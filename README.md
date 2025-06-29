@@ -170,11 +170,12 @@ config = BrowserConfig(
 
 ## 📖 文档
 
-- [系统架构设计](./ARCHITECTURE.md)
-- [项目需求文档](./PROJECT_REQUIREMENTS.md)
-- [API 参考文档](./docs/api.md)
-- [工具开发指南](./docs/tools.md)
-- [部署指南](./docs/deployment.md)
+- [系统架构设计](./ARCHITECTURE.md) - 完整的架构设计和组件说明
+- [项目需求文档](./PROJECT_REQUIREMENTS.md) - 原始需求和功能规划
+- [开发指南](./docs/guides/DEVELOPMENT_GUIDE.md) - 开发者必读指南
+- [API 参考文档](./docs/api/) - REST API 接口文档 (待完善)
+- [工具开发指南](./docs/guides/) - 自定义工具开发 (待完善)
+- [部署指南](./docs/deployment/) - 生产环境部署 (待完善)
 
 ## 🧪 测试
 
@@ -215,23 +216,29 @@ pytest --cov=tools --cov-report=html
 
 ## 🚀 路线图
 
-### Stage 1: 核心功能（当前）
-- [x] Agent 构建流程
+### Stage 1: 核心框架（当前）
+- [x] 项目架构设计
+- [x] BaseAgent 基础框架
 - [x] Browser 工具集成
+- [x] 数据Schema定义
+- [x] 目录结构规划
+- [ ] 工具知识库系统
+- [ ] 项目经理Agent
+- [ ] Claude Code集成
 - [ ] Android 工具开发
-- [ ] 基础测试覆盖
 
 ### Stage 2: 平台化
 - [ ] Web 管理界面
-- [ ] 多用户支持
-- [ ] Agent 市场
-- [ ] 可视化构建器
+- [ ] REST API接口
+- [ ] 可视化Agent构建器
+- [ ] Agent市场和模板库
+- [ ] 多用户协作
 
 ### Stage 3: 企业级
-- [ ] 权限管理系统
-- [ ] 审计日志
-- [ ] 高可用部署
-- [ ] 企业级安全
+- [ ] 企业级权限管理
+- [ ] 高可用部署架构
+- [ ] 性能监控和优化
+- [ ] 第三方系统集成
 
 ## 📞 联系我们
 
