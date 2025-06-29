@@ -307,31 +307,44 @@ class RoadshowAgent(BaseAgent):
 
 ```
 agentcrafter/
-├── core/                           # 核心框架
-│   ├── base_agent.py              # BaseAgent基础框架
-│   ├── workflow_engine.py         # 工作流引擎
-│   ├── memory_manager.py          # 内存管理
-│   └── state_manager.py           # 状态管理
-├── agent_builder/                  # Agent构建系统
-│   ├── project_manager_agent.py   # 项目经理Agent
-│   ├── tool_knowledge_base.py     # 工具知识库
-│   ├── framework_analyzer.py      # 框架分析器
-│   └── claude_code_client.py      # Claude Code集成
-├── tools/                          # 工具生态系统
-│   ├── base_tool.py               # 工具基础类
-│   ├── browser_use/               # 浏览器工具
-│   ├── android_use/               # Android工具
-│   └── memory/                    # 内存工具
-├── agents/                         # 生成的Agent存储
-│   ├── generated/                 # AI生成的Agent
-│   └── templates/                 # Agent模板
-├── schemas/                        # 数据结构定义
-│   ├── agent_schema.py            # Agent相关Schema
-│   ├── tool_schema.py             # 工具相关Schema
-│   └── workflow_schema.py         # 工作流Schema
-├── api/                           # REST API
-├── web/                           # 前端界面
-└── docs/                          # 文档和指南
+├── agent_builder/                  # 需求分析Agent目录 (项目经理Agent系统)
+│   ├── knowledge_base/            # 工具知识库
+│   ├── claude_integration/        # Claude Code集成
+│   ├── requirement_analyzer/      # 需求分析组件
+│   └── project_manager_agent.py   # 项目经理Agent
+├── base_app/                      # BaseAgent和运行环境
+│   ├── core/                      # BaseAgent核心框架
+│   │   ├── base_agent.py         # BaseAgent基础框架
+│   │   ├── workflow_engine.py    # 工作流引擎
+│   │   ├── memory_manager.py     # 内存管理
+│   │   └── state_manager.py      # 状态管理
+│   ├── tools/                     # 工具系统
+│   │   ├── browser_use/          # 浏览器工具
+│   │   ├── android_use/          # Android工具
+│   │   ├── memory/               # 内存工具
+│   │   └── base_tool.py          # 工具基础类
+│   ├── memory/                    # 内存管理系统
+│   ├── runtime/                   # Agent运行时环境
+│   ├── web/                       # 样例web页面和API
+│   └── examples/                  # 使用示例
+├── schemas/                       # 数据结构定义
+│   ├── agent_schema.py           # Agent相关Schema
+│   └── tool_schema.py            # 工具相关Schema (待实现)
+├── agents/                        # 生成的Agent存储
+│   ├── generated/                # AI生成的Agent
+│   └── templates/                # Agent模板
+├── docker/                        # Docker相关目录
+│   ├── base/                     # 基础镜像
+│   ├── agent-runner/             # Agent运行环境
+│   ├── development/              # 开发环境
+│   ├── docker-compose.yml        # 服务编排
+│   └── Dockerfile               # 主应用镜像
+├── docs/                          # 文档相关目录
+│   ├── guides/                   # 开发指南
+│   ├── api/                      # API文档
+│   └── deployment/               # 部署文档
+├── tests/                         # 测试文件
+└── config/                        # 配置文件
 ```
 
 ## 核心优势
