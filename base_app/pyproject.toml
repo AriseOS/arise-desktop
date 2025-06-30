@@ -1,0 +1,155 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "base-app"
+version = "1.0.0"
+description = "AI Agent Assistant Application"
+authors = [
+    {name = "BaseApp Team", email = "baseapp@example.com"}
+]
+readme = "README.md"
+requires-python = ">=3.8"
+keywords = ["ai", "agent", "assistant", "chat", "automation"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    # Core dependencies
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0.0",
+    
+    # Web framework
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.23.0",
+    
+    # CLI framework
+    "click>=8.0.0",
+    "rich>=13.0.0",
+    
+    # HTTP client
+    "requests>=2.31.0",
+    "httpx>=0.24.0",
+    
+    # Memory and vector store
+    "mem0ai>=0.1.0",
+    "chromadb>=0.4.0",
+    
+    # LLM providers
+    "openai>=1.0.0",
+    "anthropic>=0.25.0",
+    
+    # Browser automation (optional)
+    "browser-use>=0.1.0",
+    
+    # System monitoring
+    "psutil>=5.9.0",
+    
+    # Async support
+    "asyncio-mqtt>=0.16.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "flake8>=6.0.0",
+    "mypy>=1.5.0",
+]
+
+web = [
+    "jinja2>=3.1.0",
+    "python-multipart>=0.0.6",
+]
+
+all = [
+    "baseapp[dev,web]"
+]
+
+[project.scripts]
+baseapp = "base_app.cli.main:cli"
+
+[tool.setuptools]
+packages = ["base_app"]
+
+[tool.setuptools.package-dir]
+"" = "."
+
+[tool.setuptools.package-data]
+base_app = ["*.yaml", "*.yml", "*.json", "*.md"]
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+known_first_party = ["base_app"]
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = [
+    "mem0.*",
+    "chromadb.*",
+    "browser_use.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--verbose",
+]
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests",
+    "slow: Slow tests",
+]
