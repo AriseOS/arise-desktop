@@ -733,76 +733,377 @@ steps = [
             return self._create_simple_workflow()
     
     def _create_user_qa_workflow(self) -> Workflow:
-        """创建用户问答默认工作流"""
+        """创建用户问答默认工作流 - 基于LLM的智能决策"""
+        from .schemas import StepPort, PortType, PortConnection
+        
         steps = [
+            # 步骤1: LLM意图分析决策
             WorkflowStep(
-                name="分析用户输入",
+                id="llm_intent_analysis",
+                name="LLM意图分析",
                 step_type=StepType.CODE,
+                input_ports=[
+                    StepPort(name="user_input", type=PortType.STRING, description="用户输入文本"),
+                    StepPort(name="user_id", type=PortType.STRING, description="用户ID")
+                ],
+                output_ports=[
+                    StepPort(name="action_type", type=PortType.STRING, description="需要执行的动作类型"),
+                    StepPort(name="tool_name", type=PortType.STRING, description="需要的工具名称"),
+                    StepPort(name="tool_action", type=PortType.STRING, description="工具动作"),
+                    StepPort(name="code_to_execute", type=PortType.STRING, description="需要执行的代码"),
+                    StepPort(name="analysis_result", type=PortType.DICT, description="分析结果")
+                ],
                 code="""
-# 分析用户输入，提取关键信息
-user_input = variables.get('user_input', '')
-print(f"分析用户输入: {user_input}")
+import json
+import openai
+from openai import OpenAI
 
-# 简单的意图分析
-if '天气' in user_input:
-    intent = 'weather'
-elif '时间' in user_input:
-    intent = 'time'
+user_input = variables.get('user_input', '')
+user_id = variables.get('user_id', 'anonymous')
+
+print(f"开始LLM意图分析: {user_input[:50]}...")
+
+# 构建分析prompt
+analysis_prompt = f'''
+分析用户输入，判断需要采取的行动类型。请返回JSON格式的结果。
+
+用户输入: "{user_input}"
+
+可选的行动类型:
+1. "tool" - 需要调用外部工具（如浏览器搜索、文件操作等）
+2. "code" - 需要生成并执行代码（如计算、数据处理、逻辑判断）
+3. "direct" - 直接回答问题，无需工具或代码
+
+如果是tool类型，可用的工具:
+- browser: 浏览器操作，支持搜索、访问网页、提取信息等
+
+如果是code类型，生成Python代码来解决问题。
+
+请返回如下格式的JSON:
+{{
+    "action_type": "tool|code|direct",
+    "reasoning": "选择此行动的原因",
+    "tool_name": "工具名称(仅当action_type为tool时)",
+    "tool_action": "工具动作(仅当action_type为tool时)",
+    "tool_params": {{"参数": "值"}},
+    "code": "Python代码(仅当action_type为code时)",
+    "confidence": 0.9
+}}
+'''
+
+try:
+    # 基于关键词的简单判断逻辑
+    if any(word in user_input.lower() for word in ['搜索', '查找', '网上', '百度', '谷歌', '网站']):
+        action_type = "tool"
+        tool_name = "browser"
+        tool_action = "search"
+        code_to_execute = ""
+        reasoning = "用户需要搜索信息，使用浏览器工具"
+    elif any(word in user_input.lower() for word in ['计算', '算', '编程', '代码', '处理数据']):
+        action_type = "code"
+        tool_name = ""
+        tool_action = ""
+        # 生成简单的计算代码示例
+        code_to_execute = f'''
+# 处理用户请求: {user_input}
+user_request = "{user_input}"
+print(f"处理请求: {{user_request}}")
+
+# 这里添加具体的处理逻辑
+if "计算" in user_request:
+    # 示例计算逻辑
+    result = "计算结果示例"
 else:
-    intent = 'general'
+    result = f"已处理用户请求: {{user_request}}"
+
+print(f"处理结果: {{result}}")
+'''
+        reasoning = "用户需要计算或代码处理"
+    else:
+        action_type = "direct"
+        tool_name = ""
+        tool_action = ""
+        code_to_execute = ""
+        reasoning = "直接回答用户问题"
+
+    analysis_result = {
+        "action_type": action_type,
+        "reasoning": reasoning,
+        "confidence": 0.8,
+        "user_input": user_input
+    }
+    
+    print(f"LLM分析结果: {action_type} - {reasoning}")
+    
+except Exception as e:
+    print(f"LLM分析失败: {e}")
+    # 失败时默认直接回答
+    action_type = "direct"
+    tool_name = ""
+    tool_action = ""
+    code_to_execute = ""
+    analysis_result = {
+        "action_type": "direct",
+        "reasoning": "分析失败，使用默认直接回答",
+        "confidence": 0.5,
+        "user_input": user_input
+    }
 
 result = {
-    'user_input': user_input,
-    'intent': intent,
-    'keywords': user_input.split()
+    'action_type': action_type,
+    'tool_name': tool_name,
+    'tool_action': tool_action,
+    'code_to_execute': code_to_execute,
+    'analysis_result': analysis_result
 }
-""",
-                output_key="analysis_result"
+"""
             ),
+            
+            # 步骤2: 工具调用分支
             WorkflowStep(
-                name="搜索相关记忆",
-                step_type=StepType.MEMORY,
-                memory_action="search",
-                query="{{user_input}}",
-                params={"limit": 3},
-                output_key="memory_results",
+                id="tool_execution",
+                name="工具执行",
+                step_type=StepType.TOOL,
+                input_ports=[
+                    StepPort(name="tool_name", type=PortType.STRING, description="工具名称"),
+                    StepPort(name="tool_action", type=PortType.STRING, description="工具动作"),
+                    StepPort(name="user_input", type=PortType.STRING, description="用户输入")
+                ],
+                output_ports=[
+                    StepPort(name="tool_result", type=PortType.ANY, description="工具执行结果")
+                ],
+                port_connections={
+                    "tool_name": PortConnection(
+                        target_port="tool_name",
+                        source_step="llm_intent_analysis",
+                        source_port="tool_name"
+                    ),
+                    "tool_action": PortConnection(
+                        target_port="tool_action",
+                        source_step="llm_intent_analysis",
+                        source_port="tool_action"
+                    ),
+                    "user_input": PortConnection(
+                        target_port="user_input",
+                        source_step="llm_intent_analysis",
+                        source_port="analysis_result"
+                    )
+                },
+                condition="{{llm_intent_analysis.action_type}} == 'tool'",  # 只有action_type为tool时才执行
+                tool_name="browser",  # 默认工具名，会被端口连接覆盖
+                action="search",
+                params={"query": "{{user_input}}"},
                 error_handling=ErrorHandling.CONTINUE
             ),
+            
+            # 步骤3: 代码执行分支
             WorkflowStep(
-                name="生成响应",
+                id="code_execution",
+                name="代码执行",
                 step_type=StepType.CODE,
+                input_ports=[
+                    StepPort(name="code_to_execute", type=PortType.STRING, description="要执行的代码"),
+                    StepPort(name="user_input", type=PortType.STRING, description="用户输入")
+                ],
+                output_ports=[
+                    StepPort(name="code_result", type=PortType.ANY, description="代码执行结果")
+                ],
+                port_connections={
+                    "code_to_execute": PortConnection(
+                        target_port="code_to_execute",
+                        source_step="llm_intent_analysis",
+                        source_port="code_to_execute"
+                    ),
+                    "user_input": PortConnection(
+                        target_port="user_input",
+                        source_step="llm_intent_analysis",
+                        source_port="analysis_result"
+                    )
+                },
+                condition="{{llm_intent_analysis.action_type}} == 'code'",  # 只有action_type为code时才执行
                 code="""
-# 整合分析结果和记忆搜索结果
-analysis = step_results.get('analysis_result', {})
-memories = step_results.get('memory_results', [])
+code_to_execute = variables.get('code_to_execute', '')
+user_input_data = variables.get('user_input', {})
 
-user_input = analysis.get('user_input', '用户输入')
-intent = analysis.get('intent', 'general')
+print(f"执行生成的代码...")
 
-# 基于意图和记忆生成响应
-if intent == 'weather':
-    result = f"您询问天气情况。根据您的输入'{user_input}'，我建议您查看天气预报。"
-elif intent == 'time':
-    import datetime
-    current_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    result = f"当前时间是: {current_time}"
+if code_to_execute.strip():
+    try:
+        # 创建安全的执行环境
+        exec_globals = {
+            'print': print,
+            'len': len,
+            'str': str,
+            'int': int,
+            'float': float,
+            'list': list,
+            'dict': dict,
+            'sum': sum,
+            'max': max,
+            'min': min,
+            'abs': abs,
+            'round': round,
+        }
+        
+        exec_locals = {}
+        
+        # 执行代码
+        exec(code_to_execute, exec_globals, exec_locals)
+        
+        # 获取执行结果
+        if 'result' in exec_locals:
+            code_result = exec_locals['result']
+        else:
+            code_result = "代码执行完成"
+            
+        print(f"代码执行成功: {code_result}")
+        
+    except Exception as e:
+        code_result = f"代码执行失败: {str(e)}"
+        print(code_result)
 else:
-    if memories:
-        memory_context = "\\n".join([str(m.get('content', '')) for m in memories[:2]])
-        result = f"基于您的输入'{user_input}'和相关记忆，我为您提供以下回复：\\n{memory_context}"
-    else:
-        result = f"感谢您的输入：'{user_input}'。我已收到您的消息，但暂无相关记忆可参考。"
+    code_result = "没有代码需要执行"
 
-print(f"生成的响应: {result}")
-""",
-                output_key="final_response"
+result = {
+    'code_result': code_result
+}
+"""
             ),
+            
+            # 步骤4: 搜索相关记忆
             WorkflowStep(
-                name="存储交互记忆",
+                id="search_memory",
+                name="搜索相关记忆",
                 step_type=StepType.MEMORY,
+                input_ports=[
+                    StepPort(name="query", type=PortType.STRING, description="搜索查询")
+                ],
+                output_ports=[
+                    StepPort(name="memories", type=PortType.LIST, description="搜索到的记忆列表")
+                ],
+                port_connections={
+                    "query": PortConnection(
+                        target_port="query",
+                        source_step="llm_intent_analysis",
+                        source_port="analysis_result"
+                    )
+                },
+                memory_action="search",
+                params={"limit": 3},
+                error_handling=ErrorHandling.CONTINUE
+            ),
+            
+            # 步骤5: 信息汇总和LLM响应生成
+            WorkflowStep(
+                id="llm_response_generation",
+                name="LLM响应生成",
+                step_type=StepType.CODE,
+                input_ports=[
+                    StepPort(name="user_input", type=PortType.STRING, description="用户输入"),
+                    StepPort(name="analysis_result", type=PortType.DICT, description="意图分析结果"),
+                    StepPort(name="tool_result", type=PortType.ANY, description="工具执行结果", required=False),
+                    StepPort(name="code_result", type=PortType.ANY, description="代码执行结果", required=False),
+                    StepPort(name="memories", type=PortType.LIST, description="相关记忆")
+                ],
+                output_ports=[
+                    StepPort(name="final_response", type=PortType.STRING, description="最终响应")
+                ],
+                port_connections={
+                    "analysis_result": PortConnection(
+                        target_port="analysis_result",
+                        source_step="llm_intent_analysis",
+                        source_port="analysis_result"
+                    ),
+                    "tool_result": PortConnection(
+                        target_port="tool_result",
+                        source_step="tool_execution",
+                        source_port="tool_result"
+                    ),
+                    "code_result": PortConnection(
+                        target_port="code_result",
+                        source_step="code_execution",
+                        source_port="code_result"
+                    ),
+                    "memories": PortConnection(
+                        target_port="memories",
+                        source_step="search_memory",
+                        source_port="memories"
+                    )
+                },
+                code="""
+import json
+
+# 收集所有信息
+analysis_result = variables.get('analysis_result', {})
+tool_result = variables.get('tool_result')
+code_result = variables.get('code_result')
+memories = variables.get('memories', [])
+
+user_input = analysis_result.get('user_input', '用户输入')
+action_type = analysis_result.get('action_type', 'direct')
+reasoning = analysis_result.get('reasoning', '')
+
+print(f"生成最终响应 - 动作类型: {action_type}")
+
+# 基于规则的简单响应生成
+try:
+    if action_type == "tool" and tool_result:
+        final_response = "我为您执行了工具查询，结果如下：" + str(tool_result) + "\\n\\n希望这些信息对您有帮助！"
+    elif action_type == "code" and code_result:
+        final_response = "我执行了相关代码来处理您的请求：" + str(code_result) + "\\n\\n这是根据您的需求计算得出的结果。"
+    else:
+        # 直接回答
+        if memories:
+            memory_text = "\\n".join([str(m.get('content', ''))[:100] for m in memories[:2]])
+            final_response = f"根据您的问题'{user_input}'，结合我的记忆，我为您提供以下回复：" + memory_text + "\\n\\n如果需要更详细的信息，请告诉我！"
+        else:
+            final_response = f"您好！关于您的问题'{user_input}'，我理解您的需求。这是一个{action_type}类型的问题。{reasoning}\\n\\n请问还有什么我可以帮助您的吗？"
+    
+except Exception as e:
+    print(f"响应生成失败: {e}")
+    final_response = f"抱歉，我在处理您的问题时遇到了一些困难。您的问题是：{user_input}。请您再试一次或者换个方式问我。"
+
+print(f"最终响应生成完成: {len(final_response)} 字符")
+
+result = {
+    'final_response': final_response
+}
+"""
+            ),
+            
+            # 步骤6: 存储完整对话到长期记忆
+            WorkflowStep(
+                id="store_conversation",
+                name="存储对话记录",
+                step_type=StepType.MEMORY,
+                input_ports=[
+                    StepPort(name="user_input", type=PortType.STRING, description="用户输入"),
+                    StepPort(name="final_response", type=PortType.STRING, description="AI响应"),
+                    StepPort(name="analysis_result", type=PortType.DICT, description="分析结果"),
+                    StepPort(name="user_id", type=PortType.STRING, description="用户ID")
+                ],
+                output_ports=[
+                    StepPort(name="stored", type=PortType.BOOLEAN, description="是否存储成功")
+                ],
+                port_connections={
+                    "user_input": PortConnection(
+                        target_port="user_input",
+                        source_step="llm_intent_analysis",
+                        source_port="analysis_result"
+                    ),
+                    "final_response": PortConnection(
+                        target_port="final_response",
+                        source_step="llm_response_generation",
+                        source_port="final_response"
+                    ),
+                    "analysis_result": PortConnection(
+                        target_port="analysis_result",
+                        source_step="llm_intent_analysis",
+                        source_port="analysis_result"
+                    )
+                },
                 memory_action="store",
-                memory_key="last_interaction",
-                memory_value="{{final_response}}",
+                memory_key="conversation_history",
                 error_handling=ErrorHandling.CONTINUE
             )
         ]

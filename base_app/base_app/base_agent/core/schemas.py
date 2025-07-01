@@ -119,6 +119,33 @@ class ErrorHandling(str, Enum):
     SKIP = "skip"          # 跳过当前步骤
 
 
+class PortType(str, Enum):
+    """端口数据类型"""
+    STRING = "string"
+    INTEGER = "integer"
+    FLOAT = "float"
+    BOOLEAN = "boolean"
+    LIST = "list"
+    DICT = "dict"
+    ANY = "any"
+
+
+class StepPort(BaseModel):
+    """步骤端口定义"""
+    name: str = Field(..., description="端口名称")
+    type: PortType = Field(..., description="端口数据类型")
+    description: str = Field(default="", description="端口描述")
+    required: bool = Field(default=True, description="是否必需")
+    default_value: Any = Field(default=None, description="默认值")
+
+
+class PortConnection(BaseModel):
+    """端口连接定义"""
+    target_port: str = Field(..., description="目标端口名称")
+    source_step: str = Field(..., description="源步骤ID")
+    source_port: str = Field(..., description="源端口名称")
+
+
 class WorkflowStep(BaseModel):
     """工作流步骤定义"""
     # 基础信息
@@ -127,14 +154,19 @@ class WorkflowStep(BaseModel):
     description: str = Field(default="", description="步骤描述")
     step_type: StepType = Field(..., description="步骤类型")
     
+    # 端口连接模式 (新增)
+    input_ports: List[StepPort] = Field(default_factory=list, description="输入端口定义")
+    output_ports: List[StepPort] = Field(default_factory=list, description="输出端口定义")
+    port_connections: Dict[str, PortConnection] = Field(default_factory=dict, description="端口连接映射")
+    
     # 执行控制
     condition: Optional[str] = Field(default=None, description="执行条件")
-    depends_on: List[str] = Field(default_factory=list, description="依赖的步骤ID")
+    depends_on: List[str] = Field(default_factory=list, description="依赖的步骤ID") 
     timeout: int = Field(default=300, description="超时时间(秒)")
     error_handling: ErrorHandling = Field(default=ErrorHandling.STOP, description="错误处理策略")
     retry_count: int = Field(default=0, description="重试次数")
     
-    # 通用参数
+    # 通用参数 (保持向后兼容)
     params: Dict[str, Any] = Field(default_factory=dict, description="步骤参数")
     output_key: Optional[str] = Field(default=None, description="输出变量名")
     

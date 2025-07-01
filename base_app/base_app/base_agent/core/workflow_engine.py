@@ -124,11 +124,9 @@ class WorkflowEngine:
                 # 处理执行结果
                 if step_result.success:
                     context.completed_steps.append(step.id)
-                    context.step_results[step.id] = step_result.data
                     
-                    # 存储输出变量
-                    if step.output_key:
-                        context.variables[step.output_key] = step_result.data
+                    # 使用新的端口存储逻辑
+                    self._store_step_outputs(step, step_result.data, context)
                     
                     logger.info(f"步骤 {step.name} 执行成功")
                 else:
@@ -156,11 +154,37 @@ class WorkflowEngine:
             )
             
             # 设置最终结果
-            if context.step_results:
-                # 使用最后一个成功步骤的结果作为最终结果
+            # 1. 优先查找llm_response_generation步骤的final_response端口 (新工作流)
+            if 'llm_response_generation.final_response' in context.variables:
+                result.final_result = context.variables['llm_response_generation.final_response']
+                logger.info(f"使用llm_response_generation.final_response端口作为最终结果: {result.final_result}")
+            # 2. 查找final_response输出变量 (向后兼容)
+            elif 'final_response' in context.variables:
+                result.final_result = context.variables['final_response']
+                logger.info(f"使用final_response变量作为最终结果: {result.final_result}")
+            # 3. 查找generate_response步骤的response端口 (旧端口模式)
+            elif 'generate_response.response' in context.variables:
+                result.final_result = context.variables['generate_response.response']
+                logger.info(f"使用generate_response.response端口作为最终结果: {result.final_result}")
+            # 4. 备用方案：使用最后一个成功步骤的结果
+            elif context.step_results:
                 last_result_key = context.completed_steps[-1] if context.completed_steps else None
                 if last_result_key:
-                    result.final_result = context.step_results.get(last_result_key)
+                    last_result = context.step_results.get(last_result_key)
+                    # 如果是字典且有response或final_response键，优先使用
+                    if isinstance(last_result, dict):
+                        if 'final_response' in last_result:
+                            result.final_result = last_result['final_response']
+                        elif 'response' in last_result:
+                            result.final_result = last_result['response']
+                        else:
+                            result.final_result = last_result
+                    else:
+                        result.final_result = last_result
+                    logger.info(f"使用最后步骤结果作为最终结果: {result.final_result}")
+            
+            # 调试信息
+            logger.info(f"执行完成 - 变量: {list(context.variables.keys())}, 步骤结果: {list(context.step_results.keys())}")
             
             logger.info(f"工作流 {workflow_id} 执行完成，成功: {success}，耗时: {execution_time:.2f}秒")
             return result
@@ -198,14 +222,21 @@ class WorkflowEngine:
         step_start_time = time.time()
         
         try:
-            # 解析步骤参数中的变量引用
+            # 1. 解析端口连接，获取输入数据
+            input_data = await self._resolve_port_connections(step, context)
+            
+            # 2. 解析步骤参数中的变量引用 (保持向后兼容)
             resolved_params = await self._resolve_variables(step.params, context)
             
-            # 更新步骤参数
+            # 3. 更新步骤参数
             resolved_step = step.copy()
             resolved_step.params = resolved_params
             
-            # 解析其他字段中的变量引用
+            # 4. 将端口输入数据添加到执行环境
+            if input_data:
+                context.variables.update(input_data)
+            
+            # 5. 解析其他字段中的变量引用
             if step.agent_input:
                 resolved_step.agent_input = await self._resolve_variables(step.agent_input, context)
             if step.code:
@@ -399,9 +430,43 @@ class WorkflowEngine:
             if not step.memory_key:
                 raise ValueError("存储操作缺少memory_key参数")
             
-            value = step.memory_value if step.memory_value is not None else step.params.get("value")
+            # 构建要存储的对话记录
+            value = None
+            
+            # 检查是否是存储对话记录
+            if step.memory_key == "conversation_history":
+                # 从各个端口收集信息构建完整的对话记录
+                user_input_data = context.variables.get("user_input", {})
+                final_response = context.variables.get("final_response", "")
+                analysis_result = context.variables.get("analysis_result", {})
+                
+                # 提取用户输入
+                if isinstance(user_input_data, dict):
+                    user_input_text = user_input_data.get("user_input", "")
+                else:
+                    user_input_text = str(user_input_data)
+                
+                # 构建对话记录
+                conversation_record = {
+                    "user_input": user_input_text,
+                    "ai_response": final_response,
+                    "action_type": analysis_result.get("action_type", "unknown"),
+                    "reasoning": analysis_result.get("reasoning", ""),
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+                value = f"用户问: {user_input_text}\nAI答: {final_response}\n处理方式: {analysis_result.get('action_type', 'unknown')}"
+            else:
+                # 普通存储逻辑
+                if "content" in context.variables:
+                    value = context.variables["content"]
+                elif step.memory_value is not None:
+                    value = step.memory_value
+                else:
+                    value = step.params.get("value")
+                
             await self.agent.store_memory(step.memory_key, value)
-            return value
+            return {"stored": True, "content": value}
             
         elif action == "get":
             # 获取内存
@@ -413,21 +478,45 @@ class WorkflowEngine:
             
         elif action == "search":
             # 搜索记忆（长期记忆）
-            if not step.query:
+            # 优先从端口连接获取查询内容
+            query = None
+            if "query" in context.variables:
+                query_data = context.variables["query"]
+                # 处理查询数据，确保是字符串格式
+                if isinstance(query_data, dict):
+                    # 如果是字典，提取用户输入文本
+                    query = query_data.get("user_input", str(query_data))
+                elif isinstance(query_data, str):
+                    query = query_data
+                else:
+                    query = str(query_data)
+            elif step.query:
+                query = step.query
+            else:
                 raise ValueError("搜索操作缺少query参数")
+            
+            # 确保查询字符串不为空
+            if not query or not isinstance(query, str):
+                logger.warning(f"无效的查询字符串: {query}")
+                return {"memories": []}
             
             # 检查是否有memory manager实例
             if hasattr(self.agent, 'memory_manager') and self.agent.memory_manager:
                 limit = step.params.get("limit", 5)
                 user_id = step.params.get("user_id")
                 
-                results = await self.agent.memory_manager.search_long_term_memory(
-                    step.query, user_id, limit
-                )
-                return results
+                try:
+                    results = await self.agent.memory_manager.search_long_term_memory(
+                        query, user_id, limit
+                    )
+                    logger.debug(f"记忆搜索完成: 查询='{query}', 结果数={len(results)}")
+                    return {"memories": results}
+                except Exception as e:
+                    logger.error(f"记忆搜索失败: {e}")
+                    return {"memories": []}
             else:
                 logger.warning("长期记忆未启用，返回空结果")
-                return []
+                return {"memories": []}
                 
         else:
             raise ValueError(f"不支持的内存操作: {action}")
@@ -452,22 +541,58 @@ class WorkflowEngine:
     ) -> bool:
         """评估执行条件"""
         try:
-            # 替换变量引用
-            resolved_condition = await self._resolve_variables(condition, context)
+            # 先替换变量引用，但保持字符串格式
+            resolved_condition = condition
+            
+            # 匹配 {{variable_name}} 模式
+            import re
+            pattern = r'\{\{([^}]+)\}\}'
+            
+            def replace_var(match):
+                var_name = match.group(1).strip()
+                
+                # 先在variables中查找
+                if var_name in context.variables:
+                    value = context.variables[var_name]
+                    # 如果是字符串，需要加引号
+                    if isinstance(value, str):
+                        return f"'{value}'"
+                    else:
+                        return str(value)
+                
+                # 再在step_results中查找
+                if var_name in context.step_results:
+                    value = context.step_results[var_name]
+                    if isinstance(value, str):
+                        return f"'{value}'"
+                    else:
+                        return str(value)
+                
+                # 如果找不到，记录警告并返回False
+                logger.warning(f"变量 {var_name} 未找到")
+                return "None"
+            
+            resolved_condition = re.sub(pattern, replace_var, resolved_condition)
             
             # 准备评估环境
             eval_globals = {
-                'context': context,
-                'variables': context.variables,
-                'step_results': context.step_results,
+                '__builtins__': {},
+                'True': True,
+                'False': False,
+                'None': None,
             }
             
+            eval_locals = {}
+            
             # 评估条件表达式
-            result = eval(resolved_condition, eval_globals)
+            result = eval(resolved_condition, eval_globals, eval_locals)
+            logger.debug(f"条件评估: {condition} -> {resolved_condition} = {result}")
             return bool(result)
             
         except Exception as e:
             logger.error(f"条件评估失败: {condition}, 错误: {e}")
+            logger.debug(f"解析后条件: {resolved_condition if 'resolved_condition' in locals() else 'N/A'}")
+            logger.debug(f"可用变量: {list(context.variables.keys())}")
             return False
     
     async def _resolve_variables(
@@ -511,6 +636,87 @@ class WorkflowEngine:
         else:
             # 其他类型直接返回
             return value
+    
+    async def _resolve_port_connections(
+        self, 
+        step: WorkflowStep, 
+        context: ExecutionContext
+    ) -> Dict[str, Any]:
+        """
+        解析端口连接，获取输入数据
+        
+        Args:
+            step: 当前步骤
+            context: 执行上下文
+            
+        Returns:
+            Dict[str, Any]: 端口输入数据
+        """
+        input_data = {}
+        
+        # 处理端口连接
+        for target_port, connection in step.port_connections.items():
+            try:
+                # 从源步骤的输出端口获取数据
+                source_step_outputs = context.step_results.get(connection.source_step)
+                
+                if source_step_outputs and isinstance(source_step_outputs, dict):
+                    # 如果源步骤输出是字典，尝试获取指定端口的数据
+                    if connection.source_port in source_step_outputs:
+                        input_data[target_port] = source_step_outputs[connection.source_port]
+                    else:
+                        logger.warning(f"端口连接警告: 源步骤 {connection.source_step} 没有输出端口 {connection.source_port}")
+                else:
+                    # 如果源步骤输出不是字典，直接使用整个输出
+                    input_data[target_port] = source_step_outputs
+                    
+            except Exception as e:
+                logger.error(f"端口连接解析失败: {target_port} <- {connection.source_step}.{connection.source_port}, 错误: {e}")
+        
+        return input_data
+    
+    def _store_step_outputs(
+        self, 
+        step: WorkflowStep, 
+        step_result: Any, 
+        context: ExecutionContext
+    ) -> None:
+        """
+        存储步骤输出到端口
+        
+        Args:
+            step: 工作流步骤
+            step_result: 步骤执行结果
+            context: 执行上下文
+        """
+        # 如果步骤定义了输出端口，按端口存储
+        if step.output_ports:
+            output_data = {}
+            if isinstance(step_result, dict):
+                # 如果结果是字典，尝试映射到输出端口
+                for port in step.output_ports:
+                    if port.name in step_result:
+                        output_data[port.name] = step_result[port.name]
+                    elif port.default_value is not None:
+                        output_data[port.name] = port.default_value
+                    elif port.required:
+                        logger.warning(f"必需的输出端口 {port.name} 在步骤 {step.name} 中未找到")
+            else:
+                # 如果只有一个输出端口，直接使用结果
+                if len(step.output_ports) == 1:
+                    output_data[step.output_ports[0].name] = step_result
+                else:
+                    logger.warning(f"步骤 {step.name} 有多个输出端口但结果不是字典")
+            
+            # 存储到step_results和variables
+            context.step_results[step.id] = output_data
+            for port_name, port_value in output_data.items():
+                context.variables[f"{step.id}.{port_name}"] = port_value
+        else:
+            # 保持向后兼容：如果没有定义输出端口，使用原有逻辑
+            context.step_results[step.id] = step_result
+            if step.output_key:
+                context.variables[step.output_key] = step_result
     
     async def validate_workflow(self, steps: List[WorkflowStep]) -> bool:
         """
