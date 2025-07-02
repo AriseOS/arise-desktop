@@ -12,10 +12,10 @@ import json
 
 from .schemas import (
     AgentConfig, AgentResult, AgentState, AgentStatus, AgentPriority,
-    WorkflowStep, WorkflowResult, Workflow, AgentCapabilitySpec, InterfaceSpec, ExtensionSpec,
-    StepType, ErrorHandling
+    WorkflowResult, Workflow, AgentCapabilitySpec, InterfaceSpec, ExtensionSpec,
+    StepType, ErrorHandling, AgentWorkflowStep
 )
-from .workflow_engine import WorkflowEngine
+from .agent_workflow_engine import AgentWorkflowEngine
 from ..tools.base_tool import BaseTool, ToolResult, ToolStatus
 from ..memory.memory_manager import MemoryManager
 
@@ -38,7 +38,8 @@ class BaseAgent:
         self, 
         config: Optional[AgentConfig] = None,
         enable_memory: bool = False,
-        memory_config: Optional[Dict[str, Any]] = None
+        memory_config: Optional[Dict[str, Any]] = None,
+        provider_config: Optional[Dict[str, Any]] = None
     ):
         # 基础配置
         self.config = config or AgentConfig(name="BaseAgent")
@@ -47,6 +48,11 @@ class BaseAgent:
         # 核心组件
         self.tools: Dict[str, BaseTool] = {}
         self.hooks: Dict[str, List[Callable]] = {}
+        
+        # Provider初始化
+        self.provider = None
+        self.provider_config = provider_config or {}
+        self._initialize_provider()
         
         # 内存管理
         self.memory_manager = None
@@ -61,8 +67,13 @@ class BaseAgent:
             except Exception as e:
                 logger.warning(f"内存管理器初始化失败: {e}")
         
-        # 工作流引擎
-        self.workflow_engine = WorkflowEngine(agent_instance=self)
+        # Agent工作流引擎
+        try:
+            self.agent_workflow_engine = AgentWorkflowEngine(agent_instance=self)
+            logger.info("Agent工作流引擎初始化成功")
+        except ImportError as e:
+            logger.error(f"Agent工作流引擎初始化失败: {e}")
+            self.agent_workflow_engine = None
         
         # 状态管理
         self.state = AgentState(
@@ -122,6 +133,18 @@ class BaseAgent:
         try:
             self.state.status = AgentStatus.INITIALIZING
             await self._trigger_hook('before_initialize')
+            
+            # 初始化Provider
+            if self.provider:
+                provider_success = await self.initialize_provider_async()
+                if not provider_success:
+                    logger.error("Provider初始化失败，无法进行大模型推理")
+                    self.state.status = AgentStatus.FAILED
+                    return False
+            else:
+                logger.error("Provider未设置，无法进行大模型推理")
+                self.state.status = AgentStatus.FAILED
+                return False
             
             # 初始化所有工具
             for tool_name, tool in self.tools.items():
@@ -404,7 +427,7 @@ class BaseAgent:
     
     async def run_workflow(
         self, 
-        workflow: Union[Workflow, List[WorkflowStep]], 
+        workflow: Union[Workflow, List[AgentWorkflowStep]], 
         input_data: Dict[str, Any] = None
     ) -> WorkflowResult:
         """
@@ -420,13 +443,13 @@ class BaseAgent:
         Example:
             # 使用步骤列表
             steps = [
-                WorkflowStep(
+                AgentWorkflowStep(
                     name="搜索记忆",
                     step_type=StepType.MEMORY,
                     memory_action="search",
                     query="用户偏好"
                 ),
-                WorkflowStep(
+                AgentWorkflowStep(
                     name="生成响应",
                     step_type=StepType.CODE,
                     code="result = f'基于记忆: {step_results}'"
@@ -439,17 +462,24 @@ class BaseAgent:
             result = await self.run_workflow(workflow, {"user_input": "你好"})
         """
         if isinstance(workflow, list):
-            # 如果传入的是步骤列表，使用WorkflowEngine执行
-            return await self.workflow_engine.execute_steps(
-                workflow, 
-                input_data=input_data or {}
-            )
+            # 现在所有步骤都是AgentWorkflowStep，直接使用Agent工作流引擎
+            if self.agent_workflow_engine:
+                return await self.agent_workflow_engine.execute_workflow(
+                    workflow,
+                    input_data=input_data or {}
+                )
+            else:
+                raise RuntimeError("Agent工作流引擎未初始化，无法执行工作流")
         else:
-            # 如果传入的是完整工作流，使用WorkflowEngine执行
-            return await self.workflow_engine.execute_workflow(
-                workflow, 
-                input_data=input_data or {}
-            )
+            # 现在所有工作流都使用AgentWorkflowStep，直接使用Agent工作流引擎
+            if self.agent_workflow_engine:
+                return await self.agent_workflow_engine.execute_workflow(
+                    workflow.steps,
+                    workflow_id=workflow.name,
+                    input_data=input_data or {}
+                )
+            else:
+                raise RuntimeError("Agent工作流引擎未初始化，无法执行工作流")
     
     async def process_user_input(self, user_input: str, user_id: str = None) -> str:
         """
@@ -480,6 +510,7 @@ class BaseAgent:
         if result.success:
             # 返回最终结果
             if result.final_result:
+                logger.info(f"result.final_result: {str(result.final_result)}")
                 return str(result.final_result)
             else:
                 return "处理完成，但未生成具体结果"
@@ -488,186 +519,6 @@ class BaseAgent:
             logger.error(error_msg)
             return error_msg
     
-    # ==================== 扩展接口 ====================
-    
-    def add_hook(self, event: str, callback: Callable) -> None:
-        """
-        添加钩子函数
-        
-        Args:
-            event: 事件名称
-            callback: 回调函数
-            
-        Example:
-            # 添加工具调用前的钩子
-            def log_tool_call(tool_name, action, **kwargs):
-                print(f"调用工具: {tool_name}.{action}")
-            
-            self.add_hook('before_tool_call', log_tool_call)
-        """
-        if event not in self.hooks:
-            self.hooks[event] = []
-        self.hooks[event].append(callback)
-        logger.debug(f"钩子已添加: {event}")
-    
-    def remove_hook(self, event: str, callback: Callable) -> bool:
-        """
-        移除钩子函数
-        
-        Args:
-            event: 事件名称
-            callback: 回调函数
-            
-        Returns:
-            bool: 是否成功移除
-        """
-        if event in self.hooks and callback in self.hooks[event]:
-            self.hooks[event].remove(callback)
-            return True
-        return False
-    
-    def get_capabilities(self) -> AgentCapabilitySpec:
-        """
-        获取Agent能力描述 - 供AI工具理解
-        
-        Returns:
-            AgentCapabilitySpec: 能力规格说明
-            
-        这个方法返回完整的Agent能力描述，包括：
-        - 标准接口定义
-        - 支持的工具列表  
-        - 扩展点说明
-        - 使用示例
-        
-        AI工具（如Claude Code）可以基于这些信息生成定制Agent
-        """
-        return AgentCapabilitySpec(
-            name=self.config.name,
-            description=f"基于BaseAgent的{self.config.description}",
-            interfaces={
-                "execute": InterfaceSpec(
-                    method_name="execute",
-                    description="主执行方法，子类必须实现",
-                    parameters={
-                        "input_data": "Any - 输入数据",
-                        "kwargs": "Dict - 额外参数"
-                    },
-                    return_type="AgentResult",
-                    is_async=True,
-                    is_required=True,
-                    example_usage="""
-async def execute(self, task: str, **kwargs) -> AgentResult:
-    # 实现具体逻辑
-    result = await self.use_tool('browser', 'navigate', {'url': task})
-    return AgentResult(success=True, data=result.data)
-"""
-                ),
-                "use_tool": InterfaceSpec(
-                    method_name="use_tool",
-                    description="调用注册的工具",
-                    parameters={
-                        "tool_name": "str - 工具名称",
-                        "action": "str - 动作名称", 
-                        "params": "Dict - 动作参数"
-                    },
-                    return_type="ToolResult",
-                    is_async=True,
-                    is_required=False,
-                    example_usage="""
-# 使用浏览器工具
-result = await self.use_tool('browser', 'navigate', {'url': 'https://example.com'})
-
-# 使用Android工具
-result = await self.use_tool('android', 'read_chat', {'app': '微信', 'contact': '客户'})
-"""
-                ),
-                "store_memory": InterfaceSpec(
-                    method_name="store_memory",
-                    description="存储状态信息",
-                    parameters={
-                        "key": "str - 存储键",
-                        "value": "Any - 存储值",
-                        "persistent": "bool - 是否持久化"
-                    },
-                    return_type="None",
-                    is_async=True,
-                    is_required=False,
-                    example_usage="""
-# 存储临时数据
-await self.store_memory('temp_result', data)
-
-# 存储持久化数据  
-await self.store_memory('user_profile', profile, persistent=True)
-"""
-                ),
-                "run_workflow": InterfaceSpec(
-                    method_name="run_workflow", 
-                    description="执行多步骤工作流",
-                    parameters={
-                        "steps": "List[WorkflowStep] - 工作流步骤"
-                    },
-                    return_type="WorkflowResult",
-                    is_async=True,
-                    is_required=False,
-                    example_usage="""
-steps = [
-    WorkflowStep(name="读取数据", tool_name="file", action="read", params={"path": "data.json"}),
-    WorkflowStep(name="处理数据", tool_name="processor", action="transform", params={"data": "{{step_0_result}}"})
-]
-result = await self.run_workflow(steps)
-"""
-                )
-            },
-            supported_tools=list(self.tools.keys()),
-            extension_points={
-                "hooks": ExtensionSpec(
-                    name="事件钩子",
-                    description="在特定事件触发时执行自定义逻辑",
-                    extension_type="hook",
-                    parameters={"event": "str", "callback": "Callable"},
-                    how_to_extend="使用 add_hook() 方法添加事件监听器",
-                    example="""
-def my_hook(tool_name, action, **kwargs):
-    print(f"调用工具: {tool_name}.{action}")
-
-self.add_hook('before_tool_call', my_hook)
-"""
-                ),
-                "custom_tools": ExtensionSpec(
-                    name="自定义工具",
-                    description="注册和使用自定义工具",
-                    extension_type="plugin",
-                    parameters={"name": "str", "tool": "BaseTool"},
-                    how_to_extend="继承BaseTool实现自定义工具，然后注册",
-                    example="""
-class MyTool(BaseTool):
-    async def execute(self, action, params, **kwargs):
-        # 实现工具逻辑
-        pass
-
-self.register_tool('my_tool', MyTool())
-"""
-                ),
-                "workflow_steps": ExtensionSpec(
-                    name="自定义工作流步骤",
-                    description="定义复杂的工作流逻辑",
-                    extension_type="override",
-                    parameters={"steps": "List[WorkflowStep]"},
-                    how_to_extend="创建WorkflowStep对象，支持条件、依赖、错误处理",
-                    example="""
-steps = [
-    WorkflowStep(
-        name="条件步骤",
-        tool_name="checker", 
-        action="verify",
-        condition="{{user_verified}} == True",
-        error_handling="retry"
-    )
-]
-"""
-                )
-            }
-        )
     
     # ==================== 状态管理 ====================
     
@@ -733,384 +584,94 @@ steps = [
             return self._create_simple_workflow()
     
     def _create_user_qa_workflow(self) -> Workflow:
-        """创建用户问答默认工作流 - 基于LLM的智能决策"""
-        from .schemas import StepPort, PortType, PortConnection
+        """创建用户问答默认工作流 - 基于Provider的3步式架构"""
         
         steps = [
-            # 步骤1: LLM意图分析决策
-            WorkflowStep(
-                id="llm_intent_analysis",
-                name="LLM意图分析",
-                step_type=StepType.CODE,
-                input_ports=[
-                    StepPort(name="user_input", type=PortType.STRING, description="用户输入文本"),
-                    StepPort(name="user_id", type=PortType.STRING, description="用户ID")
-                ],
-                output_ports=[
-                    StepPort(name="action_type", type=PortType.STRING, description="需要执行的动作类型"),
-                    StepPort(name="tool_name", type=PortType.STRING, description="需要的工具名称"),
-                    StepPort(name="tool_action", type=PortType.STRING, description="工具动作"),
-                    StepPort(name="code_to_execute", type=PortType.STRING, description="需要执行的代码"),
-                    StepPort(name="analysis_result", type=PortType.DICT, description="分析结果")
-                ],
-                code="""
-import json
-import openai
-from openai import OpenAI
-
-user_input = variables.get('user_input', '')
-user_id = variables.get('user_id', 'anonymous')
-
-print(f"开始LLM意图分析: {user_input[:50]}...")
-
-# 构建分析prompt
-analysis_prompt = f'''
-分析用户输入，判断需要采取的行动类型。请返回JSON格式的结果。
-
-用户输入: "{user_input}"
-
-可选的行动类型:
-1. "tool" - 需要调用外部工具（如浏览器搜索、文件操作等）
-2. "code" - 需要生成并执行代码（如计算、数据处理、逻辑判断）
-3. "direct" - 直接回答问题，无需工具或代码
-
-如果是tool类型，可用的工具:
-- browser: 浏览器操作，支持搜索、访问网页、提取信息等
-
-如果是code类型，生成Python代码来解决问题。
-
-请返回如下格式的JSON:
-{{
-    "action_type": "tool|code|direct",
-    "reasoning": "选择此行动的原因",
-    "tool_name": "工具名称(仅当action_type为tool时)",
-    "tool_action": "工具动作(仅当action_type为tool时)",
-    "tool_params": {{"参数": "值"}},
-    "code": "Python代码(仅当action_type为code时)",
-    "confidence": 0.9
-}}
-'''
-
-try:
-    # 基于关键词的简单判断逻辑
-    if any(word in user_input.lower() for word in ['搜索', '查找', '网上', '百度', '谷歌', '网站']):
-        action_type = "tool"
-        tool_name = "browser"
-        tool_action = "search"
-        code_to_execute = ""
-        reasoning = "用户需要搜索信息，使用浏览器工具"
-    elif any(word in user_input.lower() for word in ['计算', '算', '编程', '代码', '处理数据']):
-        action_type = "code"
-        tool_name = ""
-        tool_action = ""
-        # 生成简单的计算代码示例
-        code_to_execute = f'''
-# 处理用户请求: {user_input}
-user_request = "{user_input}"
-print(f"处理请求: {{user_request}}")
-
-# 这里添加具体的处理逻辑
-if "计算" in user_request:
-    # 示例计算逻辑
-    result = "计算结果示例"
-else:
-    result = f"已处理用户请求: {{user_request}}"
-
-print(f"处理结果: {{result}}")
-'''
-        reasoning = "用户需要计算或代码处理"
-    else:
-        action_type = "direct"
-        tool_name = ""
-        tool_action = ""
-        code_to_execute = ""
-        reasoning = "直接回答用户问题"
-
-    analysis_result = {
-        "action_type": action_type,
-        "reasoning": reasoning,
-        "confidence": 0.8,
-        "user_input": user_input
-    }
-    
-    print(f"LLM分析结果: {action_type} - {reasoning}")
-    
-except Exception as e:
-    print(f"LLM分析失败: {e}")
-    # 失败时默认直接回答
-    action_type = "direct"
-    tool_name = ""
-    tool_action = ""
-    code_to_execute = ""
-    analysis_result = {
-        "action_type": "direct",
-        "reasoning": "分析失败，使用默认直接回答",
-        "confidence": 0.5,
-        "user_input": user_input
-    }
-
-result = {
-    'action_type': action_type,
-    'tool_name': tool_name,
-    'tool_action': tool_action,
-    'code_to_execute': code_to_execute,
-    'analysis_result': analysis_result
-}
-"""
+            # 步骤1: 意图识别 (Text Agent + Provider)
+            AgentWorkflowStep(
+                id="intent_analysis",
+                name="意图识别",
+                description="使用大模型分析用户意图，判断需要工具调用、复杂分析还是普通聊天",
+                agent_type="text_agent",
+                task_description="分析用户输入，判断意图类型。请只返回以下三个选项之一：'tool'(需要工具调用)、'code'(需要复杂分析/计算)、'chat'(普通聊天)",
+                input_ports={
+                    "context_data": {
+                        "user_input": "{{user_input}}",
+                        "instruction": "请仔细分析用户输入的意图。如果用户需要搜索信息、获取实时数据、访问网页等，请返回'tool'；如果用户需要复杂计算、数据分析、代码生成等，请返回'code'；如果是普通问答、聊天，请返回'chat'。请只返回一个单词。"
+                    }
+                },
+                response_style="concise",
+                max_length=10,
+                output_ports={
+                    "answer": "intent_type"
+                }
             ),
             
-            # 步骤2: 工具调用分支
-            WorkflowStep(
+            # 步骤2a: 工具调用 (Tool Agent，条件执行)
+            AgentWorkflowStep(
                 id="tool_execution",
-                name="工具执行",
-                step_type=StepType.TOOL,
-                input_ports=[
-                    StepPort(name="tool_name", type=PortType.STRING, description="工具名称"),
-                    StepPort(name="tool_action", type=PortType.STRING, description="工具动作"),
-                    StepPort(name="user_input", type=PortType.STRING, description="用户输入")
-                ],
-                output_ports=[
-                    StepPort(name="tool_result", type=PortType.ANY, description="工具执行结果")
-                ],
-                port_connections={
-                    "tool_name": PortConnection(
-                        target_port="tool_name",
-                        source_step="llm_intent_analysis",
-                        source_port="tool_name"
-                    ),
-                    "tool_action": PortConnection(
-                        target_port="tool_action",
-                        source_step="llm_intent_analysis",
-                        source_port="tool_action"
-                    ),
-                    "user_input": PortConnection(
-                        target_port="user_input",
-                        source_step="llm_intent_analysis",
-                        source_port="analysis_result"
-                    )
+                name="工具调用",
+                description="当意图为工具调用时，执行相应的工具操作",
+                agent_type="tool_agent",
+                task_description="根据用户输入执行工具调用（当前暂时返回占位符结果）",
+                input_ports={
+                    "context_data": {
+                        "user_input": "{{user_input}}",
+                        "task": "执行工具调用"
+                    }
                 },
-                condition="{{llm_intent_analysis.action_type}} == 'tool'",  # 只有action_type为tool时才执行
-                tool_name="browser",  # 默认工具名，会被端口连接覆盖
-                action="search",
-                params={"query": "{{user_input}}"},
-                error_handling=ErrorHandling.CONTINUE
+                allowed_tools=[],  # 暂时留白
+                condition="{{intent_type}} == 'tool'",
+                output_ports={
+                    "result": "tool_result"
+                }
             ),
             
-            # 步骤3: 代码执行分支
-            WorkflowStep(
-                id="code_execution",
-                name="代码执行",
-                step_type=StepType.CODE,
-                input_ports=[
-                    StepPort(name="code_to_execute", type=PortType.STRING, description="要执行的代码"),
-                    StepPort(name="user_input", type=PortType.STRING, description="用户输入")
-                ],
-                output_ports=[
-                    StepPort(name="code_result", type=PortType.ANY, description="代码执行结果")
-                ],
-                port_connections={
-                    "code_to_execute": PortConnection(
-                        target_port="code_to_execute",
-                        source_step="llm_intent_analysis",
-                        source_port="code_to_execute"
-                    ),
-                    "user_input": PortConnection(
-                        target_port="user_input",
-                        source_step="llm_intent_analysis",
-                        source_port="analysis_result"
-                    )
+            # 步骤2b: 复杂分析 (Code Agent，条件执行)
+            AgentWorkflowStep(
+                id="code_analysis",
+                name="复杂分析",
+                description="当意图为复杂分析时，执行代码生成和运行",
+                agent_type="code_agent",
+                task_description="根据用户需求执行复杂分析（当前暂时返回占位符结果）",
+                input_ports={
+                    "input_data": "{{user_input}}"
                 },
-                condition="{{llm_intent_analysis.action_type}} == 'code'",  # 只有action_type为code时才执行
-                code="""
-code_to_execute = variables.get('code_to_execute', '')
-user_input_data = variables.get('user_input', {})
-
-print(f"执行生成的代码...")
-
-if code_to_execute.strip():
-    try:
-        # 创建安全的执行环境
-        exec_globals = {
-            'print': print,
-            'len': len,
-            'str': str,
-            'int': int,
-            'float': float,
-            'list': list,
-            'dict': dict,
-            'sum': sum,
-            'max': max,
-            'min': min,
-            'abs': abs,
-            'round': round,
-        }
-        
-        exec_locals = {}
-        
-        # 执行代码
-        exec(code_to_execute, exec_globals, exec_locals)
-        
-        # 获取执行结果
-        if 'result' in exec_locals:
-            code_result = exec_locals['result']
-        else:
-            code_result = "代码执行完成"
-            
-        print(f"代码执行成功: {code_result}")
-        
-    except Exception as e:
-        code_result = f"代码执行失败: {str(e)}"
-        print(code_result)
-else:
-    code_result = "没有代码需要执行"
-
-result = {
-    'code_result': code_result
-}
-"""
+                expected_output_format="分析结果",
+                allowed_libraries=[],  # 暂时留白
+                condition="{{intent_type}} == 'code'",
+                output_ports={
+                    "result": "code_result"
+                }
             ),
             
-            # 步骤4: 搜索相关记忆
-            WorkflowStep(
-                id="search_memory",
-                name="搜索相关记忆",
-                step_type=StepType.MEMORY,
-                input_ports=[
-                    StepPort(name="query", type=PortType.STRING, description="搜索查询")
-                ],
-                output_ports=[
-                    StepPort(name="memories", type=PortType.LIST, description="搜索到的记忆列表")
-                ],
-                port_connections={
-                    "query": PortConnection(
-                        target_port="query",
-                        source_step="llm_intent_analysis",
-                        source_port="analysis_result"
-                    )
+            # 步骤3: 统一回复生成 (Text Agent + Provider)
+            AgentWorkflowStep(
+                id="final_response",
+                name="生成最终回复",
+                description="基于意图类型和前面步骤的结果，生成最终的用户回复",
+                agent_type="text_agent",
+                task_description="根据用户问题和所有可用信息，生成友好、有用的回复",
+                input_ports={
+                    "context_data": {
+                        "user_input": "{{user_input}}",
+                        "intent_type": "{{intent_type}}",
+                        "tool_result": "{{tool_result}}",
+                        "code_result": "{{code_result}}",
+                        "instructions": "请根据用户的原始问题和可用的结果信息，生成一个友好、准确的回复。如果有工具调用结果，请基于结果回答；如果有代码分析结果，请解释结果；如果是普通聊天，请直接友好回复。"
+                    }
                 },
-                memory_action="search",
-                params={"limit": 3},
-                error_handling=ErrorHandling.CONTINUE
-            ),
-            
-            # 步骤5: 信息汇总和LLM响应生成
-            WorkflowStep(
-                id="llm_response_generation",
-                name="LLM响应生成",
-                step_type=StepType.CODE,
-                input_ports=[
-                    StepPort(name="user_input", type=PortType.STRING, description="用户输入"),
-                    StepPort(name="analysis_result", type=PortType.DICT, description="意图分析结果"),
-                    StepPort(name="tool_result", type=PortType.ANY, description="工具执行结果", required=False),
-                    StepPort(name="code_result", type=PortType.ANY, description="代码执行结果", required=False),
-                    StepPort(name="memories", type=PortType.LIST, description="相关记忆")
-                ],
-                output_ports=[
-                    StepPort(name="final_response", type=PortType.STRING, description="最终响应")
-                ],
-                port_connections={
-                    "analysis_result": PortConnection(
-                        target_port="analysis_result",
-                        source_step="llm_intent_analysis",
-                        source_port="analysis_result"
-                    ),
-                    "tool_result": PortConnection(
-                        target_port="tool_result",
-                        source_step="tool_execution",
-                        source_port="tool_result"
-                    ),
-                    "code_result": PortConnection(
-                        target_port="code_result",
-                        source_step="code_execution",
-                        source_port="code_result"
-                    ),
-                    "memories": PortConnection(
-                        target_port="memories",
-                        source_step="search_memory",
-                        source_port="memories"
-                    )
-                },
-                code="""
-import json
-
-# 收集所有信息
-analysis_result = variables.get('analysis_result', {})
-tool_result = variables.get('tool_result')
-code_result = variables.get('code_result')
-memories = variables.get('memories', [])
-
-user_input = analysis_result.get('user_input', '用户输入')
-action_type = analysis_result.get('action_type', 'direct')
-reasoning = analysis_result.get('reasoning', '')
-
-print(f"生成最终响应 - 动作类型: {action_type}")
-
-# 基于规则的简单响应生成
-try:
-    if action_type == "tool" and tool_result:
-        final_response = "我为您执行了工具查询，结果如下：" + str(tool_result) + "\\n\\n希望这些信息对您有帮助！"
-    elif action_type == "code" and code_result:
-        final_response = "我执行了相关代码来处理您的请求：" + str(code_result) + "\\n\\n这是根据您的需求计算得出的结果。"
-    else:
-        # 直接回答
-        if memories:
-            memory_text = "\\n".join([str(m.get('content', ''))[:100] for m in memories[:2]])
-            final_response = f"根据您的问题'{user_input}'，结合我的记忆，我为您提供以下回复：" + memory_text + "\\n\\n如果需要更详细的信息，请告诉我！"
-        else:
-            final_response = f"您好！关于您的问题'{user_input}'，我理解您的需求。这是一个{action_type}类型的问题。{reasoning}\\n\\n请问还有什么我可以帮助您的吗？"
-    
-except Exception as e:
-    print(f"响应生成失败: {e}")
-    final_response = f"抱歉，我在处理您的问题时遇到了一些困难。您的问题是：{user_input}。请您再试一次或者换个方式问我。"
-
-print(f"最终响应生成完成: {len(final_response)} 字符")
-
-result = {
-    'final_response': final_response
-}
-"""
-            ),
-            
-            # 步骤6: 存储完整对话到长期记忆
-            WorkflowStep(
-                id="store_conversation",
-                name="存储对话记录",
-                step_type=StepType.MEMORY,
-                input_ports=[
-                    StepPort(name="user_input", type=PortType.STRING, description="用户输入"),
-                    StepPort(name="final_response", type=PortType.STRING, description="AI响应"),
-                    StepPort(name="analysis_result", type=PortType.DICT, description="分析结果"),
-                    StepPort(name="user_id", type=PortType.STRING, description="用户ID")
-                ],
-                output_ports=[
-                    StepPort(name="stored", type=PortType.BOOLEAN, description="是否存储成功")
-                ],
-                port_connections={
-                    "user_input": PortConnection(
-                        target_port="user_input",
-                        source_step="llm_intent_analysis",
-                        source_port="analysis_result"
-                    ),
-                    "final_response": PortConnection(
-                        target_port="final_response",
-                        source_step="llm_response_generation",
-                        source_port="final_response"
-                    ),
-                    "analysis_result": PortConnection(
-                        target_port="analysis_result",
-                        source_step="llm_intent_analysis",
-                        source_port="analysis_result"
-                    )
-                },
-                memory_action="store",
-                memory_key="conversation_history",
-                error_handling=ErrorHandling.CONTINUE
+                response_style="helpful",
+                max_length=500,
+                output_ports={
+                    "answer": "final_response"
+                }
             )
         ]
         
         return Workflow(
-            name="用户问答工作流",
-            description="处理用户输入并生成响应的标准工作流",
+            name="用户问答工作流-Provider架构",
+            description="基于Provider的3步式用户问答工作流：意图识别 → 条件执行(工具/代码) → 统一回复",
             steps=steps,
             input_schema={
                 "user_input": {"type": "string", "description": "用户输入"},
@@ -1124,14 +685,22 @@ result = {
     def _create_simple_workflow(self) -> Workflow:
         """创建简单的默认工作流"""
         steps = [
-            WorkflowStep(
+            AgentWorkflowStep(
+                id="simple_response",
                 name="简单响应",
-                step_type=StepType.CODE,
-                code="""
-user_input = variables.get('user_input', '未知输入')
-result = f"您好！我收到了您的消息：{user_input}"
-""",
-                output_key="simple_response"
+                description="提供简单的默认响应",
+                agent_type="text_agent",
+                task_description="为用户输入提供简单的确认响应",
+                input_ports={
+                    "context_data": {
+                        "user_input": "{{user_input}}"
+                    }
+                },
+                response_style="friendly",
+                max_length=100,
+                output_ports={
+                    "answer": "simple_response"
+                }
             )
         ]
         
@@ -1199,4 +768,66 @@ result = f"您好！我收到了您的消息：{user_input}"
         for tool_name, tool in self.tools.items():
             health_info['tools'][tool_name] = await tool.health_check()
         
+        # 检查Provider健康状态
+        if self.provider:
+            health_info['provider'] = {
+                'type': type(self.provider).__name__,
+                'initialized': getattr(self.provider, 'is_initialized', False),
+                'model': getattr(self.provider, 'model_name', 'unknown')
+            }
+        
         return health_info
+    
+    # ==================== Provider管理 ====================
+    
+    def _initialize_provider(self) -> None:
+        """初始化Provider"""
+        try:
+            # 默认使用OpenAI Provider
+            provider_type = self.provider_config.get('type', 'openai')
+            
+            if provider_type == 'openai':
+                from ..providers.openai_provider import OpenAIProvider
+                api_key = self.provider_config.get('api_key')
+                model_name = self.provider_config.get('model_name')
+                self.provider = OpenAIProvider(api_key=api_key, model_name=model_name)
+            elif provider_type == 'anthropic':
+                from ..providers.anthropic_provider import AnthropicProvider
+                api_key = self.provider_config.get('api_key')
+                model_name = self.provider_config.get('model_name')
+                self.provider = AnthropicProvider(api_key=api_key, model_name=model_name)
+            else:
+                logger.warning(f"未知的Provider类型: {provider_type}")
+                return
+            
+            logger.info(f"Provider初始化成功: {provider_type}")
+            
+        except Exception as e:
+            logger.error(f"Provider初始化失败: {e}")
+            self.provider = None
+    
+    async def initialize_provider_async(self) -> bool:
+        """异步初始化Provider"""
+        if not self.provider:
+            logger.warning("Provider未设置")
+            return False
+        
+        try:
+            await self.provider._initialize_client()
+            logger.info("Provider异步初始化完成")
+            return True
+        except Exception as e:
+            logger.error(f"Provider异步初始化失败: {e}")
+            return False
+    
+    def get_provider_info(self) -> Dict[str, Any]:
+        """获取Provider信息"""
+        if not self.provider:
+            return {"status": "not_initialized"}
+        
+        return {
+            "type": type(self.provider).__name__,
+            "model": getattr(self.provider, 'model_name', 'unknown'),
+            "initialized": getattr(self.provider, 'is_initialized', False),
+            "api_key_set": bool(getattr(self.provider, 'api_key', None))
+        }

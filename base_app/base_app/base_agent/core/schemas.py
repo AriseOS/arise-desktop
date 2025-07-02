@@ -101,6 +101,101 @@ class AgentResult(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now, description="执行时间戳")
 
 
+# ==================== Agent-as-Step Schemas ====================
+
+class AgentCapability(str, Enum):
+    """Agent能力类型"""
+    TEXT_GENERATION = "text_generation"
+    TOOL_CALLING = "tool_calling"
+    CODE_EXECUTION = "code_execution"
+    MEMORY_MANAGEMENT = "memory_management"
+    DATA_PROCESSING = "data_processing"
+
+
+class TextAgentInput(BaseModel):
+    """Text Agent 输入规范"""
+    question: str = Field(..., description="用户的问题或请求")
+    context_data: Dict[str, Any] = Field(default_factory=dict, description="上下文信息")
+    response_style: str = Field(default="professional", description="回答风格：professional/casual/technical")
+    max_length: int = Field(default=500, description="最大回答长度")
+    language: str = Field(default="zh", description="回答语言")
+
+
+class TextAgentOutput(BaseModel):
+    """Text Agent 输出规范"""
+    success: bool = Field(..., description="生成是否成功")
+    answer: str = Field(..., description="生成的回答")
+    word_count: int = Field(..., description="回答字数")
+    error_message: Optional[str] = Field(default=None, description="错误信息")
+
+
+class ToolAgentInput(BaseModel):
+    """Tool Agent 输入规范"""
+    task_description: str = Field(..., description="任务描述，用自然语言描述要完成什么")
+    context_data: Dict[str, Any] = Field(default_factory=dict, description="上下文数据")
+    constraints: List[str] = Field(default_factory=list, description="约束条件")
+    allowed_tools: List[str] = Field(default_factory=list, description="允许使用的工具列表")
+    fallback_tools: List[str] = Field(default_factory=list, description="备选工具列表")
+    confidence_threshold: float = Field(default=0.8, description="工具选择置信度阈值")
+
+
+class ToolAgentOutput(BaseModel):
+    """Tool Agent 输出规范"""
+    success: bool = Field(..., description="执行是否成功")
+    result: Any = Field(..., description="执行结果")
+    tool_used: str = Field(..., description="使用的工具名称")
+    action_taken: str = Field(..., description="执行的具体动作")
+    confidence: float = Field(..., description="工具选择置信度 0-1")
+    reasoning: str = Field(..., description="工具选择推理过程")
+    alternatives_tried: List[str] = Field(default_factory=list, description="尝试过的备选工具")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="执行元数据")
+    error_message: Optional[str] = Field(default=None, description="错误信息")
+
+
+class CodeAgentInput(BaseModel):
+    """Code Agent 输入规范"""
+    task_description: str = Field(..., description="任务描述，用自然语言描述要完成什么")
+    input_data: Any = Field(..., description="输入数据")
+    expected_output_format: str = Field(..., description="期望的输出格式描述")
+    constraints: List[str] = Field(default_factory=list, description="约束条件")
+    libraries_allowed: List[str] = Field(default_factory=list, description="允许使用的库")
+
+
+class CodeAgentOutput(BaseModel):
+    """Code Agent 输出规范"""
+    success: bool = Field(..., description="执行是否成功")
+    result: Any = Field(..., description="代码执行结果")
+    code_generated: str = Field(..., description="生成的代码")
+    execution_info: Dict[str, Any] = Field(default_factory=dict, description="执行信息")
+    stdout: str = Field(default="", description="标准输出")
+    stderr: str = Field(default="", description="错误输出")
+    error_message: Optional[str] = Field(default=None, description="错误信息")
+
+
+class AgentContext(BaseModel):
+    """Agent执行上下文"""
+    # 工作流信息
+    workflow_id: str = Field(..., description="工作流ID")
+    step_id: str = Field(..., description="当前步骤ID")
+    
+    # 数据上下文
+    variables: Dict[str, Any] = Field(default_factory=dict, description="上下文变量")
+    step_results: Dict[str, Any] = Field(default_factory=dict, description="步骤结果")
+    
+    # 执行环境
+    agent_instance: Optional[Any] = Field(default=None, description="BaseAgent实例")
+    tools_registry: Optional[Any] = Field(default=None, description="工具注册表")
+    memory_manager: Optional[Any] = Field(default=None, description="内存管理器")
+    
+    # 执行控制
+    timeout: int = Field(default=300, description="超时时间")
+    retry_count: int = Field(default=0, description="重试次数")
+    
+    # 日志和监控
+    logger: Optional[Any] = Field(default=None, description="日志记录器")
+    metrics: Dict[str, Any] = Field(default_factory=dict, description="执行指标")
+
+
 # ==================== Workflow Schemas ====================
 
 class StepType(str, Enum):
@@ -119,74 +214,41 @@ class ErrorHandling(str, Enum):
     SKIP = "skip"          # 跳过当前步骤
 
 
-class PortType(str, Enum):
-    """端口数据类型"""
-    STRING = "string"
-    INTEGER = "integer"
-    FLOAT = "float"
-    BOOLEAN = "boolean"
-    LIST = "list"
-    DICT = "dict"
-    ANY = "any"
-
-
-class StepPort(BaseModel):
-    """步骤端口定义"""
-    name: str = Field(..., description="端口名称")
-    type: PortType = Field(..., description="端口数据类型")
-    description: str = Field(default="", description="端口描述")
-    required: bool = Field(default=True, description="是否必需")
-    default_value: Any = Field(default=None, description="默认值")
-
-
-class PortConnection(BaseModel):
-    """端口连接定义"""
-    target_port: str = Field(..., description="目标端口名称")
-    source_step: str = Field(..., description="源步骤ID")
-    source_port: str = Field(..., description="源端口名称")
-
-
-class WorkflowStep(BaseModel):
-    """工作流步骤定义"""
+class AgentWorkflowStep(BaseModel):
+    """Agent工作流步骤"""
     # 基础信息
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="步骤ID")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str = Field(..., description="步骤名称")
     description: str = Field(default="", description="步骤描述")
-    step_type: StepType = Field(..., description="步骤类型")
     
-    # 端口连接模式 (新增)
-    input_ports: List[StepPort] = Field(default_factory=list, description="输入端口定义")
-    output_ports: List[StepPort] = Field(default_factory=list, description="输出端口定义")
-    port_connections: Dict[str, PortConnection] = Field(default_factory=dict, description="端口连接映射")
+    # Agent配置
+    agent_type: str = Field(..., description="Agent类型: text_agent | tool_agent | code_agent | auto")
+    task_description: str = Field(..., description="任务描述")
+    
+    # 输入配置
+    input_ports: Dict[str, Any] = Field(default_factory=dict, description="输入映射")
+    constraints: List[str] = Field(default_factory=list, description="约束条件")
+    
+    # Tool Agent 特有配置
+    allowed_tools: List[str] = Field(default_factory=list, description="允许使用的工具列表")
+    fallback_tools: List[str] = Field(default_factory=list, description="备选工具列表") 
+    confidence_threshold: float = Field(default=0.8, description="工具选择置信度阈值")
+    
+    # Code Agent 特有配置
+    allowed_libraries: List[str] = Field(default_factory=list, description="允许使用的代码库")
+    expected_output_format: str = Field(default="", description="期望的输出格式")
+    
+    # Text Agent 特有配置
+    response_style: str = Field(default="professional", description="回答风格")
+    max_length: int = Field(default=500, description="最大回答长度")
+    
+    # 输出配置  
+    output_ports: Dict[str, str] = Field(default_factory=dict, description="输出映射")
     
     # 执行控制
     condition: Optional[str] = Field(default=None, description="执行条件")
-    depends_on: List[str] = Field(default_factory=list, description="依赖的步骤ID") 
-    timeout: int = Field(default=300, description="超时时间(秒)")
-    error_handling: ErrorHandling = Field(default=ErrorHandling.STOP, description="错误处理策略")
+    timeout: int = Field(default=300, description="超时时间")
     retry_count: int = Field(default=0, description="重试次数")
-    
-    # 通用参数 (保持向后兼容)
-    params: Dict[str, Any] = Field(default_factory=dict, description="步骤参数")
-    output_key: Optional[str] = Field(default=None, description="输出变量名")
-    
-    # Agent调用参数
-    agent_name: Optional[str] = Field(default=None, description="Agent名称")
-    agent_input: Optional[Any] = Field(default=None, description="Agent输入")
-    
-    # Tool调用参数
-    tool_name: Optional[str] = Field(default=None, description="工具名称")
-    action: Optional[str] = Field(default=None, description="工具动作")
-    
-    # Code执行参数
-    code: Optional[str] = Field(default=None, description="要执行的代码")
-    code_type: str = Field(default="python", description="代码类型")
-    
-    # Memory操作参数
-    memory_action: Optional[str] = Field(default=None, description="内存操作类型")
-    memory_key: Optional[str] = Field(default=None, description="内存键")
-    memory_value: Optional[Any] = Field(default=None, description="内存值")
-    query: Optional[str] = Field(default=None, description="搜索查询")
 
 
 class StepResult(BaseModel):
@@ -239,7 +301,7 @@ class Workflow(BaseModel):
     version: str = Field(default="1.0.0", description="版本号")
     
     # 步骤定义
-    steps: List[WorkflowStep] = Field(..., description="工作流步骤")
+    steps: List['AgentWorkflowStep'] = Field(..., description="工作流步骤")
     
     # 输入输出定义
     input_schema: Dict[str, Any] = Field(default_factory=dict, description="输入参数定义")
@@ -267,6 +329,7 @@ class WorkflowResult(BaseModel):
     completed_steps: List[str] = Field(default_factory=list, description="已完成步骤")
     failed_steps: List[str] = Field(default_factory=list, description="失败步骤")
     step_results: Dict[str, Any] = Field(default_factory=dict, description="步骤结果")
+    steps: List['StepResult'] = Field(default_factory=list, description="步骤执行结果列表")
     
     # 时间信息
     total_execution_time: float = Field(default=0.0, description="总执行时间(秒)")

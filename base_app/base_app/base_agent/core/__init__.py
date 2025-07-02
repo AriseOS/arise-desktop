@@ -4,21 +4,21 @@ BaseAgent 核心模块
 """
 
 from .base_agent import BaseAgent
-from .workflow_engine import WorkflowEngine
+from .agent_workflow_engine import AgentWorkflowEngine
 from .schemas import (
     # Agent 相关
     AgentConfig, AgentResult, AgentState, AgentStatus, AgentPriority,
     AgentCapabilitySpec, InterfaceSpec, ExtensionSpec,
     
     # 工作流相关
-    WorkflowStep, Workflow, WorkflowResult, 
+    AgentWorkflowStep, Workflow, WorkflowResult, 
     ExecutionContext, StepResult, StepType, ErrorHandling
 )
 
 __all__ = [
     # 核心类
     "BaseAgent",
-    "WorkflowEngine",
+    "AgentWorkflowEngine",
     
     # Agent 数据结构
     "AgentConfig",
@@ -31,7 +31,7 @@ __all__ = [
     "ExtensionSpec",
     
     # 工作流数据结构
-    "WorkflowStep",
+    "AgentWorkflowStep",
     "Workflow",
     "WorkflowResult",
     "ExecutionContext",
