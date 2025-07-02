@@ -29,7 +29,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      Workflow Engine                        │
+│                AgentWorkflowEngine                          │
 └─────────────────────┬───────────────────────────────────────┘
                       │
 ┌─────────────────────▼───────────────────────────────────────┐
@@ -72,15 +72,15 @@
 
 ```python
 # 组件依赖关系
-WorkflowEngine
+AgentWorkflowEngine
 ├── AgentExecutor
 │   ├── TextAgent
-│   │   └── LLMClient (文本生成)
+│   │   └── Provider (文本生成)
 │   ├── ToolAgent
-│   │   ├── LLMClient (任务分析)
+│   │   ├── Provider (任务分析)
 │   │   └── ToolRegistry (工具调用)
 │   └── CodeAgent  
-│       ├── LLMClient (代码生成)
+│       ├── Provider (代码生成)
 │       └── CodeExecutor (代码执行)
 └── AgentContext (上下文管理)
 ```
@@ -129,19 +129,15 @@ class TextAgent:
         
         # Step 2: LLM生成回答
         try:
-            response = await self.llm_client.chat_completion(
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=input_data.max_length * 2,  # 预留token余量
-                temperature=0.7
+            response = await self.provider.generate_response(
+                system_prompt="你是一个专业的AI助手",
+                user_prompt=prompt
             )
-            
-            answer = response.choices[0].message.content.strip()
-            
             
             return TextAgentOutput(
                 success=True,
-                answer=answer,
-                word_count=len(answer)
+                answer=response,
+                word_count=len(response)
             )
             
         except Exception as e:
@@ -179,7 +175,6 @@ class TextAgent:
         for key, value in context_data.items():
             formatted.append(f"- {key}: {value}")
         return "\n".join(formatted)
-    
 ```
 
 #### 3.1.3 使用示例
@@ -216,7 +211,7 @@ result = await text_agent.execute(text_input, context)
 
 ### 3.2 Tool Agent
 
-#### 3.1.1 输入输出规范
+#### 3.2.1 输入输出规范
 
 ```python
 class ToolAgentInput(BaseModel):
@@ -241,7 +236,7 @@ class ToolAgentOutput(BaseModel):
     error_message: Optional[str] = Field(default=None, description="错误信息")
 ```
 
-#### 3.1.2 处理逻辑
+#### 3.2.2 处理逻辑
 
 ```python
 class ToolAgent:
@@ -267,7 +262,6 @@ class ToolAgent:
         
         # Step 3: 检查置信度
         if tool_selection["confidence"] < input_data.confidence_threshold:
-            # 置信度不足，记录警告但继续执行
             context.logger.warning(
                 f"工具选择置信度 {tool_selection['confidence']} 低于阈值 {input_data.confidence_threshold}"
             )
@@ -278,7 +272,6 @@ class ToolAgent:
         
         for tool_name in all_tools_to_try:
             try:
-                # 更新参数中的工具名（如果需要）
                 parameters = tool_selection["parameters"].copy()
                 
                 result = await self.tool_registry.call_tool(
@@ -317,7 +310,6 @@ class ToolAgent:
     
     def _get_filtered_tools(self, input_data: ToolAgentInput) -> List[str]:
         """获取预筛选的工具列表"""
-        # 直接使用Workflow层面预筛选的工具
         if input_data.allowed_tools:
             return input_data.allowed_tools
         else:
@@ -360,11 +352,10 @@ class ToolAgent:
         """
         
         # LLM推理得到工具选择结果
-        tool_selection = await self.llm_client.analyze(analysis_prompt)
+        tool_selection = await self.provider.analyze(analysis_prompt)
         
         # 验证选择的工具是否在允许范围内
         if tool_selection["tool_name"] not in available_tools:
-            # 如果选择了不可用的工具，降低置信度并选择第一个可用工具
             tool_selection["tool_name"] = available_tools[0]
             tool_selection["confidence"] = 0.3
             tool_selection["reasoning"] += " [警告: 原选择工具不可用，自动回退]"
@@ -380,7 +371,7 @@ class ToolAgent:
         return "\n".join(descriptions)
 ```
 
-#### 3.1.3 使用示例
+#### 3.2.3 使用示例
 
 ```python
 # 示例1: 填写表单（预筛选工具）
@@ -420,9 +411,9 @@ result = await tool_agent.execute(tool_input, context)
 # 如果android_use失败，会自动尝试browser_use
 ```
 
-### 3.2 Code Agent
+### 3.3 Code Agent
 
-#### 3.2.1 输入输出规范
+#### 3.3.1 输入输出规范
 
 ```python
 class CodeAgentInput(BaseModel):
@@ -444,7 +435,7 @@ class CodeAgentOutput(BaseModel):
     error_message: Optional[str] = Field(default=None, description="错误信息")
 ```
 
-#### 3.2.2 处理逻辑
+#### 3.3.2 处理逻辑
 
 ```python
 class CodeAgent:
@@ -482,7 +473,7 @@ class CodeAgent:
         """
         
         # LLM生成代码
-        generated_code = await self.llm_client.generate_code(code_prompt)
+        generated_code = await self.provider.generate_code(code_prompt)
         
         # Step 2: 代码安全检查
         if not await self._is_code_safe(generated_code):
@@ -520,7 +511,7 @@ class CodeAgent:
             )
 ```
 
-#### 3.2.3 使用示例
+#### 3.3.3 使用示例
 
 ```python
 # 示例1: 数据分析
@@ -542,9 +533,9 @@ result = await code_agent.execute(code_input, context)
 # 输出: CodeAgentOutput(success=True, result={'positive': 0.33, 'negative': 0.33, 'neutral': 0.33}, code_generated="...")
 ```
 
-### 3.3 Agent选择策略
+### 3.4 Agent选择策略
 
-#### 3.3.1 自动路由逻辑
+#### 3.4.1 自动路由逻辑
 
 ```python
 class AgentRouter:
@@ -561,19 +552,19 @@ class AgentRouter:
         
         请判断这个任务应该用哪种Agent来处理：
         
-        1. Text Agent: 如果只需要生成文本回答
-        2. Tool Agent: 如果有现成的工具可以完成任务
-        3. Code Agent: 如果需要编写代码来解决问题
+        1. text_agent: 如果只需要生成文本回答
+        2. tool_agent: 如果有现成的工具可以完成任务
+        3. code_agent: 如果需要编写代码来解决问题
         
         判断依据：
-        - 如果任务是"回答问题"、"解释说明"、"总结内容"等，用Text Agent
-        - 如果任务是"填写表单"、"点击按钮"、"读取聊天"等，用Tool Agent  
-        - 如果任务是"数据分析"、"格式转换"、"复杂计算"等，用Code Agent
+        - 如果任务是"回答问题"、"解释说明"、"总结内容"等，用text_agent
+        - 如果任务是"填写表单"、"点击按钮"、"读取聊天"等，用tool_agent  
+        - 如果任务是"数据分析"、"格式转换"、"复杂计算"等，用code_agent
         
         只返回：text_agent 或 tool_agent 或 code_agent
         """
         
-        agent_type = await self.llm_client.analyze(routing_prompt)
+        agent_type = await self.provider.analyze(routing_prompt)
         return agent_type.strip().lower()
 ```
 
@@ -613,7 +604,7 @@ class AgentRouter:
 
 ## 5. 系统集成
 
-### 5.1 改造后的WorkflowStep
+### 5.1 更新的AgentWorkflowStep
 
 ```python
 class AgentWorkflowStep(BaseModel):
@@ -627,8 +618,8 @@ class AgentWorkflowStep(BaseModel):
     agent_type: str = Field(..., description="Agent类型: text_agent | tool_agent | code_agent | auto")
     task_description: str = Field(..., description="任务描述")
     
-    # 输入配置
-    input_mapping: Dict[str, str] = Field(default_factory=dict, description="输入映射")
+    # 输入配置 (更新的字段名)
+    input_ports: Dict[str, Any] = Field(default_factory=dict, description="输入映射")
     constraints: List[str] = Field(default_factory=list, description="约束条件")
     
     # Tool Agent 特有配置
@@ -644,8 +635,8 @@ class AgentWorkflowStep(BaseModel):
     response_style: str = Field(default="professional", description="回答风格")
     max_length: int = Field(default=500, description="最大回答长度")
     
-    # 输出配置  
-    output_mapping: Dict[str, str] = Field(default_factory=dict, description="输出映射")
+    # 输出配置 (更新的字段名)
+    output_ports: Dict[str, str] = Field(default_factory=dict, description="输出映射")
     
     # 执行控制
     condition: Optional[str] = Field(default=None, description="执行条件")
@@ -653,7 +644,37 @@ class AgentWorkflowStep(BaseModel):
     retry_count: int = Field(default=0, description="重试次数")
 ```
 
-### 5.2 工作流执行示例
+### 5.2 最终结果提取机制
+
+**重要更新**: 工作流引擎现在采用新的最终结果提取逻辑：
+
+```python
+# AgentWorkflowEngine 中的关键变化
+async def execute_workflow(self, steps: List[AgentWorkflowStep], ...):
+    executed_steps = []
+    last_step_output = None  # 跟踪最后一步的输出
+    
+    for step in steps:
+        # 执行步骤...
+        step_result = await self._execute_agent_step(step, context)
+        
+        # 更新上下文变量和最后一步输出
+        if step_result.success and step.output_ports:
+            await self._update_context_variables(step_result, step.output_ports, context)
+            # 每次成功执行都更新最后一步输出
+            last_step_output = await self._extract_step_outputs(step_result, step.output_ports)
+    
+    return WorkflowResult(
+        success=True,
+        workflow_id=workflow_id,
+        steps=executed_steps,
+        # 新的逻辑：返回最后一步的输出，而不是全部上下文变量
+        final_result=last_step_output if last_step_output is not None else context.variables,
+        total_execution_time=time.time() - start_time
+    )
+```
+
+### 5.3 工作流执行示例
 
 ```python
 # 完整的工作流定义（在设计阶段就预筛选工具）
@@ -666,12 +687,12 @@ workflow_steps = [
         allowed_tools=["android_use"],  # 明确只能用手机端操作
         fallback_tools=["browser_use"], # 失败时尝试网页版
         confidence_threshold=0.8,
-        input_mapping={
+        input_ports={
             "context_data": {
                 "customer_name": "{{customer_name}}"
             }
         },
-        output_mapping={
+        output_ports={
             "result": "chat_content"
         }
     ),
@@ -680,11 +701,11 @@ workflow_steps = [
         name="提取关键信息",
         agent_type="code_agent", 
         task_description="从聊天记录中提取客户姓名、路演时间、地点等关键信息",
-        input_mapping={
+        input_ports={
             "input_data": "{{chat_content}}"
         },
         constraints=["输出必须是JSON格式", "时间格式为YYYY-MM-DD HH:MM"],
-        output_mapping={
+        output_ports={
             "result": "extracted_info"
         }
     ),
@@ -697,11 +718,11 @@ workflow_steps = [
         allowed_tools=["browser_use"],
         fallback_tools=["android_use"],  # 网页失败时尝试手机端
         confidence_threshold=0.9,  # 表单操作要求高置信度
-        input_mapping={
+        input_ports={
             "context_data": "{{extracted_info}}"
         },
         constraints=["必须填写所有必填字段"],
-        output_mapping={
+        output_ports={
             "result": "form_result"
         }
     ),
@@ -710,8 +731,7 @@ workflow_steps = [
         name="生成确认回复",
         agent_type="text_agent",
         task_description="根据表单提交结果，生成给客户的确认回复消息",
-        input_mapping={
-            "question": "请生成一个专业的确认回复",
+        input_ports={
             "context_data": {
                 "customer_name": "{{customer_name}}",
                 "form_result": "{{form_result}}",
@@ -719,7 +739,7 @@ workflow_steps = [
             }
         },
         constraints=["语调要专业友好", "包含下一步安排"],
-        output_mapping={
+        output_ports={
             "answer": "reply_message"
         }
     )
@@ -731,11 +751,14 @@ result = await engine.execute_workflow(
     steps=workflow_steps,
     input_data={"customer_name": "张三"}
 )
+
+# 新的行为：final_result 现在直接是最后一步的输出
+print(f"客户回复消息: {result.final_result}")  # 直接是 reply_message 的值
 ```
 
 ---
 
-## 6. 优势总结
+## 6. 架构优势与改进
 
 ### 6.1 设计优势
 
@@ -743,6 +766,7 @@ result = await engine.execute_workflow(
 2. **智能化路由**: 基于LLM自动选择最合适的处理方式
 3. **统一接口**: Text、Tool、Code三种Agent都遵循相同的接口规范
 4. **高度灵活**: 支持从简单问答到复杂任务的任意组合
+5. **数据流清晰**: 新的最终结果提取机制让输出更直观
 
 ### 6.2 技术优势
 
@@ -750,28 +774,39 @@ result = await engine.execute_workflow(
 2. **LLM驱动**: 所有决策都由LLM进行，智能化程度高
 3. **安全可控**: Code Agent有安全检查机制
 4. **可扩展性**: 易于添加新的工具和能力
+5. **容错机制**: 工具回退和重试机制提高系统鲁棒性
+
+### 6.3 最新改进
+
+1. **最终结果优化**: `final_result` 现在只返回最后一步的实际输出，避免冗余信息
+2. **字段名称统一**: 使用 `input_ports` 和 `output_ports` 替代旧的映射字段名
+3. **执行引擎简化**: 移除了复杂的端口连接机制，采用更直观的变量引用方式
+4. **数据流追踪**: 新增了最后一步输出的自动追踪机制
 
 ---
 
-## 7. 实施路径
+## 7. 实施状态
 
-### 7.1 MVP版本 (1周)
-- [ ] 实现基础的TextAgent、ToolAgent和CodeAgent
-- [ ] 实现AgentRouter自动路由
-- [ ] 集成工具预筛选机制
-- [ ] 集成到现有WorkflowEngine
+### 7.1 已完成功能 ✅
+- [x] 实现基础的TextAgent、ToolAgent和CodeAgent
+- [x] 实现AgentRouter自动路由
+- [x] 集成工具预筛选机制
+- [x] 集成到AgentWorkflowEngine
+- [x] 完善最终结果提取逻辑
+- [x] 移除过时的WorkflowStep类
 
-### 7.2 完整版本 (2周)
-- [ ] 完善置信度机制和自动回退
-- [ ] 添加更多工具支持和工具描述
-- [ ] 实现代码安全检查
-- [ ] 添加执行监控和日志
+### 7.2 当前架构特点
+- [x] 完善置信度机制和自动回退
+- [x] 支持多种Agent类型的条件执行
+- [x] 实现变量引用和数据流管理
+- [x] 添加执行监控和日志
 
-### 7.3 优化版本 (1周)
+### 7.3 持续优化方向
 - [ ] 性能优化和工具选择算法优化
-- [ ] 错误处理完善
-- [ ] 文档和测试用例
+- [ ] 错误处理完善和恢复机制
+- [ ] 更多工具集成和工具描述完善
+- [ ] 并行执行支持
 
 ---
 
-这个设计更加聚焦和实用，您觉得这个方向如何？
+这个架构设计更加聚焦实用，完全基于最新的代码实现，提供了清晰的Agent分工和高效的执行机制。新的最终结果提取逻辑让工作流的输出更加直观和易用。
