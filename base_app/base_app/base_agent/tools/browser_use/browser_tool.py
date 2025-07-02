@@ -182,6 +182,92 @@ class BrowserTool(BaseTool):
             "required": action_def.required_params
         }
     
+    def _get_action_description(self, action: str) -> str:
+        """获取动作描述"""
+        action_def = self._get_action_schema(action)
+        if action_def:
+            return action_def.description
+        return super()._get_action_description(action)
+    
+    def _get_action_examples(self, action: str) -> List[Dict[str, Any]]:
+        """获取动作使用示例"""
+        examples = {
+            "navigate": [
+                {
+                    "description": "导航到百度首页",
+                    "params": {"url": "https://www.baidu.com"}
+                },
+                {
+                    "description": "导航到页面并等待DOM加载完成",
+                    "params": {"url": "https://example.com", "wait_until": "domcontentloaded"}
+                }
+            ],
+            "click": [
+                {
+                    "description": "点击搜索按钮",
+                    "params": {"description": "search button"}
+                },
+                {
+                    "description": "点击指定选择器的元素",
+                    "params": {"selector": "#submit-btn"}
+                }
+            ],
+            "fill_form": [
+                {
+                    "description": "填写登录表单",
+                    "params": {
+                        "form_data": {"username": "user123", "password": "pass123"},
+                        "submit": True
+                    }
+                }
+            ],
+            "extract_data": [
+                {
+                    "description": "提取页面标题",
+                    "params": {"target": "page title", "format": "text"}
+                },
+                {
+                    "description": "提取商品列表",
+                    "params": {
+                        "target": "product information including name and price",
+                        "selectors": [".product-item", ".product-name", ".product-price"],
+                        "format": "json"
+                    }
+                }
+            ],
+            "screenshot": [
+                {
+                    "description": "截取当前页面截图",
+                    "params": {"filename": "current_page.png"}
+                },
+                {
+                    "description": "截取整页截图",
+                    "params": {"full_page": True, "filename": "full_page.png"}
+                }
+            ],
+            "execute_task": [
+                {
+                    "description": "搜索关键词",
+                    "params": {"task": "在百度搜索'人工智能'并点击第一个结果"}
+                },
+                {
+                    "description": "填写并提交表单",
+                    "params": {
+                        "task": "填写联系表单，姓名为张三，邮箱为zhangsan@example.com，然后提交",
+                        "max_steps": 10
+                    }
+                }
+            ]
+        }
+        return examples.get(action, [])
+    
+    def _get_required_params(self, action: str) -> List[str]:
+        """获取动作必需参数"""
+        action_def = self._get_action_schema(action)
+        if action_def:
+            return action_def.required_params
+        return super()._get_required_params(action)
+    
     async def _initialize(self) -> bool:
         """初始化浏览器工具"""
         try:

@@ -76,20 +76,58 @@ class AgentService:
                 memory_config=memory_config
             )
             
+            # 注册工具
+            self._register_tools(agent_config.tools)
+            
         except Exception as e:
             raise RuntimeError(f"Failed to initialize BaseAgent: {e}")
+    
+    def _register_tools(self, enabled_tools: List[str]):
+        """根据配置注册工具"""
+        print(f"🔧 开始注册工具，enabled_tools: {enabled_tools}")
+        
+        if not self.agent:
+            print("❌ Agent实例为空，无法注册工具")
+            return
+            
+        if not enabled_tools:
+            print("⚠️ 没有启用的工具配置")
+            return
+        
+        for tool_name in enabled_tools:
+            try:
+                if tool_name == "browser" or tool_name == "browser_use":
+                    from base_app.base_agent.tools.browser_use import BrowserTool
+                    browser_tool = BrowserTool()
+                    self.agent.register_tool('browser_use', browser_tool)
+                    print(f"✓ 成功注册工具: browser_use (配置名: {tool_name})")
+                    
+                    # 验证注册结果
+                    registered_tools = self.agent.get_registered_tools()
+                    print(f"📋 当前已注册工具: {registered_tools}")
+                else:
+                    print(f"⚠️ 未知工具: {tool_name}")
+            except Exception as e:
+                print(f"❌ 注册工具失败 {tool_name}: {e}")
+                import traceback
+                traceback.print_exc()
     
     def _build_agent_config(self) -> AgentConfig:
         """构建Agent配置"""
         config_data = self.config_service.get("agent", {})
         
+        # 正确读取嵌套配置
+        llm_config = config_data.get("llm", {})
+        tools_config = config_data.get("tools", {})
+        enabled_tools = tools_config.get("enabled", [])
+        
         return AgentConfig(
             name=config_data.get("name", "BaseApp Agent"),
-            llm_provider=config_data.get("llm.provider", "openai"),
-            llm_model=config_data.get("llm.model", "gpt-4o"),
-            api_key=config_data.get("llm.api_key", ""),
+            llm_provider=llm_config.get("provider", "openai"),
+            llm_model=llm_config.get("model", "gpt-4o"),
+            api_key=llm_config.get("api_key", ""),
             enable_logging=True,
-            tools=config_data.get("tools.enabled", [])
+            tools=enabled_tools
         )
     
     async def send_message(

@@ -41,6 +41,24 @@ class ToolResult(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict, description="额外元数据")
 
 
+class ToolActionDescription(BaseModel):
+    """工具动作描述"""
+    name: str = Field(..., description="动作名称")
+    description: str = Field(..., description="动作描述")
+    parameters: Dict[str, Any] = Field(..., description="参数JSON Schema")
+    examples: List[Dict[str, Any]] = Field(default_factory=list, description="使用示例")
+    required_params: List[str] = Field(default_factory=list, description="必需参数列表")
+
+
+class ToolDescription(BaseModel):
+    """工具完整描述"""
+    name: str = Field(..., description="工具名称")
+    description: str = Field(..., description="工具描述")
+    category: str = Field(..., description="工具分类")
+    version: str = Field(..., description="工具版本")
+    actions: List[ToolActionDescription] = Field(..., description="可用动作列表")
+
+
 class ToolConfig(BaseModel):
     """工具配置基类"""
     timeout: int = Field(default=300, description="超时时间(秒)")
@@ -190,6 +208,76 @@ class BaseTool(ABC):
             "properties": {},
             "required": []
         }
+    
+    def get_tool_description(self) -> ToolDescription:
+        """
+        获取工具的完整描述信息
+        
+        Returns:
+            ToolDescription: 工具描述对象
+        """
+        return ToolDescription(
+            name=self.metadata.name,
+            description=self.metadata.description,
+            category=self.metadata.category,
+            version=self.metadata.version,
+            actions=self.get_actions_description()
+        )
+    
+    def get_actions_description(self) -> List[ToolActionDescription]:
+        """
+        获取所有可用动作的详细描述
+        
+        Returns:
+            List[ToolActionDescription]: 动作描述列表
+        """
+        actions = []
+        for action in self.get_available_actions():
+            actions.append(ToolActionDescription(
+                name=action,
+                description=self._get_action_description(action),
+                parameters=self.get_schema(action),
+                examples=self._get_action_examples(action),
+                required_params=self._get_required_params(action)
+            ))
+        return actions
+    
+    def _get_action_description(self, action: str) -> str:
+        """
+        获取动作描述 (子类可重写)
+        
+        Args:
+            action: 动作名称
+            
+        Returns:
+            str: 动作描述
+        """
+        return f"执行 {action} 操作"
+    
+    def _get_action_examples(self, action: str) -> List[Dict[str, Any]]:
+        """
+        获取动作使用示例 (子类可重写)
+        
+        Args:
+            action: 动作名称
+            
+        Returns:
+            List[Dict[str, Any]]: 使用示例列表
+        """
+        return []
+    
+    def _get_required_params(self, action: str) -> List[str]:
+        """
+        获取动作必需参数 (子类可重写)
+        
+        Args:
+            action: 动作名称
+            
+        Returns:
+            List[str]: 必需参数列表
+        """
+        schema = self.get_schema(action)
+        return schema.get("required", [])
     
     async def execute_with_retry(
         self,
