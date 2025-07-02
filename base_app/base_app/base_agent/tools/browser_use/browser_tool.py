@@ -362,6 +362,12 @@ class BrowserTool(BaseTool):
         max_steps = params.get("max_steps", 20)
         
         try:
+            # 确保LLM已初始化
+            if self.llm is None:
+                await self._initialize()
+                if self.llm is None:
+                    raise RuntimeError("LLM初始化失败")
+            
             # 创建新的 Agent 实例
             self.current_agent = Agent(
                 task=task,
@@ -384,6 +390,8 @@ class BrowserTool(BaseTool):
             )
             
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return ToolResult(
                 success=False,
                 message=f"任务执行失败: {str(e)}",
@@ -394,7 +402,7 @@ class BrowserTool(BaseTool):
         """导航到URL"""
         url = params["url"]
         task = f"Navigate to {url}"
-        
+
         return await self._execute_task({"task": task})
     
     async def _extract_data(self, params: Dict[str, Any]) -> ToolResult:

@@ -5,6 +5,7 @@ import click
 from .commands.app import app_commands
 from .commands.config import config_commands
 from .commands.chat import chat_commands
+from .commands.install import install_commands
 
 
 @click.group()
@@ -26,6 +27,7 @@ for command_name, command in app_commands.commands.items():
 
 cli.add_command(config_commands, name="config")
 cli.add_command(chat_commands, name="chat")
+cli.add_command(install_commands, name="install")
 
 
 if __name__ == "__main__":

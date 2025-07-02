@@ -75,12 +75,18 @@ web = [
     "python-multipart>=0.0.6",
 ]
 
+browser = [
+    "browser-use>=0.1.0",
+    "playwright>=1.40.0",
+]
+
 all = [
-    "baseapp[dev,web]"
+    "baseapp[dev,web,browser]"
 ]
 
 [project.scripts]
 baseapp = "base_app.cli.main:cli"
+baseapp-install-chromium = "scripts.install_chromium:main"
 
 [tool.setuptools]
 packages = ["base_app"]

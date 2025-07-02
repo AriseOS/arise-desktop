@@ -108,7 +108,7 @@ class ToolAgent(BaseStepAgent):
                         parameters=api_call["parameters"],
                         context=context
                     )
-                    
+                    context.logger.info(f"result: {result}")
                     return ToolAgentOutput(
                         success=True,
                         result=result,
