@@ -1,0 +1,257 @@
+# 用户问答工作流 - 基于Provider的3步式架构
+apiVersion: "agentcrafter.io/v1"
+kind: "Workflow"
+
+metadata:
+  name: "user-qa-workflow"
+  description: "智能用户问答工作流，支持意图识别和条件分支执行"
+  version: "1.0.0"
+  author: "AgentCrafter"
+  tags: ["user-qa", "intent-analysis", "conditional"]
+
+# 工作流输入定义
+inputs:
+  user_input:
+    type: "string"
+    description: "用户输入"
+    required: true
+  user_id:
+    type: "string" 
+    description: "用户ID"
+    required: false
+    default: "anonymous"
+
+# 工作流输出定义
+outputs:
+  final_response:
+    type: "string"
+    description: "最终响应"
+
+# 全局配置
+config:
+  max_execution_time: 600
+  enable_parallel: false
+  enable_cache: true
+  timeout_strategy: "fail_fast"
+
+# 工作流步骤
+steps:
+  # 步骤1: 意图分析
+  - id: "intent-analysis"
+    name: "用户意图分析"
+    agent_type: "text_agent"
+    description: "分析用户输入，确定需要的处理方式"
+    
+    agent_instruction: |
+      分析用户输入的意图，判断是否需要：
+      1. tool - 工具调用（如搜索、计算、获取信息等）
+      2. code - 代码分析（如编程问题、算法、数据分析等）
+      3. chat - 简单对话（如闲聊、基础问答等）
+      
+      只返回: tool, code, 或 chat 中的一个
+    
+    
+    # Text Agent 配置
+    text:
+      response_style: "concise"
+      max_length: 50
+      language: "zh"
+    
+    # 输入配置
+    inputs:
+      question: "请分析用户意图并分类"
+      context_data:
+        user_input: "{{user_input}}"
+        user_id: "{{user_id}}"
+    
+    # 输出配置
+    outputs:
+      answer: "intent_type"
+    
+    # 执行控制
+    timeout: 30
+    retry_count: 2
+    
+    # 验证规则
+    validation:
+      output_format: "regex"
+      pattern: "^(tool|code|chat)$"
+      error_message: "意图分析结果必须是 tool, code, 或 chat"
+
+  # 步骤2a: 工具执行分支（条件执行）
+  - id: "tool-execution"
+    name: "工具执行"
+    agent_type: "tool_agent"
+    description: "当用户需要工具调用时执行"
+    
+    agent_instruction: "根据用户需求选择合适的工具并执行操作"
+    
+    # 执行条件
+    condition:
+      expression: "{{intent_type}} == 'tool'"
+      description: "仅当意图类型为工具调用时执行"
+    
+    # Tool Agent 配置
+    tools:
+      allowed: ["browser_use", "android_use", "llm_extract"]
+      fallback: ["browser_use"]
+      confidence_threshold: 0.8
+      max_tools_per_step: 3
+    
+    inputs:
+      task_description: "{{user_input}}"
+      context_data:
+        user_id: "{{user_id}}"
+        intent: "{{intent_type}}"
+    
+    outputs:
+      result: "tool_result"
+      tool_used: "used_tool"
+      confidence: "tool_confidence"
+    
+    timeout: 120
+    retry_count: 1
+    
+    # 错误处理
+    error_handling:
+      strategy: "continue"  # 失败时继续执行后续步骤
+      fallback_value: "工具执行失败，将使用基础回答"
+
+  # 步骤2b: 代码分析分支（条件执行）
+  - id: "code-analysis"
+    name: "代码分析"
+    agent_type: "code_agent"
+    description: "当用户需要代码相关处理时执行"
+    
+    agent_instruction: "分析、生成或执行代码来解决用户问题"
+    
+    # 执行条件
+    condition:
+      expression: "{{intent_type}} == 'code'"
+      description: "仅当意图类型为代码分析时执行"
+    
+    # Code Agent 配置
+    code:
+      allowed_libraries: ["pandas", "numpy", "matplotlib", "requests", "json", "re"]
+      expected_output_format: "分析结果或代码执行结果"
+      execution_timeout: 60
+      memory_limit_mb: 512
+    
+    inputs:
+      task_description: "{{user_input}}"
+      input_data:
+        user_id: "{{user_id}}"
+        intent: "{{intent_type}}"
+    
+    outputs:
+      result: "code_result"
+      code_generated: "generated_code"
+      execution_info: "code_execution_info"
+    
+    constraints:
+      - "不能执行危险操作"
+      - "不能访问敏感数据"
+      - "执行时间不超过60秒"
+    
+    timeout: 180
+    retry_count: 1
+    
+    error_handling:
+      strategy: "continue"
+      fallback_value: "代码分析失败，将提供基础解答"
+
+  # 步骤3: 最终响应生成
+  - id: "final-response"
+    name: "生成最终响应"
+    agent_type: "text_agent"
+    description: "基于所有可用信息生成用户友好的最终回答"
+    
+    agent_instruction: |
+      基于用户输入和前面步骤的执行结果，生成一个完整、准确、友好的回答。
+      
+      要求：
+      1. 如果有工具执行结果，要整合工具返回的信息
+      2. 如果有代码分析结果，要解释代码逻辑和执行结果
+      3. 回答要自然流畅，不要显得机械化
+      4. 根据用户问题的复杂程度调整回答详细程度
+    
+    # 始终执行，无条件限制
+    condition:
+      expression: "true"
+      description: "始终执行最终响应生成"
+    
+    text:
+      response_style: "professional"
+      max_length: 1000
+      language: "zh"
+    
+    inputs:
+      question: "{{user_input}}"
+      context_data:
+        user_id: "{{user_id}}"
+        intent_type: "{{intent_type}}"
+        tool_result: "{{tool_result}}"
+        used_tool: "{{used_tool}}"
+        tool_confidence: "{{tool_confidence}}"
+        code_result: "{{code_result}}"
+        generated_code: "{{generated_code}}"
+        code_execution_info: "{{code_execution_info}}"
+    
+    outputs:
+      answer: "final_response"
+      word_count: "response_length"
+    
+    timeout: 60
+    retry_count: 2
+
+# 工作流级别的错误处理
+error_handling:
+  global_strategy: "fail_gracefully"
+  fallback_response: "抱歉，系统遇到了问题，请稍后重试或联系技术支持。"
+  
+# 执行策略
+execution:
+  # 并行执行配置（tool和code步骤不会并行，因为有条件限制）
+  parallel_groups:
+    - ["tool-execution", "code-analysis"]  # 理论上可并行，但条件互斥
+  
+  # 依赖关系
+  dependencies:
+    "tool-execution": ["intent-analysis"]
+    "code-analysis": ["intent-analysis"] 
+    "final-response": ["intent-analysis", "tool-execution", "code-analysis"]
+  
+  # 流控制
+  flow_control:
+    # 早期退出条件
+    early_exit:
+      condition: "{{intent_type}} == 'chat' and {{final_response}} != ''"
+      description: "对于简单对话，可以早期退出"
+    
+    # 循环控制（暂未使用，保留扩展性）
+    loops: []
+    
+    # 分支合并策略
+    branch_merge:
+      strategy: "collect_all"  # 收集所有分支结果
+      timeout: 300
+
+# 监控和日志
+monitoring:
+  enable_step_timing: true
+  enable_variable_tracking: true
+  log_level: "INFO"
+  
+  # 性能指标
+  metrics:
+    - "step_execution_time"
+    - "total_execution_time"
+    - "success_rate"
+    - "tool_usage_stats"
+
+# 缓存配置
+caching:
+  enable: true
+  ttl: 3600  # 1小时
+  cache_key_fields: ["user_input", "intent_type"]
+  exclude_fields: ["user_id"]  # 不包含用户ID在缓存键中

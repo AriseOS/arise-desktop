@@ -88,10 +88,10 @@ class AgentWorkflowEngine:
                 step_result = await self._execute_agent_step(step, context)
                 
                 # 更新上下文变量
-                if step_result.success and step.output_ports:
-                    await self._update_context_variables(step_result, step.output_ports, context)
+                if step_result.success and step.outputs:
+                    await self._update_context_variables(step_result, step.outputs, context)
                     # 更新最后一步的输出
-                    last_step_output = await self._extract_step_outputs(step_result, step.output_ports)
+                    last_step_output = await self._extract_step_outputs(step_result, step.outputs)
                 
                 executed_steps.append(step_result)
                 
@@ -130,8 +130,8 @@ class AgentWorkflowEngine:
             # 确定Agent类型
             agent_type = step.agent_type
             if agent_type == "auto":
-                # 自动路由选择Agent
-                agent_type = await self.agent_router.route_to_agent(step.task_description, context)
+                # 自动路由选择Agent，使用agent_instruction
+                agent_type = await self.agent_router.route_to_agent(step.agent_instruction, context)
                 logger.info(f"自动路由选择Agent: {agent_type}")
             
             # 解析步骤输入数据
@@ -173,9 +173,12 @@ class AgentWorkflowEngine:
         context: AgentContext
     ) -> Any:
         """构建Agent输入对象"""
+        # 从输入中获取任务描述，如果没有则使用agent_instruction
+        task_description = resolved_input.get("task_description", step.agent_instruction)
+        
         if agent_type == "text_agent":
             return TextAgentInput(
-                question=step.task_description,
+                question=resolved_input.get("question", task_description),
                 context_data=resolved_input.get("context_data", {}),
                 response_style=step.response_style,
                 max_length=step.max_length
@@ -183,7 +186,7 @@ class AgentWorkflowEngine:
         
         elif agent_type == "tool_agent":
             return ToolAgentInput(
-                task_description=step.task_description,
+                task_description=task_description,
                 context_data=resolved_input.get("context_data", {}),
                 constraints=step.constraints,
                 allowed_tools=step.allowed_tools,
@@ -193,7 +196,7 @@ class AgentWorkflowEngine:
         
         elif agent_type == "code_agent":
             return CodeAgentInput(
-                task_description=step.task_description,
+                task_description=task_description,
                 input_data=resolved_input.get("input_data", {}),
                 expected_output_format=step.expected_output_format,
                 constraints=step.constraints,
@@ -211,7 +214,7 @@ class AgentWorkflowEngine:
         """解析步骤输入数据"""
         resolved_input = {}
         
-        for key, value in step.input_ports.items():
+        for key, value in step.inputs.items():
             if isinstance(value, str) and value.startswith("{{") and value.endswith("}}"):
                 var_name = value[2:-2].strip()
                 resolved_input[key] = context.variables.get(var_name, value)
@@ -233,14 +236,14 @@ class AgentWorkflowEngine:
     async def _update_context_variables(
         self, 
         step_result: StepResult, 
-        output_ports: Dict[str, str], 
+        outputs: Dict[str, str], 
         context: AgentContext
     ):
         """更新上下文变量"""
         if not step_result.data:
             return
         
-        for output_key, var_name in output_ports.items():
+        for output_key, var_name in outputs.items():
             if hasattr(step_result.data, output_key):
                 value = getattr(step_result.data, output_key)
                 context.variables[var_name] = value
@@ -252,14 +255,14 @@ class AgentWorkflowEngine:
     async def _extract_step_outputs(
         self, 
         step_result: StepResult, 
-        output_ports: Dict[str, str]
+        outputs: Dict[str, str]
     ) -> Any:
         """提取当前步骤的输出值"""
-        if not step_result.data or not output_ports:
+        if not step_result.data or not outputs:
             return None
         
         step_outputs = {}
-        for output_key, var_name in output_ports.items():
+        for output_key, var_name in outputs.items():
             if hasattr(step_result.data, output_key):
                 value = getattr(step_result.data, output_key)
                 step_outputs[var_name] = value
@@ -295,6 +298,7 @@ class AgentWorkflowEngine:
             # 安全的条件评估
             allowed_names = {
                 "True": True, "False": False, "None": None,
+                "true": True, "false": False, "null": None,  # 支持小写布尔值
                 "and": lambda a, b: a and b,
                 "or": lambda a, b: a or b,
                 "not": lambda a: not a,

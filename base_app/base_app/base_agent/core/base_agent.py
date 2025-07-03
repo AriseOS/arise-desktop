@@ -572,143 +572,18 @@ class BaseAgent:
     
     def _load_default_workflows(self) -> None:
         """加载默认工作流"""
-        # 用户问答工作流
-        self._default_workflows["user_qa"] = self._create_user_qa_workflow()
+        from ..workflows.workflow_loader import load_workflow
+        # 用户问答工作流 - 从YAML配置文件加载
+        self._default_workflows["user_qa"] = load_workflow("user-qa-workflow")
     
     def _get_default_workflow(self, name: str) -> Workflow:
         """获取默认工作流"""
         if name in self._default_workflows:
             return self._default_workflows[name]
         else:
-            logger.warning(f"未找到默认工作流: {name}")
-            return self._create_simple_workflow()
+            raise ValueError(f"未找到默认工作流: {name}")
     
-    def _create_user_qa_workflow(self) -> Workflow:
-        """创建用户问答默认工作流 - 基于Provider的3步式架构"""
-        
-        steps = [
-            # 步骤1: 意图识别 (Text Agent + Provider)
-            AgentWorkflowStep(
-                id="intent_analysis",
-                name="意图识别",
-                description="使用大模型分析用户意图，判断需要工具调用、复杂分析还是普通聊天",
-                agent_type="text_agent",
-                task_description="分析用户输入，判断意图类型。请只返回以下三个选项之一：'tool'(需要工具调用)、'code'(需要复杂分析/计算)、'chat'(普通聊天)",
-                input_ports={
-                    "context_data": {
-                        "user_input": "{{user_input}}",
-                        "instruction": "请仔细分析用户输入的意图。如果用户需要搜索信息、获取实时数据、访问网页等，请返回'tool'；如果用户需要复杂计算、数据分析、代码生成等，请返回'code'；如果是普通问答、聊天，请返回'chat'。请只返回一个单词。"
-                    }
-                },
-                response_style="concise",
-                max_length=10,
-                output_ports={
-                    "answer": "intent_type"
-                }
-            ),
-            
-            # 步骤2a: 工具调用 (Tool Agent，条件执行)
-            AgentWorkflowStep(
-                id="tool_execution",
-                name="工具调用",
-                description="当意图为工具调用时，执行相应的工具操作",
-                agent_type="tool_agent",
-                task_description="根据用户输入执行工具调用（当前暂时返回占位符结果）",
-                input_ports={
-                    "context_data": {
-                        "user_input": "{{user_input}}",
-                        "task": "执行工具调用"
-                    }
-                },
-                allowed_tools=[],  # 暂时留白
-                condition="{{intent_type}} == 'tool'",
-                output_ports={
-                    "result": "tool_result"
-                }
-            ),
-            
-            # 步骤2b: 复杂分析 (Code Agent，条件执行)
-            AgentWorkflowStep(
-                id="code_analysis",
-                name="复杂分析",
-                description="当意图为复杂分析时，执行代码生成和运行",
-                agent_type="code_agent",
-                task_description="根据用户需求执行复杂分析（当前暂时返回占位符结果）",
-                input_ports={
-                    "input_data": "{{user_input}}"
-                },
-                expected_output_format="分析结果",
-                allowed_libraries=[],  # 暂时留白
-                condition="{{intent_type}} == 'code'",
-                output_ports={
-                    "result": "code_result"
-                }
-            ),
-            
-            # 步骤3: 统一回复生成 (Text Agent + Provider)
-            AgentWorkflowStep(
-                id="final_response",
-                name="生成最终回复",
-                description="基于意图类型和前面步骤的结果，生成最终的用户回复",
-                agent_type="text_agent",
-                task_description="根据用户问题和所有可用信息，生成友好、有用的回复",
-                input_ports={
-                    "context_data": {
-                        "user_input": "{{user_input}}",
-                        "intent_type": "{{intent_type}}",
-                        "tool_result": "{{tool_result}}",
-                        "code_result": "{{code_result}}",
-                        "instructions": "请根据用户的原始问题和可用的结果信息，生成一个友好、准确的回复。如果有工具调用结果，请基于结果回答；如果有代码分析结果，请解释结果；如果是普通聊天，请直接友好回复。"
-                    }
-                },
-                response_style="helpful",
-                max_length=500,
-                output_ports={
-                    "answer": "final_response"
-                }
-            )
-        ]
-        
-        return Workflow(
-            name="用户问答工作流-Provider架构",
-            description="基于Provider的3步式用户问答工作流：意图识别 → 条件执行(工具/代码) → 统一回复",
-            steps=steps,
-            input_schema={
-                "user_input": {"type": "string", "description": "用户输入"},
-                "user_id": {"type": "string", "description": "用户ID", "optional": True}
-            },
-            output_schema={
-                "final_response": {"type": "string", "description": "最终响应"}
-            }
-        )
     
-    def _create_simple_workflow(self) -> Workflow:
-        """创建简单的默认工作流"""
-        steps = [
-            AgentWorkflowStep(
-                id="simple_response",
-                name="简单响应",
-                description="提供简单的默认响应",
-                agent_type="text_agent",
-                task_description="为用户输入提供简单的确认响应",
-                input_ports={
-                    "context_data": {
-                        "user_input": "{{user_input}}"
-                    }
-                },
-                response_style="friendly",
-                max_length=100,
-                output_ports={
-                    "answer": "simple_response"
-                }
-            )
-        ]
-        
-        return Workflow(
-            name="简单工作流",
-            description="简单的响应工作流",
-            steps=steps
-        )
     
     def _setup_logging(self) -> None:
         """设置日志"""

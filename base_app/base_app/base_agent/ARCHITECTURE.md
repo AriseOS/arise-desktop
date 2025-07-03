@@ -227,60 +227,72 @@ return WorkflowResult(
 - **以前**: final_result包含所有上下文变量
 - **现在**: final_result只返回最后一个成功步骤的实际输出
 
-### 3. 默认工作流架构
+### 3. 工作流配置文件架构
 
-**process_user_input的3步式流程**：
+**基于YAML的配置驱动工作流**：
 
+工作流现在通过YAML配置文件定义，位于 `workflows/builtin/` 和 `workflows/user/` 目录：
+
+```yaml
+# workflows/builtin/user-qa-workflow.yaml
+apiVersion: "agentcrafter.io/v1"
+kind: "Workflow"
+
+metadata:
+  name: "user-qa-workflow"
+  description: "智能用户问答工作流，支持意图识别和条件分支执行"
+
+steps:
+  # 步骤1: 意图分析
+  - id: "intent-analysis"
+    name: "用户意图分析"
+    agent_type: "text_agent"
+    task_description: "分析用户输入，判断需要的处理方式"
+    condition:
+      expression: "true"  # 始终执行
+    outputs:
+      answer: "intent_type"
+  
+  # 步骤2a: 工具执行（条件执行）
+  - id: "tool-execution"
+    name: "工具执行"
+    agent_type: "tool_agent"
+    condition:
+      expression: "{{intent_type}} == 'tool'"
+    outputs:
+      result: "tool_result"
+  
+  # 步骤2b: 代码分析（条件执行）
+  - id: "code-analysis"
+    name: "代码分析"
+    agent_type: "code_agent"
+    condition:
+      expression: "{{intent_type}} == 'code'"
+    outputs:
+      result: "code_result"
+  
+  # 步骤3: 最终响应生成
+  - id: "final-response"
+    name: "生成最终响应"
+    agent_type: "text_agent"
+    outputs:
+      answer: "final_response"
+```
+
+**工作流加载**：
 ```python
-def _create_user_qa_workflow(self) -> Workflow:
-    steps = [
-        # 步骤1: 意图识别 (TextAgent)
-        AgentWorkflowStep(
-            name="意图识别",
-            agent_type="text_agent",
-            task_description="分析用户输入，判断需要工具调用、复杂分析还是普通聊天",
-            input_ports={"context_data": {"user_input": "{{user_input}}"}},
-            output_ports={"answer": "intent_type"}
-        ),
-        
-        # 步骤2a: 工具调用 (ToolAgent，条件执行)
-        AgentWorkflowStep(
-            name="工具调用",
-            agent_type="tool_agent", 
-            condition="{{intent_type}} == 'tool'",
-            output_ports={"result": "tool_result"}
-        ),
-        
-        # 步骤2b: 复杂分析 (CodeAgent，条件执行)
-        AgentWorkflowStep(
-            name="复杂分析",
-            agent_type="code_agent",
-            condition="{{intent_type}} == 'code'", 
-            output_ports={"result": "code_result"}
-        ),
-        
-        # 步骤3: 统一回复生成 (TextAgent)
-        AgentWorkflowStep(
-            name="生成最终回复",
-            agent_type="text_agent",
-            task_description="根据用户问题和所有可用信息，生成友好、有用的回复",
-            input_ports={
-                "context_data": {
-                    "user_input": "{{user_input}}",
-                    "intent_type": "{{intent_type}}",
-                    "tool_result": "{{tool_result}}",
-                    "code_result": "{{code_result}}"
-                }
-            },
-            output_ports={"answer": "final_response"}
-        )
-    ]
+def _load_default_workflows(self) -> None:
+    from ..workflows.workflow_loader import load_workflow
+    # 从YAML配置文件加载用户问答工作流
+    self._default_workflows["user_qa"] = load_workflow("user-qa-workflow")
 ```
 
 **关键特性**：
-- **条件执行**: 根据意图类型只执行相关的Agent
-- **数据流**: 通过变量引用在步骤间传递数据
-- **最终输出**: final_result直接返回"final_response"的值
+- **配置驱动**: 工作流完全由YAML配置文件定义
+- **条件执行**: 支持复杂的条件表达式和分支逻辑
+- **配置验证**: 加载时进行完整性和正确性检查
+- **可扩展性**: 支持内置和用户自定义工作流
+- **版本控制**: 配置文件可以进行版本管理和协作
 
 ## 目录结构
 

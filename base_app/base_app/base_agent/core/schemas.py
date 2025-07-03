@@ -223,10 +223,11 @@ class AgentWorkflowStep(BaseModel):
     
     # Agent配置
     agent_type: str = Field(..., description="Agent类型: text_agent | tool_agent | code_agent | auto")
-    task_description: str = Field(..., description="任务描述")
+    agent_instruction: str = Field(..., description="Agent执行指令，描述Agent要做什么")
+    user_task: Optional[str] = Field(default=None, description="用户具体任务内容")
     
     # 输入配置
-    input_ports: Dict[str, Any] = Field(default_factory=dict, description="输入映射")
+    inputs: Dict[str, Any] = Field(default_factory=dict, description="输入映射")
     constraints: List[str] = Field(default_factory=list, description="约束条件")
     
     # Tool Agent 特有配置
@@ -243,7 +244,7 @@ class AgentWorkflowStep(BaseModel):
     max_length: int = Field(default=500, description="最大回答长度")
     
     # 输出配置  
-    output_ports: Dict[str, str] = Field(default_factory=dict, description="输出映射")
+    outputs: Dict[str, str] = Field(default_factory=dict, description="输出映射")
     
     # 执行控制
     condition: Optional[str] = Field(default=None, description="执行条件")
