@@ -8,6 +8,7 @@ import { useAuth } from './hooks/useAuth';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import Dashboard from './pages/Dashboard';
+import BaseAppPage from './pages/BaseAppPage';
 import './App.css';
 
 const AppContent: React.FC = () => {
@@ -36,6 +37,10 @@ const AppContent: React.FC = () => {
           <Route 
             path="/dashboard" 
             element={user ? <Dashboard /> : <Navigate to="/login" />} 
+          />
+          <Route 
+            path="/baseapp" 
+            element={user ? <BaseAppPage /> : <Navigate to="/login" />} 
           />
           <Route 
             path="/" 

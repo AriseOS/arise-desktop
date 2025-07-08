@@ -1,7 +1,8 @@
 import React from 'react';
 import { Layout, Button, Typography, Avatar, Dropdown, Space } from 'antd';
-import { UserOutlined, LogoutOutlined, MessageOutlined } from '@ant-design/icons';
+import { UserOutlined, LogoutOutlined, MessageOutlined, RobotOutlined } from '@ant-design/icons';
 import { useDispatch, useSelector } from 'react-redux';
+import { useNavigate } from 'react-router-dom';
 import { RootState } from '../store';
 import { logout } from '../store/authSlice';
 import ChatBox from '../components/ChatBox';
@@ -11,6 +12,7 @@ const { Title, Text } = Typography;
 
 const Dashboard: React.FC = () => {
   const dispatch = useDispatch();
+  const navigate = useNavigate();
   const { user } = useSelector((state: RootState) => state.auth);
 
   const handleLogout = () => {
@@ -45,6 +47,13 @@ const Dashboard: React.FC = () => {
         
         <div className="flex items-center space-x-4">
           <Space>
+            <Button 
+              type="default" 
+              icon={<RobotOutlined />}
+              onClick={() => navigate('/baseapp')}
+            >
+              BaseApp
+            </Button>
             <Text>欢迎回来，{user?.username}！</Text>
             <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
               <Avatar 
@@ -76,9 +85,15 @@ const Dashboard: React.FC = () => {
                     <h4 className="font-medium">创建新 Agent</h4>
                     <p className="text-sm text-gray-600">开始构建您的专属 AI 助手</p>
                   </div>
-                  <div className="p-4 border rounded-lg hover:bg-gray-50 cursor-pointer">
-                    <h4 className="font-medium">管理 Agent</h4>
-                    <p className="text-sm text-gray-600">查看和编辑现有的 Agent</p>
+                  <div 
+                    className="p-4 border rounded-lg hover:bg-gray-50 cursor-pointer"
+                    onClick={() => navigate('/baseapp')}
+                  >
+                    <h4 className="font-medium flex items-center">
+                      <RobotOutlined className="mr-2" />
+                      BaseApp
+                    </h4>
+                    <p className="text-sm text-gray-600">体验高级 AI 对话功能</p>
                   </div>
                 </div>
               </div>

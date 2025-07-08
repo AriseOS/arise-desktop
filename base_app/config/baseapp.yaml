@@ -35,7 +35,7 @@ app:
   debug: false
   host: 0.0.0.0
   name: BaseApp
-  port: 8000
+  port: 8888
   version: 1.0.0
 database:
   type: sqlite

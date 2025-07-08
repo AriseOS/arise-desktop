@@ -27,7 +27,7 @@ def app_commands():
 
 
 @app_commands.command()
-@click.option("--port", "-p", default=8000, help="服务端口")
+@click.option("--port", "-p", default=8888, help="服务端口")
 @click.option("--host", "-h", default="0.0.0.0", help="绑定主机")
 @click.option("--config", "-c", help="配置文件路径")
 @click.option("--daemon", "-d", is_flag=True, help="后台运行")

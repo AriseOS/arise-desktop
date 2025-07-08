@@ -134,8 +134,8 @@ def setup_logging(config_service: ConfigService = None, level: str = "INFO"):
 
 
 def run_server(
-    host: str = "0.0.0.0",
-    port: int = 8000,
+    host: str = None,
+    port: int = None,
     config_path: str = None,
     log_level: str = "INFO",
     reload: bool = False
@@ -145,6 +145,12 @@ def run_server(
     try:
         # 初始化配置服务
         config_service = ConfigService(config_path)
+        
+        # 从配置文件获取主机和端口，如果参数未指定
+        if host is None:
+            host = config_service.get("app.host", "0.0.0.0")
+        if port is None:
+            port = config_service.get("app.port", 8000)
         
         # 使用配置文件设置日志
         setup_logging(config_service, log_level)
@@ -171,8 +177,8 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description="BaseApp Server")
-    parser.add_argument("--host", default="0.0.0.0", help="Host to bind")
-    parser.add_argument("--port", type=int, default=8000, help="Port to bind")
+    parser.add_argument("--host", default=None, help="Host to bind")
+    parser.add_argument("--port", type=int, default=None, help="Port to bind")
     parser.add_argument("--config", help="Config file path")
     parser.add_argument("--log-level", default="INFO", help="Log level")
     parser.add_argument("--reload", action="store_true", help="Enable auto-reload")
