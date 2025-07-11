@@ -41,7 +41,7 @@ const Dashboard: React.FC = () => {
       <Header className="bg-white shadow-sm flex items-center justify-between px-6">
         <div className="flex items-center">
           <Title level={3} className="m-0 text-blue-600">
-            AgentCrafter
+            ami.dev
           </Title>
         </div>
         
@@ -80,9 +80,15 @@ const Dashboard: React.FC = () => {
                 </div>
                 
                 {/* 快捷操作 */}
-                <div className="grid grid-cols-2 gap-4 mb-6">
-                  <div className="p-4 border rounded-lg hover:bg-gray-50 cursor-pointer">
-                    <h4 className="font-medium">创建新 Agent</h4>
+                <div className="grid grid-cols-3 gap-4 mb-6">
+                  <div 
+                    className="p-4 border rounded-lg hover:bg-gray-50 cursor-pointer"
+                    onClick={() => navigate('/workspace')}
+                  >
+                    <h4 className="font-medium flex items-center">
+                      <MessageOutlined className="mr-2" />
+                      工作台
+                    </h4>
                     <p className="text-sm text-gray-600">开始构建您的专属 AI 助手</p>
                   </div>
                   <div 
@@ -94,6 +100,10 @@ const Dashboard: React.FC = () => {
                       BaseApp
                     </h4>
                     <p className="text-sm text-gray-600">体验高级 AI 对话功能</p>
+                  </div>
+                  <div className="p-4 border rounded-lg hover:bg-gray-50 cursor-pointer opacity-50">
+                    <h4 className="font-medium">项目管理</h4>
+                    <p className="text-sm text-gray-600">管理您的 Agent 项目</p>
                   </div>
                 </div>
               </div>

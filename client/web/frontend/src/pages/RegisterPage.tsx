@@ -37,7 +37,7 @@ const RegisterPage: React.FC = () => {
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <Card className="w-full max-w-md">
         <div className="text-center mb-8">
-          <Title level={2}>AgentCrafter</Title>
+          <Title level={2}>ami.dev</Title>
           <p className="text-gray-600">创建您的账户</p>
         </div>
         

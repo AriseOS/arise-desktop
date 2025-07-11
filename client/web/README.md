@@ -1,190 +1,116 @@
-# AgentCrafter Web Application
+# ami.dev Web 客户端
 
-一个完整的 Web 应用程序，提供用户注册、登录和 AI 聊天功能。
+基于 React + FastAPI 的 AI 代理构建平台，提供直观的用户界面来创建和管理智能代理应用。
 
 ## 功能特性
 
-### 用户系统
-- ✅ 用户注册和登录
-- ✅ JWT 身份验证
-- ✅ 用户会话管理
-- ✅ 密码安全加密
-
-### 聊天系统
-- ✅ 实时 AI 聊天
-- ✅ 聊天历史记录
-- ✅ 会话管理
-- ✅ 响应式界面
-
-### 技术栈
-- **后端**: FastAPI + SQLAlchemy + SQLite
-- **前端**: React + TypeScript + Ant Design + Tailwind CSS
-- **状态管理**: Redux Toolkit
-- **身份验证**: JWT + bcrypt
+- 🏠 **现代化首页** - 类似 Loveable/v0/base44 的 AI 构建界面
+- 🔧 **工作台** - 三栏式代理构建页面，包含输出日志、工作流展示、预览区
+- 🔐 **用户系统** - 完整的注册/登录/用户管理
+- 📱 **响应式设计** - 支持桌面和移动端
+- 🎨 **现代 UI** - Ant Design + Tailwind CSS
 
 ## 项目结构
 
 ```
-client/web/
-├── backend/                 # 后端 API 服务
-│   ├── __init__.py
-│   ├── main.py             # FastAPI 应用主文件
-│   ├── database.py         # 数据库模型和连接
-│   ├── auth.py             # 用户认证服务
-│   └── requirements.txt    # Python 依赖
-├── frontend/               # React 前端应用
-│   ├── public/            # 静态文件
-│   ├── src/
-│   │   ├── components/    # React 组件
-│   │   ├── pages/        # 页面组件
-│   │   ├── services/     # API 服务
-│   │   ├── store/        # Redux 状态管理
-│   │   └── hooks/        # 自定义 Hooks
-│   ├── package.json      # 前端依赖
-│   └── tailwind.config.js
-├── start_backend.py       # 后端启动脚本
-├── start_frontend.sh      # 前端启动脚本
-└── README.md
+web/
+├── frontend/          # React 前端应用
+├── backend/           # FastAPI 后端服务
+├── start_backend.py   # 后端启动脚本
+└── start_frontend.sh  # 前端启动脚本
 ```
 
-## 快速开始
+## 安装步骤
 
-### 环境要求
-- Python 3.9+
-- Node.js 16+
-- npm 或 yarn
-
-### 启动后端服务
-
-1. 运行后端启动脚本：
+### 1. 克隆仓库
 ```bash
-python start_backend.py
+git clone <repository-url>
+cd agentcloud/agentcrafter/client/web
 ```
 
-后端服务将在 `http://localhost:8000` 启动。
-
-### 启动前端服务
-
-1. 运行前端启动脚本：
-```bash
-./start_frontend.sh
-```
-
-前端服务将在 `http://localhost:3000` 启动。
-
-### 手动启动（可选）
-
-#### 后端
+### 2. 安装后端依赖
 ```bash
 cd backend
 pip install -r requirements.txt
-python main.py
+cd ..
 ```
 
-#### 前端
+### 3. 安装前端依赖
 ```bash
 cd frontend
 npm install
+cd ..
+```
+
+## 启动服务
+
+### 方法一：使用启动脚本（推荐）
+
+**启动后端服务：**
+```bash
+# 在 web 目录下执行
+python start_backend.py
+```
+
+**启动前端服务：**
+```bash
+# 在 web 目录下执行
+./start_frontend.sh
+# 或者手动进入前端目录
+cd frontend && npm start
+```
+
+### 方法二：手动启动
+
+**启动后端服务：**
+```bash
+cd backend
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+**启动前端服务：**
+```bash
+cd frontend
 npm start
 ```
 
-## API 文档
+### 服务地址
+- 前端应用：`http://localhost:3000`
+- 后端 API：`http://localhost:8000`
+- API 文档：`http://localhost:8000/docs`
 
-启动后端服务后，可以在以下地址查看 API 文档：
-- Swagger UI: `http://localhost:8000/docs`
-- ReDoc: `http://localhost:8000/redoc`
+## 页面说明
 
-## 数据库
+- **首页** (`/`) - AI 代理构建入口页面
+- **工作台** (`/workspace`) - 代理生成和管理工作区
+- **登录** (`/login`) - 用户登录页面
+- **注册** (`/register`) - 用户注册页面
+- **控制台** (`/dashboard`) - 用户管理控制台
 
-项目使用 SQLite 数据库，数据库文件会自动创建在 `backend/agentcrafter_users.db`。
+## 技术栈
 
-### 数据表结构
-- `users`: 用户信息表
-- `user_sessions`: 用户会话表
-- `chat_history`: 聊天历史表
+- **前端**: React 18 + TypeScript + Ant Design + Tailwind CSS
+- **后端**: FastAPI + SQLAlchemy + SQLite
+- **认证**: JWT + bcrypt 密码加密
+- **状态管理**: Redux Toolkit
 
-## 使用说明
+## 开发说明
 
-1. **注册账户**: 访问 `/register` 页面创建新账户
-2. **登录**: 使用用户名和密码登录
-3. **聊天**: 在主页面右侧聊天框中与 AI 助手对话
-4. **退出**: 点击右上角头像菜单中的"退出登录"
+### 前端代理配置
+前端已配置代理到后端：`"proxy": "http://localhost:8000"`
 
-## 开发指南
+### API 接口
+- `POST /api/login` - 用户登录
+- `POST /api/register` - 用户注册  
+- `GET /api/me` - 获取用户信息
 
-### 添加新的 API 端点
-
-1. 在 `backend/main.py` 中添加新的路由
-2. 在 `frontend/src/services/` 中添加对应的 API 调用
-3. 在 Redux store 中添加相应的状态管理
-
-### 自定义样式
-
-项目使用 Ant Design + Tailwind CSS，可以：
-- 修改 `frontend/src/App.css` 进行全局样式调整
-- 在组件中使用 Tailwind 类名
-- 通过 Ant Design 的 ConfigProvider 自定义主题
-
-### 数据库迁移
-
-如需修改数据库结构：
-1. 修改 `backend/database.py` 中的模型
-2. 删除现有数据库文件
-3. 重新运行后端服务自动创建新表
-
-## 部署
-
-### 生产环境部署
-
-1. **后端部署**:
-```bash
-pip install -r backend/requirements.txt
-uvicorn backend.main:app --host 0.0.0.0 --port 8000
-```
-
-2. **前端部署**:
-```bash
-cd frontend
-npm run build
-# 将 build 文件夹部署到 Web 服务器
-```
-
-### 环境变量配置
-
-创建 `.env` 文件配置环境变量：
-```env
-DATABASE_URL=sqlite:///./agentcrafter_users.db
-SECRET_KEY=your-secret-key-here
-REACT_APP_API_URL=http://localhost:8000
-```
+### 数据库
+- 自动初始化 SQLite 数据库
+- 位置：`backend/agentcrafter_users.db`
 
 ## 故障排除
 
-### 常见问题
-
-1. **后端启动失败**
-   - 检查 Python 版本（需要 3.9+）
-   - 确保依赖包正确安装
-
-2. **前端启动失败**
-   - 检查 Node.js 版本（需要 16+）
-   - 删除 `node_modules` 文件夹重新安装
-
-3. **API 请求失败**
-   - 检查后端服务是否正常运行
-   - 验证 API 端点地址是否正确
-
-4. **数据库连接错误**
-   - 确保有写入权限
-   - 检查数据库文件路径
-
-## 贡献指南
-
-1. Fork 项目
-2. 创建功能分支
-3. 提交更改
-4. 创建 Pull Request
-
-## 许可证
-
-MIT License
+1. **端口占用**: 确保 3000 和 8000 端口未被占用
+2. **依赖问题**: 删除 `node_modules` 重新 `npm install`
+3. **数据库问题**: 删除 `.db` 文件重新初始化
+4. **登录失败**: 检查后端控制台的认证日志

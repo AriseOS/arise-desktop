@@ -51,11 +51,24 @@ class AuthService:
     
     def authenticate_user(self, db: Session, username: str, password: str) -> Optional[User]:
         """验证用户"""
+        print(f"[AUTH] 开始验证用户: username='{username}', password_length={len(password)}")
+        
         user = db.query(User).filter(User.username == username).first()
         if not user:
+            print(f"[AUTH] 用户不存在: username='{username}'")
             return None
-        if not self.verify_password(password, user.hashed_password):
+        
+        print(f"[AUTH] 找到用户: id={user.id}, username='{user.username}', email='{user.email}'")
+        print(f"[AUTH] 存储的密码哈希: {user.hashed_password[:50]}...")
+        
+        password_valid = self.verify_password(password, user.hashed_password)
+        print(f"[AUTH] 密码验证结果: {password_valid}")
+        
+        if not password_valid:
+            print(f"[AUTH] 密码验证失败: username='{username}'")
             return None
+        
+        print(f"[AUTH] 认证成功: username='{username}'")
         return user
     
     def create_user(self, db: Session, username: str, email: str, password: str, full_name: str = None) -> User:

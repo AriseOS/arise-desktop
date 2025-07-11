@@ -5,10 +5,12 @@ import { ConfigProvider } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import { store } from './store';
 import { useAuth } from './hooks/useAuth';
+import HomePage from './pages/HomePage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import Dashboard from './pages/Dashboard';
 import BaseAppPage from './pages/BaseAppPage';
+import WorkspacePage from './pages/WorkspacePage';
 import './App.css';
 
 const AppContent: React.FC = () => {
@@ -27,6 +29,10 @@ const AppContent: React.FC = () => {
       <div className="App">
         <Routes>
           <Route 
+            path="/" 
+            element={<HomePage />} 
+          />
+          <Route 
             path="/login" 
             element={user ? <Navigate to="/dashboard" /> : <LoginPage />} 
           />
@@ -43,8 +49,8 @@ const AppContent: React.FC = () => {
             element={user ? <BaseAppPage /> : <Navigate to="/login" />} 
           />
           <Route 
-            path="/" 
-            element={<Navigate to={user ? "/dashboard" : "/login"} />} 
+            path="/workspace" 
+            element={user ? <WorkspacePage /> : <Navigate to="/login" />} 
           />
         </Routes>
       </div>
