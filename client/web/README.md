@@ -58,6 +58,8 @@ python start_backend.py
 ./start_frontend.sh
 # 或者手动进入前端目录
 cd frontend && npm start
+# 或使用新的 dev 命令
+cd frontend && npm run dev
 ```
 
 ### 方法二：手动启动
@@ -71,7 +73,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 **启动前端服务：**
 ```bash
 cd frontend
-npm start
+npm start  # 或 npm run dev
 ```
 
 ### 服务地址
@@ -89,10 +91,11 @@ npm start
 
 ## 技术栈
 
-- **前端**: React 18 + TypeScript + Ant Design + Tailwind CSS
+- **前端**: React 18 + TypeScript 5 + Vite + Ant Design + Tailwind CSS
 - **后端**: FastAPI + SQLAlchemy + SQLite
 - **认证**: JWT + bcrypt 密码加密
 - **状态管理**: Redux Toolkit
+- **国际化**: react-i18next (支持中英文切换)
 
 ## 开发说明
 

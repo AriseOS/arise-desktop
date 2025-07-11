@@ -3,12 +3,15 @@ import { Form, Input, Button, Card, message, Typography } from 'antd';
 import { UserOutlined, LockOutlined } from '@ant-design/icons';
 import { useDispatch, useSelector } from 'react-redux';
 import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { RootState } from '../store';
 import { login, clearError } from '../store/authSlice';
+import LanguageSwitcher from '../components/LanguageSwitcher';
 
 const { Title } = Typography;
 
 const LoginPage: React.FC = () => {
+  const { t } = useTranslation();
   const dispatch = useDispatch();
   const { loading, error } = useSelector((state: RootState) => state.auth);
 
@@ -30,10 +33,13 @@ const LoginPage: React.FC = () => {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="absolute top-4 right-4">
+        <LanguageSwitcher />
+      </div>
       <Card className="w-full max-w-md">
         <div className="text-center mb-8">
-          <Title level={2}>ami.dev</Title>
-          <p className="text-gray-600">登录到您的账户</p>
+          <Title level={2}>{t('login.title')}</Title>
+          <p className="text-gray-600">{t('login.subtitle')}</p>
         </div>
         
         <Form
@@ -44,21 +50,21 @@ const LoginPage: React.FC = () => {
         >
           <Form.Item
             name="username"
-            rules={[{ required: true, message: '请输入用户名' }]}
+            rules={[{ required: true, message: t('login.usernameRequired') }]}
           >
             <Input
               prefix={<UserOutlined />}
-              placeholder="用户名"
+              placeholder={t('common.username')}
             />
           </Form.Item>
 
           <Form.Item
             name="password"
-            rules={[{ required: true, message: '请输入密码' }]}
+            rules={[{ required: true, message: t('login.passwordRequired') }]}
           >
             <Input.Password
               prefix={<LockOutlined />}
-              placeholder="密码"
+              placeholder={t('common.password')}
             />
           </Form.Item>
 
@@ -69,14 +75,14 @@ const LoginPage: React.FC = () => {
               loading={loading}
               className="w-full"
             >
-              登录
+              {t('common.login')}
             </Button>
           </Form.Item>
 
           <div className="text-center">
-            <span className="text-gray-600">还没有账户？</span>
+            <span className="text-gray-600">{t('login.noAccount')}</span>
             <Link to="/register" className="text-blue-600 hover:text-blue-800 ml-1">
-              立即注册
+              {t('login.registerNow')}
             </Link>
           </div>
         </Form>

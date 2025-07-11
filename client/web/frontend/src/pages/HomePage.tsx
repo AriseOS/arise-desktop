@@ -3,15 +3,18 @@ import { Layout, Button, Typography, Avatar, Dropdown, Space, Card, Input, messa
 import { UserOutlined, LogoutOutlined, SendOutlined, RobotOutlined } from '@ant-design/icons';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { RootState } from '../store';
 import { logout } from '../store/authSlice';
 import UserProfile from '../components/UserProfile';
+import LanguageSwitcher from '../components/LanguageSwitcher';
 
 const { Header, Content } = Layout;
 const { Title, Text } = Typography;
 const { TextArea } = Input;
 
 const HomePage: React.FC = () => {
+  const { t } = useTranslation();
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const { user } = useSelector((state: RootState) => state.auth);
@@ -30,13 +33,13 @@ const HomePage: React.FC = () => {
     {
       key: 'profile',
       icon: <UserOutlined />,
-      label: '用户信息',
+      label: t('nav.profile'),
       onClick: () => setShowUserProfile(true),
     },
     {
       key: 'dashboard',
       icon: <RobotOutlined />,
-      label: '控制台',
+      label: t('nav.dashboard'),
       onClick: () => navigate('/dashboard'),
     },
     {
@@ -45,19 +48,19 @@ const HomePage: React.FC = () => {
     {
       key: 'logout',
       icon: <LogoutOutlined />,
-      label: '退出登录',
+      label: t('nav.logout'),
       onClick: handleLogout,
     },
   ];
 
   const handleGenerate = async () => {
     if (!prompt.trim()) {
-      message.warning('请输入您的需求');
+      message.warning(t('home.messages.enterRequirement'));
       return;
     }
 
     if (!user) {
-      message.info('请先登录以使用对话功能');
+      message.info(t('home.messages.pleaseLogin'));
       navigate('/login');
       return;
     }
@@ -74,10 +77,10 @@ const HomePage: React.FC = () => {
   };
 
   const examplePrompts = [
-    "创建一个任务管理应用",
-    "设计一个电商网站首页",
-    "构建一个聊天机器人",
-    "开发一个数据分析dashboard"
+    t('home.examples.taskApp'),
+    t('home.examples.ecommerce'),
+    t('home.examples.chatbot'),
+    t('home.examples.dashboard')
   ];
 
   return (
@@ -90,9 +93,10 @@ const HomePage: React.FC = () => {
         </div>
         
         <div className="flex items-center space-x-4">
+          <LanguageSwitcher />
           {user ? (
             <Space>
-              <Text className="text-gray-600">欢迎，{user.username}！</Text>
+              <Text className="text-gray-600">{t('home.welcome', { username: user.username })}</Text>
               <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
                 <Avatar 
                   icon={<UserOutlined />} 
@@ -103,10 +107,10 @@ const HomePage: React.FC = () => {
           ) : (
             <Space>
               <Button type="text" onClick={handleLogin}>
-                登录
+                {t('common.login')}
               </Button>
               <Button type="primary" onClick={() => navigate('/register')}>
-                注册
+                {t('common.register')}
               </Button>
             </Space>
           )}
@@ -118,10 +122,10 @@ const HomePage: React.FC = () => {
           {/* Hero Section */}
           <div className="text-center mb-12">
             <Title level={1} className="mb-4 bg-gradient-to-r from-blue-600 via-purple-600 to-blue-800 bg-clip-text text-transparent">
-              ami.dev
+              {t('home.title')}
             </Title>
             <Text className="text-xl text-gray-600 block mb-12">
-              使用 AI 驱动的工具，快速创建、部署和管理您的智能代理应用
+              {t('home.subtitle')}
             </Text>
           </div>
 
@@ -130,10 +134,10 @@ const HomePage: React.FC = () => {
             <div className="mb-6">
               <Title level={3} className="text-center mb-2">
                 <RobotOutlined className="mr-2 text-blue-600" />
-                对话框
+                {t('home.dialogTitle')}
               </Title>
               <Text className="text-gray-600 block text-center">
-                描述您想要创建的应用或功能，AI 将帮助您实现
+                {t('home.dialogSubtitle')}
               </Text>
             </div>
 
@@ -142,14 +146,14 @@ const HomePage: React.FC = () => {
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 onKeyPress={handleKeyPress}
-                placeholder="例如：创建一个待办事项管理应用，包含任务分类、优先级设置和进度跟踪功能..."
+                placeholder={t('home.placeholder')}
                 autoSize={{ minRows: 4, maxRows: 8 }}
                 className="resize-none text-lg"
               />
 
               <div className="flex justify-between items-center">
                 <Text className="text-sm text-gray-500">
-                  按 {navigator.platform.includes('Mac') ? 'Cmd' : 'Ctrl'} + Enter 快速生成
+                  {t('home.quickGenerate', { key: navigator.platform.includes('Mac') ? 'Cmd' : 'Ctrl' })}
                 </Text>
                 <Button
                   type="primary"
@@ -159,14 +163,14 @@ const HomePage: React.FC = () => {
                   disabled={!prompt.trim()}
                   className="bg-gradient-to-r from-blue-600 to-purple-600 border-0 h-12 px-8"
                 >
-                  开始构建
+                  {t('home.startBuilding')}
                 </Button>
               </div>
             </div>
 
             {/* Example Prompts */}
             <div className="mt-8 pt-6 border-t border-gray-100">
-              <Text className="text-sm text-gray-600 mb-3 block">尝试这些示例：</Text>
+              <Text className="text-sm text-gray-600 mb-3 block">{t('home.tryExamples')}</Text>
               <div className="flex flex-wrap gap-2">
                 {examplePrompts.map((example, index) => (
                   <Button
@@ -186,7 +190,7 @@ const HomePage: React.FC = () => {
           {/* Footer */}
           <div className="text-center mt-12 text-gray-500">
             <Text>
-              基于先进的 AI 技术构建
+              {t('home.footer')}
             </Text>
           </div>
         </div>
