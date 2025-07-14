@@ -96,7 +96,9 @@ const HomePage: React.FC = () => {
           <LanguageSwitcher />
           {user ? (
             <Space>
-              <Text className="text-gray-600">{t('home.welcome', { username: user.username })}</Text>
+              <Text className="text-gray-600">
+                {t('home.welcome').replace('{username}', user.username || user.full_name || 'User')}
+              </Text>
               <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
                 <Avatar 
                   icon={<UserOutlined />} 

@@ -7,8 +7,10 @@
 - 🏠 **现代化首页** - 类似 Loveable/v0/base44 的 AI 构建界面
 - 🔧 **工作台** - 三栏式代理构建页面，包含输出日志、工作流展示、预览区
 - 🔐 **用户系统** - 完整的注册/登录/用户管理
+- 🌍 **国际化支持** - 中英文自动切换，支持系统语言检测
 - 📱 **响应式设计** - 支持桌面和移动端
 - 🎨 **现代 UI** - Ant Design + Tailwind CSS
+- ⚡ **快速开发** - Vite 构建工具，热模块替换
 
 ## 项目结构
 
@@ -99,13 +101,41 @@ npm start  # 或 npm run dev
 
 ## 开发说明
 
-### 前端代理配置
-前端已配置代理到后端：`"proxy": "http://localhost:8000"`
+### 前端配置
+
+**构建工具**: 使用 Vite 替代 Create React App，提供更快的开发体验
+
+**代理配置**: Vite 配置文件中已设置 API 代理到后端
+```javascript
+// vite.config.ts
+server: {
+  proxy: {
+    '/api': {
+      target: 'http://localhost:8000',
+      changeOrigin: true,
+    },
+  },
+}
+```
+
+**环境变量**: Vite 使用 `import.meta.env` 替代 `process.env`
+- `VITE_API_URL` - 后端 API 地址
+- `VITE_BASEAPP_API_URL` - BaseApp API 地址
 
 ### API 接口
 - `POST /api/login` - 用户登录
 - `POST /api/register` - 用户注册  
 - `GET /api/me` - 获取用户信息
+
+### 国际化 (i18n)
+
+**语言支持**: 
+- 中文 (zh-CN) 
+- English (en-US)
+
+**自动检测**: 根据用户浏览器/系统语言自动选择
+**手动切换**: 页面右上角语言切换器
+**持久化**: 语言偏好保存在 localStorage
 
 ### 数据库
 - 自动初始化 SQLite 数据库
@@ -117,3 +147,5 @@ npm start  # 或 npm run dev
 2. **依赖问题**: 删除 `node_modules` 重新 `npm install`
 3. **数据库问题**: 删除 `.db` 文件重新初始化
 4. **登录失败**: 检查后端控制台的认证日志
+5. **JavaScript 错误**: 检查浏览器控制台，确保 JavaScript 已启用
+6. **环境变量**: Vite 项目使用 `VITE_` 前缀，不是 `REACT_APP_`

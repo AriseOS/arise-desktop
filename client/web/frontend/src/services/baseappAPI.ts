@@ -1,5 +1,7 @@
 import axios from 'axios';
+import { createBaseAppAPIProxy } from './agentAPI';
 
+// 保留原有API结构以向后兼容
 const BASEAPP_API_URL = import.meta.env.VITE_BASEAPP_API_URL || 'http://localhost:8888';
 
 const baseappAPI = axios.create({
@@ -85,46 +87,63 @@ export interface BaseAppOperationResponse {
   timestamp: string;
 }
 
-export const baseappService = {
-  // 发送消息
-  sendMessage: async (data: BaseAppChatRequest): Promise<BaseAppChatResponse> => {
-    const response = await baseappAPI.post('/api/v1/chat/message', data);
-    return response.data;
-  },
+/**
+ * 创建BaseApp服务实例
+ * 支持新的统一路由和旧的直连方式
+ */
+export const createBaseAppService = (userId?: string, useNewRouting: boolean = true) => {
+  if (useNewRouting && userId) {
+    // 使用新的统一路由 (推荐)
+    console.log('[BaseApp] Using new unified routing via Agent Gateway');
+    return createBaseAppAPIProxy(userId, 'baseapp');
+  } else {
+    // 使用传统的直连方式 (向后兼容)
+    console.log('[BaseApp] Using legacy direct connection');
+    return {
+      // 发送消息
+      sendMessage: async (data: BaseAppChatRequest): Promise<BaseAppChatResponse> => {
+        const response = await baseappAPI.post('/api/v1/chat/message', data);
+        return response.data;
+      },
 
-  // 创建新会话
-  createSession: async (data: BaseAppSessionRequest): Promise<BaseAppSessionInfo> => {
-    const response = await baseappAPI.post('/api/v1/chat/session', data);
-    return response.data;
-  },
+      // 创建新会话
+      createSession: async (data: BaseAppSessionRequest): Promise<BaseAppSessionInfo> => {
+        const response = await baseappAPI.post('/api/v1/chat/session', data);
+        return response.data;
+      },
 
-  // 获取会话列表
-  getSessions: async (userId: string): Promise<BaseAppSessionListResponse> => {
-    const response = await baseappAPI.get(`/api/v1/chat/sessions?user_id=${userId}`);
-    return response.data;
-  },
+      // 获取会话列表
+      getSessions: async (userId: string): Promise<BaseAppSessionListResponse> => {
+        const response = await baseappAPI.get(`/api/v1/chat/sessions?user_id=${userId}`);
+        return response.data;
+      },
 
-  // 获取会话历史
-  getSessionHistory: async (sessionId: string, limit: number = 50): Promise<BaseAppSessionHistoryResponse> => {
-    const response = await baseappAPI.get(`/api/v1/chat/sessions/${sessionId}/history?limit=${limit}`);
-    return response.data;
-  },
+      // 获取会话历史
+      getSessionHistory: async (sessionId: string, limit: number = 50): Promise<BaseAppSessionHistoryResponse> => {
+        const response = await baseappAPI.get(`/api/v1/chat/sessions/${sessionId}/history?limit=${limit}`);
+        return response.data;
+      },
 
-  // 删除会话
-  deleteSession: async (sessionId: string, userId: string): Promise<BaseAppOperationResponse> => {
-    const response = await baseappAPI.delete(`/api/v1/chat/sessions/${sessionId}?user_id=${userId}`);
-    return response.data;
-  },
+      // 删除会话
+      deleteSession: async (sessionId: string, userId: string): Promise<BaseAppOperationResponse> => {
+        const response = await baseappAPI.delete(`/api/v1/chat/sessions/${sessionId}?user_id=${userId}`);
+        return response.data;
+      },
 
-  // 获取会话信息
-  getSessionInfo: async (sessionId: string): Promise<BaseAppSessionInfo> => {
-    const response = await baseappAPI.get(`/api/v1/chat/sessions/${sessionId}`);
-    return response.data;
-  },
+      // 获取会话信息
+      getSessionInfo: async (sessionId: string): Promise<BaseAppSessionInfo> => {
+        const response = await baseappAPI.get(`/api/v1/chat/sessions/${sessionId}`);
+        return response.data;
+      },
 
-  // 健康检查
-  healthCheck: async (): Promise<{ status: string; service: string; version: string }> => {
-    const response = await baseappAPI.get('/health');
-    return response.data;
-  },
+      // 健康检查
+      healthCheck: async (): Promise<{ status: string; service: string; version: string }> => {
+        const response = await baseappAPI.get('/health');
+        return response.data;
+      },
+    };
+  }
 };
+
+// 默认导出 - 保持向后兼容
+export const baseappService = createBaseAppService();

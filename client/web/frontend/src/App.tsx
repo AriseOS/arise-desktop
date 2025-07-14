@@ -11,8 +11,10 @@ import HomePage from './pages/HomePage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import Dashboard from './pages/Dashboard';
-import BaseAppPage from './pages/BaseAppPage';
 import WorkspacePage from './pages/WorkspacePage';
+import AgentContainer from './pages/AgentContainer';
+import AgentTestPage from './pages/AgentTestPage';
+import AgentManagePage from './pages/AgentManagePage';
 import './App.css';
 
 const AppContent: React.FC = () => {
@@ -28,7 +30,7 @@ const AppContent: React.FC = () => {
   }
 
   return (
-    <Router future={{ v7_startTransition: true }}>
+    <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <div className="App">
         <Routes>
           <Route 
@@ -48,12 +50,20 @@ const AppContent: React.FC = () => {
             element={user ? <Dashboard /> : <Navigate to="/login" />} 
           />
           <Route 
-            path="/baseapp" 
-            element={user ? <BaseAppPage /> : <Navigate to="/login" />} 
-          />
-          <Route 
             path="/workspace" 
             element={user ? <WorkspacePage /> : <Navigate to="/login" />} 
+          />
+          <Route 
+            path="/users/:userId/agents/:agentId/*" 
+            element={<AgentContainer />} 
+          />
+          <Route 
+            path="/agent-test" 
+            element={user ? <AgentTestPage /> : <Navigate to="/login" />} 
+          />
+          <Route 
+            path="/agent-manage" 
+            element={user ? <AgentManagePage /> : <Navigate to="/login" />} 
           />
         </Routes>
       </div>

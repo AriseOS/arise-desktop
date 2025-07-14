@@ -9,12 +9,18 @@ import {
   MobileOutlined,
   DesktopOutlined,
   CodeOutlined,
-  ThunderboltOutlined
+  ThunderboltOutlined,
+  SendOutlined,
+  ZoomInOutlined,
+  ZoomOutOutlined,
+  FullscreenOutlined
 } from '@ant-design/icons';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { RootState } from '../store';
 import { logout } from '../store/authSlice';
+import LanguageSwitcher from '../components/LanguageSwitcher';
 
 const { Header, Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
@@ -26,16 +32,152 @@ const WorkspacePage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useSelector((state: RootState) => state.auth);
+  const { t } = useTranslation();
   
   // Get initial prompt from navigation state
-  const initialPrompt = (location.state as any)?.initialPrompt || '';
+  const initialPrompt = (location.state as any)?.initialPrompt || 'Create an Excel Q&A Agent that can validate uploaded Excel files and answer questions about proper Excel formatting. The agent should check for correct headers, data types, required fields, and provide helpful guidance on Excel best practices.';
   
   // State management
   const [userInput, setUserInput] = useState(initialPrompt);
   const [isGenerating, setIsGenerating] = useState(false);
   const [targetPlatform, setTargetPlatform] = useState<'frontend' | 'android'>('frontend');
-  const [agentLogs, setAgentLogs] = useState<Array<{id: string, timestamp: Date, message: string, type: 'info' | 'success' | 'error'}>>([]);
-  const [workflowSteps, setWorkflowSteps] = useState<Array<{id: string, title: string, status: 'pending' | 'running' | 'completed' | 'error', description: string}>>([]);
+  const [agentLogs, setAgentLogs] = useState<Array<{id: string, timestamp: Date, message: string, type: 'info' | 'success' | 'error'}>>([
+    // 添加完整的Excel Q&A Agent构建过程日志
+    {
+      id: '1',
+      timestamp: new Date(Date.now() - 300000),
+      message: '🎯 [REQUIREMENT ANALYSIS] User wants: Excel Q&A Agent for form validation and guidance',
+      type: 'info'
+    },
+    {
+      id: '2',
+      timestamp: new Date(Date.now() - 285000),
+      message: '🤔 [THINKING] This requires: 1) Excel parsing 2) Schema validation 3) Q&A capability 4) User guidance',
+      type: 'info'
+    },
+    {
+      id: '3',
+      timestamp: new Date(Date.now() - 270000),
+      message: '📋 [ANALYSIS] Key use cases: Upload template → Validate submissions → Answer formatting questions',
+      type: 'info'
+    },
+    {
+      id: '4',
+      timestamp: new Date(Date.now() - 255000),
+      message: '🏗️ [ARCHITECTURE] Designing multi-component system: FileHandler + Validator + KnowledgeBase + ChatEngine',
+      type: 'info'
+    },
+    {
+      id: '5',
+      timestamp: new Date(Date.now() - 240000),
+      message: '⚙️ [IMPLEMENTATION] Setting up Excel parser with pandas/openpyxl for file processing',
+      type: 'info'
+    },
+    {
+      id: '6',
+      timestamp: new Date(Date.now() - 225000),
+      message: '🔍 [VALIDATION] Building schema validator: check headers, data types, required fields, format rules',
+      type: 'info'
+    },
+    {
+      id: '7',
+      timestamp: new Date(Date.now() - 210000),
+      message: '🧠 [KNOWLEDGE BASE] Creating Q&A database with Excel best practices and common formatting issues',
+      type: 'info'
+    },
+    {
+      id: '8',
+      timestamp: new Date(Date.now() - 195000),
+      message: '💬 [CHAT ENGINE] Implementing NLP interface for natural language Q&A about Excel formatting',
+      type: 'info'
+    },
+    {
+      id: '9',
+      timestamp: new Date(Date.now() - 180000),
+      message: '🔗 [INTEGRATION] Connecting all components: Upload → Parse → Validate → Store → Query → Response',
+      type: 'info'
+    },
+    {
+      id: '10',
+      timestamp: new Date(Date.now() - 165000),
+      message: '🧪 [TESTING] Running validation tests with sample Excel files and edge cases',
+      type: 'info'
+    },
+    {
+      id: '11',
+      timestamp: new Date(Date.now() - 150000),
+      message: '📊 [VALIDATION TEST] Testing with employee_data.xlsx - found 3 missing emails, 1 date format issue',
+      type: 'info'
+    },
+    {
+      id: '12',
+      timestamp: new Date(Date.now() - 135000),
+      message: '🔧 [ERROR HANDLING] Adding graceful error handling for malformed Excel files',
+      type: 'info'
+    },
+    {
+      id: '13',
+      timestamp: new Date(Date.now() - 120000),
+      message: '📝 [DOCUMENTATION] Generating user guide for Excel formatting best practices',
+      type: 'info'
+    },
+    {
+      id: '14',
+      timestamp: new Date(Date.now() - 105000),
+      message: '🎨 [UI SETUP] Creating intuitive chat interface for user interactions',
+      type: 'info'
+    },
+    {
+      id: '15',
+      timestamp: new Date(Date.now() - 90000),
+      message: '⚡ [OPTIMIZATION] Optimizing file processing speed and memory usage',
+      type: 'info'
+    },
+    {
+      id: '16',
+      timestamp: new Date(Date.now() - 75000),
+      message: '🔐 [SECURITY] Adding file type validation and malware scanning',
+      type: 'info'
+    },
+    {
+      id: '17',
+      timestamp: new Date(Date.now() - 60000),
+      message: '📊 [METRICS] Setting up logging and analytics for agent performance',
+      type: 'info'
+    },
+    {
+      id: '18',
+      timestamp: new Date(Date.now() - 45000),
+      message: '🚀 [DEPLOYMENT] Preparing agent for production deployment',
+      type: 'info'
+    },
+    {
+      id: '19',
+      timestamp: new Date(Date.now() - 30000),
+      message: '✅ [FINAL TEST] All systems operational - validation, Q&A, and guidance features working',
+      type: 'success'
+    },
+    {
+      id: '20',
+      timestamp: new Date(Date.now() - 15000),
+      message: '🎉 [SUCCESS] Excel Q&A Agent built successfully! Ready for deployment and user testing.',
+      type: 'success'
+    }
+  ]);
+  const [workflowSteps, setWorkflowSteps] = useState<Array<{id: string, title: string, status: 'pending' | 'running' | 'completed' | 'error', description: string}>>([
+    // 添加一些演示workflow步骤
+    { id: '1', title: 'Requirement Analysis', status: 'completed' as const, description: 'Analyzing Excel Q&A Agent requirements' },
+    { id: '2', title: 'Excel Schema Design', status: 'completed' as const, description: 'Designing Excel validation schema' },
+    { id: '3', title: 'Q&A Engine Setup', status: 'completed' as const, description: 'Building knowledge base and Q&A system' },
+    { id: '4', title: 'Agent Integration', status: 'completed' as const, description: 'Integrating all components and testing' }
+  ]);
+  
+  // Workflow display states
+  const [workflowZoom, setWorkflowZoom] = useState(1);
+  const [workflowPosition, setWorkflowPosition] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const workflowRef = useRef<HTMLDivElement>(null);
   
   const agentLogsRef = useRef<HTMLDivElement>(null);
 
@@ -47,12 +189,12 @@ const WorkspacePage: React.FC = () => {
     {
       key: 'profile',
       icon: <UserOutlined />,
-      label: '用户信息',
+      label: t('nav.profile'),
     },
     {
       key: 'home',
       icon: <DesktopOutlined />,
-      label: '返回首页',
+      label: t('nav.backToHome'),
       onClick: () => navigate('/'),
     },
     {
@@ -61,7 +203,7 @@ const WorkspacePage: React.FC = () => {
     {
       key: 'logout',
       icon: <LogoutOutlined />,
-      label: '退出登录',
+      label: t('nav.logout'),
       onClick: handleLogout,
     },
   ];
@@ -70,35 +212,110 @@ const WorkspacePage: React.FC = () => {
     if (!userInput.trim()) return;
     
     setIsGenerating(true);
+    setAgentLogs([]); // Clear previous logs
     
-    // Mock agent generation process
-    const newLog = {
-      id: Date.now().toString(),
-      timestamp: new Date(),
-      message: `开始分析用户需求: ${userInput}`,
-      type: 'info' as const
-    };
-    setAgentLogs(prev => [...prev, newLog]);
-    
-    // Mock workflow steps
+    // Simulate Excel Q&A Agent building process - detailed thinking process
+    const buildingSteps = [
+      {
+        message: "🎯 [REQUIREMENT ANALYSIS] User wants: Excel Q&A Agent for form validation and guidance",
+        type: 'info' as const,
+        delay: 500
+      },
+      {
+        message: "🤔 [THINKING] This requires: 1) Excel parsing 2) Schema validation 3) Q&A capability 4) User guidance",
+        type: 'info' as const,
+        delay: 1200
+      },
+      {
+        message: "📋 [ANALYSIS] Key use cases: Upload template → Validate submissions → Answer formatting questions",
+        type: 'info' as const,
+        delay: 1800
+      },
+      {
+        message: "🏗️ [ARCHITECTURE] Designing multi-component system: FileHandler + Validator + KnowledgeBase + ChatEngine",
+        type: 'info' as const,
+        delay: 2400
+      },
+      {
+        message: "⚙️ [IMPLEMENTATION] Setting up Excel parser with pandas/openpyxl for file processing",
+        type: 'info' as const,
+        delay: 3000
+      },
+      {
+        message: "🔍 [VALIDATION] Building schema validator: check headers, data types, required fields, format rules",
+        type: 'info' as const,
+        delay: 3600
+      },
+      {
+        message: "🧠 [KNOWLEDGE BASE] Creating Q&A database with Excel best practices and common formatting issues",
+        type: 'info' as const,
+        delay: 4200
+      },
+      {
+        message: "💬 [CHAT ENGINE] Implementing NLP interface for natural language Q&A about Excel formatting",
+        type: 'info' as const,
+        delay: 4800
+      },
+      {
+        message: "🔗 [INTEGRATION] Connecting all components: Upload → Parse → Validate → Store → Query → Response",
+        type: 'info' as const,
+        delay: 5400
+      },
+      {
+        message: "🧪 [TESTING] Running validation tests with sample Excel files and edge cases",
+        type: 'info' as const,
+        delay: 6000
+      },
+      {
+        message: "✅ [SUCCESS] Excel Q&A Agent built successfully! Ready for deployment and user testing.",
+        type: 'success' as const,
+        delay: 6600
+      }
+    ];
+
+    // Mock workflow steps for Excel Q&A Agent
     const mockSteps = [
-      { id: '1', title: '需求分析', status: 'running' as const, description: '正在分析用户输入的需求...' },
-      { id: '2', title: '架构设计', status: 'pending' as const, description: '设计应用架构和组件结构' },
-      { id: '3', title: '代码生成', status: 'pending' as const, description: '生成相应的代码文件' },
-      { id: '4', title: '测试部署', status: 'pending' as const, description: '测试生成的代码并部署' }
+      { id: '1', title: 'Requirement Analysis', status: 'running' as const, description: 'Analyzing Excel Q&A Agent requirements' },
+      { id: '2', title: 'Excel Schema Design', status: 'pending' as const, description: 'Designing Excel validation schema' },
+      { id: '3', title: 'Q&A Engine Setup', status: 'pending' as const, description: 'Building knowledge base and Q&A system' },
+      { id: '4', title: 'Agent Integration', status: 'pending' as const, description: 'Integrating all components and testing' }
     ];
     setWorkflowSteps(mockSteps);
     
-    // TODO: Integrate with backend API
-    setTimeout(() => {
-      setIsGenerating(false);
+    // Execute building steps with realistic timing
+    let currentStep = 0;
+    
+    const executeStep = async (step: typeof buildingSteps[0]) => {
+      await new Promise(resolve => setTimeout(resolve, step.delay));
       setAgentLogs(prev => [...prev, {
-        id: (Date.now() + 1).toString(),
+        id: (Date.now() + Math.random()).toString(),
         timestamp: new Date(),
-        message: 'Agent生成功能开发中，敬请期待！',
-        type: 'success'
+        message: step.message,
+        type: step.type
       }]);
-    }, 3000);
+      
+      // Update workflow step status
+      if (currentStep < mockSteps.length) {
+        setWorkflowSteps(prev => prev.map((s, i) => {
+          if (i === currentStep) {
+            return { ...s, status: 'completed' as const };
+          } else if (i === currentStep + 1) {
+            return { ...s, status: 'running' as const };
+          }
+          return s;
+        }));
+        currentStep++;
+      }
+    };
+    
+    // Execute all steps
+    for (const step of buildingSteps) {
+      await executeStep(step);
+    }
+    
+    // Mark final step as completed
+    setWorkflowSteps(prev => prev.map(s => ({ ...s, status: 'completed' as const })));
+    setIsGenerating(false);
   };
 
   const handleStopGeneration = () => {
@@ -106,7 +323,7 @@ const WorkspacePage: React.FC = () => {
     setAgentLogs(prev => [...prev, {
       id: Date.now().toString(),
       timestamp: new Date(),
-      message: '用户停止了生成过程',
+      message: t('workspace.generationStopped'),
       type: 'info'
     }]);
   };
@@ -116,6 +333,40 @@ const WorkspacePage: React.FC = () => {
       e.preventDefault();
       handleStartGeneration();
     }
+  };
+
+  // Workflow zoom and pan handlers
+  const handleZoomIn = () => {
+    setWorkflowZoom(prev => Math.min(prev + 0.2, 3));
+  };
+
+  const handleZoomOut = () => {
+    setWorkflowZoom(prev => Math.max(prev - 0.2, 0.3));
+  };
+
+  const handleResetView = () => {
+    setWorkflowZoom(1);
+    setWorkflowPosition({ x: 0, y: 0 });
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    setIsDragging(true);
+    setDragStart({
+      x: e.clientX - workflowPosition.x,
+      y: e.clientY - workflowPosition.y
+    });
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging) return;
+    setWorkflowPosition({
+      x: e.clientX - dragStart.x,
+      y: e.clientY - dragStart.y
+    });
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
   };
 
   // Auto-scroll agent logs
@@ -133,28 +384,14 @@ const WorkspacePage: React.FC = () => {
           <Title level={3} className="m-0 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
             ami.dev
           </Title>
-          <Tag color="blue" className="ml-4">工作台</Tag>
+          <Tag color="blue" className="ml-4">{t('workspace.title')}</Tag>
         </div>
         
         <div className="flex items-center space-x-4">
-          <Select
-            value={targetPlatform}
-            onChange={setTargetPlatform}
-            className="w-32"
-            size="small"
-          >
-            <Option value="frontend">
-              <DesktopOutlined className="mr-1" />
-              前端
-            </Option>
-            <Option value="android">
-              <MobileOutlined className="mr-1" />
-              Android
-            </Option>
-          </Select>
+          <LanguageSwitcher />
           
           <Space>
-            <Text className="text-gray-600">欢迎，{user?.username}！</Text>
+            <Text className="text-gray-600">{t('home.welcome').replace('{username}', user?.username || 'User')}</Text>
             <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
               <Avatar 
                 icon={<UserOutlined />} 
@@ -166,32 +403,33 @@ const WorkspacePage: React.FC = () => {
       </Header>
 
       {/* Main Content */}
-      <Content className="p-4">
+      <Content className="p-4 h-[calc(100vh-64px)]">
         <div className="h-full grid grid-cols-12 gap-4">
           
           {/* Left Panel - Agent Output & User Dialog */}
-          <div className="col-span-3 flex flex-col space-y-4">
+          <div className="col-span-3 flex flex-col h-full gap-4">
             
             {/* Agent Output */}
             <Card 
               title={
                 <Space>
                   <RobotOutlined className="text-green-600" />
-                  <span>Agent 输出框</span>
-                  {isGenerating && <Tag color="processing">运行中</Tag>}
+                  <span>{t('workspace.agentOutput')}</span>
+                  {isGenerating && <Tag color="processing">{t('workspace.running')}</Tag>}
                 </Space>
               }
-              className="flex-1"
-              bodyStyle={{ padding: 0 }}
+              className="flex-shrink-0"
+              style={{ height: 'calc(100vh - 64px - 340px - 32px - 16px - 60px)' }}
+              bodyStyle={{ padding: 0, height: 'calc(100% - 60px)' }}
             >
               <div 
                 ref={agentLogsRef}
-                className="h-80 overflow-y-auto p-4 bg-gray-900 text-white text-sm font-mono"
+                className="h-full overflow-y-auto p-4 bg-gray-900 text-white text-sm font-mono"
               >
                 {agentLogs.length === 0 ? (
                   <div className="text-gray-400 text-center py-8">
                     <RobotOutlined className="text-2xl mb-2 block" />
-                    等待开始生成...
+                    {t('workspace.waitingToStart')}
                   </div>
                 ) : (
                   agentLogs.map(log => (
@@ -212,7 +450,7 @@ const WorkspacePage: React.FC = () => {
                 {isGenerating && (
                   <div className="text-yellow-400 animate-pulse">
                     <ThunderboltOutlined className="mr-2" />
-                    Agent 正在思考中...
+                    {t('workspace.agentThinking')}
                   </div>
                 )}
               </div>
@@ -223,19 +461,21 @@ const WorkspacePage: React.FC = () => {
               title={
                 <Space>
                   <UserOutlined className="text-blue-600" />
-                  <span>对话框</span>
+                  <span>{t('workspace.dialog')}</span>
                 </Space>
               }
-              className="h-80"
+              className="flex-shrink-0"
+              style={{ height: '340px' }}
+              bodyStyle={{ height: 'calc(100% - 60px)' }}
             >
               <div className="h-full flex flex-col">
                 <div className="flex-1 mb-4">
-                  <Text className="text-gray-600 block mb-2">用户描述新的修改需求：</Text>
+                  <Text className="text-gray-600 block mb-2">{t('workspace.userRequirements')}</Text>
                   <TextArea
                     value={userInput}
                     onChange={(e) => setUserInput(e.target.value)}
                     onKeyPress={handleKeyPress}
-                    placeholder="描述您想要创建或修改的功能，例如：创建一个待办事项应用，包含添加、删除、标记完成等功能..."
+                    placeholder={t('workspace.placeholder')}
                     autoSize={{ minRows: 4, maxRows: 8 }}
                     disabled={isGenerating}
                     className="mb-4"
@@ -244,7 +484,7 @@ const WorkspacePage: React.FC = () => {
                 
                 <div className="flex justify-between items-center">
                   <Text className="text-xs text-gray-500">
-                    按 {navigator.platform.includes('Mac') ? 'Cmd' : 'Ctrl'} + Enter 开始生成
+                    {t('workspace.quickGenerate').replace('{key}', navigator.platform.includes('Mac') ? 'Cmd' : 'Ctrl')}
                   </Text>
                   <Space>
                     {isGenerating ? (
@@ -253,7 +493,7 @@ const WorkspacePage: React.FC = () => {
                         icon={<StopOutlined />}
                         onClick={handleStopGeneration}
                       >
-                        停止
+                        {t('workspace.stop')}
                       </Button>
                     ) : (
                       <Button
@@ -262,7 +502,7 @@ const WorkspacePage: React.FC = () => {
                         onClick={handleStartGeneration}
                         disabled={!userInput.trim()}
                       >
-                        开始生成
+                        {t('workspace.startGeneration')}
                       </Button>
                     )}
                   </Space>
@@ -272,61 +512,184 @@ const WorkspacePage: React.FC = () => {
           </div>
 
           {/* Center Panel - Workflow Display */}
-          <div className="col-span-6">
+          <div className="col-span-6 h-full">
             <Card 
               title={
-                <Space>
-                  <CodeOutlined className="text-purple-600" />
-                  <span>User Agent 逻辑展示 (workflow)</span>
-                </Space>
+                <div className="flex justify-between items-center w-full">
+                  <Space>
+                    <CodeOutlined className="text-purple-600" />
+                    <span>{t('workspace.userAgentDisplay')}</span>
+                  </Space>
+                  <Space size="small">
+                    <Button 
+                      size="small" 
+                      icon={<ZoomOutOutlined />}
+                      onClick={handleZoomOut}
+                      disabled={workflowZoom <= 0.3}
+                    />
+                    <span className="text-xs text-gray-500 min-w-[50px] text-center">
+                      {Math.round(workflowZoom * 100)}%
+                    </span>
+                    <Button 
+                      size="small" 
+                      icon={<ZoomInOutlined />}
+                      onClick={handleZoomIn}
+                      disabled={workflowZoom >= 3}
+                    />
+                    <Button 
+                      size="small" 
+                      icon={<FullscreenOutlined />}
+                      onClick={handleResetView}
+                      title="Reset View"
+                    />
+                  </Space>
+                </div>
               }
               className="h-full"
+              bodyStyle={{ height: '100%', padding: 0, overflow: 'hidden' }}
             >
-              <div className="h-full overflow-y-auto">
+              <div 
+                className="h-full relative overflow-hidden"
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseUp}
+                style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
+              >
                 {workflowSteps.length === 0 ? (
-                  <div className="text-center py-16 text-gray-400">
-                    <CodeOutlined className="text-4xl mb-4 block" />
-                    <Title level={4} className="text-gray-400">等待开始构建</Title>
-                    <Paragraph className="text-gray-500">
-                      Agent 将在这里展示构建过程和逻辑流程
-                    </Paragraph>
+                  <div className="text-center py-16 text-gray-400 absolute inset-0 flex items-center justify-center">
+                    <div>
+                      <CodeOutlined className="text-4xl mb-4 block" />
+                      <Text className="text-gray-500">Start building to see the agent workflow</Text>
+                    </div>
                   </div>
                 ) : (
-                  <div className="space-y-4">
-                    {workflowSteps.map((step, index) => (
-                      <div key={step.id} className="relative">
-                        {index < workflowSteps.length - 1 && (
-                          <div className="absolute left-6 top-12 w-0.5 h-16 bg-gray-300"></div>
-                        )}
-                        <div className="flex items-start space-x-4">
-                          <div className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-bold ${
-                            step.status === 'completed' ? 'bg-green-500' :
-                            step.status === 'running' ? 'bg-blue-500 animate-pulse' :
-                            step.status === 'error' ? 'bg-red-500' :
-                            'bg-gray-400'
-                          }`}>
-                            {index + 1}
+                  <div 
+                    ref={workflowRef}
+                    className="absolute inset-0 transition-transform duration-200"
+                    style={{ 
+                      transform: `translate(${workflowPosition.x}px, ${workflowPosition.y}px) scale(${workflowZoom})`,
+                      transformOrigin: 'center center',
+                      width: '100%',
+                      height: '100%',
+                      padding: '16px'
+                    }}
+                  >
+                    {/* Excel Q&A Agent Workflow - Node-based visualization */}
+                    <div className="space-y-3">
+                      
+                      {/* Workflow Title */}
+                      <div className="text-center mb-4">
+                        <Text className="font-semibold text-base">Excel Q&A Agent Workflow</Text>
+                        <div className="text-xs text-gray-500">Node-based processing pipeline</div>
+                      </div>
+
+                      {/* Start Node */}
+                      <div className="flex justify-center">
+                        <div className="bg-green-50 border-2 border-green-400 rounded-lg p-2 min-w-[120px] text-center">
+                          <div className="text-green-600 text-lg mb-1">🚀</div>
+                          <Text className="font-semibold text-xs">START</Text>
+                          <div className="text-xs text-gray-600">User Input</div>
+                        </div>
+                      </div>
+                      
+                      {/* Connection Line */}
+                      <div className="flex justify-center">
+                        <div className="w-0.5 h-4 bg-gray-300"></div>
+                      </div>
+
+                      {/* File Upload Node */}
+                      <div className="flex justify-center">
+                        <div className="bg-blue-50 border-2 border-blue-400 rounded-lg p-2 min-w-[120px] text-center relative">
+                          <div className="text-blue-600 text-lg mb-1">📁</div>
+                          <Text className="font-semibold text-xs">File Upload</Text>
+                          <div className="text-xs text-gray-600">.xlsx, .csv</div>
+                          {/* Node connector dots */}
+                          <div className="absolute -top-0.5 left-1/2 transform -translate-x-1/2 w-1.5 h-1.5 bg-blue-400 rounded-full"></div>
+                          <div className="absolute -bottom-0.5 left-1/2 transform -translate-x-1/2 w-1.5 h-1.5 bg-blue-400 rounded-full"></div>
+                        </div>
+                      </div>
+
+                      {/* Connection Line */}
+                      <div className="flex justify-center">
+                        <div className="w-0.5 h-4 bg-gray-300"></div>
+                      </div>
+
+                      {/* Parallel Processing Nodes */}
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="text-center">
+                          <div className="bg-purple-50 border-2 border-purple-400 rounded-lg p-2 relative">
+                            <div className="text-purple-600 text-lg mb-1">🔍</div>
+                            <Text className="font-semibold text-xs">Schema Validator</Text>
+                            <div className="text-xs text-gray-600">Check format</div>
+                            <div className="absolute -top-0.5 left-1/2 transform -translate-x-1/2 w-1.5 h-1.5 bg-purple-400 rounded-full"></div>
+                            <div className="absolute -bottom-0.5 left-1/2 transform -translate-x-1/2 w-1.5 h-1.5 bg-purple-400 rounded-full"></div>
                           </div>
-                          <div className="flex-1">
-                            <Title level={5} className="mb-1">{step.title}</Title>
-                            <Text className="text-gray-600">{step.description}</Text>
-                            <div className="mt-2">
-                              <Tag color={
-                                step.status === 'completed' ? 'success' :
-                                step.status === 'running' ? 'processing' :
-                                step.status === 'error' ? 'error' :
-                                'default'
-                              }>
-                                {step.status === 'completed' ? '已完成' :
-                                 step.status === 'running' ? '进行中' :
-                                 step.status === 'error' ? '出错' :
-                                 '等待中'}
-                              </Tag>
-                            </div>
+                        </div>
+                        <div className="text-center">
+                          <div className="bg-orange-50 border-2 border-orange-400 rounded-lg p-2 relative">
+                            <div className="text-orange-600 text-lg mb-1">💬</div>
+                            <Text className="font-semibold text-xs">Q&A Engine</Text>
+                            <div className="text-xs text-gray-600">Answer questions</div>
+                            <div className="absolute -top-0.5 left-1/2 transform -translate-x-1/2 w-1.5 h-1.5 bg-orange-400 rounded-full"></div>
+                            <div className="absolute -bottom-0.5 left-1/2 transform -translate-x-1/2 w-1.5 h-1.5 bg-orange-400 rounded-full"></div>
                           </div>
                         </div>
                       </div>
-                    ))}
+
+                      {/* Connection Lines from parallel nodes */}
+                      <div className="flex justify-center items-center space-x-6">
+                        <div className="w-0.5 h-4 bg-gray-300"></div>
+                        <div className="w-0.5 h-4 bg-gray-300"></div>
+                      </div>
+
+                      {/* Knowledge Base Node */}
+                      <div className="flex justify-center">
+                        <div className="bg-yellow-50 border-2 border-yellow-400 rounded-lg p-2 min-w-[140px] text-center relative">
+                          <div className="text-yellow-600 text-lg mb-1">🧠</div>
+                          <Text className="font-semibold text-xs">Knowledge Base</Text>
+                          <div className="text-xs text-gray-600">Excel rules</div>
+                          <div className="mt-1 flex justify-center space-x-1">
+                            <Tag size="small" color="blue" className="text-xs px-1">Templates</Tag>
+                            <Tag size="small" color="green" className="text-xs px-1">Rules</Tag>
+                          </div>
+                          <div className="absolute -top-0.5 left-1/2 transform -translate-x-1/2 w-1.5 h-1.5 bg-yellow-400 rounded-full"></div>
+                          <div className="absolute -bottom-0.5 left-1/2 transform -translate-x-1/2 w-1.5 h-1.5 bg-yellow-400 rounded-full"></div>
+                        </div>
+                      </div>
+
+                      {/* Connection Line */}
+                      <div className="flex justify-center">
+                        <div className="w-0.5 h-4 bg-gray-300"></div>
+                      </div>
+
+                      {/* Response Node */}
+                      <div className="flex justify-center">
+                        <div className="bg-red-50 border-2 border-red-400 rounded-lg p-2 min-w-[120px] text-center relative">
+                          <div className="text-red-600 text-lg mb-1">📤</div>
+                          <Text className="font-semibold text-xs">Response</Text>
+                          <div className="text-xs text-gray-600">Validation + Answer</div>
+                          <div className="absolute -top-0.5 left-1/2 transform -translate-x-1/2 w-1.5 h-1.5 bg-red-400 rounded-full"></div>
+                        </div>
+                      </div>
+
+                      {/* Agent Status Panel */}
+                      <div className="mt-4 p-3 bg-gray-50 border rounded-lg">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-2">
+                            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                            <div>
+                              <Text className="font-semibold text-xs">Agent Status: ACTIVE</Text>
+                              <div className="text-xs text-gray-600">All nodes connected</div>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-xs text-gray-500">Memory</div>
+                            <div className="text-xs font-semibold">2.3 MB</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
@@ -334,7 +697,7 @@ const WorkspacePage: React.FC = () => {
           </div>
 
           {/* Right Panel - Preview */}
-          <div className="col-span-3">
+          <div className="col-span-3 h-full">
             <Card 
               title={
                 <Space>
@@ -342,27 +705,249 @@ const WorkspacePage: React.FC = () => {
                     <DesktopOutlined className="text-orange-600" /> : 
                     <MobileOutlined className="text-orange-600" />
                   }
-                  <span>
-                    User Agent {targetPlatform === 'frontend' ? '前端' : 'Android'} 展示
-                  </span>
+                  <span>{t('workspace.preview')}</span>
                 </Space>
               }
               className="h-full"
+              bodyStyle={{ height: '100%', padding: 0 }}
             >
-              <div className="h-full flex items-center justify-center">
-                <div className="text-center text-gray-400">
-                  {targetPlatform === 'frontend' ? (
-                    <DesktopOutlined className="text-6xl mb-4 block" />
+              <div className="h-full flex flex-col">
+                {/* Platform Selector */}
+                <div className="p-4 pb-2 flex justify-center border-b">
+                  <Select
+                    value={targetPlatform}
+                    onChange={setTargetPlatform}
+                    className="w-36"
+                    size="small"
+                  >
+                    <Option value="frontend">
+                      <DesktopOutlined className="mr-1" />
+                      {t('workspace.frontend')}
+                    </Option>
+                    <Option value="android">
+                      <MobileOutlined className="mr-1" />
+                      {t('workspace.android')}
+                    </Option>
+                  </Select>
+                </div>
+
+                {/* Preview Container with Scroll */}
+                <div className="flex-1 overflow-y-auto">
+                  {workflowSteps.length === 0 ? (
+                    <div className="h-full flex items-center justify-center text-center text-gray-400 p-8">
+                      <div>
+                        {targetPlatform === 'frontend' ? (
+                          <DesktopOutlined className="text-4xl mb-4 block" />
+                        ) : (
+                          <MobileOutlined className="text-4xl mb-4 block" />
+                        )}
+                        <Text className="text-gray-500">Agent preview will appear here</Text>
+                      </div>
+                    </div>
                   ) : (
-                    <MobileOutlined className="text-6xl mb-4 block" />
+                    <div className="p-4">
+                      {/* Excel Q&A Chat Interface */}
+                      <div className="bg-gray-50 rounded-lg border">
+                        {/* Chat Header */}
+                        <div className="bg-gradient-to-r from-blue-500 to-blue-600 text-white p-4 flex items-center space-x-3">
+                          <div className="w-10 h-10 bg-white bg-opacity-20 rounded-full flex items-center justify-center">
+                            <span className="text-xl">📊</span>
+                          </div>
+                          <div>
+                            <Text className="font-semibold text-white text-base">Excel Q&A Assistant</Text>
+                            <div className="text-sm text-blue-100">✅ Ready to help with Excel questions</div>
+                          </div>
+                        </div>
+
+                        {/* Chat Messages with Scroll */}
+                        <div className="p-4 space-y-4 bg-gray-50 max-h-[500px] overflow-y-auto">
+                      {/* Welcome Message */}
+                      <div className="flex items-start space-x-2">
+                        <div className="w-7 h-7 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
+                          <span className="text-white text-xs">🤖</span>
+                        </div>
+                        <div className="bg-white rounded-lg p-3 max-w-[85%] shadow-sm border">
+                          <Text className="text-sm">Hello! I'm your Excel validation assistant. Upload your Excel file or ask me questions about proper formatting. I can help with:</Text>
+                          <div className="mt-2 text-xs space-y-1">
+                            <div>• File structure validation</div>
+                            <div>• Data type checking</div>
+                            <div>• Formatting guidance</div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* User Upload Request */}
+                      <div className="flex items-start space-x-2 justify-end">
+                        <div className="bg-blue-500 text-white rounded-lg p-3 max-w-[85%] shadow-sm">
+                          <Text className="text-sm text-white">I need to validate my employee data Excel file. Can you check it?</Text>
+                        </div>
+                        <div className="w-7 h-7 bg-gray-400 rounded-full flex items-center justify-center flex-shrink-0">
+                          <UserOutlined className="text-xs text-white" />
+                        </div>
+                      </div>
+
+                      {/* Assistant Upload Interface */}
+                      <div className="flex items-start space-x-2">
+                        <div className="w-7 h-7 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
+                          <span className="text-white text-xs">🤖</span>
+                        </div>
+                        <div className="bg-white rounded-lg p-3 max-w-[85%] shadow-sm border">
+                          <Text className="text-sm">Perfect! Please upload your Excel file:</Text>
+                          <div className="mt-3 p-4 border-2 border-dashed border-blue-300 rounded-lg text-center bg-blue-50 hover:bg-blue-100 cursor-pointer transition-colors">
+                            <div className="text-blue-500 text-2xl mb-2">📎</div>
+                            <Text className="text-sm font-medium text-blue-600">Drop file here or click to browse</Text>
+                            <div className="text-xs text-gray-500 mt-1">Supports .xlsx, .xls, .csv files</div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* File Processing */}
+                      <div className="flex items-start space-x-2">
+                        <div className="w-7 h-7 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
+                          <span className="text-white text-xs">🤖</span>
+                        </div>
+                        <div className="bg-white rounded-lg p-3 max-w-[85%] shadow-sm border">
+                          <Text className="text-sm">📄 Processing "employee_data.xlsx"...</Text>
+                          <div className="mt-2 bg-gray-200 rounded-full h-2">
+                            <div className="bg-blue-500 h-2 rounded-full w-full"></div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Validation Results */}
+                      <div className="flex items-start space-x-2">
+                        <div className="w-7 h-7 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
+                          <span className="text-white text-xs">🤖</span>
+                        </div>
+                        <div className="bg-white rounded-lg p-3 max-w-[85%] shadow-sm border">
+                          <Text className="text-sm font-semibold text-green-600 mb-2">✅ Validation Results</Text>
+                          <div className="space-y-2 text-sm">
+                            <div className="flex items-center space-x-2">
+                              <span className="text-green-500">✓</span>
+                              <span>Headers are correctly formatted</span>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <span className="text-green-500">✓</span>
+                              <span>All required columns present</span>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <span className="text-yellow-500">⚠️</span>
+                              <span>3 rows have missing email addresses</span>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <span className="text-red-500">❌</span>
+                              <span>Date format inconsistent in column D</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* User Follow-up */}
+                      <div className="flex items-start space-x-2 justify-end">
+                        <div className="bg-blue-500 text-white rounded-lg p-3 max-w-[85%] shadow-sm">
+                          <Text className="text-sm text-white">How should I fix the date format issue?</Text>
+                        </div>
+                        <div className="w-7 h-7 bg-gray-400 rounded-full flex items-center justify-center flex-shrink-0">
+                          <UserOutlined className="text-xs text-white" />
+                        </div>
+                      </div>
+
+                            {/* Assistant Guidance */}
+                            <div className="flex items-start space-x-3">
+                              <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
+                                <span className="text-white text-sm">🤖</span>
+                              </div>
+                              <div className="bg-white rounded-lg p-4 max-w-[80%] shadow-sm border">
+                                <Text className="text-sm">For consistent date formatting:</Text>
+                                <div className="mt-3 bg-gray-100 p-3 rounded-lg text-sm font-mono">
+                                  Format: YYYY-MM-DD<br/>
+                                  Example: 2024-03-15
+                                </div>
+                                <Text className="text-sm mt-3">This ensures proper sorting and validation. Would you like me to show you how to apply this format in Excel?</Text>
+                              </div>
+                            </div>
+
+                            {/* User Follow-up Question */}
+                            <div className="flex items-start space-x-3 justify-end">
+                              <div className="bg-blue-500 text-white rounded-lg p-4 max-w-[80%] shadow-sm">
+                                <Text className="text-sm text-white">Yes please! Can you also help with phone number formatting?</Text>
+                              </div>
+                              <div className="w-8 h-8 bg-gray-400 rounded-full flex items-center justify-center flex-shrink-0">
+                                <UserOutlined className="text-sm text-white" />
+                              </div>
+                            </div>
+
+                            {/* Assistant Phone Number Help */}
+                            <div className="flex items-start space-x-3">
+                              <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
+                                <span className="text-white text-sm">🤖</span>
+                              </div>
+                              <div className="bg-white rounded-lg p-4 max-w-[80%] shadow-sm border">
+                                <Text className="text-sm font-semibold mb-2">📞 Phone Number Formatting Guide</Text>
+                                <div className="space-y-2 text-sm">
+                                  <div className="bg-blue-50 p-3 rounded">
+                                    <strong>Recommended format:</strong> +1 (555) 123-4567
+                                  </div>
+                                  <div className="bg-green-50 p-3 rounded">
+                                    <strong>Alternative:</strong> 555-123-4567
+                                  </div>
+                                  <div className="bg-yellow-50 p-3 rounded">
+                                    <strong>Avoid:</strong> Mixed formats in same column
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* More User Questions */}
+                            <div className="flex items-start space-x-3 justify-end">
+                              <div className="bg-blue-500 text-white rounded-lg p-4 max-w-[80%] shadow-sm">
+                                <Text className="text-sm text-white">What about email validation? Any specific format I should follow?</Text>
+                              </div>
+                              <div className="w-8 h-8 bg-gray-400 rounded-full flex items-center justify-center flex-shrink-0">
+                                <UserOutlined className="text-sm text-white" />
+                              </div>
+                            </div>
+
+                            {/* Email Validation Response */}
+                            <div className="flex items-start space-x-3">
+                              <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
+                                <span className="text-white text-sm">🤖</span>
+                              </div>
+                              <div className="bg-white rounded-lg p-4 max-w-[80%] shadow-sm border">
+                                <Text className="text-sm font-semibold mb-2">📧 Email Validation Tips</Text>
+                                <div className="text-sm space-y-2">
+                                  <div>✅ Ensure all emails contain @ symbol</div>
+                                  <div>✅ Check for valid domain extensions (.com, .org, etc.)</div>
+                                  <div>✅ No spaces in email addresses</div>
+                                  <div>❌ Watch out for: multiple @, missing domains</div>
+                                </div>
+                                <div className="mt-3 p-3 bg-gray-50 rounded text-xs">
+                                  <strong>Excel Tip:</strong> Use Data Validation with custom formula to check email format automatically!
+                                </div>
+                              </div>
+                            </div>
+
+                        </div>
+
+                        {/* Chat Input - Fixed at bottom */}
+                        <div className="border-t bg-white p-4">
+                          <div className="flex items-center space-x-3">
+                            <Input 
+                              placeholder="Ask about Excel formatting, validation rules..."
+                              className="flex-1"
+                              size="large"
+                            />
+                            <Button type="primary" size="large" icon={<SendOutlined />}>
+                              Send
+                            </Button>
+                          </div>
+                          <div className="text-xs text-gray-500 mt-2">
+                            💡 Try: "How to format currency?" or "Validate address format"
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   )}
-                  <Title level={4} className="text-gray-400">预览区域</Title>
-                  <Paragraph className="text-gray-500">
-                    生成的{targetPlatform === 'frontend' ? '前端界面' : 'Android应用'}将在这里展示
-                  </Paragraph>
-                  <Button type="dashed" disabled>
-                    {targetPlatform === 'frontend' ? '前端预览' : 'Android模拟器'}
-                  </Button>
                 </div>
               </div>
             </Card>

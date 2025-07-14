@@ -1,6 +1,6 @@
 import React from 'react';
 import { Layout, Button, Typography, Avatar, Dropdown, Space } from 'antd';
-import { UserOutlined, LogoutOutlined, MessageOutlined, RobotOutlined } from '@ant-design/icons';
+import { UserOutlined, LogoutOutlined, MessageOutlined, RobotOutlined, ExperimentOutlined, SettingOutlined } from '@ant-design/icons';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { RootState } from '../store';
@@ -50,7 +50,7 @@ const Dashboard: React.FC = () => {
             <Button 
               type="default" 
               icon={<RobotOutlined />}
-              onClick={() => navigate('/baseapp')}
+              onClick={() => navigate(`/users/${user?.id}/agents/baseapp`)}
             >
               BaseApp
             </Button>
@@ -80,7 +80,7 @@ const Dashboard: React.FC = () => {
                 </div>
                 
                 {/* 快捷操作 */}
-                <div className="grid grid-cols-3 gap-4 mb-6">
+                <div className="grid grid-cols-2 gap-4 mb-6">
                   <div 
                     className="p-4 border rounded-lg hover:bg-gray-50 cursor-pointer"
                     onClick={() => navigate('/workspace')}
@@ -93,7 +93,7 @@ const Dashboard: React.FC = () => {
                   </div>
                   <div 
                     className="p-4 border rounded-lg hover:bg-gray-50 cursor-pointer"
-                    onClick={() => navigate('/baseapp')}
+                    onClick={() => navigate(`/users/${user?.id}/agents/baseapp`)}
                   >
                     <h4 className="font-medium flex items-center">
                       <RobotOutlined className="mr-2" />
@@ -101,9 +101,25 @@ const Dashboard: React.FC = () => {
                     </h4>
                     <p className="text-sm text-gray-600">体验高级 AI 对话功能</p>
                   </div>
-                  <div className="p-4 border rounded-lg hover:bg-gray-50 cursor-pointer opacity-50">
-                    <h4 className="font-medium">项目管理</h4>
-                    <p className="text-sm text-gray-600">管理您的 Agent 项目</p>
+                  <div 
+                    className="p-4 border rounded-lg hover:bg-gray-50 cursor-pointer"
+                    onClick={() => navigate('/agent-manage')}
+                  >
+                    <h4 className="font-medium flex items-center">
+                      <SettingOutlined className="mr-2" />
+                      Agent管理
+                    </h4>
+                    <p className="text-sm text-gray-600">管理您的所有Agent</p>
+                  </div>
+                  <div 
+                    className="p-4 border rounded-lg hover:bg-gray-50 cursor-pointer"
+                    onClick={() => navigate('/agent-test')}
+                  >
+                    <h4 className="font-medium flex items-center">
+                      <ExperimentOutlined className="mr-2" />
+                      架构测试
+                    </h4>
+                    <p className="text-sm text-gray-600">测试新Agent架构组件</p>
                   </div>
                 </div>
               </div>

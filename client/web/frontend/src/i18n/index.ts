@@ -51,6 +51,45 @@ const zhCNTranslations = {
     "profile": "用户信息",
     "logout": "退出登录",
     "backToHome": "返回首页"
+  },
+  "workspace": {
+    "title": "工作台",
+    "agentOutput": "Agent输出框",
+    "running": "运行中",
+    "dialog": "对话框",
+    "userRequirements": "用户描述新的修改需求：",
+    "placeholder": "描述您想要创建或修改的功能，例如：创建一个待办事项应用，包含添加、删除、标记完成等功能...",
+    "quickGenerate": "按{key}+Enter开始生成",
+    "stop": "停止",
+    "startGeneration": "开始生成",
+    "userAgentDisplay": "User Agent展示",
+    "frontend": "前端",
+    "android": "Android",
+    "preview": "预览区域",
+    "previewDescription": "生成的{platform}将在这里展示",
+    "frontendInterface": "前端界面",
+    "androidApp": "Android应用",
+    "frontendPreview": "前端预览",
+    "androidSimulator": "Android模拟器",
+    "waitingToStart": "等待开始生成...",
+    "agentThinking": "Agent正在思考中...",
+    "startAnalyzing": "开始分析用户需求：{input}",
+    "generationStopped": "用户停止了生成过程",
+    "generationComplete": "Agent生成功能开发中，敬请期待！",
+    "steps": {
+      "requirementAnalysis": "需求分析",
+      "architectureDesign": "架构设计", 
+      "codeGeneration": "代码生成",
+      "testDeploy": "测试部署",
+      "analyzing": "正在分析用户输入的需求...",
+      "designingArchitecture": "设计应用架构和组件结构",
+      "generatingCode": "生成相应的代码文件",
+      "testingDeploying": "测试生成的代码并部署",
+      "completed": "已完成",
+      "inProgress": "进行中",
+      "error": "出错",
+      "waiting": "等待中"
+    }
   }
 };
 
@@ -100,6 +139,45 @@ const enUSTranslations = {
     "profile": "Profile",
     "logout": "Logout",
     "backToHome": "Back to Home"
+  },
+  "workspace": {
+    "title": "Workspace",
+    "agentOutput": "Agent Output",
+    "running": "Running",
+    "dialog": "Dialog",
+    "userRequirements": "Describe your new modification requirements:",
+    "placeholder": "Describe the features you want to create or modify, for example: Create a todo management app with add, delete, and mark complete functions...",
+    "quickGenerate": "Press {key}+Enter to start generation",
+    "stop": "Stop",
+    "startGeneration": "Start Generation",
+    "userAgentDisplay": "User Agent Display",
+    "frontend": "Frontend",
+    "android": "Android",
+    "preview": "Preview Area",
+    "previewDescription": "Generated {platform} will be displayed here",
+    "frontendInterface": "frontend interface",
+    "androidApp": "Android application",
+    "frontendPreview": "Frontend Preview",
+    "androidSimulator": "Android Simulator",
+    "waitingToStart": "Waiting to start generation...",
+    "agentThinking": "Agent is thinking...",
+    "startAnalyzing": "Starting to analyze user requirements: {input}",
+    "generationStopped": "User stopped the generation process",
+    "generationComplete": "Agent generation feature is under development, please stay tuned!",
+    "steps": {
+      "requirementAnalysis": "Requirement Analysis",
+      "architectureDesign": "Architecture Design",
+      "codeGeneration": "Code Generation", 
+      "testDeploy": "Test & Deploy",
+      "analyzing": "Analyzing user input requirements...",
+      "designingArchitecture": "Designing application architecture and component structure",
+      "generatingCode": "Generating corresponding code files",
+      "testingDeploying": "Testing generated code and deploying",
+      "completed": "Completed",
+      "inProgress": "In Progress",
+      "error": "Error",
+      "waiting": "Waiting"
+    }
   }
 };
 
