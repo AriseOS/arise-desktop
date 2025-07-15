@@ -49,8 +49,11 @@
     },
     "messages": {
       "pleaseLogin": "Please login first to use the dialog feature",
-      "enterRequirement": "Please enter your requirements"
-    }
+      "enterRequirement": "Please enter your requirements",
+      "buildStarted": "Agent building started! Redirecting to workspace...",
+      "buildFailed": "Failed to start agent building"
+    },
+    "building": "Building..."
   },
   "login": {
     "title": "ami.dev",

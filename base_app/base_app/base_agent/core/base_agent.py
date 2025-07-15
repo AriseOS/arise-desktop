@@ -202,227 +202,6 @@ class BaseAgent:
             logger.error(f"Agent清理失败: {e}")
             return False
     
-    # ==================== 工具调用接口 ====================
-    
-    async def use_tool(
-        self, 
-        tool_name: str, 
-        action: str, 
-        params: Dict[str, Any],
-        **kwargs
-    ) -> ToolResult:
-        """
-        标准化工具调用接口
-        
-        Args:
-            tool_name: 工具名称
-            action: 动作名称
-            params: 动作参数
-            **kwargs: 额外参数
-            
-        Returns:
-            ToolResult: 工具执行结果
-            
-        Raises:
-            ValueError: 工具未注册或参数无效
-            
-        Example:
-            # 使用浏览器工具导航
-            result = await self.use_tool('browser', 'navigate', {
-                'url': 'https://example.com'
-            })
-            
-            # 使用Android工具读取微信
-            result = await self.use_tool('android', 'read_chat', {
-                'app': '微信',
-                'contact': '客户A'
-            })
-        """
-        if tool_name not in self.tools:
-            raise ValueError(f"工具 '{tool_name}' 未注册")
-        
-        tool = self.tools[tool_name]
-        
-        try:
-            await self._trigger_hook('before_tool_call', tool_name=tool_name, action=action)
-            
-            # 记录工具调用
-            call_info = {
-                'tool': tool_name,
-                'action': action,
-                'params': params,
-                'timestamp': datetime.now()
-            }
-            self._execution_history.append(call_info)
-            
-            # 执行工具调用
-            result = await tool.execute_with_retry(action, params, **kwargs)
-            
-            # 更新调用记录
-            call_info['result'] = {
-                'success': result.success,
-                'execution_time': result.execution_time
-            }
-            
-            await self._trigger_hook('after_tool_call', tool_name=tool_name, result=result)
-            
-            logger.debug(f"工具调用完成: {tool_name}.{action} -> {result.success}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"工具调用失败: {tool_name}.{action}, 错误: {e}")
-            return ToolResult(
-                success=False,
-                message=f"工具调用失败: {str(e)}",
-                status=ToolStatus.ERROR
-            )
-    
-    def register_tool(self, name: str, tool: BaseTool) -> None:
-        """
-        注册工具
-        
-        Args:
-            name: 工具名称
-            tool: 工具实例
-            
-        Example:
-            # 注册浏览器工具
-            self.register_tool('browser', BrowserTool(config))
-            
-            # 注册自定义工具
-            self.register_tool('custom', MyCustomTool())
-        """
-        if not isinstance(tool, BaseTool):
-            raise ValueError(f"工具必须继承自 BaseTool")
-        
-        self.tools[name] = tool
-        logger.info(f"工具 '{name}' 注册成功: {tool.metadata.description}")
-    
-    def unregister_tool(self, name: str) -> bool:
-        """
-        注销工具
-        
-        Args:
-            name: 工具名称
-            
-        Returns:
-            bool: 是否成功注销
-        """
-        if name in self.tools:
-            del self.tools[name]
-            logger.info(f"工具 '{name}' 已注销")
-            return True
-        return False
-    
-    def get_registered_tools(self) -> List[str]:
-        """
-        获取已注册的工具列表
-        
-        Returns:
-            List[str]: 工具名称列表
-        """
-        return list(self.tools.keys())
-    
-    # ==================== 内存管理接口 ====================
-    
-    async def store_memory(self, key: str, value: Any) -> None:
-        """
-        存储临时变量
-        
-        Args:
-            key: 存储键
-            value: 存储值
-            
-        Example:
-            # 存储临时数据
-            await self.store_memory('temp_data', {'result': 'success'})
-        """
-        if self.memory_manager:
-            await self.memory_manager.store_memory(key, value)
-        else:
-            # 如果没有memory_manager，使用简单的变量存储
-            if not hasattr(self, '_variables'):
-                self._variables = {}
-            self._variables[key] = value
-        
-        logger.debug(f"临时变量存储: {key}")
-    
-    async def get_memory(self, key: str, default: Any = None) -> Any:
-        """
-        获取临时变量
-        
-        Args:
-            key: 存储键
-            default: 默认值
-            
-        Returns:
-            Any: 存储的值
-            
-        Example:
-            # 获取变量
-            temp_data = await self.get_memory('temp_data')
-        """
-        if self.memory_manager:
-            return await self.memory_manager.get_memory(key, default)
-        else:
-            # 如果没有memory_manager，使用简单的变量存储
-            if not hasattr(self, '_variables'):
-                self._variables = {}
-            return self._variables.get(key, default)
-    
-    async def clear_memory(self) -> None:
-        """
-        清空临时变量
-        """
-        if self.memory_manager:
-            await self.memory_manager.clear_memory()
-        else:
-            if hasattr(self, '_variables'):
-                self._variables.clear()
-        
-        logger.info("临时变量已清空")
-    
-    # 长期记忆接口
-    async def add_long_term_memory(self, content: str, user_id: str = None) -> Optional[str]:
-        """
-        添加长期记忆
-        
-        Args:
-            content: 记忆内容
-            user_id: 用户ID
-            
-        Returns:
-            Optional[str]: 记忆ID
-        """
-        if self.memory_manager:
-            return await self.memory_manager.add_long_term_memory(content, user_id)
-        else:
-            logger.warning("长期记忆未启用")
-            return None
-    
-    async def search_long_term_memory(
-        self, 
-        query: str, 
-        user_id: str = None, 
-        limit: int = 5
-    ) -> List[Dict[str, Any]]:
-        """
-        搜索长期记忆
-        
-        Args:
-            query: 搜索查询
-            user_id: 用户ID
-            limit: 结果数量限制
-            
-        Returns:
-            List[Dict[str, Any]]: 搜索结果
-        """
-        if self.memory_manager:
-            return await self.memory_manager.search_long_term_memory(query, user_id, limit)
-        else:
-            logger.warning("长期记忆未启用")
-            return []
-    
     # ==================== 工作流接口 ====================
     
     async def run_workflow(
@@ -706,3 +485,411 @@ class BaseAgent:
             "initialized": getattr(self.provider, 'is_initialized', False),
             "api_key_set": bool(getattr(self.provider, 'api_key', None))
         }
+
+    # ==================== 用户自定义接口 ====================
+    
+    def create_workflow_builder(self, name: str, description: str = "") -> 'WorkflowBuilder':
+        """
+        创建工作流构建器 - 用户友好的工作流创建接口
+        
+        Args:
+            name: 工作流名称
+            description: 工作流描述
+            
+        Returns:
+            WorkflowBuilder: 工作流构建器实例
+            
+        Example:
+            builder = agent.create_workflow_builder("数据分析流程", "用于处理和分析数据")
+            builder.add_text_step("理解需求", "分析用户的数据分析需求")
+            builder.add_tool_step("读取数据", "从文件中读取数据", tools=["file_reader"])
+            builder.add_code_step("分析数据", "进行统计分析", language="python")
+            workflow = builder.build()
+        """
+        from .workflow_builder import WorkflowBuilder
+        return WorkflowBuilder(name, description, self)
+
+    def register_custom_agent(self, agent) -> bool:
+        """
+        注册自定义Agent
+        
+        Args:
+            agent: 继承自BaseStepAgent的自定义Agent实例
+            
+        Returns:
+            bool: 注册是否成功
+            
+        Example:
+            from .custom_agents import CustomTextAgent
+            
+            custom_agent = CustomTextAgent(
+                name="专业翻译员",
+                system_prompt="你是一个专业的中英文翻译员。"
+            )
+            success = agent.register_custom_agent(custom_agent)
+        """
+        if not self.agent_workflow_engine:
+            logger.error("工作流引擎未初始化")
+            return False
+        
+        try:
+            self.agent_workflow_engine.agent_registry.register_agent(agent)
+            logger.info(f"自定义Agent注册成功: {agent.metadata.name}")
+            return True
+        except Exception as e:
+            logger.error(f"自定义Agent注册失败: {e}")
+            return False
+
+    def create_custom_text_agent(self, 
+                                name: str,
+                                system_prompt: str,
+                                response_style: str = "professional",
+                                max_length: int = 500,
+                                temperature: float = 0.7) -> 'CustomTextAgent':
+        """
+        创建自定义文本Agent
+        
+        Args:
+            name: Agent名称
+            system_prompt: 系统提示词
+            response_style: 响应风格
+            max_length: 最大响应长度
+            temperature: 温度参数
+            
+        Returns:
+            CustomTextAgent: 自定义文本Agent实例
+            
+        Example:
+            text_agent = agent.create_custom_text_agent(
+                name="专业翻译员",
+                system_prompt="你是一个专业的中英文翻译员，请提供准确、流畅的翻译。",
+                response_style="professional"
+            )
+            agent.register_custom_agent(text_agent)
+        """
+        from .custom_agents import CustomTextAgent
+        return CustomTextAgent(name, system_prompt, response_style, max_length, temperature)
+
+    def create_custom_tool_agent(self,
+                                name: str,
+                                available_tools: List[str],
+                                tool_selection_strategy: str = "best_match",
+                                confidence_threshold: float = 0.8,
+                                max_tool_calls: int = 3) -> 'CustomToolAgent':
+        """
+        创建自定义工具Agent
+        
+        Args:
+            name: Agent名称
+            available_tools: 可用工具列表
+            tool_selection_strategy: 工具选择策略
+            confidence_threshold: 置信度阈值
+            max_tool_calls: 最大工具调用次数
+            
+        Returns:
+            CustomToolAgent: 自定义工具Agent实例
+            
+        Example:
+            tool_agent = agent.create_custom_tool_agent(
+                name="数据处理专家",
+                available_tools=["excel_reader", "data_analyzer", "chart_generator"],
+                tool_selection_strategy="best_match"
+            )
+            agent.register_custom_agent(tool_agent)
+        """
+        from .custom_agents import CustomToolAgent
+        return CustomToolAgent(name, available_tools, tool_selection_strategy, confidence_threshold, max_tool_calls)
+
+    def create_custom_code_agent(self,
+                                name: str,
+                                language: str = "python",
+                                allowed_libraries: List[str] = None,
+                                code_template: str = "",
+                                execution_timeout: int = 30) -> 'CustomCodeAgent':
+        """
+        创建自定义代码Agent
+        
+        Args:
+            name: Agent名称
+            language: 编程语言
+            allowed_libraries: 允许的库列表
+            code_template: 代码模板
+            execution_timeout: 执行超时时间
+            
+        Returns:
+            CustomCodeAgent: 自定义代码Agent实例
+            
+        Example:
+            code_agent = agent.create_custom_code_agent(
+                name="数据分析师",
+                language="python",
+                allowed_libraries=["pandas", "numpy", "matplotlib"],
+                code_template="# 数据分析代码\\nimport pandas as pd\\nimport numpy as np\\n"
+            )
+            agent.register_custom_agent(code_agent)
+        """
+        from .custom_agents import CustomCodeAgent
+        return CustomCodeAgent(name, language, allowed_libraries or [], code_template, execution_timeout)
+
+    def list_available_agents(self) -> List[str]:
+        """
+        列出所有可用的Agent
+        
+        Returns:
+            List[str]: Agent名称列表
+            
+        Example:
+            agents = agent.list_available_agents()
+            print(f"可用Agent: {agents}")
+        """
+        if not self.agent_workflow_engine:
+            return []
+        
+        return self.agent_workflow_engine.agent_registry.list_agent_names()
+
+    def get_agent_info(self, agent_name: str) -> Optional[Dict[str, Any]]:
+        """
+        获取Agent信息
+        
+        Args:
+            agent_name: Agent名称
+            
+        Returns:
+            Optional[Dict[str, Any]]: Agent信息字典
+            
+        Example:
+            info = agent.get_agent_info("text_agent")
+            print(f"Agent信息: {info}")
+        """
+        if not self.agent_workflow_engine:
+            return None
+        
+        try:
+            agent_instance = self.agent_workflow_engine.agent_registry.get_agent(agent_name)
+            if agent_instance:
+                return {
+                    "name": agent_instance.metadata.name,
+                    "description": agent_instance.metadata.description,
+                    "capabilities": [cap.value for cap in agent_instance.metadata.capabilities],
+                    "input_schema": agent_instance.metadata.input_schema,
+                    "output_schema": agent_instance.metadata.output_schema,
+                    "version": agent_instance.metadata.version,
+                    "author": agent_instance.metadata.author
+                }
+        except Exception as e:
+            logger.error(f"获取Agent信息失败: {e}")
+        
+        return None
+
+    async def run_custom_workflow(self, workflow: 'Workflow', input_data: Dict[str, Any] = None) -> 'WorkflowResult':
+        """
+        运行自定义工作流
+        
+        Args:
+            workflow: 工作流实例
+            input_data: 输入数据
+            
+        Returns:
+            WorkflowResult: 工作流执行结果
+            
+        Example:
+            result = await agent.run_custom_workflow(workflow, {"user_input": "分析这个数据"})
+            print(f"执行结果: {result.final_result}")
+        """
+        return await self.run_workflow(workflow, input_data)
+
+    def create_quick_qa_workflow(self, name: str = "快速问答", system_prompt: str = None) -> 'Workflow':
+        """
+        创建快速问答工作流
+        
+        Args:
+            name: 工作流名称
+            system_prompt: 自定义系统提示词
+            
+        Returns:
+            Workflow: 问答工作流实例
+            
+        Example:
+            workflow = agent.create_quick_qa_workflow("智能助手", "你是一个友好的AI助手")
+            result = await agent.run_custom_workflow(workflow, {"user_input": "你好"})
+        """
+        builder = self.create_workflow_builder(name, "快速问答工作流")
+        
+        if system_prompt:
+            # 创建自定义文本Agent
+            qa_agent = self.create_custom_text_agent(
+                name=f"{name}_qa_agent",
+                system_prompt=system_prompt,
+                response_style="friendly"
+            )
+            self.register_custom_agent(qa_agent)
+            
+            builder.add_custom_step(
+                name="回答问题",
+                agent_name=f"{name}_qa_agent",
+                instruction="回答用户的问题"
+            )
+        else:
+            builder.add_text_step(
+                name="回答问题",
+                instruction="回答用户的问题",
+                response_style="friendly"
+            )
+        
+        return builder.build()
+
+    def create_translation_workflow(self, source_lang: str = "中文", target_lang: str = "英文") -> 'Workflow':
+        """
+        创建翻译工作流
+        
+        Args:
+            source_lang: 源语言
+            target_lang: 目标语言
+            
+        Returns:
+            Workflow: 翻译工作流实例
+            
+        Example:
+            workflow = agent.create_translation_workflow("中文", "英文")
+            result = await agent.run_custom_workflow(workflow, {"user_input": "你好世界"})
+        """
+        builder = self.create_workflow_builder("翻译服务", f"{source_lang}到{target_lang}的翻译服务")
+        
+        # 创建专业翻译Agent
+        translator = self.create_custom_text_agent(
+            name="专业翻译员",
+            system_prompt=f"你是一个专业的{source_lang}到{target_lang}翻译员。请提供准确、流畅的翻译，保持原文的语调和风格。",
+            response_style="professional"
+        )
+        self.register_custom_agent(translator)
+        
+        builder.add_custom_step(
+            name="翻译文本",
+            agent_name="专业翻译员",
+            instruction=f"将{source_lang}文本翻译成{target_lang}"
+        )
+        
+        return builder.build()
+
+    def get_workflow_templates(self) -> Dict[str, Callable]:
+        """
+        获取可用的工作流模板
+        
+        Returns:
+            Dict[str, Callable]: 模板名称到创建函数的映射
+            
+        Example:
+            templates = agent.get_workflow_templates()
+            qa_workflow = templates["问答"]()
+        """
+        return {
+            "问答": self.create_quick_qa_workflow,
+            "翻译": self.create_translation_workflow,
+        }
+
+    def validate_workflow(self, workflow: 'Workflow') -> List[str]:
+        """
+        验证工作流配置
+        
+        Args:
+            workflow: 工作流实例
+            
+        Returns:
+            List[str]: 验证错误列表
+            
+        Example:
+            errors = agent.validate_workflow(workflow)
+            if errors:
+                print(f"工作流验证失败: {errors}")
+        """
+        errors = []
+        
+        if not workflow.steps:
+            errors.append("工作流必须包含至少一个步骤")
+        
+        # 检查步骤名称重复
+        step_names = [step.name for step in workflow.steps]
+        if len(step_names) != len(set(step_names)):
+            errors.append("步骤名称不能重复")
+        
+        # 检查Agent是否存在
+        if self.agent_workflow_engine:
+            available_agents = self.agent_workflow_engine.agent_registry.list_agent_names()
+            for step in workflow.steps:
+                if step.agent_type not in available_agents:
+                    errors.append(f"步骤 '{step.name}' 使用的Agent '{step.agent_type}' 不存在")
+        
+        return errors
+
+    def export_workflow(self, workflow: 'Workflow', file_path: str = None) -> str:
+        """
+        导出工作流配置
+        
+        Args:
+            workflow: 工作流实例
+            file_path: 导出文件路径（可选）
+            
+        Returns:
+            str: 工作流JSON字符串
+            
+        Example:
+            json_str = agent.export_workflow(workflow, "my_workflow.json")
+        """
+        import json
+        from datetime import datetime
+        
+        def default_serializer(obj):
+            """自定义JSON序列化器"""
+            if isinstance(obj, datetime):
+                return obj.isoformat()
+            raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+        
+        workflow_dict = workflow.model_dump() if hasattr(workflow, 'model_dump') else workflow.dict()
+        json_str = json.dumps(workflow_dict, indent=2, ensure_ascii=False, default=default_serializer)
+        
+        if file_path:
+            try:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(json_str)
+                logger.info(f"工作流已导出到: {file_path}")
+            except Exception as e:
+                logger.error(f"导出工作流失败: {e}")
+        
+        return json_str
+
+    def import_workflow(self, json_str: str = None, file_path: str = None) -> 'Workflow':
+        """
+        导入工作流配置
+        
+        Args:
+            json_str: 工作流JSON字符串
+            file_path: 导入文件路径
+            
+        Returns:
+            Workflow: 工作流实例
+            
+        Example:
+            workflow = agent.import_workflow(file_path="my_workflow.json")
+        """
+        import json
+        
+        if file_path:
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    json_str = f.read()
+                logger.info(f"从文件导入工作流: {file_path}")
+            except Exception as e:
+                logger.error(f"导入工作流文件失败: {e}")
+                raise
+        
+        if not json_str:
+            raise ValueError("必须提供json_str或file_path参数")
+        
+        try:
+            workflow_dict = json.loads(json_str)
+            workflow = Workflow(**workflow_dict)
+            logger.info(f"工作流导入成功: {workflow.name}")
+            return workflow
+        except Exception as e:
+            logger.error(f"解析工作流JSON失败: {e}")
+            raise
