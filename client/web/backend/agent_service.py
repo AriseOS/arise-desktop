@@ -21,7 +21,7 @@ print(f"路径是否存在: {os.path.exists(agent_builder_path)}")
 from core.agent_builder import AgentBuilder, build_agent
 from core.schemas import LLMConfig
 print("✅ AgentBuilder 导入成功")
-from database import AgentBuildSession, GeneratedAgent
+from database import AgentBuildSession, GeneratedAgent, AgentBuild
 from progress_tracker import create_progress_tracker
 
 
@@ -121,8 +121,8 @@ class AgentBuildService:
             
             print(f"✅ 进度追踪器已创建")
             
-            # 创建AgentBuilder实例
-            builder = AgentBuilder(self.default_llm_config)
+            # 创建AgentBuilder实例，传入数据库会话
+            builder = AgentBuilder(self.default_llm_config, db_session=db)
             print(f"✅ AgentBuilder 实例已创建")
             
             # 构建输出目录
@@ -133,11 +133,13 @@ class AgentBuildService:
             )
             os.makedirs(agent_output_dir, exist_ok=True)
             
-            # 调用真实的AgentBuilder构建Agent
+            # 调用真实的AgentBuilder构建Agent，传入user_id和build_id
             result = await builder.build_agent_from_description(
                 user_description=description,
                 output_dir=agent_output_dir,
-                agent_name=agent_name or f"agent_{build_id[:8]}"
+                agent_name=agent_name or f"agent_{build_id[:8]}",
+                user_id=user_id,
+                build_id=build_id
             )
             
             if result["success"]:

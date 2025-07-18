@@ -9,12 +9,18 @@ import asyncio
 import logging
 import argparse
 import json
+import tempfile
 from typing import Optional, Dict, Any
+from pathlib import Path
 
 # 初始化日志
 logging.basicConfig(level=logging.INFO, format='%(name)s - %(levelname)s - %(message)s')
 
-sys.path.insert(0, '../')
+# 添加项目路径
+current_dir = Path(__file__).parent.parent.parent  # agentcrafter/
+sys.path.insert(0, str(current_dir))  # agentcrafter
+sys.path.insert(0, str(current_dir / 'agent_builder'))  # agent_builder
+sys.path.insert(0, str(current_dir / 'client' / 'web' / 'backend'))  # backend
 
 from core.agent_builder import AgentBuilder
 from core.schemas import LLMConfig, ParsedRequirement, StepDesign
@@ -23,17 +29,59 @@ from core.agent_designer import AgentDesigner
 from core.workflow_builder import WorkflowBuilder
 from core.code_generator import CodeGenerator
 
+# 数据库相关导入
+try:
+    from database import SessionLocal, init_db
+    DATABASE_AVAILABLE = True
+    print("✅ 数据库模块导入成功")
+except ImportError as e:
+    print(f"⚠️ 警告: 无法导入数据库模块: {e}")
+    print("将在无数据库模式下运行测试")
+    DATABASE_AVAILABLE = False
+    SessionLocal = None
+
 
 class AgentBuilderTester:
     """AgentBuilder 测试器 - 支持分步测试"""
     
-    def __init__(self, api_key: str, provider: str = "openai", model: str = "gpt-4o"):
+    def __init__(self, api_key: str, provider: str = "openai", model: str = "gpt-4o", user_id: int = 1):
         self.llm_config = LLMConfig(
             provider=provider,
             model=model,
             api_key=api_key
         )
-        self.builder = AgentBuilder(self.llm_config)
+        self.user_id = user_id  # 测试用户ID
+        self.db_session = None
+        
+        # 初始化数据库会话
+        if DATABASE_AVAILABLE:
+            try:
+                # 确保数据库已初始化
+                init_db()
+                # 创建数据库会话，和backend使用相同的方式
+                self.db_session = SessionLocal()
+                print(f"✅ 数据库会话创建成功")
+            except Exception as e:
+                print(f"⚠️ 数据库会话创建失败: {e}")
+                self.db_session = None
+        
+        # 创建AgentBuilder实例，传入db_session
+        self.builder = AgentBuilder(self.llm_config, self.db_session)
+        
+        print(f"✅ AgentBuilderTester初始化完成")
+        print(f"   LLM: {provider}/{model}")
+        print(f"   用户ID: {user_id}")
+        print(f"   数据库: {'启用' if self.db_session else '禁用'}")
+    
+    def cleanup(self):
+        """清理资源"""
+        if self.db_session:
+            self.db_session.close()
+            print("🧹 数据库会话已关闭")
+    
+    def __del__(self):
+        """析构函数"""
+        self.cleanup()
     
     def get_mock_requirement(self, user_description: str) -> ParsedRequirement:
         """获取模拟的需求解析结果"""
@@ -210,10 +258,12 @@ class AgentBuilderTester:
         """测试完整的构建流程"""
         print("🚀 开始完整构建流程测试")
         print(f"用户描述: {user_description}")
+        print(f"用户ID: {self.user_id}")
         print("=" * 60)
         
         try:
             result = await self.builder.build_agent_from_description(
+                user_id=self.user_id,
                 user_description=user_description,
                 output_dir=output_dir
             )
@@ -224,6 +274,8 @@ class AgentBuilderTester:
             
         except Exception as e:
             print(f"❌ 完整构建流程失败: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
     async def test_step_1_requirement_parsing(self, user_description: str):
@@ -477,6 +529,7 @@ async def main():
     parser.add_argument("--provider", default="openai", help="LLM提供商")
     parser.add_argument("--model", default="gpt-4o", help="LLM模型")
     parser.add_argument("--api-key", help="API密钥 (可通过OPENAI_API_KEY环境变量设置)")
+    parser.add_argument("--user-id", type=int, default=1, help="测试用户ID (默认: 1)")
     
     args = parser.parse_args()
     
@@ -488,11 +541,12 @@ async def main():
         return
     
     # 创建测试器
-    tester = AgentBuilderTester(api_key, args.provider, args.model)
+    tester = AgentBuilderTester(api_key, args.provider, args.model, args.user_id)
     
     print("🧪 AgentBuilder 复杂测试脚本")
     print(f"提供商: {args.provider}")
     print(f"模型: {args.model}")
+    print(f"用户ID: {args.user_id}")
     print(f"用户描述: {args.description}")
     print("=" * 60)
     
@@ -508,6 +562,11 @@ async def main():
         print("\n⏹️ 测试被用户中断")
     except Exception as e:
         print(f"❌ 测试过程中发生错误: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        # 确保资源被清理
+        tester.cleanup()
 
 
 if __name__ == "__main__":

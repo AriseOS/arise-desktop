@@ -1,0 +1,153 @@
+apiVersion: agentcrafter.io/v1
+caching:
+  cache_key_fields:
+  - user_input
+  enable: true
+  exclude_fields:
+  - user_id
+  ttl: 3600
+config:
+  enable_cache: true
+  enable_parallel: false
+  max_execution_time: 600
+  timeout_strategy: fail_fast
+error_handling:
+  fallback_response: 抱歉，工作流执行遇到问题，请检查配置或联系技术支持。
+  global_strategy: fail_gracefully
+execution:
+  dependencies:
+    10c0c538-185f-44d4-8015-15811d5046de:
+    - 7c5b457c-0742-48d4-bb6b-19f69e816bfd
+    7be8e5f7-0c06-41c9-8429-5e56ac3b3b29:
+    - 10c0c538-185f-44d4-8015-15811d5046de
+  flow_control:
+    branch_merge:
+      strategy: collect_all
+      timeout: 300
+    early_exit:
+      condition: 'false'
+      description: 不使用早期退出
+    loops: []
+inputs:
+  user_id:
+    default: anonymous
+    description: 用户ID
+    required: false
+    type: string
+  user_input:
+    description: 用户输入
+    required: true
+    type: string
+  发送报告至微信_input:
+    description: 工作报告文本
+    required: false
+    type: string
+  收集wiki活动数据_input:
+    description: Wiki的页面URL
+    required: false
+    type: string
+  生成工作报告_input:
+    description: 结构化的活动数据
+    required: false
+    type: string
+kind: Workflow
+metadata:
+  author: AgentBuilder
+  created_at: '2025-07-18T11:17:10.004761'
+  description: AgentBuilder自动生成的工作流，包含3个步骤
+  name: generated_workflow_20250718_111710
+  tags:
+  - agent-builder
+  - auto-generated
+  version: 1.0.0
+monitoring:
+  enable_step_timing: true
+  enable_variable_tracking: true
+  log_level: INFO
+  metrics:
+  - step_execution_time
+  - total_execution_time
+  - success_rate
+outputs:
+  execution_summary:
+    description: 执行摘要信息
+    type: object
+  final_response:
+    description: 最终响应结果
+    type: string
+steps:
+- agent_instruction: 使用浏览器自动化工具从用户的Wiki页面提取活动数据，输入为Wiki的URL，输出为结构化的活动数据。
+  agent_type: tool
+  description: 使用浏览器自动化工具从用户的Wiki页面提取活动数据，输入为Wiki的URL，输出为结构化的活动数据。
+  id: 7c5b457c-0742-48d4-bb6b-19f69e816bfd
+  inputs:
+    context_data:
+      user_id: '{{user_id}}'
+      user_input: '{{user_input}}'
+    task_description: '{{user_input}}'
+  name: 收集Wiki活动数据
+  outputs:
+    confidence: step_0_confidence
+    execution_time: step_0_time
+    result: step_0_result
+    step_name: 收集Wiki活动数据
+    tool_used: step_0_tool
+  retry_count: 1
+  timeout: 120
+  tools:
+    allowed:
+    - browser_use
+    confidence_threshold: 0.8
+    fallback:
+    - browser_use
+    max_tools_per_step: 3
+- agent_instruction: 使用文本处理工具对提取的活动数据进行分析和总结，生成工作报告。
+  agent_type: text
+  description: 使用文本处理工具对提取的活动数据进行分析和总结，生成工作报告。
+  id: 10c0c538-185f-44d4-8015-15811d5046de
+  inputs:
+    context_data:
+      previous_results: '{{previous_step_result}}'
+      user_id: '{{user_id}}'
+      user_input: '{{user_input}}'
+    task_description: '{{user_input}}'
+  name: 生成工作报告
+  outputs:
+    execution_time: step_1_time
+    result: step_1_result
+    step_name: 生成工作报告
+  retry_count: 1
+  text:
+    language: zh
+    max_length: 500
+    response_style: professional
+  timeout: 120
+- agent_instruction: 通过微信API自动发送生成的工作报告给指定的领导微信账号。
+  agent_type: tool
+  description: 通过微信API自动发送生成的工作报告给指定的领导微信账号。
+  id: 7be8e5f7-0c06-41c9-8429-5e56ac3b3b29
+  inputs:
+    context_data:
+      previous_results: '{{previous_step_result}}'
+      user_id: '{{user_id}}'
+      user_input: '{{user_input}}'
+    task_description: '{{user_input}}'
+  name: 发送报告至微信
+  outputs:
+    confidence: step_2_confidence
+    execution_time: step_2_time
+    result: step_2_result
+    step_name: 发送报告至微信
+    tool_used: step_2_tool
+  retry_count: 1
+  timeout: 120
+  tools:
+    _note: '需要实现新工具: 需要实现微信API的调用工具'
+    allowed:
+    - browser_use
+    - android_use
+    - llm_extract
+    confidence_threshold: 0.8
+    fallback:
+    - browser_use
+    max_tools_per_step: 3

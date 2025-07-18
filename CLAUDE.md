@@ -122,14 +122,14 @@ pre-commit run --all-files
 **Dynamic Loading Architecture**
 - BaseAgent can dynamically load workflows, tools, and memory configurations
 - Configuration-driven behavior changes without code modification
-- Context preservation across the requirements ’ design ’ implementation chain
+- Context preservation across the requirements ï¿½ design ï¿½ implementation chain
 
 **Multi-Database Architecture**
 ```
-users table          ’ User authentication and profiles
-agents table          ’ Agent instances with port assignments  
-port_allocation table ’ Port pool management (5001-5020)
-agent_sessions table  ’ Multi-session conversation support
+users table          ï¿½ User authentication and profiles
+agents table          ï¿½ Agent instances with port assignments  
+port_allocation table ï¿½ Port pool management (5001-5020)
+agent_sessions table  ï¿½ Multi-session conversation support
 ```
 
 ## Important Configuration
@@ -140,8 +140,22 @@ agent_sessions table  ’ Multi-session conversation support
 OPENAI_API_KEY=your_openai_key
 ANTHROPIC_API_KEY=your_anthropic_key
 
-# Database (optional, defaults to SQLite)
+# Database configuration (multiple options)
+# Option 1: Full database URL
 DATABASE_URL=sqlite:///./agentcrafter_users.db
+# DATABASE_URL=postgresql://username:password@localhost/agentcrafter
+
+# Option 2: Database file path (SQLite only)
+# DATABASE_PATH=client/web/backend/agentcrafter_users.db
+
+# Backend server configuration
+BACKEND_HOST=0.0.0.0
+BACKEND_PORT=8000
+BACKEND_RELOAD=true
+LOG_LEVEL=INFO
+
+# Security configuration
+SECRET_KEY=your-secret-key-here-change-in-production
 
 # BaseApp specific
 BASEAPP_HOST=0.0.0.0
@@ -151,7 +165,9 @@ BASEAPP_PORT=8888
 ### Key Configuration Files
 - `base_app/config/baseapp.yaml` - BaseApp runtime configuration
 - `base_app/base_agent/workflows/builtin/user-qa-workflow.yaml` - Default workflow definition
+- `client/web/backend/config.py` - Backend configuration management
 - `client/web/backend/agentcrafter_users.db` - Main user database
+- `client/web/.env.example` - Environment configuration template
 - `.env` files for environment-specific settings
 
 ## Database Schema
@@ -164,9 +180,9 @@ BASEAPP_PORT=8888
 - **user_sessions**: JWT session management
 
 **Key Relationships:**
-- Users (1:N) ’ agents, user_sessions, agent_sessions
-- Agents (1:1) ’ port_allocation  
-- Agents (1:N) ’ agent_sessions
+- Users (1:N) ï¿½ agents, user_sessions, agent_sessions
+- Agents (1:1) ï¿½ port_allocation  
+- Agents (1:N) ï¿½ agent_sessions
 
 See `docs/database_architecture.md` for complete schema documentation.
 

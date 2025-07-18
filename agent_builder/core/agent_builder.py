@@ -5,6 +5,7 @@ AgentBuilder - 主控制器，协调整个Agent生成过程
 import os
 import json
 import logging
+import uuid
 from typing import Optional, Dict, Any
 from datetime import datetime
 
@@ -20,14 +21,16 @@ logger = logging.getLogger(__name__)
 class AgentBuilder:
     """AgentBuilder主控制器 - 协调整个Agent生成过程"""
     
-    def __init__(self, llm_config: LLMConfig):
+    def __init__(self, llm_config: LLMConfig, db_session=None):
         """
         初始化AgentBuilder
         
         Args:
             llm_config: LLM配置
+            db_session: 数据库会话（可选）
         """
         self.llm_config = llm_config
+        self.db_session = db_session
         
         # 初始化核心组件
         self.requirement_parser = RequirementParser(llm_config)
@@ -37,10 +40,98 @@ class AgentBuilder:
         
         logger.info(f"AgentBuilder初始化完成，使用LLM: {llm_config.provider}/{llm_config.model}")
     
+    def create_build_metadata(self, user_id: int, user_description: str) -> str:
+        """
+        创建构建元数据，返回build_id
+        
+        Args:
+            user_id: 用户ID
+            user_description: 用户需求描述
+            
+        Returns:
+            build_id: 构建ID
+        """
+        build_id = f"build_{uuid.uuid4().hex[:8]}_{int(datetime.now().timestamp())}"
+        
+        if self.db_session:
+            # 导入数据库模型
+            from client.web.backend.database import AgentBuild
+            
+            # 创建构建记录
+            agent_build = AgentBuild(
+                build_id=build_id,
+                user_id=user_id,
+                user_description=user_description,
+                status="building",
+                current_step="starting"
+            )
+            
+            self.db_session.add(agent_build)
+            self.db_session.commit()
+            
+            logger.info(f"创建构建元数据 - build_id: {build_id}")
+        
+        return build_id
+    
+    def update_build_step(self, build_id: str, step_name: str, step_data: Optional[Dict] = None):
+        """
+        更新构建步骤
+        
+        Args:
+            build_id: 构建ID
+            step_name: 步骤名称
+            step_data: 步骤数据（可选）
+        """
+        if self.db_session:
+            from client.web.backend.database import AgentBuild
+            
+            build = self.db_session.query(AgentBuild).filter_by(build_id=build_id).first()
+            if build:
+                build.current_step = step_name
+                self.db_session.commit()
+                logger.info(f"更新构建步骤 - build_id: {build_id}, step: {step_name}")
+    
+    def update_build_result(self, build_id: str, agent_purpose: str = None, 
+                          generated_code: str = None, workflow_config: str = None, 
+                          status: str = None, error_message: str = None):
+        """
+        更新构建结果
+        
+        Args:
+            build_id: 构建ID
+            agent_purpose: Agent目的
+            generated_code: 生成的代码
+            workflow_config: 工作流配置
+            status: 构建状态
+            error_message: 错误信息
+        """
+        if self.db_session:
+            from client.web.backend.database import AgentBuild
+            
+            build = self.db_session.query(AgentBuild).filter_by(build_id=build_id).first()
+            if build:
+                if agent_purpose:
+                    build.agent_purpose = agent_purpose
+                if generated_code:
+                    build.generated_code = generated_code
+                if workflow_config:
+                    build.workflow_config = workflow_config
+                if status:
+                    build.status = status
+                    if status == "completed":
+                        build.completed_at = datetime.utcnow()
+                if error_message:
+                    build.error_message = error_message
+                
+                self.db_session.commit()
+                logger.info(f"更新构建结果 - build_id: {build_id}, status: {status}")
+    
     async def build_agent_from_description(self, 
                                          user_description: str,
                                          output_dir: str = "./generated_agents",
-                                         agent_name: Optional[str] = None) -> Dict[str, Any]:
+                                         agent_name: Optional[str] = None,
+                                         user_id: Optional[int] = None,
+                                         build_id: Optional[str] = None) -> Dict[str, Any]:
         """
         从自然语言描述构建Agent - 基于Context Engineering优化的完整流程
         
@@ -48,6 +139,8 @@ class AgentBuilder:
             user_description: 用户的自然语言需求描述
             output_dir: 输出目录
             agent_name: 可选的Agent名称，如果不提供会自动生成
+            user_id: 用户ID（用于数据库记录）
+            build_id: 构建ID（如果提供则使用现有记录）
             
         Returns:
             Dict包含生成结果和文件路径
@@ -56,14 +149,23 @@ class AgentBuilder:
         logger.info("开始从自然语言描述构建Agent")
         logger.info(f"用户描述: {user_description[:100]}...")
         
+        # 如果没有提供build_id且有user_id，创建新的构建记录
+        if not build_id and user_id is not None:
+            build_id = self.create_build_metadata(user_id, user_description)
+        
         try:
             # 1. 智能需求解析（已实现）
             logger.info("步骤1: 解析用户需求")
+            self.update_build_step(build_id, "parsing_requirements")
             requirement = await self.requirement_parser.parse_requirements(user_description)
             logger.info(f"解析完成 - Agent目的: {requirement.agent_purpose}")
             
+            # 保存需求解析结果
+            self.update_build_result(build_id, agent_purpose=requirement.agent_purpose)
+            
             # 2. 基于工具能力的步骤提取（已实现）
             logger.info("步骤2: 提取执行步骤")
+            self.update_build_step(build_id, "extracting_steps")
             steps = await self.requirement_parser.extract_steps(
                 user_description, requirement.agent_purpose
             )
@@ -71,31 +173,40 @@ class AgentBuilder:
             
             # 3. 成本效益优化的Agent类型判断（已实现）
             logger.info("步骤3: 判断Agent类型")
+            self.update_build_step(build_id, "judging_agent_types")
             agent_types = await self.agent_designer.judge_agent_types(steps)
             logger.info(f"Agent类型判断完成: {agent_types}")
             
             # 4. 按需生成StepAgent（已实现）
             logger.info("步骤4: 生成StepAgent规格")
+            self.update_build_step(build_id, "generating_step_agents")
             step_agents = await self.agent_designer.generate_step_agents(steps)
             logger.info(f"StepAgent生成完成 - 共{len(step_agents)}个Agent规格")
             
             # 5. 组合Workflow（已实现）
             logger.info("步骤5: 构建工作流")
+            self.update_build_step(build_id, "building_workflow")
             workflow = await self.workflow_builder.build_workflow(steps, step_agents)
             logger.info(f"工作流构建完成 - {workflow['metadata']['name']}")
             
-            # 6. 注册Workflow（已实现）
-            logger.info("步骤6: 注册工作流")
-            registration_result = await self.workflow_builder.register_workflow(workflow)
-            logger.info(f"工作流注册完成 - ID: {registration_result['workflow_id']}")
-            
             # 7. 生成BaseAgent兼容代码（已实现）
             logger.info("步骤7: 生成Python代码")
+            self.update_build_step(build_id, "generating_code")
             generated_code = await self.code_generator.generate_agent_code(workflow, step_agents)
             logger.info("代码生成完成")
             
+            # 保存生成的代码和工作流配置
+            import yaml
+            workflow_config_str = yaml.dump(workflow, default_flow_style=False, allow_unicode=True)
+            self.update_build_result(
+                build_id, 
+                generated_code=generated_code.main_agent_code,
+                workflow_config=workflow_config_str
+            )
+            
             # 8. 保存生成的文件
             logger.info("步骤8: 保存生成的文件")
+            self.update_build_step(build_id, "saving_files")
             file_paths = await self._save_generated_files(
                 generated_code, workflow, steps, output_dir, agent_name
             )
@@ -103,19 +214,27 @@ class AgentBuilder:
             
             # 9. 测试生成的代码
             logger.info("步骤9: 测试生成的代码")
+            self.update_build_step(build_id, "testing_code")
             test_result = self._test_generated_agent(file_paths['agent_file'])
             logger.info(f"代码测试完成 - 语法有效: {test_result['syntax_valid']}")
             
-            # 10. 生成完整的构建报告
+            # 10. 标记构建完成
+            self.update_build_step(build_id, "completed")
+            self.update_build_result(build_id, status="completed")
+            
+            # 11. 生成完整的构建报告
             build_report = self._generate_build_report(
                 requirement, steps, workflow, generated_code, file_paths, test_result
             )
+            build_report['build_id'] = build_id
             
             logger.info("Agent构建完成！")
             return build_report
             
         except Exception as e:
             logger.error(f"Agent构建失败: {str(e)}")
+            # 更新构建失败状态
+            self.update_build_result(build_id, status="failed", error_message=str(e))
             raise AgentBuildError(f"构建Agent时发生错误: {str(e)}") from e
     
     async def _save_generated_files(self, 

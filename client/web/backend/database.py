@@ -6,14 +6,17 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 import os
+from pathlib import Path
+from config import get_database_url, get_database_config
 
-# 数据库URL - 可以通过环境变量配置
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./agentcrafter_users.db")
+# 数据库配置 - 通过配置文件管理
+DATABASE_URL = get_database_url()
+db_config = get_database_config()
 
 # 创建数据库引擎
 engine = create_engine(
-    DATABASE_URL, 
-    connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
+    db_config["url"], 
+    connect_args=db_config.get("connect_args", {})
 )
 
 # 创建会话
@@ -59,7 +62,29 @@ class ChatHistory(Base):
     response = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-# Agent构建会话模型
+# Agent构建会话模型 - 重构为最简版本
+class AgentBuild(Base):
+    __tablename__ = "agent_builds"
+    
+    build_id = Column(String(255), primary_key=True)
+    user_id = Column(Integer, nullable=False)
+    
+    # 基本信息
+    user_description = Column(Text, nullable=False)
+    status = Column(String(50), default="building")  # building, completed, failed
+    current_step = Column(String(100), nullable=True)
+    error_message = Column(Text, nullable=True)
+    
+    # 构建结果
+    agent_purpose = Column(Text, nullable=True)  # 解析后的Agent目的
+    generated_code = Column(Text, nullable=True)  # 生成的Python代码
+    workflow_config = Column(Text, nullable=True)  # 生成的YAML配置
+    
+    # 时间戳
+    started_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+
+# 保留原有的兼容性，暂时不删除
 class AgentBuildSession(Base):
     __tablename__ = "agent_build_sessions"
     
@@ -109,10 +134,58 @@ def get_db():
     finally:
         db.close()
 
+# 检查数据库文件是否存在
+def check_database_file():
+    """检查数据库文件是否存在"""
+    db_config = get_database_config()
+    db_url = db_config["url"]
+    
+    if "sqlite" in db_url:
+        # 提取SQLite文件路径
+        if db_url.startswith("sqlite:///"):
+            db_file_path = db_url[10:]  # 移除 "sqlite:///" 前缀
+            db_file = Path(db_file_path)
+            
+            if not db_file.exists():
+                print(f"数据库文件不存在: {db_file_path}")
+                
+                # 确保父目录存在
+                db_file.parent.mkdir(parents=True, exist_ok=True)
+                print(f"创建数据库目录: {db_file.parent}")
+                
+                return False
+            else:
+                print(f"数据库文件已存在: {db_file_path}")
+                return True
+    else:
+        # 对于PostgreSQL、MySQL等，假设数据库服务器已配置
+        print("使用远程数据库，跳过文件检查")
+        return True
+    
+    return False
+
 # 初始化数据库
 def init_db():
+    """初始化数据库 - 检查文件存在性并创建表结构"""
+    print("正在检查数据库配置...")
+    
+    # 打印数据库配置信息
+    db_url = get_database_url()
+    print(f"数据库URL: {db_url}")
+    
+    # 检查数据库文件
+    db_exists = check_database_file()
+    
+    # 创建表结构
+    print("正在创建/更新数据库表结构...")
     create_tables()
-    print("Database initialized successfully")
+    
+    if db_exists:
+        print("✅ 数据库初始化完成 (使用现有数据库)")
+    else:
+        print("✅ 数据库初始化完成 (创建新数据库)")
+    
+    return True
 
 if __name__ == "__main__":
     init_db()

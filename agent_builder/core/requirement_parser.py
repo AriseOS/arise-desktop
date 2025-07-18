@@ -64,12 +64,18 @@ class RequirementParser:
         
         # 构建步骤提取的prompt
         steps_prompt = self._build_steps_prompt(user_input, agent_purpose)
+        # logger.info("\n\n\nsteps_prompt\n")
+        # logger.info(steps_prompt)
+        print("\n\n\nsteps_prompt\n")
+        print(steps_prompt)
         
         # 调用大模型进行步骤提取
         response = await self._call_llm(steps_prompt)
         
         # 解析步骤数据
         steps_data = self._parse_steps_response(response)
+        print("\n\n\nsteps_data\n")
+        print(steps_data)
         
         # 转换为StepDesign对象
         steps = []
