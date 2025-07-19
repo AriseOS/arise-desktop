@@ -28,7 +28,12 @@ class WorkflowBuilder:
     def add_text_step(self, 
                      name: str, 
                      instruction: str,
+                     description: str = "",
                      agent_name: str = "text_agent",
+                     user_task: Optional[str] = None,
+                     inputs: Dict[str, Any] = None,
+                     outputs: Dict[str, str] = None,
+                     constraints: List[str] = None,
                      response_style: str = "professional",
                      max_length: int = 500,
                      condition: Optional[str] = None,
@@ -40,7 +45,12 @@ class WorkflowBuilder:
         Args:
             name: 步骤名称
             instruction: Agent执行指令
+            description: 步骤描述
             agent_name: 使用的Agent名称
+            user_task: 用户具体任务内容
+            inputs: 输入映射配置
+            outputs: 输出映射配置
+            constraints: 约束条件
             response_style: 响应风格
             max_length: 最大响应长度
             condition: 执行条件
@@ -52,9 +62,13 @@ class WorkflowBuilder:
         """
         step = AgentWorkflowStep(
             name=name,
-            description=f"文本处理步骤: {name}",
+            description=description or f"文本处理步骤: {name}",
             agent_type=agent_name,
             agent_instruction=instruction,
+            user_task=user_task,
+            inputs=inputs or {},
+            outputs=outputs or {},
+            constraints=constraints or [],
             response_style=response_style,
             max_length=max_length,
             condition=condition,
@@ -69,7 +83,12 @@ class WorkflowBuilder:
                      name: str,
                      instruction: str,
                      tools: List[str],
+                     description: str = "",
                      agent_name: str = "tool_agent",
+                     user_task: Optional[str] = None,
+                     inputs: Dict[str, Any] = None,
+                     outputs: Dict[str, str] = None,
+                     constraints: List[str] = None,
                      confidence_threshold: float = 0.8,
                      fallback_tools: List[str] = None,
                      condition: Optional[str] = None,
@@ -82,7 +101,12 @@ class WorkflowBuilder:
             name: 步骤名称
             instruction: Agent执行指令
             tools: 可用工具列表
+            description: 步骤描述
             agent_name: 使用的Agent名称
+            user_task: 用户具体任务内容
+            inputs: 输入映射配置
+            outputs: 输出映射配置
+            constraints: 约束条件
             confidence_threshold: 置信度阈值
             fallback_tools: 备选工具列表
             condition: 执行条件
@@ -94,9 +118,13 @@ class WorkflowBuilder:
         """
         step = AgentWorkflowStep(
             name=name,
-            description=f"工具使用步骤: {name}",
+            description=description or f"工具使用步骤: {name}",
             agent_type=agent_name,
             agent_instruction=instruction,
+            user_task=user_task,
+            inputs=inputs or {},
+            outputs=outputs or {},
+            constraints=constraints or [],
             allowed_tools=tools,
             fallback_tools=fallback_tools or [],
             confidence_threshold=confidence_threshold,
@@ -111,10 +139,15 @@ class WorkflowBuilder:
     def add_code_step(self,
                      name: str,
                      instruction: str,
+                     description: str = "",
                      language: str = "python",
                      libraries: List[str] = None,
                      expected_output_format: str = "",
                      agent_name: str = "code_agent",
+                     user_task: Optional[str] = None,
+                     inputs: Dict[str, Any] = None,
+                     outputs: Dict[str, str] = None,
+                     constraints: List[str] = None,
                      condition: Optional[str] = None,
                      timeout: int = 300,
                      retry_count: int = 0) -> 'WorkflowBuilder':
@@ -124,10 +157,15 @@ class WorkflowBuilder:
         Args:
             name: 步骤名称
             instruction: Agent执行指令
+            description: 步骤描述
             language: 编程语言
             libraries: 允许的库列表
             expected_output_format: 期望的输出格式
             agent_name: 使用的Agent名称
+            user_task: 用户具体任务内容
+            inputs: 输入映射配置
+            outputs: 输出映射配置
+            constraints: 约束条件
             condition: 执行条件
             timeout: 超时时间
             retry_count: 重试次数
@@ -137,9 +175,13 @@ class WorkflowBuilder:
         """
         step = AgentWorkflowStep(
             name=name,
-            description=f"代码执行步骤: {name}",
+            description=description or f"代码执行步骤: {name}",
             agent_type=agent_name,
             agent_instruction=instruction,
+            user_task=user_task,
+            inputs=inputs or {},
+            outputs=outputs or {},
+            constraints=constraints or [],
             allowed_libraries=libraries or [],
             expected_output_format=expected_output_format,
             condition=condition,
@@ -154,6 +196,8 @@ class WorkflowBuilder:
                        name: str,
                        agent_name: str,
                        instruction: str,
+                       description: str = "",
+                       user_task: Optional[str] = None,
                        inputs: Dict[str, Any] = None,
                        outputs: Dict[str, str] = None,
                        constraints: List[str] = None,
@@ -167,6 +211,8 @@ class WorkflowBuilder:
             name: 步骤名称
             agent_name: 自定义Agent名称
             instruction: Agent执行指令
+            description: 步骤描述
+            user_task: 用户具体任务内容
             inputs: 输入配置
             outputs: 输出配置
             constraints: 约束条件
@@ -179,9 +225,10 @@ class WorkflowBuilder:
         """
         step = AgentWorkflowStep(
             name=name,
-            description=f"自定义Agent步骤: {name}",
+            description=description or f"自定义Agent步骤: {name}",
             agent_type=agent_name,
             agent_instruction=instruction,
+            user_task=user_task,
             inputs=inputs or {},
             outputs=outputs or {},
             constraints=constraints or [],

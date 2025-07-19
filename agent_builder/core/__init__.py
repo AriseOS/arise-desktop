@@ -11,7 +11,6 @@ from .schemas import (
 
 from .requirement_parser import RequirementParser
 from .agent_designer import AgentDesigner
-from .workflow_builder import WorkflowBuilder
 from .code_generator import CodeGenerator
 from .agent_builder import AgentBuilder
 
@@ -22,7 +21,6 @@ __all__ = [
     'AgentMetadata',
     'RequirementParser',
     'AgentDesigner',
-    'WorkflowBuilder',
     'CodeGenerator',
     'AgentBuilder'
 ]

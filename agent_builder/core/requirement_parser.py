@@ -74,8 +74,8 @@ class RequirementParser:
         
         # 解析步骤数据
         steps_data = self._parse_steps_response(response)
-        print("\n\n\nsteps_data\n")
-        print(steps_data)
+        # print("\n\n\nsteps_data\n")
+        # print(steps_data)
         
         # 转换为StepDesign对象
         steps = []

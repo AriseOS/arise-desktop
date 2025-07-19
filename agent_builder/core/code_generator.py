@@ -10,7 +10,7 @@ import subprocess
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from .schemas import GeneratedCode, AgentMetadata, LLMConfig
-from .workflow_builder import WorkflowBuilder
+# from .workflow_builder import WorkflowBuilder  # 不再需要
 from .providers import OpenAIProvider
 
 
@@ -32,7 +32,7 @@ class CodeGenerator:
         else:
             raise ValueError(f"不支持的 LLM 提供商: {self.llm_config.provider}")
     
-    async def generate_agent_code(self, workflow: Dict[str, Any], agent_specs: List[Dict[str, Any]]) -> GeneratedCode:
+    async def generate_agent_code(self, workflow: Any, agent_specs: List[Dict[str, Any]]) -> GeneratedCode:
         """
         生成Agent代码 - 使用LLM生成BaseAgent兼容代码
         - 生成继承自BaseAgent的Python类
@@ -43,7 +43,7 @@ class CodeGenerator:
         # 1. 生成主Agent类代码
         main_agent_code = await self._generate_main_agent_class(workflow, agent_specs)
         
-        # 2. 生成工作流配置（已经由WorkflowBuilder生成）
+        # 2. 生成工作流配置（直接使用BaseAgent的workflow对象）
         workflow_config = self._format_workflow_config(workflow)
         
         # 3. 生成Agent元数据
@@ -62,7 +62,7 @@ class CodeGenerator:
             created_at=datetime.now()
         )
     
-    async def _generate_main_agent_class(self, workflow: Dict[str, Any], agent_specs: List[Dict[str, Any]]) -> str:
+    async def _generate_main_agent_class(self, workflow: Any, agent_specs: List[Dict[str, Any]]) -> str:
         """生成主Agent类的Python代码"""
         
         # 构建代码生成的提示词
@@ -76,12 +76,20 @@ class CodeGenerator:
         
         return code
     
-    def _build_code_generation_prompt(self, workflow: Dict[str, Any], agent_specs: List[Dict[str, Any]]) -> str:
+    def _build_code_generation_prompt(self, workflow: Any, agent_specs: List[Dict[str, Any]]) -> str:
         """构建代码生成的提示词"""
         
-        workflow_name = workflow.get("metadata", {}).get("name", "GeneratedAgent")
-        workflow_description = workflow.get("metadata", {}).get("description", "自动生成的Agent")
-        steps = workflow.get("steps", [])
+        # 处理BaseAgent的Workflow对象
+        if hasattr(workflow, 'name'):
+            # BaseAgent Workflow对象
+            workflow_name = workflow.name or "GeneratedAgent"
+            workflow_description = getattr(workflow, 'description', "自动生成的Agent")
+            steps = getattr(workflow, 'steps', [])
+        else:
+            # 字典格式的workflow
+            workflow_name = workflow.get("metadata", {}).get("name", "GeneratedAgent")
+            workflow_description = workflow.get("metadata", {}).get("description", "自动生成的Agent")
+            steps = workflow.get("steps", [])
         
         # 分析需要的自定义工具
         custom_tools_needed = []
@@ -96,9 +104,20 @@ class CodeGenerator:
         # 构建步骤描述
         steps_description = ""
         for i, step in enumerate(steps):
-            steps_description += f"  {i+1}. {step.get('name', 'Unknown')}: {step.get('description', 'No description')}\n"
+            # 处理步骤对象或字典
+            if hasattr(step, 'name'):
+                # BaseAgent Step对象
+                step_name = getattr(step, 'name', 'Unknown')
+                step_desc = getattr(step, 'description', 'No description')
+            else:
+                # 字典格式的步骤
+                step_name = step.get('name', 'Unknown')
+                step_desc = step.get('description', 'No description')
+            
+            steps_description += f"  {i+1}. {step_name}: {step_desc}\n"
         
-        return f"""# Python代码生成专家
+        # 构建提示词，使用字符串连接避免f-string中的变量冲突
+        prompt = """# Python代码生成专家
 
 ## 任务背景
 你是一个专业的Python代码生成专家，需要基于BaseAgent框架生成一个完整的自定义Agent类。
@@ -107,17 +126,31 @@ class CodeGenerator:
 
 ### 基本导入和初始化
 ```python
-import asyncio
+#!/usr/bin/env python3
+\"\"\"
+Generated Agent - 由AgentBuilder自动生成
+可以独立运行的Agent实现
+\"\"\"
+
 import sys
 import os
+import asyncio
+import argparse
+import json
+from pathlib import Path
 from typing import Any, Dict, Optional
 from datetime import datetime
+
+# 添加BaseApp路径到系统路径
+current_dir = Path(__file__).parent
+base_app_path = current_dir.parent.parent / "base_app"
+sys.path.insert(0, str(base_app_path))
 
 # BaseAgent核心导入
 from base_app.base_agent.core.base_agent import BaseAgent
 from base_app.base_agent.core.schemas import AgentConfig, AgentResult
 
-class CustomAgent(BaseAgent):
+class Agent_Generated(BaseAgent):
     def __init__(self, config: AgentConfig):
         super().__init__(config)
         self.workflow = None
@@ -144,7 +177,9 @@ class CustomAgent(BaseAgent):
             await self._setup_workflow()
         
         # 运行工作流
-        result = await self.run_custom_workflow(self.workflow, input_data)
+        # 将input_data包装为字典格式，因为BaseAgent的run_custom_workflow期望Dict[str, Any]
+        workflow_input = {"user_input": input_data} if not isinstance(input_data, dict) else input_data
+        result = await self.run_custom_workflow(self.workflow, workflow_input)
         
         return AgentResult(
             success=True,
@@ -176,16 +211,16 @@ self.register_custom_agent(custom_agent)
 ## 生成要求
 
 ### Agent信息
-- **Agent名称**: {workflow_name}
-- **Agent描述**: {workflow_description}
+- **Agent名称**: """ + workflow_name + """
+- **Agent描述**: """ + workflow_description + """
 - **工作流步骤**:
-{steps_description}
+""" + steps_description + """
 
 ### 自定义工具需求
-{self._format_custom_tools_info(custom_tools_needed)}
+""" + self._format_custom_tools_info(custom_tools_needed) + """
 
 ### 工具组合需求
-{self._format_tool_combinations_info(tool_combinations_needed)}
+""" + self._format_tool_combinations_info(tool_combinations_needed) + """
 
 ## 代码生成要求
 
@@ -199,16 +234,87 @@ self.register_custom_agent(custom_agent)
    - 类型注解
 
 5. **文件结构**:
-   - 导入语句
+   - 导入语句（包含argparse, json, sys, os, Path等）
    - Agent类定义
    - 工作流设置方法
    - 自定义工具实现（如需要）
-   - 主函数示例
+   - 完整的main函数和CLI入口
 
-请生成一个完整的Python文件，文件名建议为 `{workflow_name.lower().replace(' ', '_')}_agent.py`
+6. **独立运行要求**:
+   - 必须包含#!/usr/bin/env python3作为shebang
+   - 必须包含完整的main()函数
+   - 支持--interactive交互模式
+   - 支持--input单次执行模式
+   - 支持--api-key和--config参数
+   - 包含正确的BaseApp路径设置
+   - 生成的Agent类名必须为Agent_Generated
+   - 生成的Agent应该能够直接使用传入的workflow对象执行工作流
+
+请生成一个完整的可独立运行的Python文件，其中Agent类应该能够执行BaseAgent的workflow
 
 ## 输出格式
+## CLI入口要求
+
+必须在代码末尾包含以下结构的main函数：
+
+```python
+def main():
+    parser = argparse.ArgumentParser(description="Generated Agent")
+    parser.add_argument('--input', help='输入数据')
+    parser.add_argument('--interactive', action='store_true', help='交互模式')
+    parser.add_argument('--api-key', help='API密钥')
+    parser.add_argument('--config', help='配置文件路径')
+    
+    args = parser.parse_args()
+    
+    # 加载配置
+    config_file = Path(__file__).parent / "config.json"
+    if config_file.exists() and not args.config:
+        with open(config_file, 'r') as f:
+            config_data = json.load(f)
+            config = AgentConfig(
+                name=config_data.get('name', 'Generated Agent'),
+                llm_provider=config_data.get('llm_provider', 'openai'),
+                llm_model=config_data.get('llm_model', 'gpt-4o'),
+                api_key=args.api_key or config_data.get('api_key') or os.getenv('OPENAI_API_KEY')
+            )
+    else:
+        config = AgentConfig(
+            name="Generated Agent",
+            llm_provider="openai",
+            llm_model="gpt-4o",
+            api_key=args.api_key or os.getenv("OPENAI_API_KEY")
+        )
+    
+    agent = Agent_Generated(config)
+    
+    if args.interactive:
+        print("Agent 交互模式启动")
+        while True:
+            try:
+                user_input = input("输入: ")
+                if user_input.lower() in ['quit', 'exit']:
+                    break
+                agent_result = asyncio.run(agent.execute(user_input))
+                print(f"结果: {agent_result}")
+            except KeyboardInterrupt:
+                break
+    else:
+        if args.input:
+            agent_result = asyncio.run(agent.execute(args.input))
+            # 使用model_dump而不是dict()，并处理datetime序列化
+            result_dict = agent_result.model_dump() if hasattr(agent_result, 'model_dump') else agent_result.dict()
+            print(json.dumps(result_dict, indent=2, ensure_ascii=False, default=str))
+        else:
+            print("请提供--input参数或使用--interactive模式")
+
+if __name__ == "__main__":
+    main()
+```
+
 请直接输出Python代码，不要包含任何markdown标记或额外的解释文字。"""
+        
+        return prompt
     
     def _format_custom_tools_info(self, custom_tools: List[Dict[str, Any]]) -> str:
         """格式化自定义工具信息"""
@@ -262,30 +368,74 @@ self.register_custom_agent(custom_agent)
         
         return code.strip()
     
-    def _format_workflow_config(self, workflow: Dict[str, Any]) -> str:
+    def _format_workflow_config(self, workflow: Any) -> str:
         """格式化工作流配置为YAML字符串"""
         import yaml
-        return yaml.dump(workflow, default_flow_style=False, allow_unicode=True)
+        
+        # 处理BaseAgent Workflow对象
+        if hasattr(workflow, 'name'):
+            # BaseAgent Workflow对象，转换为字典
+            workflow_dict = {
+                "metadata": {
+                    "name": workflow.name,
+                    "description": getattr(workflow, 'description', ''),
+                    "version": getattr(workflow, 'version', '1.0.0'),
+                    "created_at": datetime.now().isoformat()
+                },
+                "steps": []
+            }
+            
+            # 添加步骤
+            for step in getattr(workflow, 'steps', []):
+                step_dict = {
+                    "name": getattr(step, 'name', ''),
+                    "description": getattr(step, 'description', ''),
+                    "agent_type": getattr(step, 'agent_type', 'text'),
+                    "instruction": getattr(step, 'agent_instruction', '')
+                }
+                workflow_dict["steps"].append(step_dict)
+            
+            return yaml.dump(workflow_dict, default_flow_style=False, allow_unicode=True)
+        else:
+            # 字典格式的workflow（向后兼容）
+            return yaml.dump(workflow, default_flow_style=False, allow_unicode=True)
     
-    async def _generate_metadata(self, workflow: Dict[str, Any], agent_specs: List[Dict[str, Any]]) -> AgentMetadata:
+    async def _generate_metadata(self, workflow: Any, agent_specs: List[Dict[str, Any]]) -> AgentMetadata:
         """生成Agent元数据"""
         
         # 分析能力列表
         capabilities = []
-        steps = workflow.get("steps", [])
         
-        for step in steps:
-            agent_type = step.get("agent_type", "text")
-            if agent_type == "text":
-                capabilities.append("自然语言理解与生成")
-            elif agent_type == "tool":
-                tools = step.get("tools", {}).get("allowed", [])
-                for tool in tools:
-                    capabilities.append(f"工具调用: {tool}")
-            elif agent_type == "code":
-                capabilities.append("代码生成与执行")
-            elif agent_type == "custom":
-                capabilities.append("自定义功能")
+        # 处理BaseAgent Workflow对象
+        if hasattr(workflow, 'steps'):
+            steps = getattr(workflow, 'steps', [])
+            for step in steps:
+                agent_type = getattr(step, 'agent_type', 'text')
+                if agent_type == 'text_agent' or agent_type == 'text':
+                    capabilities.append("自然语言理解与生成")
+                elif agent_type == 'tool_agent' or agent_type == 'tool':
+                    tools = getattr(step, 'allowed_tools', [])
+                    for tool in tools:
+                        capabilities.append(f"工具调用: {tool}")
+                elif agent_type == 'code_agent' or agent_type == 'code':
+                    capabilities.append("代码生成与执行")
+                else:
+                    capabilities.append("自定义功能")
+        else:
+            # 字典格式的workflow（向后兼容）
+            steps = workflow.get("steps", [])
+            for step in steps:
+                agent_type = step.get("agent_type", "text")
+                if agent_type == "text":
+                    capabilities.append("自然语言理解与生成")
+                elif agent_type == "tool":
+                    tools = step.get("tools", {}).get("allowed", [])
+                    for tool in tools:
+                        capabilities.append(f"工具调用: {tool}")
+                elif agent_type == "code":
+                    capabilities.append("代码生成与执行")
+                elif agent_type == "custom":
+                    capabilities.append("自定义功能")
         
         # 去重
         capabilities = list(set(capabilities))
@@ -293,9 +443,17 @@ self.register_custom_agent(custom_agent)
         # 分析成本
         cost_analysis = self._analyze_implementation_cost(agent_specs)
         
+        # 获取workflow名称和描述
+        if hasattr(workflow, 'name'):
+            workflow_name = workflow.name
+            workflow_description = getattr(workflow, 'description', '自动生成的Agent')
+        else:
+            workflow_name = workflow.get("metadata", {}).get("name", "GeneratedAgent")
+            workflow_description = workflow.get("metadata", {}).get("description", "自动生成的Agent")
+        
         return AgentMetadata(
-            name=workflow.get("metadata", {}).get("name", "GeneratedAgent"),
-            description=workflow.get("metadata", {}).get("description", "自动生成的Agent"),
+            name=workflow_name,
+            description=workflow_description,
             capabilities=capabilities,
             interface={
                 "input": "字符串或字典格式的用户输入",

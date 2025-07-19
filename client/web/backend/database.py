@@ -80,6 +80,12 @@ class AgentBuild(Base):
     generated_code = Column(Text, nullable=True)  # 生成的Python代码
     workflow_config = Column(Text, nullable=True)  # 生成的YAML配置
     
+    # 中间产物存储 (JSON格式)
+    steps_data = Column(Text, nullable=True)  # 步骤提取结果
+    step_agents_data = Column(Text, nullable=True)  # StepAgent规格数据
+    agent_types_data = Column(Text, nullable=True)  # Agent类型判断结果
+    workflow_data = Column(Text, nullable=True)  # BaseAgent Workflow对象数据
+    
     # 时间戳
     started_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)

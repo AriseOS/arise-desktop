@@ -13,6 +13,24 @@ AgentBuilder是一个革命性的AI Agent开发工具，能够将用户的自然
 - 🔧 **自动工作流构建** - 生成BaseAgent兼容的YAML工作流
 - 💻 **Python代码生成** - 直接输出完整的可执行Python文件
 - 📚 **完整文档生成** - 自动生成README、测试和依赖文件
+- 🗄️ **数据库集成** - 完整的构建过程追踪和存储
+
+## 🔄 工作流程总览
+
+AgentBuilder采用10步构建流程，每个步骤产生特定的中间产物：
+
+### 构建步骤详解
+
+1. **智能需求解析** → `ParsedRequirement` 对象
+2. **步骤提取** → `List[StepDesign]` 执行步骤列表
+3. **Agent类型判断** → `Dict[str, str]` 类型优化映射
+4. **StepAgent生成** → `List[Dict]` Agent规格列表
+5. **工作流构建** → BaseAgent `Workflow` 对象
+6. **代码生成** → `GeneratedCode` 完整代码包
+7. **文件保存** → 结构化文件夹 `agent_{id}/`
+8. **代码测试** → 语法和结构验证报告
+9. **构建报告** → 完整构建摘要
+10. **数据库存储** → 持久化所有构建数据
 
 ## 🏗️ 系统架构
 
@@ -121,23 +139,41 @@ agent_builder/
 
 ## 🔧 生成的Agent结构
 
-AgentBuilder生成的每个Agent包含：
+AgentBuilder生成的每个Agent包含完整的项目结构：
 
 ### 文件清单
-- `agent_name.py` - 主Agent实现代码
-- `agent_name_workflow.yaml` - 工作流配置
-- `agent_name_metadata.json` - Agent元数据
-- `agent_name_README.md` - 使用说明
-- `agent_name_requirements.txt` - 依赖包列表
+```
+agent_{agent_id}/
+├── agent.py              # 主Agent实现代码（包含CLI入口）
+├── config.json           # Agent配置文件
+├── workflow.yaml         # BaseAgent工作流配置
+├── metadata.json         # Agent元数据和能力描述
+├── README.md             # 详细使用说明和示例
+└── requirements.txt      # Python依赖包列表
+```
+
+### 数据库存储
+所有构建数据都存储在 `AgentBuild` 表中：
+- `build_id` - 唯一构建标识符
+- `agent_purpose` - Agent目的和功能描述
+- `generated_code` - 完整的Python Agent代码
+- `workflow_data` - BaseAgent工作流JSON数据
+- `steps_data` - 执行步骤的详细信息
+- `step_agents_data` - StepAgent规格数据
+- `agent_types_data` - Agent类型优化结果
 
 ### Agent代码结构
+生成的Agent具备完整的CLI功能和BaseAgent集成：
+
 ```python
-class GeneratedAgent(BaseAgent):
+#!/usr/bin/env python3
+class Agent_Generated(BaseAgent):
     """由AgentBuilder自动生成的Agent"""
     
     def __init__(self, config: AgentConfig):
         super().__init__(config)
         self.workflow = None
+        self.workflow_name = "custom_workflow"
     
     async def initialize(self):
         """初始化Agent和工作流"""
@@ -145,9 +181,14 @@ class GeneratedAgent(BaseAgent):
         await self._setup_workflow()
     
     async def _setup_workflow(self):
-        """设置工作流"""
-        builder = self.create_workflow_builder("名称", "描述")
-        # 自动生成的工作流步骤...
+        """设置BaseAgent工作流"""
+        builder = self.create_workflow_builder("工作流名称", "工作流描述")
+        
+        # 自动生成的工作流步骤（基于用户需求）
+        builder.add_text_step(name="步骤1", instruction="处理用户输入")
+        builder.add_tool_step(name="步骤2", instruction="调用外部工具", tools=["browser_use"])
+        builder.add_code_step(name="步骤3", instruction="生成分析代码")
+        
         self.workflow = builder.build()
     
     async def execute(self, input_data: Any) -> AgentResult:
@@ -155,8 +196,31 @@ class GeneratedAgent(BaseAgent):
         if not self.workflow:
             await self._setup_workflow()
         
-        result = await self.run_custom_workflow(self.workflow, input_data)
-        return AgentResult(success=True, data=result, agent_name=self.config.name)
+        # 包装输入数据为字典格式
+        workflow_input = {"user_input": input_data} if not isinstance(input_data, dict) else input_data
+        result = await self.run_custom_workflow(self.workflow, workflow_input)
+        
+        return AgentResult(
+            success=True, 
+            data=result, 
+            agent_name=self.config.name,
+            execution_time=0.0
+        )
+
+# 完整的CLI入口支持
+def main():
+    parser = argparse.ArgumentParser(description="Generated Agent")
+    parser.add_argument('--input', help='输入数据')
+    parser.add_argument('--interactive', action='store_true', help='交互模式')
+    parser.add_argument('--api-key', help='API密钥')
+    parser.add_argument('--config', help='配置文件路径')
+    
+    # 支持配置文件加载和环境变量
+    # 支持交互模式和单次执行模式
+    # 完整的错误处理和输出格式化
+
+if __name__ == "__main__":
+    main()
 ```
 
 ## 🎨 使用示例

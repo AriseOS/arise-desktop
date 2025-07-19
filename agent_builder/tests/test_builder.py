@@ -26,7 +26,6 @@ from core.agent_builder import AgentBuilder
 from core.schemas import LLMConfig, ParsedRequirement, StepDesign
 from core.requirement_parser import RequirementParser
 from core.agent_designer import AgentDesigner
-from core.workflow_builder import WorkflowBuilder
 from core.code_generator import CodeGenerator
 
 # 数据库相关导入
@@ -82,6 +81,80 @@ class AgentBuilderTester:
     def __del__(self):
         """析构函数"""
         self.cleanup()
+    
+    def _validate_generated_files(self, result: dict):
+        """验证生成的文件结构"""
+        print("📁 验证生成的文件结构...")
+        
+        files = result.get('files', {})
+        
+        # 检查文件夹结构
+        expected_files = [
+            'agent_folder',
+            'agent_file', 
+            'config_file',
+            'workflow_file',
+            'metadata_file',
+            'readme_file',
+            'requirements_file'
+        ]
+        
+        for file_key in expected_files:
+            if file_key in files:
+                file_path = files[file_key]
+                if file_key == 'agent_folder':
+                    if os.path.exists(file_path):
+                        print(f"✅ Agent文件夹已创建: {file_path}")
+                    else:
+                        print(f"❌ Agent文件夹不存在: {file_path}")
+                else:
+                    if os.path.exists(file_path):
+                        print(f"✅ {file_key}已生成: {os.path.basename(file_path)}")
+                    else:
+                        print(f"❌ {file_key}不存在: {file_path}")
+            else:
+                print(f"❌ 缺少文件路径: {file_key}")
+        
+        # 检查Agent文件夹命名格式
+        if 'agent_folder' in files:
+            folder_name = os.path.basename(files['agent_folder'])
+            if folder_name.startswith('agent_'):
+                print(f"✅ Agent文件夹命名格式正确: {folder_name}")
+            else:
+                print(f"❌ Agent文件夹命名格式错误: {folder_name}")
+    
+    def _validate_generated_code_structure(self, generated_code):
+        """验证生成的代码结构包含CLI入口"""
+        print("🔍 验证生成的代码结构...")
+        
+        code = generated_code.main_agent_code
+        
+        # 检查必要的组件
+        checks = [
+            ("shebang", "#!/usr/bin/env python3" in code),
+            ("imports", "import argparse" in code),
+            ("path_setup", "base_app_path" in code),
+            ("base_agent_import", "from base_app.base_agent.core.base_agent import BaseAgent" in code),
+            ("agent_class", "class Agent_" in code),
+            ("main_function", "def main():" in code),
+            ("cli_args", "parser.add_argument('--interactive'" in code),
+            ("entry_point", 'if __name__ == "__main__":' in code),
+            ("config_loading", "config.json" in code),
+            ("interactive_mode", "while True:" in code)
+        ]
+        
+        for check_name, passed in checks:
+            status = "✅" if passed else "❌"
+            print(f"  {status} {check_name}: {'通过' if passed else '失败'}")
+        
+        # 检查所有必要组件
+        all_passed = all(passed for _, passed in checks)
+        if all_passed:
+            print("✅ 代码结构验证通过")
+        else:
+            print("❌ 代码结构验证失败")
+        
+        return all_passed
     
     def get_mock_requirement(self, user_description: str) -> ParsedRequirement:
         """获取模拟的需求解析结果"""
@@ -270,6 +343,10 @@ class AgentBuilderTester:
             
             print("✅ 完整构建流程成功")
             print(f"构建结果: {json.dumps(result, indent=2, ensure_ascii=False)}")
+            
+            # 验证新的文件夹结构
+            self._validate_generated_files(result)
+            
             return result
             
         except Exception as e:
@@ -417,15 +494,14 @@ class AgentBuilderTester:
                 )
                 step_designs.append(step_design)
             
-            workflow_builder = WorkflowBuilder()
+            # 注意: 工作流构建现在集成在AgentBuilder中，使用BaseAgent WorkflowBuilder
+            print("⚠️  独立工作流构建测试已不适用 - 工作流构建现在集成在AgentBuilder.build_agent_from_description()中")
+            print("💡 请使用完整测试流程 (test_all_steps) 来测试工作流构建功能")
             
-            # 测试工作流构建
-            workflow = await workflow_builder.build_workflow(step_designs, step_agents)
-            print(f"✅ 工作流构建成功")
-            print(f"工作流名称: {workflow.get('metadata', {}).get('name', 'Unknown')}")
-            print(f"工作流步骤数: {len(workflow.get('steps', []))}")
-            
-            return workflow
+            # 返回模拟的workflow结果
+            mock_workflow = self.get_mock_workflow()
+            print(f"✅ 返回模拟工作流: {mock_workflow['metadata']['name']}")
+            return mock_workflow
             
         except Exception as e:
             print(f"❌ 工作流构建失败: {e}")
@@ -438,13 +514,13 @@ class AgentBuilderTester:
         print("-" * 40)
         
         try:
-            workflow_builder = WorkflowBuilder()
+            # 注意: 工作流注册现在集成在AgentBuilder中，使用BaseAgent WorkflowBuilder
+            print("⚠️  独立工作流注册测试已不适用 - 工作流注册现在集成在AgentBuilder.build_agent_from_description()中")
+            print("💡 请使用完整测试流程 (test_all_steps) 来测试工作流注册功能")
             
-            # 测试工作流注册
-            registration_result = await workflow_builder.register_workflow(workflow)
-            print(f"✅ 工作流注册成功")
-            print(f"注册结果: {registration_result}")
-            
+            # 返回模拟的注册结果
+            registration_result = {"success": True, "message": "工作流已集成在数据库存储中"}
+            print(f"✅ 返回模拟注册结果: {registration_result}")
             return registration_result
             
         except Exception as e:
@@ -468,6 +544,9 @@ class AgentBuilderTester:
             print(f"Agent能力: {generated_code.metadata.capabilities}")
             print(f"成本分析: {generated_code.metadata.cost_analysis}")
             print(f"代码长度: {len(generated_code.main_agent_code)} 字符")
+            
+            # 验证生成的代码包含CLI入口
+            self._validate_generated_code_structure(generated_code)
             
             return generated_code
             

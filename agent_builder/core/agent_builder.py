@@ -12,8 +12,15 @@ from datetime import datetime
 from .schemas import GeneratedCode, LLMConfig
 from .requirement_parser import RequirementParser
 from .agent_designer import AgentDesigner
-from .workflow_builder import WorkflowBuilder
 from .code_generator import CodeGenerator
+
+# 导入BaseAgent的WorkflowBuilder和相关类
+import sys
+from pathlib import Path
+base_app_path = Path(__file__).parent.parent.parent / "base_app"
+sys.path.insert(0, str(base_app_path))
+from base_app.base_agent.core.workflow_builder import WorkflowBuilder as BaseWorkflowBuilder
+from base_app.base_agent.core.base_agent import BaseAgent
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +42,131 @@ class AgentBuilder:
         # 初始化核心组件
         self.requirement_parser = RequirementParser(llm_config)
         self.agent_designer = AgentDesigner(llm_config)
-        self.workflow_builder = WorkflowBuilder()
         self.code_generator = CodeGenerator(llm_config)
         
+        # 初始化BaseAgent实例（用于WorkflowBuilder）
+        self.base_agent = BaseAgent()
+        
+        
         logger.info(f"AgentBuilder初始化完成，使用LLM: {llm_config.provider}/{llm_config.model}")
+    
+    def _convert_steps_to_base_workflow(self, steps: list, step_agents: list, build_id: str) -> Any:
+        """
+        将AgentBuilder的步骤转换为BaseAgent的Workflow格式
+        
+        Args:
+            steps: AgentBuilder步骤列表
+            step_agents: StepAgent规格列表
+            build_id: 构建ID
+            
+        Returns:
+            BaseAgent Workflow对象
+        """
+        import json
+        
+        # 创建工作流名称和描述
+        workflow_name = f"agentbuilder_workflow_{build_id[:8]}"
+        workflow_description = f"AgentBuilder自动生成的工作流，包含{len(steps)}个步骤"
+        
+        # 创建BaseWorkflowBuilder实例
+        workflow_builder = BaseWorkflowBuilder(
+            name=workflow_name,
+            description=workflow_description,
+            agent_instance=self.base_agent
+        )
+        
+        # 为步骤创建agent_spec映射
+        agent_spec_map = {spec.get('step_id', f'step_{i+1}'): spec 
+                         for i, spec in enumerate(step_agents)}
+        
+        # 转换每个步骤，使用生成的精确配置
+        for i, step in enumerate(steps):
+            step_id = f"step_{i+1}"
+            
+            # 处理StepDesign对象或字典
+            if hasattr(step, 'name'):
+                # StepDesign对象
+                step_name = step.name or f'步骤{i+1}'
+                agent_type = step.agent_type or 'text'
+            else:
+                # 字典对象
+                step_name = step.get('name', f'步骤{i+1}')
+                agent_type = step.get('agent_type', 'text')
+            
+            # 获取对应的agent规格，使用新的baseagent_config
+            agent_spec = agent_spec_map.get(step_id, {})
+            baseagent_config = agent_spec.get('baseagent_config', {})
+            
+            if agent_type == 'text' or agent_type == 'text_agent':
+                # 使用生成的精确TextAgent配置
+                workflow_builder.add_text_step(
+                    name=step_name,
+                    instruction=baseagent_config.get('agent_instruction', step.description if hasattr(step, 'description') else ''),
+                    description=baseagent_config.get('description', step.description if hasattr(step, 'description') else ''),
+                    user_task=baseagent_config.get('user_task'),
+                    inputs=baseagent_config.get('inputs', {}),
+                    outputs=baseagent_config.get('outputs', {}),
+                    constraints=baseagent_config.get('constraints', []),
+                    response_style=baseagent_config.get('response_style', 'professional'),
+                    max_length=baseagent_config.get('max_length', 500),
+                    timeout=baseagent_config.get('timeout', 300),
+                    retry_count=baseagent_config.get('retry_count', 0),
+                    condition=baseagent_config.get('condition')
+                )
+            elif agent_type == 'tool' or agent_type == 'tool_agent':
+                # 使用生成的精确ToolAgent配置，映射字段名
+                workflow_builder.add_tool_step(
+                    name=step_name,
+                    instruction=baseagent_config.get('agent_instruction', step.description if hasattr(step, 'description') else ''),
+                    tools=baseagent_config.get('allowed_tools', ['browser_use']),  # 映射 allowed_tools -> tools
+                    description=baseagent_config.get('description', step.description if hasattr(step, 'description') else ''),
+                    user_task=baseagent_config.get('user_task'),
+                    inputs=baseagent_config.get('inputs', {}),
+                    outputs=baseagent_config.get('outputs', {}),
+                    constraints=baseagent_config.get('constraints', []),
+                    confidence_threshold=baseagent_config.get('confidence_threshold', 0.8),
+                    fallback_tools=baseagent_config.get('fallback_tools', []),
+                    timeout=baseagent_config.get('timeout', 300),
+                    retry_count=baseagent_config.get('retry_count', 0),
+                    condition=baseagent_config.get('condition')
+                )
+            elif agent_type == 'code' or agent_type == 'code_agent':
+                # 使用生成的精确CodeAgent配置，映射字段名
+                workflow_builder.add_code_step(
+                    name=step_name,
+                    instruction=baseagent_config.get('agent_instruction', step.description if hasattr(step, 'description') else ''),
+                    description=baseagent_config.get('description', step.description if hasattr(step, 'description') else ''),
+                    language='python',  # WorkflowBuilder不支持language参数，固定使用python
+                    libraries=baseagent_config.get('allowed_libraries', ['pandas', 'numpy']),  # 映射 allowed_libraries -> libraries
+                    expected_output_format=baseagent_config.get('expected_output_format', ''),
+                    user_task=baseagent_config.get('user_task'),
+                    inputs=baseagent_config.get('inputs', {}),
+                    outputs=baseagent_config.get('outputs', {}),
+                    constraints=baseagent_config.get('constraints', []),
+                    timeout=baseagent_config.get('timeout', 300),
+                    retry_count=baseagent_config.get('retry_count', 0),
+                    condition=baseagent_config.get('condition')
+                )
+            else:
+                # 使用生成的精确自定义Agent配置
+                workflow_builder.add_custom_step(
+                    name=step_name,
+                    agent_name=baseagent_config.get('agent_name', agent_type),
+                    instruction=baseagent_config.get('agent_instruction', step.description if hasattr(step, 'description') else ''),
+                    description=baseagent_config.get('description', step.description if hasattr(step, 'description') else ''),
+                    user_task=baseagent_config.get('user_task'),
+                    inputs=baseagent_config.get('inputs', {}),
+                    outputs=baseagent_config.get('outputs', {}),
+                    constraints=baseagent_config.get('constraints', []),
+                    timeout=baseagent_config.get('timeout', 300),
+                    retry_count=baseagent_config.get('retry_count', 0),
+                    condition=baseagent_config.get('condition')
+                )
+        
+        # 构建并返回Workflow
+        workflow = workflow_builder.build()
+        logger.info(f"成功转换为BaseAgent Workflow: {workflow.name}")
+        return workflow
     
     def create_build_metadata(self, user_id: int, user_description: str) -> str:
         """
@@ -93,7 +221,9 @@ class AgentBuilder:
     
     def update_build_result(self, build_id: str, agent_purpose: str = None, 
                           generated_code: str = None, workflow_config: str = None, 
-                          status: str = None, error_message: str = None):
+                          status: str = None, error_message: str = None,
+                          steps_data: str = None, step_agents_data: str = None,
+                          agent_types_data: str = None, workflow_data: str = None):
         """
         更新构建结果
         
@@ -104,6 +234,10 @@ class AgentBuilder:
             workflow_config: 工作流配置
             status: 构建状态
             error_message: 错误信息
+            steps_data: 步骤数据(JSON)
+            step_agents_data: StepAgent数据(JSON)
+            agent_types_data: Agent类型数据(JSON)
+            workflow_data: BaseAgent Workflow数据(JSON)
         """
         if self.db_session:
             from client.web.backend.database import AgentBuild
@@ -122,6 +256,14 @@ class AgentBuilder:
                         build.completed_at = datetime.utcnow()
                 if error_message:
                     build.error_message = error_message
+                if steps_data:
+                    build.steps_data = steps_data
+                if step_agents_data:
+                    build.step_agents_data = step_agents_data
+                if agent_types_data:
+                    build.agent_types_data = agent_types_data
+                if workflow_data:
+                    build.workflow_data = workflow_data
                 
                 self.db_session.commit()
                 logger.info(f"更新构建结果 - build_id: {build_id}, status: {status}")
@@ -183,32 +325,63 @@ class AgentBuilder:
             step_agents = await self.agent_designer.generate_step_agents(steps)
             logger.info(f"StepAgent生成完成 - 共{len(step_agents)}个Agent规格")
             
-            # 5. 组合Workflow（已实现）
+            # 存储中间产物到数据库
+            import json
+            
+            # 将StepDesign对象转换为可序列化的字典
+            serializable_steps = []
+            for step in steps:
+                if hasattr(step, 'dict'):
+                    # 如果是Pydantic模型，使用dict()方法
+                    serializable_steps.append(step.dict())
+                elif hasattr(step, '__dict__'):
+                    # 如果是普通对象，使用__dict__
+                    serializable_steps.append(step.__dict__)
+                else:
+                    # 如果已经是字典，直接使用
+                    serializable_steps.append(step)
+            
+            self.update_build_result(
+                build_id,
+                steps_data=json.dumps(serializable_steps, ensure_ascii=False),
+                step_agents_data=json.dumps(step_agents, ensure_ascii=False),
+                agent_types_data=json.dumps(agent_types, ensure_ascii=False)
+            )
+            
+            # 5. 组合Workflow（使用BaseAgent WorkflowBuilder）
             logger.info("步骤5: 构建工作流")
             self.update_build_step(build_id, "building_workflow")
-            workflow = await self.workflow_builder.build_workflow(steps, step_agents)
-            logger.info(f"工作流构建完成 - {workflow['metadata']['name']}")
+            workflow = self._convert_steps_to_base_workflow(steps, step_agents, build_id)
+            logger.info(f"工作流构建完成 - {workflow.name}")
+            print(workflow)
             
-            # 7. 生成BaseAgent兼容代码（已实现）
+            # 存储BaseAgent Workflow到数据库
+            # 使用model_dump替代弃用的dict()方法
+            workflow_dict = workflow.model_dump() if hasattr(workflow, 'model_dump') else workflow.dict()
+            self.update_build_result(
+                build_id,
+                workflow_data=json.dumps(workflow_dict, ensure_ascii=False, default=str)
+            )
+            
+            # 7. 生成BaseAgent兼容代码（直接使用BaseAgent Workflow）
             logger.info("步骤7: 生成Python代码")
             self.update_build_step(build_id, "generating_code")
+            
+            # 直接使用BaseAgent Workflow对象，不再转换为字典格式
             generated_code = await self.code_generator.generate_agent_code(workflow, step_agents)
             logger.info("代码生成完成")
             
-            # 保存生成的代码和工作流配置
-            import yaml
-            workflow_config_str = yaml.dump(workflow, default_flow_style=False, allow_unicode=True)
+            # 保存生成的代码，workflow配置直接存储在workflow_data字段中
             self.update_build_result(
                 build_id, 
-                generated_code=generated_code.main_agent_code,
-                workflow_config=workflow_config_str
+                generated_code=generated_code.main_agent_code
             )
             
             # 8. 保存生成的文件
             logger.info("步骤8: 保存生成的文件")
             self.update_build_step(build_id, "saving_files")
             file_paths = await self._save_generated_files(
-                generated_code, workflow, steps, output_dir, agent_name
+                generated_code, workflow, steps, output_dir, agent_name, build_id
             )
             logger.info(f"文件保存完成 - 主文件: {file_paths['agent_file']}")
             
@@ -239,32 +412,29 @@ class AgentBuilder:
     
     async def _save_generated_files(self, 
                                   generated_code: GeneratedCode,
-                                  workflow: Dict[str, Any],
+                                  workflow: Any,
                                   steps: list,
                                   output_dir: str,
-                                  agent_name: Optional[str]) -> Dict[str, str]:
-        """保存所有生成的文件"""
+                                  agent_name: Optional[str],
+                                  build_id: str) -> Dict[str, str]:
+        """保存所有生成的文件到基于Agent ID的文件夹"""
         
-        # 确定文件名
-        if agent_name:
-            base_name = agent_name.lower().replace(' ', '_').replace('-', '_')
-        else:
-            base_name = generated_code.metadata.name.lower().replace(' ', '_').replace('-', '_')
+        # 从build_id中提取Agent ID（取前8位）
+        agent_id = build_id.split('_')[1][:8] if '_' in build_id else build_id[:8]
         
-        # 确保基础名称是有效的Python标识符
-        if not base_name.replace('_', '').isalnum():
-            base_name = f"generated_agent_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        
-        # 创建输出目录
-        os.makedirs(output_dir, exist_ok=True)
+        # 创建基于Agent ID的文件夹
+        agent_folder = os.path.join(output_dir, f"agent_{agent_id}")
+        os.makedirs(agent_folder, exist_ok=True)
         
         # 文件路径
         file_paths = {
-            'agent_file': os.path.join(output_dir, f"{base_name}.py"),
-            'workflow_file': os.path.join(output_dir, f"{base_name}_workflow.yaml"),
-            'metadata_file': os.path.join(output_dir, f"{base_name}_metadata.json"),
-            'readme_file': os.path.join(output_dir, f"{base_name}_README.md"),
-            'requirements_file': os.path.join(output_dir, f"{base_name}_requirements.txt")
+            'agent_folder': agent_folder,
+            'agent_file': os.path.join(agent_folder, 'agent.py'),
+            'config_file': os.path.join(agent_folder, 'config.json'),
+            'workflow_file': os.path.join(agent_folder, 'workflow.yaml'),
+            'metadata_file': os.path.join(agent_folder, 'metadata.json'),
+            'readme_file': os.path.join(agent_folder, 'README.md'),
+            'requirements_file': os.path.join(agent_folder, 'requirements.txt')
         }
         
         # 保存主Agent代码
@@ -275,23 +445,39 @@ class AgentBuilder:
         with open(file_paths['workflow_file'], 'w', encoding='utf-8') as f:
             f.write(generated_code.workflow_config)
         
+        # 保存Agent配置文件
+        config_dict = {
+            "name": generated_code.metadata.name,
+            "agent_id": agent_id,
+            "description": generated_code.metadata.description,
+            "llm_provider": self.llm_config.provider,
+            "llm_model": self.llm_config.model,
+            "api_key": "${OPENAI_API_KEY}",
+            "capabilities": generated_code.metadata.capabilities,
+            "created_at": generated_code.metadata.created_at.isoformat()
+        }
+        
+        with open(file_paths['config_file'], 'w', encoding='utf-8') as f:
+            json.dump(config_dict, f, indent=2, ensure_ascii=False)
+        
         # 保存元数据
         metadata_dict = {
             "name": generated_code.metadata.name,
+            "agent_id": agent_id,
             "description": generated_code.metadata.description,
             "capabilities": generated_code.metadata.capabilities,
             "interface": generated_code.metadata.interface,
             "cost_analysis": generated_code.metadata.cost_analysis,
             "created_at": generated_code.metadata.created_at.isoformat(),
             "steps_count": len(steps),
-            "workflow_complexity": workflow.get("complexity_score", "unknown")
+            "workflow_complexity": getattr(workflow, 'complexity_score', "unknown") if hasattr(workflow, 'complexity_score') else "unknown"
         }
         
         with open(file_paths['metadata_file'], 'w', encoding='utf-8') as f:
             json.dump(metadata_dict, f, indent=2, ensure_ascii=False)
         
         # 生成README文档
-        readme_content = self._generate_readme(generated_code, workflow, steps, base_name)
+        readme_content = self._generate_readme(generated_code, workflow, steps, agent_id)
         with open(file_paths['readme_file'], 'w', encoding='utf-8') as f:
             f.write(readme_content)
         
@@ -304,9 +490,9 @@ class AgentBuilder:
     
     def _generate_readme(self, 
                         generated_code: GeneratedCode,
-                        workflow: Dict[str, Any],
+                        workflow: Any,
                         steps: list,
-                        base_name: str) -> str:
+                        agent_id: str) -> str:
         """生成README文档"""
         
         steps_list = ""
@@ -338,33 +524,33 @@ class AgentBuilder:
 ### 1. 安装依赖
 
 ```bash
-pip install -r {base_name}_requirements.txt
+pip install -r requirements.txt
 ```
 
 ### 2. 配置API密钥
 
 编辑代码中的API密钥配置：
 
-```python
-config = AgentConfig(
-    name="{generated_code.metadata.name}",
-    llm_provider="{self.llm_config.provider}",
-    llm_model="{self.llm_config.model}",
-    api_key="your-api-key-here"  # 请替换为实际的API密钥
-)
+设置环境变量：
+
+```bash
+export OPENAI_API_KEY="your-api-key-here"
+```
+
+或者编辑 config.json 文件中的 api_key 字段
 ```
 
 ### 3. 运行Agent
 
 ```bash
-python {base_name}.py
+python agent.py --interactive
 ```
 
 ### 4. 编程方式使用
 
 ```python
 import asyncio
-from {base_name} import GeneratedAgent
+from agent import Agent_{agent_id}
 from base_app.base_agent.core.schemas import AgentConfig
 
 async def main():
@@ -374,9 +560,7 @@ async def main():
         api_key="your-api-key"
     )
     
-    agent = GeneratedAgent(config)
-    await agent.initialize()
-    
+    agent = Agent_{agent_id}(config)
     result = await agent.execute("你的输入")
     print(result.data)
 
@@ -397,17 +581,18 @@ if __name__ == "__main__":
 
 ## 文件说明
 
-- `{base_name}.py` - 主Agent实现代码
-- `{base_name}_workflow.yaml` - 工作流配置文件
-- `{base_name}_metadata.json` - Agent元数据
-- `{base_name}_requirements.txt` - Python依赖包
-- `{base_name}_README.md` - 本说明文档
+- `agent.py` - 主Agent实现代码
+- `config.json` - Agent配置文件
+- `workflow.yaml` - 工作流配置文件
+- `metadata.json` - Agent元数据
+- `requirements.txt` - Python依赖包
+- `README.md` - 本说明文档
 
 ## 生成信息
 
 - **生成时间**: {generated_code.created_at.strftime('%Y-%m-%d %H:%M:%S')}
 - **AgentBuilder版本**: 1.0.0
-- **工作流复杂度**: {workflow.get('complexity_score', '未评估')}
+- **工作流复杂度**: {getattr(workflow, 'complexity_score', '未评估') if hasattr(workflow, 'complexity_score') else '未评估'}
 
 ## 支持与反馈
 
@@ -451,7 +636,7 @@ loguru>=0.6.0
     def _generate_build_report(self,
                              requirement,
                              steps,
-                             workflow,
+                             workflow: Any,
                              generated_code,
                              file_paths,
                              test_result) -> Dict[str, Any]:
@@ -467,8 +652,8 @@ loguru>=0.6.0
             },
             "build_summary": {
                 "steps_count": len(steps),
-                "workflow_complexity": workflow.get("complexity_score", "unknown"),
-                "estimated_execution_time": workflow.get("estimated_execution_time", 0),
+                "workflow_complexity": getattr(workflow, 'complexity_score', "unknown") if hasattr(workflow, 'complexity_score') else "unknown",
+                "estimated_execution_time": getattr(workflow, 'estimated_execution_time', 0) if hasattr(workflow, 'estimated_execution_time') else 0,
                 "generated_files_count": len(file_paths)
             },
             "files": file_paths,
@@ -480,10 +665,10 @@ loguru>=0.6.0
                 "warnings": test_result.get("warnings", [])
             },
             "workflow_info": {
-                "name": workflow["metadata"]["name"],
-                "steps_count": len(workflow.get("steps", [])),
-                "has_conditions": any("condition" in step for step in workflow.get("steps", [])),
-                "agent_types_used": list(set(step.get("agent_type", "unknown") for step in workflow.get("steps", [])))
+                "name": getattr(workflow, 'name', "Unknown") if hasattr(workflow, 'name') else "Unknown",
+                "steps_count": len(getattr(workflow, 'steps', [])) if hasattr(workflow, 'steps') else 0,
+                "has_conditions": False,  # 简化处理，BaseAgent workflow通常没有条件
+                "agent_types_used": []  # 简化处理，从steps中提取类型较复杂
             },
             "generation_details": {
                 "llm_provider": self.llm_config.provider,

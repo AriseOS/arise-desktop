@@ -44,28 +44,332 @@ class AgentDesigner:
         return judgment_result
     
     async def generate_step_agents(self, steps: List[StepDesign]) -> List[Dict[str, Any]]:
-        """按需生成新的专用StepAgent"""
+        """生成符合BaseAgent要求的精确Step配置"""
         
         generated_agents = []
         
-        for step in steps:
-            # 分析工具需求
-            tool_approach = step.agent_config.get('tool_approach', 'reuse_existing')
-            
-            if tool_approach == 'implement_new':
-                # 需要实现新的工具或Agent
-                agent_spec = await self._generate_custom_agent_spec(step)
-                generated_agents.append(agent_spec)
-            elif tool_approach == 'combine_existing':
-                # 需要组合现有工具
-                combination_spec = await self._generate_tool_combination_spec(step)
-                generated_agents.append(combination_spec)
+        for i, step in enumerate(steps):
+            # 根据Agent类型调用大模型生成具体配置
+            if step.agent_type in ['text', 'text_agent']:
+                agent_spec = await self._generate_text_agent_config(step, i, len(steps))
+            elif step.agent_type in ['tool', 'tool_agent']:
+                agent_spec = await self._generate_tool_agent_config(step, i, len(steps))
+            elif step.agent_type in ['code', 'code_agent']:
+                agent_spec = await self._generate_code_agent_config(step, i, len(steps))
             else:
-                # 使用现有能力，生成基本配置
-                basic_spec = self._generate_basic_agent_spec(step)
-                generated_agents.append(basic_spec)
-        
+                # 自定义Agent
+                agent_spec = await self._generate_custom_agent_config(step, i, len(steps))
+            
+            generated_agents.append(agent_spec)
+        print("generated_agents\n")
+        print(generated_agents) 
         return generated_agents
+    
+    async def _generate_text_agent_config(self, step: StepDesign, step_index: int, total_steps: int) -> Dict[str, Any]:
+        """生成TextAgent的BaseAgent配置"""
+        
+        # 构建LLM分析prompt
+        prompt = f"""# BaseAgent TextAgent配置专家
+
+## 任务
+为以下工作流步骤生成精确的BaseAgent TextAgent配置参数。
+
+## 步骤信息
+- 步骤名称: {step.name}
+- 步骤描述: {step.description}
+- 步骤位置: 第{step_index + 1}步，共{total_steps}步
+- 现有配置: {step.agent_config}
+
+## AgentWorkflowStep完整字段要求
+需要生成完整的AgentWorkflowStep兼容配置，包括：
+
+### 基础字段:
+- name: 步骤名称
+- description: 步骤描述  
+- agent_type: Agent类型
+- agent_instruction: Agent执行指令
+- user_task: 用户具体任务内容(可选)
+
+### 输入输出配置:
+- inputs: 输入映射配置
+- outputs: 输出映射配置
+- constraints: 约束条件列表
+
+### Text Agent特有字段:
+- response_style: 响应风格
+- max_length: 最大响应长度
+
+### 执行控制:
+- condition: 执行条件(可选)
+- timeout: 超时时间
+- retry_count: 重试次数
+
+## 输出要求
+严格按照以下JSON格式输出：
+
+```json
+{{
+    "step_id": "step_{step_index + 1}",
+    "agent_type": "text_agent",
+    "baseagent_config": {{
+        "name": "步骤名称",
+        "description": "步骤描述",
+        "agent_type": "text_agent",
+        "agent_instruction": "具体的Agent执行指令",
+        "user_task": "用户具体任务内容或null",
+        "inputs": {{"input_key": "input_description"}},
+        "outputs": {{"output_key": "output_description"}},
+        "constraints": ["约束条件列表"],
+        "response_style": "professional/casual/technical",
+        "max_length": 数值,
+        "condition": null,
+        "timeout": 数值,
+        "retry_count": 数值
+    }}
+}}
+```"""
+
+        response = await self._call_llm(prompt)
+        return self._parse_agent_config_response(response, step.step_id)
+    
+    async def _generate_tool_agent_config(self, step: StepDesign, step_index: int, total_steps: int) -> Dict[str, Any]:
+        """生成ToolAgent的BaseAgent配置"""
+        
+        existing_tools = step.agent_config.get('existing_tools', [])
+        
+        prompt = f"""# BaseAgent ToolAgent配置专家
+
+## 任务
+为以下工作流步骤生成精确的BaseAgent ToolAgent配置参数。
+
+## 步骤信息
+- 步骤名称: {step.name}
+- 步骤描述: {step.description}
+- 步骤位置: 第{step_index + 1}步，共{total_steps}步
+- 现有工具: {existing_tools}
+- 工具策略: {step.agent_config.get('tool_approach', 'reuse_existing')}
+
+## AgentWorkflowStep完整字段要求
+需要生成完整的AgentWorkflowStep兼容配置，包括：
+
+### 基础字段:
+- name: 步骤名称
+- description: 步骤描述  
+- agent_type: Agent类型
+- agent_instruction: Agent执行指令
+- user_task: 用户具体任务内容(可选)
+
+### 输入输出配置:
+- inputs: 输入映射配置
+- outputs: 输出映射配置
+- constraints: 约束条件列表
+
+### Tool Agent特有字段:
+- allowed_tools: 允许使用的工具列表 (注意:字段名是allowed_tools,不是tools)
+- fallback_tools: 备选工具列表
+- confidence_threshold: 置信度阈值
+
+### 执行控制:
+- condition: 执行条件(可选)
+- timeout: 超时时间
+- retry_count: 重试次数
+
+## 可用工具列表参考
+常见工具: browser_use, web_search, file_manager, data_processor, email_sender
+
+## 输出要求
+严格按照以下JSON格式输出：
+
+```json
+{{
+    "step_id": "step_{step_index + 1}",
+    "agent_type": "tool_agent",
+    "baseagent_config": {{
+        "name": "步骤名称",
+        "description": "步骤描述",
+        "agent_type": "tool_agent",
+        "agent_instruction": "具体的Agent执行指令",
+        "user_task": "用户具体任务内容或null",
+        "inputs": {{"input_key": "input_description"}},
+        "outputs": {{"output_key": "output_description"}},
+        "constraints": ["约束条件列表"],
+        "allowed_tools": ["工具名称列表"],
+        "fallback_tools": ["备选工具列表"],
+        "confidence_threshold": 0.8,
+        "condition": null,
+        "timeout": 数值,
+        "retry_count": 数值
+    }}
+}}
+```"""
+
+        response = await self._call_llm(prompt)
+        return self._parse_agent_config_response(response, step.step_id)
+    
+    async def _generate_code_agent_config(self, step: StepDesign, step_index: int, total_steps: int) -> Dict[str, Any]:
+        """生成CodeAgent的BaseAgent配置"""
+        
+        allowed_libraries = step.agent_config.get('allowed_libraries', [])
+        
+        prompt = f"""# BaseAgent CodeAgent配置专家
+
+## 任务
+为以下工作流步骤生成精确的BaseAgent CodeAgent配置参数。
+
+## 步骤信息
+- 步骤名称: {step.name}
+- 步骤描述: {step.description}
+- 步骤位置: 第{step_index + 1}步，共{total_steps}步
+- 建议库: {allowed_libraries}
+
+## AgentWorkflowStep完整字段要求
+需要生成完整的AgentWorkflowStep兼容配置，包括：
+
+### 基础字段:
+- name: 步骤名称
+- description: 步骤描述  
+- agent_type: Agent类型
+- agent_instruction: Agent执行指令
+- user_task: 用户具体任务内容(可选)
+
+### 输入输出配置:
+- inputs: 输入映射配置
+- outputs: 输出映射配置
+- constraints: 约束条件列表
+
+### Code Agent特有字段:
+- allowed_libraries: 允许使用的代码库列表 (注意:字段名是allowed_libraries,不是libraries)
+- expected_output_format: 期望的输出格式
+
+### 执行控制:
+- condition: 执行条件(可选)
+- timeout: 超时时间
+- retry_count: 重试次数
+
+## 常用库参考
+数据处理: pandas, numpy, json, csv
+可视化: matplotlib, seaborn, plotly
+网络: requests, urllib, httpx
+文本: re, string, nltk
+
+## 输出要求
+严格按照以下JSON格式输出：
+
+```json
+{{
+    "step_id": "step_{step_index + 1}",
+    "agent_type": "code_agent",
+    "baseagent_config": {{
+        "name": "步骤名称",
+        "description": "步骤描述",
+        "agent_type": "code_agent",
+        "agent_instruction": "具体的Agent执行指令",
+        "user_task": "用户具体任务内容或null",
+        "inputs": {{"input_key": "input_description"}},
+        "outputs": {{"output_key": "output_description"}},
+        "constraints": ["约束条件列表"],
+        "allowed_libraries": ["库名称列表"],
+        "expected_output_format": "输出格式描述",
+        "condition": null,
+        "timeout": 数值,
+        "retry_count": 数值
+    }}
+}}
+```"""
+
+        response = await self._call_llm(prompt)
+        return self._parse_agent_config_response(response, step.step_id)
+    
+    async def _generate_custom_agent_config(self, step: StepDesign, step_index: int, total_steps: int) -> Dict[str, Any]:
+        """生成自定义Agent的BaseAgent配置"""
+        
+        prompt = f"""# BaseAgent 自定义Agent配置专家
+
+## 任务
+为以下工作流步骤生成精确的BaseAgent自定义Agent配置参数。
+
+## 步骤信息
+- 步骤名称: {step.name}
+- 步骤描述: {step.description}
+- 步骤位置: 第{step_index + 1}步，共{total_steps}步
+- Agent类型: {step.agent_type}
+
+## AgentWorkflowStep完整字段要求
+需要生成完整的AgentWorkflowStep兼容配置，包括：
+
+### 基础字段:
+- name: 步骤名称
+- description: 步骤描述  
+- agent_type: Agent类型
+- agent_instruction: Agent执行指令
+- user_task: 用户具体任务内容(可选)
+
+### 输入输出配置:
+- inputs: 输入映射配置
+- outputs: 输出映射配置
+- constraints: 约束条件列表
+
+### 执行控制:
+- condition: 执行条件(可选)
+- timeout: 超时时间
+- retry_count: 重试次数
+
+## 输出要求
+严格按照以下JSON格式输出：
+
+```json
+{{
+    "step_id": "step_{step_index + 1}",
+    "agent_type": "{step.agent_type}",
+    "baseagent_config": {{
+        "name": "步骤名称",
+        "description": "步骤描述",
+        "agent_type": "{step.agent_type}",
+        "agent_instruction": "具体的Agent执行指令",
+        "user_task": "用户具体任务内容或null",
+        "inputs": {{"input_key": "input_description"}},
+        "outputs": {{"output_key": "output_description"}},
+        "constraints": ["约束条件列表"],
+        "condition": null,
+        "timeout": 数值,
+        "retry_count": 数值
+    }}
+}}
+```"""
+
+        response = await self._call_llm(prompt)
+        return self._parse_agent_config_response(response, step.step_id)
+    
+    def _parse_agent_config_response(self, response: str, step_id: str) -> Dict[str, Any]:
+        """解析LLM返回的Agent配置"""
+        print("stepAgent response: \n ")
+        print(response)
+        try:
+            # 提取JSON部分
+            json_start = response.find('{')
+            json_end = response.rfind('}') + 1
+            if json_start != -1 and json_end > json_start:
+                json_str = response[json_start:json_end]
+                config = json.loads(json_str)
+                return config
+            else:
+                raise ValueError("No valid JSON found")
+        except (json.JSONDecodeError, ValueError) as e:
+            # 如果解析失败，返回基础配置
+            return {
+                "step_id": step_id,
+                "agent_type": "text_agent",
+                "baseagent_config": {
+                    "agent_instruction": "执行文本处理任务",
+                    "response_style": "professional",
+                    "max_length": 500,
+                    "timeout": 300,
+                    "retry_count": 0,
+                    "condition": None
+                },
+                "parse_error": str(e),
+                "raw_response": response
+            }
     
     def _build_agent_type_judgment_prompt(self, steps: List[StepDesign]) -> str:
         """构建Agent类型判断的prompt"""
