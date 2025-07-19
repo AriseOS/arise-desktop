@@ -381,7 +381,7 @@ class AgentBuilder:
             logger.info("步骤8: 保存生成的文件")
             self.update_build_step(build_id, "saving_files")
             file_paths = await self._save_generated_files(
-                generated_code, workflow, steps, output_dir, agent_name, build_id
+                generated_code, workflow, steps, step_agents, output_dir, agent_name, build_id
             )
             logger.info(f"文件保存完成 - 主文件: {file_paths['agent_file']}")
             
@@ -414,6 +414,7 @@ class AgentBuilder:
                                   generated_code: GeneratedCode,
                                   workflow: Any,
                                   steps: list,
+                                  step_agents: list,
                                   output_dir: str,
                                   agent_name: Optional[str],
                                   build_id: str) -> Dict[str, str]:
@@ -445,6 +446,27 @@ class AgentBuilder:
         with open(file_paths['workflow_file'], 'w', encoding='utf-8') as f:
             f.write(generated_code.workflow_config)
         
+        # 收集所有需要的工具
+        required_tools = set()
+        
+        # 从工作流步骤收集工具
+        for step in getattr(workflow, 'steps', []):
+            if hasattr(step, 'allowed_tools'):
+                step_tools = getattr(step, 'allowed_tools', [])
+                if step_tools:
+                    required_tools.update(step_tools)
+            elif hasattr(step, 'tools'):
+                step_tools = getattr(step, 'tools', [])
+                if step_tools:
+                    required_tools.update(step_tools)
+        
+        # 从agent_specs收集工具
+        for spec in step_agents:
+            baseagent_config = spec.get('baseagent_config', {})
+            spec_tools = baseagent_config.get('allowed_tools', []) or baseagent_config.get('tools', [])
+            if spec_tools:
+                required_tools.update(spec_tools)
+        
         # 保存Agent配置文件
         config_dict = {
             "name": generated_code.metadata.name,
@@ -453,6 +475,7 @@ class AgentBuilder:
             "llm_provider": self.llm_config.provider,
             "llm_model": self.llm_config.model,
             "api_key": "${OPENAI_API_KEY}",
+            "tools": sorted(list(required_tools)),  # 明确标记需要的工具
             "capabilities": generated_code.metadata.capabilities,
             "created_at": generated_code.metadata.created_at.isoformat()
         }
@@ -470,14 +493,19 @@ class AgentBuilder:
             "cost_analysis": generated_code.metadata.cost_analysis,
             "created_at": generated_code.metadata.created_at.isoformat(),
             "steps_count": len(steps),
-            "workflow_complexity": getattr(workflow, 'complexity_score', "unknown") if hasattr(workflow, 'complexity_score') else "unknown"
+            "workflow_complexity": getattr(workflow, 'complexity_score', "unknown") if hasattr(workflow, 'complexity_score') else "unknown",
+            "required_tools": sorted(list(required_tools)),  # 明确记录需要的工具
+            "tools_description": {
+                tool: f"工具 {tool} 用于Agent的功能实现" 
+                for tool in sorted(list(required_tools))
+            }
         }
         
         with open(file_paths['metadata_file'], 'w', encoding='utf-8') as f:
             json.dump(metadata_dict, f, indent=2, ensure_ascii=False)
         
         # 生成README文档
-        readme_content = self._generate_readme(generated_code, workflow, steps, agent_id)
+        readme_content = self._generate_readme(generated_code, workflow, steps, agent_id, sorted(list(required_tools)))
         with open(file_paths['readme_file'], 'w', encoding='utf-8') as f:
             f.write(readme_content)
         
@@ -492,7 +520,8 @@ class AgentBuilder:
                         generated_code: GeneratedCode,
                         workflow: Any,
                         steps: list,
-                        agent_id: str) -> str:
+                        agent_id: str,
+                        required_tools: list = None) -> str:
         """生成README文档"""
         
         steps_list = ""
@@ -502,6 +531,14 @@ class AgentBuilder:
         capabilities_list = ""
         for capability in generated_code.metadata.capabilities:
             capabilities_list += f"- {capability}\n"
+        
+        # 生成工具列表
+        tools_list = ""
+        if required_tools:
+            for tool in required_tools:
+                tools_list += f"- **{tool}**: BaseAgent自动管理的工具\n"
+        else:
+            tools_list = "- 无需额外工具\n"
         
         return f"""# {generated_code.metadata.name}
 
@@ -514,6 +551,10 @@ class AgentBuilder:
 ## 功能特性
 
 {capabilities_list}
+
+## 需要的工具
+
+{tools_list}
 
 ## 工作流步骤
 

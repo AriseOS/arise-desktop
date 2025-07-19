@@ -92,6 +92,9 @@ class BaseAgent:
         # 初始化日志
         self._setup_logging()
         
+        # 自动注册配置中的工具
+        self._auto_register_tools()
+        
         logger.info(f"BaseAgent {self.config.name} ({self.id}) 初始化完成")
     
     # ==================== 标准化接口 ====================
@@ -486,6 +489,260 @@ class BaseAgent:
             "api_key_set": bool(getattr(self.provider, 'api_key', None))
         }
 
+ # ==================== 工具调用接口 ====================
+    
+    async def use_tool(
+        self, 
+        tool_name: str, 
+        action: str, 
+        params: Dict[str, Any],
+        **kwargs
+    ) -> ToolResult:
+        """
+        标准化工具调用接口
+        
+        Args:
+            tool_name: 工具名称
+            action: 动作名称
+            params: 动作参数
+            **kwargs: 额外参数
+            
+        Returns:
+            ToolResult: 工具执行结果
+            
+        Raises:
+            ValueError: 工具未注册或参数无效
+            
+        Example:
+            # 使用浏览器工具导航
+            result = await self.use_tool('browser', 'navigate', {
+                'url': 'https://example.com'
+            })
+            
+            # 使用Android工具读取微信
+            result = await self.use_tool('android', 'read_chat', {
+                'app': '微信',
+                'contact': '客户A'
+            })
+        """
+        if tool_name not in self.tools:
+            raise ValueError(f"工具 '{tool_name}' 未注册")
+        
+        tool = self.tools[tool_name]
+        
+        try:
+            await self._trigger_hook('before_tool_call', tool_name=tool_name, action=action)
+            
+            # 记录工具调用
+            call_info = {
+                'tool': tool_name,
+                'action': action,
+                'params': params,
+                'timestamp': datetime.now()
+            }
+            self._execution_history.append(call_info)
+            
+            # 执行工具调用
+            result = await tool.execute_with_retry(action, params, **kwargs)
+            
+            # 更新调用记录
+            call_info['result'] = {
+                'success': result.success,
+                'execution_time': result.execution_time
+            }
+            
+            await self._trigger_hook('after_tool_call', tool_name=tool_name, result=result)
+            
+            logger.debug(f"工具调用完成: {tool_name}.{action} -> {result.success}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"工具调用失败: {tool_name}.{action}, 错误: {e}")
+            return ToolResult(
+                success=False,
+                message=f"工具调用失败: {str(e)}",
+                status=ToolStatus.ERROR
+            )
+    
+    def register_tool(self, name: str, tool: BaseTool) -> None:
+        """
+        注册工具
+        
+        Args:
+            name: 工具名称
+            tool: 工具实例
+            
+        Example:
+            # 注册浏览器工具
+            self.register_tool('browser', BrowserTool(config))
+            
+            # 注册自定义工具
+            self.register_tool('custom', MyCustomTool())
+        """
+        if not isinstance(tool, BaseTool):
+            raise ValueError(f"工具必须继承自 BaseTool")
+        
+        self.tools[name] = tool
+        logger.info(f"工具 '{name}' 注册成功: {tool.metadata.description}")
+    
+    def unregister_tool(self, name: str) -> bool:
+        """
+        注销工具
+        
+        Args:
+            name: 工具名称
+            
+        Returns:
+            bool: 是否成功注销
+        """
+        if name in self.tools:
+            del self.tools[name]
+            logger.info(f"工具 '{name}' 已注销")
+            return True
+        return False
+    
+    def get_registered_tools(self) -> List[str]:
+        """
+        获取已注册的工具列表
+        
+        Returns:
+            List[str]: 工具名称列表
+        """
+        return list(self.tools.keys())
+    
+    def _auto_register_tools(self) -> None:
+        """
+        根据配置自动注册工具
+        """
+        if not self.config.tools:
+            logger.debug("没有配置工具，跳过自动注册")
+            return
+        
+        logger.info(f"开始自动注册工具: {self.config.tools}")
+        
+        for tool_name in self.config.tools:
+            try:
+                tool = self._create_tool_instance(tool_name)
+                if tool:
+                    self.register_tool(tool_name, tool)
+                    logger.info(f"工具 '{tool_name}' 自动注册成功")
+                else:
+                    logger.warning(f"无法创建工具实例: {tool_name}")
+            except Exception as e:
+                logger.error(f"自动注册工具失败 {tool_name}: {e}")
+                import traceback
+                traceback.print_exc()
+    
+    def _create_tool_instance(self, tool_name: str) -> Optional[BaseTool]:
+        """
+        根据工具名称创建工具实例
+        
+        Args:
+            tool_name: 工具名称
+            
+        Returns:
+            Optional[BaseTool]: 工具实例
+        """
+        tool_registry = {
+            'browser_use': self._create_browser_tool,
+            'browser': self._create_browser_tool,  # 兼容旧名称
+            'android': self._create_android_tool,
+            'memory': self._create_memory_tool,
+            'llm_extract': self._create_llm_extract_tool,
+            'wechat_send': self._create_wechat_tool,
+            'file_manager': self._create_file_manager_tool,
+            'web_search': self._create_web_search_tool,
+            'data_processor': self._create_data_processor_tool,
+            'email_sender': self._create_email_sender_tool,
+        }
+        
+        if tool_name in tool_registry:
+            return tool_registry[tool_name]()
+        else:
+            logger.warning(f"未知工具类型: {tool_name}")
+            return None
+    
+    def _create_browser_tool(self) -> Optional[BaseTool]:
+        """创建浏览器工具"""
+        try:
+            from ..tools.browser_use import BrowserTool
+            return BrowserTool()
+        except ImportError as e:
+            logger.error(f"无法导入浏览器工具: {e}")
+            return None
+    
+    def _create_android_tool(self) -> Optional[BaseTool]:
+        """创建Android工具"""
+        try:
+            from ..tools.android_tool import AndroidTool
+            return AndroidTool()
+        except ImportError as e:
+            logger.error(f"无法导入Android工具: {e}")
+            return None
+    
+    def _create_memory_tool(self) -> Optional[BaseTool]:
+        """创建内存工具"""
+        try:
+            from ..tools.memory_tool import MemoryTool
+            return MemoryTool(self.memory_manager)
+        except ImportError as e:
+            logger.error(f"无法导入内存工具: {e}")
+            return None
+    
+    def _create_llm_extract_tool(self) -> Optional[BaseTool]:
+        """创建LLM提取工具"""
+        try:
+            from ..tools.llm_extract_tool import LLMExtractTool
+            return LLMExtractTool(provider=self.provider)
+        except ImportError as e:
+            logger.error(f"无法导入LLM提取工具: {e}")
+            return None
+    
+    def _create_wechat_tool(self) -> Optional[BaseTool]:
+        """创建微信工具"""
+        try:
+            from ..tools.wechat_tool import WeChatTool
+            return WeChatTool()
+        except ImportError as e:
+            logger.error(f"无法导入微信工具: {e}")
+            return None
+    
+    def _create_file_manager_tool(self) -> Optional[BaseTool]:
+        """创建文件管理工具"""
+        try:
+            from ..tools.file_manager_tool import FileManagerTool
+            return FileManagerTool()
+        except ImportError as e:
+            logger.error(f"无法导入文件管理工具: {e}")
+            return None
+    
+    def _create_web_search_tool(self) -> Optional[BaseTool]:
+        """创建网络搜索工具"""
+        try:
+            from ..tools.web_search_tool import WebSearchTool
+            return WebSearchTool()
+        except ImportError as e:
+            logger.error(f"无法导入网络搜索工具: {e}")
+            return None
+    
+    def _create_data_processor_tool(self) -> Optional[BaseTool]:
+        """创建数据处理工具"""
+        try:
+            from ..tools.data_processor_tool import DataProcessorTool
+            return DataProcessorTool()
+        except ImportError as e:
+            logger.error(f"无法导入数据处理工具: {e}")
+            return None
+    
+    def _create_email_sender_tool(self) -> Optional[BaseTool]:
+        """创建邮件发送工具"""
+        try:
+            from ..tools.email_sender_tool import EmailSenderTool
+            return EmailSenderTool()
+        except ImportError as e:
+            logger.error(f"无法导入邮件发送工具: {e}")
+            return None
+
     # ==================== 用户自定义接口 ====================
     
     def create_workflow_builder(self, name: str, description: str = "") -> 'WorkflowBuilder':
@@ -681,23 +938,6 @@ class BaseAgent:
         
         return None
 
-    async def run_custom_workflow(self, workflow: 'Workflow', input_data: Dict[str, Any] = None) -> 'WorkflowResult':
-        """
-        运行自定义工作流
-        
-        Args:
-            workflow: 工作流实例
-            input_data: 输入数据
-            
-        Returns:
-            WorkflowResult: 工作流执行结果
-            
-        Example:
-            result = await agent.run_custom_workflow(workflow, {"user_input": "分析这个数据"})
-            print(f"执行结果: {result.final_result}")
-        """
-        return await self.run_workflow(workflow, input_data)
-
     def create_quick_qa_workflow(self, name: str = "快速问答", system_prompt: str = None) -> 'Workflow':
         """
         创建快速问答工作流
@@ -737,89 +977,6 @@ class BaseAgent:
             )
         
         return builder.build()
-
-    def create_translation_workflow(self, source_lang: str = "中文", target_lang: str = "英文") -> 'Workflow':
-        """
-        创建翻译工作流
-        
-        Args:
-            source_lang: 源语言
-            target_lang: 目标语言
-            
-        Returns:
-            Workflow: 翻译工作流实例
-            
-        Example:
-            workflow = agent.create_translation_workflow("中文", "英文")
-            result = await agent.run_custom_workflow(workflow, {"user_input": "你好世界"})
-        """
-        builder = self.create_workflow_builder("翻译服务", f"{source_lang}到{target_lang}的翻译服务")
-        
-        # 创建专业翻译Agent
-        translator = self.create_custom_text_agent(
-            name="专业翻译员",
-            system_prompt=f"你是一个专业的{source_lang}到{target_lang}翻译员。请提供准确、流畅的翻译，保持原文的语调和风格。",
-            response_style="professional"
-        )
-        self.register_custom_agent(translator)
-        
-        builder.add_custom_step(
-            name="翻译文本",
-            agent_name="专业翻译员",
-            instruction=f"将{source_lang}文本翻译成{target_lang}"
-        )
-        
-        return builder.build()
-
-    def get_workflow_templates(self) -> Dict[str, Callable]:
-        """
-        获取可用的工作流模板
-        
-        Returns:
-            Dict[str, Callable]: 模板名称到创建函数的映射
-            
-        Example:
-            templates = agent.get_workflow_templates()
-            qa_workflow = templates["问答"]()
-        """
-        return {
-            "问答": self.create_quick_qa_workflow,
-            "翻译": self.create_translation_workflow,
-        }
-
-    def validate_workflow(self, workflow: 'Workflow') -> List[str]:
-        """
-        验证工作流配置
-        
-        Args:
-            workflow: 工作流实例
-            
-        Returns:
-            List[str]: 验证错误列表
-            
-        Example:
-            errors = agent.validate_workflow(workflow)
-            if errors:
-                print(f"工作流验证失败: {errors}")
-        """
-        errors = []
-        
-        if not workflow.steps:
-            errors.append("工作流必须包含至少一个步骤")
-        
-        # 检查步骤名称重复
-        step_names = [step.name for step in workflow.steps]
-        if len(step_names) != len(set(step_names)):
-            errors.append("步骤名称不能重复")
-        
-        # 检查Agent是否存在
-        if self.agent_workflow_engine:
-            available_agents = self.agent_workflow_engine.agent_registry.list_agent_names()
-            for step in workflow.steps:
-                if step.agent_type not in available_agents:
-                    errors.append(f"步骤 '{step.name}' 使用的Agent '{step.agent_type}' 不存在")
-        
-        return errors
 
     def export_workflow(self, workflow: 'Workflow', file_path: str = None) -> str:
         """

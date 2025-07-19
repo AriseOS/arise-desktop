@@ -85,4 +85,4 @@ yarn-error.log*
 *.tmp
 *.temp
 .cache/
-output/
+*output/

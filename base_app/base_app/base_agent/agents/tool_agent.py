@@ -381,20 +381,6 @@ class ToolAgent(BaseStepAgent):
         if context.logger:
             context.logger.info(f"尝试获取工具实例: {tool_name}")
         
-        # 优先从agent_instance获取工具
-        if hasattr(context.agent_instance, 'tools'):
-            if context.logger:
-                available_tools = list(context.agent_instance.tools.keys()) if context.agent_instance.tools else []
-                context.logger.info(f"agent_instance.tools中的工具: {available_tools}")
-            
-            if context.agent_instance.tools:
-                tool_instance = context.agent_instance.tools.get(tool_name)
-                if tool_instance:
-                    if context.logger:
-                        context.logger.info(f"成功从agent_instance获取工具: {tool_name}")
-                    return tool_instance
-        
-        # 备用：从tools_registry获取
         if self.tool_registry and hasattr(self.tool_registry, 'tools'):
             if context.logger:
                 registry_tools = list(self.tool_registry.tools.keys()) if self.tool_registry.tools else []

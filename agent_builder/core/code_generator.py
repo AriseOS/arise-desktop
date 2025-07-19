@@ -101,20 +101,46 @@ class CodeGenerator:
             elif spec.get("generation_type") == "tool_combination":
                 tool_combinations_needed.append(spec)
         
-        # 构建步骤描述
+        # 构建步骤描述和收集需要的工具
         steps_description = ""
+        required_tools = set()
+        
         for i, step in enumerate(steps):
             # 处理步骤对象或字典
             if hasattr(step, 'name'):
                 # BaseAgent Step对象
                 step_name = getattr(step, 'name', 'Unknown')
                 step_desc = getattr(step, 'description', 'No description')
+                step_type = getattr(step, 'agent_type', 'unknown')
+                # 收集工具需求 - 优先从allowed_tools，然后从tools
+                step_tools = getattr(step, 'allowed_tools', []) or getattr(step, 'tools', [])
+                if step_tools:
+                    required_tools.update(step_tools)
             else:
                 # 字典格式的步骤
                 step_name = step.get('name', 'Unknown')
-                step_desc = step.get('description', 'No description')
+                step_desc = step.get('description', 'No description') 
+                step_type = step.get('agent_type', 'unknown')
+                # 收集工具需求
+                step_tools = step.get('allowed_tools', []) or step.get('tools', [])
+                if step_tools:
+                    required_tools.update(step_tools)
             
-            steps_description += f"  {i+1}. {step_name}: {step_desc}\n"
+            # 构建详细的步骤描述，包含工具信息
+            if step_tools:
+                steps_description += f"  {i+1}. {step_name} ({step_type}): {step_desc} [工具: {', '.join(step_tools)}]\n"
+            else:
+                steps_description += f"  {i+1}. {step_name} ({step_type}): {step_desc}\n"
+        
+        # 从agent_specs中额外收集工具需求
+        for spec in agent_specs:
+            baseagent_config = spec.get('baseagent_config', {})
+            spec_tools = baseagent_config.get('allowed_tools', []) or baseagent_config.get('tools', [])
+            if spec_tools:
+                required_tools.update(spec_tools)
+        
+        # 将工具集合转换为列表并排序
+        required_tools_list = sorted(list(required_tools))
         
         # 构建提示词，使用字符串连接避免f-string中的变量冲突
         prompt = """# Python代码生成专家
@@ -151,14 +177,20 @@ from base_app.base_agent.core.base_agent import BaseAgent
 from base_app.base_agent.core.schemas import AgentConfig, AgentResult
 
 class Agent_Generated(BaseAgent):
+    \"\"\"
+    自动生成的Agent
+    
+    需要的工具: """ + str(required_tools_list) + """
+    这些工具会通过config.tools自动注册到Agent中
+    \"\"\"
     def __init__(self, config: AgentConfig):
-        super().__init__(config)
+        super().__init__(config)  # BaseAgent会根据config.tools自动注册工具
         self.workflow = None
         self.workflow_name = "custom_workflow"
     
     async def initialize(self):
         \"\"\"初始化Agent和工作流\"\"\"
-        await super().initialize()
+        await super().initialize()  # 这里会初始化所有工具
         await self._setup_workflow()
     
     async def _setup_workflow(self):
@@ -177,9 +209,9 @@ class Agent_Generated(BaseAgent):
             await self._setup_workflow()
         
         # 运行工作流
-        # 将input_data包装为字典格式，因为BaseAgent的run_custom_workflow期望Dict[str, Any]
+        # 将input_data包装为字典格式，因为BaseAgent的run_workflow期望Dict[str, Any]
         workflow_input = {"user_input": input_data} if not isinstance(input_data, dict) else input_data
-        result = await self.run_custom_workflow(self.workflow, workflow_input)
+        result = await self.run_workflow(self.workflow, workflow_input)
         
         return AgentResult(
             success=True,
@@ -213,6 +245,7 @@ self.register_custom_agent(custom_agent)
 ### Agent信息
 - **Agent名称**: """ + workflow_name + """
 - **Agent描述**: """ + workflow_description + """
+- **需要的工具**: """ + str(required_tools_list) + """
 - **工作流步骤**:
 """ + steps_description + """
 
@@ -276,14 +309,16 @@ def main():
                 name=config_data.get('name', 'Generated Agent'),
                 llm_provider=config_data.get('llm_provider', 'openai'),
                 llm_model=config_data.get('llm_model', 'gpt-4o'),
-                api_key=args.api_key or config_data.get('api_key') or os.getenv('OPENAI_API_KEY')
+                api_key=args.api_key or config_data.get('api_key') or os.getenv('OPENAI_API_KEY'),
+                tools=config_data.get('tools', """ + str(required_tools_list) + """)  # 需要的工具: """ + str(required_tools_list) + """
             )
     else:
         config = AgentConfig(
             name="Generated Agent",
             llm_provider="openai",
             llm_model="gpt-4o",
-            api_key=args.api_key or os.getenv("OPENAI_API_KEY")
+            api_key=args.api_key or os.getenv("OPENAI_API_KEY"),
+            tools=""" + str(required_tools_list) + """  # 需要的工具: """ + str(required_tools_list) + """
         )
     
     agent = Agent_Generated(config)
