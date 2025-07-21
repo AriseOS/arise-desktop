@@ -39,6 +39,8 @@ class CodeGenerator:
         - 生成YAML格式的工作流配置文件
         - 确保代码符合BaseAgent接口规范
         """
+        print("\nagent_specs\n")
+        print(agent_specs)
         
         # 1. 生成主Agent类代码
         main_agent_code = await self._generate_main_agent_class(workflow, agent_specs)
@@ -132,12 +134,154 @@ class CodeGenerator:
             else:
                 steps_description += f"  {i+1}. {step_name} ({step_type}): {step_desc}\n"
         
-        # 从agent_specs中额外收集工具需求
-        for spec in agent_specs:
+        # 从agent_specs中额外收集工具需求并构建详细配置信息
+        detailed_step_configs = ""
+        for i, spec in enumerate(agent_specs):
             baseagent_config = spec.get('baseagent_config', {})
             spec_tools = baseagent_config.get('allowed_tools', []) or baseagent_config.get('tools', [])
             if spec_tools:
                 required_tools.update(spec_tools)
+            
+            # 构建详细的步骤配置信息
+            step_num = i + 1
+            step_name = baseagent_config.get('name', f'步骤{step_num}')
+            step_type = baseagent_config.get('agent_type', 'text_agent')
+            
+            detailed_step_configs += f"\n### 步骤 {step_num}: {step_name} ({step_type})\n"
+            detailed_step_configs += f"- **名称**: {step_name}\n"
+            detailed_step_configs += f"- **描述**: {baseagent_config.get('description', '')}\n"
+            detailed_step_configs += f"- **Agent类型**: {step_type}\n"
+            detailed_step_configs += f"- **执行指令**: {baseagent_config.get('agent_instruction', '')}\n"
+            
+            if baseagent_config.get('user_task'):
+                detailed_step_configs += f"- **用户任务**: {baseagent_config.get('user_task')}\n"
+            
+            # 输入输出配置
+            inputs = baseagent_config.get('inputs', {})
+            if inputs:
+                detailed_step_configs += f"- **输入配置**: {inputs}\n"
+            
+            outputs = baseagent_config.get('outputs', {})
+            if outputs:
+                detailed_step_configs += f"- **输出配置**: {outputs}\n"
+            
+            constraints = baseagent_config.get('constraints', [])
+            if constraints:
+                detailed_step_configs += f"- **约束条件**: {constraints}\n"
+            
+            # Agent类型特定配置
+            if step_type == 'text_agent':
+                if baseagent_config.get('response_style'):
+                    detailed_step_configs += f"- **回答风格**: {baseagent_config.get('response_style')}\n"
+                if baseagent_config.get('max_length'):
+                    detailed_step_configs += f"- **最大长度**: {baseagent_config.get('max_length')}\n"
+            
+            elif step_type == 'tool_agent':
+                if spec_tools:
+                    detailed_step_configs += f"- **允许工具**: {spec_tools}\n"
+                if baseagent_config.get('confidence_threshold'):
+                    detailed_step_configs += f"- **置信度阈值**: {baseagent_config.get('confidence_threshold')}\n"
+                fallback_tools = baseagent_config.get('fallback_tools', [])
+                if fallback_tools:
+                    detailed_step_configs += f"- **备选工具**: {fallback_tools}\n"
+            
+            elif step_type == 'code_agent':
+                allowed_libraries = baseagent_config.get('allowed_libraries', [])
+                if allowed_libraries:
+                    detailed_step_configs += f"- **允许的库**: {allowed_libraries}\n"
+                if baseagent_config.get('expected_output_format'):
+                    detailed_step_configs += f"- **期望输出格式**: {baseagent_config.get('expected_output_format')}\n"
+            
+            # 执行控制参数
+            if baseagent_config.get('timeout', 300) != 300:
+                detailed_step_configs += f"- **超时时间**: {baseagent_config.get('timeout')}秒\n"
+            if baseagent_config.get('retry_count', 0) > 0:
+                detailed_step_configs += f"- **重试次数**: {baseagent_config.get('retry_count')}\n"
+            if baseagent_config.get('condition'):
+                detailed_step_configs += f"- **执行条件**: {baseagent_config.get('condition')}\n"
+            
+            # 生成对应的WorkflowBuilder调用代码
+            detailed_step_configs += f"\n**对应的WorkflowBuilder调用代码**:\n```python\n"
+            
+            if step_type == 'text_agent':
+                detailed_step_configs += f"builder.add_text_step(\n"
+                detailed_step_configs += f"    name=\"{step_name}\",\n"
+                detailed_step_configs += f"    instruction=\"{baseagent_config.get('agent_instruction', '')}\",\n"
+                detailed_step_configs += f"    description=\"{baseagent_config.get('description', '')}\",\n"
+                if baseagent_config.get('user_task'):
+                    detailed_step_configs += f"    user_task=\"{baseagent_config.get('user_task')}\",\n"
+                if inputs:
+                    detailed_step_configs += f"    inputs={inputs},\n"
+                if outputs:
+                    detailed_step_configs += f"    outputs={outputs},\n"
+                if constraints:
+                    detailed_step_configs += f"    constraints={constraints},\n"
+                if baseagent_config.get('response_style'):
+                    detailed_step_configs += f"    response_style=\"{baseagent_config.get('response_style')}\",\n"
+                if baseagent_config.get('max_length'):
+                    detailed_step_configs += f"    max_length={baseagent_config.get('max_length')},\n"
+                if baseagent_config.get('timeout', 300) != 300:
+                    detailed_step_configs += f"    timeout={baseagent_config.get('timeout')},\n"
+                if baseagent_config.get('retry_count', 0) > 0:
+                    detailed_step_configs += f"    retry_count={baseagent_config.get('retry_count')},\n"
+                if baseagent_config.get('condition'):
+                    detailed_step_configs += f"    condition=\"{baseagent_config.get('condition')}\",\n"
+                detailed_step_configs += f")\n"
+            
+            elif step_type == 'tool_agent':
+                detailed_step_configs += f"builder.add_tool_step(\n"
+                detailed_step_configs += f"    name=\"{step_name}\",\n"
+                detailed_step_configs += f"    instruction=\"{baseagent_config.get('agent_instruction', '')}\",\n"
+                detailed_step_configs += f"    tools={spec_tools},\n"
+                detailed_step_configs += f"    description=\"{baseagent_config.get('description', '')}\",\n"
+                if baseagent_config.get('user_task'):
+                    detailed_step_configs += f"    user_task=\"{baseagent_config.get('user_task')}\",\n"
+                if inputs:
+                    detailed_step_configs += f"    inputs={inputs},\n"
+                if outputs:
+                    detailed_step_configs += f"    outputs={outputs},\n"
+                if constraints:
+                    detailed_step_configs += f"    constraints={constraints},\n"
+                if baseagent_config.get('confidence_threshold'):
+                    detailed_step_configs += f"    confidence_threshold={baseagent_config.get('confidence_threshold')},\n"
+                fallback_tools = baseagent_config.get('fallback_tools', [])
+                if fallback_tools:
+                    detailed_step_configs += f"    fallback_tools={fallback_tools},\n"
+                if baseagent_config.get('timeout', 300) != 300:
+                    detailed_step_configs += f"    timeout={baseagent_config.get('timeout')},\n"
+                if baseagent_config.get('retry_count', 0) > 0:
+                    detailed_step_configs += f"    retry_count={baseagent_config.get('retry_count')},\n"
+                if baseagent_config.get('condition'):
+                    detailed_step_configs += f"    condition=\"{baseagent_config.get('condition')}\",\n"
+                detailed_step_configs += f")\n"
+            
+            elif step_type == 'code_agent':
+                detailed_step_configs += f"builder.add_code_step(\n"
+                detailed_step_configs += f"    name=\"{step_name}\",\n"
+                detailed_step_configs += f"    instruction=\"{baseagent_config.get('agent_instruction', '')}\",\n"
+                detailed_step_configs += f"    description=\"{baseagent_config.get('description', '')}\",\n"
+                allowed_libraries = baseagent_config.get('allowed_libraries', [])
+                if allowed_libraries:
+                    detailed_step_configs += f"    libraries={allowed_libraries},\n"
+                if baseagent_config.get('expected_output_format'):
+                    detailed_step_configs += f"    expected_output_format=\"{baseagent_config.get('expected_output_format')}\",\n"
+                if baseagent_config.get('user_task'):
+                    detailed_step_configs += f"    user_task=\"{baseagent_config.get('user_task')}\",\n"
+                if inputs:
+                    detailed_step_configs += f"    inputs={inputs},\n"
+                if outputs:
+                    detailed_step_configs += f"    outputs={outputs},\n"
+                if constraints:
+                    detailed_step_configs += f"    constraints={constraints},\n"
+                if baseagent_config.get('timeout', 300) != 300:
+                    detailed_step_configs += f"    timeout={baseagent_config.get('timeout')},\n"
+                if baseagent_config.get('retry_count', 0) > 0:
+                    detailed_step_configs += f"    retry_count={baseagent_config.get('retry_count')},\n"
+                if baseagent_config.get('condition'):
+                    detailed_step_configs += f"    condition=\"{baseagent_config.get('condition')}\",\n"
+                detailed_step_configs += f")\n"
+            
+            detailed_step_configs += f"```\n"
         
         # 将工具集合转换为列表并排序
         required_tools_list = sorted(list(required_tools))
@@ -249,6 +393,11 @@ self.register_custom_agent(custom_agent)
 - **工作流步骤**:
 """ + steps_description + """
 
+## 详细步骤配置
+
+AgentBuilder已经为每个步骤生成了详细的配置信息，请严格按照这些配置生成相应的WorkflowBuilder调用代码：
+""" + detailed_step_configs + """
+
 ### 自定义工具需求
 """ + self._format_custom_tools_info(custom_tools_needed) + """
 
@@ -260,13 +409,20 @@ self.register_custom_agent(custom_agent)
 1. **完整性**: 生成完整的可执行Python文件
 2. **兼容性**: 严格遵循BaseAgent接口规范
 3. **功能性**: 实现所有指定的工作流步骤
-4. **代码质量**: 
+4. **配置完整性**: **必须使用上述"详细步骤配置"中提供的所有参数，包括inputs、outputs、constraints、Agent特定参数等**
+5. **代码质量**: 
    - 清晰的注释和文档字符串
    - 符合PEP 8编码规范
    - 适当的错误处理
    - 类型注解
 
-5. **文件结构**:
+6. **工作流构建要求**:
+   - 在`_setup_workflow`方法中，必须使用上述提供的WorkflowBuilder调用代码
+   - 严格按照每个步骤的详细配置参数调用相应的add_*_step方法
+   - 确保所有inputs、outputs、constraints等配置都正确传递
+   - 保持步骤的执行顺序
+
+7. **文件结构**:
    - 导入语句（包含argparse, json, sys, os, Path等）
    - Agent类定义
    - 工作流设置方法

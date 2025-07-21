@@ -44,28 +44,37 @@ class AgentDesigner:
         return judgment_result
     
     async def generate_step_agents(self, steps: List[StepDesign]) -> List[Dict[str, Any]]:
-        """生成符合BaseAgent要求的精确Step配置"""
+        """生成符合BaseAgent要求的精确Step配置，支持变量链条"""
         
         generated_agents = []
+        available_variables = ["user_input"]  # 跟踪可用变量
         
         for i, step in enumerate(steps):
-            # 根据Agent类型调用大模型生成具体配置
+            # 构建可用变量上下文信息
+            context_info = self._build_variable_context(available_variables, i, len(steps))
+            
+            # 根据Agent类型调用大模型生成具体配置（传入上下文信息）
             if step.agent_type in ['text', 'text_agent']:
-                agent_spec = await self._generate_text_agent_config(step, i, len(steps))
+                agent_spec = await self._generate_text_agent_config(step, i, len(steps), context_info)
             elif step.agent_type in ['tool', 'tool_agent']:
-                agent_spec = await self._generate_tool_agent_config(step, i, len(steps))
+                agent_spec = await self._generate_tool_agent_config(step, i, len(steps), context_info)
             elif step.agent_type in ['code', 'code_agent']:
-                agent_spec = await self._generate_code_agent_config(step, i, len(steps))
+                agent_spec = await self._generate_code_agent_config(step, i, len(steps), context_info)
             else:
                 # 自定义Agent
-                agent_spec = await self._generate_custom_agent_config(step, i, len(steps))
+                agent_spec = await self._generate_custom_agent_config(step, i, len(steps), context_info)
+            
+            # 更新可用变量列表
+            outputs = agent_spec.get('baseagent_config', {}).get('outputs', {})
+            available_variables.extend(outputs.values())
             
             generated_agents.append(agent_spec)
+            
         print("generated_agents\n")
         print(generated_agents) 
         return generated_agents
     
-    async def _generate_text_agent_config(self, step: StepDesign, step_index: int, total_steps: int) -> Dict[str, Any]:
+    async def _generate_text_agent_config(self, step: StepDesign, step_index: int, total_steps: int, variable_context: str) -> Dict[str, Any]:
         """生成TextAgent的BaseAgent配置"""
         
         # 构建LLM分析prompt
@@ -80,6 +89,8 @@ class AgentDesigner:
 - 步骤位置: 第{step_index + 1}步，共{total_steps}步
 - 现有配置: {step.agent_config}
 
+{variable_context}
+
 ## AgentWorkflowStep完整字段要求
 需要生成完整的AgentWorkflowStep兼容配置，包括：
 
@@ -91,8 +102,8 @@ class AgentDesigner:
 - user_task: 用户具体任务内容(可选)
 
 ### 输入输出配置:
-- inputs: 输入映射配置
-- outputs: 输出映射配置
+- inputs: 输入映射配置（使用{{{{变量名}}}}格式引用变量）
+- outputs: 输出映射配置（定义要存储的变量名）
 - constraints: 约束条件列表
 
 ### Text Agent特有字段:
@@ -105,7 +116,7 @@ class AgentDesigner:
 - retry_count: 重试次数
 
 ## 输出要求
-严格按照以下JSON格式输出：
+严格按照以下JSON格式输出，注意inputs使用变量引用格式：
 
 ```json
 {{
@@ -117,8 +128,8 @@ class AgentDesigner:
         "agent_type": "text_agent",
         "agent_instruction": "具体的Agent执行指令",
         "user_task": "用户具体任务内容或null",
-        "inputs": {{"input_key": "input_description"}},
-        "outputs": {{"output_key": "output_description"}},
+        "inputs": {{"field_name": "{{{{variable_name}}}}"}},
+        "outputs": {{"field_name": "variable_to_store"}},
         "constraints": ["约束条件列表"],
         "response_style": "professional/casual/technical",
         "max_length": 数值,
@@ -132,7 +143,7 @@ class AgentDesigner:
         response = await self._call_llm(prompt)
         return self._parse_agent_config_response(response, step.step_id)
     
-    async def _generate_tool_agent_config(self, step: StepDesign, step_index: int, total_steps: int) -> Dict[str, Any]:
+    async def _generate_tool_agent_config(self, step: StepDesign, step_index: int, total_steps: int, variable_context: str) -> Dict[str, Any]:
         """生成ToolAgent的BaseAgent配置"""
         
         existing_tools = step.agent_config.get('existing_tools', [])
@@ -149,6 +160,8 @@ class AgentDesigner:
 - 现有工具: {existing_tools}
 - 工具策略: {step.agent_config.get('tool_approach', 'reuse_existing')}
 
+{variable_context}
+
 ## AgentWorkflowStep完整字段要求
 需要生成完整的AgentWorkflowStep兼容配置，包括：
 
@@ -160,8 +173,8 @@ class AgentDesigner:
 - user_task: 用户具体任务内容(可选)
 
 ### 输入输出配置:
-- inputs: 输入映射配置
-- outputs: 输出映射配置
+- inputs: 输入映射配置（使用{{{{变量名}}}}格式引用变量）
+- outputs: 输出映射配置（定义要存储的变量名）
 - constraints: 约束条件列表
 
 ### Tool Agent特有字段:
@@ -178,7 +191,7 @@ class AgentDesigner:
 常见工具: browser_use, web_search, file_manager, data_processor, email_sender
 
 ## 输出要求
-严格按照以下JSON格式输出：
+严格按照以下JSON格式输出，注意inputs使用变量引用格式：
 
 ```json
 {{
@@ -190,8 +203,8 @@ class AgentDesigner:
         "agent_type": "tool_agent",
         "agent_instruction": "具体的Agent执行指令",
         "user_task": "用户具体任务内容或null",
-        "inputs": {{"input_key": "input_description"}},
-        "outputs": {{"output_key": "output_description"}},
+        "inputs": {{"field_name": "{{{{variable_name}}}}"}},
+        "outputs": {{"field_name": "variable_to_store"}},
         "constraints": ["约束条件列表"],
         "allowed_tools": ["工具名称列表"],
         "fallback_tools": ["备选工具列表"],
@@ -206,7 +219,7 @@ class AgentDesigner:
         response = await self._call_llm(prompt)
         return self._parse_agent_config_response(response, step.step_id)
     
-    async def _generate_code_agent_config(self, step: StepDesign, step_index: int, total_steps: int) -> Dict[str, Any]:
+    async def _generate_code_agent_config(self, step: StepDesign, step_index: int, total_steps: int, variable_context: str) -> Dict[str, Any]:
         """生成CodeAgent的BaseAgent配置"""
         
         allowed_libraries = step.agent_config.get('allowed_libraries', [])
@@ -222,6 +235,8 @@ class AgentDesigner:
 - 步骤位置: 第{step_index + 1}步，共{total_steps}步
 - 建议库: {allowed_libraries}
 
+{variable_context}
+
 ## AgentWorkflowStep完整字段要求
 需要生成完整的AgentWorkflowStep兼容配置，包括：
 
@@ -233,8 +248,8 @@ class AgentDesigner:
 - user_task: 用户具体任务内容(可选)
 
 ### 输入输出配置:
-- inputs: 输入映射配置
-- outputs: 输出映射配置
+- inputs: 输入映射配置（使用{{{{变量名}}}}格式引用变量）
+- outputs: 输出映射配置（定义要存储的变量名）
 - constraints: 约束条件列表
 
 ### Code Agent特有字段:
@@ -253,7 +268,7 @@ class AgentDesigner:
 文本: re, string, nltk
 
 ## 输出要求
-严格按照以下JSON格式输出：
+严格按照以下JSON格式输出，注意inputs使用变量引用格式：
 
 ```json
 {{
@@ -265,8 +280,8 @@ class AgentDesigner:
         "agent_type": "code_agent",
         "agent_instruction": "具体的Agent执行指令",
         "user_task": "用户具体任务内容或null",
-        "inputs": {{"input_key": "input_description"}},
-        "outputs": {{"output_key": "output_description"}},
+        "inputs": {{"field_name": "{{{{variable_name}}}}"}},
+        "outputs": {{"field_name": "variable_to_store"}},
         "constraints": ["约束条件列表"],
         "allowed_libraries": ["库名称列表"],
         "expected_output_format": "输出格式描述",
@@ -280,7 +295,7 @@ class AgentDesigner:
         response = await self._call_llm(prompt)
         return self._parse_agent_config_response(response, step.step_id)
     
-    async def _generate_custom_agent_config(self, step: StepDesign, step_index: int, total_steps: int) -> Dict[str, Any]:
+    async def _generate_custom_agent_config(self, step: StepDesign, step_index: int, total_steps: int, variable_context: str) -> Dict[str, Any]:
         """生成自定义Agent的BaseAgent配置"""
         
         prompt = f"""# BaseAgent 自定义Agent配置专家
@@ -294,6 +309,8 @@ class AgentDesigner:
 - 步骤位置: 第{step_index + 1}步，共{total_steps}步
 - Agent类型: {step.agent_type}
 
+{variable_context}
+
 ## AgentWorkflowStep完整字段要求
 需要生成完整的AgentWorkflowStep兼容配置，包括：
 
@@ -305,8 +322,8 @@ class AgentDesigner:
 - user_task: 用户具体任务内容(可选)
 
 ### 输入输出配置:
-- inputs: 输入映射配置
-- outputs: 输出映射配置
+- inputs: 输入映射配置（使用{{{{变量名}}}}格式引用变量）
+- outputs: 输出映射配置（定义要存储的变量名）
 - constraints: 约束条件列表
 
 ### 执行控制:
@@ -315,7 +332,7 @@ class AgentDesigner:
 - retry_count: 重试次数
 
 ## 输出要求
-严格按照以下JSON格式输出：
+严格按照以下JSON格式输出，注意inputs使用变量引用格式：
 
 ```json
 {{
@@ -327,8 +344,8 @@ class AgentDesigner:
         "agent_type": "{step.agent_type}",
         "agent_instruction": "具体的Agent执行指令",
         "user_task": "用户具体任务内容或null",
-        "inputs": {{"input_key": "input_description"}},
-        "outputs": {{"output_key": "output_description"}},
+        "inputs": {{"field_name": "{{{{variable_name}}}}"}},
+        "outputs": {{"field_name": "variable_to_store"}},
         "constraints": ["约束条件列表"],
         "condition": null,
         "timeout": 数值,
@@ -562,6 +579,66 @@ class AgentDesigner:
                 "error_handling": "Handle errors in tool combination"
             }
         }
+    
+    def _build_variable_context(self, available_variables: List[str], step_index: int, total_steps: int) -> str:
+        """构建可用变量的上下文信息"""
+        
+        if step_index == 0:
+            # 第一个Agent根据实际情况定义
+            return """## 输入数据
+- {{user_input}}: 用户输入的原始消息
+
+## 变量引用格式
+输入引用: \"field_name\": \"{{variable_name}}\"
+输出定义: \"field_name\": \"variable_to_store_as\"
+
+## 示例
+\"inputs\": {
+  \"user_question\": \"{{user_input}}\"
+},
+\"outputs\": {
+  \"result\": \"step1_output\",
+  \"metadata\": \"step1_metadata\"
+}
+
+请根据当前步骤的实际业务逻辑定义合适的输出变量。"""
+        
+        if not available_variables or len(available_variables) <= 1:
+            return """## 输入数据
+- {{user_input}}: 用户输入的原始消息
+
+## 变量引用格式
+输入引用: \"field_name\": \"{{variable_name}}\"
+输出定义: \"field_name\": \"variable_to_store_as\"
+
+请根据当前步骤的业务逻辑，智能选择需要的输入变量。"""
+        
+        context = """## 可用的上下文变量（根据业务需要选择使用）:
+- {{user_input}}: 工作流初始输入
+"""
+        
+        for var in available_variables[1:]:  # 跳过user_input
+            context += f"- {{{{{var}}}}}: 前序步骤的输出数据\n"
+        
+        context += """
+## 变量引用格式示例
+输入引用: \"field_name\": \"{{source_variable}}\"
+输出定义: \"field_name\": \"target_variable_name\"
+
+## 实际示例
+\"inputs\": {
+  \"user_question\": \"{{user_input}}\",
+  \"analysis_result\": \"{{step1_analysis}}\"
+},
+\"outputs\": {
+  \"tool_result\": \"step2_output\",
+  \"confidence\": \"step2_confidence\"
+}
+
+请根据当前步骤的业务逻辑，智能选择需要的输入变量。
+无需强制使用所有变量，只选择对当前任务有意义的变量。"""
+        
+        return context
     
     def _generate_basic_agent_spec(self, step: StepDesign) -> Dict[str, Any]:
         """生成基本Agent的配置规格"""

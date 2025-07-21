@@ -13,6 +13,7 @@ class ParsedRequirement:
     original_text: str                    # 原始需求文本
     agent_purpose: str                    # Agent目的
     process_steps: List['StepDesign']     # 执行步骤
+    needs_intent_analysis: bool = False   # 是否需要意图分析步骤
     created_at: datetime = field(default_factory=datetime.now)
 
 

@@ -46,24 +46,29 @@ class RequirementParser:
         # 解析大模型返回的结果
         parsed_data = self._parse_llm_response(response)
         
+        # 提取是否需要意图分析
+        needs_intent_analysis = parsed_data.get('needs_intent_analysis', False)
+        
         # 提取步骤设计
-        steps = await self.extract_steps(user_input, parsed_data['agent_purpose'])
+        steps = await self.extract_steps(user_input, parsed_data['agent_purpose'], needs_intent_analysis)
         
         return ParsedRequirement(
             original_text=user_input,
             agent_purpose=parsed_data['agent_purpose'],
-            process_steps=steps
+            process_steps=steps,
+            needs_intent_analysis=needs_intent_analysis
         )
     
-    async def extract_steps(self, user_input: str, agent_purpose: str) -> List[StepDesign]:
+    async def extract_steps(self, user_input: str, agent_purpose: str, needs_intent_analysis: bool = False) -> List[StepDesign]:
         """
         提取执行步骤
         - 从需求中提取具体的执行步骤
         - 分析步骤间的逻辑关系
+        - 根据需要在首位添加意图分析步骤
         """
         
         # 构建步骤提取的prompt
-        steps_prompt = self._build_steps_prompt(user_input, agent_purpose)
+        steps_prompt = self._build_steps_prompt(user_input, agent_purpose, needs_intent_analysis)
         # logger.info("\n\n\nsteps_prompt\n")
         # logger.info(steps_prompt)
         print("\n\n\nsteps_prompt\n")
@@ -109,7 +114,7 @@ class RequirementParser:
         return f"""# AI Agent需求分析专家
 
 ## 任务背景
-你是一个专业的AI Agent需求分析师，专门将用户的自然语言需求转换为结构化的Agent设计规范。你需要准确理解用户意图，识别核心功能，并确定最适合的实现方式。
+你是一个专业的AI Agent需求分析师，专门将用户的自然语言需求转换为结构化的Agent设计规范。你需要准确理解用户意图，识别核心功能，并判断是否需要意图分析步骤。
 
 ## 核心分析框架
 基于用户需求，你需要分析以下关键维度：
@@ -123,6 +128,19 @@ class RequirementParser:
 - **输入类型**：用户会提供什么样的输入？
 - **输出期望**：用户期望得到什么样的输出？
 - **交互流程**：用户和Agent如何交互？
+
+### 3. 意图分析需求判断
+判断是否需要意图分析步骤：
+- **需要意图分析的场景**：
+  - 用户每次使用时输入的内容可能差异很大，需要理解不同的意图
+  - 一个Agent需要处理多种类型的任务或请求
+  - 需要根据用户输入动态选择不同的处理路径
+  - 用户输入比较开放，需要先理解意图再执行
+  
+- **不需要意图分析的场景**：
+  - 任务目标明确，每次执行的流程基本相同
+  - 用户输入格式固定，处理逻辑清晰
+  - 单一功能的专用Agent，不需要判断意图
 
 ## 待分析的用户需求
 ```
@@ -138,7 +156,9 @@ class RequirementParser:
     "functional_scope": "Agent的功能边界和能力范围",
     "input_characteristics": "预期输入的特征和类型",
     "output_characteristics": "预期输出的特征和格式",
-    "interaction_pattern": "用户与Agent的交互模式描述"
+    "interaction_pattern": "用户与Agent的交互模式描述",
+    "needs_intent_analysis": true/false,
+    "intent_analysis_rationale": "是否需要意图分析的原因说明"
 }}
 ```
 
@@ -146,18 +166,49 @@ class RequirementParser:
 1. **准确性**：确保理解用户的真实意图，不要过度解读
 2. **可操作性**：分析结果应该能够指导后续的Agent设计
 3. **边界清晰**：明确Agent能做什么，不能做什么
-4. **实现可行性**：考虑技术实现的可行性"""
+4. **实现可行性**：考虑技术实现的可行性
+5. **意图分析判断**：准确判断是否真正需要意图分析步骤"""
     
-    def _build_steps_prompt(self, user_input: str, agent_purpose: str) -> str:
+    def _build_steps_prompt(self, user_input: str, agent_purpose: str, needs_intent_analysis: bool = False) -> str:
         """构建步骤提取的prompt - 使用context engineering优化信息流"""
         
         # 获取现有工具能力摘要
         tools_summary = self.tool_analyzer.get_existing_tools_summary()
         
+        # 构建意图分析相关的指导
+        intent_analysis_guidance = ""
+        if needs_intent_analysis:
+            intent_analysis_guidance = """
+## ⚠️ 重要：需要意图分析步骤
+
+根据需求分析，这个Agent需要意图分析能力。请在工作流的第一步添加意图分析步骤：
+
+### 意图分析步骤要求：
+- **步骤名称**：用户意图分析 / Intent Analysis
+- **Agent类型**：text_agent（文本分析最适合意图理解）
+- **核心功能**：分析用户输入，识别具体意图和需要的处理方式
+- **输出格式**：结构化的意图数据 + 语义上下文，供后续步骤使用
+- **变量输出**：
+  - 结构化数据：提取的关键参数、意图类型等
+  - 语义上下文：完整的用户意图理解
+  
+### 后续步骤设计：
+后续步骤应该基于意图分析的结果进行条件执行或智能路由。
+"""
+        else:
+            intent_analysis_guidance = """
+## ℹ️ 无需意图分析步骤
+
+根据需求分析，这个Agent目标明确，无需专门的意图分析步骤。
+请直接设计执行任务所需的工作流步骤。
+"""
+        
         return f"""# AI Agent工作流设计专家
 
 ## 任务背景
 你是一个专业的AI Agent工作流设计师，专门将用户需求分解为可执行的工作流步骤。你需要基于用户需求、Agent目的和现有工具能力，设计出逻辑清晰、高效可执行且成本最优的工作流。
+
+{intent_analysis_guidance}
 
 ## 设计原则
 ### 1. 成本效益原则 (最重要)
@@ -275,7 +326,9 @@ class RequirementParser:
                 "functional_scope": "处理用户请求",
                 "input_characteristics": "自然语言输入",
                 "output_characteristics": "文本回复",
-                "interaction_pattern": "问答交互"
+                "interaction_pattern": "问答交互",
+                "needs_intent_analysis": False,
+                "intent_analysis_rationale": "解析失败，默认不需要意图分析"
             }
     
     def _parse_steps_response(self, response: str) -> List[Dict[str, Any]]:
