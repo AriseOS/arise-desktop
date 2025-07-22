@@ -49,13 +49,10 @@ class RequirementParser:
         # 提取是否需要意图分析
         needs_intent_analysis = parsed_data.get('needs_intent_analysis', False)
         
-        # 提取步骤设计
-        steps = await self.extract_steps(user_input, parsed_data['agent_purpose'], needs_intent_analysis)
-        
         return ParsedRequirement(
             original_text=user_input,
             agent_purpose=parsed_data['agent_purpose'],
-            process_steps=steps,
+            process_steps=[],  # 步骤由AgentBuilder单独调用extract_steps生成
             needs_intent_analysis=needs_intent_analysis
         )
     
@@ -71,8 +68,8 @@ class RequirementParser:
         steps_prompt = self._build_steps_prompt(user_input, agent_purpose, needs_intent_analysis)
         # logger.info("\n\n\nsteps_prompt\n")
         # logger.info(steps_prompt)
-        print("\n\n\nsteps_prompt\n")
-        print(steps_prompt)
+        # print("\n\n\nsteps_prompt\n")
+        # print(steps_prompt)
         
         # 调用大模型进行步骤提取
         response = await self._call_llm(steps_prompt)
@@ -185,7 +182,7 @@ class RequirementParser:
 
 ### 意图分析步骤要求：
 - **步骤名称**：用户意图分析 / Intent Analysis
-- **Agent类型**：text_agent（文本分析最适合意图理解）
+- **Agent类型**：text(文本分析最适合意图理解）
 - **核心功能**：分析用户输入，识别具体意图和需要的处理方式
 - **输出格式**：结构化的意图数据 + 语义上下文，供后续步骤使用
 - **变量输出**：
@@ -302,7 +299,6 @@ class RequirementParser:
 5. **可扩展性**：为未来的功能扩展留有余地"""
     
     async def _call_llm(self, prompt: str, system_prompt: str = "") -> str:
-        """调用真实的大模型API"""
         if not system_prompt:
             system_prompt = "你是一个专业的需求分析师，请严格按照要求的 JSON 格式回复。"
         

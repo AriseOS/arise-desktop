@@ -300,7 +300,8 @@ class AgentBuilder:
             logger.info("步骤1: 解析用户需求")
             self.update_build_step(build_id, "parsing_requirements")
             requirement = await self.requirement_parser.parse_requirements(user_description)
-            logger.info(f"解析完成 - Agent目的: {requirement.agent_purpose}")
+            # logger.info(f"解析完成 - Agent目的: {requirement.agent_purpose}")
+            logger.info(f"解析完成 - Agent需求: {requirement}")
             
             # 保存需求解析结果
             self.update_build_result(build_id, agent_purpose=requirement.agent_purpose)
@@ -309,9 +310,9 @@ class AgentBuilder:
             logger.info("步骤2: 提取执行步骤")
             self.update_build_step(build_id, "extracting_steps")
             steps = await self.requirement_parser.extract_steps(
-                user_description, requirement.agent_purpose
+                user_description, requirement.agent_purpose, requirement.needs_intent_analysis
             )
-            logger.info(f"步骤提取完成 - 共{len(steps)}个步骤")
+            logger.info(f"步骤提取完成 - 共{len(steps)}个步骤，需要意图分析: {requirement.needs_intent_analysis}")
             
             # 3. 成本效益优化的Agent类型判断（已实现）
             logger.info("步骤3: 判断Agent类型")
