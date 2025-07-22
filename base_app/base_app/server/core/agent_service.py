@@ -76,41 +76,10 @@ class AgentService:
                 memory_config=memory_config
             )
             
-            # 注册工具
-            self._register_tools(agent_config.tools)
+            # 工具现在由BaseAgent自动注册，不需要手动注册
             
         except Exception as e:
             raise RuntimeError(f"Failed to initialize BaseAgent: {e}")
-    
-    def _register_tools(self, enabled_tools: List[str]):
-        """根据配置注册工具"""
-        print(f"🔧 开始注册工具，enabled_tools: {enabled_tools}")
-        
-        if not self.agent:
-            print("❌ Agent实例为空，无法注册工具")
-            return
-            
-        if not enabled_tools:
-            print("⚠️ 没有启用的工具配置")
-            return
-        
-        for tool_name in enabled_tools:
-            try:
-                if tool_name == "browser" or tool_name == "browser_use":
-                    from base_app.base_agent.tools.browser_use import BrowserTool
-                    browser_tool = BrowserTool()
-                    self.agent.register_tool('browser_use', browser_tool)
-                    print(f"✓ 成功注册工具: browser_use (配置名: {tool_name})")
-                    
-                    # 验证注册结果
-                    registered_tools = self.agent.get_registered_tools()
-                    print(f"📋 当前已注册工具: {registered_tools}")
-                else:
-                    print(f"⚠️ 未知工具: {tool_name}")
-            except Exception as e:
-                print(f"❌ 注册工具失败 {tool_name}: {e}")
-                import traceback
-                traceback.print_exc()
     
     def _build_agent_config(self) -> AgentConfig:
         """构建Agent配置"""

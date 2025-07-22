@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Layout, Button, Typography, Avatar, Dropdown, Space, Card, Input, message } from 'antd';
-import { UserOutlined, LogoutOutlined, SendOutlined, RobotOutlined } from '@ant-design/icons';
+import { UserOutlined, LogoutOutlined, SendOutlined, RobotOutlined, LoadingOutlined } from '@ant-design/icons';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -8,6 +8,7 @@ import { RootState } from '../store';
 import { logout } from '../store/authSlice';
 import UserProfile from '../components/UserProfile';
 import LanguageSwitcher from '../components/LanguageSwitcher';
+import { agentBuildAPI } from '../services/agentBuildAPI';
 
 const { Header, Content } = Layout;
 const { Title, Text } = Typography;
@@ -20,6 +21,7 @@ const HomePage: React.FC = () => {
   const { user } = useSelector((state: RootState) => state.auth);
   const [prompt, setPrompt] = useState('');
   const [showUserProfile, setShowUserProfile] = useState(false);
+  const [isBuilding, setIsBuilding] = useState(false);
 
   const handleLogout = () => {
     dispatch(logout());
@@ -65,8 +67,33 @@ const HomePage: React.FC = () => {
       return;
     }
 
-    // Navigate to workspace with the prompt
-    navigate('/workspace', { state: { initialPrompt: prompt } });
+    setIsBuilding(true);
+    
+    try {
+      // 调用 Agent 构建 API
+      const result = await agentBuildAPI.buildAgent({
+        description: prompt.trim(),
+        agent_name: undefined // 让系统自动生成名称
+      });
+
+      message.success(t('home.messages.buildStarted'));
+      
+      // 跳转到 workspace 页面，传递构建ID和初始提示
+      navigate('/workspace', { 
+        state: { 
+          buildId: result.build_id,
+          initialPrompt: prompt.trim()
+        } 
+      });
+      
+    } catch (error: any) {
+      console.error('Agent 构建启动失败:', error);
+      message.error(
+        error.response?.data?.detail || t('home.messages.buildFailed')
+      );
+    } finally {
+      setIsBuilding(false);
+    }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -160,12 +187,13 @@ const HomePage: React.FC = () => {
                 <Button
                   type="primary"
                   size="large"
-                  icon={<SendOutlined />}
+                  icon={isBuilding ? <LoadingOutlined /> : <SendOutlined />}
                   onClick={handleGenerate}
-                  disabled={!prompt.trim()}
+                  disabled={!prompt.trim() || isBuilding}
+                  loading={isBuilding}
                   className="bg-gradient-to-r from-blue-600 to-purple-600 border-0 h-12 px-8"
                 >
-                  {t('home.startBuilding')}
+                  {isBuilding ? t('home.building') : t('home.startBuilding')}
                 </Button>
               </div>
             </div>

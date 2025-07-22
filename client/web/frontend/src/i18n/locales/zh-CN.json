@@ -49,8 +49,11 @@
     },
     "messages": {
       "pleaseLogin": "请先登录以使用对话功能",
-      "enterRequirement": "请输入您的需求"
-    }
+      "enterRequirement": "请输入您的需求",
+      "buildStarted": "Agent 构建已启动！正在跳转到工作台...",
+      "buildFailed": "启动 Agent 构建失败"
+    },
+    "building": "构建中..."
   },
   "login": {
     "title": "ami.dev",

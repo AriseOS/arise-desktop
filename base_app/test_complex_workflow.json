@@ -1,0 +1,104 @@
+{
+  "id": "ea35ef0c-28d3-429d-b381-7366226047a3",
+  "name": "智能分析流程",
+  "description": "完整的需求分析和处理流程",
+  "version": "1.0.0",
+  "steps": [
+    {
+      "id": "00ddd009-091a-4679-9ed1-8e919e59cd97",
+      "name": "需求分析",
+      "description": "自定义Agent步骤: 需求分析",
+      "agent_type": "需求分析师",
+      "agent_instruction": "深入分析用户的需求，识别关键要素",
+      "user_task": null,
+      "inputs": {},
+      "constraints": [],
+      "allowed_tools": [],
+      "fallback_tools": [],
+      "confidence_threshold": 0.8,
+      "allowed_libraries": [],
+      "expected_output_format": "",
+      "response_style": "professional",
+      "max_length": 500,
+      "outputs": {},
+      "condition": null,
+      "timeout": 300,
+      "retry_count": 0
+    },
+    {
+      "id": "b4028cf4-41d5-4374-acb2-7e1716cf5cb7",
+      "name": "方案生成",
+      "description": "文本处理步骤: 方案生成",
+      "agent_type": "text_agent",
+      "agent_instruction": "基于需求分析结果，生成解决方案",
+      "user_task": null,
+      "inputs": {},
+      "constraints": [],
+      "allowed_tools": [],
+      "fallback_tools": [],
+      "confidence_threshold": 0.8,
+      "allowed_libraries": [],
+      "expected_output_format": "",
+      "response_style": "professional",
+      "max_length": 500,
+      "outputs": {},
+      "condition": null,
+      "timeout": 300,
+      "retry_count": 0
+    },
+    {
+      "id": "b7e41bc0-6c9d-4bc1-bea9-2f6e6472226a",
+      "name": "结果汇总",
+      "description": "文本处理步骤: 结果汇总",
+      "agent_type": "text_agent",
+      "agent_instruction": "整合分析结果和解决方案，形成最终报告",
+      "user_task": null,
+      "inputs": {},
+      "constraints": [],
+      "allowed_tools": [],
+      "fallback_tools": [],
+      "confidence_threshold": 0.8,
+      "allowed_libraries": [],
+      "expected_output_format": "",
+      "response_style": "professional",
+      "max_length": 500,
+      "outputs": {},
+      "condition": null,
+      "timeout": 300,
+      "retry_count": 0
+    }
+  ],
+  "input_schema": {
+    "user_input": {
+      "type": "string",
+      "required": true,
+      "description": "用户输入"
+    },
+    "context": {
+      "type": "object",
+      "required": false,
+      "description": "上下文信息"
+    }
+  },
+  "output_schema": {
+    "analysis": {
+      "type": "string",
+      "description": "需求分析结果"
+    },
+    "solution": {
+      "type": "string",
+      "description": "解决方案"
+    },
+    "final_report": {
+      "type": "string",
+      "description": "最终报告"
+    }
+  },
+  "max_execution_time": 3600,
+  "enable_parallel": false,
+  "enable_cache": true,
+  "tags": [],
+  "author": "AgentCrafter",
+  "created_at": "2025-07-14T20:36:54.707819",
+  "updated_at": "2025-07-14T20:36:54.707819"
+}

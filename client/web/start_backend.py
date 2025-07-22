@@ -35,8 +35,14 @@ def main():
     
     # 启动服务器
     print("启动后端服务器...")
+    from backend.config import get_server_config, print_config
+    
+    # 打印配置信息
+    print_config()
+    
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    server_config = get_server_config()
+    uvicorn.run("main:app", **server_config)
 
 if __name__ == "__main__":
     main()
