@@ -18,7 +18,7 @@ class ChatMessageRequest(BaseModel):
     )
     
     message: str = Field(..., description="用户消息", min_length=1)
-    session_id: Optional[str] = Field(None, description="会话ID")
+    session_id: str = Field(..., description="会话ID")  # 必填字段
     user_id: str = Field(..., description="用户ID")
 
 
