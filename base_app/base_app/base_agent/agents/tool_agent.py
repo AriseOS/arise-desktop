@@ -6,8 +6,7 @@ from typing import Any, Dict, List
 
 from .base_agent import BaseStepAgent, AgentMetadata
 from ..core.schemas import (
-    AgentCapability, AgentContext,
-    ToolAgentInput, ToolAgentOutput
+    AgentContext, AgentInput, AgentOutput
 )
 
 
@@ -17,27 +16,7 @@ class ToolAgent(BaseStepAgent):
     def __init__(self):
         metadata = AgentMetadata(
             name="tool_agent",
-            description="智能工具调用Agent，支持工具预筛选和置信度评估",
-            capabilities=[AgentCapability.TOOL_CALLING],
-            input_schema={
-                "task_description": {"type": "string", "required": True},
-                "context_data": {"type": "object", "required": False},
-                "constraints": {"type": "array", "required": False},
-                "allowed_tools": {"type": "array", "required": False},
-                "fallback_tools": {"type": "array", "required": False},
-                "confidence_threshold": {"type": "number", "required": False}
-            },
-            output_schema={
-                "success": {"type": "boolean"},
-                "result": {"type": "any"},
-                "tool_used": {"type": "string"},
-                "action_taken": {"type": "string"},
-                "confidence": {"type": "number"},
-                "reasoning": {"type": "string"},
-                "alternatives_tried": {"type": "array"},
-                "metadata": {"type": "object"},
-                "error_message": {"type": "string"}
-            }
+            description="工具调用Agent，支持两轮工具选择和置信度评估",
         )
         super().__init__(metadata)
         self.provider = None
@@ -48,7 +27,7 @@ class ToolAgent(BaseStepAgent):
         if not context.agent_instance:
             return False
         
-        # 验证Provider和工具注册表是否可用
+        # 获取Provider
         if not hasattr(context.agent_instance, 'provider') or not context.agent_instance.provider:
             if context.logger:
                 context.logger.error("Provider不可用")
@@ -61,44 +40,49 @@ class ToolAgent(BaseStepAgent):
     
     async def validate_input(self, input_data: Any) -> bool:
         """验证输入数据"""
-        if isinstance(input_data, ToolAgentInput):
+        if isinstance(input_data, AgentInput):
             return True
-        if not isinstance(input_data, dict):
-            return False
-        return "task_description" in input_data
+        if isinstance(input_data, dict):
+            return "instruction" in input_data
+        return False
     
-    async def execute(self, input_data: Any, context: AgentContext) -> ToolAgentOutput:
+    async def execute(self, input_data: Any, context: AgentContext) -> AgentOutput:
         """执行工具调用 - 两轮沟通机制"""
         try:
-            # 解析输入
+            # 确保输入是AgentInput类型
             if isinstance(input_data, dict):
-                tool_input = ToolAgentInput(**input_data)
+                agent_input = AgentInput(**input_data)
             else:
-                tool_input = input_data
+                agent_input = input_data
+            
+            # 从AgentInput中解析工具调用所需的参数
+            tool_params = self._parse_tool_params(agent_input)
             
             # 第一轮：选择工具
-            selected_tool = await self._select_tool_first_round(tool_input, context)
+            selected_tool = await self._select_tool_first_round(tool_params, context)
             
             # 第二轮：选择具体API和参数
             api_call = await self._select_api_and_params_second_round(
                 tool_name=selected_tool["tool_name"],
-                task_description=tool_input.task_description,
-                context_data=tool_input.context_data,
-                constraints=tool_input.constraints,
+                task_description=tool_params["task_description"],
+                context_data=tool_params.get("context_data", {}),
+                constraints=tool_params.get("constraints", []),
                 context=context
             )
             
             # 检查置信度
             final_confidence = min(selected_tool["confidence"], api_call["confidence"])
-            if final_confidence < tool_input.confidence_threshold:
+            confidence_threshold = tool_params.get("confidence_threshold", 0.7)
+            if final_confidence < confidence_threshold:
                 if context.logger:
                     context.logger.warning(
-                        f"最终置信度 {final_confidence} 低于阈值 {tool_input.confidence_threshold}"
+                        f"最终置信度 {final_confidence} 低于阈值 {confidence_threshold}"
                     )
             
             # 执行API调用
             alternatives_tried = []
-            all_tools_to_try = [selected_tool["tool_name"]] + tool_input.fallback_tools
+            fallback_tools = tool_params.get("fallback_tools", [])
+            all_tools_to_try = [selected_tool["tool_name"]] + fallback_tools
             
             for tool_name in all_tools_to_try:
                 try:
@@ -108,20 +92,24 @@ class ToolAgent(BaseStepAgent):
                         parameters=api_call["parameters"],
                         context=context
                     )
-                    context.logger.info(f"result: {result}")
-                    return ToolAgentOutput(
+                    
+                    if context.logger:
+                        context.logger.info(f"工具调用成功: {result}")
+                    
+                    return AgentOutput(
                         success=True,
-                        result=result,
-                        tool_used=tool_name,
-                        action_taken=api_call["action"],
-                        confidence=final_confidence,
-                        reasoning=f"工具选择: {selected_tool['reasoning']}; API选择: {api_call['reasoning']}",
-                        alternatives_tried=alternatives_tried,
-                        metadata={
+                        data={
+                            "result": result,
+                            "tool_used": tool_name,
+                            "action_taken": api_call["action"],
+                            "confidence": final_confidence,
+                            "reasoning": f"工具选择: {selected_tool['reasoning']}; API选择: {api_call['reasoning']}",
+                            "alternatives_tried": alternatives_tried,
                             "parameters": api_call["parameters"],
                             "tool_selection": selected_tool,
                             "api_selection": api_call
-                        }
+                        },
+                        message="工具调用成功"
                     )
                     
                 except Exception as e:
@@ -131,67 +119,71 @@ class ToolAgent(BaseStepAgent):
                     continue
             
             # 所有工具都失败了
-            return ToolAgentOutput(
+            return AgentOutput(
                 success=False,
-                result=None,
-                tool_used=selected_tool.get("tool_name", "unknown"),
-                action_taken=api_call.get("action", "unknown"),
-                confidence=final_confidence,
-                reasoning=f"工具选择: {selected_tool.get('reasoning', '')}; API选择: {api_call.get('reasoning', '')}",
-                alternatives_tried=alternatives_tried,
-                error_message=f"所有工具都执行失败，尝试过: {alternatives_tried}"
+                data={
+                    "tool_used": selected_tool.get("tool_name", "unknown"),
+                    "action_taken": api_call.get("action", "unknown"),
+                    "confidence": final_confidence,
+                    "reasoning": f"工具选择: {selected_tool.get('reasoning', '')}; API选择: {api_call.get('reasoning', '')}",
+                    "alternatives_tried": alternatives_tried,
+                },
+                message=f"所有工具都执行失败，尝试过: {alternatives_tried}"
             )
             
         except Exception as e:
             if context.logger:
                 context.logger.error(f"Tool Agent执行失败: {str(e)}")
             
-            return ToolAgentOutput(
+            return AgentOutput(
                 success=False,
-                result=None,
-                tool_used="unknown",
-                action_taken="unknown",
-                confidence=0.0,
-                reasoning="",
-                alternatives_tried=[],
-                error_message=str(e)
+                data={},
+                message=f"Tool Agent执行失败: {str(e)}"
             )
     
-    def _get_filtered_tools(self, input_data: ToolAgentInput) -> List[str]:
+    def _parse_tool_params(self, agent_input: AgentInput) -> Dict[str, Any]:
+        """从AgentInput解析工具调用参数"""
+        return {
+            "task_description": agent_input.instruction,
+            "context_data": agent_input.data,
+            "constraints": agent_input.metadata.get("constraints", []),
+            "allowed_tools": agent_input.metadata.get("allowed_tools", []),
+            "fallback_tools": agent_input.metadata.get("fallback_tools", []),
+            "confidence_threshold": agent_input.metadata.get("confidence_threshold", 0.7)
+        }
+    
+    def _get_filtered_tools(self, tool_params: Dict[str, Any]) -> List[str]:
         """获取预筛选的工具列表"""
-        # 直接使用Workflow层面预筛选的工具
-        if input_data.allowed_tools:
-            return input_data.allowed_tools
+        if tool_params.get("allowed_tools"):
+            return tool_params["allowed_tools"]
         else:
-            # 如果没有预筛选，使用所有可用工具（不推荐）
             return self._get_all_available_tools()
     
     def _get_all_available_tools(self) -> List[str]:
         """获取所有可用工具"""
-        # 优先从tool_registry获取
         if self.tool_registry and hasattr(self.tool_registry, 'get_registered_tools'):
             return self.tool_registry.get_registered_tools()
         elif self.tool_registry and hasattr(self.tool_registry, 'tools'):
             return list(self.tool_registry.tools.keys())
-        return []
+        return ["browser_use"]  # 默认工具
     
     async def _select_tool_first_round(
         self, 
-        input_data: ToolAgentInput, 
+        tool_params: Dict[str, Any],
         context: AgentContext
     ) -> Dict[str, Any]:
         """第一轮：基于任务描述选择工具"""
         
         # 获取可用工具
-        available_tools = self._get_filtered_tools(input_data)
+        available_tools = self._get_filtered_tools(tool_params)
         
         # 获取工具描述信息
         tool_descriptions = await self._get_tool_descriptions_from_registry(available_tools, context)
         
         analysis_prompt = f"""
-任务描述: {input_data.task_description}
-上下文数据: {input_data.context_data}
-约束条件: {input_data.constraints}
+任务描述: {tool_params['task_description']}
+上下文数据: {tool_params.get('context_data', {})}
+约束条件: {tool_params.get('constraints', [])}
 
 可用工具及描述:
 {tool_descriptions}
@@ -216,23 +208,7 @@ class ToolAgent(BaseStepAgent):
                 context.logger.info(f"第一轮LLM原始响应: {response}")
             
             # 处理可能的非JSON响应
-            if not response or not response.strip():
-                raise ValueError("LLM返回空响应")
-            
-            # 尝试提取JSON（有时LLM会返回带说明的文本）
-            response_clean = response.strip()
-            if "```json" in response_clean:
-                # 提取json代码块
-                start = response_clean.find("```json") + 7
-                end = response_clean.find("```", start)
-                response_clean = response_clean[start:end].strip()
-            elif "{" in response_clean:
-                # 提取第一个JSON对象
-                start = response_clean.find("{")
-                end = response_clean.rfind("}") + 1
-                response_clean = response_clean[start:end]
-            
-            result = json.loads(response_clean)
+            result = self._parse_json_response(response)
             
             # 验证结果
             if result.get("tool_name") not in available_tools:
@@ -244,9 +220,6 @@ class ToolAgent(BaseStepAgent):
                 "reasoning": result.get("reasoning", "")
             }
             
-        except json.JSONDecodeError as e:
-            if context.logger:
-                context.logger.error(f"第一轮JSON解析失败: {str(e)}, 原始响应: {response}")
         except Exception as e:
             if context.logger:
                 context.logger.error(f"第一轮工具选择失败: {str(e)}")
@@ -268,30 +241,23 @@ class ToolAgent(BaseStepAgent):
     ) -> Dict[str, Any]:
         """第二轮：基于选中的工具选择具体API和参数"""
         
-        # 获取工具实例和详细API描述
-        tool_instance = await self._get_tool_instance(tool_name, context)
-        if not tool_instance:
-            raise ValueError(f"无法获取工具实例: {tool_name}")
+        # 获取工具的可用API信息
+        tool_apis = await self._get_tool_apis(tool_name, context)
         
-        # 获取工具的详细动作描述
-        actions_description = tool_instance.get_actions_description()
-        actions_text = self._format_actions_description(actions_description)
-        
-        analysis_prompt = f"""
+        api_prompt = f"""
+已选择工具: {tool_name}
 任务描述: {task_description}
 上下文数据: {context_data}
 约束条件: {constraints}
 
-选中的工具: {tool_name}
+该工具可用的API操作:
+{tool_apis}
 
-该工具的可用API操作：
-{actions_text}
-
-请根据任务描述选择最合适的API操作并生成参数。
+请基于任务需求选择具体的API操作和参数。
 
 返回JSON格式：
 {{
-    "action": "选择的API操作名称",
+    "action": "API操作名称",
     "parameters": {{"参数名": "参数值"}},
     "confidence": 0.0到1.0之间的置信度,
     "reasoning": "选择这个API和参数的理由"
@@ -300,139 +266,110 @@ class ToolAgent(BaseStepAgent):
         
         try:
             response = await self.provider.generate_response(
-                system_prompt="你是一个API选择专家。请分析任务需求并选择最合适的API操作和参数，返回严格的JSON格式结果。",
-                user_prompt=analysis_prompt
+                system_prompt="你是一个API选择专家。请根据任务需求选择合适的API操作和参数，返回严格的JSON格式结果。",
+                user_prompt=api_prompt
             )
             
             if context.logger:
                 context.logger.info(f"第二轮LLM原始响应: {response}")
             
-            # 处理可能的非JSON响应
-            if not response or not response.strip():
-                raise ValueError("LLM返回空响应")
-            
-            # 尝试提取JSON
-            response_clean = response.strip()
-            if "```json" in response_clean:
-                start = response_clean.find("```json") + 7
-                end = response_clean.find("```", start)
-                response_clean = response_clean[start:end].strip()
-            elif "{" in response_clean:
-                start = response_clean.find("{")
-                end = response_clean.rfind("}") + 1
-                response_clean = response_clean[start:end]
-            
-            result = json.loads(response_clean)
-            
-            # 验证动作是否存在
-            available_actions = [action.name for action in actions_description]
-            if result.get("action") not in available_actions:
-                raise ValueError(f"选择的动作 {result.get('action')} 不在可用动作列表中")
+            result = self._parse_json_response(response)
             
             return {
-                "action": result["action"],
-                "parameters": result.get("parameters", {}),
+                "action": result.get("action", "navigate_and_extract"),
+                "parameters": result.get("parameters", {"instruction": task_description}),
                 "confidence": float(result.get("confidence", 0.5)),
                 "reasoning": result.get("reasoning", "")
             }
             
-        except json.JSONDecodeError as e:
-            if context.logger:
-                context.logger.error(f"第二轮JSON解析失败: {str(e)}, 原始响应: {response}")
         except Exception as e:
             if context.logger:
                 context.logger.error(f"第二轮API选择失败: {str(e)}")
         
-        # 默认使用execute_task操作
+        # 默认返回通用操作
         return {
-            "action": "execute_task",
-            "parameters": {"task": task_description},
+            "action": "navigate_and_extract",
+            "parameters": {"instruction": task_description},
             "confidence": 0.3,
-            "reasoning": f"自动选择execute_task操作，原因：LLM响应解析失败"
+            "reasoning": "使用默认API操作，原因：LLM响应解析失败"
         }
     
-    async def _get_tool_descriptions_from_registry(
-        self, 
-        available_tools: List[str], 
-        context: AgentContext
-    ) -> str:
+    def _parse_json_response(self, response: str) -> Dict[str, Any]:
+        """解析LLM的JSON响应"""
+        if not response or not response.strip():
+            raise ValueError("LLM返回空响应")
+        
+        # 尝试提取JSON（有时LLM会返回带说明的文本）
+        response_clean = response.strip()
+        if "```json" in response_clean:
+            # 提取json代码块
+            start = response_clean.find("```json") + 7
+            end = response_clean.find("```", start)
+            response_clean = response_clean[start:end].strip()
+        elif "{" in response_clean:
+            # 提取第一个JSON对象
+            start = response_clean.find("{")
+            end = response_clean.rfind("}") + 1
+            response_clean = response_clean[start:end]
+        
+        return json.loads(response_clean)
+    
+    async def _get_tool_descriptions_from_registry(self, available_tools: List[str], context: AgentContext) -> str:
         """从工具注册表获取工具描述"""
         descriptions = []
-        
         for tool_name in available_tools:
             try:
                 tool_instance = await self._get_tool_instance(tool_name, context)
-                if tool_instance:
-                    tool_desc = tool_instance.get_tool_description()
-                    descriptions.append(f"""
-- {tool_desc.name}: {tool_desc.description}
-  分类: {tool_desc.category}
-  版本: {tool_desc.version}
-""")
+                if hasattr(tool_instance, 'get_description'):
+                    desc = tool_instance.get_description()
                 else:
-                    descriptions.append(f"- {tool_name}: 工具描述不可用")
+                    desc = f"{tool_name} - 工具描述不可用"
+                descriptions.append(f"- {tool_name}: {desc}")
             except Exception as e:
-                descriptions.append(f"- {tool_name}: 获取描述失败 - {str(e)}")
+                descriptions.append(f"- {tool_name}: 获取描述失败 ({str(e)})")
         
-        return "\n".join(descriptions)
+        return "\\n".join(descriptions) if descriptions else "无可用工具"
+    
+    async def _get_tool_apis(self, tool_name: str, context: AgentContext) -> str:
+        """获取工具的API信息"""
+        try:
+            tool_instance = await self._get_tool_instance(tool_name, context)
+            if hasattr(tool_instance, 'get_available_actions'):
+                actions = tool_instance.get_available_actions()
+                return "\\n".join([f"- {action}" for action in actions])
+            else:
+                return "- navigate_and_extract: 导航并提取信息"
+        except Exception:
+            return "- navigate_and_extract: 导航并提取信息（默认操作）"
     
     async def _get_tool_instance(self, tool_name: str, context: AgentContext):
         """获取工具实例"""
-        if context.logger:
-            context.logger.info(f"尝试获取工具实例: {tool_name}")
-        
-        if self.tool_registry and hasattr(self.tool_registry, 'tools'):
-            if context.logger:
-                registry_tools = list(self.tool_registry.tools.keys()) if self.tool_registry.tools else []
-                context.logger.info(f"tools_registry中的工具: {registry_tools}")
-            
-            tool_instance = self.tool_registry.tools.get(tool_name)
-            if tool_instance:
-                if context.logger:
-                    context.logger.info(f"成功从tools_registry获取工具: {tool_name}")
-                return tool_instance
-        
-        if context.logger:
-            context.logger.error(f"无法获取工具实例: {tool_name}, agent_instance: {context.agent_instance}, tools_registry: {self.tool_registry}")
-        
-        return None
-    
-    def _format_actions_description(self, actions_description: List) -> str:
-        """格式化动作描述为文本"""
-        formatted = []
-        
-        for action in actions_description:
-            examples_text = ""
-            if action.examples:
-                examples_text = "\n  示例:\n" + "\n".join([
-                    f"    - {ex.get('description', '')}: {ex.get('params', {})}"
-                    for ex in action.examples[:2]  # 只显示前2个示例
-                ])
-            
-            formatted.append(f"""
-{action.name}: {action.description}
-  必需参数: {action.required_params}
-  参数结构: {action.parameters}{examples_text}
-""")
-        
-        return "\n".join(formatted)
+        if hasattr(self.tool_registry, 'get_tool'):
+            return self.tool_registry.get_tool(tool_name)
+        elif hasattr(self.tool_registry, 'tools') and tool_name in self.tool_registry.tools:
+            return self.tool_registry.tools[tool_name]
+        else:
+            raise ValueError(f"工具 {tool_name} 不存在")
     
     async def _call_tool(
         self, 
         tool_name: str, 
         action: str, 
-        parameters: Dict[str, Any],
+        parameters: Dict[str, Any], 
         context: AgentContext
     ) -> Any:
-        """调用具体工具"""
-        tool_instance = await self._get_tool_instance(tool_name, context)
-        if not tool_instance:
-            raise ValueError(f"工具 {tool_name} 不存在")
+        """调用具体的工具"""
+        # 解析变量
+        resolved_params = await self._resolve_variables(parameters, context)
         
-        return await tool_instance.execute(action, parameters)
+        # 调用工具
+        if hasattr(context.agent_instance, 'use_tool'):
+            return await context.agent_instance.use_tool(tool_name, action, resolved_params)
+        else:
+            raise ValueError("工具调用接口不可用")
     
     async def _resolve_variables(self, params: Dict[str, Any], context: AgentContext) -> Dict[str, Any]:
-        """解析参数中的变量引用"""
+        """解析参数中的变量"""
         resolved = {}
         for key, value in params.items():
             if isinstance(value, str) and value.startswith("{{") and value.endswith("}}"):

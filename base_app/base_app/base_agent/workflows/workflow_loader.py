@@ -354,10 +354,6 @@ class WorkflowConfigLoader:
         step.inputs = step_config.get('inputs', {})
         step.outputs = step_config.get('outputs', {})
         
-        # 执行控制
-        step.timeout = step_config.get('timeout', 300)
-        step.retry_count = step_config.get('retry_count', 0)
-        
         # 条件配置
         if 'condition' in step_config:
             condition = step_config['condition']
@@ -365,28 +361,6 @@ class WorkflowConfigLoader:
                 step.condition = condition['expression']
             elif isinstance(condition, str):
                 step.condition = condition
-        
-        # 约束条件
-        step.constraints = step_config.get('constraints', [])
-        
-        # Agent 特定配置
-        agent_type = step_config['agent_type']
-        
-        if agent_type == 'tool_agent' and 'tools' in step_config:
-            tools = step_config['tools']
-            step.allowed_tools = tools.get('allowed', [])
-            step.fallback_tools = tools.get('fallback', [])
-            step.confidence_threshold = tools.get('confidence_threshold', 0.8)
-        
-        elif agent_type == 'code_agent' and 'code' in step_config:
-            code = step_config['code']
-            step.allowed_libraries = code.get('allowed_libraries', [])
-            step.expected_output_format = code.get('expected_output_format', '')
-        
-        elif agent_type == 'text_agent' and 'text' in step_config:
-            text = step_config['text']
-            step.response_style = text.get('response_style', 'professional')
-            step.max_length = text.get('max_length', 500)
         
         return step
 

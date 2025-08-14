@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Optional
 
 from .schemas import (
     AgentWorkflowStep, WorkflowResult, StepResult, 
-    AgentContext, TextAgentInput, ToolAgentInput, CodeAgentInput
+    AgentContext, AgentInput, AgentOutput
 )
 from ..agents import (
     AgentRegistry, AgentRouter, AgentExecutor,
@@ -76,22 +76,25 @@ class AgentWorkflowEngine:
         
         try:
             for step in steps:
-                # 检查条件
-                if step.condition and not await self._evaluate_condition(step.condition, context):
-                    logger.info(f"步骤 {step.name} 条件不满足，跳过执行")
-                    continue
+                # # 检查条件
+                # if step.condition and not await self._evaluate_condition(step.condition, context):
+                #     logger.info(f"步骤 {step.name} 条件不满足，跳过执行")
+                #     continue
                 
                 # 更新上下文
                 context.step_id = step.id
                 
                 # 执行Agent步骤
                 step_result = await self._execute_agent_step(step, context)
+                print(f"step_result: {step_result}")
                 
                 # 更新上下文变量
+                print(f"step_outputs: {step.outputs}")
                 if step_result.success and step.outputs:
                     await self._update_context_variables(step_result, step.outputs, context)
                     # 更新最后一步的输出
                     last_step_output = await self._extract_step_outputs(step_result, step.outputs)
+                print(f"last_step_output {last_step_output}")
                 
                 executed_steps.append(step_result)
                 
@@ -129,16 +132,13 @@ class AgentWorkflowEngine:
         try:
             # 确定Agent类型
             agent_type = step.agent_type
-            if agent_type == "auto":
-                # 自动路由选择Agent，使用agent_instruction
-                agent_type = await self.agent_router.route_to_agent(step.agent_instruction, context)
-                logger.info(f"自动路由选择Agent: {agent_type}")
             
             # 解析步骤输入数据
             resolved_input = await self._resolve_step_input(step, context)
             
             # 构建Agent输入
             agent_input = await self._build_agent_input(step, agent_type, resolved_input, context)
+            print(f"agent_input {agent_input}")
             
             # 执行Agent
             result = await self.agent_executor.execute_agent(
@@ -171,40 +171,100 @@ class AgentWorkflowEngine:
         agent_type: str, 
         resolved_input: Dict[str, Any],
         context: AgentContext
-    ) -> Any:
-        """构建Agent输入对象"""
-        # 从输入中获取任务描述，如果没有则使用agent_instruction
-        task_description = resolved_input.get("task_description", step.agent_instruction)
+    ) -> AgentInput:
+        """构建Agent输入对象 - 统一的AgentInput"""
         
-        if agent_type == "text_agent":
-            return TextAgentInput(
-                question=resolved_input.get("question", task_description),
-                context_data=resolved_input.get("context_data", {}),
-                response_style=step.response_style,
-                max_length=step.max_length
-            )
+        # 构建完整的提示词，包含指令、输入数据和输出要求
+        complete_prompt = self._build_complete_prompt(step, resolved_input, context)
         
-        elif agent_type == "tool_agent":
-            return ToolAgentInput(
-                task_description=task_description,
-                context_data=resolved_input.get("context_data", {}),
-                constraints=step.constraints,
-                allowed_tools=step.allowed_tools,
-                fallback_tools=step.fallback_tools,
-                confidence_threshold=step.confidence_threshold
-            )
+        # 构建metadata，包含agent特定的配置
+        metadata = {
+            "expected_outputs": step.outputs,
+            "constraints": getattr(step, 'constraints', []),
+        }
         
+        # 根据agent类型添加特定的metadata
+        if agent_type == "tool_agent":
+            metadata.update({
+                "allowed_tools": getattr(step, 'allowed_tools', []),
+                "fallback_tools": getattr(step, 'fallback_tools', []),
+                "confidence_threshold": getattr(step, 'confidence_threshold', 0.7)
+            })
         elif agent_type == "code_agent":
-            return CodeAgentInput(
-                task_description=task_description,
-                input_data=resolved_input.get("input_data", {}),
-                expected_output_format=step.expected_output_format,
-                constraints=step.constraints,
-                libraries_allowed=step.allowed_libraries
-            )
+            metadata.update({
+                "expected_output_format": getattr(step, 'expected_output_format', 'any'),
+                "libraries_allowed": getattr(step, 'allowed_libraries', ['json', 'math', 'datetime', 're'])
+            })
+        elif agent_type == "text_agent":
+            metadata.update({
+                "response_style": getattr(step, 'response_style', 'professional'),
+                "max_length": getattr(step, 'max_length', 1000)
+            })
         
-        else:
-            raise ValueError(f"不支持的Agent类型: {agent_type}")
+        return AgentInput(
+            instruction=complete_prompt,
+            data=resolved_input,
+            metadata=metadata
+        )
+    
+    def _build_complete_prompt(
+        self, 
+        step: AgentWorkflowStep, 
+        resolved_input: Dict[str, Any], 
+        context: AgentContext
+    ) -> str:
+        """构建完整的大模型提示词，包含指令、输入和输出要求"""
+        
+        prompt_parts = []
+        
+        # 1. 添加任务指令
+        prompt_parts.append(f"## 任务指令\n{step.agent_instruction}")
+        
+        # 2. 添加输入数据
+        if resolved_input:
+            prompt_parts.append("## 输入数据")
+            for key, value in resolved_input.items():
+                if isinstance(value, (dict, list)):
+                    prompt_parts.append(f"**{key}**:\n```json\n{self._format_json_value(value)}\n```")
+                else:
+                    prompt_parts.append(f"**{key}**: {value}")
+        
+        # 3. 添加输出格式要求
+        if step.outputs:
+            prompt_parts.append("## 输出格式要求")
+            prompt_parts.append("请严格按照以下JSON格式返回结果：")
+            
+            # 构建JSON模板
+            output_template = {}
+            for output_key, output_type in step.outputs.items():
+                output_template[output_key] = f"<{output_type}>"
+            
+            prompt_parts.append("```json")
+            prompt_parts.append(self._format_json_value(output_template))
+            prompt_parts.append("```")
+            
+            # 添加字段说明
+            prompt_parts.append("**字段说明：**")
+            for output_key, output_type in step.outputs.items():
+                prompt_parts.append(f"- **{output_key}**: {output_type}")
+        
+        # 4. 添加执行要求
+        prompt_parts.append("""## 执行要求
+1. 仔细阅读任务指令，理解要完成的具体任务
+2. 基于提供的输入数据进行处理和分析
+3. 严格按照输出格式要求返回结构化数据
+4. 确保所有输出字段都填充准确、完整的内容
+5. 输出必须是有效的JSON格式，以便后续工作流步骤正确解析
+
+现在开始执行任务：""")
+        
+        return "\n\n".join(prompt_parts)
+    
+    def _format_json_value(self, value) -> str:
+        """格式化JSON值"""
+        import json
+        return json.dumps(value, ensure_ascii=False, indent=2)
+    
     
     async def _resolve_step_input(
         self, 
@@ -240,17 +300,14 @@ class AgentWorkflowEngine:
         context: AgentContext
     ):
         """更新上下文变量"""
-        if not step_result.data:
+        if not step_result.data or not isinstance(step_result.data, AgentOutput):
             return
         
+        agent_output = step_result.data
         for output_key, var_name in outputs.items():
-            if hasattr(step_result.data, output_key):
-                value = getattr(step_result.data, output_key)
-                context.variables[var_name] = value
-                logger.debug(f"更新上下文变量: {var_name} = {value}")
-            elif isinstance(step_result.data, dict) and output_key in step_result.data:
-                context.variables[var_name] = step_result.data[output_key]
-                logger.debug(f"更新上下文变量: {var_name} = {step_result.data[output_key]}")
+            if output_key in agent_output.data:
+                context.variables[var_name] = agent_output.data[output_key]
+                logger.debug(f"更新上下文变量: {var_name} = {agent_output.data[output_key]}")
     
     async def _extract_step_outputs(
         self, 
@@ -258,16 +315,15 @@ class AgentWorkflowEngine:
         outputs: Dict[str, str]
     ) -> Any:
         """提取当前步骤的输出值"""
-        if not step_result.data or not outputs:
+        if not step_result.data or not outputs or not isinstance(step_result.data, AgentOutput):
             return None
         
+        agent_output = step_result.data
         step_outputs = {}
+        
         for output_key, var_name in outputs.items():
-            if hasattr(step_result.data, output_key):
-                value = getattr(step_result.data, output_key)
-                step_outputs[var_name] = value
-            elif isinstance(step_result.data, dict) and output_key in step_result.data:
-                step_outputs[var_name] = step_result.data[output_key]
+            if output_key in agent_output.data:
+                step_outputs[var_name] = agent_output.data[output_key]
         
         # 如果只有一个输出，直接返回值；否则返回字典
         if len(step_outputs) == 1:
@@ -276,39 +332,6 @@ class AgentWorkflowEngine:
             return step_outputs
         else:
             return None
-    
-    async def _evaluate_condition(self, condition: str, context: AgentContext) -> bool:
-        """评估执行条件"""
-        try:
-            # 简单的条件评估，可以后续扩展
-            # 替换变量引用
-            import re
-            def replace_var(match):
-                var_name = match.group(1).strip()
-                value = context.variables.get(var_name, None)
-                if value is None:
-                    return "None"
-                elif isinstance(value, str):
-                    return f"'{value}'"
-                else:
-                    return str(value)
-            
-            resolved_condition = re.sub(r'\{\{([^}]+)\}\}', replace_var, condition)
-            
-            # 安全的条件评估
-            allowed_names = {
-                "True": True, "False": False, "None": None,
-                "true": True, "false": False, "null": None,  # 支持小写布尔值
-                "and": lambda a, b: a and b,
-                "or": lambda a, b: a or b,
-                "not": lambda a: not a,
-            }
-            
-            return eval(resolved_condition, {"__builtins__": {}}, allowed_names)
-            
-        except Exception as e:
-            logger.warning(f"条件评估失败: {condition}, 错误: {str(e)}")
-            return True  # 默认执行
     
     def get_agent_stats(self) -> Dict[str, Any]:
         """获取Agent统计信息"""

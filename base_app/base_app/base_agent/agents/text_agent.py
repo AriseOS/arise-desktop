@@ -7,15 +7,13 @@ from typing import Any, Dict
 try:
     from .base_agent import BaseStepAgent, AgentMetadata
     from ..core.schemas import (
-        AgentCapability, AgentContext, 
-        TextAgentInput, TextAgentOutput
+        AgentContext, AgentInput, AgentOutput
     )
 except ImportError:
     # 绝对导入作为备选
     from base_agent.agents.base_agent import BaseStepAgent, AgentMetadata
     from base_agent.core.schemas import (
-        AgentCapability, AgentContext, 
-        TextAgentInput, TextAgentOutput
+        AgentContext, AgentInput, AgentOutput
     )
 
 
@@ -26,20 +24,6 @@ class TextAgent(BaseStepAgent):
         metadata = AgentMetadata(
             name="text_agent",
             description="基于LLM的文本生成Agent，用于回答问题、生成文本、总结内容",
-            capabilities=[AgentCapability.TEXT_GENERATION],
-            input_schema={
-                "question": {"type": "string", "required": True},
-                "context_data": {"type": "object", "required": False},
-                "response_style": {"type": "string", "required": False},
-                "max_length": {"type": "integer", "required": False},
-                "language": {"type": "string", "required": False}
-            },
-            output_schema={
-                "success": {"type": "boolean"},
-                "answer": {"type": "string"},
-                "word_count": {"type": "integer"},
-                "error_message": {"type": "string"}
-            }
         )
         super().__init__(metadata)
         self.provider = None
@@ -61,81 +45,42 @@ class TextAgent(BaseStepAgent):
     
     async def validate_input(self, input_data: Any) -> bool:
         """验证输入数据"""
-        if isinstance(input_data, TextAgentInput):
+        if isinstance(input_data, AgentInput):
             return True
-        if not isinstance(input_data, dict):
-            return False
-        return "question" in input_data
+        if isinstance(input_data, dict):
+            return "instruction" in input_data
+        return False
     
-    async def execute(self, input_data: Any, context: AgentContext) -> TextAgentOutput:
+    async def execute(self, input_data: Any, context: AgentContext) -> AgentOutput:
         """执行文本生成"""
         try:
-            # 解析输入
+            # 确保输入是AgentInput类型
             if isinstance(input_data, dict):
-                text_input = TextAgentInput(**input_data)
+                agent_input = AgentInput(**input_data)
             else:
-                text_input = input_data
-            
-            # 构建提示词
-            prompt = self._build_prompt(text_input, context)
+                agent_input = input_data
             
             # Provider生成回答
             response = await self.provider.generate_response(
-                system_prompt="你是一个有用的AI助手，请根据用户的问题和上下文信息提供准确、有帮助的回答。",
-                user_prompt=prompt
+                system_prompt="你是一个专业的AI助手，根据指令完成文本生成任务。",
+                user_prompt=agent_input.instruction
             )
             
             answer = response.strip()
             
-            return TextAgentOutput(
+            return AgentOutput(
                 success=True,
-                answer=answer,
-                word_count=len(answer)
+                data={"answer": answer},
+                message="文本生成完成"
             )
             
         except Exception as e:
             if context.logger:
                 context.logger.error(f"文本生成失败: {str(e)}")
             
-            return TextAgentOutput(
+            return AgentOutput(
                 success=False,
-                answer="",
-                word_count=0,
-                error_message=str(e)
+                data={},
+                message=f"文本生成失败: {str(e)}"
             )
     
-    def _build_prompt(self, input_data: TextAgentInput, context: AgentContext) -> str:
-        """构建提示词"""
-        base_prompt = f"""
-请回答以下问题：{input_data.question}
-
-上下文信息：
-{self._format_context(input_data.context_data)}
-
-回答要求：
-- 风格：{input_data.response_style}
-- 语言：{input_data.language}
-- 长度限制：{input_data.max_length}字以内
-- 准确性：基于提供的上下文信息回答
-
-请提供清晰、准确的回答：
-"""
-        return base_prompt
-    
-    def _format_context(self, context_data: Dict[str, Any]) -> str:
-        """格式化上下文数据"""
-        if not context_data:
-            return "无额外上下文"
-        
-        formatted = []
-        for key, value in context_data.items():
-            formatted.append(f"- {key}: {value}")
-        return "\n".join(formatted)
-    
-    async def _resolve_prompt_variables(self, prompt: str, context: AgentContext) -> str:
-        """解析提示词中的变量引用"""
-        def replace_var(match):
-            var_name = match.group(1).strip()
-            return str(context.variables.get(var_name, f"{{{{{var_name}}}}}"))
-        
-        return re.sub(r'\{\{([^}]+)\}\}', replace_var, prompt)
