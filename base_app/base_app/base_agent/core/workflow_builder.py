@@ -341,6 +341,91 @@ class WorkflowBuilder:
         # 更复杂的验证可以在这里添加
         return False
     
+    def add_if_step(self,
+                    name: str,
+                    condition: str,
+                    then_steps: List[AgentWorkflowStep] = None,
+                    else_steps: List[AgentWorkflowStep] = None,
+                    description: str = "",
+                    inputs: Dict[str, Any] = None,
+                    outputs: Dict[str, str] = None,
+                    timeout: int = 300) -> 'WorkflowBuilder':
+        """
+        添加if/else条件控制步骤
+        
+        Args:
+            name: 步骤名称
+            condition: 条件表达式
+            then_steps: 条件为真时执行的步骤列表
+            else_steps: 条件为假时执行的步骤列表（可选）
+            description: 步骤描述
+            inputs: 输入映射
+            outputs: 输出映射
+            timeout: 超时时间
+            
+        Returns:
+            WorkflowBuilder: 返回自身支持链式调用
+        """
+        step = AgentWorkflowStep(
+            name=name,
+            description=description,
+            agent_type="if",
+            agent_instruction="",  # if步骤不需要指令
+            inputs=inputs or {},
+            outputs=outputs or {},
+            condition=condition,
+            timeout=timeout,
+            then=then_steps or [],
+            else_=else_steps or []
+        )
+        
+        self.steps.append(step)
+        logger.info(f"添加if步骤: {name}")
+        return self
+    
+    def add_while_step(self,
+                       name: str,
+                       condition: str,
+                       loop_steps: List[AgentWorkflowStep] = None,
+                       description: str = "",
+                       inputs: Dict[str, Any] = None,
+                       outputs: Dict[str, str] = None,
+                       max_iterations: int = 10,
+                       timeout: int = 300) -> 'WorkflowBuilder':
+        """
+        添加while循环控制步骤
+        
+        Args:
+            name: 步骤名称
+            condition: 循环条件表达式
+            loop_steps: 循环体步骤列表
+            description: 步骤描述
+            inputs: 输入映射
+            outputs: 输出映射
+            max_iterations: 最大循环次数
+            timeout: 超时时间
+            
+        Returns:
+            WorkflowBuilder: 返回自身支持链式调用
+        """
+        step = AgentWorkflowStep(
+            name=name,
+            description=description,
+            agent_type="while",
+            agent_instruction="",  # while步骤不需要指令
+            inputs=inputs or {},
+            outputs=outputs or {},
+            condition=condition,
+            timeout=timeout,
+            steps=loop_steps or [],
+            max_iterations=max_iterations,
+            loop_timeout=timeout
+        )
+        
+        self.steps.append(step)
+        logger.info(f"添加while步骤: {name}")
+        return self
+    
     def build(self) -> Workflow:
         """
         构建工作流

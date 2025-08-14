@@ -107,7 +107,7 @@ class AgentInput(BaseModel):
     """统一的Agent输入模型"""
     instruction: str = Field(..., description="执行指令")
     data: Dict[str, Any] = Field(default_factory=dict, description="输入数据")
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="元数据")
+    step_metadata: Dict[str, Any] = Field(default_factory=dict, description="步骤元数据")
 
 
 class AgentOutput(BaseModel):
@@ -150,6 +150,8 @@ class StepType(str, Enum):
     TOOL = "tool"          # 调用工具
     CODE = "code"          # 执行代码
     MEMORY = "memory"      # 内存操作
+    IF = "if"              # 条件分支控制
+    WHILE = "while"        # 循环控制
 
 
 class ErrorHandling(str, Enum):
@@ -168,8 +170,8 @@ class AgentWorkflowStep(BaseModel):
     description: str = Field(default="", description="步骤描述")
     
     # Agent配置
-    agent_type: str = Field(..., description="Agent类型: text_agent | tool_agent | code_agent")
-    agent_instruction: str = Field(..., description="Agent执行指令，描述Agent要做什么")
+    agent_type: str = Field(..., description="Agent类型: text_agent | tool_agent | code_agent | if | while")
+    agent_instruction: str = Field(default="", description="Agent执行指令，描述Agent要做什么")
     user_task: Optional[str] = Field(default=None, description="用户具体任务内容")
     
     # 输入配置
@@ -196,6 +198,13 @@ class AgentWorkflowStep(BaseModel):
     condition: Optional[str] = Field(default=None, description="执行条件")
     timeout: int = Field(default=300, description="超时时间")
     retry_count: int = Field(default=0, description="重试次数")
+    
+    # 控制流相关字段 (仅当agent_type为if或while时使用)
+    then: Optional[List['AgentWorkflowStep']] = Field(default=None, description="if条件为真时执行的步骤")
+    else_: Optional[List['AgentWorkflowStep']] = Field(default=None, alias="else", description="if条件为假时执行的步骤")
+    steps: Optional[List['AgentWorkflowStep']] = Field(default=None, description="while循环体步骤")
+    max_iterations: Optional[int] = Field(default=10, description="while最大循环次数")
+    loop_timeout: Optional[int] = Field(default=300, description="while循环超时时间")
 
 
 class StepResult(BaseModel):
@@ -216,6 +225,14 @@ class StepResult(BaseModel):
     # 错误信息
     error: Optional[str] = Field(default=None, description="错误信息")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="额外元数据")
+    
+    # 控制流相关字段 (仅当step_type为控制流时使用)
+    step_type: Optional[str] = Field(default="agent", description="步骤类型：agent/if/while")
+    condition_result: Optional[bool] = Field(default=None, description="条件评估结果")
+    branch_executed: Optional[str] = Field(default=None, description="执行的分支：then/else/loop")
+    iterations_executed: Optional[int] = Field(default=None, description="实际执行的循环次数")
+    exit_reason: Optional[str] = Field(default=None, description="退出原因")
+    sub_step_results: List['StepResult'] = Field(default_factory=list, description="子步骤执行结果")
 
 
 class ExecutionContext(BaseModel):

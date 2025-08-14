@@ -51,7 +51,9 @@ class ConditionEvaluator:
         """
         try:
             # 替换变量引用 {{variable}} -> variables['variable']
+            print(f"expression {expression}, \t variables {variables}")
             resolved_expression = self._resolve_variables(expression, variables)
+            print(f"resolved_expression {resolved_expression}")
             
             # 构建安全的执行环境
             safe_dict = {**self.safe_builtins, **variables}
@@ -71,7 +73,9 @@ class ConditionEvaluator:
             if var_name in variables:
                 value = variables[var_name]
                 if isinstance(value, str):
-                    return f"'{value}'"
+                    # 对字符串进行转义处理，避免引号冲突
+                    escaped_value = value.replace("'", "\\'").replace('"', '\\"')
+                    return f"'{escaped_value}'"
                 elif value is None:
                     return "None"
                 else:
@@ -118,6 +122,9 @@ class WorkflowValidator:
         # 验证输入输出定义
         errors.extend(self._validate_inputs_outputs(config))
         
+        # 验证final_response要求
+        errors.extend(self._validate_final_response_requirement(config))
+        
         return errors
     
     def _validate_required_fields(self, config: Dict[str, Any]) -> List[str]:
@@ -158,11 +165,23 @@ class WorkflowValidator:
             
             # 验证 agent_type
             agent_type = step.get('agent_type')
-            if agent_type not in ['text_agent', 'tool_agent', 'code_agent', 'auto']:
+            if agent_type not in ['text_agent', 'tool_agent', 'code_agent', 'if', 'while']:
                 errors.append(f"{step_prefix}: 不支持的 agent_type '{agent_type}'")
             
-            # 验证 agent_type 特定配置
-            if agent_type in self.AGENT_SPECIFIC_FIELDS:
+            # 验证控制流特定配置
+            if agent_type == 'if':
+                if 'condition' not in step:
+                    errors.append(f"{step_prefix}: if类型必须有condition字段")
+                if 'then' not in step:
+                    errors.append(f"{step_prefix}: if类型必须有then字段")
+                # else字段是可选的
+            elif agent_type == 'while':
+                if 'condition' not in step:
+                    errors.append(f"{step_prefix}: while类型必须有condition字段")
+                if 'steps' not in step:
+                    errors.append(f"{step_prefix}: while类型必须有steps字段")
+            elif agent_type in self.AGENT_SPECIFIC_FIELDS:
+                # 验证普通agent类型特定配置
                 required_field = self.AGENT_SPECIFIC_FIELDS[agent_type][0]
                 if required_field not in step:
                     errors.append(f"{step_prefix}: {agent_type} 类型缺少 {required_field} 配置")
@@ -201,6 +220,33 @@ class WorkflowValidator:
             
             if 'type' not in output_def:
                 errors.append(f"outputs.{output_name}.type 是必填字段")
+        
+        return errors
+    
+    def _validate_final_response_requirement(self, config: Dict[str, Any]) -> List[str]:
+        """验证workflow必须有步骤输出final_response"""
+        errors = []
+        
+        def check_steps_for_final_response(step_list):
+            for step in step_list:
+                step_outputs = step.get('outputs', {})
+                if 'final_response' in step_outputs.values():
+                    return True
+                
+                # 递归检查控制流中的步骤
+                if step.get('agent_type') == 'if':
+                    if 'then' in step and check_steps_for_final_response(step['then']):
+                        return True
+                    if 'else' in step and check_steps_for_final_response(step['else']):
+                        return True
+                elif step.get('agent_type') == 'while':
+                    if 'steps' in step and check_steps_for_final_response(step['steps']):
+                        return True
+            return False
+        
+        steps = config.get('steps', [])
+        if not check_steps_for_final_response(steps):
+            errors.append("workflow中必须有至少一个步骤的outputs映射到final_response变量")
         
         return errors
 
@@ -346,7 +392,7 @@ class WorkflowConfigLoader:
             name=step_config['name'],
             description=step_config.get('description', ''),
             agent_type=step_config['agent_type'],
-            agent_instruction=step_config['agent_instruction'],
+            agent_instruction=step_config.get('agent_instruction', ''),
             user_task=step_config.get('user_task')
         )
         
@@ -361,6 +407,25 @@ class WorkflowConfigLoader:
                 step.condition = condition['expression']
             elif isinstance(condition, str):
                 step.condition = condition
+        
+        # 控制流配置
+        if step_config['agent_type'] == 'if':
+            # 处理then分支
+            if 'then' in step_config:
+                step.then = [self._create_workflow_step(sub_step) for sub_step in step_config['then']]
+            
+            # 处理else分支（可选）
+            if 'else' in step_config:
+                step.else_ = [self._create_workflow_step(sub_step) for sub_step in step_config['else']]
+        
+        elif step_config['agent_type'] == 'while':
+            # 处理循环体
+            if 'steps' in step_config:
+                step.steps = [self._create_workflow_step(sub_step) for sub_step in step_config['steps']]
+            
+            # 处理循环限制配置
+            step.max_iterations = step_config.get('max_iterations', 10)
+            step.loop_timeout = step_config.get('timeout', 300)
         
         return step
 

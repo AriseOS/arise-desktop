@@ -16,6 +16,7 @@ from ..agents import (
     AgentRegistry, AgentRouter, AgentExecutor,
     TextAgent, ToolAgent, CodeAgent
 )
+from ..workflows.workflow_loader import ConditionEvaluator
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ class AgentWorkflowEngine:
         self.agent_registry = AgentRegistry()
         self.agent_executor = AgentExecutor(self.agent_registry)
         self.agent_router = AgentRouter(self.agent_registry)
+        self.condition_evaluator = ConditionEvaluator()
         
         # 注册内置Agent
         self._register_builtin_agents()
@@ -76,20 +78,25 @@ class AgentWorkflowEngine:
         
         try:
             for step in steps:
-                # # 检查条件
-                # if step.condition and not await self._evaluate_condition(step.condition, context):
-                #     logger.info(f"步骤 {step.name} 条件不满足，跳过执行")
-                #     continue
-                
                 # 更新上下文
                 context.step_id = step.id
                 
-                # 执行Agent步骤
-                step_result = await self._execute_agent_step(step, context)
+                # 根据步骤类型执行不同逻辑
+                if step.agent_type == "if":
+                    step_result = await self._execute_if_step(step, context)
+                elif step.agent_type == "while": 
+                    step_result = await self._execute_while_step(step, context)
+                else:
+                    # 检查普通步骤的执行条件
+                    if step.condition and not await self._evaluate_condition(step.condition, context):
+                        logger.info(f"步骤 {step.name} 条件不满足，跳过执行")
+                        continue
+                    
+                    # 执行普通Agent步骤
+                    step_result = await self._execute_agent_step(step, context)
                 print(f"step_result: {step_result}")
                 
                 # 更新上下文变量
-                print(f"step_outputs: {step.outputs}")
                 if step_result.success and step.outputs:
                     await self._update_context_variables(step_result, step.outputs, context)
                     # 更新最后一步的输出
@@ -103,11 +110,15 @@ class AgentWorkflowEngine:
                     logger.error(f"步骤 {step.name} 执行失败: {step_result.message}")
                     break
             
+            # 提取final_response作为最终结果
+            final_result = context.variables.get('final_response', 
+                "抱歉，系统未能生成有效回复。请联系开发者检查workflow配置，确保有步骤输出到final_response变量。")
+            
             return WorkflowResult(
                 success=True,
                 workflow_id=workflow_id,
                 steps=executed_steps,
-                final_result=last_step_output if last_step_output is not None else context.variables, 
+                final_result=final_result, 
                 total_execution_time=time.time() - start_time
             )
             
@@ -172,10 +183,7 @@ class AgentWorkflowEngine:
         resolved_input: Dict[str, Any],
         context: AgentContext
     ) -> AgentInput:
-        """构建Agent输入对象 - 统一的AgentInput"""
-        
-        # 构建完整的提示词，包含指令、输入数据和输出要求
-        complete_prompt = self._build_complete_prompt(step, resolved_input, context)
+        """构建Agent输入对象 - 直接传递原始数据"""
         
         # 构建metadata，包含agent特定的配置
         metadata = {
@@ -202,68 +210,10 @@ class AgentWorkflowEngine:
             })
         
         return AgentInput(
-            instruction=complete_prompt,
-            data=resolved_input,
-            metadata=metadata
+            instruction=step.agent_instruction,  # 原始指令
+            data=resolved_input,                 # 解析后的输入数据
+            step_metadata=metadata
         )
-    
-    def _build_complete_prompt(
-        self, 
-        step: AgentWorkflowStep, 
-        resolved_input: Dict[str, Any], 
-        context: AgentContext
-    ) -> str:
-        """构建完整的大模型提示词，包含指令、输入和输出要求"""
-        
-        prompt_parts = []
-        
-        # 1. 添加任务指令
-        prompt_parts.append(f"## 任务指令\n{step.agent_instruction}")
-        
-        # 2. 添加输入数据
-        if resolved_input:
-            prompt_parts.append("## 输入数据")
-            for key, value in resolved_input.items():
-                if isinstance(value, (dict, list)):
-                    prompt_parts.append(f"**{key}**:\n```json\n{self._format_json_value(value)}\n```")
-                else:
-                    prompt_parts.append(f"**{key}**: {value}")
-        
-        # 3. 添加输出格式要求
-        if step.outputs:
-            prompt_parts.append("## 输出格式要求")
-            prompt_parts.append("请严格按照以下JSON格式返回结果：")
-            
-            # 构建JSON模板
-            output_template = {}
-            for output_key, output_type in step.outputs.items():
-                output_template[output_key] = f"<{output_type}>"
-            
-            prompt_parts.append("```json")
-            prompt_parts.append(self._format_json_value(output_template))
-            prompt_parts.append("```")
-            
-            # 添加字段说明
-            prompt_parts.append("**字段说明：**")
-            for output_key, output_type in step.outputs.items():
-                prompt_parts.append(f"- **{output_key}**: {output_type}")
-        
-        # 4. 添加执行要求
-        prompt_parts.append("""## 执行要求
-1. 仔细阅读任务指令，理解要完成的具体任务
-2. 基于提供的输入数据进行处理和分析
-3. 严格按照输出格式要求返回结构化数据
-4. 确保所有输出字段都填充准确、完整的内容
-5. 输出必须是有效的JSON格式，以便后续工作流步骤正确解析
-
-现在开始执行任务：""")
-        
-        return "\n\n".join(prompt_parts)
-    
-    def _format_json_value(self, value) -> str:
-        """格式化JSON值"""
-        import json
-        return json.dumps(value, ensure_ascii=False, indent=2)
     
     
     async def _resolve_step_input(
@@ -332,6 +282,166 @@ class AgentWorkflowEngine:
             return step_outputs
         else:
             return None
+    
+    async def _evaluate_condition(self, condition: str, context: AgentContext) -> bool:
+        """评估条件表达式"""
+        return self.condition_evaluator.evaluate(condition, context.variables)
+    
+    async def _execute_if_step(self, step: AgentWorkflowStep, context: AgentContext) -> StepResult:
+        """执行if/else条件控制步骤"""
+        step_start_time = time.time()
+        
+        try:
+            # 评估条件
+            condition_result = await self._evaluate_condition(step.condition, context)
+            logger.info(f"If条件 '{step.condition}' 评估结果: {condition_result}")
+            
+            # 选择执行分支
+            branch_executed = "then" if condition_result else "else"
+            sub_steps = step.then if condition_result else step.else_
+            
+            sub_step_results = []
+            branch_success = True
+            
+            # 执行选中分支的步骤
+            if sub_steps:
+                for sub_step in sub_steps:
+                    sub_result = await self._execute_single_step(sub_step, context)
+                    sub_step_results.append(sub_result)
+                    
+                    if not sub_result.success:
+                        branch_success = False
+                        break
+                        
+                    # 更新上下文变量
+                    if sub_result.success and sub_step.outputs:
+                        await self._update_context_variables(sub_result, sub_step.outputs, context)
+            
+            return StepResult(
+                step_id=step.id,
+                success=branch_success,
+                data=None,
+                message=f"If条件执行完成，分支: {branch_executed}",
+                execution_time=time.time() - step_start_time,
+                step_type="if",
+                condition_result=condition_result,
+                branch_executed=branch_executed,
+                sub_step_results=sub_step_results
+            )
+            
+        except Exception as e:
+            logger.error(f"If步骤执行失败: {str(e)}")
+            return StepResult(
+                step_id=step.id,
+                success=False,
+                data=None,
+                message=str(e),
+                execution_time=time.time() - step_start_time,
+                step_type="if"
+            )
+    
+    async def _execute_while_step(self, step: AgentWorkflowStep, context: AgentContext) -> StepResult:
+        """执行while循环控制步骤"""
+        step_start_time = time.time()
+        max_iterations = step.max_iterations or 10
+        loop_timeout = step.loop_timeout or 300
+        
+        try:
+            iterations_executed = 0
+            sub_step_results = []
+            exit_reason = "condition_false"
+            
+            while iterations_executed < max_iterations:
+                # 检查超时
+                if time.time() - step_start_time > loop_timeout:
+                    exit_reason = "timeout"
+                    break
+                
+                # 评估循环条件
+                condition_result = await self._evaluate_condition(step.condition, context)
+                logger.info(f"While条件 '{step.condition}' 评估结果: {condition_result} (第{iterations_executed + 1}次)")
+                
+                if not condition_result:
+                    exit_reason = "condition_false"
+                    break
+                
+                # 执行循环体步骤
+                iteration_success = True
+                iteration_results = []
+                
+                if step.steps:
+                    for sub_step in step.steps:
+                        sub_result = await self._execute_single_step(sub_step, context)
+                        iteration_results.append(sub_result)
+                        
+                        if not sub_result.success:
+                            iteration_success = False
+                            exit_reason = "step_failed"
+                            break
+                            
+                        # 更新上下文变量
+                        if sub_result.success and sub_step.outputs:
+                            await self._update_context_variables(sub_result, sub_step.outputs, context)
+                
+                sub_step_results.extend(iteration_results)
+                iterations_executed += 1
+                
+                if not iteration_success:
+                    break
+            
+            if iterations_executed >= max_iterations:
+                exit_reason = "max_iterations_reached"
+            
+            return StepResult(
+                step_id=step.id,
+                success=True,
+                data=None,
+                message=f"While循环执行完成，迭代{iterations_executed}次，退出原因: {exit_reason}",
+                execution_time=time.time() - step_start_time,
+                step_type="while",
+                iterations_executed=iterations_executed,
+                exit_reason=exit_reason,
+                sub_step_results=sub_step_results
+            )
+            
+        except Exception as e:
+            logger.error(f"While步骤执行失败: {str(e)}")
+            return StepResult(
+                step_id=step.id,
+                success=False,
+                data=None,
+                message=str(e),
+                execution_time=time.time() - step_start_time,
+                step_type="while"
+            )
+    
+    async def _execute_single_step(self, step: AgentWorkflowStep, context: AgentContext) -> StepResult:
+        """执行单个步骤（可能是Agent步骤或控制流步骤）"""
+        # 更新上下文
+        original_step_id = context.step_id
+        context.step_id = step.id
+        
+        try:
+            if step.agent_type == "if":
+                return await self._execute_if_step(step, context)
+            elif step.agent_type == "while":
+                return await self._execute_while_step(step, context)
+            else:
+                # 检查普通步骤的执行条件
+                if step.condition and not await self._evaluate_condition(step.condition, context):
+                    logger.info(f"步骤 {step.name} 条件不满足，跳过执行")
+                    return StepResult(
+                        step_id=step.id,
+                        success=True,
+                        data=None,
+                        message="条件不满足，跳过执行",
+                        execution_time=0.0
+                    )
+                
+                return await self._execute_agent_step(step, context)
+        finally:
+            # 恢复原来的step_id
+            context.step_id = original_step_id
     
     def get_agent_stats(self) -> Dict[str, Any]:
         """获取Agent统计信息"""
