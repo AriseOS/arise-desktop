@@ -58,10 +58,20 @@ class ToolAgent(BaseStepAgent):
             # 从AgentInput中解析工具调用所需的参数
             tool_params = self._parse_tool_params(agent_input)
             
+            
             # 第一轮：选择工具
+            print("\n" + "-"*40)
+            print("🎯 第一轮：工具选择")
+            print("-"*40)
             selected_tool = await self._select_tool_first_round(tool_params, context)
+            print(f"✅ 选择的工具: {selected_tool['tool_name']}")
+            print(f"📈 置信度: {selected_tool['confidence']}")
+            print(f"💭 选择理由: {selected_tool['reasoning']}")
             
             # 第二轮：选择具体API和参数
+            print("\n" + "-"*40)
+            print("🎯 第二轮：API和参数选择")
+            print("-"*40)
             api_call = await self._select_api_and_params_second_round(
                 tool_name=selected_tool["tool_name"],
                 task_description=tool_params["task_description"],
@@ -69,6 +79,10 @@ class ToolAgent(BaseStepAgent):
                 constraints=tool_params.get("constraints", []),
                 context=context
             )
+            print(f"✅ 选择的API: {api_call['action']}")
+            print(f"📋 API参数: {api_call['parameters']}")
+            print(f"📈 置信度: {api_call['confidence']}")
+            print(f"💭 选择理由: {api_call['reasoning']}")
             
             # 检查置信度
             final_confidence = min(selected_tool["confidence"], api_call["confidence"])
@@ -142,15 +156,57 @@ class ToolAgent(BaseStepAgent):
             )
     
     def _parse_tool_params(self, agent_input: AgentInput) -> Dict[str, Any]:
-        """从AgentInput解析工具调用参数"""
+        """从AgentInput解析工具调用参数 - 智能处理结构化输入"""
+        data = agent_input.data or {}
+        
+        # 构建增强的任务描述
+        enhanced_task_description = self._build_enhanced_task_description(
+            agent_input.instruction, data
+        )
+        
         return {
-            "task_description": agent_input.instruction,
-            "context_data": agent_input.data,
-            "constraints": agent_input.metadata.get("constraints", []),
-            "allowed_tools": agent_input.metadata.get("allowed_tools", []),
-            "fallback_tools": agent_input.metadata.get("fallback_tools", []),
-            "confidence_threshold": agent_input.metadata.get("confidence_threshold", 0.7)
+            "task_description": enhanced_task_description,
+            "context_data": data,
+            "constraints": agent_input.step_metadata.get("constraints", []),
+            "allowed_tools": agent_input.step_metadata.get("allowed_tools", []),
+            "fallback_tools": agent_input.step_metadata.get("fallback_tools", []),
+            "confidence_threshold": agent_input.step_metadata.get("confidence_threshold", 0.7)
         }
+    
+    def _build_enhanced_task_description(self, instruction: str, data: Dict[str, Any]) -> str:
+        """构建增强的任务描述，智能整合可用信息"""
+        enhanced_parts = [instruction]
+        
+        # 检查是否有用户意图信息
+        if "user_intention" in data and data["user_intention"]:
+            enhanced_parts.append(f"\n## 用户具体意图\n{data['user_intention']}")
+        
+        # 检查是否有用户指定的参数
+        if "user_specified_params" in data and data["user_specified_params"]:
+            params_str = self._format_params_for_prompt(data["user_specified_params"])
+            enhanced_parts.append(f"\n## 用户指定的参数\n{params_str}")
+        
+        # 检查是否有其他上下文信息
+        context_items = []
+        for key, value in data.items():
+            if key not in ["user_intention", "user_specified_params", "user_id", "intent"] and value:
+                context_items.append(f"- {key}: {value}")
+        
+        if context_items:
+            enhanced_parts.append(f"\n## 额外上下文\n" + "\n".join(context_items))
+        
+        return "\n".join(enhanced_parts)
+    
+    def _format_params_for_prompt(self, params: Dict[str, Any]) -> str:
+        """格式化参数为提示文本"""
+        if not params:
+            return "无特定参数"
+        
+        param_lines = []
+        for key, value in params.items():
+            param_lines.append(f"- {key}: {value}")
+        
+        return "\n".join(param_lines)
     
     def _get_filtered_tools(self, tool_params: Dict[str, Any]) -> List[str]:
         """获取预筛选的工具列表"""
@@ -243,6 +299,7 @@ class ToolAgent(BaseStepAgent):
         
         # 获取工具的可用API信息
         tool_apis = await self._get_tool_apis(tool_name, context)
+        print(f"tool_apis: {tool_apis}")
         
         api_prompt = f"""
 已选择工具: {tool_name}
@@ -253,7 +310,13 @@ class ToolAgent(BaseStepAgent):
 该工具可用的API操作:
 {tool_apis}
 
-请基于任务需求选择具体的API操作和参数。
+⚠️ 重要要求：
+1. 必须选择能够一次性完成整个任务的API操作和参数
+2. 不要将任务分解为多个步骤，而要在一次调用中完成所有操作
+3. 参数应该包含完成任务所需的全部信息和指令
+4. 如果任务复杂，请在参数中提供详细的执行指令
+
+优先选择能够自动完成全流程的API操作（如 navigate_and_extract），避免只完成部分操作的API（如单独的 navigate）。
 
 返回JSON格式：
 {{
@@ -266,7 +329,7 @@ class ToolAgent(BaseStepAgent):
         
         try:
             response = await self.provider.generate_response(
-                system_prompt="你是一个API选择专家。请根据任务需求选择合适的API操作和参数，返回严格的JSON格式结果。",
+                system_prompt="你是一个API选择专家。请选择能够一次性完成整个任务的API操作和参数。避免分步骤执行，要在单次调用中完成所有操作。返回严格的JSON格式结果。",
                 user_prompt=api_prompt
             )
             
