@@ -41,22 +41,6 @@ class ToolResult(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict, description="额外元数据")
 
 
-class ToolActionDescription(BaseModel):
-    """工具动作描述"""
-    name: str = Field(..., description="动作名称")
-    description: str = Field(..., description="动作描述")
-    parameters: Dict[str, Any] = Field(..., description="参数JSON Schema")
-    examples: List[Dict[str, Any]] = Field(default_factory=list, description="使用示例")
-    required_params: List[str] = Field(default_factory=list, description="必需参数列表")
-
-
-class ToolDescription(BaseModel):
-    """工具完整描述"""
-    name: str = Field(..., description="工具名称")
-    description: str = Field(..., description="工具描述")
-    category: str = Field(..., description="工具分类")
-    version: str = Field(..., description="工具版本")
-    actions: List[ToolActionDescription] = Field(..., description="可用动作列表")
 
 
 class ToolConfig(BaseModel):
@@ -193,91 +177,77 @@ class BaseTool(ABC):
         """子类实现的健康检查逻辑"""
         return self.status != ToolStatus.ERROR
     
-    def get_schema(self, action: str) -> Dict[str, Any]:
-        """
-        获取指定动作的参数模式
-        
-        Args:
-            action: 动作名称
-            
-        Returns:
-            Dict[str, Any]: JSON Schema
-        """
+    def get_tool_info(self) -> Dict[str, Any]:
+        """获取工具整体信息（第一轮选择用）"""
         return {
-            "type": "object",
-            "properties": {},
-            "required": []
+            "name": self.metadata.name,
+            "description": self.metadata.description,
+            "category": self.metadata.category,
+            "use_cases": self._get_use_cases()
         }
     
-    def get_tool_description(self) -> ToolDescription:
-        """
-        获取工具的完整描述信息
-        
-        Returns:
-            ToolDescription: 工具描述对象
-        """
-        return ToolDescription(
-            name=self.metadata.name,
-            description=self.metadata.description,
-            category=self.metadata.category,
-            version=self.metadata.version,
-            actions=self.get_actions_description()
-        )
-    
-    def get_actions_description(self) -> List[ToolActionDescription]:
-        """
-        获取所有可用动作的详细描述
-        
-        Returns:
-            List[ToolActionDescription]: 动作描述列表
-        """
-        actions = []
+    def get_all_apis_info(self) -> List[Dict[str, Any]]:
+        """获取工具的所有API详细信息（第二轮选择用）"""
+        apis_info = []
         for action in self.get_available_actions():
-            actions.append(ToolActionDescription(
-                name=action,
-                description=self._get_action_description(action),
-                parameters=self.get_schema(action),
-                examples=self._get_action_examples(action),
-                required_params=self._get_required_params(action)
-            ))
-        return actions
+            apis_info.append({
+                "name": action,
+                "description": self._get_api_description(action),
+                "parameters": self._get_api_parameters(action),
+                "examples": self._get_api_examples(action)
+            })
+        return apis_info
     
-    def _get_action_description(self, action: str) -> str:
-        """
-        获取动作描述 (子类可重写)
+    def get_apis_prompt_text(self) -> str:
+        """获取格式化的API信息文本（供Tool Agent使用）"""
+        apis_info = self.get_all_apis_info()
         
-        Args:
-            action: 动作名称
+        api_descriptions = []
+        for api_info in apis_info:
+            # 格式化参数信息
+            params_desc = []
+            for param_name, param_info in api_info["parameters"].items():
+                required = "必需" if param_info.get("required", False) else "可选"
+                default = f"默认值: {param_info['default']}" if "default" in param_info else ""
+                desc_parts = [f"{param_name}({param_info['type']}, {required})"]
+                if default:
+                    desc_parts.append(default)
+                desc_parts.append(param_info["description"])
+                params_desc.append(" - ".join(desc_parts))
             
-        Returns:
-            str: 动作描述
-        """
-        return f"执行 {action} 操作"
+            api_desc = f"- {api_info['name']}: {api_info['description']}"
+            if params_desc:
+                api_desc += f"\\n  参数: {'; '.join(params_desc)}"
+            
+            # 添加示例
+            if api_info["examples"]:
+                example = api_info["examples"][0]  # 只显示第一个示例
+                api_desc += f"\\n  示例: {example['scenario']} - {example['params']}"
+            
+            api_descriptions.append(api_desc)
+        
+        return "\\n".join(api_descriptions)
     
-    def _get_action_examples(self, action: str) -> List[Dict[str, Any]]:
-        """
-        获取动作使用示例 (子类可重写)
+    @abstractmethod
+    def _get_use_cases(self) -> List[str]:
+        """工具适用场景（子类必须实现）"""
+        pass
         
-        Args:
-            action: 动作名称
-            
-        Returns:
-            List[Dict[str, Any]]: 使用示例列表
-        """
-        return []
+    @abstractmethod
+    def _get_api_description(self, action: str) -> str:
+        """API具体描述（子类必须实现）"""  
+        pass
+        
+    @abstractmethod
+    def _get_api_parameters(self, action: str) -> Dict[str, Any]:
+        """API参数说明（子类必须实现）"""
+        pass
+        
+    @abstractmethod
+    def _get_api_examples(self, action: str) -> List[Dict[str, Any]]:
+        """API使用示例（子类必须实现）"""
+        pass
     
-    def _get_required_params(self, action: str) -> List[str]:
-        """
-        获取动作必需参数 (子类可重写)
-        
-        Args:
-            action: 动作名称
-            
-        Returns:
-            List[str]: 必需参数列表
-        """
-        schema = self.get_schema(action)
-        return schema.get("required", [])
     
     async def execute_with_retry(
         self,

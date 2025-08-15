@@ -30,13 +30,6 @@ class BrowserConfig(ToolConfig):
     llm_base_url: Optional[str] = Field(default=None, description="LLM Base URL")
 
 
-class BrowserAction(BaseModel):
-    """浏览器动作定义"""
-    name: str
-    description: str
-    params_schema: Dict[str, Any]
-    required_params: List[str]
-
 
 class BrowserTool(BaseTool):
     """
@@ -63,210 +56,73 @@ class BrowserTool(BaseTool):
     
     def get_available_actions(self) -> List[str]:
         """获取支持的动作列表"""
+        return ["execute"]
+    
+    def _get_use_cases(self) -> List[str]:
+        """工具适用场景"""
         return [
-            "navigate",
-            "click",
-            "fill_form", 
-            "extract_data",
-            "screenshot",
-            "wait_for_element",
-            "scroll",
-            "execute_task",
-            "get_page_info"
+            "网页信息查询",
+            "在线表单操作", 
+            "电商数据抓取",
+            "网站自动化测试",
+            "天气股价等实时数据获取"
         ]
-    
-    def _get_action_schema(self, action: str) -> BrowserAction:
-        """获取动作的详细定义"""
-        actions = {
-            "navigate": BrowserAction(
-                name="navigate",
-                description="导航到指定URL",
-                params_schema={
-                    "url": {"type": "string", "description": "目标URL"},
-                    "wait_until": {"type": "string", "enum": ["load", "domcontentloaded", "networkidle"], "default": "load"}
-                },
-                required_params=["url"]
-            ),
-            "click": BrowserAction(
-                name="click",
-                description="点击页面元素",
-                params_schema={
-                    "selector": {"type": "string", "description": "CSS选择器或元素描述"},
-                    "description": {"type": "string", "description": "元素的自然语言描述"},
-                    "wait_timeout": {"type": "number", "default": 10000}
-                },
-                required_params=[]
-            ),
-            "fill_form": BrowserAction(
-                name="fill_form",
-                description="填写表单",
-                params_schema={
-                    "form_data": {"type": "object", "description": "表单数据字典"},
-                    "form_selector": {"type": "string", "description": "表单选择器"},
-                    "submit": {"type": "boolean", "default": False, "description": "是否提交表单"}
-                },
-                required_params=["form_data"]
-            ),
-            "extract_data": BrowserAction(
-                name="extract_data",
-                description="从页面提取数据",
-                params_schema={
-                    "target": {"type": "string", "description": "要提取的数据描述"},
-                    "selectors": {"type": "array", "items": {"type": "string"}, "description": "CSS选择器列表"},
-                    "format": {"type": "string", "enum": ["json", "text", "html"], "default": "json"}
-                },
-                required_params=["target"]
-            ),
-            "screenshot": BrowserAction(
-                name="screenshot",
-                description="截取页面截图",
-                params_schema={
-                    "full_page": {"type": "boolean", "default": False},
-                    "selector": {"type": "string", "description": "截取特定元素"},
-                    "filename": {"type": "string", "description": "保存文件名"}
-                },
-                required_params=[]
-            ),
-            "wait_for_element": BrowserAction(
-                name="wait_for_element",
-                description="等待元素出现",
-                params_schema={
-                    "selector": {"type": "string", "description": "CSS选择器"},
-                    "description": {"type": "string", "description": "元素描述"},
-                    "timeout": {"type": "number", "default": 10000},
-                    "state": {"type": "string", "enum": ["attached", "detached", "visible", "hidden"], "default": "visible"}
-                },
-                required_params=[]
-            ),
-            "scroll": BrowserAction(
-                name="scroll",
-                description="滚动页面",
-                params_schema={
-                    "direction": {"type": "string", "enum": ["up", "down", "left", "right"], "default": "down"},
-                    "amount": {"type": "number", "description": "滚动距离(像素)", "default": 500},
-                    "to_element": {"type": "string", "description": "滚动到指定元素"}
-                },
-                required_params=[]
-            ),
-            "execute_task": BrowserAction(
-                name="execute_task",
-                description="执行复杂的自然语言任务",
-                params_schema={
-                    "task": {"type": "string", "description": "任务描述"},
-                    "context": {"type": "object", "description": "任务上下文信息"},
-                    "max_steps": {"type": "number", "default": 20, "description": "最大执行步数"}
-                },
-                required_params=["task"]
-            ),
-            "get_page_info": BrowserAction(
-                name="get_page_info",
-                description="获取页面信息",
-                params_schema={
-                    "info_type": {"type": "string", "enum": ["title", "url", "html", "text", "cookies"], "default": "title"}
-                },
-                required_params=[]
-            )
-        }
-        return actions.get(action)
-    
-    def get_schema(self, action: str) -> Dict[str, Any]:
-        """获取动作的JSON Schema"""
-        action_def = self._get_action_schema(action)
-        if not action_def:
-            return super().get_schema(action)
         
-        return {
-            "type": "object",
-            "description": action_def.description,
-            "properties": action_def.params_schema,
-            "required": action_def.required_params
-        }
-    
-    def _get_action_description(self, action: str) -> str:
-        """获取动作描述"""
-        action_def = self._get_action_schema(action)
-        if action_def:
-            return action_def.description
-        return super()._get_action_description(action)
-    
-    def _get_action_examples(self, action: str) -> List[Dict[str, Any]]:
-        """获取动作使用示例"""
-        examples = {
-            "navigate": [
-                {
-                    "description": "导航到百度首页",
-                    "params": {"url": "https://www.baidu.com"}
+    def _get_api_description(self, action: str) -> str:
+        """API具体描述"""
+        if action == "execute":
+            return "通过自然语言指令执行复杂的浏览器操作序列，包括导航、点击、填写表单、数据提取等"
+        return f"不支持的操作: {action}"
+        
+    def _get_api_parameters(self, action: str) -> Dict[str, Any]:
+        """API参数说明"""
+        if action == "execute":
+            return {
+                "task": {
+                    "type": "string",
+                    "required": True,
+                    "description": "自然语言任务描述，如'查询北京明天天气'"
                 },
-                {
-                    "description": "导航到页面并等待DOM加载完成",
-                    "params": {"url": "https://example.com", "wait_until": "domcontentloaded"}
-                }
-            ],
-            "click": [
-                {
-                    "description": "点击搜索按钮",
-                    "params": {"description": "search button"}
+                "max_actions": {
+                    "type": "integer", 
+                    "required": False,
+                    "default": 20,
+                    "description": "最大执行步数"
                 },
-                {
-                    "description": "点击指定选择器的元素",
-                    "params": {"selector": "#submit-btn"}
+                "use_vision": {
+                    "type": "boolean",
+                    "required": False, 
+                    "default": True,
+                    "description": "是否使用视觉理解"
                 }
-            ],
-            "fill_form": [
+            }
+        return {}
+        
+    def _get_api_examples(self, action: str) -> List[Dict[str, Any]]:
+        """API使用示例"""
+        if action == "execute":
+            return [
                 {
-                    "description": "填写登录表单",
+                    "scenario": "天气查询",
                     "params": {
-                        "form_data": {"username": "user123", "password": "pass123"},
-                        "submit": True
+                        "task": "访问天气网站，查询巴厘岛明天天气并提供穿衣建议"
                     }
-                }
-            ],
-            "extract_data": [
-                {
-                    "description": "提取页面标题",
-                    "params": {"target": "page title", "format": "text"}
                 },
                 {
-                    "description": "提取商品列表",
+                    "scenario": "信息搜索",
                     "params": {
-                        "target": "product information including name and price",
-                        "selectors": [".product-item", ".product-name", ".product-price"],
-                        "format": "json"
+                        "task": "在百度搜索'Python机器学习教程'，点击第一个结果，提取文章标题和主要内容"
                     }
-                }
-            ],
-            "screenshot": [
-                {
-                    "description": "截取当前页面截图",
-                    "params": {"filename": "current_page.png"}
                 },
                 {
-                    "description": "截取整页截图",
-                    "params": {"full_page": True, "filename": "full_page.png"}
-                }
-            ],
-            "execute_task": [
-                {
-                    "description": "搜索关键词",
-                    "params": {"task": "在百度搜索'人工智能'并点击第一个结果"}
-                },
-                {
-                    "description": "填写并提交表单",
+                    "scenario": "电商操作", 
                     "params": {
-                        "task": "填写联系表单，姓名为张三，邮箱为zhangsan@example.com，然后提交",
-                        "max_steps": 10
+                        "task": "在淘宝搜索'iPhone 15'，找到评分最高的商品，提取商品信息",
+                        "max_actions": 30
                     }
                 }
             ]
-        }
-        return examples.get(action, [])
-    
-    def _get_required_params(self, action: str) -> List[str]:
-        """获取动作必需参数"""
-        action_def = self._get_action_schema(action)
-        if action_def:
-            return action_def.required_params
-        return super()._get_required_params(action)
+        return []
     
     async def _initialize(self) -> bool:
         """初始化浏览器工具"""
@@ -302,15 +158,13 @@ class BrowserTool(BaseTool):
     
     async def validate_params(self, action: str, params: Dict[str, Any]) -> bool:
         """验证参数"""
-        action_def = self._get_action_schema(action)
-        if not action_def:
+        if action != "execute":
             return False
         
         # 检查必需参数
-        for required_param in action_def.required_params:
-            if required_param not in params:
-                logger.error(f"缺少必需参数: {required_param}")
-                return False
+        if "task" not in params:
+            logger.error("缺少必需参数: task")
+            return False
         
         return True
     
@@ -326,22 +180,14 @@ class BrowserTool(BaseTool):
         try:
             self.status = ToolStatus.RUNNING
             
-            if action == "execute_task":
-                result = await self._execute_task(params)
-            elif action == "navigate":
-                result = await self._navigate(params)
-            elif action == "extract_data":
-                result = await self._extract_data(params)
-            elif action == "fill_form":
-                result = await self._fill_form(params)
-            elif action == "screenshot":
-                result = await self._screenshot(params)
-            elif action == "get_page_info":
-                result = await self._get_page_info(params)
+            if action == "execute":
+                result = await self._execute_browser_task(params)
             else:
-                # 其他动作通过自然语言任务执行
-                task_description = self._action_to_task(action, params)
-                result = await self._execute_task({"task": task_description})
+                return ToolResult(
+                    success=False,
+                    message=f"不支持的操作: {action}",
+                    status=ToolStatus.ERROR
+                )
             
             self.status = ToolStatus.SUCCESS if result.success else ToolStatus.ERROR
             return result
@@ -355,11 +201,12 @@ class BrowserTool(BaseTool):
                 status=ToolStatus.ERROR
             )
     
-    async def _execute_task(self, params: Dict[str, Any]) -> ToolResult:
-        """执行自然语言任务"""
+    async def _execute_browser_task(self, params: Dict[str, Any]) -> ToolResult:
+        """执行浏览器自动化任务 - 直接对接 browser-use Agent"""
         task = params["task"]
+        max_actions = params.get("max_actions", 20)
+        use_vision = params.get("use_vision", True)
         context = params.get("context", {})
-        max_steps = params.get("max_steps", 20)
         
         try:
             # 确保LLM已初始化
@@ -368,11 +215,12 @@ class BrowserTool(BaseTool):
                 if self.llm is None:
                     raise RuntimeError("LLM初始化失败")
             
-            # 创建新的 Agent 实例
+            # 创建新的 browser-use Agent 实例，参数直接对齐
             self.current_agent = Agent(
                 task=task,
                 llm=self.llm,
-                max_actions=max_steps
+                max_actions=max_actions,
+                use_vision=use_vision
             )
             
             # 执行任务
@@ -383,6 +231,8 @@ class BrowserTool(BaseTool):
                 data={
                     "result": str(result),
                     "task": task,
+                    "max_actions": max_actions,
+                    "use_vision": use_vision,
                     "context": context
                 },
                 message=f"任务执行完成: {task}",
@@ -398,89 +248,3 @@ class BrowserTool(BaseTool):
                 status=ToolStatus.ERROR
             )
     
-    async def _navigate(self, params: Dict[str, Any]) -> ToolResult:
-        """导航到URL"""
-        url = params["url"]
-        task = f"Navigate to {url}"
-
-        return await self._execute_task({"task": task})
-    
-    async def _extract_data(self, params: Dict[str, Any]) -> ToolResult:
-        """提取数据"""
-        target = params["target"]
-        format_type = params.get("format", "json")
-        
-        task = f"Extract {target} from the current page and return it in {format_type} format"
-        
-        return await self._execute_task({"task": task})
-    
-    async def _fill_form(self, params: Dict[str, Any]) -> ToolResult:
-        """填写表单"""
-        form_data = params["form_data"]
-        submit = params.get("submit", False)
-        
-        form_str = json.dumps(form_data, ensure_ascii=False)
-        task = f"Fill the form with the following data: {form_str}"
-        
-        if submit:
-            task += " and submit the form"
-        
-        return await self._execute_task({"task": task})
-    
-    async def _screenshot(self, params: Dict[str, Any]) -> ToolResult:
-        """截取截图"""
-        full_page = params.get("full_page", False)
-        selector = params.get("selector")
-        
-        if selector:
-            task = f"Take a screenshot of element: {selector}"
-        elif full_page:
-            task = "Take a full page screenshot"
-        else:
-            task = "Take a screenshot of the current viewport"
-        
-        return await self._execute_task({"task": task})
-    
-    async def _get_page_info(self, params: Dict[str, Any]) -> ToolResult:
-        """获取页面信息"""
-        info_type = params.get("info_type", "title")
-        
-        task = f"Get the current page {info_type}"
-        
-        return await self._execute_task({"task": task})
-    
-    def _action_to_task(self, action: str, params: Dict[str, Any]) -> str:
-        """将动作转换为自然语言任务描述"""
-        if action == "click":
-            selector = params.get("selector", "")
-            description = params.get("description", "")
-            if description:
-                return f"Click on {description}"
-            elif selector:
-                return f"Click on element with selector: {selector}"
-            else:
-                return "Click on the appropriate element"
-        
-        elif action == "wait_for_element":
-            selector = params.get("selector", "")
-            description = params.get("description", "")
-            state = params.get("state", "visible")
-            
-            if description:
-                return f"Wait for {description} to be {state}"
-            elif selector:
-                return f"Wait for element {selector} to be {state}"
-            else:
-                return f"Wait for element to be {state}"
-        
-        elif action == "scroll":
-            direction = params.get("direction", "down")
-            amount = params.get("amount", 500)
-            to_element = params.get("to_element")
-            
-            if to_element:
-                return f"Scroll to element: {to_element}"
-            else:
-                return f"Scroll {direction} by {amount} pixels"
-        
-        return f"Execute {action} with parameters: {params}"

@@ -311,12 +311,12 @@ class ToolAgent(BaseStepAgent):
 {tool_apis}
 
 ⚠️ 重要要求：
-1. 必须选择能够一次性完成整个任务的API操作和参数
-2. 不要将任务分解为多个步骤，而要在一次调用中完成所有操作
-3. 参数应该包含完成任务所需的全部信息和指令
-4. 如果任务复杂，请在参数中提供详细的执行指令
+1. 根据任务描述选择最合适的API操作
+2. 仔细阅读API的参数说明和示例
+3. 参数值应该准确反映任务需求
+4. 参数值必须符合参数类型要求
 
-优先选择能够自动完成全流程的API操作（如 navigate_and_extract），避免只完成部分操作的API（如单独的 navigate）。
+请基于任务需求和API说明，选择合适的API操作并正确填充参数。
 
 返回JSON格式：
 {{
@@ -329,7 +329,7 @@ class ToolAgent(BaseStepAgent):
         
         try:
             response = await self.provider.generate_response(
-                system_prompt="你是一个API选择专家。请选择能够一次性完成整个任务的API操作和参数。避免分步骤执行，要在单次调用中完成所有操作。返回严格的JSON格式结果。",
+                system_prompt="你是一个API选择专家。请根据任务需求选择合适的API操作并正确填充参数。仔细阅读API说明和参数要求，返回严格的JSON格式结果。",
                 user_prompt=api_prompt
             )
             
@@ -383,11 +383,9 @@ class ToolAgent(BaseStepAgent):
         for tool_name in available_tools:
             try:
                 tool_instance = await self._get_tool_instance(tool_name, context)
-                if hasattr(tool_instance, 'get_description'):
-                    desc = tool_instance.get_description()
-                else:
-                    desc = f"{tool_name} - 工具描述不可用"
-                descriptions.append(f"- {tool_name}: {desc}")
+                tool_info = tool_instance.get_tool_info()
+                use_cases = ", ".join(tool_info["use_cases"])
+                descriptions.append(f"- {tool_name}: {tool_info['description']} (适用场景: {use_cases})")
             except Exception as e:
                 descriptions.append(f"- {tool_name}: 获取描述失败 ({str(e)})")
         
@@ -397,13 +395,9 @@ class ToolAgent(BaseStepAgent):
         """获取工具的API信息"""
         try:
             tool_instance = await self._get_tool_instance(tool_name, context)
-            if hasattr(tool_instance, 'get_available_actions'):
-                actions = tool_instance.get_available_actions()
-                return "\\n".join([f"- {action}" for action in actions])
-            else:
-                return "- navigate_and_extract: 导航并提取信息"
-        except Exception:
-            return "- navigate_and_extract: 导航并提取信息（默认操作）"
+            return tool_instance.get_apis_prompt_text()
+        except Exception as e:
+            return f"获取API信息失败: {str(e)}"
     
     async def _get_tool_instance(self, tool_name: str, context: AgentContext):
         """获取工具实例"""
