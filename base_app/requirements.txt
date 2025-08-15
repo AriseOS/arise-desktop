@@ -28,3 +28,18 @@ browser-use>=0.1.0
 
 # System monitoring
 psutil>=5.9.0
+
+# Database
+aiosqlite>=0.19.0
+sqlite3  # 标准库，通常已包含
+
+# Testing
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+
+# Additional dependencies for session storage
+pathlib  # 标准库，通常已包含
+json  # 标准库，通常已包含
+logging  # 标准库，通常已包含
+uuid  # 标准库，通常已包含
+datetime  # 标准库，通常已包含

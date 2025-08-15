@@ -9,7 +9,7 @@ from urllib.parse import urljoin
 class APIClient:
     """BaseApp API客户端"""
     
-    def __init__(self, base_url: str = "http://localhost:8000"):
+    def __init__(self, base_url: str = "http://localhost:8888"):
         self.base_url = base_url
         self.session = requests.Session()
         self.session.headers.update({

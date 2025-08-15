@@ -103,73 +103,19 @@ class AgentResult(BaseModel):
 
 # ==================== Agent-as-Step Schemas ====================
 
-class AgentCapability(str, Enum):
-    """Agent能力类型"""
-    TEXT_GENERATION = "text_generation"
-    TOOL_CALLING = "tool_calling"
-    CODE_EXECUTION = "code_execution"
-    MEMORY_MANAGEMENT = "memory_management"
-    DATA_PROCESSING = "data_processing"
+class AgentInput(BaseModel):
+    """统一的Agent输入模型"""
+    instruction: str = Field(..., description="执行指令")
+    data: Dict[str, Any] = Field(default_factory=dict, description="输入数据")
+    step_metadata: Dict[str, Any] = Field(default_factory=dict, description="步骤元数据")
 
 
-class TextAgentInput(BaseModel):
-    """Text Agent 输入规范"""
-    question: str = Field(..., description="用户的问题或请求")
-    context_data: Dict[str, Any] = Field(default_factory=dict, description="上下文信息")
-    response_style: str = Field(default="professional", description="回答风格：professional/casual/technical")
-    max_length: int = Field(default=500, description="最大回答长度")
-    language: str = Field(default="zh", description="回答语言")
-
-
-class TextAgentOutput(BaseModel):
-    """Text Agent 输出规范"""
-    success: bool = Field(..., description="生成是否成功")
-    answer: str = Field(..., description="生成的回答")
-    word_count: int = Field(..., description="回答字数")
-    error_message: Optional[str] = Field(default=None, description="错误信息")
-
-
-class ToolAgentInput(BaseModel):
-    """Tool Agent 输入规范"""
-    task_description: str = Field(..., description="任务描述，用自然语言描述要完成什么")
-    context_data: Dict[str, Any] = Field(default_factory=dict, description="上下文数据")
-    constraints: List[str] = Field(default_factory=list, description="约束条件")
-    allowed_tools: List[str] = Field(default_factory=list, description="允许使用的工具列表")
-    fallback_tools: List[str] = Field(default_factory=list, description="备选工具列表")
-    confidence_threshold: float = Field(default=0.8, description="工具选择置信度阈值")
-
-
-class ToolAgentOutput(BaseModel):
-    """Tool Agent 输出规范"""
+class AgentOutput(BaseModel):
+    """统一的Agent输出模型"""
     success: bool = Field(..., description="执行是否成功")
-    result: Any = Field(..., description="执行结果")
-    tool_used: str = Field(..., description="使用的工具名称")
-    action_taken: str = Field(..., description="执行的具体动作")
-    confidence: float = Field(..., description="工具选择置信度 0-1")
-    reasoning: str = Field(..., description="工具选择推理过程")
-    alternatives_tried: List[str] = Field(default_factory=list, description="尝试过的备选工具")
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="执行元数据")
-    error_message: Optional[str] = Field(default=None, description="错误信息")
-
-
-class CodeAgentInput(BaseModel):
-    """Code Agent 输入规范"""
-    task_description: str = Field(..., description="任务描述，用自然语言描述要完成什么")
-    input_data: Any = Field(..., description="输入数据")
-    expected_output_format: str = Field(..., description="期望的输出格式描述")
-    constraints: List[str] = Field(default_factory=list, description="约束条件")
-    libraries_allowed: List[str] = Field(default_factory=list, description="允许使用的库")
-
-
-class CodeAgentOutput(BaseModel):
-    """Code Agent 输出规范"""
-    success: bool = Field(..., description="执行是否成功")
-    result: Any = Field(..., description="代码执行结果")
-    code_generated: str = Field(..., description="生成的代码")
-    execution_info: Dict[str, Any] = Field(default_factory=dict, description="执行信息")
-    stdout: str = Field(default="", description="标准输出")
-    stderr: str = Field(default="", description="错误输出")
-    error_message: Optional[str] = Field(default=None, description="错误信息")
+    data: Dict[str, Any] = Field(default_factory=dict, description="输出数据") 
+    message: str = Field(default="", description="执行消息")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="元数据")
 
 
 class AgentContext(BaseModel):
@@ -204,6 +150,8 @@ class StepType(str, Enum):
     TOOL = "tool"          # 调用工具
     CODE = "code"          # 执行代码
     MEMORY = "memory"      # 内存操作
+    IF = "if"              # 条件分支控制
+    WHILE = "while"        # 循环控制
 
 
 class ErrorHandling(str, Enum):
@@ -222,8 +170,8 @@ class AgentWorkflowStep(BaseModel):
     description: str = Field(default="", description="步骤描述")
     
     # Agent配置
-    agent_type: str = Field(..., description="Agent类型: text_agent | tool_agent | code_agent | auto")
-    agent_instruction: str = Field(..., description="Agent执行指令，描述Agent要做什么")
+    agent_type: str = Field(..., description="Agent类型: text_agent | tool_agent | code_agent | if | while")
+    agent_instruction: str = Field(default="", description="Agent执行指令，描述Agent要做什么")
     user_task: Optional[str] = Field(default=None, description="用户具体任务内容")
     
     # 输入配置
@@ -250,6 +198,13 @@ class AgentWorkflowStep(BaseModel):
     condition: Optional[str] = Field(default=None, description="执行条件")
     timeout: int = Field(default=300, description="超时时间")
     retry_count: int = Field(default=0, description="重试次数")
+    
+    # 控制流相关字段 (仅当agent_type为if或while时使用)
+    then: Optional[List['AgentWorkflowStep']] = Field(default=None, description="if条件为真时执行的步骤")
+    else_: Optional[List['AgentWorkflowStep']] = Field(default=None, alias="else", description="if条件为假时执行的步骤")
+    steps: Optional[List['AgentWorkflowStep']] = Field(default=None, description="while循环体步骤")
+    max_iterations: Optional[int] = Field(default=10, description="while最大循环次数")
+    loop_timeout: Optional[int] = Field(default=300, description="while循环超时时间")
 
 
 class StepResult(BaseModel):
@@ -270,6 +225,14 @@ class StepResult(BaseModel):
     # 错误信息
     error: Optional[str] = Field(default=None, description="错误信息")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="额外元数据")
+    
+    # 控制流相关字段 (仅当step_type为控制流时使用)
+    step_type: Optional[str] = Field(default="agent", description="步骤类型：agent/if/while")
+    condition_result: Optional[bool] = Field(default=None, description="条件评估结果")
+    branch_executed: Optional[str] = Field(default=None, description="执行的分支：then/else/loop")
+    iterations_executed: Optional[int] = Field(default=None, description="实际执行的循环次数")
+    exit_reason: Optional[str] = Field(default=None, description="退出原因")
+    sub_step_results: List['StepResult'] = Field(default_factory=list, description="子步骤执行结果")
 
 
 class ExecutionContext(BaseModel):

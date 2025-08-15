@@ -40,10 +40,6 @@ app:
 database:
   type: sqlite
   url: ./data/baseapp.db
-storage:
-  session:
-    type: sqlite
-    database_url: ./data/sessions.db
 logging:
   backup_count: 5
   file: ./logs/baseapp.log

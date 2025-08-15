@@ -2,20 +2,20 @@
 Text Agent - 基于LLM的文本生成Agent
 """
 import re
+import json
+import logging
 from typing import Any, Dict
 
 try:
     from .base_agent import BaseStepAgent, AgentMetadata
     from ..core.schemas import (
-        AgentCapability, AgentContext, 
-        TextAgentInput, TextAgentOutput
+        AgentContext, AgentInput, AgentOutput
     )
 except ImportError:
     # 绝对导入作为备选
     from base_agent.agents.base_agent import BaseStepAgent, AgentMetadata
     from base_agent.core.schemas import (
-        AgentCapability, AgentContext, 
-        TextAgentInput, TextAgentOutput
+        AgentContext, AgentInput, AgentOutput
     )
 
 
@@ -26,23 +26,10 @@ class TextAgent(BaseStepAgent):
         metadata = AgentMetadata(
             name="text_agent",
             description="基于LLM的文本生成Agent，用于回答问题、生成文本、总结内容",
-            capabilities=[AgentCapability.TEXT_GENERATION],
-            input_schema={
-                "question": {"type": "string", "required": True},
-                "context_data": {"type": "object", "required": False},
-                "response_style": {"type": "string", "required": False},
-                "max_length": {"type": "integer", "required": False},
-                "language": {"type": "string", "required": False}
-            },
-            output_schema={
-                "success": {"type": "boolean"},
-                "answer": {"type": "string"},
-                "word_count": {"type": "integer"},
-                "error_message": {"type": "string"}
-            }
         )
         super().__init__(metadata)
         self.provider = None
+        self.logger = logging.getLogger(__name__)
     
     async def initialize(self, context: AgentContext) -> bool:
         """初始化Text Agent"""
@@ -61,81 +48,143 @@ class TextAgent(BaseStepAgent):
     
     async def validate_input(self, input_data: Any) -> bool:
         """验证输入数据"""
-        if isinstance(input_data, TextAgentInput):
+        if isinstance(input_data, AgentInput):
             return True
-        if not isinstance(input_data, dict):
-            return False
-        return "question" in input_data
+        if isinstance(input_data, dict):
+            return "instruction" in input_data
+        return False
     
-    async def execute(self, input_data: Any, context: AgentContext) -> TextAgentOutput:
+    def _build_complete_prompt(self, instruction: str, input_data: Dict[str, Any], expected_outputs: Dict[str, str]) -> str:
+        """构建完整的大模型提示词，包含指令、输入和输出要求"""
+        
+        prompt_parts = []
+        
+        # 1. 添加任务指令
+        prompt_parts.append(f"## 任务指令\n{instruction}")
+        
+        # 2. 添加输入数据
+        if input_data:
+            prompt_parts.append("## 输入数据")
+            for key, value in input_data.items():
+                if isinstance(value, (dict, list)):
+                    prompt_parts.append(f"**{key}**:\n```json\n{self._format_json_value(value)}\n```")
+                else:
+                    prompt_parts.append(f"**{key}**: {value}")
+        
+        # 3. 添加输出格式要求
+        if expected_outputs:
+            prompt_parts.append("## 输出格式要求")
+            prompt_parts.append("请严格按照以下JSON格式返回结果：")
+            
+            # 构建JSON模板
+            output_template = {}
+            for output_key, output_type in expected_outputs.items():
+                output_template[output_key] = f"<{output_type}>"
+            
+            prompt_parts.append("```json")
+            prompt_parts.append(self._format_json_value(output_template))
+            prompt_parts.append("```")
+            
+            # 添加字段说明
+            prompt_parts.append("**字段说明：**")
+            for output_key, output_type in expected_outputs.items():
+                prompt_parts.append(f"- **{output_key}**: {output_type}")
+        
+        # 4. 添加执行要求
+        prompt_parts.append("""## 执行要求
+1. 仔细阅读任务指令，理解要完成的具体任务
+2. 基于提供的输入数据进行处理和分析
+3. 严格按照输出格式要求返回结构化数据
+4. 确保所有输出字段都填充准确、完整的内容
+5. 输出必须是有效的JSON格式，以便后续工作流步骤正确解析
+
+现在开始执行任务：""")
+        
+        return "\n\n".join(prompt_parts)
+    
+    def _format_json_value(self, value) -> str:
+        """格式化JSON值"""
+        return json.dumps(value, ensure_ascii=False, indent=2)
+    
+    def _parse_json_response(self, raw_response: str) -> Dict[str, Any]:
+        """解析Agent返回的JSON格式输出，提取实际值"""
+        try:
+            # 移除markdown代码块标记
+            if raw_response.startswith('```json'):
+                # 提取```json和```之间的内容
+                start = raw_response.find('```json') + 7
+                end = raw_response.rfind('```')
+                if end > start:
+                    json_content = raw_response[start:end].strip()
+                else:
+                    json_content = raw_response
+            elif raw_response.startswith('```'):
+                # 处理没有json标识的代码块
+                start = raw_response.find('```') + 3
+                end = raw_response.rfind('```')
+                if end > start:
+                    json_content = raw_response[start:end].strip()
+                else:
+                    json_content = raw_response
+            else:
+                json_content = raw_response.strip()
+            
+            # 尝试解析JSON
+            parsed_data = json.loads(json_content)
+            
+            # 如果解析成功且是字典，返回解析后的数据
+            if isinstance(parsed_data, dict):
+                return parsed_data
+            else:
+                # 如果不是字典，包装在answer字段中
+                return {"answer": parsed_data}
+                
+        except (json.JSONDecodeError, Exception) as e:
+            self.logger.warning(f"解析Agent JSON输出失败: {str(e)}, 原始输出: {raw_response}")
+            # 如果解析失败，返回原始输出包装在answer字段中
+            return {"answer": raw_response}
+    
+    async def execute(self, input_data: Any, context: AgentContext) -> AgentOutput:
         """执行文本生成"""
         try:
-            # 解析输入
+            # 确保输入是AgentInput类型
             if isinstance(input_data, dict):
-                text_input = TextAgentInput(**input_data)
+                agent_input = AgentInput(**input_data)
             else:
-                text_input = input_data
+                agent_input = input_data
             
-            # 构建提示词
-            prompt = self._build_prompt(text_input, context)
+            # 获取期望的输出格式
+            expected_outputs = agent_input.step_metadata.get('expected_outputs', {})
+            
+            # 构建完整的prompt
+            complete_prompt = self._build_complete_prompt(
+                instruction=agent_input.instruction,
+                input_data=agent_input.data,
+                expected_outputs=expected_outputs
+            )
             
             # Provider生成回答
             response = await self.provider.generate_response(
-                system_prompt="你是一个有用的AI助手，请根据用户的问题和上下文信息提供准确、有帮助的回答。",
-                user_prompt=prompt
+                system_prompt="你是一个专业的AI助手，严格按照要求返回JSON格式的结果。",
+                user_prompt=complete_prompt
             )
             
-            answer = response.strip()
+            # 解析JSON响应
+            parsed_data = self._parse_json_response(response)
             
-            return TextAgentOutput(
+            return AgentOutput(
                 success=True,
-                answer=answer,
-                word_count=len(answer)
+                data=parsed_data,
+                message="文本生成完成"
             )
             
         except Exception as e:
             if context.logger:
                 context.logger.error(f"文本生成失败: {str(e)}")
             
-            return TextAgentOutput(
+            return AgentOutput(
                 success=False,
-                answer="",
-                word_count=0,
-                error_message=str(e)
+                data={},
+                message=f"文本生成失败: {str(e)}"
             )
     
-    def _build_prompt(self, input_data: TextAgentInput, context: AgentContext) -> str:
-        """构建提示词"""
-        base_prompt = f"""
-请回答以下问题：{input_data.question}
-
-上下文信息：
-{self._format_context(input_data.context_data)}
-
-回答要求：
-- 风格：{input_data.response_style}
-- 语言：{input_data.language}
-- 长度限制：{input_data.max_length}字以内
-- 准确性：基于提供的上下文信息回答
-
-请提供清晰、准确的回答：
-"""
-        return base_prompt
-    
-    def _format_context(self, context_data: Dict[str, Any]) -> str:
-        """格式化上下文数据"""
-        if not context_data:
-            return "无额外上下文"
-        
-        formatted = []
-        for key, value in context_data.items():
-            formatted.append(f"- {key}: {value}")
-        return "\n".join(formatted)
-    
-    async def _resolve_prompt_variables(self, prompt: str, context: AgentContext) -> str:
-        """解析提示词中的变量引用"""
-        def replace_var(match):
-            var_name = match.group(1).strip()
-            return str(context.variables.get(var_name, f"{{{{{var_name}}}}}"))
-        
-        return re.sub(r'\{\{([^}]+)\}\}', replace_var, prompt)

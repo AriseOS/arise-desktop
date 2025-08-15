@@ -7,39 +7,17 @@ import time
 import uuid
 from typing import Dict, Optional, List, Any
 from datetime import datetime
+import logging
 
 from base_app.base_agent.core import BaseAgent, AgentConfig, AgentStatus
 from .config_service import ConfigService
+from ..storage import SessionStorage, SQLiteSessionStorage, SessionModel, MessageModel
+
+logger = logging.getLogger(__name__)
 
 
 
-class Session:
-    """会话管理"""
-    
-    def __init__(self, session_id: str, user_id: str, title: str = ""):
-        self.session_id = session_id
-        self.user_id = user_id
-        self.title = title or f"对话_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        self.created_at = datetime.now()
-        self.updated_at = datetime.now()
-        self.messages: List[Dict[str, Any]] = []
-    
-    def add_message(self, role: str, content: str, metadata: Optional[Dict] = None):
-        """添加消息到会话"""
-        message = {
-            "id": str(uuid.uuid4()),
-            "role": role,  # "user" or "assistant"
-            "content": content,
-            "timestamp": datetime.now().isoformat(),
-            "metadata": metadata or {}
-        }
-        self.messages.append(message)
-        self.updated_at = datetime.now()
-        return message
-    
-    def get_recent_messages(self, limit: int = 10) -> List[Dict]:
-        """获取最近的消息"""
-        return self.messages[-limit:] if limit > 0 else self.messages
+# 移除内存Session类，使用持久化存储
 
 
 class AgentService:
@@ -53,15 +31,36 @@ class AgentService:
     4. BaseAgent生命周期管理
     """
     
-    def __init__(self, config_service: ConfigService):
+    def __init__(self, config_service: ConfigService, storage: Optional[SessionStorage] = None):
         self.config_service = config_service
         self.agent: Optional[BaseAgent] = None
-        self.sessions: Dict[str, Session] = {}
         self.start_time = time.time()
         self._lock = asyncio.Lock()
         
-        # 初始化Agent
-        self._initialize_agent()
+        # 初始化存储
+        if storage is None:
+            # 从配置获取存储设置
+            storage_type = config_service.get("storage.session.type", "sqlite")
+            if storage_type == "sqlite":
+                db_path = config_service.get("storage.session.database_url", "./data/sessions.db")
+                if db_path.startswith("sqlite:///"):
+                    db_path = db_path[10:]  # 移除 sqlite:/// 前缀
+                self.storage = SQLiteSessionStorage(db_path)
+            else:
+                raise ValueError(f"Unsupported storage type: {storage_type}")
+        else:
+            self.storage = storage
+        
+        # 初始化存储和Agent
+        self._initialized = False
+        
+    async def initialize(self):
+        """异步初始化存储和Agent"""
+        if not self._initialized:
+            await self.storage.initialize()
+            self._initialize_agent()
+            self._initialized = True
+            logger.info("AgentService initialized successfully")
     
     def _initialize_agent(self):
         """初始化BaseAgent实例"""
@@ -111,85 +110,127 @@ class AgentService:
         
         Args:
             message: 用户消息
-            session_id: 会话ID
+            session_id: 会话ID（必填）
             user_id: 用户ID
             **kwargs: 额外参数
             
         Returns:
             包含响应内容和元数据的字典
         """
+        if not self._initialized:
+            await self.initialize()
+            
         async with self._lock:
             try:
-                # 获取或创建会话
-                session = self.get_or_create_session(session_id, user_id)
+                # 验证会话是否存在
+                session = await self.storage.get_session(session_id)
+                if not session:
+                    raise ValueError(f"Session {session_id} not found")
                 
-                # 添加用户消息到会话历史
-                user_msg = session.add_message("user", message)
+                # 验证用户权限
+                if session.user_id != user_id:
+                    raise PermissionError(f"User {user_id} has no access to session {session_id}")
+                
+                # 创建用户消息
+                user_message = MessageModel(
+                    session_id=session_id,
+                    role="user",
+                    content=message
+                )
+                
+                # 保存用户消息
+                user_msg = await self.storage.add_message(user_message)
                 
                 # 调用BaseAgent处理消息
                 start_time = time.time()
                 response = await self.agent.process_user_input(message, user_id)
                 processing_time = time.time() - start_time
                 
-                # 添加Agent响应到会话历史
-                assistant_msg = session.add_message(
-                    "assistant", 
-                    response,
-                    {"processing_time": processing_time}
+                # 创建Agent响应消息
+                assistant_message = MessageModel(
+                    session_id=session_id,
+                    role="assistant",
+                    content=response,
+                    metadata={"processing_time": processing_time}
                 )
+                
+                # 保存Agent响应
+                assistant_msg = await self.storage.add_message(assistant_message)
                 
                 return {
                     "success": True,
                     "session_id": session_id,
-                    "user_message": user_msg,
-                    "assistant_message": assistant_msg,
+                    "user_message": user_msg.to_api_format(),
+                    "assistant_message": assistant_msg.to_api_format(),
                     "processing_time": processing_time
                 }
                 
+            except (ValueError, PermissionError) as e:
+                logger.warning(f"Session validation error: {e}")
+                return {
+                    "success": False,
+                    "error": str(e),
+                    "session_id": session_id
+                }
             except Exception as e:
+                logger.error(f"Error processing message: {e}")
                 return {
                     "success": False,
                     "error": str(e),
                     "session_id": session_id
                 }
     
-    def get_or_create_session(self, session_id: str, user_id: str, title: str = "") -> Session:
-        """获取或创建会话"""
-        if session_id not in self.sessions:
-            if not session_id:
-                session_id = str(uuid.uuid4())
-            self.sessions[session_id] = Session(session_id, user_id, title)
-        return self.sessions[session_id]
+    async def create_session(self, user_id: str, title: str = "") -> SessionModel:
+        """创建新会话"""
+        if not self._initialized:
+            await self.initialize()
+            
+        session = SessionModel(
+            user_id=user_id,
+            title=title or f"对话_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        )
+        
+        return await self.storage.create_session(session)
     
-    def get_session_history(self, session_id: str, limit: int = 50) -> Optional[List[Dict]]:
+    async def get_session_history(self, session_id: str, limit: int = 50) -> Optional[List[Dict]]:
         """获取会话历史"""
-        session = self.sessions.get(session_id)
-        if session:
-            return session.get_recent_messages(limit)
+        if not self._initialized:
+            await self.initialize()
+            
+        messages = await self.storage.get_session_messages(session_id, limit)
+        if messages:
+            return [msg.to_api_format() for msg in messages]
         return None
     
-    def list_sessions(self, user_id: str) -> List[Dict]:
+    async def list_sessions(self, user_id: str) -> List[Dict]:
         """列出用户的所有会话"""
+        if not self._initialized:
+            await self.initialize()
+            
+        sessions = await self.storage.list_user_sessions(user_id)
         user_sessions = []
-        for session in self.sessions.values():
-            if session.user_id == user_id:
-                user_sessions.append({
-                    "session_id": session.session_id,
-                    "title": session.title,
-                    "created_at": session.created_at.isoformat(),
-                    "updated_at": session.updated_at.isoformat(),
-                    "message_count": len(session.messages)
-                })
         
-        # 按更新时间倒序排列
-        return sorted(user_sessions, key=lambda x: x["updated_at"], reverse=True)
+        for session in sessions:
+            message_count = await self.storage.get_message_count(session.session_id)
+            user_sessions.append({
+                "session_id": session.session_id,
+                "title": session.title,
+                "created_at": session.created_at.isoformat(),
+                "updated_at": session.updated_at.isoformat(),
+                "message_count": message_count
+            })
+        
+        return user_sessions
     
-    def delete_session(self, session_id: str, user_id: str) -> bool:
+    async def delete_session(self, session_id: str, user_id: str) -> bool:
         """删除会话"""
-        session = self.sessions.get(session_id)
+        if not self._initialized:
+            await self.initialize()
+            
+        # 验证会话存在和权限
+        session = await self.storage.get_session(session_id)
         if session and session.user_id == user_id:
-            del self.sessions[session_id]
-            return True
+            return await self.storage.delete_session(session_id)
         return False
     
     def get_agent_status(self) -> Dict[str, Any]:
@@ -198,13 +239,13 @@ class AgentService:
             return {"status": "not_initialized"}
         
         return {
-            "status": "ready" if self.agent else "not_ready",
+            "status": "ready" if self.agent and self._initialized else "not_ready",
             "uptime": time.time() - self.start_time,
             "agent_name": self.agent.config.name if self.agent else None,
             "memory_enabled": self.agent.memory_manager is not None if self.agent else False,
             "tools": self.agent.get_registered_tools() if self.agent else [],
-            "active_sessions": len(self.sessions),
-            "total_conversations": sum(len(s.messages) // 2 for s in self.sessions.values())
+            "active_sessions": 0,  # 不再使用内存会话统计
+            "total_conversations": 0  # 需要通过数据库查询
         }
     
     def get_agent_config(self) -> Dict[str, Any]:
@@ -223,14 +264,8 @@ class AgentService:
     async def restart_agent(self) -> Dict[str, Any]:
         """重启Agent"""
         try:
-            # 保存当前会话
-            old_sessions = self.sessions.copy()
-            
-            # 重新初始化Agent
+            # 重新初始化Agent（会话数据已在数据库中）
             self._initialize_agent()
-            
-            # 恢复会话
-            self.sessions = old_sessions
             
             return {
                 "success": True,
@@ -251,5 +286,8 @@ class AgentService:
         if self.agent and hasattr(self.agent, 'shutdown'):
             await self.agent.shutdown()
         
-        # 可以在这里保存会话到持久化存储
-        self.sessions.clear()
+        # 关闭存储连接
+        if hasattr(self, 'storage') and self.storage:
+            await self.storage.close()
+            
+        logger.info("AgentService shutdown completed")

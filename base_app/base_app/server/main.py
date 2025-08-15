@@ -40,6 +40,9 @@ async def lifespan(app: FastAPI):
         # 初始化Agent服务
         agent_service = AgentService(config_service)
         
+        # 异步初始化存储和Agent
+        await agent_service.initialize()
+        
         # 设置应用状态
         app.state.config_service = config_service
         app.state.agent_service = agent_service
