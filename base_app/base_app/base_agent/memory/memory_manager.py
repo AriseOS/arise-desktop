@@ -8,34 +8,41 @@ import logging
 from typing import Any, Dict, Optional, Set, List
 
 from .mem0_memory import Mem0Memory
+from .sqlite_kv_storage import SQLiteKVStorage
 
 logger = logging.getLogger(__name__)
 
 
 class MemoryManager:
     """
-    Simplified memory manager for BaseAgent
+    Memory manager for BaseAgent
     
-    Provides two types of storage:
+    Provides three types of storage:
     - variables: temporary storage (cleared on restart)
     - long_term_memory: intelligent persistent storage using mem0 (optional)
+    - kv_storage: simple persistent key-value storage using SQLite
     """
     
     def __init__(
         self, 
         enable_long_term_memory: bool = False,
+        enable_kv_storage: bool = True,
         user_id: Optional[str] = None,
-        mem0_config: Optional[Dict[str, Any]] = None
+        mem0_config: Optional[Dict[str, Any]] = None,
+        kv_storage_path: Optional[str] = None
     ):
         """
         Initialize the memory manager
         
         Args:
             enable_long_term_memory: Whether to enable mem0 long-term memory (local version)
-            user_id: User ID for long-term memory isolation
+            enable_kv_storage: Whether to enable SQLite KV storage
+            user_id: User ID for memory isolation
             mem0_config: Custom configuration for mem0 (vector store, LLM, etc.)
+            kv_storage_path: Path for SQLite KV database
         """
         self.variables: Dict[str, Any] = {}  # Temporary variables
+        self.user_id = user_id or "default"
         
         # Long-term memory (optional, local version)
         self.long_term_memory: Optional[Mem0Memory] = None
@@ -48,6 +55,17 @@ class MemoryManager:
                 logger.info("Long-term memory (mem0 local) enabled")
             except Exception as e:
                 logger.warning(f"Failed to initialize long-term memory: {e}")
+        
+        # KV Storage (SQLite-based persistent storage)
+        self.kv_storage: Optional[SQLiteKVStorage] = None
+        if enable_kv_storage:
+            try:
+                self.kv_storage = SQLiteKVStorage(
+                    database_path=kv_storage_path or "./data/agent_kv.db"
+                )
+                logger.info("KV storage (SQLite) enabled")
+            except Exception as e:
+                logger.warning(f"Failed to initialize KV storage: {e}")
         
         logger.debug("MemoryManager initialized")
     
@@ -144,7 +162,8 @@ class MemoryManager:
         """
         return {
             "variables_count": len(self.variables),
-            "long_term_memory_enabled": self.is_long_term_memory_enabled()
+            "long_term_memory_enabled": self.is_long_term_memory_enabled(),
+            "kv_storage_enabled": self.is_kv_storage_enabled()
         }
     
     def has_key(self, key: str) -> bool:
@@ -306,4 +325,156 @@ class MemoryManager:
         """Get current user ID for long-term memory"""
         if self.long_term_memory:
             return self.long_term_memory.get_user_id()
-        return None
+        return self.user_id
+    
+    # ==================== KV Storage Methods ====================
+    
+    async def set_data(
+        self, 
+        key: str, 
+        value: Any, 
+        user_id: Optional[str] = None
+    ) -> bool:
+        """
+        Store data in persistent KV storage
+        
+        Args:
+            key: Storage key
+            value: Value to store
+            user_id: User ID (optional, uses default if not provided)
+            
+        Returns:
+            True if stored successfully
+        """
+        if not self.kv_storage:
+            logger.warning("KV storage not enabled")
+            return False
+        
+        try:
+            user_id = user_id or self.user_id
+            success = await self.kv_storage.set(key, value, user_id)
+            if success:
+                logger.info(f"Stored data in KV storage: {key}")
+            return success
+        except Exception as e:
+            logger.error(f"Error storing data in KV storage: {e}")
+            return False
+    
+    async def get_data(
+        self, 
+        key: str, 
+        default: Any = None,
+        user_id: Optional[str] = None
+    ) -> Any:
+        """
+        Retrieve data from persistent KV storage
+        
+        Args:
+            key: Storage key
+            default: Default value if key not found
+            user_id: User ID (optional, uses default if not provided)
+            
+        Returns:
+            Stored value or default
+        """
+        if not self.kv_storage:
+            logger.warning("KV storage not enabled")
+            return default
+        
+        try:
+            user_id = user_id or self.user_id
+            value = await self.kv_storage.get(key, user_id, default)
+            logger.info(f"Retrieved data from KV storage: {key}")
+            return value
+        except Exception as e:
+            logger.error(f"Error retrieving data from KV storage: {e}")
+            return default
+    
+    async def delete_data(
+        self, 
+        key: str, 
+        user_id: Optional[str] = None
+    ) -> bool:
+        """
+        Delete data from persistent KV storage
+        
+        Args:
+            key: Storage key to delete
+            user_id: User ID (optional, uses default if not provided)
+            
+        Returns:
+            True if deleted successfully
+        """
+        if not self.kv_storage:
+            logger.warning("KV storage not enabled")
+            return False
+        
+        try:
+            user_id = user_id or self.user_id
+            success = await self.kv_storage.delete(key, user_id)
+            if success:
+                logger.info(f"Deleted data from KV storage: {key}")
+            return success
+        except Exception as e:
+            logger.error(f"Error deleting data from KV storage: {e}")
+            return False
+    
+    async def clear_all_data(self, user_id: Optional[str] = None) -> int:
+        """
+        Clear all data from persistent KV storage for a user
+        
+        Args:
+            user_id: User ID (optional, uses default if not provided)
+            
+        Returns:
+            Number of keys deleted
+        """
+        if not self.kv_storage:
+            logger.warning("KV storage not enabled")
+            return 0
+        
+        try:
+            user_id = user_id or self.user_id
+            count = await self.kv_storage.clear(user_id)
+            if count > 0:
+                logger.info(f"Cleared {count} items from KV storage")
+            return count
+        except Exception as e:
+            logger.error(f"Error clearing KV storage: {e}")
+            return 0
+    
+    async def list_data_keys(self, user_id: Optional[str] = None) -> List[str]:
+        """
+        List all keys in persistent KV storage for a user
+        
+        Args:
+            user_id: User ID (optional, uses default if not provided)
+            
+        Returns:
+            List of keys
+        """
+        if not self.kv_storage:
+            logger.warning("KV storage not enabled")
+            return []
+        
+        try:
+            user_id = user_id or self.user_id
+            keys = await self.kv_storage.keys(user_id)
+            logger.info(f"Listed {len(keys)} keys from KV storage")
+            return keys
+        except Exception as e:
+            logger.error(f"Error listing keys from KV storage: {e}")
+            return []
+    
+    async def initialize_storage(self) -> None:
+        """Initialize storage backends"""
+        if self.kv_storage:
+            try:
+                await self.kv_storage.initialize()
+                logger.info("KV storage initialized")
+            except Exception as e:
+                logger.error(f"Failed to initialize KV storage: {e}")
+    
+    def is_kv_storage_enabled(self) -> bool:
+        """Check if KV storage is enabled"""
+        return self.kv_storage is not None
