@@ -384,7 +384,10 @@ class MemoryManager:
         try:
             user_id = user_id or self.user_id
             value = await self.kv_storage.get(key, user_id, default)
-            logger.info(f"Retrieved data from KV storage: {key}")
+            if value is not default:
+                logger.info(f"Retrieved data from KV storage: {key}")
+            else:
+                logger.debug(f"Key not found in KV storage: {key}")
             return value
         except Exception as e:
             logger.error(f"Error retrieving data from KV storage: {e}")
