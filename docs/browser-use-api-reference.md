@@ -1,12 +1,38 @@
 # Browser-Use API Reference
 
-This document provides a comprehensive API reference for browser-use library, focusing on DOM manipulation, browser control actions, and data structures for LLM integration.
+This document provides a comprehensive API reference for browser-use library version 0.7+, focusing on DOM manipulation, browser control actions, and data structures for LLM integration.
+
+## Import Reference
+
+### Core Imports
+```python
+# Main classes
+from browser_use import Agent, BrowserSession, Tools, DomService
+
+# LLM providers
+from browser_use.llm.openai.chat import ChatOpenAI
+from browser_use.llm.anthropic.chat import ChatAnthropic
+from browser_use.llm.google.chat import ChatGoogle
+
+# Action models
+from browser_use.tools.views import (
+    GoToUrlAction, ClickElementAction, InputTextAction,
+    ScrollAction, DoneAction, StructuredOutputAction
+)
+from browser_use.agent.views import ActionModel, ActionResult
+
+# Browser profile
+from browser_use.browser.profile import BrowserProfile
+
+# Backward compatibility (deprecated)
+from browser_use import Controller  # Alias for Tools
+```
 
 ## Core Architecture
 
 Browser-use follows an event-driven architecture with three main components:
 - **DOM Service**: Page data extraction and DOM tree management
-- **Controller**: Browser action execution and coordination  
+- **Tools**: Browser action execution and coordination (formerly Controller)
 - **Event System**: Asynchronous browser event handling
 
 ## DOM Service API
@@ -142,14 +168,14 @@ class SerializedDOMState:
     ) -> str                           # Text representation for LLM
 ```
 
-## Controller API
+## Tools API (formerly Controller)
 
-### Controller Class
+### Tools Class
 
 Main interface for browser action execution:
 
 ```python
-class Controller:
+class Tools:
     def __init__(
         self,
         exclude_actions: list[str] = [],
@@ -167,11 +193,14 @@ class Controller:
         file_system: FileSystem = None,
         context: Context = None
     ) -> ActionResult
+
+# Backward compatibility alias
+Controller = Tools
 ```
 
 ### Action Models
 
-All browser actions inherit from ActionModel base class:
+All browser actions inherit from ActionModel base class. Import from `browser_use.agent.views`:
 
 #### Navigation Actions
 
@@ -380,7 +409,59 @@ await event
 result = await event.event_result(raise_if_any=True, raise_if_none=False)
 ```
 
-## Agent Integration API
+## Agent API
+
+### Agent Class
+
+Main agent interface for autonomous browser automation:
+
+```python
+from browser_use import Agent
+from browser_use.llm.openai.chat import ChatOpenAI
+
+class Agent:
+    def __init__(
+        self,
+        task: str,
+        llm: BaseChatModel,
+        browser_session: BrowserSession = None,
+        tools: Tools = None,
+        use_vision: bool = True,
+        max_actions: int = 100,
+        agent_settings: AgentSettings = None
+    )
+    
+    async def run(self) -> AgentHistoryList
+```
+
+### Basic Agent Usage
+
+```python
+from browser_use import Agent
+from browser_use.llm.openai.chat import ChatOpenAI
+
+# Create LLM instance
+llm = ChatOpenAI(model="gpt-4o")
+
+# Create and run agent
+agent = Agent(
+    task="Search for Python tutorials on Google and extract the first 3 results",
+    llm=llm,
+    use_vision=True,
+    max_actions=20
+)
+
+# Execute the task
+history = await agent.run()
+
+# Check results
+if history.is_successful():
+    print("Task completed successfully!")
+    for item in history.extracted_content():
+        print(item)
+else:
+    print("Task failed:", history.errors())
+```
 
 ### AgentOutput
 
@@ -514,9 +595,9 @@ def extract_llm_error_message(error: Exception) -> str:
     # Extracts clean error message from <llm_error_msg> tags
     # Falls back to str(error) if no tags found
 
-# Controller action error handling
+# Tools action error handling
 try:
-    result = await controller.act(action, browser_session)
+    result = await tools.act(action, browser_session)
     if result.error:
         # Handle action-specific error
         logger.error(result.error)
@@ -552,17 +633,21 @@ for child in dom_tree.children:
 ### Action Execution
 
 ```python
-controller = Controller()
+from browser_use import Tools
+from browser_use.tools.views import GoToUrlAction, ClickElementAction
+from browser_use.agent.views import ActionModel
+
+tools = Tools()
 
 # Navigate to page
-result = await controller.act(
+result = await tools.act(
     GoToUrlAction(url="https://example.com"),
     browser_session
 )
 
 # Interact with elements
 if not result.error:
-    result = await controller.act(
+    result = await tools.act(
         ClickElementAction(index=5, while_holding_ctrl=True),
         browser_session
     )
@@ -572,17 +657,19 @@ if not result.error:
 
 ```python
 from pydantic import BaseModel
+from browser_use import Tools
+from browser_use.agent.views import StructuredOutputAction
 
 class ProductInfo(BaseModel):
     name: str
     price: float
     availability: bool
 
-# Configure controller for structured output
-controller = Controller(output_model=ProductInfo)
+# Configure tools for structured output
+tools = Tools(output_model=ProductInfo)
 
 # Final result will be validated against ProductInfo schema
-result = await controller.act(
+result = await tools.act(
     StructuredOutputAction(
         success=True,
         data=ProductInfo(name="Widget", price=19.99, availability=True)
@@ -591,4 +678,134 @@ result = await controller.act(
 )
 ```
 
-This API reference provides complete coverage of browser-use's core functionality for DOM manipulation, browser control, and LLM integration. All methods and classes include proper type hints and comprehensive documentation for reliable programmatic usage.
+## Complete Usage Example
+
+### Simple Agent Task
+
+```python
+import asyncio
+from browser_use import Agent
+from browser_use.llm.openai.chat import ChatOpenAI
+
+async def main():
+    # Create LLM instance
+    llm = ChatOpenAI(
+        model="gpt-4o",
+        api_key="your-api-key"
+    )
+    
+    # Create and run agent
+    agent = Agent(
+        task="Go to example.com and extract the main heading text",
+        llm=llm,
+        use_vision=True,
+        max_actions=10
+    )
+    
+    try:
+        history = await agent.run()
+        
+        if history.is_successful():
+            print("Task completed successfully!")
+            print("Extracted content:")
+            for content in history.extracted_content():
+                print(f"- {content}")
+        else:
+            print("Task failed. Check the history for details.")
+            
+    except Exception as e:
+        print(f"Error: {e}")
+
+# Run the example
+asyncio.run(main())
+```
+
+### Advanced Usage with Custom Browser Session
+
+```python
+import asyncio
+from browser_use import Agent, BrowserSession, Tools
+from browser_use.browser.profile import BrowserProfile
+from browser_use.llm.openai.chat import ChatOpenAI
+from browser_use.tools.views import GoToUrlAction, ClickElementAction
+
+async def advanced_example():
+    # Create custom browser profile
+    profile = BrowserProfile(
+        headless=False,  # Show browser
+        user_data_dir="./my_browser_data",
+        keep_alive=True
+    )
+    
+    # Create browser session
+    browser_session = BrowserSession(browser_profile=profile)
+    await browser_session.start()
+    
+    # Create tools instance
+    tools = Tools()
+    
+    # Create LLM
+    llm = ChatOpenAI(model="gpt-4o")
+    
+    try:
+        # Method 1: Use Agent for full automation
+        agent = Agent(
+            task="Search for AI news on Google and get the top 3 article titles",
+            llm=llm,
+            browser_session=browser_session,
+            tools=tools,
+            max_actions=20
+        )
+        
+        history = await agent.run()
+        print(f"Agent completed with {len(history.history)} steps")
+        
+        # Method 2: Use Tools directly for precise control
+        result = await tools.act(
+            GoToUrlAction(url="https://example.com"),
+            browser_session
+        )
+        
+        if not result.error:
+            print("Navigation successful")
+            
+            # Click on an element (index from DOM analysis)
+            click_result = await tools.act(
+                ClickElementAction(index=5),
+                browser_session
+            )
+            
+            if not click_result.error:
+                print("Click successful")
+                
+    finally:
+        await browser_session.close()
+
+asyncio.run(advanced_example())
+```
+
+### Migration from v0.6 to v0.7
+
+```python
+# OLD API (v0.6)
+from browser_use import Agent
+from browser_use.llm import ChatOpenAI
+from browser_use.controller.service import Controller
+from browser_use.controller.views import GoToUrlAction
+
+# NEW API (v0.7)
+from browser_use import Agent, Tools  # Tools replaces Controller
+from browser_use.llm.openai.chat import ChatOpenAI  # Specific import path
+from browser_use.tools.views import GoToUrlAction  # Moved to tools.views
+from browser_use.agent.views import ActionModel  # Action base model
+
+# OLD: Controller usage
+controller = Controller()
+result = await controller.act(action, browser_session)
+
+# NEW: Tools usage (Controller still works as alias)
+tools = Tools()  # or Controller() for backward compatibility
+result = await tools.act(action, browser_session)
+```
+
+This API reference provides complete coverage of browser-use v0.7+ core functionality for DOM manipulation, browser control, and LLM integration. All methods and classes include proper type hints and comprehensive documentation for reliable programmatic usage.
