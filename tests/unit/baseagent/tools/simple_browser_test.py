@@ -27,7 +27,7 @@ async def simple_browser_test():
     print()
     
     # 确定用户数据目录
-    user_data_dir = os.path.abspath("./data/test_browser_data")
+    user_data_dir = os.path.expanduser("~/.data/test_browser_data")
     print(f"用户数据目录: {user_data_dir}")
     
     # 确保目录存在

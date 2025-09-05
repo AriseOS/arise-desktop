@@ -159,13 +159,36 @@ LLM-optimized DOM representation:
 ```python
 @dataclass
 class SerializedDOMState:
-    _root: SimplifiedNode | None       # Simplified tree structure
+    _root: SimplifiedNode | None       # Simplified tree structure - NOT meant to be used directly
     selector_map: DOMSelectorMap       # Index to node mapping
     
     def llm_representation(
         self, 
         include_attributes: list[str] = None
     ) -> str                           # Text representation for LLM
+```
+
+**Important Usage Note:**
+- **Do NOT use `_root` directly** - it's an internal implementation detail
+- **Use `llm_representation()` method instead** - this provides the proper text format for LLMs
+- The `_root` field is prefixed with underscore to indicate it's internal
+- `llm_representation()` converts the internal tree structure to readable text format
+- If `_root` is None, `llm_representation()` returns: "Empty DOM tree (you might have to wait for the page to load)"
+
+**Example Usage:**
+```python
+dom_state, enhanced_dom_tree, timing_info = await dom_service.get_serialized_dom_tree()
+
+# ❌ Wrong - don't use _root directly
+# tree_data = dom_state._root  
+
+# ✅ Correct - use llm_representation method
+llm_text = dom_state.llm_representation()
+print(llm_text)  # Human-readable DOM representation
+
+# Access interactive elements through selector_map
+for selector, element in dom_state.selector_map.items():
+    print(f"Element {selector}: {element.tag_name}")
 ```
 
 ## Tools API (formerly Controller)
