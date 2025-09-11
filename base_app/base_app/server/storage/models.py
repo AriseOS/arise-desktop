@@ -3,7 +3,7 @@
 """
 from datetime import datetime
 from typing import Dict, Any, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 import uuid
 
 
@@ -17,10 +17,9 @@ class SessionModel(BaseModel):
     status: str = Field(default="active", description="会话状态：active/archived/deleted")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="会话元数据")
 
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
+    model_config = ConfigDict(
+        json_encoders={datetime: lambda v: v.isoformat()}
+    )
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典格式"""
@@ -55,10 +54,9 @@ class MessageModel(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now, description="消息时间")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="消息元数据")
 
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
+    model_config = ConfigDict(
+        json_encoders={datetime: lambda v: v.isoformat()}
+    )
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典格式"""
