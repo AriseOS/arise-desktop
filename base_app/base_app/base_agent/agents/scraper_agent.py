@@ -43,10 +43,18 @@ class ScraperAgent(BaseStepAgent):
     1. initialize模式: 使用 browser-use 分析样本页面，生成数据提取脚本
     2. execute模式: 执行生成的脚本进行数据提取
     
+    两种提取方法:
+    1. script模式: Plan-Generate-Exec模式，生成脚本并缓存
+    2. llm模式: 直接使用LLM提取数据
+    
+    DOM配置选项:
+    - dom_scope: 'partial'(可见DOM) | 'full'(完整DOM含隐藏元素)
+    
     特点:
     - 使用 browser-use 库进行真实浏览器操作
     - 支持复杂的页面交互（点击、滚动、输入等）
     - 基于 DOM 结构和 LLM 生成智能提取脚本
+    - 支持多种DOM视图和输出格式配置
     """
     
     SYSTEM_PROMPT = """你是专业的网页数据提取代码生成专家。基于 browser-use 库生成高效、稳定的数据提取脚本。
@@ -63,7 +71,9 @@ class ScraperAgent(BaseStepAgent):
                  browser_session: Optional[BrowserSession] = None,
                  controller: Optional[Controller] = None,
                  debug_mode: bool = False,
-                 extraction_method: str = 'script'):
+                 extraction_method: str = 'script',
+                 dom_scope: str = 'partial',
+):
         if not BROWSER_USE_AVAILABLE:
             raise ImportError("browser-use 库未安装，请先安装: pip install browser-use")
             
@@ -77,10 +87,16 @@ class ScraperAgent(BaseStepAgent):
         # 配置参数
         self.debug_mode = debug_mode
         self.extraction_method = extraction_method
+        self.dom_scope = dom_scope
         
         # 验证提取方法
         if extraction_method not in ['script', 'llm']:
             raise ValueError(f"不支持的提取方法: {extraction_method}，请使用 'script' 或 'llm'")
+        
+        # 验证DOM范围
+        if dom_scope not in ['partial', 'full']:
+            raise ValueError(f"不支持的DOM范围: {dom_scope}，请使用 'partial' 或 'full'")
+        
         
         # 直接使用 browser-use 核心组件
         self.browser_session = browser_session or self._create_browser_session()
@@ -92,14 +108,14 @@ class ScraperAgent(BaseStepAgent):
         from pathlib import Path
         
         # 使用共同的用户数据目录
-        user_data_dir = os.path.abspath("./data/test_browser_data")
+        # user_data_dir = os.path.abspath("./data/test_browser_data")
+        user_data_dir = os.path.expanduser("~/.data/test_browser_data")
         Path(user_data_dir).mkdir(parents=True, exist_ok=True)
         
         profile = BrowserProfile(
             headless=False,  
             user_data_dir=user_data_dir,  # 使用持久化用户数据
             keep_alive=True,  # 保持浏览器运行
-            chrome_instance_id="scraper_agent",  # 唯一实例ID
         )
         return BrowserSession(browser_profile=profile)
     
@@ -280,20 +296,6 @@ class ScraperAgent(BaseStepAgent):
             logger.error(f"交互步骤执行失败: {e}")
             return ActionResult(success=False, error=str(e))
 
-    async def _analyze_page_structure(self) -> Dict:
-        """使用 DomService 分析当前页面结构"""
-        try:
-            serialized_dom, enhanced_dom, timing = await self.dom_service.get_serialized_dom_tree()
-            
-            return {
-                'serialized_dom': serialized_dom,
-                'enhanced_dom': enhanced_dom,
-                'timing_info': timing
-            }
-        except Exception as e:
-            logger.error(f"页面结构分析失败: {e}")
-            raise
-
     async def _handle_execute(self, input_data: Dict, context: AgentContext) -> Dict:
         """执行模式: 访问目标页面并使用配置的方法提取数据"""
         target_path = input_data['target_path']
@@ -363,30 +365,54 @@ class ScraperAgent(BaseStepAgent):
         """从当前页面提取数据的统一入口"""
         
         try:
-            # Get current page DOM structure
+            # 根据配置决定DOM范围，初始化阶段强制使用partial
+            effective_dom_scope = "partial" if is_initialize else self.dom_scope
+            
+            # 获取基础DOM
             serialized_dom, enhanced_dom, timing = await self.dom_service.get_serialized_dom_tree()
+            
+            # 使用新的DOM API
+            from ..tools.browser_use.dom_extractor import extract_dom_dict, extract_llm_view, DOMExtractor
+            
+            extractor = DOMExtractor()
+            # 根据配置选择目标DOM
+            if effective_dom_scope == "full":
+                target_dom, _ = extractor.serialize_accessible_elements_custom(
+                    enhanced_dom, include_non_visible=True
+                )
+            else:
+                target_dom, _ = extractor.serialize_accessible_elements_custom(
+                    enhanced_dom, include_non_visible=False
+                )
+            
+            # 转换为DOM字典结构
+            dom_dict = extract_dom_dict(target_dom)
+            llm_view = extract_llm_view(dom_dict)
             
             # 调试模式: 保存DOM结构
             if self.debug_mode:
                 logger.info("=== DOM 结构分析 ===")
-                dom_representation = serialized_dom.llm_representation()
-                logger.info(f"DOM元素总数: {len(serialized_dom.selector_map) if hasattr(serialized_dom, 'selector_map') else '未知'}")
+                logger.info(f"DOM范围: {effective_dom_scope}")
+                logger.info(f"DOM元素总数: {len(target_dom.selector_map) if hasattr(target_dom, 'selector_map') else '未知'}")
+                logger.info(f"有意义元素数: {len(json.loads(llm_view)) if llm_view != '[]' else 0}")
                 
                 # 保存DOM到文件
                 import time
-                debug_key = f"extraction_{self.extraction_method}_{int(time.time())}"
+                debug_key = f"extraction_{self.extraction_method}_{effective_dom_scope}_{int(time.time())}"
+                
+                # 使用人类可读的JSON格式保存到文件
+                dom_representation = json.dumps(dom_dict, indent=2, ensure_ascii=False)
+                
                 await self._save_dom_to_file(dom_representation, debug_key)
             
             # 根据配置的提取方法调用对应函数
             if self.extraction_method == 'script':
-                # 脚本模式：根据阶段决定是生成还是加载脚本
                 return await self._extract_with_script(
-                    serialized_dom, enhanced_dom, data_requirements, max_items, timeout, context, is_initialize
+                    target_dom, dom_dict, llm_view, data_requirements, max_items, timeout, context, is_initialize
                 )
             else:
-                # LLM模式：直接使用大模型提取
                 return await self._extract_with_llm(
-                    serialized_dom, enhanced_dom, data_requirements, max_items, timeout
+                    dom_dict, llm_view, data_requirements, max_items, timeout
                 )
                 
         except Exception as e:
@@ -395,9 +421,10 @@ class ScraperAgent(BaseStepAgent):
     
     async def _extract_with_script(
         self,
-        serialized_dom,
-        enhanced_dom, 
-        data_requirements: str,
+        target_dom,
+        dom_dict: Dict,
+        llm_view: str,
+        data_requirements: Dict,  # 改为字典格式
         max_items: int,
         timeout: int,
         context: Optional[AgentContext] = None,
@@ -405,39 +432,49 @@ class ScraperAgent(BaseStepAgent):
     ) -> Dict[str, Any]:
         """使用脚本模式提取数据"""
         try:
+            # Generate script key including DOM configuration
             script_key = self._generate_script_key(data_requirements)
             
             if is_initialize:
-                # init阶段：生成脚本并存储到KV
+                # init阶段：使用LLM视图生成脚本
+                # 构建DOM分析数据
                 dom_analysis = {
-                    'serialized_dom': serialized_dom,
-                    'enhanced_dom': enhanced_dom
+                    'serialized_dom': target_dom,
+                    'dom_dict': dom_dict,
+                    'llm_view': llm_view,
+                    'dom_config': {
+                        'dom_scope': self.dom_scope
+                    }
                 }
                 
                 generated_script = await self._generate_extraction_script_with_llm(
                     dom_analysis, data_requirements, [], None
                 )
                 
-                # 存储脚本到KV
+                # 存储脚本和配置到KV
                 if context and context.memory_manager:
                     script_data = {
                         "script_content": generated_script,
                         "data_requirements": data_requirements,
+                        "dom_config": {
+                            "dom_scope": self.dom_scope
+                        },
                         "created_at": datetime.now().isoformat(),
-                        "version": "4.0"
+                        "version": "6.0"
                     }
                     await context.memory_manager.set_data(script_key, script_data)
-                    logger.info(f"脚本已存储到KV，键值: {script_key}")
+                    logger.info(f"脚本已存储到KV，键值: {script_key}，配置: dom_scope={self.dom_scope}")
                 
                 # 调试模式: 保存到文件
                 if self.debug_mode:
                     logger.info("=== init阶段生成脚本 ===")
                     logger.info(f"脚本长度: {len(generated_script)} 字符")
+                    logger.info(f"DOM配置: dom_scope={self.dom_scope}")
                     await self._save_script_to_file(generated_script, script_key)
                 
                 # init阶段也执行一次测试
                 return await self._execute_generated_script_direct(
-                    generated_script, serialized_dom, enhanced_dom, max_items
+                    generated_script, target_dom, dom_dict, max_items
                 )
                 
             else:
@@ -446,10 +483,13 @@ class ScraperAgent(BaseStepAgent):
                     script_data = await context.memory_manager.get_data(script_key)
                     if script_data and 'script_content' in script_data:
                         generated_script = script_data['script_content']
+                        stored_config = script_data.get('dom_config', {})
                         logger.info(f"exec阶段从KV加载脚本，键值: {script_key}")
+                        logger.info(f"存储的配置: {stored_config}")
+                        logger.info(f"当前配置: dom_scope={self.dom_scope}")
                         
                         return await self._execute_generated_script_direct(
-                            generated_script, serialized_dom, enhanced_dom, max_items
+                            generated_script, target_dom, dom_dict, max_items
                         )
                     else:
                         return self._create_error_result(f"未找到脚本: {script_key}，请先运行init阶段")
@@ -462,27 +502,47 @@ class ScraperAgent(BaseStepAgent):
     
     async def _extract_with_llm(
         self,
-        serialized_dom,
-        enhanced_dom,
-        data_requirements: str,
+        dom_dict: Dict,
+        llm_view: str,
+        data_requirements: Dict,  # 改为字典格式
         max_items: int,
         timeout: int
     ) -> Dict[str, Any]:
         """使用大模型直接提取数据"""
         try:
-            dom_text = serialized_dom.llm_representation()
+            # 使用LLM视图作为DOM文本
+            dom_text = llm_view
+            
+            # 解析新的data_requirements格式
+            user_description = data_requirements.get('user_description', '')
+            output_format = data_requirements.get('output_format', {})
+            sample_data = data_requirements.get('sample_data', [])
+            
+            # 构建字段说明
+            fields_description = ""
+            for field_name, field_desc in output_format.items():
+                fields_description += f"- {field_name}: {field_desc}\n"
+            
+            # 构建样例说明
+            sample_description = ""
+            if sample_data and len(sample_data) > 0:
+                sample_description = f"\n\n参考样例数据：\n{json.dumps(sample_data, indent=2, ensure_ascii=False)}"
             
             # 准备大模型提取的提示
             prompt = f"""
 从以下HTML DOM结构中提取数据：
 
-数据要求: {data_requirements}
-最大数量: {max_items}
+用户需求：{user_description}
 
-HTML DOM结构:
+输出字段说明：
+{fields_description}
+最大数量: {max_items}
+DOM范围: {self.dom_scope}{sample_description}
+
+HTML DOM结构（简化视图）:
 {dom_text}
 
-请提取符合要求的数据，以JSON数组格式返回，每个对象包含要求的字段。
+请严格按照输出字段说明提取数据，以JSON数组格式返回。每个对象包含指定的字段。
 只返回JSON数组，不要其他文字。
 """
             
@@ -504,6 +564,9 @@ HTML DOM结构:
                             "success": True,
                             "data": limited_data,
                             "total_count": len(limited_data),
+                            "dom_config": {
+                                "dom_scope": self.dom_scope
+                            },
                             "error": None
                         }
                 except json.JSONDecodeError as e:
@@ -518,6 +581,9 @@ HTML DOM结构:
                         "success": True,
                         "data": limited_data,
                         "total_count": len(limited_data),
+                        "dom_config": {
+                            "dom_scope": self.dom_scope
+                        },
                         "error": None
                     }
             except json.JSONDecodeError:
@@ -533,7 +599,7 @@ HTML DOM结构:
         self,
         script_content: str,
         serialized_dom,
-        enhanced_dom,
+        dom_dict: Dict,
         max_items: int
     ) -> Dict[str, Any]:
         """直接执行生成的脚本，使用提供的DOM数据"""
@@ -560,7 +626,7 @@ HTML DOM结构:
                 return self._create_error_result("脚本缺少 execute_extraction 函数")
             
             # 使用提供的DOM数据执行提取
-            result = execute_func(serialized_dom, enhanced_dom, max_items)
+            result = execute_func(serialized_dom, dom_dict, max_items)
             return result
             
         except Exception as e:
@@ -570,48 +636,102 @@ HTML DOM结构:
     
     async def _generate_extraction_script_with_llm(self, 
                                                  dom_analysis: Dict, 
-                                                 data_requirements: str,
+                                                 data_requirements: Dict,
                                                  interaction_steps: List[Dict],
                                                  example_data: Optional[str] = None) -> str:
-        """Generate data extraction script using LLM - simplified version"""
+        """Generate data extraction script using LLM with enhanced strategy guidance"""
         
         try:
-            serialized_dom = dom_analysis['serialized_dom']
-            dom_text = serialized_dom.llm_representation()
+            llm_view = dom_analysis['llm_view']
             
+            # Parse data_requirements format
+            user_description = data_requirements.get('user_description', '')
+            output_format = data_requirements.get('output_format', {})
+            sample_data = data_requirements.get('sample_data', [])
+            
+            # Build field descriptions
+            fields_description = ""
+            for field_name, field_desc in output_format.items():
+                fields_description += f"- {field_name}: {field_desc}\n"
+            
+            # Build sample descriptions
+            sample_description = ""
+            if sample_data and len(sample_data) > 0:
+                sample_description = f"\n\n参考样例数据，用户给出的当前页面期望的结果：\n{json.dumps(sample_data, indent=2, ensure_ascii=False)}"
+            
+            # Simplified scraper prompt - clear instructions with minimal examples
             prompt = f"""
-基于以下DOM结构生成数据提取脚本：
+## 第一步：理解DOM遍历
+DOM是嵌套字典结构，每个元素包含：
+- tag: HTML标签名
+- text: 文本内容
+- class: CSS类名 
+- href: 链接地址
+- structural_path: 结构化路径（如 html>body>div.container>h1.title）
+- xpath: XPath路径
+- children: 子元素数组
 
-数据要求: {data_requirements}
+遍历方法：递归访问 node.get('children', [])
 
-DOM结构:
-{dom_text}
+## 第二步：任务分析和策略选择
+判断任务类型：
+- **精准提取**：提取特定字段（如商品详情页的标题、价格）
+- **模式提取**：提取重复数据（如搜索结果列表、商品列表）
 
-生成一个完整的Python函数，要求：
-1. 函数名为 extract_data_from_page(serialized_dom, enhanced_dom)
-2. 返回 List[Dict[str, Any]] 格式的数据
-3. 包含错误处理
-4. 只返回Python代码，不要其他解释
+定位策略（优先级）：
+1. **Class定位**（首选）- 通过CSS类名，灵活适应单个/多个元素
+2. **Structural Path定位** - 结构路径精确定位
+3. **内容特征定位** - 通过href/text等内容匹配
 
-示例模板：
+**跨DOM数据提取策略**：当数据分散在多个相邻元素中时：
+1. 先定位到任意一个目标数据元素（通过class或内容）
+2. 向上查找该元素的父容器
+3. 遍历父容器的所有子元素，收集并组合数据
+
+关键函数示例：
 ```python
-def extract_data_from_page(serialized_dom, enhanced_dom):
-    import re
-    from typing import List, Dict, Any
-    
-    dom_text = serialized_dom.llm_representation()
-    lines = dom_text.split('\\n')
-    results = []
-    
-    # 实现数据提取逻辑
-    
-    return results
+def find_parent_container(node, target_level=1):
+    # 根据structural_path向上查找父容器
+    path = node.get('structural_path', '')
+    parts = path.split('>')
+    if len(parts) > target_level:
+        parent_path = '>'.join(parts[:-target_level])
+        return find_by_path(dom_dict, parent_path)
+    return None
+
+def collect_scattered_data(container_node):
+    # 在容器内收集所有子元素的文本
+    texts = []
+    if container_node and 'children' in container_node:
+        for child in container_node.get('children', []):
+            if isinstance(child, dict):
+                text = child.get('text', '').strip()
+                if text:
+                    texts.append(text)
+    return ''.join(texts)
 ```
+
+## 第三步：理解具体需求
+用户需求：{user_description}
+
+输出字段说明：
+{fields_description}{sample_description}
+
+**重要**：这是样例页面，生成的脚本要能适用于内容不同但结构相似的其他页面。
+
+## DOM结构：
+{llm_view}
+
+## 要求：
+请生成 extract_data_from_page(serialized_dom, dom_dict) 函数：
+- 返回: List[Dict[str, Any]]
+- 包含错误处理
+- 只返回Python代码，不要解释文字
+- 根据DOM结构和用户需求选择最合适的策略
 """
-            
             llm_provider = AnthropicProvider()
             response = await llm_provider.generate_response(
-                system_prompt="你是Python代码生成专家，生成高效的数据提取脚本。只返回代码，不要解释。",
+                system_prompt="""你是网页数据提取专家。根据提供的三步指导，分析DOM结构生成提取脚本。优先使用Class定位，确保跨页面兼容性。只返回Python代码，不要解释。""",
                 user_prompt=prompt
             )
             
@@ -643,14 +763,14 @@ from typing import List, Dict, Any
 
 {code}
 
-def execute_extraction(serialized_dom, enhanced_dom, max_items: int = 100):
+def execute_extraction(serialized_dom, dom_dict, max_items: int = 100):
     """Execute data extraction wrapper function"""
     import logging
     logger = logging.getLogger(__name__)
     
     try:
         # Extract all available data
-        all_data = extract_data_from_page(serialized_dom, enhanced_dom)
+        all_data = extract_data_from_page(serialized_dom, dom_dict)
         
         # Apply quantity limit at wrapper level
         if isinstance(all_data, list):
@@ -719,9 +839,12 @@ def execute_extraction(serialized_dom, enhanced_dom, max_items: int = 100):
             logger.error(f"Script execution failed: {e}")
             return self._create_error_result(str(e))
     
-    def _generate_script_key(self, data_requirements: str) -> str:
-        """生成脚本存储键"""
-        content = f"script_{data_requirements}"
+    def _generate_script_key(self, data_requirements: Dict) -> str:
+        """Generate script storage key with DOM configuration"""
+        # 使用用户描述和字段名生成key
+        user_desc = data_requirements.get('user_description', '')
+        fields = list(data_requirements.get('output_format', {}).keys())
+        content = f"script_{user_desc}_{','.join(fields)}_{self.dom_scope}"
         hash_suffix = hashlib.md5(content.encode()).hexdigest()[:8]
         return f"scraper_script_{hash_suffix}"
     
@@ -779,3 +902,4 @@ def execute_extraction(serialized_dom, enhanced_dom, max_items: int = 100):
             logger.info(f"生成的脚本已保存到: {script_file}")
         except Exception as e:
             logger.warning(f"保存脚本文件失败: {e}")
+    

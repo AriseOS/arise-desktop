@@ -215,13 +215,17 @@ class DOMExtractor:
             return False
 
     def extract_dom_dict(self, serialized_dom) -> Dict:
-        """Extract DOM structure as Python dictionary with href support
+        """Extract DOM structure as simplified Python dictionary
+        
+        Uses layered filtering strategy:
+        - Content elements: Keep full information for precise targeting  
+        - Container elements: Only keep tag + children to reduce noise
         
         Args:
             serialized_dom: SerializedDOM object (from any source)
             
         Returns:
-            Dict: Nested dictionary structure with tag, text, href, interactive_index, children
+            Dict: Simplified nested dictionary structure optimized for both human and LLM consumption
         """
         try:
             # Check if DOM is valid
@@ -231,7 +235,13 @@ class DOMExtractor:
                     "text": "Empty DOM tree (you might have to wait for the page to load)"
                 }
             
-            return self._serialize_tree_to_dict(serialized_dom._root, depth=0)
+            # First generate complete DOM dictionary
+            full_dict = self._serialize_tree_to_dict(serialized_dom._root, depth=0, parent_structural_path="", parent_xpath="")
+            
+            # Then apply layered filtering for consistency between human and LLM views
+            simplified_dict = self._apply_layered_filtering(full_dict)
+            
+            return simplified_dict
             
         except Exception as e:
             logger.error(f"Error extracting DOM dict: {e}")
@@ -240,7 +250,7 @@ class DOMExtractor:
                 "text": f"Error extracting DOM dict: {str(e)}"
             }
     
-    def _serialize_tree_to_dict(self, node, depth: int = 0) -> Dict:
+    def _serialize_tree_to_dict(self, node, depth: int = 0, parent_structural_path: str = "", parent_xpath: str = "") -> Dict:
         """Serialize tree to simplified dict format (matching llm_representation style)"""
         if not node:
             return None
@@ -249,7 +259,7 @@ class DOMExtractor:
         if hasattr(node, 'excluded_by_parent') and node.excluded_by_parent:
             children_dicts = []
             for child in node.children:
-                child_dict = self._serialize_tree_to_dict(child, depth)
+                child_dict = self._serialize_tree_to_dict(child, depth, parent_structural_path, parent_xpath)
                 if child_dict:
                     children_dicts.append(child_dict)
             # Return children as flat list or first child
@@ -263,7 +273,7 @@ class DOMExtractor:
             if hasattr(node, 'should_display') and not node.should_display:
                 children_dicts = []
                 for child in node.children:
-                    child_dict = self._serialize_tree_to_dict(child, depth)
+                    child_dict = self._serialize_tree_to_dict(child, depth, parent_structural_path, parent_xpath)
                     if child_dict:
                         children_dicts.append(child_dict)
                 # Return children as flat list or first child
@@ -274,41 +284,239 @@ class DOMExtractor:
             if tag_name:
                 node_dict["tag"] = tag_name
             
-            # Only extract href attribute if it exists and is not empty
+            # Build xpath from top to bottom (much more efficient than bottom-up)
+            current_xpath = self._build_xpath_from_parent(node, parent_xpath, tag_name)
+            if current_xpath:
+                node_dict["xpath"] = current_xpath
+            
+            # Generate structural path (similar to xpath format but simplified)
+            current_structural_path = self._build_structural_path(node, parent_structural_path, tag_name)
+            if current_structural_path:
+                node_dict["structural_path"] = current_structural_path
+            
+            # Add node identification information (no expensive calculations)
+            node_dict["node_id"] = node.original_node.node_id
+            if hasattr(node.original_node, 'backend_node_id'):
+                node_dict["backend_node_id"] = node.original_node.backend_node_id
+            
+            # Extract useful attributes from the element
             if (hasattr(node.original_node, 'attributes') and 
-                node.original_node.attributes and 
-                'href' in node.original_node.attributes and
-                node.original_node.attributes['href']):
-                node_dict["href"] = node.original_node.attributes['href']
+                node.original_node.attributes):
+                
+                # Common useful attributes for data extraction
+                useful_attributes = {
+                    'id': 'id',
+                    'class': 'class',
+                    'href': 'href', 
+                    'src': 'src',
+                    'alt': 'alt',
+                    'title': 'title',
+                    'name': 'name',
+                    'value': 'value',
+                    'type': 'type',
+                    'role': 'role',
+                    'aria-label': 'aria_label',
+                    'aria-labelledby': 'aria_labelledby',
+                    'aria-describedby': 'aria_describedby',
+                    'data-testid': 'data_testid',
+                    'data-id': 'data_id',
+                    'data-value': 'data_value',
+                    'data-action': 'data_action',
+                    'placeholder': 'placeholder',
+                    'rel': 'rel',
+                    'target': 'target'
+                }
+                
+                for attr_name, dict_key in useful_attributes.items():
+                    if (attr_name in node.original_node.attributes and 
+                        node.original_node.attributes[attr_name]):
+                        node_dict[dict_key] = node.original_node.attributes[attr_name]
+            
+            # Add element state information (现成可用，无需计算)
+            if hasattr(node.original_node, 'is_visible') and node.original_node.is_visible is not None:
+                node_dict["is_visible"] = node.original_node.is_visible
+            
+            if hasattr(node.original_node, 'is_scrollable') and node.original_node.is_scrollable is not None:
+                node_dict["is_scrollable"] = node.original_node.is_scrollable
+            
+            # Add position information if available (现成可用)
+            if (hasattr(node.original_node, 'absolute_position') and 
+                node.original_node.absolute_position is not None):
+                pos = node.original_node.absolute_position
+                node_dict["position"] = {
+                    "x": pos.x,
+                    "y": pos.y, 
+                    "width": pos.width,
+                    "height": pos.height
+                }
             
             # Only add interactive index if present
             if hasattr(node, 'interactive_index') and node.interactive_index is not None:
                 node_dict["interactive_index"] = node.interactive_index
+            
+            # Collect text content from direct TEXT_NODE children and merge into this element
+            direct_text_parts = []
+            element_children = []
+            
+            for child in node.children:
+                if child.original_node.node_type == NodeType.TEXT_NODE:
+                    # Check if text content is meaningful (not just whitespace)
+                    is_visible = (getattr(child.original_node, 'snapshot_node', None) and 
+                                 getattr(child.original_node, 'is_visible', False))
+                    if (is_visible and 
+                        getattr(child.original_node, 'node_value', None) and
+                        child.original_node.node_value.strip()):
+                        text_content = child.original_node.node_value.strip()
+                        # Only add non-empty text that's not just whitespace/newlines
+                        if text_content and len(text_content) > 1:
+                            direct_text_parts.append(text_content)
+                else:
+                    # This is an element child, process it recursively
+                    element_children.append(child)
+            
+            # Add text content to element if any meaningful text found
+            if direct_text_parts:
+                node_dict["text"] = " ".join(direct_text_parts)
+            
+            # Process element children (skip TEXT_NODE children as they're already processed above)
+            children_dicts = []
+            for child in element_children:
+                child_dict = self._serialize_tree_to_dict(child, depth + 1, current_structural_path, current_xpath)
+                if child_dict:
+                    children_dicts.append(child_dict)
+            
+            if children_dicts:
+                node_dict["children"] = children_dicts
         
         elif node.original_node.node_type == NodeType.TEXT_NODE:
-            # Include visible text (like "Warunki oferty", "-6%")
-            is_visible = (getattr(node.original_node, 'snapshot_node', None) and 
-                         getattr(node.original_node, 'is_visible', False))
-            if (is_visible and 
-                getattr(node.original_node, 'node_value', None) and
-                node.original_node.node_value.strip() and 
-                len(node.original_node.node_value.strip()) > 1):
-                
-                node_dict["tag"] = "text"
-                node_dict["text"] = node.original_node.node_value.strip()
-        
-        # Process children and only add children key if there are actual children
-        children_dicts = []
-        for child in node.children:
-            child_dict = self._serialize_tree_to_dict(child, depth + 1)
-            if child_dict:
-                children_dicts.append(child_dict)
-        
-        if children_dicts:
-            node_dict["children"] = children_dicts
+            # TEXT_NODE is now processed by parent ELEMENT_NODE, so we skip individual text nodes
+            return None
         
         # Only return node if it has any content
         return node_dict if node_dict else None
+    
+    def _build_xpath_from_parent(self, node, parent_xpath: str, tag_name: str) -> str:
+        """Build xpath from parent path (top-down, much more efficient)"""
+        if not tag_name:
+            return parent_xpath
+        
+        # Calculate position among siblings with same tag name
+        position = self._calculate_sibling_position(node, tag_name)
+        
+        # Build xpath segment
+        xpath_segment = tag_name
+        if position > 1:  # XPath uses 1-based indexing, only add index if > 1
+            xpath_segment += f"[{position}]"
+        
+        # Special handling for root node
+        if not parent_xpath:
+            return xpath_segment
+        elif parent_xpath == "/":
+            return f"/{xpath_segment}" 
+        else:
+            return f"{parent_xpath}/{xpath_segment}"
+    
+    def _calculate_sibling_position(self, current_node, tag_name: str) -> int:
+        """Calculate the position of current node among siblings with same tag name"""
+        # Access parent node from browser-use structure
+        parent = getattr(current_node.original_node, 'parent_node', None)
+        if not parent or not hasattr(parent, 'children_nodes'):
+            return 1  # If no parent or siblings info, assume position 1
+        
+        # Count siblings with same tag name that come before current node
+        position = 1
+        current_node_id = current_node.original_node.node_id
+        
+        for sibling in parent.children_nodes:
+            if sibling.node_id == current_node_id:
+                break  # Found current node, stop counting
+            if (sibling.node_type == NodeType.ELEMENT_NODE and 
+                sibling.node_name and 
+                sibling.node_name.lower() == tag_name):
+                position += 1
+        
+        return position
+    
+    def _build_structural_path(self, node, parent_path: str, tag_name: str) -> str:
+        """Build structural path with semantic information (different from xpath)"""
+        if not tag_name:
+            return parent_path
+            
+        # Build current element selector with semantic meaning
+        element_selector = tag_name
+        
+        # Add meaningful identifiers that provide semantic context
+        if (hasattr(node.original_node, 'attributes') and 
+            node.original_node.attributes):
+            
+            attrs = node.original_node.attributes
+            
+            # Priority 1: ID (most stable and meaningful)
+            if 'id' in attrs and attrs['id']:
+                element_selector += f"#{attrs['id']}"
+            
+            # Priority 2: CSS classes (keep all classes for precision)
+            elif 'class' in attrs and attrs['class']:
+                # Use the first class as primary identifier, but keep all for context
+                classes = attrs['class'].split()
+                if classes:
+                    # Add first class as main selector
+                    element_selector += f".{classes[0]}"
+                    # If there are multiple significant classes, add them too
+                    if len(classes) > 1:
+                        # Add up to 2 more classes for better precision
+                        additional_classes = classes[1:3]
+                        for cls in additional_classes:
+                            if len(cls) > 2:  # Skip very short classes
+                                element_selector += f".{cls}"
+            
+            # Priority 3: Data attributes for identification
+            elif any(key.startswith('data-testid') for key in attrs):
+                for key, value in attrs.items():
+                    if key.startswith('data-testid') and value:
+                        element_selector += f"[data-testid='{value}']"
+                        break
+            
+            # Priority 4: Role or type attributes (semantic meaning)
+            elif attrs.get('role') or attrs.get('type'):
+                role_or_type = attrs.get('role') or attrs.get('type')
+                element_selector += f"[{attrs.get('role') and 'role' or 'type'}='{role_or_type}']"
+        
+        # Combine with parent path
+        if parent_path:
+            return f"{parent_path}>{element_selector}"
+        else:
+            return element_selector
+    
+    def _extract_stable_classes(self, class_string: str) -> list:
+        """Extract stable CSS classes (avoid auto-generated ones)"""
+        classes = class_string.split()
+        stable_classes = []
+        
+        for cls in classes:
+            # Skip classes that look auto-generated
+            if (not self._is_generated_class(cls) and 
+                len(cls) > 2 and  # Skip very short classes
+                not cls.isdigit()):  # Skip pure numeric classes
+                stable_classes.append(cls)
+        
+        return stable_classes
+    
+    def _is_generated_class(self, class_name: str) -> bool:
+        """Check if class name appears to be auto-generated"""
+        # Common patterns for auto-generated classes
+        generated_patterns = [
+            # Random strings like: m389_6m, mwdn_1_m
+            lambda x: len([c for c in x if c.isdigit()]) > len(x) / 3,
+            # Very short random strings
+            lambda x: len(x) <= 3 and any(c.isdigit() for c in x),
+            # Hash-like patterns
+            lambda x: len(x) > 8 and all(c in '0123456789abcdef' for c in x.lower()),
+            # CSS-in-JS patterns like: _77895_3emTY
+            lambda x: x.count('_') >= 2 and any(c.isdigit() for c in x)
+        ]
+        
+        return any(pattern(class_name) for pattern in generated_patterns)
 
     def format_dict_as_text(self, dom_dict: Dict, depth: int = 0) -> str:
         """Format simplified dictionary structure as text (matching llm_representation output)"""
@@ -318,12 +526,28 @@ class DOMExtractor:
         formatted_lines = []
         depth_str = depth * '\t'
         
-        # Use get() with empty string defaults, but keys might not exist
+        # Extract all relevant attributes
         tag = dom_dict.get("tag", "")
         text = dom_dict.get("text", "").strip()
-        href = dom_dict.get("href", "")
         interactive_index = dom_dict.get("interactive_index")
         children = dom_dict.get("children", [])
+        
+        # Collect attributes to display
+        attrs_to_show = []
+        attr_keys = ["id", "class", "href", "src", "alt", "title", "name", "value", "type", "role", 
+                    "data_testid", "data_id", "placeholder"]
+        for attr_key in attr_keys:
+            if attr_key in dom_dict and dom_dict[attr_key]:
+                attrs_to_show.append(f'{attr_key}={dom_dict[attr_key]}')
+        
+        # Add position info if available
+        if "position" in dom_dict and dom_dict["position"]:
+            pos = dom_dict["position"]
+            attrs_to_show.append(f'pos=({pos["x"]:.0f},{pos["y"]:.0f},{pos["width"]:.0f}x{pos["height"]:.0f})')
+        
+        # Add visibility info
+        if "is_visible" in dom_dict:
+            attrs_to_show.append(f'visible={dom_dict["is_visible"]}')
         
         if tag == "empty":
             return text
@@ -346,9 +570,9 @@ class DOMExtractor:
                 else:
                     line += f'<{tag.upper()}'
                 
-                # Add href attribute if present (like: href=/oferta/...)
-                if href:
-                    line += f' href={href}'
+                # Add all collected attributes
+                if attrs_to_show:
+                    line += ' ' + ' '.join(attrs_to_show)
                 
                 line += ' />'
                 formatted_lines.append(line)
@@ -368,54 +592,124 @@ class DOMExtractor:
         return '\n'.join(formatted_lines)
 
     def extract_llm_view(self, dom_dict: Dict) -> str:
-        """Extract simplified view for LLM (flattened meaningful nodes only)
+        """Extract LLM view from already simplified DOM dictionary
+        
+        Since extract_dom_dict() now applies layered filtering, this method
+        just converts the simplified dict to compact JSON format.
         
         Args:
-            dom_dict: Nested DOM dictionary from extract_dom_dict()
+            dom_dict: Simplified DOM dictionary from extract_dom_dict()
             
         Returns:
-            str: Compact JSON string of meaningful nodes for LLM
+            str: Compact JSON string for LLM consumption
         """
         try:
-            meaningful_nodes = self._extract_meaningful_nodes(dom_dict)
-            # Return compact JSON string
+            # DOM dict is already simplified by extract_dom_dict, just convert to JSON
             import json
-            return json.dumps(meaningful_nodes, separators=(',', ':'), ensure_ascii=False)
+            return json.dumps(dom_dict, separators=(',', ':'), ensure_ascii=False)
             
         except Exception as e:
             logger.error(f"Error extracting LLM view: {e}")
-            return "[]"
+            return "{}"
     
-    def _extract_meaningful_nodes(self, node) -> List[Dict]:
-        """Extract meaningful nodes from nested DOM dict (interactive elements + text nodes)"""
-        results = []
+    def _apply_layered_filtering(self, node):
+        """Apply layered filtering: full info for content elements, minimal for containers
         
-        def traverse(current_node):
-            if not isinstance(current_node, dict):
-                return
+        Args:
+            node: DOM node dictionary
+            
+        Returns:
+            Dict: Filtered node dictionary
+        """
+        if not isinstance(node, dict):
+            return node
+            
+        # Check if this element contains meaningful content
+        is_content = self._is_content_element(node)
+        
+        if is_content:
+            # Content element: keep all important fields for precise targeting
+            result = self._extract_content_fields(node)
+        else:
+            # Container element: only keep basic structure
+            result = {"tag": node["tag"]} if "tag" in node else {}
+        
+        # Process children recursively
+        if "children" in node and node["children"]:
+            result["children"] = [self._apply_layered_filtering(child) for child in node["children"]]
+            
+        return result
+    
+    def _is_content_element(self, node: Dict) -> bool:
+        """Check if element has meaningful content that needs full representation
+        
+        Content elements include:
+        - Elements with text content
+        - Interactive elements
+        - Elements with important attributes (href, src, etc.)
+        - Important semantic tags
+        
+        Args:
+            node: DOM node dictionary
+            
+        Returns:
+            bool: True if element should keep full information
+        """
+        # Has text content
+        if node.get("text") and node["text"].strip():
+            return True
+            
+        # Has interactive index (clickable/operable)
+        if "interactive_index" in node:
+            return True
+            
+        # Has important attributes
+        important_attrs = ["href", "src", "alt", "value", "placeholder"]
+        if any(node.get(attr) for attr in important_attrs):
+            return True
+            
+        # Important semantic tags (always content even if empty)
+        content_tags = {"img", "input", "button", "a", "select", "textarea", "h1", "h2", "h3", "h4", "h5", "h6", "p", "label"}
+        if node.get("tag") in content_tags:
+            return True
+            
+        return False
+    
+    def _extract_content_fields(self, node: Dict) -> Dict:
+        """Extract all important fields for content elements (no modification of values)
+        
+        Keep original values for precise targeting - do not simplify paths or classes.
+        
+        Args:
+            node: DOM node dictionary
+            
+        Returns:
+            Dict: Node with all important fields preserved
+        """
+        # Fields that are important for content elements
+        content_fields = [
+            # Basic identification
+            "tag",
+            # Content data
+            "text", "href", "src", "alt", "title", "value", "placeholder",
+            # Targeting information (keep original for precision)
+            # "xpath", "structural_path", "id", "class",
+            "id", "class",
+            "structural_path",
+            # Interactive information
+            "interactive_index",
+            # Other useful attributes
+            # "type", "role", "name", "data_testid", "data_id", "data_action"
+        ]
+        
+        result = {}
+        for field in content_fields:
+            if field in node and node[field] is not None:
+                # Keep original values - no simplification
+                result[field] = node[field]
                 
-            # Collect interactive elements
-            if "interactive_index" in current_node:
-                node_info = {"interactive_index": current_node["interactive_index"]}
-                if "tag" in current_node:
-                    node_info["tag"] = current_node["tag"]
-                if "href" in current_node:
-                    node_info["href"] = current_node["href"]
-                results.append(node_info)
-            
-            # Collect text nodes
-            elif current_node.get("tag") == "text" and "text" in current_node:
-                results.append({
-                    "tag": "text", 
-                    "text": current_node["text"]
-                })
-            
-            # Recursively process children
-            for child in current_node.get("children", []):
-                traverse(child)
-        
-        traverse(node)
-        return results
+        return result
+    
 
 
 # New simplified convenience functions
