@@ -110,6 +110,7 @@ class DOMExtractor:
                                 simplified.children.append(simplified_child)
                         return simplified
                 
+                
                 is_interactive = self._is_interactive_cached(node)
                 # Override visibility if include_non_visible is True
                 original_is_visible = getattr(node, 'snapshot_node', None) and getattr(node, 'is_visible', False)
@@ -235,6 +236,8 @@ class DOMExtractor:
                     "text": "Empty DOM tree (you might have to wait for the page to load)"
                 }
             
+            # No need for xpath precomputation - we'll calculate on demand
+            
             # First generate complete DOM dictionary
             full_dict = self._serialize_tree_to_dict(serialized_dom._root, depth=0, parent_structural_path="", parent_xpath="")
             
@@ -284,8 +287,8 @@ class DOMExtractor:
             if tag_name:
                 node_dict["tag"] = tag_name
             
-            # Build xpath from top to bottom (much more efficient than bottom-up)
-            current_xpath = self._build_xpath_from_parent(node, parent_xpath, tag_name)
+            # Calculate xpath in top-down manner (much more efficient)
+            current_xpath = self._build_xpath_top_down(node.original_node, parent_xpath, tag_name)
             if current_xpath:
                 node_dict["xpath"] = current_xpath
             
@@ -395,47 +398,65 @@ class DOMExtractor:
         # Only return node if it has any content
         return node_dict if node_dict else None
     
-    def _build_xpath_from_parent(self, node, parent_xpath: str, tag_name: str) -> str:
-        """Build xpath from parent path (top-down, much more efficient)"""
+    
+
+    def _build_xpath_top_down(self, node: EnhancedDOMTreeNode, parent_xpath: str, tag_name: str) -> str:
+        """Build relative xpath in top-down manner (one-pass, very efficient)"""
         if not tag_name:
             return parent_xpath
         
-        # Calculate position among siblings with same tag name
-        position = self._calculate_sibling_position(node, tag_name)
+        # Check if this element has an ID - use ID-based relative xpath
+        if hasattr(node, 'attributes') and node.attributes:
+            element_id = node.attributes.get('id')
+            if element_id and element_id.strip():
+                return f'//*[@id="{element_id}"]'
         
-        # Build xpath segment
+        # Calculate position among siblings with same tag name (browser-use style)
+        position = self._get_element_position_in_original_dom(node, tag_name)
+        
+        # Build current xpath segment
         xpath_segment = tag_name
-        if position > 1:  # XPath uses 1-based indexing, only add index if > 1
+        if position > 0:  # Only add index if needed (multiple siblings)
             xpath_segment += f"[{position}]"
         
-        # Special handling for root node
+        # Generate relative xpath format
         if not parent_xpath:
-            return xpath_segment
-        elif parent_xpath == "/":
-            return f"/{xpath_segment}" 
+            return f"//{xpath_segment}"  # Root element with // prefix
+        elif parent_xpath.startswith("//"):
+            return f"{parent_xpath}/{xpath_segment}"  # Continue relative path
         else:
-            return f"{parent_xpath}/{xpath_segment}"
+            return f"//{xpath_segment}"  # Ensure relative format
     
-    def _calculate_sibling_position(self, current_node, tag_name: str) -> int:
-        """Calculate the position of current node among siblings with same tag name"""
-        # Access parent node from browser-use structure
-        parent = getattr(current_node.original_node, 'parent_node', None)
-        if not parent or not hasattr(parent, 'children_nodes'):
-            return 1  # If no parent or siblings info, assume position 1
+    def _get_element_position_in_original_dom(self, element: EnhancedDOMTreeNode, tag_name: str) -> int:
+        """Get position using browser-use logic - returns 0 if only element, otherwise 1-based index"""
+        if not hasattr(element, 'parent_node') or not element.parent_node:
+            return 0
         
-        # Count siblings with same tag name that come before current node
-        position = 1
-        current_node_id = current_node.original_node.node_id
-        
-        for sibling in parent.children_nodes:
-            if sibling.node_id == current_node_id:
-                break  # Found current node, stop counting
-            if (sibling.node_type == NodeType.ELEMENT_NODE and 
-                sibling.node_name and 
-                sibling.node_name.lower() == tag_name):
-                position += 1
-        
-        return position
+        parent = element.parent_node
+        if not hasattr(parent, 'children_nodes') or not parent.children_nodes:
+            return 0
+
+        # Find all siblings with same tag name (based on original DOM structure)
+        same_tag_siblings = [
+            child
+            for child in parent.children_nodes
+            if (child.node_type == NodeType.ELEMENT_NODE and 
+                hasattr(child, 'node_name') and
+                child.node_name and
+                child.node_name.lower() == tag_name)
+        ]
+
+        if len(same_tag_siblings) <= 1:
+            return 0  # No index needed if it's the only one
+
+        try:
+            # XPath is 1-indexed
+            position = same_tag_siblings.index(element) + 1
+            return position
+        except ValueError:
+            return 0
+
+
     
     def _build_structural_path(self, node, parent_path: str, tag_name: str) -> str:
         """Build structural path with semantic information (different from xpath)"""
@@ -695,6 +716,7 @@ class DOMExtractor:
             # Targeting information (keep original for precision)
             # "xpath", "structural_path", "id", "class",
             "id", "class",
+            "xpath",
             "structural_path",
             # Interactive information
             "interactive_index",
