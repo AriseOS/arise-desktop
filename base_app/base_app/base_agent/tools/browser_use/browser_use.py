@@ -12,6 +12,12 @@ from browser_use import Agent
 from browser_use.llm import ChatOpenAI
 from ..base_tool import BaseTool, ToolMetadata, ToolResult, ToolStatus, ToolConfig
 
+try:
+    from .enhanced_browser_use import SimpleBrowserUseTool
+    SIMPLE_MONITORING_AVAILABLE = True
+except ImportError:
+    SIMPLE_MONITORING_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -247,4 +253,11 @@ class BrowserTool(BaseTool):
                 message=f"任务执行失败: {str(e)}",
                 status=ToolStatus.ERROR
             )
+    
+    @classmethod
+    def create_with_monitoring(cls, **kwargs):
+        """Create tool with user behavior monitoring"""
+        if not SIMPLE_MONITORING_AVAILABLE:
+            raise ImportError("Simple monitoring features not available")
+        return SimpleBrowserUseTool(enable_behavior_monitoring=True, **kwargs)
     
