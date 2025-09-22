@@ -293,3 +293,41 @@ Key architecture analysis documents in the repository:
 - `docs/database_architecture.md` - Complete database schema documentation
 
 The recommended approach is the contextual dynamic architecture which preserves the complete context chain from user requirements through design to implementation, enabling better AI-assisted development.
+
+## Claude Code Work Mode Settings
+
+### Development Philosophy
+
+**Minimalist Approach:**
+- Start with the simplest solution that meets the stated requirements
+- Add complexity only when explicitly requested
+- Focus solely on mentioned requirements, avoid anticipating future needs
+- No over-engineering or premature optimization
+
+**Testing Strategy:**
+- **DO NOT** automatically run tests after completing tasks
+- **DO NOT** proactively execute testing commands unless explicitly requested
+- Only create test scripts when specifically asked by the user
+- Let the user decide when and how to run tests
+- When creating test scripts, make them simple and focused on the immediate requirements
+
+**Compatibility Approach:**
+- **DO NOT** consider backward compatibility unless explicitly mentioned
+- Focus on current requirements only
+- Prefer modern, simple solutions over complex legacy-compatible ones
+- Break changes are acceptable if they simplify the implementation
+
+**Implementation Priority:**
+1. Complete the exact task as described
+2. Use the simplest possible implementation
+3. Create test scripts only when requested
+4. Let user control testing and validation process
+
+**Code Style:**
+- Prefer clarity over cleverness
+- Minimal abstractions unless complexity demands it
+- Direct implementation over framework-heavy solutions
+- Remove unused code and imports aggressively
+- **ALWAYS use English for ALL code comments and log messages**
+- No Chinese characters in code comments, docstrings, or log messages
+- Function names, variable names, and all code elements must be in English

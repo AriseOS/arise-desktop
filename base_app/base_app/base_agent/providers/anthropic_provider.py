@@ -41,7 +41,7 @@ class AnthropicProvider(BaseProvider):
         
         # Set default model if not specified
         if not self.model_name:
-            self.model_name = "claude-sonnet-4-20250514	"
+            self.model_name = "claude-sonnet-4-20250514"
         
         # Initialize client
         self._client = Anthropic(api_key=self.api_key)
