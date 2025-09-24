@@ -16,14 +16,19 @@ logger = logging.getLogger(__name__)
 class SQLiteKVStorage:
     """
     SQLite-based Key-Value storage for BaseAgent
-    
+
     Simple KV operations with user-based data isolation
     """
-    
-    def __init__(self, database_path: str = "./data/agent_kv.db"):
-        """Initialize SQLite KV storage"""
-        self.database_path = Path(database_path)
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def __init__(self, config_service):
+        """
+        Initialize SQLite KV storage
+
+        Args:
+            config_service: 配置服务实例（必须提供）
+        """
+        # 从配置服务获取路径
+        self.database_path = config_service.get_path("data.databases.kv")
         logger.debug(f"Initialized SQLite KV storage at {self.database_path}")
     
     async def initialize(self):

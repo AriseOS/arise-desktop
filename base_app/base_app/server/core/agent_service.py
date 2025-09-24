@@ -39,15 +39,8 @@ class AgentService:
         
         # 初始化存储
         if storage is None:
-            # 从配置获取存储设置
-            storage_type = config_service.get("storage.session.type", "sqlite")
-            if storage_type == "sqlite":
-                db_path = config_service.get("storage.session.database_url", "./data/sessions.db")
-                if db_path.startswith("sqlite:///"):
-                    db_path = db_path[10:]  # 移除 sqlite:/// 前缀
-                self.storage = SQLiteSessionStorage(db_path)
-            else:
-                raise ValueError(f"Unsupported storage type: {storage_type}")
+            # 使用配置服务初始化存储，让存储自己从配置读取路径
+            self.storage = SQLiteSessionStorage(config_service=config_service)
         else:
             self.storage = storage
         

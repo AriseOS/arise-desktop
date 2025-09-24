@@ -24,45 +24,48 @@ class MemoryManager:
     """
     
     def __init__(
-        self, 
+        self,
         enable_long_term_memory: bool = False,
         enable_kv_storage: bool = True,
         user_id: Optional[str] = None,
         mem0_config: Optional[Dict[str, Any]] = None,
-        kv_storage_path: Optional[str] = None
+        kv_storage_path: Optional[str] = None,
+        config_service=None
     ):
         """
         Initialize the memory manager
-        
+
         Args:
             enable_long_term_memory: Whether to enable mem0 long-term memory (local version)
             enable_kv_storage: Whether to enable SQLite KV storage
             user_id: User ID for memory isolation
             mem0_config: Custom configuration for mem0 (vector store, LLM, etc.)
             kv_storage_path: Path for SQLite KV database
+            config_service: 配置服务实例
         """
         self.variables: Dict[str, Any] = {}  # Temporary variables
         self.user_id = user_id or "default"
-        
+        self.config_service = config_service
+
         # Long-term memory (optional, local version)
         self.long_term_memory: Optional[Mem0Memory] = None
         if enable_long_term_memory:
             try:
                 self.long_term_memory = Mem0Memory(
                     user_id=user_id,
-                    config=mem0_config
+                    config=mem0_config,
+                    config_service=config_service
                 )
                 logger.info("Long-term memory (mem0 local) enabled")
             except Exception as e:
                 logger.warning(f"Failed to initialize long-term memory: {e}")
-        
+
         # KV Storage (SQLite-based persistent storage)
         self.kv_storage: Optional[SQLiteKVStorage] = None
-        if enable_kv_storage:
+        if enable_kv_storage and config_service:
             try:
-                self.kv_storage = SQLiteKVStorage(
-                    database_path=kv_storage_path or "./data/agent_kv.db"
-                )
+                # 使用配置服务
+                self.kv_storage = SQLiteKVStorage(config_service=config_service)
                 logger.info("KV storage (SQLite) enabled")
             except Exception as e:
                 logger.warning(f"Failed to initialize KV storage: {e}")
