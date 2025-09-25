@@ -5,7 +5,7 @@ ScraperAgent Debug Helper - DOM collection and script generation
 Usage:
   # Collect DOM data
   python scraper_debug_helper.py --mode dom --url "https://allegro.pl/oferta/some-product" --name "product_page"
-  
+
   # Generate script using ScraperAgent's logic
   python scraper_debug_helper.py --mode generate --name "product_page"
 
@@ -22,6 +22,8 @@ from pathlib import Path
 
 # Add base_app to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../../base_app'))
+
+from base_app.server.core.config_service import ConfigService
 
 # DOM collection imports
 from browser_use.browser.session import BrowserSession
@@ -48,10 +50,17 @@ class ScrollActionModel(ActionModel):
 
 class ScraperDebugHelper:
     """Debug helper that uses ScraperAgent's exact logic"""
-    
-    def __init__(self, data_dir: str = "./data"):
-        self.data_dir = Path(data_dir)
-        self.data_dir.mkdir(parents=True, exist_ok=True)
+
+    def __init__(self, data_dir: str = None, config_service=None):
+        if config_service:
+            # Use config service to get data directory
+            self.data_dir = config_service.get_path("data.debug")
+            self.config_service = config_service
+        else:
+            # Load test configuration
+            test_config_path = Path(__file__).parent.parent.parent.parent / "test_config.yaml"
+            self.config_service = ConfigService(config_path=str(test_config_path))
+            self.data_dir = self.config_service.get_path("data.debug")
         
         # Default data requirements from test_scraper_agent_with_script.py
         self.default_data_requirements = {
@@ -83,13 +92,12 @@ class ScraperDebugHelper:
     
     async def collect_dom(self, url: str, name: str):
         """Collect DOM data from URL"""
-        
+
         print(f"=== DOM Collection for '{name}' ===")
         print(f"URL: {url}")
-        
-        # Browser setup
-        user_data_dir = os.path.expanduser("~/.data/test_browser_data")
-        os.makedirs(user_data_dir, exist_ok=True)
+
+        # Browser setup - get user data dir from config
+        user_data_dir = str(self.config_service.get_path("data.browser_data"))
         
         profile = BrowserProfile(
             headless=False,

@@ -124,6 +124,7 @@ async def get_system_config(
 
 @system_router.get("/logs")
 async def get_system_logs(
+    request: Request,
     level: str = Query("INFO", description="日志级别"),
     limit: int = Query(100, ge=1, le=1000, description="日志行数"),
     tail: bool = Query(True, description="是否获取最新日志")
@@ -132,8 +133,10 @@ async def get_system_logs(
     try:
         import os
         from pathlib import Path
-        
-        log_file = Path("./logs/baseapp.log")
+
+        # 从配置服务获取日志文件路径
+        config_service = get_config_service(request)
+        log_file = config_service.get_path("logging.file", create_parent=False)
         
         if not log_file.exists():
             return {

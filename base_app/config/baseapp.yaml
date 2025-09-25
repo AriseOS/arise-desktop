@@ -18,7 +18,7 @@ agent:
       vector_store:
         config:
           collection_name: mem0_collection
-          path: ./data/chroma_db
+          path: ~/.local/share/baseapp/chroma_db
         provider: chroma
       version: v1.1
     enabled: true
@@ -37,11 +37,26 @@ app:
   name: BaseApp
   port: 8000
   version: 1.0.0
-database:
-  type: sqlite
-  url: ./data/baseapp.db
+
+# Data storage configuration
+data:
+  # Root directory for all data files
+  root: ~/.local/share/baseapp
+
+  # Database files
+  databases:
+    sessions: ${data.root}/sessions.db    # Session storage
+    kv: ${data.root}/agent_kv.db          # Key-value storage
+
+  # Vector database directory
+  chroma_db: ${data.root}/chroma_db
+
+  # Browser related directories
+  browser_data: ~/.cache/baseapp/browser_data   # Browser user data
+  debug: ${data.root}/debug                     # Debug output
+
 logging:
   backup_count: 5
-  file: ./logs/baseapp.log
+  file: ${data.root}/logs/baseapp.log
   level: INFO
   max_size: 10MB

@@ -1,0 +1,48 @@
+# Test configuration for BaseApp
+app:
+  name: BaseApp Test
+  version: 1.0.0
+  host: 127.0.0.1
+  port: 8888
+  debug: true
+
+# Test data storage configuration
+data:
+  # Test data root directory - use temp directory for tests
+  root: ~/.local/share/baseapp-test
+
+  # Test database files
+  databases:
+    sessions: ${data.root}/test_sessions.db
+    kv: ${data.root}/test_agent_kv.db
+
+  # Test vector database directory
+  chroma_db: ${data.root}/test_chroma_db
+
+  # Test browser related directories
+  browser_data: ~/.cache/baseapp-test/browser_data
+  debug: ${data.root}/test_debug
+
+# Test agent configuration
+agent:
+  name: Test Agent
+  llm:
+    provider: openai
+    model: gpt-3.5-turbo  # Use cheaper model for tests
+    api_key: ${OPENAI_API_KEY}
+  memory:
+    enabled: false  # Disable memory for tests
+    provider: mem0
+  tools:
+    enabled:
+    - browser
+    browser:
+      headless: true  # Headless for tests
+      timeout: 10
+
+# Test logging configuration
+logging:
+  level: DEBUG
+  file: ${data.root}/logs/test.log
+  max_size: 5MB
+  backup_count: 3

@@ -8,6 +8,7 @@ import json
 import os
 import sys
 from pprint import pprint
+from pathlib import Path
 
 # Add the base_app directory to Python path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../../base_app'))
@@ -21,6 +22,7 @@ from browser_use.dom.service import DomService
 from base_app.base_agent.tools.browser_use.dom_extractor import (
     extract_dom_dict, extract_llm_view, format_dict_as_text, DOMExtractor
 )
+from base_app.server.core.config_service import ConfigService
 
 
 class GoToUrlActionModel(ActionModel):
@@ -29,12 +31,15 @@ class GoToUrlActionModel(ActionModel):
 
 async def simple_dom_test():
     """Simple test: open URL and print DOM information"""
-    
+
     print("=== Simple DOM Test ===")
-    
-    # Set up user data directory
-    user_data_dir = os.path.expanduser("~/.data/test_browser_data")
-    os.makedirs(user_data_dir, exist_ok=True)
+
+    # Load test configuration
+    test_config_path = Path(__file__).parent.parent.parent.parent / "test_config.yaml"
+    config_service = ConfigService(config_path=str(test_config_path))
+
+    # Get browser user data directory from config
+    user_data_dir = str(config_service.get_path("data.browser_data"))
     print(f"User data directory: {user_data_dir}")
     
     # Create browser profile

@@ -17,25 +17,30 @@ sys.path.insert(0, base_app_path)
 from browser_use.browser.session import BrowserSession
 from browser_use.browser.profile import BrowserProfile
 from base_app.base_agent.tools.browser_use.user_behavior.monitor import SimpleUserBehaviorMonitor
+from base_app.server.core.config_service import ConfigService
 
 
 async def test_behavior_monitoring():
     """用户行为监控测试"""
-    
+
     # 启用调试日志
     logging.basicConfig(level=logging.DEBUG, format='%(name)s - %(levelname)s - %(message)s')
-    
+
     print("=== 用户行为监控测试 ===")
     print("这个脚本只会打开浏览器，不执行任何自动化操作")
     print("请手动在浏览器中进行操作，所有操作将在控制台实时显示")
     print()
-    
+
     # 创建操作记录列表
     operation_list = []
-    
-    # 设置浏览器用户数据目录
-    user_data_dir = os.path.expanduser("~/.data/test_browser_data")
-    os.makedirs(user_data_dir, exist_ok=True)
+
+    # 加载测试配置
+    test_config_path = Path(__file__).parent.parent.parent.parent / "test_config.yaml"
+    print(f"test_config_path: {test_config_path}")
+    config_service = ConfigService(config_path=str(test_config_path))
+
+    # 从配置获取浏览器用户数据目录
+    user_data_dir = str(config_service.get_path("data.browser_data"))
     
     # 创建浏览器配置
     profile = BrowserProfile(

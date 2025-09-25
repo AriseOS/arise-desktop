@@ -18,28 +18,55 @@ class ConfigService:
     
     def _find_config_file(self, config_path: Optional[str] = None) -> str:
         """查找配置文件"""
-        if config_path and Path(config_path).exists():
-            return config_path
-        
-        # 按优先级查找配置文件
-        search_paths = [
-            "./baseapp.yaml",
-            "./config/baseapp.yaml", 
-            Path.home() / ".baseapp" / "config.yaml",
-            "/etc/baseapp/config.yaml"
-        ]
-        
+        # 1. 环境变量最高优先级
+        if env_path := os.environ.get('BASEAPP_CONFIG_PATH'):
+            env_path = Path(env_path).expanduser()
+            if env_path.exists():
+                return str(env_path)
+            else:
+                raise FileNotFoundError(f"Config file specified by BASEAPP_CONFIG_PATH not found: {env_path}")
+
+        # 2. 命令行参数
+        if config_path:
+            config_path = Path(config_path).expanduser()
+            if config_path.exists():
+                return str(config_path)
+            else:
+                raise FileNotFoundError(f"Specified config file not found: {config_path}")
+
+        # 3. 项目默认配置（基于代码位置）
+        search_paths = []
+
+        # Find default config relative to this file's location
+        # ConfigService is at: base_app/server/core/config_service.py
+        # Default config at: base_app/config/baseapp.yaml
+        code_dir = Path(__file__).parent.parent.parent  # base_app directory
+        default_config = code_dir / 'config' / 'baseapp.yaml'
+        if default_config.exists():
+            search_paths.append(default_config)
+
+        # 4. 用户配置目录
+        search_paths.append(Path.home() / '.baseapp' / 'config.yaml')
+
+        # 5. System-wide configuration
+        search_paths.extend([
+            Path('/etc/baseapp/config.yaml'),
+            Path('/usr/local/etc/baseapp/config.yaml')
+        ])
+
         for path in search_paths:
-            if Path(path).exists():
+            if path.exists():
                 return str(path)
-        
-        # 如果没有找到，创建默认配置
-        default_path = "./config/baseapp.yaml"
-        self._create_default_config(default_path)
-        return default_path
+
+        # No config found, raise error
+        search_locations = '\n  - '.join([''] + [str(p) for p in search_paths])
+        raise FileNotFoundError(
+            f"No configuration file found. Searched in:{search_locations}\n"
+            "Please create a config file in one of these locations or set BASEAPP_CONFIG_PATH environment variable."
+        )
     
     def _create_default_config(self, config_path: str):
-        """创建默认配置文件"""
+        """Create default configuration file"""
         default_config = {
             "app": {
                 "name": "BaseApp",
@@ -73,7 +100,7 @@ class ConfigService:
                             "provider": "chroma",
                             "config": {
                                 "collection_name": "mem0_collection",
-                                "path": "./data/chroma_db"
+                                "path": "~/.local/share/baseapp/chroma_db"
                             }
                         }
                     }
@@ -91,13 +118,24 @@ class ConfigService:
                     }
                 }
             },
-            "database": {
-                "type": "sqlite",
-                "url": "./data/baseapp.db"
+            "data": {
+                "root": "~/.local/share/baseapp",
+                "databases": {
+                    "sessions": "${data.root}/sessions.db",
+                    "kv": "${data.root}/agent_kv.db"
+                },
+                "chroma_db": "${data.root}/chroma_db",
+                "browser_data": "~/.cache/baseapp/browser_data",
+                "debug": "${data.root}/debug"
+            },
+            "storage": {
+                "session": {
+                    "database_path": "${data.root}/sessions.db"
+                }
             },
             "logging": {
                 "level": "INFO",
-                "file": "./logs/baseapp.log",
+                "file": "${data.root}/logs/baseapp.log",
                 "max_size": "10MB",
                 "backup_count": 5
             }
@@ -181,18 +219,29 @@ class ConfigService:
         """获取嵌套字典的值"""
         keys = key.split('.')
         current = data
-        
+
         for k in keys:
             if isinstance(current, dict) and k in current:
                 current = current[k]
             else:
                 return default
-        
-        # 处理环境变量引用
-        if isinstance(current, str) and current.startswith('${') and current.endswith('}'):
-            env_var = current[2:-1]
-            return os.getenv(env_var, default)
-        
+
+        # Handle config internal references ${data.root}/xxx
+        if isinstance(current, str) and '${' in current:
+            import re
+            pattern = r'\$\{([^}]+)\}'
+
+            def replace_ref(match):
+                ref_key = match.group(1)
+                # Check if it's an environment variable (all caps or contains underscore)
+                if ref_key.isupper() or '_' in ref_key:
+                    return os.getenv(ref_key, match.group(0))
+                # Otherwise treat as nested config reference
+                ref_value = self._get_nested_value(self.config_data, ref_key, match.group(0))
+                return str(ref_value)
+
+            current = re.sub(pattern, replace_ref, current)
+
         return current
     
     def set(self, key: str, value: Any):
@@ -224,37 +273,81 @@ class ConfigService:
         """获取所有配置"""
         return self.config_data.copy()
     
+    def resolve_path(self, path: str) -> Path:
+        """
+        Resolve path with standard handling:
+        - Absolute paths: returned as-is
+        - Paths starting with ~: expanded to user home
+        - Environment variables: expanded
+        - Relative paths: resolved relative to config file directory
+        """
+        # Expand user directory and environment variables
+        path = os.path.expanduser(path)
+        path = os.path.expandvars(path)
+
+        path_obj = Path(path)
+
+        # If absolute path, return as-is
+        if path_obj.is_absolute():
+            return path_obj.resolve()
+
+        # For relative paths, use config file directory as base
+        config_dir = Path(self.config_path).parent
+        return (config_dir / path).resolve()
+
+    def get_path(self, key: str, create_parent: bool = True) -> Path:
+        """
+        获取路径配置并确保父目录存在
+
+        Args:
+            key: 配置键
+            create_parent: 是否自动创建父目录
+
+        Returns:
+            解析后的路径
+        """
+        path_str = self.get(key)
+        if not path_str:
+            raise ValueError(f"Path config not found: {key}")
+
+        path = self.resolve_path(str(path_str))
+
+        if create_parent:
+            path.parent.mkdir(parents=True, exist_ok=True)
+
+        return path
+
     def validate(self) -> Dict[str, Any]:
         """验证配置"""
         errors = []
         warnings = []
-        
+
         # 检查必需的配置
         required_configs = [
             "app.name",
-            "app.port", 
+            "app.port",
             "agent.name",
             "agent.llm.provider",
             "agent.llm.model"
         ]
-        
+
         for config_key in required_configs:
             value = self.get(config_key)
             if value is None:
                 errors.append(f"Missing required config: {config_key}")
-        
+
         # 检查API密钥
         llm_provider = self.get("agent.llm.provider")
         if llm_provider == "openai":
             api_key = self.get("agent.llm.api_key")
             if not api_key:
                 errors.append("OpenAI API key is required when using OpenAI provider")
-        
+
         # 检查端口范围
         port = self.get("app.port")
         if port and (not isinstance(port, int) or port < 1 or port > 65535):
             errors.append("Invalid port number")
-        
+
         return {
             "valid": len(errors) == 0,
             "errors": errors,

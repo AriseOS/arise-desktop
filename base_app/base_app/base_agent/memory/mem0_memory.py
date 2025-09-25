@@ -27,25 +27,28 @@ class Mem0Memory:
     """
     
     def __init__(
-        self, 
+        self,
         user_id: Optional[str] = None,
-        config: Optional[Dict[str, Any]] = None
+        config: Optional[Dict[str, Any]] = None,
+        config_service=None
     ):
         """
         Initialize Mem0 memory client (local version)
-        
+
         Args:
             user_id: Default user ID for memory operations
             config: Custom configuration for mem0 (vector store, LLM, etc.)
+            config_service: 配置服务实例
         """
         if AsyncMemory is None:
             raise ImportError("mem0ai package is required. Install with: pip install mem0ai")
-        
+
         self.user_id = user_id or "default_user"
-        
+        self.config_service = config_service
+
         # Default configuration for local deployment
         self.config = config or self._get_default_config()
-        
+
         # Initialize local AsyncMemory client
         try:
             # self._client = AsyncMemory(config=self.config)
@@ -90,12 +93,19 @@ class Mem0Memory:
         else:
             logger.warning("OPENAI_API_KEY not found. Mem0 requires an LLM to function.")
         
-        # Vector store configuration (using in-memory for simplicity)
+        # Vector store configuration
+        if self.config_service:
+            # 从配置服务获取路径
+            chroma_path = str(self.config_service.get_path("data.chroma_db"))
+        else:
+            # 应该总是使用配置服务，这里只是为了防止异常
+            chroma_path = "./data/chroma_db"
+
         config["vector_store"] = {
             "provider": "chroma",
             "config": {
                 "collection_name": "mem0_collection",
-                "path": "./chroma_db"  # Local storage path
+                "path": chroma_path
             }
         }
         

@@ -66,55 +66,57 @@ class ScraperAgent(BaseStepAgent):
 4. 包含完整的异常处理
 5. 只返回 Python 代码，不要其他说明文字"""
     
-    def __init__(self, 
-                 metadata: Optional[AgentMetadata] = None, 
+    def __init__(self,
+                 metadata: Optional[AgentMetadata] = None,
                  browser_session: Optional[BrowserSession] = None,
                  controller: Optional[Controller] = None,
                  debug_mode: bool = False,
                  extraction_method: str = 'script',
                  dom_scope: str = 'partial',
+                 config_service=None
 ):
         if not BROWSER_USE_AVAILABLE:
             raise ImportError("browser-use 库未安装，请先安装: pip install browser-use")
-            
+
         if metadata is None:
             metadata = AgentMetadata(
                 name="ScraperAgent",
                 description="基于 browser-use 库的通用爬虫生成和执行代理"
             )
         super().__init__(metadata)
-        
+
+        # 保存配置服务
+        self.config_service = config_service
+
         # 配置参数
         self.debug_mode = debug_mode
         self.extraction_method = extraction_method
         self.dom_scope = dom_scope
-        
+
         # 验证提取方法
         if extraction_method not in ['script', 'llm']:
             raise ValueError(f"不支持的提取方法: {extraction_method}，请使用 'script' 或 'llm'")
-        
+
         # 验证DOM范围
         if dom_scope not in ['partial', 'full']:
             raise ValueError(f"不支持的DOM范围: {dom_scope}，请使用 'partial' 或 'full'")
-        
-        
+
+
         # 直接使用 browser-use 核心组件
         self.browser_session = browser_session or self._create_browser_session()
         self.controller = controller or Controller()
         self.dom_service = DomService(self.browser_session)
         
     def _create_browser_session(self) -> BrowserSession:
-        import os
-        from pathlib import Path
-        
-        # 使用共同的用户数据目录
-        # user_data_dir = os.path.abspath("./data/test_browser_data")
-        user_data_dir = os.path.expanduser("~/.data/test_browser_data")
-        Path(user_data_dir).mkdir(parents=True, exist_ok=True)
-        
+        # 从配置获取用户数据目录
+        if self.config_service:
+            user_data_dir = str(self.config_service.get_path("data.browser_data"))
+        else:
+            raise ValueError("必须提供 config_service 来配置浏览器数据目录")
+
         profile = BrowserProfile(
-            headless=False,  
-            user_data_dir=user_data_dir,  # 使用持久化用户数据
+            headless=False,
+            user_data_dir=user_data_dir,  # 使用配置的用户数据目录
             keep_alive=True,  # 保持浏览器运行
         )
         return BrowserSession(browser_profile=profile)
@@ -867,11 +869,11 @@ def execute_extraction(serialized_dom, dom_dict, max_items: int = 100):
     
     async def _save_dom_to_file(self, dom_content: str, script_key: str) -> None:
         """保存DOM内容到文件用于调试"""
-        import os
-        from pathlib import Path
-        
-        debug_dir = Path("./data/debug")
-        debug_dir.mkdir(parents=True, exist_ok=True)
+        if not self.config_service:
+            logger.warning("无法保存DOM文件: 缺少配置服务")
+            return
+
+        debug_dir = self.config_service.get_path("data.debug")
         
         dom_file = debug_dir / f"{script_key}_dom.txt"
         try:
@@ -886,11 +888,11 @@ def execute_extraction(serialized_dom, dom_dict, max_items: int = 100):
     
     async def _save_script_to_file(self, script_content: str, script_key: str) -> None:
         """保存生成的脚本到文件用于调试"""
-        import os
-        from pathlib import Path
-        
-        debug_dir = Path("./data/debug")
-        debug_dir.mkdir(parents=True, exist_ok=True)
+        if not self.config_service:
+            logger.warning("无法保存脚本文件: 缺少配置服务")
+            return
+
+        debug_dir = self.config_service.get_path("data.debug")
         
         script_file = debug_dir / f"{script_key}_script.py"
         try:
