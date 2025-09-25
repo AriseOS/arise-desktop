@@ -17,6 +17,7 @@ import { logout } from '../store/authSlice';
 import LanguageSwitcher from '../components/LanguageSwitcher';
 import { agentBuildAPI } from '../services/agentBuildAPI';
 import { BuildProgressWebSocket } from '../services/websocketService';
+import WorkflowVisualization from '../components/WorkflowVisualization';
 
 const { Header, Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
@@ -234,6 +235,58 @@ const WorkspacePage: React.FC = () => {
     }
   };
 
+  // 创建一个示例工作流数据用于测试
+  const sampleWorkflowData = {
+    steps: [
+      {
+        id: '1',
+        name: '开始',
+        type: 'start',
+        description: '工作流开始节点'
+      },
+      {
+        id: '2',
+        name: '用户输入分析',
+        type: 'analysis',
+        description: '分析用户输入并提取关键信息'
+      },
+      {
+        id: '3',
+        name: '任务规划',
+        type: 'planning',
+        description: '根据用户需求制定执行计划'
+      },
+      {
+        id: '4',
+        name: '工具执行',
+        type: 'execution',
+        description: '执行具体的工具操作'
+      },
+      {
+        id: '5',
+        name: '结果整合',
+        type: 'integration',
+        description: '整合执行结果并生成响应'
+      },
+      {
+        id: '6',
+        name: '结束',
+        type: 'end',
+        description: '工作流结束节点'
+      }
+    ],
+    connections: [
+      { from: '1', to: '2' },
+      { from: '2', to: '3' },
+      { from: '3', to: '4' },
+      { from: '4', to: '5' },
+      { from: '5', to: '6' }
+    ]
+  };
+
+  // 临时使用示例数据来展示可视化效果
+  const displayWorkflowData = workflowData || sampleWorkflowData;
+
   return (
     <Layout className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -375,12 +428,15 @@ const WorkspacePage: React.FC = () => {
               bodyStyle={{ height: 'calc(100vh - 200px)' }}
             >
               <div className="h-full flex items-center justify-center bg-gray-50 rounded-lg">
-                {workflowData ? (
-                  <div className="text-center">
-                    <Title level={4}>工作流可视化</Title>
-                    <Paragraph>这里将显示 Agent 的工作流结构</Paragraph>
-                    {/* TODO: 实现工作流可视化组件 */}
-                  </div>
+                {displayWorkflowData ? (
+                  <WorkflowVisualization 
+                    workflowData={displayWorkflowData} 
+                    onConnectionsChange={(connections) => {
+                      console.log('连接线已更新:', connections);
+                      // 可以在这里添加保存连接线逻辑
+                      message.info('连接线已更新');
+                    }}
+                  />
                 ) : (
                   <div className="text-center text-gray-500">
                     <RobotOutlined className="text-4xl mb-4" />
