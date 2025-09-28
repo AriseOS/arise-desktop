@@ -35,14 +35,16 @@ class BaseAgent:
     """
     
     def __init__(
-        self, 
+        self,
         config: Optional[AgentConfig] = None,
+        config_service: Optional[Any] = None,
         enable_memory: bool = False,
         memory_config: Optional[Dict[str, Any]] = None,
         provider_config: Optional[Dict[str, Any]] = None
     ):
         # 基础配置
         self.config = config or AgentConfig(name="BaseAgent")
+        self.config_service = config_service  # Store config service
         self.id = str(uuid.uuid4())
         
         # 核心组件

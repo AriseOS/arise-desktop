@@ -16,6 +16,8 @@ from ..agents import (
     AgentRegistry, AgentRouter, AgentExecutor,
     TextAgent, ToolAgent, CodeAgent
 )
+from ..agents.variable_agent import VariableAgent
+from ..agents.scraper_agent import ScraperAgent
 from ..workflows.workflow_loader import ConditionEvaluator
 
 logger = logging.getLogger(__name__)
@@ -35,33 +37,66 @@ class AgentWorkflowEngine:
         self._register_builtin_agents()
     
     def _register_builtin_agents(self):
-        """注册内置Agent"""
-        # 注册Text Agent
-        text_agent = TextAgent()
-        self.agent_registry.register_agent(text_agent)
-        
-        # 注册Tool Agent
-        tool_agent = ToolAgent()
-        self.agent_registry.register_agent(tool_agent)
-        
-        # 注册Code Agent (使用标准名称)
-        code_agent = CodeAgent("python")
-        # 修改Code Agent的名称为标准名称
-        code_agent.metadata.name = "code_agent"
-        self.agent_registry.register_agent(code_agent)
-        
-        logger.info(f"已注册内置Agent: {self.agent_registry.list_agent_names()}")
+        """注册内置Agent工厂函数"""
+        # 获取config_service
+        config_service = getattr(self.agent, 'config_service', None) if self.agent else None
+
+        # 注册Text Agent工厂
+        self.agent_registry.register_agent_factory(
+            "text_agent",
+            lambda config: TextAgent()
+        )
+
+        # 注册Tool Agent工厂
+        self.agent_registry.register_agent_factory(
+            "tool_agent",
+            lambda config: ToolAgent()
+        )
+
+        # 注册Code Agent工厂
+        def create_code_agent(config):
+            agent = CodeAgent("python")
+            agent.metadata.name = "code_agent"
+            return agent
+
+        self.agent_registry.register_agent_factory(
+            "code_agent",
+            create_code_agent
+        )
+
+        # 注册Variable Agent工厂
+        self.agent_registry.register_agent_factory(
+            "variable",
+            lambda config: VariableAgent()
+        )
+
+        # 注册Scraper Agent工厂 - 支持默认配置
+        def create_scraper_agent(config):
+            # 可以从config传递默认值，运行时还能覆盖
+            return ScraperAgent(
+                config_service=config_service,
+                extraction_method=config.get('extraction_method', 'llm'),  # 默认用llm
+                dom_scope=config.get('dom_scope', 'partial'),
+                debug_mode=config.get('debug_mode', False)
+            )
+
+        self.agent_registry.register_agent_factory(
+            "scraper_agent",
+            create_scraper_agent
+        )
+
+        logger.info(f"已注册内置Agent工厂: {self.agent_registry.list_agent_names()}")
     
     async def execute_workflow(
-        self, 
-        steps: List[AgentWorkflowStep], 
+        self,
+        steps: List[AgentWorkflowStep],
         workflow_id: str = None,
         input_data: Dict[str, Any] = None
     ) -> WorkflowResult:
         """执行Agent工作流"""
         start_time = time.time()
         workflow_id = workflow_id or f"agent_workflow_{int(time.time())}"
-        
+
         # 初始化执行上下文
         context = AgentContext(
             workflow_id=workflow_id,
@@ -118,10 +153,10 @@ class AgentWorkflowEngine:
                 success=True,
                 workflow_id=workflow_id,
                 steps=executed_steps,
-                final_result=final_result, 
+                final_result=final_result,
                 total_execution_time=time.time() - start_time
             )
-            
+
         except Exception as e:
             logger.error(f"工作流执行失败: {str(e)}")
             return WorkflowResult(
@@ -131,31 +166,48 @@ class AgentWorkflowEngine:
                 steps=executed_steps,
                 total_execution_time=time.time() - start_time
             )
+        finally:
+            # 清理context的浏览器会话（如果有）
+            await context.cleanup_browser_session()
     
     async def _execute_agent_step(
-        self, 
-        step: AgentWorkflowStep, 
+        self,
+        step: AgentWorkflowStep,
         context: AgentContext
     ) -> StepResult:
         """执行Agent步骤"""
         step_start_time = time.time()
-        
+
         try:
             # 确定Agent类型
             agent_type = step.agent_type
-            
+
             # 解析步骤输入数据
             resolved_input = await self._resolve_step_input(step, context)
-            
+
             # 构建Agent输入
             agent_input = await self._build_agent_input(step, agent_type, resolved_input, context)
             print(f"agent_input {agent_input}")
-            
+
+            # 提取agent配置（从step的agent_config字段或inputs中）
+            agent_config = {}
+
+            # 1. 从step的agent_config字段获取（如果有）
+            if hasattr(step, 'agent_config'):
+                agent_config.update(step.agent_config)
+
+            # 2. 从inputs中提取特定的配置参数
+            config_keys = ['extraction_method', 'dom_scope', 'debug_mode']
+            for key in config_keys:
+                if key in resolved_input:
+                    agent_config[key] = resolved_input[key]
+
             # 执行Agent
             result = await self.agent_executor.execute_agent(
                 agent_type,
                 agent_input,
-                context
+                context,
+                agent_config
             )
             
             return StepResult(
@@ -208,7 +260,26 @@ class AgentWorkflowEngine:
                 "response_style": getattr(step, 'response_style', 'professional'),
                 "max_length": getattr(step, 'max_length', 1000)
             })
-        
+        elif agent_type == "variable":
+            # Variable agent uses step_config for operation details
+            step_data = getattr(step, 'data', {})
+            logger.debug(f"Variable agent step.data: {step_data}")
+            metadata.update({
+                "step_config": {
+                    "operation": getattr(step, 'operation', 'set'),
+                    "data": step_data,
+                    "source": getattr(step, 'source', None),
+                    "field": getattr(step, 'field', None),
+                    "value": getattr(step, 'value', None),
+                    "expression": getattr(step, 'expression', None),
+                    "updates": getattr(step, 'updates', None),
+                    "current_page": getattr(step, 'current_page', None),
+                    "max_pages": getattr(step, 'max_pages', None),
+                    "items_found": getattr(step, 'items_found', None)
+                },
+                "context": context
+            })
+
         return AgentInput(
             instruction=step.agent_instruction,  # 原始指令
             data=resolved_input,                 # 解析后的输入数据

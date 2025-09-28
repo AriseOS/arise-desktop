@@ -67,20 +67,27 @@ class ScraperAgent(BaseStepAgent):
 5. 只返回 Python 代码，不要其他说明文字"""
     
     def __init__(self,
+                 config_service=None,
                  metadata: Optional[AgentMetadata] = None,
-                 browser_session: Optional[BrowserSession] = None,
-                 controller: Optional[Controller] = None,
-                 debug_mode: bool = False,
-                 extraction_method: str = 'script',
-                 dom_scope: str = 'partial',
-                 config_service=None
+                 extraction_method: str = 'llm',  # 默认值
+                 dom_scope: str = 'partial',      # 默认值
+                 debug_mode: bool = False         # 默认值
 ):
+        """初始化，保留默认配置，运行时可覆盖
+
+        Args:
+            config_service: 配置服务（用于获取路径等）
+            metadata: Agent元数据
+            extraction_method: 默认提取方法 ('script' or 'llm')
+            dom_scope: 默认DOM范围 ('partial' or 'full')
+            debug_mode: 默认调试模式
+        """
         if not BROWSER_USE_AVAILABLE:
             raise ImportError("browser-use 库未安装，请先安装: pip install browser-use")
 
         if metadata is None:
             metadata = AgentMetadata(
-                name="ScraperAgent",
+                name="scraper_agent",
                 description="基于 browser-use 库的通用爬虫生成和执行代理"
             )
         super().__init__(metadata)
@@ -88,83 +95,191 @@ class ScraperAgent(BaseStepAgent):
         # 保存配置服务
         self.config_service = config_service
 
-        # 配置参数
-        self.debug_mode = debug_mode
+        # 默认配置（运行时可覆盖）
         self.extraction_method = extraction_method
         self.dom_scope = dom_scope
+        self.debug_mode = debug_mode
 
-        # 验证提取方法
-        if extraction_method not in ['script', 'llm']:
-            raise ValueError(f"不支持的提取方法: {extraction_method}，请使用 'script' 或 'llm'")
+        # 会话管理相关
+        self._session_manager = None
+        self._session_id = None
+        self._is_shared_session = False
 
-        # 验证DOM范围
-        if dom_scope not in ['partial', 'full']:
-            raise ValueError(f"不支持的DOM范围: {dom_scope}，请使用 'partial' 或 'full'")
-
-
-        # 直接使用 browser-use 核心组件
-        self.browser_session = browser_session or self._create_browser_session()
-        self.controller = controller or Controller()
-        self.dom_service = DomService(self.browser_session)
-        
-    def _create_browser_session(self) -> BrowserSession:
-        # 从配置获取用户数据目录
-        if self.config_service:
-            user_data_dir = str(self.config_service.get_path("data.browser_data"))
-        else:
-            raise ValueError("必须提供 config_service 来配置浏览器数据目录")
-
-        profile = BrowserProfile(
-            headless=False,
-            user_data_dir=user_data_dir,  # 使用配置的用户数据目录
-            keep_alive=True,  # 保持浏览器运行
-        )
-        return BrowserSession(browser_profile=profile)
+        # browser-use 组件将在initialize时设置
+        self.browser_session = None
+        self.controller = None
+        self.dom_service = None
     
     async def initialize(self, context: AgentContext) -> bool:
-        # 启动浏览器会话
+        """初始化Agent，从context获取浏览器会话"""
         try:
-            await self.browser_session.start()
+            # 从context获取浏览器会话（懒加载）
+            session_info = await context.get_browser_session()
+
+            # 设置browser-use组件
+            self.browser_session = session_info.session
+            self.controller = session_info.controller
+            self.dom_service = session_info.dom_service
+
+            # 标记已初始化
             self.is_initialized = True
+
+            logger.info(f"ScraperAgent初始化成功，使用workflow {context.workflow_id} 的共享会话")
             return True
+
         except Exception as e:
-            logger.error(f"浏览器会话启动失败: {e}")
+            logger.error(f"ScraperAgent初始化失败: {e}")
             return False
+
+    def _parse_runtime_config(self, input_data: Dict) -> Dict:
+        """解析运行时配置
+
+        Args:
+            input_data: 输入数据字典
+
+        Returns:
+            配置字典，包含extraction_method, dom_scope, debug_mode等
+        """
+        config = {}
+
+        # 提取配置参数（支持从顶层或options中获取）
+        options = input_data.get('options', {})
+
+        # extraction_method - 默认使用 llm 避免 memory 依赖
+        config['extraction_method'] = (
+            input_data.get('extraction_method') or
+            options.get('extraction_method') or
+            'llm'
+        )
+
+        # dom_scope - 默认 partial
+        config['dom_scope'] = (
+            input_data.get('dom_scope') or
+            options.get('dom_scope') or
+            'partial'
+        )
+
+        # debug_mode - 默认 False
+        config['debug_mode'] = (
+            input_data.get('debug_mode') or
+            options.get('debug_mode') or
+            False
+        )
+
+        # max_items 和 timeout
+        config['max_items'] = (
+            input_data.get('max_items') or
+            options.get('max_items') or
+            10
+        )
+
+        config['timeout'] = (
+            input_data.get('timeout') or
+            options.get('timeout') or
+            30
+        )
+
+        # 验证配置值
+        if config['extraction_method'] not in ['script', 'llm']:
+            raise ValueError(f"不支持的提取方法: {config['extraction_method']}，请使用 'script' 或 'llm'")
+
+        if config['dom_scope'] not in ['partial', 'full']:
+            raise ValueError(f"不支持的DOM范围: {config['dom_scope']}，请使用 'partial' 或 'full'")
+
+        logger.debug(f"运行时配置: {config}")
+        return config
     
     async def validate_input(self, input_data: Any) -> bool:
         """验证输入数据"""
-        if not isinstance(input_data, dict):
+        # Handle AgentInput type from workflow engine
+        from ..core.schemas import AgentInput
+
+        if isinstance(input_data, AgentInput):
+            actual_data = input_data.data
+        elif isinstance(input_data, dict):
+            actual_data = input_data
+        else:
             return False
-        
-        mode = input_data.get('mode')
+
+        mode = actual_data.get('mode')
         if mode not in ['initialize', 'execute']:
             return False
-        
+
         if mode == 'initialize':
             required_fields = ['sample_path', 'data_requirements']
-            return all(field in input_data for field in required_fields)
-        
+            return all(field in actual_data for field in required_fields)
+
         elif mode == 'execute':
             required_fields = ['target_path', 'data_requirements']
-            return all(field in input_data for field in required_fields)
-        
+            return all(field in actual_data for field in required_fields)
+
         return False
     
     async def execute(self, input_data: Any, context: AgentContext) -> Any:
         """执行代理任务"""
         if not self.is_initialized:
             raise RuntimeError("代理未初始化")
-        
-        mode = input_data.get('mode')
-        
+
+        # Handle AgentInput type from workflow engine
+        from ..core.schemas import AgentInput, AgentOutput
+
+        if isinstance(input_data, AgentInput):
+            actual_data = input_data.data
+        else:
+            actual_data = input_data
+
+        # 从输入数据中提取配置（运行时决定所有行为）
+        config = self._parse_runtime_config(actual_data)
+
+        # 运行时覆盖实例变量
+        self.extraction_method = config['extraction_method']
+        self.dom_scope = config['dom_scope']
+        self.debug_mode = config['debug_mode']
+
+        # 检查是否需要切换会话
+        requested_session_id = actual_data.get('session_id') if isinstance(actual_data, dict) else None
+        if requested_session_id and requested_session_id != self._session_id:
+            logger.info(f"切换会话: {self._session_id} -> {requested_session_id}")
+
+            # 释放当前会话引用
+            if self._session_id and self._session_manager:
+                self._session_manager.release_session(self._session_id)
+
+            # 获取新会话
+            session_info = await self._session_manager.get_or_create_session(
+                session_id=requested_session_id,
+                config_service=self.config_service
+            )
+
+            self.browser_session = session_info.session
+            self.controller = session_info.controller
+            self.dom_service = session_info.dom_service
+            self._session_id = requested_session_id
+
+            # 更新context中的session_id
+            context.variables['browser_session_id'] = self._session_id
+
+        mode = actual_data.get('mode')
+
         if mode == 'initialize':
-            return await self._handle_initialize(input_data, context)
+            result = await self._handle_initialize(actual_data, context, config)
         elif mode == 'execute':
-            return await self._handle_execute(input_data, context)
+            result = await self._handle_execute(actual_data, context, config)
         else:
             raise ValueError(f"不支持的模式: {mode}")
+
+        # Wrap result in AgentOutput for workflow engine
+        if isinstance(input_data, AgentInput):
+            return AgentOutput(
+                success=result.get('success', False),
+                data=result,
+                message=result.get('message', '')
+            )
+        else:
+            return result
+
     
-    async def _handle_initialize(self, input_data: Dict, context: AgentContext) -> Dict:
+    async def _handle_initialize(self, input_data: Dict, context: AgentContext, config: Dict) -> Dict:
         """初始化模式: 访问样本页面并使用配置的方法提取数据"""
         sample_path = input_data['sample_path']
         data_requirements = input_data['data_requirements']
@@ -183,26 +298,27 @@ class ScraperAgent(BaseStepAgent):
             
             # 获取DOM数据并调用对应的提取方法
             extraction_result = await self._extract_data_from_current_page(
-                data_requirements, 
+                data_requirements,
                 max_items=10,  # 初始化阶段只测试提取少量数据
                 timeout=30,
                 context=context,
-                is_initialize=True
+                is_initialize=True,
+                config=config  # 传递配置
             )
-            
+
             # 返回结果
             if extraction_result["success"]:
                 return self._create_response(
-                    True, 'initialize', 
-                    f'初始化成功，使用{self.extraction_method}模式提取了{extraction_result["total_count"]}条测试数据',
-                    extraction_method=self.extraction_method,
+                    True, 'initialize',
+                    f'初始化成功，使用{config["extraction_method"]}模式提取了{extraction_result["total_count"]}条测试数据',
+                    extraction_method=config['extraction_method'],
                     test_data=extraction_result["data"],
                     total_count=extraction_result["total_count"]
                 )
             else:
                 return self._create_response(
-                    False, 'initialize', f'初始化失败，{self.extraction_method}模式提取数据失败',
-                    extraction_method=self.extraction_method,
+                    False, 'initialize', f'初始化失败，{config["extraction_method"]}模式提取数据失败',
+                    extraction_method=config['extraction_method'],
                     error=extraction_result["error"]
                 )
             
@@ -231,6 +347,7 @@ class ScraperAgent(BaseStepAgent):
                 # All navigation happens in the same tab
                 action_data = {'go_to_url': GoToUrlAction(url=url, new_tab=False)}
                 result = await self.controller.act(GoToUrlActionModel(**action_data), self.browser_session)
+                await asyncio.sleep(3)
                 
                 # Check for explicit failure
                 if result.success is False:
@@ -298,54 +415,54 @@ class ScraperAgent(BaseStepAgent):
             logger.error(f"交互步骤执行失败: {e}")
             return ActionResult(success=False, error=str(e))
 
-    async def _handle_execute(self, input_data: Dict, context: AgentContext) -> Dict:
+    async def _handle_execute(self, input_data: Dict, context: AgentContext, config: Dict) -> Dict:
         """执行模式: 访问目标页面并使用配置的方法提取数据"""
         target_path = input_data['target_path']
         data_requirements = input_data['data_requirements']
         interaction_steps = input_data.get('interaction_steps', [])
-        
+
         try:
-            # 提取执行参数
-            options = input_data.get('options', {})
-            max_items = options.get('max_items', 100)
-            timeout = options.get('timeout', 90)
-            
+            # 使用config中的参数
+            max_items = config['max_items']
+            timeout = config['timeout']
+
             # 导航到目标页面并执行交互
             navigate_result = await self._navigate_to_pages(target_path, interaction_steps)
-            
+
             if navigate_result.success is False:
                 return self._create_response(
                     False, 'execute', '无法访问目标页面',
                     error=f'页面导航失败: {navigate_result.error}'
                 )
-            
+
             # 获取DOM数据并调用对应的提取方法
             extraction_result = await self._extract_data_from_current_page(
-                data_requirements, 
+                data_requirements,
                 max_items,
                 timeout,
                 context=context,
-                is_initialize=False
+                is_initialize=False,
+                config=config  # 传递配置
             )
-            
+
             # 返回执行结果
             if extraction_result["success"]:
                 return self._create_response(
-                    True, 'execute', 
-                    f'成功提取{extraction_result["total_count"]}条数据，使用{self.extraction_method}模式',
-                    extraction_method=self.extraction_method,
+                    True, 'execute',
+                    f'成功提取{extraction_result["total_count"]}条数据，使用{config["extraction_method"]}模式',
+                    extraction_method=config['extraction_method'],
                     extracted_data=extraction_result["data"],
                     metadata={
                         'total_items': extraction_result["total_count"],
                         'target_path': target_path,
-                        'extraction_method': self.extraction_method,
+                        'extraction_method': config['extraction_method'],
                         'execution_time': datetime.now().isoformat()
                     }
                 )
             else:
                 return self._create_response(
-                    False, 'execute', f'数据提取失败，{self.extraction_method}模式',
-                    extraction_method=self.extraction_method, 
+                    False, 'execute', f'数据提取失败，{config["extraction_method"]}模式',
+                    extraction_method=config['extraction_method'],
                     error=extraction_result["error"]
                 )
                 
@@ -357,21 +474,22 @@ class ScraperAgent(BaseStepAgent):
             )
     
     async def _extract_data_from_current_page(
-        self, 
-        data_requirements: str, 
+        self,
+        data_requirements: str,
         max_items: int,
         timeout: int,
         context: Optional[AgentContext] = None,
-        is_initialize: bool = False
+        is_initialize: bool = False,
+        config: Optional[Dict] = None
     ) -> Dict[str, Any]:
         """从当前页面提取数据的统一入口"""
-        
+
         try:
             # 根据配置决定DOM范围，初始化阶段强制使用partial
             effective_dom_scope = "partial" if is_initialize else self.dom_scope
             
             # 获取基础DOM
-            serialized_dom, enhanced_dom, timing = await self.dom_service.get_serialized_dom_tree()
+            _, enhanced_dom, _= await self.dom_service.get_serialized_dom_tree()
             
             # 使用新的DOM API
             from ..tools.browser_use.dom_extractor import extract_dom_dict, extract_llm_view, DOMExtractor
@@ -397,16 +515,16 @@ class ScraperAgent(BaseStepAgent):
                 logger.info(f"DOM范围: {effective_dom_scope}")
                 logger.info(f"DOM元素总数: {len(target_dom.selector_map) if hasattr(target_dom, 'selector_map') else '未知'}")
                 logger.info(f"有意义元素数: {len(json.loads(llm_view)) if llm_view != '[]' else 0}")
-                
+
                 # 保存DOM到文件
                 import time
                 debug_key = f"extraction_{self.extraction_method}_{effective_dom_scope}_{int(time.time())}"
-                
+
                 # 使用人类可读的JSON格式保存到文件
                 dom_representation = json.dumps(dom_dict, indent=2, ensure_ascii=False)
-                
+
                 await self._save_dom_to_file(dom_representation, debug_key)
-            
+
             # 根据配置的提取方法调用对应函数
             if self.extraction_method == 'script':
                 return await self._extract_with_script(
@@ -502,99 +620,164 @@ class ScraperAgent(BaseStepAgent):
             logger.error(f"脚本模式提取失败: {e}")
             return self._create_error_result(str(e))
     
+    def _parse_llm_json(self, text: str) -> Optional[List[Dict]]:
+        """Parse JSON from LLM response - simple and robust"""
+        import re
+
+        if not text:
+            return None
+
+        # Step 1: Extract JSON array (handle markdown blocks)
+        text = text.strip()
+        if '```' in text:
+            match = re.search(r'```(?:json)?\s*(.*?)\s*```', text, re.DOTALL)
+            if match:
+                text = match.group(1).strip()
+
+        # Find array pattern
+        match = re.search(r'(\[.*\])', text, re.DOTALL)
+        if not match:
+            return None
+
+        json_str = match.group(1)
+
+        # Step 2: Normalize Chinese punctuation
+        cn_to_en = {
+            '"': '"', '"': '"',  # Chinese quotes
+            ''': "'", ''': "'",  # Chinese apostrophes
+            '，': ',', '：': ':',  # Chinese comma/colon
+            '；': ';',            # Chinese semicolon
+        }
+        for cn, en in cn_to_en.items():
+            json_str = json_str.replace(cn, en)
+
+        # Step 3: Try parse directly
+        try:
+            data = json.loads(json_str)
+            return data if isinstance(data, list) else None
+        except json.JSONDecodeError:
+            pass
+
+        # Step 4: Fallback - clean nested quotes in values
+        # Remove any quotes inside string values
+        def clean_value(match):
+            value = match.group(1)
+            # Remove all quotes and apostrophes from value
+            value = value.replace('"', '').replace("'", '')
+            return f'"{value}"'
+
+        json_str = re.sub(r'"([^"]*)"(?=[,\}\]])', clean_value, json_str)
+
+        # Final attempt
+        try:
+            data = json.loads(json_str)
+            return data if isinstance(data, list) else None
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse JSON: {e}")
+            logger.debug(f"Problematic JSON: {json_str[:200]}...")
+            return None
+
+    def _build_extraction_prompt(self, dom_text: str, requirements: Dict, max_items: int) -> str:
+        """Build extraction prompt from requirements"""
+        user_desc = requirements.get('user_description', '')
+        output_format = requirements.get('output_format', {})
+        sample_data = requirements.get('sample_data', [])
+
+        # Format field descriptions
+        fields = "\n".join([
+            f"- {name}: {desc}"
+            for name, desc in output_format.items()
+        ])
+
+        # Format sample if provided
+        sample = ""
+        if sample_data:
+            sample = f"\n\nSample output:\n{json.dumps(sample_data, indent=2, ensure_ascii=False)}"
+
+        return f"""Extract data from HTML DOM:
+
+Requirement: {user_desc}
+Fields:
+{fields}
+
+Max items: {max_items}
+DOM scope: {self.dom_scope}{sample}
+
+HTML DOM:
+{dom_text}
+
+CRITICAL RULES:
+1. Return JSON array ONLY, no other text
+2. NO markdown blocks (no ```)
+3. NO quotes or apostrophes inside field values
+4. Replace ALL quotes in values with spaces or dashes
+5. Example: Change "User's comment" to "User comment"
+6. Example: Change 'Product "ABC"' to 'Product ABC'
+
+CORRECT format:
+[{{"text": "Hot topic about technology"}}, {{"text": "User comment on product"}}]
+
+WRONG format:
+[{{"text": "User said 'hello'"}}, {{"text": "Product "ABC" review"}}]
+
+Extract data now:"""
+
     async def _extract_with_llm(
         self,
         dom_dict: Dict,
         llm_view: str,
-        data_requirements: Dict,  # 改为字典格式
+        data_requirements: Dict,
         max_items: int,
         timeout: int
     ) -> Dict[str, Any]:
-        """使用大模型直接提取数据"""
+        """Extract data using LLM with simplified logic"""
         try:
-            # 使用LLM视图作为DOM文本
-            dom_text = llm_view
-            
-            # 解析新的data_requirements格式
-            user_description = data_requirements.get('user_description', '')
-            output_format = data_requirements.get('output_format', {})
-            sample_data = data_requirements.get('sample_data', [])
-            
-            # 构建字段说明
-            fields_description = ""
-            for field_name, field_desc in output_format.items():
-                fields_description += f"- {field_name}: {field_desc}\n"
-            
-            # 构建样例说明
-            sample_description = ""
-            if sample_data and len(sample_data) > 0:
-                sample_description = f"\n\n参考样例数据：\n{json.dumps(sample_data, indent=2, ensure_ascii=False)}"
-            
-            # 准备大模型提取的提示
-            prompt = f"""
-从以下HTML DOM结构中提取数据：
+            # Build extraction prompt
+            prompt = self._build_extraction_prompt(
+                llm_view,
+                data_requirements,
+                max_items
+            )
 
-用户需求：{user_description}
-
-输出字段说明：
-{fields_description}
-最大数量: {max_items}
-DOM范围: {self.dom_scope}{sample_description}
-
-HTML DOM结构（简化视图）:
-{dom_text}
-
-请严格按照输出字段说明提取数据，以JSON数组格式返回。每个对象包含指定的字段。
-只返回JSON数组，不要其他文字。
-"""
-            
+            # Get LLM response
             llm_provider = AnthropicProvider()
             response = await llm_provider.generate_response(
-                system_prompt="你是数据提取专家，从HTML中提取结构化数据并返回有效的JSON格式。",
+                system_prompt="You are a data extraction expert. Return only JSON array, no markdown, no explanations.",
                 user_prompt=prompt
             )
-            
-            # 解析JSON响应
-            import re
-            json_match = re.search(r'\[.*\]', response, re.DOTALL)
-            if json_match:
-                try:
-                    extracted_data = json.loads(json_match.group())
-                    if isinstance(extracted_data, list):
-                        limited_data = extracted_data[:max_items] if max_items > 0 else extracted_data
-                        return {
-                            "success": True,
-                            "data": limited_data,
-                            "total_count": len(limited_data),
-                            "dom_config": {
-                                "dom_scope": self.dom_scope
-                            },
-                            "error": None
-                        }
-                except json.JSONDecodeError as e:
-                    logger.error(f"JSON解析失败: {e}")
-                    
-            # 备用方案：尝试解析整个响应
-            try:
-                extracted_data = json.loads(response.strip())
-                if isinstance(extracted_data, list):
-                    limited_data = extracted_data[:max_items] if max_items > 0 else extracted_data
-                    return {
-                        "success": True,
-                        "data": limited_data,
-                        "total_count": len(limited_data),
-                        "dom_config": {
-                            "dom_scope": self.dom_scope
-                        },
-                        "error": None
-                    }
-            except json.JSONDecodeError:
-                pass
-                
-            return self._create_error_result("LLM未返回有效的JSON格式")
-            
+
+            # Enhanced logging for debugging
+            logger.info(f"LLM response length: {len(response)}")
+            logger.info(f"LLM response preview: {response[:500]}...")
+
+            # Parse response
+            extracted_data = self._parse_llm_json(response)
+
+            # Log parsing result
+            if extracted_data:
+                logger.info(f"Successfully parsed {len(extracted_data)} items")
+            else:
+                logger.warning(f"Failed to parse LLM response")
+                logger.info(f"Full LLM response: {response}")
+
+            if extracted_data:
+                # Limit results if needed
+                if max_items > 0:
+                    extracted_data = extracted_data[:max_items]
+
+                return {
+                    "success": True,
+                    "data": extracted_data,
+                    "total_count": len(extracted_data),
+                    "dom_config": {"dom_scope": self.dom_scope},
+                    "error": None
+                }
+
+            logger.warning("No valid data extracted from LLM response")
+            return self._create_error_result("Failed to extract valid JSON from LLM")
+
         except Exception as e:
-            logger.error(f"LLM模式提取失败: {e}")
+            logger.error(f"LLM extraction error: {e}")
             return self._create_error_result(str(e))
     
     async def _execute_generated_script_direct(
@@ -904,4 +1087,6 @@ def execute_extraction(serialized_dom, dom_dict, max_items: int = 100):
             logger.info(f"生成的脚本已保存到: {script_file}")
         except Exception as e:
             logger.warning(f"保存脚本文件失败: {e}")
-    
+
+    # cleanup 方法不再需要，由context统一管理浏览器会话生命周期
+
