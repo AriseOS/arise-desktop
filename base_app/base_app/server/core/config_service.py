@@ -38,9 +38,10 @@ class ConfigService:
         search_paths = []
 
         # Find default config relative to this file's location
-        # ConfigService is at: base_app/server/core/config_service.py
+        # ConfigService is at: base_app/base_app/server/core/config_service.py
         # Default config at: base_app/config/baseapp.yaml
-        code_dir = Path(__file__).parent.parent.parent  # base_app directory
+        # Need to go up 4 levels: core -> server -> base_app -> base_app (root)
+        code_dir = Path(__file__).parent.parent.parent.parent  # project base_app directory
         default_config = code_dir / 'config' / 'baseapp.yaml'
         if default_config.exists():
             search_paths.append(default_config)

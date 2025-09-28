@@ -34,12 +34,24 @@ async def simple_dom_test():
 
     print("=== Simple DOM Test ===")
 
-    # Load test configuration
-    test_config_path = Path(__file__).parent.parent.parent.parent / "test_config.yaml"
-    config_service = ConfigService(config_path=str(test_config_path))
+    # Load configuration - ConfigService will automatically find config file
+    try:
+        config_service = ConfigService()
+        print(f"Loaded config from: {config_service.config_path}")
+    except FileNotFoundError:
+        # If no config found, use default paths
+        print("No config file found, using default configuration")
+        config_service = None
 
-    # Get browser user data directory from config
-    user_data_dir = str(config_service.get_path("data.browser_data"))
+    # Get browser user data directory
+    if config_service:
+        user_data_dir = str(config_service.get("data.browser_data", "~/claude/browser_data"))
+        # Expand ~ in path
+        user_data_dir = os.path.expanduser(user_data_dir)
+    else:
+        # Use default path
+        user_data_dir = os.path.expanduser("~/claude/browser_data")
+
     print(f"User data directory: {user_data_dir}")
     
     # Create browser profile
@@ -67,8 +79,8 @@ async def simple_dom_test():
         
         # Navigate to Allegro coffee category page
         # test_url = "https://allegro.pl/kategoria/kawa-kawa-mielona-74033"
-        test_url = "https://allegro.pl/oferta/kawa-mielona-lavazza-qualita-oro-250g-17837534792"
-        # test_url = "http://example.com"
+        # test_url = "https://allegro.pl/oferta/kawa-mielona-lavazza-qualita-oro-250g-17837534792"
+        test_url = "http://baidu.com"
         print(f"Navigating to {test_url}...")
         
         goto_action = {'go_to_url': GoToUrlAction(url=test_url)}

@@ -6,7 +6,10 @@ import uuid
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # ==================== Agent Core Schemas ====================
@@ -123,23 +126,77 @@ class AgentContext(BaseModel):
     # 工作流信息
     workflow_id: str = Field(..., description="工作流ID")
     step_id: str = Field(..., description="当前步骤ID")
-    
+
     # 数据上下文
     variables: Dict[str, Any] = Field(default_factory=dict, description="上下文变量")
     step_results: Dict[str, Any] = Field(default_factory=dict, description="步骤结果")
-    
+
     # 执行环境
     agent_instance: Optional[Any] = Field(default=None, description="BaseAgent实例")
     tools_registry: Optional[Any] = Field(default=None, description="工具注册表")
     memory_manager: Optional[Any] = Field(default=None, description="内存管理器")
-    
+
     # 执行控制
     timeout: int = Field(default=300, description="超时时间")
     retry_count: int = Field(default=0, description="重试次数")
-    
+
     # 日志和监控
     logger: Optional[Any] = Field(default=None, description="日志记录器")
     metrics: Dict[str, Any] = Field(default_factory=dict, description="执行指标")
+
+    # 私有字段 - 浏览器会话管理
+    _browser_session_manager: Optional[Any] = PrivateAttr(default=None)
+    _browser_session_info: Optional[Any] = PrivateAttr(default=None)
+
+    class Config:
+        """Pydantic配置"""
+        arbitrary_types_allowed = True
+
+    async def get_browser_session(self):
+        """获取浏览器会话（懒加载）
+
+        第一次调用时创建会话，后续调用返回已有会话。
+        所有需要浏览器的Agent都会共享同一个会话。
+        """
+        if not self._browser_session_info:
+            # 动态导入，避免循环依赖
+            from ..tools.browser_session_manager import BrowserSessionManager
+
+            # 获取会话管理器
+            if not self._browser_session_manager:
+                self._browser_session_manager = await BrowserSessionManager.get_instance()
+
+            # 获取配置服务
+            config_service = getattr(self.agent_instance, 'config_service', None)
+
+            # 创建或获取会话
+            self._browser_session_info = await self._browser_session_manager.get_or_create_session(
+                session_id=self.workflow_id,
+                config_service=config_service,
+                headless=False,  # 可以从配置中读取
+                keep_alive=True
+            )
+
+            if self.logger:
+                self.logger.info(f"Workflow {self.workflow_id} 创建浏览器会话")
+            else:
+                logger.info(f"Workflow {self.workflow_id} 创建浏览器会话")
+
+        return self._browser_session_info
+
+    async def cleanup_browser_session(self):
+        """清理浏览器会话引用
+
+        释放会话引用，但不关闭浏览器（可能有其他workflow在使用）。
+        """
+        if self._browser_session_info and self._browser_session_manager:
+            self._browser_session_manager.release_session(self.workflow_id)
+            if self.logger:
+                self.logger.info(f"Workflow {self.workflow_id} 释放浏览器会话引用")
+            else:
+                logger.info(f"Workflow {self.workflow_id} 释放浏览器会话引用")
+
+            self._browser_session_info = None
 
 
 # ==================== Workflow Schemas ====================
@@ -205,6 +262,18 @@ class AgentWorkflowStep(BaseModel):
     steps: Optional[List['AgentWorkflowStep']] = Field(default=None, description="while循环体步骤")
     max_iterations: Optional[int] = Field(default=10, description="while最大循环次数")
     loop_timeout: Optional[int] = Field(default=300, description="while循环超时时间")
+
+    # Variable Agent 特有配置
+    operation: Optional[str] = Field(default=None, description="Variable operation type")
+    data: Optional[Dict[str, Any]] = Field(default=None, description="Data for set operation")
+    source: Optional[str] = Field(default=None, description="Source variable for operations")
+    field: Optional[str] = Field(default=None, description="Field for extract operation")
+    value: Optional[Any] = Field(default=None, description="Value for increment/decrement")
+    expression: Optional[str] = Field(default=None, description="Expression for calculate")
+    updates: Optional[Dict[str, Any]] = Field(default=None, description="Updates for update operation")
+    current_page: Optional[Any] = Field(default=None, description="Current page for condition check")
+    max_pages: Optional[Any] = Field(default=None, description="Max pages for condition check")
+    items_found: Optional[Any] = Field(default=None, description="Items found for condition check")
 
 
 class StepResult(BaseModel):

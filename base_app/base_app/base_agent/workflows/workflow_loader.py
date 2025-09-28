@@ -99,7 +99,9 @@ class WorkflowValidator:
     AGENT_SPECIFIC_FIELDS = {
         'tool_agent': ['tools'],
         'code_agent': ['code'],
-        'text_agent': ['text']
+        'text_agent': ['text'],
+        'variable': [],  # Variable agent doesn't require specific fields
+        'scraper_agent': []  # Scraper agent doesn't require specific fields
     }
     
     def validate(self, config: Dict[str, Any]) -> List[str]:
@@ -165,7 +167,7 @@ class WorkflowValidator:
             
             # 验证 agent_type
             agent_type = step.get('agent_type')
-            if agent_type not in ['text_agent', 'tool_agent', 'code_agent', 'if', 'while']:
+            if agent_type not in ['text_agent', 'tool_agent', 'code_agent', 'variable', 'scraper_agent', 'if', 'while']:
                 errors.append(f"{step_prefix}: 不支持的 agent_type '{agent_type}'")
             
             # 验证控制流特定配置
@@ -182,9 +184,11 @@ class WorkflowValidator:
                     errors.append(f"{step_prefix}: while类型必须有steps字段")
             elif agent_type in self.AGENT_SPECIFIC_FIELDS:
                 # 验证普通agent类型特定配置
-                required_field = self.AGENT_SPECIFIC_FIELDS[agent_type][0]
-                if required_field not in step:
-                    errors.append(f"{step_prefix}: {agent_type} 类型缺少 {required_field} 配置")
+                required_fields = self.AGENT_SPECIFIC_FIELDS[agent_type]
+                if required_fields:  # Only check if there are required fields
+                    required_field = required_fields[0]
+                    if required_field not in step:
+                        errors.append(f"{step_prefix}: {agent_type} 类型缺少 {required_field} 配置")
             
             # 验证条件表达式格式（如果存在）
             if 'condition' in step:
@@ -291,16 +295,16 @@ class WorkflowConfigLoader:
     def load_builtin_workflow(self, workflow_name: str) -> Workflow:
         """
         加载内置工作流
-        
+
         Args:
             workflow_name: 工作流名称
-            
+
         Returns:
             Workflow: 工作流对象
         """
         builtin_dir = Path(__file__).parent / "builtin"
         workflow_file = builtin_dir / f"{workflow_name}.yaml"
-        
+
         if not workflow_file.exists():
             # 尝试查找其他格式
             for ext in ['.yml', '.json']:
@@ -310,7 +314,32 @@ class WorkflowConfigLoader:
                     break
             else:
                 raise FileNotFoundError(f"内置工作流 '{workflow_name}' 不存在")
-        
+
+        return self.load_from_file(workflow_file)
+
+    def load_user_workflow(self, workflow_name: str) -> Workflow:
+        """
+        加载用户工作流
+
+        Args:
+            workflow_name: 工作流名称
+
+        Returns:
+            Workflow: 工作流对象
+        """
+        user_dir = Path(__file__).parent / "user"
+        workflow_file = user_dir / f"{workflow_name}.yaml"
+
+        if not workflow_file.exists():
+            # 尝试查找其他格式
+            for ext in ['.yml', '.json']:
+                alt_file = user_dir / f"{workflow_name}{ext}"
+                if alt_file.exists():
+                    workflow_file = alt_file
+                    break
+            else:
+                raise FileNotFoundError(f"用户工作流 '{workflow_name}' 不存在")
+
         return self.load_from_file(workflow_file)
     
     def list_builtin_workflows(self) -> List[str]:
@@ -422,32 +451,52 @@ class WorkflowConfigLoader:
             # 处理循环体
             if 'steps' in step_config:
                 step.steps = [self._create_workflow_step(sub_step) for sub_step in step_config['steps']]
-            
+
             # 处理循环限制配置
             step.max_iterations = step_config.get('max_iterations', 10)
             step.loop_timeout = step_config.get('timeout', 300)
-        
+
+        elif step_config['agent_type'] == 'variable':
+            # 处理Variable Agent特有配置
+            step.operation = step_config.get('operation')
+            step.data = step_config.get('data')
+            step.source = step_config.get('source')
+            step.field = step_config.get('field')
+            step.value = step_config.get('value')
+            step.expression = step_config.get('expression')
+            step.updates = step_config.get('updates')
+            step.current_page = step_config.get('current_page')
+            step.max_pages = step_config.get('max_pages')
+            step.items_found = step_config.get('items_found')
+
         return step
 
 
 def load_workflow(workflow_name_or_path: str) -> Workflow:
     """
     加载工作流（便捷函数）
-    
+
     Args:
-        workflow_name_or_path: 工作流名称（内置）或文件路径
-        
+        workflow_name_or_path: 工作流名称（内置或用户）或文件路径
+
     Returns:
         Workflow: 工作流对象
     """
     loader = WorkflowConfigLoader()
-    
+
     # 检查是否是文件路径
     if '/' in workflow_name_or_path or '\\' in workflow_name_or_path or '.' in workflow_name_or_path:
         return loader.load_from_file(workflow_name_or_path)
     else:
-        # 尝试加载内置工作流
-        return loader.load_builtin_workflow(workflow_name_or_path)
+        # 先尝试加载内置工作流
+        try:
+            return loader.load_builtin_workflow(workflow_name_or_path)
+        except FileNotFoundError:
+            # 再尝试加载用户工作流
+            try:
+                return loader.load_user_workflow(workflow_name_or_path)
+            except FileNotFoundError:
+                raise FileNotFoundError(f"工作流 '{workflow_name_or_path}' 在内置和用户目录中都不存在")
 
 
 def list_workflows() -> Dict[str, List[str]]:
