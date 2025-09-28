@@ -238,49 +238,176 @@ const WorkspacePage: React.FC = () => {
   // 创建一个示例工作流数据用于测试
   const sampleWorkflowData = {
     steps: [
+      // 开始节点
       {
-        id: '1',
+        id: 'start',
         name: '开始',
         type: 'start',
-        description: '工作流开始节点'
+        description: '分页商品爬取工作流开始'
       },
+      // 步骤1: 初始化全局变量
       {
-        id: '2',
-        name: '用户输入分析',
-        type: 'analysis',
-        description: '分析用户输入并提取关键信息'
+        id: 'init-global-vars',
+        name: '初始化全局变量',
+        type: 'text_agent',
+        description: '初始化分页循环和数据收集所需的变量'
       },
+      // 步骤2: 打开浏览器会话
       {
-        id: '3',
-        name: '任务规划',
-        type: 'planning',
-        description: '根据用户需求制定执行计划'
+        id: 'init-browser',
+        name: '初始化浏览器',
+        type: 'tool_agent',
+        description: '创建浏览器会话用于后续页面访问'
       },
+      // 步骤3: 外层循环 - 遍历所有页面
       {
-        id: '4',
-        name: '工具执行',
-        type: 'execution',
-        description: '执行具体的工具操作'
+        id: 'page-iteration-loop',
+        name: '页面遍历循环',
+        type: 'loop',
+        description: '遍历多个列表页面',
+        data: {
+          condition: '{{current_page}} <= {{max_pages}} && {{has_next_page}} == true'
+        }
       },
+      // 步骤3.1: 构建当前页URL
       {
-        id: '5',
-        name: '结果整合',
-        type: 'integration',
-        description: '整合执行结果并生成响应'
+        id: 'build-page-url',
+        name: '构建当前页URL',
+        type: 'text_agent',
+        description: '根据页码构建完整的列表页URL'
       },
+      // 步骤3.2: 打开列表页
       {
-        id: '6',
+        id: 'open-list-page',
+        name: '打开商品列表页',
+        type: 'tool_agent',
+        description: '导航到当前列表页'
+      },
+      // 步骤3.3: 提取商品URL列表
+      {
+        id: 'extract-product-urls',
+        name: '提取商品链接',
+        type: 'scraper_agent',
+        description: '从列表页提取所有商品的详情页链接'
+      },
+      // 步骤3.4: 初始化商品循环变量
+      {
+        id: 'init-product-loop-vars',
+        name: '初始化商品循环变量',
+        type: 'text_agent',
+        description: '为内层商品循环准备变量'
+      },
+      // 步骤3.5: 内层循环 - 遍历当前页商品
+      {
+        id: 'product-iteration-loop',
+        name: '商品数据收集循环',
+        type: 'loop',
+        description: '遍历当前页的所有商品并收集数据',
+        data: {
+          condition: '{{product_index}} < {{total_products_in_page}}'
+        }
+      },
+      // 步骤3.5.1: 获取当前商品信息
+      {
+        id: 'get-current-product',
+        name: '获取当前商品',
+        type: 'text_agent',
+        description: '从列表中获取当前索引的商品'
+      },
+      // 步骤3.5.2: 打开商品详情页
+      {
+        id: 'open-product-page',
+        name: '打开商品详情页',
+        type: 'tool_agent',
+        description: '导航到商品详情页'
+      },
+      // 步骤3.5.3: 提取商品详细数据
+      {
+        id: 'extract-product-details',
+        name: '提取商品详情',
+        type: 'scraper_agent',
+        description: '从商品详情页提取完整数据'
+      },
+      // 步骤3.5.4: 添加到总数据集
+      {
+        id: 'append-product-data',
+        name: '保存商品数据',
+        type: 'text_agent',
+        description: '将提取的数据添加到总集合'
+      },
+      // 步骤3.5.5: 商品索引递增
+      {
+        id: 'increment-product-index',
+        name: '更新商品索引',
+        type: 'text_agent',
+        description: '移动到下一个商品'
+      },
+      // 步骤3.6: 检查是否有下一页
+      {
+        id: 'check-next-page',
+        name: '检查下一页',
+        type: 'scraper_agent',
+        description: '检查列表页是否有下一页'
+      },
+      // 步骤3.7: 更新页码和下一页标志
+      {
+        id: 'update-page-vars',
+        name: '更新页面变量',
+        type: 'text_agent',
+        description: '准备下一轮页面循环'
+      },
+      // 步骤4: 生成数据分析报告
+      {
+        id: 'generate-report',
+        name: '生成分析报告',
+        type: 'text_agent',
+        description: '基于收集的数据生成详细分析报告'
+      },
+      // 步骤5: 保存结果（可选）
+      {
+        id: 'save-results',
+        name: '保存数据和报告',
+        type: 'code_agent',
+        description: '将收集的数据保存到文件'
+      },
+      // 步骤6: 最终输出
+      {
+        id: 'final-output',
+        name: '整理最终输出',
+        type: 'text_agent',
+        description: '准备工作流的最终输出'
+      },
+      // 结束节点
+      {
+        id: 'end',
         name: '结束',
         type: 'end',
         description: '工作流结束节点'
       }
     ],
     connections: [
-      { from: '1', to: '2' },
-      { from: '2', to: '3' },
-      { from: '3', to: '4' },
-      { from: '4', to: '5' },
-      { from: '5', to: '6' }
+      { from: 'start', to: 'init-global-vars' },
+      { from: 'init-global-vars', to: 'init-browser' },
+      { from: 'init-browser', to: 'page-iteration-loop' },
+      { from: 'page-iteration-loop', to: 'build-page-url' },
+      { from: 'page-iteration-loop', to: 'end' },
+      { from: 'build-page-url', to: 'open-list-page' },
+      { from: 'open-list-page', to: 'extract-product-urls' },
+      { from: 'extract-product-urls', to: 'init-product-loop-vars' },
+      { from: 'init-product-loop-vars', to: 'product-iteration-loop' },
+      { from: 'product-iteration-loop', to: 'check-next-page' },
+      { from: 'product-iteration-loop', to: 'get-current-product' },
+      { from: 'get-current-product', to: 'open-product-page' },
+      { from: 'open-product-page', to: 'extract-product-details' },
+      { from: 'extract-product-details', to: 'append-product-data' },
+      { from: 'append-product-data', to: 'increment-product-index' },
+      { from: 'increment-product-index', to: 'product-iteration-loop' },
+      { from: 'check-next-page', to: 'update-page-vars' },
+      { from: 'update-page-vars', to: 'page-iteration-loop' },
+      { from: 'page-iteration-loop', to: 'generate-report' },
+      { from: 'generate-report', to: 'save-results' },
+      { from: 'save-results', to: 'final-output' },
+      { from: 'final-output', to: 'end' }
     ]
   };
 
@@ -429,14 +556,9 @@ const WorkspacePage: React.FC = () => {
             >
               <div className="h-full flex items-center justify-center bg-gray-50 rounded-lg">
                 {displayWorkflowData ? (
-                  <WorkflowVisualization 
-                    workflowData={displayWorkflowData} 
-                    onConnectionsChange={(connections) => {
-                      console.log('连接线已更新:', connections);
-                      // 可以在这里添加保存连接线逻辑
-                      message.info('连接线已更新');
-                    }}
-                  />
+                  <div className="bg-white rounded-lg shadow-sm border border-gray-200 h-full w-full">
+                    <WorkflowVisualization workflowData={displayWorkflowData} />
+                  </div>
                 ) : (
                   <div className="text-center text-gray-500">
                     <RobotOutlined className="text-4xl mb-4" />
