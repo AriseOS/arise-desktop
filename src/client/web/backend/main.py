@@ -381,6 +381,52 @@ async def get_agent_workflow(
         }
     }
 
+# 添加执行工作流的API接口
+@app.get("/api/agents/workflow/{workflow_name}/execute")
+async def execute_workflow(
+    workflow_name: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """执行指定的工作流"""
+    print(f"Received execute workflow request:")
+    print(f"  Workflow Name: {workflow_name}")
+    print(f"  User ID: {current_user.id}")
+    print(f"  User Name: {current_user.username}")
+    
+    # 特殊处理browser-session-test-workflow工作流
+    if workflow_name == "browser-session-test-workflow":
+        import subprocess
+        import os
+        from pathlib import Path
+        
+        # 获取项目根目录
+        project_root = Path(__file__).parent.parent.parent.parent
+        
+        # 构建命令
+        cmd = [
+            "bash", "-c",
+            f"source {project_root}/.venv/bin/activate && "
+            f"cd {project_root}/tests/integration/workflow && "
+            f"python run_workflow.py {workflow_name}"
+        ]
+        
+        try:
+            # 在后台执行命令
+            subprocess.Popen(cmd, cwd=str(project_root))
+            print(f"Started workflow execution for {workflow_name}")
+        except Exception as e:
+            print(f"Failed to start workflow execution: {e}")
+    
+    # 这里只是打印参数请求，不实际处理
+    return {
+        "success": True,
+        "message": f"Workflow {workflow_name} execute request received",
+        "workflow_name": workflow_name,
+        "user_id": current_user.id,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
 # WebSocket 路由
 
 @app.websocket("/ws/agents/build/{build_id}")

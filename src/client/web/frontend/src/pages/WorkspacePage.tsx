@@ -12,10 +12,12 @@ import {
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { RootState } from '../store';
+import agentService from '../services/agentAPI';
+import { agentBuildAPI } from '../services/agentBuildAPI'; // 导入agentBuildAPI
+import { createBaseAppService } from '../services/baseappAPI';
+import type { AgentInfo } from '../services/agentAPI';
 import { logout } from '../store/authSlice';
-import LanguageSwitcher from '../components/LanguageSwitcher';
-import { agentBuildAPI } from '../services/agentBuildAPI';
+import { RootState } from '../store';
 import { BuildProgressWebSocket } from '../services/websocketService';
 import WorkflowVisualization from '../components/WorkflowVisualization';
 
@@ -235,6 +237,30 @@ const WorkspacePage: React.FC = () => {
     }
   };
 
+  const handleExecuteWorkflow = async () => {
+    if (!user) return;
+    
+    // 检查是否有构建完成的Agent
+    // todo： 演示的时候直接调用了写死的agent
+    // if (!currentBuildId || !agentInfo) {
+    //   message.error('请先构建一个Agent');
+    //   return;
+    // }
+    
+    try {
+      // 调用agentService的startAgent接口启动Agent
+      await agentService.startAgent(user.id.toString(), "browser-session-test-workflow");
+      message.success('Agent已成功启动');
+    } catch (error: any) {
+      console.error('启动Agent出错:', error);
+      if (error.message && error.message.includes('Network Error')) {
+        message.error('连接服务失败，请确保后端服务正在运行');
+      } else {
+        message.error('启动Agent失败，请查看控制台了解详情');
+      }
+    }
+  };
+
   // 创建一个示例工作流数据用于测试
   const sampleWorkflowData = {
     steps: [
@@ -243,139 +269,35 @@ const WorkspacePage: React.FC = () => {
         id: 'start',
         name: '开始',
         type: 'start',
-        description: '分页商品爬取工作流开始'
+        description: '浏览器会话共享测试工作流开始'
       },
-      // 步骤1: 初始化全局变量
+      // 步骤1: 从example.com获取标题
       {
-        id: 'init-global-vars',
-        name: '初始化全局变量',
-        type: 'text_agent',
-        description: '初始化分页循环和数据收集所需的变量'
-      },
-      // 步骤2: 打开浏览器会话
-      {
-        id: 'init-browser',
-        name: '初始化浏览器',
-        type: 'tool_agent',
-        description: '创建浏览器会话用于后续页面访问'
-      },
-      // 步骤3: 外层循环 - 遍历所有页面
-      {
-        id: 'page-iteration-loop',
-        name: '页面遍历循环',
-        type: 'loop',
-        description: '遍历多个列表页面',
-        data: {
-          condition: '{{current_page}} <= {{max_pages}} && {{has_next_page}} == true'
-        }
-      },
-      // 步骤3.1: 构建当前页URL
-      {
-        id: 'build-page-url',
-        name: '构建当前页URL',
-        type: 'text_agent',
-        description: '根据页码构建完整的列表页URL'
-      },
-      // 步骤3.2: 打开列表页
-      {
-        id: 'open-list-page',
-        name: '打开商品列表页',
-        type: 'tool_agent',
-        description: '导航到当前列表页'
-      },
-      // 步骤3.3: 提取商品URL列表
-      {
-        id: 'extract-product-urls',
-        name: '提取商品链接',
+        id: 'get-example-title',
+        name: '获取Example.com标题',
         type: 'scraper_agent',
-        description: '从列表页提取所有商品的详情页链接'
+        description: '提取example.com的页面标题'
       },
-      // 步骤3.4: 初始化商品循环变量
+      // 步骤2: 从百度获取热点话题
       {
-        id: 'init-product-loop-vars',
-        name: '初始化商品循环变量',
-        type: 'text_agent',
-        description: '为内层商品循环准备变量'
-      },
-      // 步骤3.5: 内层循环 - 遍历当前页商品
-      {
-        id: 'product-iteration-loop',
-        name: '商品数据收集循环',
-        type: 'loop',
-        description: '遍历当前页的所有商品并收集数据',
-        data: {
-          condition: '{{product_index}} < {{total_products_in_page}}'
-        }
-      },
-      // 步骤3.5.1: 获取当前商品信息
-      {
-        id: 'get-current-product',
-        name: '获取当前商品',
-        type: 'text_agent',
-        description: '从列表中获取当前索引的商品'
-      },
-      // 步骤3.5.2: 打开商品详情页
-      {
-        id: 'open-product-page',
-        name: '打开商品详情页',
-        type: 'tool_agent',
-        description: '导航到商品详情页'
-      },
-      // 步骤3.5.3: 提取商品详细数据
-      {
-        id: 'extract-product-details',
-        name: '提取商品详情',
+        id: 'get-baidu-hot',
+        name: '获取百度热点话题',
         type: 'scraper_agent',
-        description: '从商品详情页提取完整数据'
+        description: '提取百度热搜或主要链接'
       },
-      // 步骤3.5.4: 添加到总数据集
+      // 步骤3: 汇总结果
       {
-        id: 'append-product-data',
-        name: '保存商品数据',
+        id: 'summarize-results',
+        name: '汇总结果',
         type: 'text_agent',
-        description: '将提取的数据添加到总集合'
+        description: '汇总来自两个网站的数据'
       },
-      // 步骤3.5.5: 商品索引递增
+      // 步骤4: 准备最终输出
       {
-        id: 'increment-product-index',
-        name: '更新商品索引',
-        type: 'text_agent',
-        description: '移动到下一个商品'
-      },
-      // 步骤3.6: 检查是否有下一页
-      {
-        id: 'check-next-page',
-        name: '检查下一页',
-        type: 'scraper_agent',
-        description: '检查列表页是否有下一页'
-      },
-      // 步骤3.7: 更新页码和下一页标志
-      {
-        id: 'update-page-vars',
-        name: '更新页面变量',
-        type: 'text_agent',
-        description: '准备下一轮页面循环'
-      },
-      // 步骤4: 生成数据分析报告
-      {
-        id: 'generate-report',
-        name: '生成分析报告',
-        type: 'text_agent',
-        description: '基于收集的数据生成详细分析报告'
-      },
-      // 步骤5: 保存结果（可选）
-      {
-        id: 'save-results',
-        name: '保存数据和报告',
-        type: 'code_agent',
-        description: '将收集的数据保存到文件'
-      },
-      // 步骤6: 最终输出
-      {
-        id: 'final-output',
-        name: '整理最终输出',
-        type: 'text_agent',
-        description: '准备工作流的最终输出'
+        id: 'prepare-output',
+        name: '准备最终输出',
+        type: 'variable',
+        description: '组织最终输出结构'
       },
       // 结束节点
       {
@@ -386,28 +308,11 @@ const WorkspacePage: React.FC = () => {
       }
     ],
     connections: [
-      { from: 'start', to: 'init-global-vars' },
-      { from: 'init-global-vars', to: 'init-browser' },
-      { from: 'init-browser', to: 'page-iteration-loop' },
-      { from: 'page-iteration-loop', to: 'build-page-url' },
-      { from: 'page-iteration-loop', to: 'end' },
-      { from: 'build-page-url', to: 'open-list-page' },
-      { from: 'open-list-page', to: 'extract-product-urls' },
-      { from: 'extract-product-urls', to: 'init-product-loop-vars' },
-      { from: 'init-product-loop-vars', to: 'product-iteration-loop' },
-      { from: 'product-iteration-loop', to: 'check-next-page' },
-      { from: 'product-iteration-loop', to: 'get-current-product' },
-      { from: 'get-current-product', to: 'open-product-page' },
-      { from: 'open-product-page', to: 'extract-product-details' },
-      { from: 'extract-product-details', to: 'append-product-data' },
-      { from: 'append-product-data', to: 'increment-product-index' },
-      { from: 'increment-product-index', to: 'product-iteration-loop' },
-      { from: 'check-next-page', to: 'update-page-vars' },
-      { from: 'update-page-vars', to: 'page-iteration-loop' },
-      { from: 'page-iteration-loop', to: 'generate-report' },
-      { from: 'generate-report', to: 'save-results' },
-      { from: 'save-results', to: 'final-output' },
-      { from: 'final-output', to: 'end' }
+      { from: 'start', to: 'get-example-title' },
+      { from: 'get-example-title', to: 'get-baidu-hot' },
+      { from: 'get-baidu-hot', to: 'summarize-results' },
+      { from: 'summarize-results', to: 'prepare-output' },
+      { from: 'prepare-output', to: 'end' }
     ]
   };
 
@@ -425,7 +330,6 @@ const WorkspacePage: React.FC = () => {
         </div>
         
         <div className="flex items-center space-x-4">
-          <LanguageSwitcher />
           {user ? (
             <Space>
               <Text className="text-gray-600">
@@ -546,9 +450,18 @@ const WorkspacePage: React.FC = () => {
           <div className="col-span-6">
             <Card 
               title={
-                <div className="flex items-center">
-                  <RobotOutlined className="mr-2 text-green-600" />
-                  {t('workspace.workflow')}
+                <div className="flex items-center justify-between w-full">
+                  <div className="flex items-center">
+                    <RobotOutlined className="mr-2 text-green-600" />
+                    {t('workspace.workflow')}
+                  </div>
+                  <Button 
+                    type="primary" 
+                    icon={<PlayCircleOutlined />}
+                    onClick={handleExecuteWorkflow}
+                  >
+                    执行工作流
+                  </Button>
                 </div>
               }
               className="h-full"

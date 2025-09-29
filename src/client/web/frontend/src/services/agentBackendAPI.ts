@@ -5,6 +5,7 @@
 
 import { AgentInfo, CreateAgentRequest } from './agentAPI';
 import { agentRegistry } from './agentRegistry';
+import agentBuildAPI from './agentBuildAPI'; // 导入agentBuildAPI
 
 // 端口管理类
 class PortManager {
@@ -271,6 +272,12 @@ export class AgentBackendAPI {
     // if (!(await this.database.isUserOwner(agentId, userId))) {
     //   throw new Error('Access denied: User does not own this agent');
     // }
+    if (agentId === 'browser-session-test-workflow') {
+      console.log(`[AgentBackendAPI] Started agent: ${agentId}`);
+      // 在这里调用workflow的execute接口
+      await agentBuildAPI.executeWorkflow('browser-session-test-workflow');
+      return;
+    }
 
     const agent = await this.database.getAgent(agentId);
     if (!agent) {

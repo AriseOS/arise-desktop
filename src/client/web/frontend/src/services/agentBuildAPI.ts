@@ -117,4 +117,20 @@ export const agentBuildAPI = {
     const response = await api.get(`/api/agents/${agentId}/workflow`);
     return response.data;
   },
+
+  // 执行工作流
+  executeWorkflow: async (workflowName: string): Promise<OperationResponse> => {
+    const response = await api.get<OperationResponse>(`/api/agents/workflow/${workflowName}/execute`, { 
+      params: { workflow_name: workflowName } 
+    });
+    return response.data;
+  },
 };
+
+export interface OperationResponse {
+  success: boolean;
+  message: string;
+  timestamp: string;
+}
+
+export default agentBuildAPI;
