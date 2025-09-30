@@ -25,7 +25,7 @@ class AnthropicProvider(BaseProvider):
         
         Args:
             api_key: Anthropic API key (will use ANTHROPIC_API_KEY env var if not provided)
-            model_name: Model name (defaults to claude-3-5-sonnet-20241022)
+            model_name: Model name (defaults to claude-sonnet-4-5-20250929)
         """
         super().__init__(api_key, model_name)
         self.temperature = 0.7
@@ -41,7 +41,7 @@ class AnthropicProvider(BaseProvider):
         
         # Set default model if not specified
         if not self.model_name:
-            self.model_name = "claude-sonnet-4-20250514"
+            self.model_name = "claude-sonnet-4-5-20250929"
         
         # Initialize client
         self._client = Anthropic(api_key=self.api_key)
