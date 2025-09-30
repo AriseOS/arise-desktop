@@ -46,6 +46,7 @@ const WorkspacePage: React.FC = () => {
   const [agentLogs, setAgentLogs] = useState<Array<{id: string, timestamp: Date, message: string, type: 'info' | 'success' | 'error'}>>([]);
   const [workflowData, setWorkflowData] = useState<any>(null);
   const [websocket, setWebsocket] = useState<BuildProgressWebSocket | null>(null);
+  const [isExecutingWorkflow, setIsExecutingWorkflow] = useState(false);
 
   const agentLogsRef = useRef<HTMLDivElement>(null);
 
@@ -239,15 +240,16 @@ const WorkspacePage: React.FC = () => {
 
   const handleExecuteWorkflow = async () => {
     if (!user) return;
-    
+
     // 检查是否有构建完成的Agent
     // todo： 演示的时候直接调用了写死的agent
     // if (!currentBuildId || !agentInfo) {
     //   message.error('请先构建一个Agent');
     //   return;
     // }
-    
+
     try {
+      setIsExecutingWorkflow(true);
       // 调用agentService的startAgent接口启动Agent
       await agentService.startAgent(user.id.toString(), "browser-session-test-workflow");
       message.success('Agent已成功启动');
@@ -258,6 +260,8 @@ const WorkspacePage: React.FC = () => {
       } else {
         message.error('启动Agent失败，请查看控制台了解详情');
       }
+    } finally {
+      setIsExecutingWorkflow(false);
     }
   };
 
@@ -455,12 +459,14 @@ const WorkspacePage: React.FC = () => {
                     <RobotOutlined className="mr-2 text-green-600" />
                     {t('workspace.workflow')}
                   </div>
-                  <Button 
-                    type="primary" 
-                    icon={<PlayCircleOutlined />}
+                  <Button
+                    type="primary"
+                    icon={isExecutingWorkflow ? <LoadingOutlined /> : <PlayCircleOutlined />}
                     onClick={handleExecuteWorkflow}
+                    loading={isExecutingWorkflow}
+                    disabled={isExecutingWorkflow}
                   >
-                    执行工作流
+                    {isExecutingWorkflow ? '运行中...' : '执行工作流'}
                   </Button>
                 </div>
               }
