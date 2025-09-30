@@ -394,30 +394,68 @@ async def execute_workflow(
     print(f"  User ID: {current_user.id}")
     print(f"  User Name: {current_user.username}")
     
-    # 特殊处理browser-session-test-workflow工作流
-    if workflow_name == "browser-session-test-workflow":
-        import subprocess
-        import os
-        from pathlib import Path
-        
-        # 获取项目根目录
-        project_root = Path(__file__).parent.parent.parent.parent
-        
-        # 构建命令
-        cmd = [
-            "bash", "-c",
-            f"source {project_root}/.venv/bin/activate && "
-            f"cd {project_root}/tests/integration/workflow && "
-            f"python run_workflow.py {workflow_name}"
-        ]
-        
-        try:
-            # 在后台执行命令
-            subprocess.Popen(cmd, cwd=str(project_root))
-            print(f"Started workflow execution for {workflow_name}")
-        except Exception as e:
-            print(f"Failed to start workflow execution: {e}")
+    from base_app.base_agent.core.base_agent import BaseAgent
+    from base_app.base_agent.core.schemas import AgentConfig
+    from base_app.base_agent.workflows.workflow_loader import load_workflow
+    from base_app.server.core.config_service import ConfigService
+    import asyncio
     
+    async def run_workflow_async():
+        try:
+            # 初始化配置服务
+            config_service = ConfigService()
+            
+            # 获取LLM配置
+            llm_provider = config_service.get('agent.llm.provider', 'openai')
+            llm_model = config_service.get('agent.llm.model', 'gpt-4o')
+            api_key = config_service.get('agent.llm.api_key')
+            
+            # 创建BaseAgent配置
+            agent_config = AgentConfig(
+                name="WorkflowTestRunner",
+                llm_provider=llm_provider,
+                llm_model=llm_model,
+                api_key=api_key or ""
+            )
+            
+            # 创建provider配置
+            provider_config = {
+                'type': llm_provider,
+                'api_key': api_key if api_key else None,
+                'model_name': llm_model
+            }
+            
+            # 创建BaseAgent实例
+            base_agent = BaseAgent(
+                agent_config,
+                config_service=config_service,
+                provider_config=provider_config
+            )
+            
+            # 初始化BaseAgent
+            await base_agent.initialize()
+            
+            # 加载工作流
+            workflow = load_workflow(workflow_name)
+            
+            # 执行工作流
+            result = await base_agent.run_workflow(
+                workflow=workflow,
+                input_data={}
+            )
+            
+            print(f"Workflow execution completed with success: {result.success}")
+            return result
+        except Exception as e:
+            print(f"Failed to execute workflow: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+    
+    # 在后台执行工作流
+    asyncio.create_task(run_workflow_async())
+    print(f"Started workflow execution for {workflow_name}")
+
     # 这里只是打印参数请求，不实际处理
     return {
         "success": True,
