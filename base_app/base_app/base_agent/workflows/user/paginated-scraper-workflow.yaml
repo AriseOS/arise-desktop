@@ -1,0 +1,230 @@
+# 两层商品爬取工作流 - 列表页和详情页
+apiVersion: "agentcrafter.io/v1"
+kind: "Workflow"
+
+metadata:
+  name: "paginated-scraper-workflow"
+  description: "爬取商品列表页获取URL，然后访问每个商品详情页获取详细信息"
+  version: "4.0.0"
+  author: "AgentCrafter"
+  tags: ["scraper", "detail-scraping", "browser-automation"]
+
+# 工作流输入定义
+inputs:
+  max_products:
+    type: "integer"
+    description: "最多爬取的商品数量"
+    required: false
+    default: 5
+
+# 工作流输出定义
+outputs:
+  product_urls:
+    type: "array"
+    description: "收集的商品URL列表"
+  product_details:
+    type: "array"
+    description: "商品详细信息"
+  summary:
+    type: "string"
+    description: "爬取总结报告"
+
+# 全局配置
+config:
+  max_execution_time: 1800
+  enable_parallel: false
+  enable_cache: true
+  timeout_strategy: "continue_on_error"
+
+# 工作流步骤
+steps:
+  # 步骤1: 初始化变量
+  - id: "init-vars"
+    name: "初始化变量"
+    agent_type: "variable"
+    description: "初始化爬取所需的变量"
+
+    agent_instruction: "Initialize scraping variables"
+
+    inputs:
+      operation: "set"
+      data:
+        all_product_urls: []
+        all_product_details: []
+        target_url: "https://allegro.pl/kategoria/produkty-spozywcze-kawa-74030"
+        max_products: 5
+        product_index: 0
+
+    outputs:
+      all_product_urls: "all_product_urls"
+      all_product_details: "all_product_details"
+      target_url: "target_url"
+      max_products: "max_products"
+      product_index: "product_index"
+
+    timeout: 10
+
+  # 步骤2: 爬取第一页商品URL列表
+  - id: "scrape-first-page-urls"
+    name: "爬取第一页商品链接"
+    agent_type: "scraper_agent"
+    description: "从第一页商品列表获取商品URL"
+
+    agent_instruction: |
+      访问商品列表页面，提取商品展示列表中的所有商品的链接，而不是所有的链接。
+      注意：只需要提取商品的URL链接，不需要其他信息。
+      请确保URL是完整的，包含https://前缀。
+
+    inputs:
+      extraction_method: "script"
+      dom_scope: "full"
+      target_path: "https://allegro.pl/kategoria/produkty-spozywcze-kawa-74030"
+      data_requirements:
+        user_description: "提取页面中所有商品的URL链接"
+        output_format:
+          url: "商品详情页完整URL"
+        sample_data:
+          - url: "https://allegro.pl/oferta/example-product-123"
+      options:
+        max_items: 20
+        timeout: 30
+
+    outputs:
+      extracted_data: "page_urls"
+      message: "scrape_message"
+
+    timeout: 60
+
+  # 步骤3: 保存URL列表
+  - id: "save-urls"
+    name: "保存商品URL列表"
+    agent_type: "variable"
+    description: "保存爬取到的URL列表"
+
+    agent_instruction: "Save scraped URLs"
+
+    inputs:
+      operation: "set"
+      data:
+        all_product_urls: "{{page_urls}}"
+        url_count: 0
+
+    outputs:
+      all_product_urls: "all_product_urls"
+      url_count: "url_count"
+
+    timeout: 10
+
+  # 步骤4: 循环爬取商品详情
+  - id: "crawl-product-details"
+    name: "爬取商品详情"
+    agent_type: "foreach"
+    description: "遍历URL列表爬取每个商品的详细信息"
+
+    source: "{{all_product_urls}}"
+    item_var: "current_product"
+    index_var: "product_index"
+    max_iterations: 10
+    loop_timeout: 900
+
+    steps:
+      # 4.1: 爬取商品详情
+      - id: "scrape-product-detail"
+        name: "爬取商品详情"
+        agent_type: "scraper_agent"
+        description: "访问商品URL获取详细信息"
+
+        agent_instruction: |
+          访问商品详情页，提取商品的详细信息。
+          包括：名称、价格、描述、评分、卖家等。
+          确保提取的信息尽可能完整。
+
+        inputs:
+          extraction_method: "llm"
+          target_path: "{{current_product.url}}"
+          data_requirements:
+            user_description: "提取商品的详细信息"
+            output_format:
+              name: "商品名称"
+              price: "商品价格"
+              description: "商品描述"
+              rating: "商品评分"
+              seller: "卖家名称"
+              url: "商品URL"
+            sample_data:
+              - name: "Kawa ziarnista Lavazza"
+                price: "45.99 zł"
+                description: "Wysokiej jakości kawa ziarnista"
+                rating: "4.5"
+                seller: "Sklep Lavazza"
+                url: "https://allegro.pl/oferta/kawa-lavazza-123"
+          options:
+            max_items: 1
+            timeout: 20
+
+        outputs:
+          extracted_data: "product_detail"
+          message: "detail_message"
+
+        timeout: 45
+
+      # 4.2: 保存商品详情
+      - id: "save-product-detail"
+        name: "保存商品详情"
+        agent_type: "variable"
+        description: "将商品详情添加到列表"
+
+        agent_instruction: "Save product detail to list"
+
+        inputs:
+          operation: "append"
+          source: "{{all_product_details}}"
+          data: "{{product_detail}}"
+
+        outputs:
+          result: "all_product_details"
+
+        timeout: 10
+
+      # 4.3: 持久化存储商品详情
+      - id: "store-product-detail"
+        name: "持久化存储商品详情"
+        agent_type: "storage_agent"
+        description: "将商品详情存储到数据库"
+
+        agent_instruction: "Store product details to database"
+
+        inputs:
+          operation: "store"
+          collection: "daily_products"
+          data: "{{product_detail}}"
+
+        outputs:
+          message: "store_message"
+          rows_stored: "rows_stored"
+
+        timeout: 10
+
+  # 步骤5: 准备最终输出
+  - id: "prepare-output"
+    name: "准备最终输出"
+    agent_type: "variable"
+    description: "组织爬取结果"
+
+    agent_instruction: "Prepare final output"
+
+    inputs:
+      operation: "set"
+      data:
+        product_urls: "{{all_product_urls}}"
+        product_details: "{{all_product_details}}"
+        summary: "Successfully scraped and stored {{product_index}} products to database"
+        final_response: "Data collection and storage completed successfully"
+
+    outputs:
+      product_urls: "product_urls"
+      product_details: "product_details"
+      summary: "summary"
+      final_response: "final_response"
+
+    timeout: 10

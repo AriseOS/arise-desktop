@@ -1,4 +1,4 @@
-# ScraperAgent 设计文档 v4.0
+# ScraperAgent 设计文档 v5.0
 
 ## 1. 系统架构设计
 
@@ -6,13 +6,12 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    ScraperAgent v4.0                       │
+│                    ScraperAgent v5.0                       │
 ├─────────────────────────────────────────────────────────────┤
 │  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────┐ │
-│  │   Initialize    │  │    Execute      │  │ Extraction   │ │
-│  │     Phase       │  │     Phase       │  │   Methods    │ │
-│  │ (Generate &     │  │ (Load & Run)    │  │ (Script/LLM) │ │
-│  │  Store Script)  │  │                 │  │              │ │
+│  │  Unified Entry  │  │  Extraction     │  │  KV Auto     │ │
+│  │    (execute)    │  │    Methods      │  │   Cache      │ │
+│  │                 │  │  (Script/LLM)   │  │              │ │
 │  └─────────────────┘  └─────────────────┘  └──────────────┘ │
 ├─────────────────────────────────────────────────────────────┤
 │  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────┐ │
@@ -31,20 +30,21 @@
 
 #### 1.2.1 ScraperAgent 主类
 继承自 BaseStepAgent，支持两种数据提取模式：
-- **创建时配置**: 在构造函数中设置 `extraction_method` ('script' 或 'llm') 和 `debug_mode`
-- **双模式支持**: 脚本模式和大模型直接提取模式
+- **运行时配置**: 每次调用时可覆盖默认的 `extraction_method`、`dom_scope`、`debug_mode`
+- **双模式支持**: 脚本模式和LLM直接提取模式
 
 #### 1.2.2 数据提取模式
 
 **脚本模式 (Script Mode):**
-- **Initialize**: 生成Python脚本并存储到KV
-- **Execute**: 从KV加载脚本执行（可多次复用）
-- **优势**: 一次生成，多次使用，性能高效
+- **自动缓存**: 首次调用自动生成脚本并存储到KV
+- **自动复用**: 后续调用自动从KV加载缓存的脚本
+- **DOM支持**: 支持 partial 和 full DOM
+- **优势**: 自动管理生命周期，性能高效
 
-**大模型模式 (LLM Mode):**
-- **Initialize**: 直接使用LLM分析DOM提取测试数据  
-- **Execute**: 每次都使用LLM分析DOM并提取数据
-- **优势**: 无需生成脚本，适应性强
+**LLM模式 (LLM Mode):**
+- **直接提取**: 每次都使用LLM分析DOM并提取数据
+- **DOM限制**: 仅支持 partial DOM（自动强制）
+- **优势**: 无需脚本管理，适应性强
 
 #### 1.2.3 核心服务组件
 - **DOM Analysis Service**: 基于 browser-use DomService 分析页面结构
@@ -92,128 +92,76 @@ class ScraperAgent(BaseStepAgent):
         self.dom_service = DomService(self.browser_session)
         
     async def execute(self, input_data: Any, context: AgentContext) -> Any:
-        """执行代理任务"""
-        mode = input_data.get('mode')
-        
-        if mode == 'initialize':
-            return await self._handle_initialize(input_data, context)
-        elif mode == 'execute':
-            return await self._handle_execute(input_data, context)
-        else:
-            raise ValueError(f"不支持的模式: {mode}")
+        """执行代理任务 - 统一入口"""
+        # 解析运行时配置
+        config = self._parse_runtime_config(input_data)
+
+        # 覆盖实例配置
+        self.extraction_method = config['extraction_method']
+        self.dom_scope = config['dom_scope']
+        self.debug_mode = config['debug_mode']
+
+        # 执行数据提取
+        return await self._handle_scrape(input_data, context, config)
 ```
 
-### 2.2 核心模式处理
+### 2.2 核心处理逻辑
 
-#### 2.2.1 Initialize 模式处理 (简化的统一流程)
-
-```python
-async def _handle_initialize(self, input_data: Dict, context: AgentContext) -> Dict:
-    """初始化模式: 访问样本页面并使用配置的方法提取数据"""
-    sample_path = input_data['sample_path']
-    data_requirements = input_data['data_requirements']
-    interaction_steps = input_data.get('interaction_steps', [])
-    
-    try:
-        # 执行页面导航和交互
-        navigate_result = await self._navigate_to_pages(sample_path, interaction_steps)
-        
-        if navigate_result.success is False:
-            return self._create_response(
-                False, 'initialize', '页面导航失败',
-                error=navigate_result.error
-            )
-        
-        # 获取DOM数据并调用对应的提取方法
-        extraction_result = await self._extract_data_from_current_page(
-            data_requirements, 
-            max_items=10,  # 初始化阶段只测试提取少量数据
-            timeout=30,
-            context=context,
-            is_initialize=True  # 标识为初始化阶段
-        )
-        
-        # 返回结果
-        if extraction_result["success"]:
-            return self._create_response(
-                True, 'initialize', 
-                f'初始化成功，使用{self.extraction_method}模式提取了{extraction_result["total_count"]}条测试数据',
-                extraction_method=self.extraction_method,
-                test_data=extraction_result["data"],
-                total_count=extraction_result["total_count"]
-            )
-        else:
-            return self._create_response(
-                False, 'initialize', f'初始化失败，{self.extraction_method}模式提取数据失败',
-                extraction_method=self.extraction_method,
-                error=extraction_result["error"]
-            )
-            
-    except Exception as e:
-        logger.error(f"Initialize 模式执行失败: {e}")
-        return self._create_response(
-            False, 'initialize', '初始化失败',
-            error=str(e)
-        )
-
-#### 2.2.2 Execute 模式处理 (简化的统一流程)
+#### 2.2.1 统一数据提取处理
 
 ```python
-async def _handle_execute(self, input_data: Dict, context: AgentContext) -> Dict:
-    """执行模式: 访问目标页面并使用配置的方法提取数据"""
+async def _handle_scrape(self, input_data: Dict, context: AgentContext, config: Dict) -> Dict:
+    """统一的数据提取处理"""
     target_path = input_data['target_path']
     data_requirements = input_data['data_requirements']
     interaction_steps = input_data.get('interaction_steps', [])
-    
+
     try:
-        # 提取执行参数
-        options = input_data.get('options', {})
-        max_items = options.get('max_items', 100)
-        timeout = options.get('timeout', 90)
-        
         # 导航到目标页面并执行交互
         navigate_result = await self._navigate_to_pages(target_path, interaction_steps)
-        
+
         if navigate_result.success is False:
             return self._create_response(
-                False, 'execute', '无法访问目标页面',
-                error=f'页面导航失败: {navigate_result.error}'
+                False,
+                f'页面导航失败: {navigate_result.error}'
             )
-        
-        # 获取DOM数据并调用对应的提取方法
+
+        # 提取数据
         extraction_result = await self._extract_data_from_current_page(
-            data_requirements, 
-            max_items,
-            timeout,
+            data_requirements,
+            config['max_items'],
+            config['timeout'],
             context=context,
-            is_initialize=False  # 标识为执行阶段
+            config=config
         )
-        
-        # 返回执行结果
+
+        # 返回结果
         if extraction_result["success"]:
             return self._create_response(
-                True, 'execute', 
-                f'成功提取{extraction_result["total_count"]}条数据，使用{self.extraction_method}模式',
-                extraction_method=self.extraction_method,
+                True,
+                f'成功提取{extraction_result["total_count"]}条数据',
+                extraction_method=config['extraction_method'],
                 extracted_data=extraction_result["data"],
                 metadata={
                     'total_items': extraction_result["total_count"],
                     'target_path': target_path,
-                    'extraction_method': self.extraction_method,
+                    'extraction_method': config['extraction_method'],
                     'execution_time': datetime.now().isoformat()
                 }
             )
         else:
             return self._create_response(
-                False, 'execute', f'数据提取失败，{self.extraction_method}模式',
-                extraction_method=self.extraction_method, 
+                False,
+                f'数据提取失败',
+                extraction_method=config['extraction_method'],
                 error=extraction_result["error"]
             )
-            
+
     except Exception as e:
-        logger.error(f"Execute 模式执行失败: {e}")
+        logger.error(f"数据提取执行失败: {e}")
         return self._create_response(
-            False, 'execute', '数据提取失败',
+            False,
+            '数据提取失败',
             error=str(e)
         )
 ```
@@ -269,66 +217,69 @@ async def _extract_data_from_current_page(
 ```python
 async def _extract_with_script(
     self,
-    serialized_dom,
-    enhanced_dom, 
-    data_requirements: str,
+    target_dom,
+    dom_dict: Dict,
+    llm_view: str,
+    data_requirements: Dict,
     max_items: int,
     timeout: int,
-    context: Optional[AgentContext] = None,
-    is_initialize: bool = False
+    context: Optional[AgentContext] = None
 ) -> Dict[str, Any]:
-    """使用脚本模式提取数据"""
+    """使用脚本模式提取数据 - 自动检查KV缓存"""
     try:
+        # Generate script key based on data requirements and DOM config
         script_key = self._generate_script_key(data_requirements)
-        
-        if is_initialize:
-            # init阶段：生成脚本并存储到KV
+
+        # Try to load script from KV
+        generated_script = None
+        if context and context.memory_manager:
+            script_data = await context.memory_manager.get_data(script_key)
+            if script_data and 'script_content' in script_data:
+                generated_script = script_data['script_content']
+                logger.info(f"使用缓存的脚本: {script_key}")
+
+        # If no cached script, generate new one
+        if not generated_script:
+            logger.info(f"脚本不存在，自动生成: {script_key}")
+
+            # Build DOM analysis data
             dom_analysis = {
-                'serialized_dom': serialized_dom,
-                'enhanced_dom': enhanced_dom
+                'serialized_dom': target_dom,
+                'dom_dict': dom_dict,
+                'llm_view': llm_view,
+                'dom_config': {
+                    'dom_scope': self.dom_scope
+                }
             }
-            
+
             generated_script = await self._generate_extraction_script_with_llm(
                 dom_analysis, data_requirements, [], None
             )
-            
-            # 存储脚本到KV
+
+            # Store script to KV
             if context and context.memory_manager:
                 script_data = {
                     "script_content": generated_script,
                     "data_requirements": data_requirements,
+                    "dom_config": {
+                        "dom_scope": self.dom_scope
+                    },
                     "created_at": datetime.now().isoformat(),
-                    "version": "4.0"
+                    "version": "7.0"
                 }
                 await context.memory_manager.set_data(script_key, script_data)
-                logger.info(f"脚本已存储到KV，键值: {script_key}")
-            
-            # 调试模式: 保存到文件
+                logger.info(f"脚本已存储到KV: {script_key}")
+
+            # Debug mode: save to file
             if self.debug_mode:
-                logger.info("=== init阶段生成脚本 ===")
+                logger.info(f"=== 生成新脚本 ===")
                 await self._save_script_to_file(generated_script, script_key)
-            
-            # init阶段也执行一次测试
-            return await self._execute_generated_script_direct(
-                generated_script, serialized_dom, enhanced_dom, max_items
-            )
-            
-        else:
-            # exec阶段：从KV获取脚本执行
-            if context and context.memory_manager:
-                script_data = await context.memory_manager.get_data(script_key)
-                if script_data and 'script_content' in script_data:
-                    generated_script = script_data['script_content']
-                    logger.info(f"exec阶段从KV加载脚本，键值: {script_key}")
-                    
-                    return await self._execute_generated_script_direct(
-                        generated_script, serialized_dom, enhanced_dom, max_items
-                    )
-                else:
-                    return self._create_error_result(f"未找到脚本: {script_key}，请先运行init阶段")
-            else:
-                return self._create_error_result("无法访问KV存储")
-        
+
+        # Execute script
+        return await self._execute_generated_script_direct(
+            generated_script, target_dom, dom_dict, max_items
+        )
+
     except Exception as e:
         logger.error(f"脚本模式提取失败: {e}")
         return self._create_error_result(str(e))

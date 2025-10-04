@@ -38,36 +38,50 @@ class BaseAgent:
         self,
         config: Optional[AgentConfig] = None,
         config_service: Optional[Any] = None,
-        enable_memory: bool = False,
-        memory_config: Optional[Dict[str, Any]] = None,
-        provider_config: Optional[Dict[str, Any]] = None
+        provider_config: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None
     ):
+        """初始化BaseAgent
+
+        Args:
+            config: Agent配置
+            config_service: 配置服务实例
+            provider_config: LLM provider配置
+            user_id: 用户ID，用于Memory隔离。如果不指定，每个BaseAgent实例将拥有独立的Memory命名空间
+        """
         # 基础配置
         self.config = config or AgentConfig(name="BaseAgent")
-        self.config_service = config_service  # Store config service
+        self.config_service = config_service
         self.id = str(uuid.uuid4())
-        
+
         # 核心组件
         self.tools: Dict[str, BaseTool] = {}
         self.hooks: Dict[str, List[Callable]] = {}
-        
+
         # Provider初始化
         self.provider = None
         self.provider_config = provider_config or {}
         self._initialize_provider()
-        
-        # 内存管理
-        self.memory_manager = None
-        if enable_memory:
-            try:
-                self.memory_manager = MemoryManager(
-                    enable_long_term_memory=True,
-                    user_id=f"agent_{self.id}",
-                    mem0_config=memory_config
-                )
-                logger.info("内存管理器初始化成功")
-            except Exception as e:
-                logger.warning(f"内存管理器初始化失败: {e}")
+
+        # 确定 Memory 的 user_id
+        if user_id:
+            # 明确为某个用户服务
+            memory_user_id = user_id
+            logger.info(f"BaseAgent 实例 {self.id[:8]} 已启动，服务用户: {user_id}")
+        else:
+            # 兼容模式：使用 agent.id（每个实例独立 memory）
+            memory_user_id = f"agent_{self.id}"
+            logger.warning(
+                f"BaseAgent 未指定 user_id，使用实例独立 memory 命名空间: {memory_user_id[:20]}..."
+                "\n提示: 如需跨实例共享 memory（如脚本缓存），请在创建 BaseAgent 时传入 user_id 参数"
+            )
+
+        # Memory系统 - 始终启用
+        self.memory_manager = MemoryManager(
+            user_id=memory_user_id,
+            config_service=config_service
+        )
+        logger.info(f"Memory系统已启用，user_id: {memory_user_id}")
         
         # Agent工作流引擎
         try:
@@ -157,7 +171,7 @@ class BaseAgent:
                 if not success:
                     logger.error(f"工具 {tool_name} 初始化失败")
                     return False
-            
+
             self.state.status = AgentStatus.READY
             self.state.started_at = datetime.now()
             

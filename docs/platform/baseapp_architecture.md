@@ -273,8 +273,12 @@ baseapp logs show --level info --tail 50
 ```python
 # AgentService 示例
 class AgentService:
-    def __init__(self, config: AgentConfig):
-        self.agent = BaseAgent(config, enable_memory=True)
+    def __init__(self, config: AgentConfig, config_service):
+        # Memory系统自动启用，只需提供config_service
+        self.agent = BaseAgent(
+            config,
+            config_service=config_service
+        )
         self.sessions = {}  # 会话管理
         
     async def send_message(
@@ -348,16 +352,11 @@ app:
 # Agent 配置
 agent:
   name: "MyAgent"
+
+  # Memory系统（自动启用）
   memory:
-    enabled: true
-    provider: "mem0"
-    config:
-      llm:
-        provider: "openai"
-        model: "gpt-4o-mini"
-      vector_store:
-        provider: "chroma"
-        path: "./data/chroma_db"
+    kv_storage:
+      db_path: "./data/kv_storage.db"  # SQLite数据库路径
   
   # LLM 提供商配置
   llm:

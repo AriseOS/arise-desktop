@@ -1,14 +1,14 @@
-# ScraperAgent 需求文档 v4.0 (双模式版本)
+# ScraperAgent 需求文档 v5.0 (简化版本)
 
 ## 1. 概述
 
-ScraperAgent v4.0 是一个基于 browser-use 库的智能爬虫代理，支持**脚本模式**和**大模型模式**两种数据提取方式。脚本模式通过生成可重用的提取脚本实现高效数据提取，大模型模式通过直接分析DOM结构实现灵活的实时提取。
+ScraperAgent v5.0 是一个基于 browser-use 库的智能爬虫代理，支持**脚本模式**和**LLM模式**两种数据提取方式。
 
 ### 1.1 核心目标
 
-- **双模式支持**: 支持脚本模式和大模型模式两种数据提取方式
-- **脚本重用性**: 脚本模式实现一次生成、多次使用的高效提取
-- **实时适应性**: 大模型模式可实时适应页面变化
+- **双模式支持**: 支持脚本模式和LLM模式两种数据提取方式
+- **自动脚本管理**: 脚本模式自动检查KV缓存，无需手动区分初始化/执行阶段
+- **DOM范围控制**: LLM模式仅支持partial DOM，脚本模式支持partial/full DOM
 - **人性化浏览**: 模拟真实用户的浏览行为和路径导航
 - **复杂交互支持**: 处理需要点击、滚动、表单填写等交互的页面
 - **动态内容处理**: 支持 JavaScript 渲染的动态网页内容
@@ -23,20 +23,32 @@ ScraperAgent v4.0 是一个基于 browser-use 库的智能爬虫代理，支持*
 
 ## 2. 功能性需求
 
-### 2.1 工作模式
-
-#### 2.1.1 Initialize 模式（测试提取）
+### 2.1 统一工作模式
 
 **输入参数:**
 ```json
 {
-    "mode": "initialize",
-    "sample_path": "string | array<string>",  // 样本页面路径
-    "data_requirements": "string",            // 数据需求（逗号分隔字段列表）
-    "interaction_steps": "array<object>",     // 可选：页面交互步骤
+    "target_path": "string | array<string>",     // 目标页面路径
+    "data_requirements": "dict",                 // 数据需求（字典格式）
+    "extraction_method": "script | llm",         // 提取方法
+    "dom_scope": "partial | full",               // DOM范围（仅script模式支持full）
+    "interaction_steps": "array<object>",        // 可选：页面交互步骤
     "options": {
-        "timeout": "number"                   // 超时设置
+        "max_items": "number",                   // 最大提取数量
+        "timeout": "number",                     // 执行超时
+        "debug_mode": "boolean"                  // 调试模式
     }
+}
+```
+
+**data_requirements 格式:**
+```json
+{
+    "user_description": "string",                // 数据提取需求描述
+    "output_format": {                           // 输出字段定义
+        "field_name": "field_description"
+    },
+    "sample_data": []                            // 可选：样例数据
 }
 ```
 
@@ -44,41 +56,19 @@ ScraperAgent v4.0 是一个基于 browser-use 库的智能爬虫代理，支持*
 - 支持单页面和多步骤路径导航
 - 自动检测页面加载完成状态
 - 处理需要交互才能获取数据的页面（如点击加载更多）
-- **脚本模式**: 生成提取脚本并存储到KV，执行测试提取
-- **大模型模式**: 直接使用LLM分析DOM进行测试提取
+- **脚本模式**: 自动检查KV缓存，无缓存则生成脚本并存储
+- **LLM模式**: 直接使用LLM分析DOM进行数据提取（仅支持partial DOM）
 - 支持调试模式保存DOM和脚本文件
 
-#### 2.1.2 Execute 模式（生产提取）
+### 2.2 运行时配置
 
-**输入参数:**
-```json
-{
-    "mode": "execute", 
-    "target_path": "string | array<string>",  // 目标页面路径
-    "data_requirements": "string",            // 数据需求（逗号分隔字段列表）
-    "interaction_steps": "array<object>",     // 可选：页面交互步骤
-    "options": {
-        "max_items": "number",                // 最大提取数量
-        "timeout": "number"                   // 执行超时
-    }
-}
-```
-
-**功能要求:**
-- **脚本模式**: 从KV加载存储的脚本执行数据提取
-- **大模型模式**: 直接使用LLM分析当前DOM进行数据提取
-- 执行复杂的页面导航序列
-- 处理动态内容加载
-- 智能错误恢复和重试
-- 数据质量验证和清洗
-
-### 2.2 创建时配置需求
-
-#### 2.2.1 代理创建参数
-- **extraction_method**: 提取方法 ('script' 或 'llm')
-- **debug_mode**: 调试模式开关 (True/False)
-- **模式固定性**: 创建后提取方法不可更改
-- **组件初始化**: 自动初始化browser-use核心组件
+#### 2.2.1 配置参数
+- **extraction_method**: 提取方法 ('script' 或 'llm')，默认 'llm'
+- **dom_scope**: DOM范围 ('partial' 或 'full')，默认 'partial'
+  - LLM模式强制使用 'partial'
+  - script模式支持 'partial' 和 'full'
+- **debug_mode**: 调试模式开关，默认 False
+- **配置灵活性**: 每次调用时可通过输入参数覆盖默认配置
 
 ### 2.3 Browser-Use 集成需求
 
@@ -104,16 +94,20 @@ ScraperAgent v4.0 是一个基于 browser-use 库的智能爬虫代理，支持*
 ### 2.4 数据提取模式需求
 
 #### 2.4.1 脚本模式需求
-- **Initialize阶段**: 生成Python提取脚本并存储到KV
-- **Execute阶段**: 从KV加载脚本并执行提取
+- **Token优化**: 脚本生成始终使用 partial DOM，大幅降低 token 消耗
+- **自动脚本管理**: 首次调用自动生成脚本并存储到KV，后续调用直接使用缓存
+- **KV缓存检查**: 基于数据需求生成唯一key（不包含dom_scope）
 - **脚本重用**: 同一脚本可多次执行于不同页面
 - **脚本格式**: 包含完整执行环境的Python代码
-- **存储键值**: 基于数据需求的MD5哈希生成
+- **执行灵活性**:
+  - 生成阶段：强制使用 partial DOM（节省token）
+  - 执行阶段：支持 partial 或 full DOM（根据配置）
 
-#### 2.4.2 大模型模式需求
+#### 2.4.2 LLM模式需求
 - **直接提取**: 每次都使用LLM分析DOM结构
 - **实时适应**: 可适应页面结构变化
 - **JSON输出**: 标准JSON数组格式返回
+- **DOM限制**: 仅支持 partial DOM（强制）
 - **提示优化**: 包含数据要求和DOM结构的完整提示
 
 ### 2.5 人性化浏览行为
@@ -198,24 +192,27 @@ ScraperAgent v4.0 是一个基于 browser-use 库的智能爬虫代理，支持*
 - 兼容容器化部署 (Docker)
 - 支持分布式架构部署
 
-## 5. 接口规范 v4.0
+## 5. 接口规范 v5.0
 
 ### 5.1 创建时配置接口
 
 ```python
 class ScraperAgent(BaseStepAgent):
     def __init__(self,
+                 config_service=None,
                  metadata: Optional[AgentMetadata] = None,
-                 browser_session: Optional[BrowserSession] = None,
-                 controller: Optional[Controller] = None,
-                 debug_mode: bool = False,
-                 extraction_method: str = 'script'):
+                 extraction_method: str = 'llm',
+                 dom_scope: str = 'partial',
+                 debug_mode: bool = False):
         """
         创建 ScraperAgent 实例
-        
+
         Args:
-            debug_mode: 调试模式开关
-            extraction_method: 提取方法 ('script' 或 'llm')
+            config_service: 配置服务
+            metadata: Agent元数据
+            extraction_method: 默认提取方法 ('script' 或 'llm')
+            dom_scope: 默认DOM范围 ('partial' 或 'full')
+            debug_mode: 默认调试模式
         """
 ```
 
@@ -223,10 +220,11 @@ class ScraperAgent(BaseStepAgent):
 
 ```python
 class ScraperAgentInput(BaseModel):
-    mode: Literal["initialize", "execute"]
-    sample_path: Union[str, List[str]]  # initialize 模式
-    target_path: Union[str, List[str]]  # execute 模式
-    data_requirements: str  # 逗号分隔的字段列表
+    target_path: Union[str, List[str]]  # 目标页面路径
+    data_requirements: Dict  # 数据需求（字典格式）
+    extraction_method: Optional[str] = None  # 运行时覆盖
+    dom_scope: Optional[str] = None  # 运行时覆盖
+    debug_mode: Optional[bool] = None  # 运行时覆盖
     interaction_steps: Optional[List[InteractionStep]] = []
     options: Optional[ScraperOptions] = ScraperOptions()
 
@@ -246,18 +244,13 @@ class ScraperOptions(BaseModel):
 ```python
 class ScraperAgentOutput(BaseModel):
     success: bool
-    mode: str
     message: str
     extraction_method: str  # 'script' 或 'llm'
-    
-    # Initialize 模式输出
-    test_data: Optional[List[Dict[str, Any]]] = None
-    total_count: Optional[int] = None
-    
-    # Execute 模式输出
+
+    # 数据输出
     extracted_data: Optional[List[Dict[str, Any]]] = None
     metadata: Optional[Dict[str, Any]] = None
-    
+
     error: Optional[str] = None
 
 class ScraperMetadata(BaseModel):
@@ -272,18 +265,24 @@ class ScraperMetadata(BaseModel):
 ```python
 class StoredScript(BaseModel):
     script_content: str  # LLM 生成的完整脚本
-    data_requirements: str
+    data_requirements: Dict  # 数据需求字典
+    dom_config: Dict  # DOM配置
+        # generation_dom_scope: "partial" (始终partial)
+        # execution_dom_scope: "partial" | "full" (记录首次执行时的配置)
     created_at: str
-    version: str = "4.0"
+    version: str = "7.1"
+
+# 注意：script key 仅基于 data_requirements，不包含 dom_scope
+# 因为脚本生成始终使用 partial DOM，生成的脚本是通用的
 ```
 
-## 6. 质量属性 v4.0
+## 6. 质量属性 v5.0
 
 ### 6.1 可用性
-- **双模式支持**: 用户可根据需求选择脚本或大模型模式
+- **自动化**: 脚本模式自动管理KV缓存，无需手动区分阶段
+- **灵活配置**: 运行时可覆盖默认配置
 - **调试友好**: 调试模式下提供详细的DOM和脚本文件
 - **错误提示**: 清晰的错误信息和调试指导
-- **统一接口**: 两种模式使用相同的输入输出格式
 
 ### 6.2 可扩展性
 - **提取方法**: 可扩展支持更多提取方式
@@ -297,13 +296,13 @@ class StoredScript(BaseModel):
 - **性能监控**: 记录执行时间和提取数据量
 - **错误追踪**: 完整的异常和错误堆栈追踪
 
-## 7. 验收标准 v4.0
+## 7. 验收标准 v5.0
 
 ### 7.1 功能验收
-- [ ] **双模式支持**: 脚本模式和大模型模式都能正常工作
-- [ ] **脚本重用**: 初始化阶段生成的脚本在执行阶段可重复使用
+- [ ] **双模式支持**: 脚本模式和LLM模式都能正常工作
+- [ ] **自动脚本管理**: 脚本模式自动检查KV缓存并生成/复用脚本
 - [ ] **KV存储**: 脚本可正常存储到KV并从KV加载
-- [ ] **大模型提取**: LLM模式可直接提取数据不依赖脚本
+- [ ] **LLM模式限制**: LLM模式自动强制使用partial DOM
 - [ ] **调试支持**: 调试模式下可正常生成DOM和脚本文件
 - [ ] **交互处理**: 支持点击、滚动、输入等交互操作
 
@@ -322,26 +321,29 @@ class StoredScript(BaseModel):
 - [ ] **合规性**: 遵守网站robots.txt和使用条款
 
 
-## 8. 实现总结 v4.0
+## 8. 实现总结 v5.0
 
-ScraperAgent v4.0 已成功实现双模式数据提取架构：
+ScraperAgent v5.0 简化了工作模式，提供更自动化的使用体验：
 
-### 8.1 核心创新
-- **创建时配置**: 在代理创建时确定提取方法和调试模式，后续不可更改
-- **脚本模式**: 实现"一次生成，多次使用"的高效提取方案
-- **大模型模式**: 提供实时适应的灵活提取能力
-- **统一接口**: 两种模式共享相同的API设计
+### 8.1 核心改进
+- **自动脚本管理**: 移除init/execute模式区分，自动检查KV缓存
+- **Token优化**: 脚本生成强制使用partial DOM，大幅降低成本
+- **运行时配置**: 支持灵活的运行时参数覆盖
+- **DOM范围控制**: LLM模式强制partial，脚本模式生成用partial、执行可用full
+- **统一接口**: 单一的execute入口，简化调用流程
 
 ### 8.2 技术特点
 - **Browser-Use集成**: 直接使用BrowserSession、Controller、DomService核心组件
-- **KV存储**: 脚本持久化存储和加载机制
+- **KV自动缓存**: 脚本基于data_requirements自动缓存（不含dom_scope）
+- **智能DOM选择**: 生成用partial（省token），执行支持full（获取隐藏数据）
 - **调试友好**: 完整的DOM和脚本文件保存功能
 - **错误处理**: 统一的异常处理和恢复策略
 
 ### 8.3 应用价值
-- **性能优化**: 脚本模式避免重复LLM调用，提高执行效率
-- **灵活适应**: 大模型模式可适应页面结构变化
-- **开发效率**: 统一的接口设计降低学习和使用成本
+- **使用简单**: 无需区分阶段，自动管理脚本生命周期
+- **成本优化**: 脚本生成强制partial DOM，token消耗降低50-80%
+- **性能优化**: 脚本模式自动复用，避免重复LLM调用
+- **灵活配置**: 运行时可随时调整提取策略
 - **调试便利**: 调试模式提供详细的执行状态和中间文件
 
-本需求文档v4.0反映了ScraperAgent的最新实现，为智能爬虫的双模式数据提取提供了完整的功能规范和质量标准。
+本需求文档v5.0反映了ScraperAgent的简化设计和token优化策略，为智能爬虫提供了更自动化、经济、易用的功能规范。

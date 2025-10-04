@@ -97,10 +97,8 @@ class VariableAgent(BaseStepAgent):
         data = step_config.get('data', {})
         self.logger.debug(f"VariableAgent _handle_set input data: {data}")
 
-        # Resolve any variable references in data
-        resolved_data = {}
-        for key, value in data.items():
-            resolved_data[key] = self._resolve_variable(value, context)
+        # Resolve any variable references in data (handles nested dicts recursively)
+        resolved_data = self._resolve_variable(data, context)
 
         self.logger.debug(f"VariableAgent _handle_set resolved data: {resolved_data}")
         return resolved_data
@@ -235,15 +233,77 @@ class VariableAgent(BaseStepAgent):
         }
 
     def _resolve_variable(self, value: Any, context: Any) -> Any:
-        """Resolve variable references in value"""
+        """Resolve variable references in value, supports nested property access like {{item.name}}"""
+        # Handle dictionaries recursively
+        if isinstance(value, dict):
+            resolved_dict = {}
+            for k, v in value.items():
+                resolved_dict[k] = self._resolve_variable(v, context)
+            return resolved_dict
+
+        # Handle lists recursively
+        if isinstance(value, list):
+            return [self._resolve_variable(item, context) for item in value]
+
+        # Handle strings with variable references
         if not isinstance(value, str):
             return value
 
-        # Check if it's a variable reference {{var}}
-        if value.startswith('{{') and value.endswith('}}'):
-            var_name = value[2:-2].strip()
+        # Check if it's a complete variable reference {{var}} or {{var.field}}
+        if value.startswith('{{') and value.endswith('}}') and value.count('{{') == 1:
+            var_expression = value[2:-2].strip()
             if context and hasattr(context, 'variables'):
-                return context.variables.get(var_name, value)
+                # Support nested property access
+                parts = var_expression.split('.')
+                result = context.variables.get(parts[0])
+
+                # If variable not found, return original
+                if result is None:
+                    return value
+
+                # Access nested properties
+                for part in parts[1:]:
+                    if isinstance(result, dict):
+                        result = result.get(part)
+                    elif hasattr(result, part):
+                        result = getattr(result, part)
+                    else:
+                        return value  # Can't access, return original
+
+                    if result is None:
+                        return value
+
+                return result
+
+        # Handle string interpolation like "Processed: {{current_item.name}}"
+        if '{{' in value and '}}' in value:
+            if context and hasattr(context, 'variables'):
+                import re
+                pattern = r'\{\{([^}]+)\}\}'
+
+                def replace_var(match):
+                    var_expression = match.group(1).strip()
+                    parts = var_expression.split('.')
+                    result = context.variables.get(parts[0])
+
+                    if result is None:
+                        return match.group(0)  # Return original {{...}}
+
+                    # Access nested properties
+                    for part in parts[1:]:
+                        if isinstance(result, dict):
+                            result = result.get(part)
+                        elif hasattr(result, part):
+                            result = getattr(result, part)
+                        else:
+                            return match.group(0)
+
+                        if result is None:
+                            return match.group(0)
+
+                    return str(result)
+
+                return re.sub(pattern, replace_var, value)
 
         return value
 

@@ -42,12 +42,18 @@ from base_app.server.core.config_service import ConfigService
 class WorkflowTestRunner:
     """Workflow test runner class"""
 
-    def __init__(self, config_path: Optional[str] = None, verbose: bool = False):
+    def __init__(
+        self,
+        config_path: Optional[str] = None,
+        verbose: bool = False,
+        user_id: str = "test_user"
+    ):
         """Initialize workflow runner
 
         Args:
             config_path: Path to config file (optional)
             verbose: Enable verbose logging
+            user_id: User ID for memory isolation (default: "test_user")
         """
         # Setup logging
         log_level = logging.DEBUG if verbose else logging.INFO
@@ -56,6 +62,9 @@ class WorkflowTestRunner:
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )
         self.logger = logging.getLogger(__name__)
+
+        # Store user_id
+        self.user_id = user_id
 
         # Load configuration
         try:
@@ -76,12 +85,17 @@ class WorkflowTestRunner:
         self.context = None
 
     async def initialize(self, llm_provider: str = None, llm_model: str = None):
-        """Initialize BaseAgent and context
+        """Initialize BaseAgent and context (only once)
 
         Args:
             llm_provider: LLM provider (openai, anthropic, etc.)
             llm_model: LLM model name
         """
+        # Check if already initialized
+        if self.base_agent is not None:
+            self.logger.info(f"BaseAgent already initialized for user '{self.user_id}', skipping initialization")
+            return
+
         # Get LLM config from service
         # Use ConfigService's get method to properly handle environment variables
         if not llm_provider:
@@ -107,12 +121,14 @@ class WorkflowTestRunner:
             'model_name': llm_model
         }
 
+        # Create BaseAgent with user_id for memory isolation
         self.base_agent = BaseAgent(
             agent_config,
             config_service=self.config_service,  # Pass config service
-            provider_config=provider_config
+            provider_config=provider_config,
+            user_id=self.user_id  # Pass user_id for memory isolation
         )
-        self.logger.info(f"Initialized BaseAgent with {llm_provider}/{llm_model}")
+        self.logger.info(f"Initialized BaseAgent with {llm_provider}/{llm_model} for user '{self.user_id}'")
 
         # Debug: Check if provider is initialized
         if self.base_agent.provider:
@@ -349,6 +365,11 @@ async def main():
         '--llm-model',
         help='LLM model name'
     )
+    config_group.add_argument(
+        '--user-id',
+        default='test_user',
+        help='User ID for memory isolation (default: test_user)'
+    )
 
     # Output options
     output_group = parser.add_argument_group('Output Options')
@@ -393,7 +414,8 @@ async def main():
     # Create and run workflow
     runner = WorkflowTestRunner(
         config_path=args.config,
-        verbose=args.verbose
+        verbose=args.verbose,
+        user_id=args.user_id
     )
 
     try:

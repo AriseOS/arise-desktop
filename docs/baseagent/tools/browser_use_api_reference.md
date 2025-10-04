@@ -419,9 +419,45 @@ class GetDropdownOptionsEvent:
     node: EnhancedDOMTreeNode         # Dropdown element
 
 class SelectDropdownOptionEvent:
-    node: EnhancedDOMTreeNode         # Dropdown element  
+    node: EnhancedDOMTreeNode         # Dropdown element
     text: str                         # Option text
+
+# Browser State Events
+class BrowserStateRequestEvent:
+    include_dom: bool = True          # Include DOM tree in response
+    include_screenshot: bool = True   # Include screenshot in response
+    include_recent_events: bool = False  # Include recent event history
 ```
+
+**Important Note on BrowserStateRequestEvent:**
+
+This event is the **primary mechanism for getting the complete browser state** with page stability guarantees:
+
+1. **Automatic Page Stability Wait**: When dispatched, this event triggers `_wait_for_stable_network()` inside DOMWatchdog, which waits for:
+   - `minimum_wait_page_load_time` (default 0.25s) - lets page settle
+   - `wait_for_network_idle_page_load_time` (default 0.5s) - waits for dynamic content
+
+2. **Complete Browser State**: Returns `BrowserStateSummary` containing:
+   - `dom_state`: SerializedDOMState with full DOM tree and selector_map
+   - `screenshot`: Base64 screenshot with optional element highlighting
+   - `url`, `title`: Current page information
+   - `tabs`: All open tabs
+   - `page_info`: Viewport and scroll position data
+
+3. **Usage Pattern**: Always dispatch this event after navigation before extracting DOM data:
+```python
+# After navigation
+event = browser_session.event_bus.dispatch(BrowserStateRequestEvent())
+await event
+browser_state = await event.event_result(raise_if_any=True, raise_if_none=False)
+
+# Now safe to access DOM
+dom_state = browser_state.dom_state
+```
+
+4. **Direct DOM Access vs BrowserStateRequestEvent**:
+   - ❌ **Direct**: `dom_service.get_serialized_dom_tree()` - No page stability wait
+   - ✅ **Via Event**: `BrowserStateRequestEvent()` → waits for stability → builds DOM
 
 ### Event Dispatching
 

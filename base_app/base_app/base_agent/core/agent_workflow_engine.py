@@ -18,6 +18,7 @@ from ..agents import (
 )
 from ..agents.variable_agent import VariableAgent
 from ..agents.scraper_agent import ScraperAgent
+from ..agents.storage_agent import StorageAgent
 from ..workflows.workflow_loader import ConditionEvaluator
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,12 @@ class AgentWorkflowEngine:
             create_scraper_agent
         )
 
+        # 注册 Storage Agent 工厂
+        self.agent_registry.register_agent_factory(
+            "storage_agent",
+            lambda config: StorageAgent()
+        )
+
         logger.info(f"已注册内置Agent工厂: {self.agent_registry.list_agent_names()}")
     
     async def execute_workflow(
@@ -119,24 +126,26 @@ class AgentWorkflowEngine:
                 # 根据步骤类型执行不同逻辑
                 if step.agent_type == "if":
                     step_result = await self._execute_if_step(step, context)
-                elif step.agent_type == "while": 
+                elif step.agent_type == "while":
                     step_result = await self._execute_while_step(step, context)
+                elif step.agent_type == "foreach":
+                    step_result = await self._execute_foreach_step(step, context)
                 else:
                     # 检查普通步骤的执行条件
                     if step.condition and not await self._evaluate_condition(step.condition, context):
                         logger.info(f"步骤 {step.name} 条件不满足，跳过执行")
                         continue
-                    
+
                     # 执行普通Agent步骤
                     step_result = await self._execute_agent_step(step, context)
-                print(f"step_result: {step_result}")
+                # print(f"step_result: {step_result}")
                 
                 # 更新上下文变量
                 if step_result.success and step.outputs:
                     await self._update_context_variables(step_result, step.outputs, context)
                     # 更新最后一步的输出
                     last_step_output = await self._extract_step_outputs(step_result, step.outputs)
-                print(f"last_step_output {last_step_output}")
+                # print(f"last_step_output {last_step_output}")
                 
                 executed_steps.append(step_result)
                 
@@ -187,7 +196,7 @@ class AgentWorkflowEngine:
 
             # 构建Agent输入
             agent_input = await self._build_agent_input(step, agent_type, resolved_input, context)
-            print(f"agent_input {agent_input}")
+            # print(f"agent_input {agent_input}")
 
             # 提取agent配置（从step的agent_config字段或inputs中）
             agent_config = {}
@@ -287,31 +296,63 @@ class AgentWorkflowEngine:
         )
     
     
+    def _resolve_variable(self, var_expression: str, context: AgentContext) -> Any:
+        """解析变量表达式，支持嵌套属性访问（如 {{current_item.name}}）
+
+        Args:
+            var_expression: 变量表达式（如 "current_item.name"）
+            context: Agent执行上下文
+
+        Returns:
+            解析后的值
+        """
+        parts = var_expression.split('.')
+        value = context.variables.get(parts[0])
+
+        # 如果变量不存在，返回原表达式
+        if value is None:
+            return f"{{{{{var_expression}}}}}"
+
+        # 遍历嵌套属性
+        for part in parts[1:]:
+            if isinstance(value, dict):
+                value = value.get(part)
+            elif hasattr(value, part):
+                value = getattr(value, part)
+            else:
+                # 无法访问，返回原表达式
+                return f"{{{{{var_expression}}}}}"
+
+            if value is None:
+                return f"{{{{{var_expression}}}}}"
+
+        return value
+
     async def _resolve_step_input(
-        self, 
-        step: AgentWorkflowStep, 
+        self,
+        step: AgentWorkflowStep,
         context: AgentContext
     ) -> Dict[str, Any]:
         """解析步骤输入数据"""
         resolved_input = {}
-        
+
         for key, value in step.inputs.items():
             if isinstance(value, str) and value.startswith("{{") and value.endswith("}}"):
-                var_name = value[2:-2].strip()
-                resolved_input[key] = context.variables.get(var_name, value)
+                var_expression = value[2:-2].strip()
+                resolved_input[key] = self._resolve_variable(var_expression, context)
             elif isinstance(value, dict):
                 # 递归解析嵌套字典
                 resolved_dict = {}
                 for sub_key, sub_value in value.items():
                     if isinstance(sub_value, str) and sub_value.startswith("{{") and sub_value.endswith("}}"):
-                        var_name = sub_value[2:-2].strip()
-                        resolved_dict[sub_key] = context.variables.get(var_name, sub_value)
+                        var_expression = sub_value[2:-2].strip()
+                        resolved_dict[sub_key] = self._resolve_variable(var_expression, context)
                     else:
                         resolved_dict[sub_key] = sub_value
                 resolved_input[key] = resolved_dict
             else:
                 resolved_input[key] = value
-        
+
         return resolved_input
     
     async def _update_context_variables(
@@ -486,6 +527,109 @@ class AgentWorkflowEngine:
                 step_type="while"
             )
     
+    async def _execute_foreach_step(self, step: AgentWorkflowStep, context: AgentContext) -> StepResult:
+        """执行foreach循环控制步骤"""
+        step_start_time = time.time()
+        max_iterations = step.max_iterations or 100
+        loop_timeout = step.loop_timeout or 600
+
+        try:
+            # 解析source变量，获取要遍历的列表
+            source_var = step.source
+            if not source_var:
+                raise ValueError("foreach步骤缺少source配置")
+
+            # 解析变量引用（移除 {{}} 包装）
+            source_var_name = source_var.strip("{} ")
+            source_list = context.variables.get(source_var_name)
+
+            if not isinstance(source_list, list):
+                raise ValueError(f"source变量 '{source_var_name}' 必须是列表，当前类型: {type(source_list)}")
+
+            logger.info(f"Foreach循环开始，遍历 {len(source_list)} 个元素")
+
+            # 获取配置
+            item_var = step.item_var or "item"
+            index_var = step.index_var or "index"
+
+            iterations_executed = 0
+            sub_step_results = []
+            exit_reason = "completed"
+
+            # 遍历列表
+            for index, item in enumerate(source_list):
+                # 检查迭代次数限制
+                if iterations_executed >= max_iterations:
+                    exit_reason = "max_iterations_reached"
+                    logger.warning(f"达到最大迭代次数 {max_iterations}，停止遍历")
+                    break
+
+                # 检查超时
+                if time.time() - step_start_time > loop_timeout:
+                    exit_reason = "timeout"
+                    logger.warning(f"达到超时限制 {loop_timeout}秒，停止遍历")
+                    break
+
+                # 设置当前项和索引到上下文
+                context.variables[item_var] = item
+                context.variables[index_var] = index
+
+                logger.info(f"Foreach迭代 {index + 1}/{len(source_list)}: {item_var}={item}")
+
+                # 执行循环体步骤
+                iteration_success = True
+                iteration_results = []
+
+                if step.steps:
+                    for sub_step in step.steps:
+                        sub_result = await self._execute_single_step(sub_step, context)
+                        iteration_results.append(sub_result)
+
+                        if not sub_result.success:
+                            iteration_success = False
+                            exit_reason = "step_failed"
+                            logger.error(f"Foreach迭代 {index + 1} 中的步骤失败: {sub_step.name}")
+                            break
+
+                        # 更新上下文变量
+                        if sub_result.success and sub_step.outputs:
+                            await self._update_context_variables(sub_result, sub_step.outputs, context)
+
+                sub_step_results.extend(iteration_results)
+                iterations_executed += 1
+
+                if not iteration_success:
+                    break
+
+            # 清理循环变量
+            if item_var in context.variables:
+                del context.variables[item_var]
+            if index_var in context.variables:
+                del context.variables[index_var]
+
+            return StepResult(
+                step_id=step.id,
+                success=True,
+                data=None,
+                message=f"Foreach循环执行完成，遍历{iterations_executed}/{len(source_list)}个元素，退出原因: {exit_reason}",
+                execution_time=time.time() - step_start_time,
+                step_type="foreach",
+                iterations_executed=iterations_executed,
+                exit_reason=exit_reason,
+                sub_step_results=sub_step_results
+            )
+
+        except Exception as e:
+            logger.error(f"Foreach步骤执行失败: {str(e)}")
+            return StepResult(
+                step_id=step.id,
+                success=False,
+                data=None,
+                message=str(e),
+                execution_time=time.time() - step_start_time,
+                step_type="foreach"
+            )
+
     async def _execute_single_step(self, step: AgentWorkflowStep, context: AgentContext) -> StepResult:
         """执行单个步骤（可能是Agent步骤或控制流步骤）"""
         # 更新上下文
@@ -497,6 +641,8 @@ class AgentWorkflowEngine:
                 return await self._execute_if_step(step, context)
             elif step.agent_type == "while":
                 return await self._execute_while_step(step, context)
+            elif step.agent_type == "foreach":
+                return await self._execute_foreach_step(step, context)
             else:
                 # 检查普通步骤的执行条件
                 if step.condition and not await self._evaluate_condition(step.condition, context):
@@ -508,7 +654,7 @@ class AgentWorkflowEngine:
                         message="条件不满足，跳过执行",
                         execution_time=0.0
                     )
-                
+
                 return await self._execute_agent_step(step, context)
         finally:
             # 恢复原来的step_id

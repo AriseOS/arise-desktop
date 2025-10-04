@@ -12,7 +12,6 @@ try:
     from browser_use import Tools
     from browser_use.browser.session import BrowserSession
     from browser_use.browser.profile import BrowserProfile
-    from browser_use.dom.service import DomService
     BROWSER_USE_AVAILABLE = True
     Controller = Tools  # 向后兼容
 except ImportError:
@@ -20,17 +19,19 @@ except ImportError:
     BrowserSession = None
     BrowserProfile = None
     Controller = None
-    DomService = None
 
 logger = logging.getLogger(__name__)
 
 
 class BrowserSessionInfo:
-    """浏览器会话信息"""
-    def __init__(self, session: BrowserSession, controller: Controller, dom_service: DomService):
+    """浏览器会话信息
+
+    Note: dom_service has been removed as we now use DOMWatchdog's cached enhanced_dom_tree
+    instead of creating separate DomService instances.
+    """
+    def __init__(self, session: BrowserSession, controller: Controller):
         self.session = session
         self.controller = controller
-        self.dom_service = dom_service
         self.created_at = datetime.now()
         self.last_accessed = datetime.now()
         self.reference_count = 0  # 引用计数，用于判断是否可以清理
@@ -110,7 +111,7 @@ class BrowserSessionManager:
             keep_alive: 是否保持会话
 
         Returns:
-            BrowserSessionInfo: 包含session、controller和dom_service
+            BrowserSessionInfo: 包含session和controller
         """
         # 如果会话已存在，直接返回
         if session_id in self._sessions:
@@ -145,12 +146,12 @@ class BrowserSessionManager:
         # 启动浏览器
         await session.start()
 
-        # 创建Controller（Tools）和DomService
+        # 创建Controller（Tools）
+        # Note: DomService is no longer needed as we use DOMWatchdog's cached enhanced_dom_tree
         controller = Controller()  # browser-use的Tools实例
-        dom_service = DomService(session)
 
         # 保存会话信息
-        info = BrowserSessionInfo(session, controller, dom_service)
+        info = BrowserSessionInfo(session, controller)
         info.reference_count = 1
         self._sessions[session_id] = info
 

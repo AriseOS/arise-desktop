@@ -15,6 +15,7 @@ data:
   databases:
     sessions: ${data.root}/test_sessions.db
     kv: ${data.root}/test_agent_kv.db
+    storage: ${data.root}/test_storage.db
 
   # Test vector database directory
   chroma_db: ${data.root}/test_chroma_db

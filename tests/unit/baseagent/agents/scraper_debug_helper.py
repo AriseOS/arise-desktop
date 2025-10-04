@@ -75,7 +75,6 @@ class ScraperDebugHelper:
                     "product_name": "Kawa mielona 100% Arabica Świeżo palona Brazylia Santos 250g",
                     "price": "25,00 zł",
                     "sales_count_30d": "323"
-
                 }]
             },
             "product_list": {
@@ -87,6 +86,15 @@ class ScraperDebugHelper:
                     "seller_name": "卖家名称"
                 },
                 "sample_data": []
+            },
+            "url_list": {
+                "user_description": "提取页面中所有商品的URL链接",
+                "output_format": {
+                    "url": "商品详情页完整URL"
+                },
+                "sample_data": [
+                    {"url": "https://allegro.pl/oferta/example-product-123"}
+                ]
             }
         }
     
@@ -122,18 +130,30 @@ class ScraperDebugHelper:
                 action=GoToUrlActionModel(**goto_action),
                 browser_session=browser_session
             )
-            
+
             if nav_result.error:
                 print(f"Navigation failed: {nav_result.error}")
                 return False
-            
-            # Wait for page to load
-            print("Waiting for page to load...")
-            await asyncio.sleep(3)
-            
-            # Extract DOM (same as ScraperAgent)
+
+            # Wait for page stability using BrowserStateRequestEvent (same as ScraperAgent fix)
+            print("Waiting for page stability...")
+            from browser_use.browser.events import BrowserStateRequestEvent
+
+            event = browser_session.event_bus.dispatch(
+                BrowserStateRequestEvent(
+                    include_dom=True,
+                    include_screenshot=False,
+                    include_recent_events=False
+                )
+            )
+            browser_state = await event.event_result(raise_if_any=True, raise_if_none=False)
+            print("✅ Page stability complete")
+
+            # Extract DOM (same as ScraperAgent) - use DOMWatchdog cache
             print("Extracting DOM data...")
-            serialized_dom, enhanced_dom, timing = await dom_service.get_serialized_dom_tree()
+            enhanced_dom = browser_session._dom_watchdog.enhanced_dom_tree
+            if enhanced_dom is None:
+                raise RuntimeError("DOM tree is None after BrowserStateRequestEvent - page may have failed to load")
             
             current_url = await browser_session.get_current_page_url()
             
@@ -209,45 +229,45 @@ class ScraperDebugHelper:
                 except Exception as e:
                     print(f"Error closing browser: {e}")
     
-    async def generate_script(self, name: str, requirement_type: str = "product_detail", dom_scope: str = "partial"):
-        """Generate script using ScraperAgent's exact logic and prompts"""
-        
+    async def generate_script(self, name: str, requirement_type: str = "product_detail"):
+        """Generate script using ScraperAgent's exact logic and prompts
+
+        Note: Script generation ALWAYS uses partial DOM (matching ScraperAgent v5.0 token optimization)
+        """
+
         print(f"=== Script Generation for '{name}' ===")
         print(f"Requirement type: {requirement_type}")
-        print(f"DOM scope: {dom_scope}")
-        
+        print(f"⚡ Token Optimization: Always using PARTIAL DOM for script generation")
+
         # Load DOM data
         dom_file = self.data_dir / f"{name}_dom.json"
         if not dom_file.exists():
             print(f"❌ DOM data not found: {dom_file}")
             print("Run with --mode dom first to collect DOM data")
             return False
-        
+
         try:
             with open(dom_file, 'r', encoding='utf-8') as f:
                 dom_data = json.load(f)
-            
+
             print(f"✅ Loaded DOM data from: {dom_file}")
-            
+
             # Get data requirements (same as test_scraper_agent_with_script.py)
             if requirement_type not in self.default_data_requirements:
                 print(f"❌ Unknown requirement type: {requirement_type}")
                 print(f"Available types: {list(self.default_data_requirements.keys())}")
                 return False
-            
+
             data_requirements = self.default_data_requirements[requirement_type]
-            
-            # Select DOM scope (same as ScraperAgent logic)
-            if dom_scope == "partial":
-                dom_info = dom_data['partial_scope']
-            else:
-                dom_info = dom_data['full_scope']
-            
+
+            # ALWAYS use partial DOM for script generation (token optimization)
+            dom_info = dom_data['partial_scope']
+
             target_dom = dom_info['target_dom']
             dom_dict = dom_info['dom_dict']
             llm_view = dom_info['llm_view']
-            
-            print(f"Using {dom_scope} DOM")
+
+            print(f"Using PARTIAL DOM for generation (saves 50-80% tokens)")
             print(f"LLM view length: {len(llm_view)} chars")
             
             # Build DOM analysis (same structure as ScraperAgent)
@@ -256,26 +276,27 @@ class ScraperDebugHelper:
                 'dom_dict': dom_dict,
                 'llm_view': llm_view,
                 'dom_config': {
-                    'dom_scope': dom_scope
+                    'dom_scope': 'partial'  # Always partial for generation
                 }
             }
-            
+
             # Call ScraperAgent's exact LLM generation function
             print("Calling ScraperAgent's LLM generation logic...")
             script_content = await self._generate_extraction_script_with_llm(
-                dom_analysis, 
-                data_requirements, 
+                dom_analysis,
+                data_requirements,
                 []  # interaction_steps
             )
-            
+
             # Save script
             timestamp = int(datetime.now().timestamp())
-            script_file = self.data_dir / f"{name}_script_{requirement_type}_{dom_scope}_{timestamp}.py"
+            script_file = self.data_dir / f"{name}_script_{requirement_type}_{timestamp}.py"
             
             with open(script_file, 'w', encoding='utf-8') as f:
                 f.write(f"# Generated script for '{name}'\n")
                 f.write(f"# Requirement type: {requirement_type}\n")
-                f.write(f"# DOM scope: {dom_scope}\n")
+                f.write(f"# Generation DOM: partial (token optimization)\n")
+                f.write(f"# Execution DOM: can use partial or full\n")
                 f.write(f"# Generated at: {datetime.now().isoformat()}\n")
                 f.write("# Data requirements:\n")
                 # Fix: Add # to each line of JSON
@@ -284,32 +305,36 @@ class ScraperDebugHelper:
                     f.write(f"# {line}\n")
                 f.write("# " + "=" * 70 + "\n\n")
                 f.write(script_content)
-            
+
             print(f"✅ Script saved to: {script_file}")
-            
+
             # Print for manual testing
             print("\n" + "=" * 80)
             print("🔧 MANUAL TESTING DATA")
             print("=" * 80)
-            
+
             print(f"\n📋 Data Requirements:")
             print(json.dumps(data_requirements, indent=2, ensure_ascii=False))
-            
+
             print(f"\n📝 Generated Script:")
             print("-" * 50)
             print(script_content)
-            
+
             print(f"\n🤖 LLM View (first 1000 chars):")
             print("-" * 50)
             print(llm_view[:1000] + ("..." if len(llm_view) > 1000 else ""))
-            
+
             print(f"\n🧪 Manual Test Commands:")
             print("-" * 50)
-            print("# 1. Load DOM data")
+            print("# 1. Load DOM data (can test with partial or full)")
             print(f"import json")
             print(f"dom_data = json.load(open('{dom_file}'))")
-            print(f"dom_dict = dom_data['{dom_scope}_scope']['dom_dict']")
-            print(f"serialized_dom = dom_data['{dom_scope}_scope']['target_dom']")
+            print(f"# Use partial DOM:")
+            print(f"dom_dict = dom_data['partial_scope']['dom_dict']")
+            print(f"serialized_dom = dom_data['partial_scope']['target_dom']")
+            print(f"# OR use full DOM:")
+            print(f"# dom_dict = dom_data['full_scope']['dom_dict']")
+            print(f"# serialized_dom = dom_data['full_scope']['target_dom']")
             print("")
             print("# 2. Execute script")
             print(f"exec(open('{script_file}').read())")
@@ -356,9 +381,8 @@ class ScraperDebugHelper:
 DOM是嵌套字典结构，每个元素包含：
 - tag: HTML标签名
 - text: 文本内容
-- class: CSS类名 
+- class: CSS类名
 - href: 链接地址
-- structural_path: 结构化路径（如 html>body>div.container>h1.title）
 - xpath: XPath路径
 - children: 子元素数组
 
@@ -371,7 +395,7 @@ DOM是嵌套字典结构，每个元素包含：
 
 定位策略（优先级）：
 1. **Class定位**（首选）- 通过CSS类名，灵活适应单个/多个元素
-2. **Structural Path定位** - 结构路径精确定位
+2. **XPath定位** - 精确路径定位
 3. **内容特征定位** - 通过href/text等内容匹配
 
 **跨DOM数据提取策略**：当数据分散在多个相邻元素中时：
@@ -381,13 +405,16 @@ DOM是嵌套字典结构，每个元素包含：
 
 关键函数示例：
 ```python
-def find_parent_container(node, target_level=1):
-    # 根据structural_path向上查找父容器
-    path = node.get('structural_path', '')
-    parts = path.split('>')
-    if len(parts) > target_level:
-        parent_path = '>'.join(parts[:-target_level])
-        return find_by_path(dom_dict, parent_path)
+def find_parent_by_xpath(node, levels_up=1):
+    # 根据xpath向上查找父容器
+    xpath = node.get('xpath', '')
+    if not xpath:
+        return None
+    # XPath向上查找：移除最后N级路径
+    parts = xpath.split('/')
+    if len(parts) > levels_up:
+        parent_xpath = '/'.join(parts[:-levels_up])
+        return find_by_xpath(dom_dict, parent_xpath)
     return None
 
 def collect_scattered_data(container_node):
@@ -524,17 +551,26 @@ def execute_extraction(serialized_dom, dom_dict, max_items: int = 100):
             print(f"  • {req_type}: {req_data['user_description']}")
     
     async def execute_script(self, name: str, script_file_path: str = None, requirement_type: str = "product_detail", dom_scope: str = "partial", max_items: int = 10):
-        """Execute a generated script - simplified version"""
-        
+        """Execute a generated script
+
+        Args:
+            name: Test data name
+            script_file_path: Specific script file path (optional)
+            requirement_type: Type of requirement (for finding script)
+            dom_scope: DOM scope for execution ('partial' or 'full')
+            max_items: Maximum items to extract
+        """
+
         print(f"=== Script Execution for '{name}' ===")
+        print(f"Execution DOM scope: {dom_scope}")
         print(f"Max items: {max_items}")
-        
+
         # Find script file
         if script_file_path:
             script_file = Path(script_file_path)
         else:
-            # Find the most recent script file matching criteria
-            pattern = f"{name}_script_{requirement_type}_{dom_scope}_*.py"
+            # Find the most recent script file matching criteria (no dom_scope in filename anymore)
+            pattern = f"{name}_script_{requirement_type}_*.py"
             script_files = sorted(self.data_dir.glob(pattern), reverse=True)
             if not script_files:
                 print(f"❌ No script files found matching pattern: {pattern}")
@@ -544,8 +580,8 @@ def execute_extraction(serialized_dom, dom_dict, max_items: int = 100):
                     print(f"  • {script.name}")
                 return False
             script_file = script_files[0]
-        
-        # Load DOM data
+
+        # Load cached DOM data
         dom_file = self.data_dir / f"{name}_dom.json"
         if not dom_file.exists():
             print(f"❌ DOM data not found: {dom_file}")
@@ -599,9 +635,9 @@ def execute_extraction(serialized_dom, dom_dict, max_items: int = 100):
             
             print(f"\n📄 Full result:")
             print(json.dumps(result, indent=2, ensure_ascii=False))
-            
+
             return result.get("success", False)
-            
+
         except Exception as e:
             print(f"❌ Execution failed: {e}")
             import traceback
@@ -615,10 +651,10 @@ async def main():
                        help='dom: collect DOM data, generate: create script, exec: execute script, list: show data')
     parser.add_argument('--url', help='URL for DOM collection')
     parser.add_argument('--name', help='Test data name')
-    parser.add_argument('--requirement-type', choices=['product_detail', 'product_list'], 
+    parser.add_argument('--requirement-type', choices=['product_detail', 'product_list', 'url_list'],
                        default='product_detail', help='Type of data requirements to use')
     parser.add_argument('--dom-scope', choices=['partial', 'full'], default='partial',
-                       help='DOM scope for script generation and execution')
+                       help='DOM scope for script execution (generation always uses partial)')
     parser.add_argument('--script-file', help='Specific script file to execute (optional)')
     parser.add_argument('--max-items', type=int, default=10, help='Maximum items to extract')
     
@@ -642,20 +678,20 @@ async def main():
         if not args.name:
             print("❌ --name required for script generation")
             return
-        
-        success = await helper.generate_script(args.name, args.requirement_type, args.dom_scope)
+
+        success = await helper.generate_script(args.name, args.requirement_type)
         print("✅ Script generation completed" if success else "❌ Script generation failed")
     
     elif args.mode == 'exec':
         if not args.name:
             print("❌ --name required for script execution")
             return
-        
+
         success = await helper.execute_script(
-            args.name, 
-            args.script_file, 
-            args.requirement_type, 
-            args.dom_scope, 
+            args.name,
+            args.script_file,
+            args.requirement_type,
+            args.dom_scope,
             args.max_items
         )
         print("✅ Script execution completed" if success else "❌ Script execution failed")

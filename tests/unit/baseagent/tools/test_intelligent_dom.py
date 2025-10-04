@@ -94,34 +94,25 @@ async def simple_dom_test():
             return
         
         print("Navigation successful!")
-        
-        # Wait for page to load
+
+        # Wait for page to load using BrowserStateRequestEvent
         print("Waiting for page to load...")
-        await asyncio.sleep(5)
-        
-        # Scroll down to load more dynamic content
-        print("Scrolling to load dynamic content...")
-        from browser_use.tools.views import ScrollAction
-        
-        # Create a proper ActionModel for scrolling
-        class ScrollActionModel(ActionModel):
-            scroll: ScrollAction | None = None
-        
-        # Scroll down multiple times to load more products
-        # for i in range(3):
-        #     print(f"Scrolling down ({i+1}/3)...")
-        #     scroll_action = ScrollActionModel(scroll=ScrollAction(down=True, num_pages=2.0))
-        #     scroll_result = await tools.act(
-        #         action=scroll_action,
-        #         browser_session=browser_session
-        #     )
-        #     if scroll_result.error:
-        #         print(f"Scroll error: {scroll_result.error}")
-        #     await asyncio.sleep(2)  # Wait for content to load
-        
-        # Get DOM information
+        from browser_use.browser.events import BrowserStateRequestEvent
+        event = browser_session.event_bus.dispatch(
+            BrowserStateRequestEvent(
+                include_dom=True,
+                include_screenshot=False,
+                include_recent_events=False
+            )
+        )
+        browser_state = await event.event_result(raise_if_any=True, raise_if_none=False)
+        print("✅ Page stability complete")
+
+        # Get DOM information from DOMWatchdog cache
         print("\n=== Testing New DOM API ===")
-        dom_state, enhanced_dom_tree, timing_info = await dom_service.get_serialized_dom_tree()
+        enhanced_dom_tree = browser_session._dom_watchdog.enhanced_dom_tree
+        if enhanced_dom_tree is None:
+            raise RuntimeError("DOM tree is None after BrowserStateRequestEvent - page may have failed to load")
         
         # Print current URL
         current_url = await browser_session.get_current_page_url()

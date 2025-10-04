@@ -53,20 +53,38 @@ class SQLiteKVStorage:
             await db.commit()
             logger.info(f"Initialized SQLite KV storage schema")
     
+    async def _ensure_table_exists(self, db):
+        """Ensure the kv_storage table exists"""
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS kv_storage (
+                key TEXT NOT NULL,
+                user_id TEXT NOT NULL DEFAULT 'default',
+                value TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (key, user_id)
+            )
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_kv_user_id
+            ON kv_storage(user_id)
+        """)
+        await db.commit()
+
     async def set(
-        self, 
-        key: str, 
-        value: Any, 
+        self,
+        key: str,
+        value: Any,
         user_id: str = "default"
     ) -> bool:
         """
         Store a key-value pair
-        
+
         Args:
             key: Storage key
             value: Value to store (will be JSON serialized)
             user_id: User ID for data isolation
-            
+
         Returns:
             True if stored successfully
         """
@@ -74,58 +92,60 @@ class SQLiteKVStorage:
             # JSON serialize the value
             serialized_value = json.dumps(value, ensure_ascii=False)
             now = datetime.now().isoformat()
-            
+
             async with aiosqlite.connect(str(self.database_path)) as db:
+                await self._ensure_table_exists(db)
                 await db.execute("""
-                    INSERT OR REPLACE INTO kv_storage 
+                    INSERT OR REPLACE INTO kv_storage
                     (key, user_id, value, created_at, updated_at)
-                    VALUES (?, ?, ?, 
+                    VALUES (?, ?, ?,
                             COALESCE((SELECT created_at FROM kv_storage WHERE key = ? AND user_id = ?), ?),
                             ?)
                 """, (key, user_id, serialized_value, key, user_id, now, now))
                 await db.commit()
-                
+
             logger.debug(f"Stored KV pair: {user_id}:{key}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Error storing KV pair {user_id}:{key}: {e}")
             return False
     
     async def get(
-        self, 
-        key: str, 
-        user_id: str = "default", 
+        self,
+        key: str,
+        user_id: str = "default",
         default: Any = None
     ) -> Any:
         """
         Retrieve a value by key
-        
+
         Args:
             key: Storage key
             user_id: User ID for data isolation
             default: Default value if key not found
-            
+
         Returns:
             Stored value or default
         """
         try:
             async with aiosqlite.connect(str(self.database_path)) as db:
+                await self._ensure_table_exists(db)
                 cursor = await db.execute("""
-                    SELECT value FROM kv_storage 
+                    SELECT value FROM kv_storage
                     WHERE key = ? AND user_id = ?
                 """, (key, user_id))
-                
+
                 row = await cursor.fetchone()
                 if not row:
                     logger.debug(f"KV key not found: {user_id}:{key}")
                     return default
-                
+
                 # Deserialize JSON value
                 value = json.loads(row[0])
                 logger.debug(f"Retrieved KV pair: {user_id}:{key}")
                 return value
-                
+
         except Exception as e:
             logger.error(f"Error retrieving KV pair {user_id}:{key}: {e}")
             return default

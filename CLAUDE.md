@@ -101,6 +101,7 @@ pre-commit run --all-files
 - **Tools Integration**: `base_app/base_agent/tools/` - Browser automation, Android tools, memory management
 - **Providers**: `base_app/base_agent/providers/` - LLM provider abstraction (OpenAI, Anthropic)
 - **Workflows**: `base_app/base_agent/workflows/` - YAML-based workflow definitions and loader
+- **Memory System**: `base_app/base_agent/memory/` - Three-layer memory architecture (Variables, KV Storage, Long-term Memory)
 
 **Agent Builder System** (`agent_builder/`)
 - **ProjectManagerAgent**: Intelligent development assistant that analyzes requirements and guides code generation
@@ -123,6 +124,19 @@ pre-commit run --all-files
 - BaseAgent can dynamically load workflows, tools, and memory configurations
 - Configuration-driven behavior changes without code modification
 - Context preservation across the requirements � design � implementation chain
+
+**Memory Architecture**
+- **Core Principle**: Memory binds to users, not to BaseAgent instances
+- **BaseAgent as Stateless Container**: Long-running service that executes workflows for a specific user
+- **User-bound Memory**: All memory data (cache, KV storage) is isolated by `user_id`
+- **Best Practice**: Always specify `user_id` when creating BaseAgent to enable memory sharing across instances
+```python
+# Correct: Specify user_id for memory persistence
+agent = BaseAgent(config, config_service=config, user_id="user123")
+
+# Wrong: Without user_id, each instance gets random ID and cannot share memory
+agent = BaseAgent(config, config_service=config)  # Gets random agent_xxx-uuid
+```
 
 **Multi-Database Architecture**
 ```
@@ -184,7 +198,7 @@ BASEAPP_PORT=8888
 - Agents (1:1) � port_allocation  
 - Agents (1:N) � agent_sessions
 
-See `docs/database_architecture.md` for complete schema documentation.
+See `docs/platform/database_architecture.md` for complete schema documentation.
 
 ## Agent Development Patterns
 
@@ -284,13 +298,22 @@ result = await agent.use_tool('custom_tool', 'action1', {'param': 'value'})
 - Frontend dev server: Port 3000
 - Backend API: Port 8000
 
-## Recent Architecture Documents
+## Documentation Structure
 
-Key architecture analysis documents in the repository:
-- `baseapp_agentic_architecture_analysis.md` - Initial BaseAgent suitability analysis
-- `baseagent_dynamic_loading_architecture.md` - Simplified dynamic loading design
-- `baseagent_contextual_dynamic_architecture.md` - Context-preserving architecture (recommended)
-- `docs/database_architecture.md` - Complete database schema documentation
+All documentation is organized in the `docs/` directory:
+
+- **`docs/baseagent/`** - BaseAgent framework documentation (architecture, workflows, memory, agents)
+- **`docs/agentbuilder/`** - AgentBuilder system documentation (AI-assisted agent generation)
+- **`docs/platform/`** - Platform documentation (web UI, database, deployment)
+- **`docs/guides/`** - Development guides and best practices
+
+See [`docs/README.md`](docs/README.md) for complete documentation index.
+
+Key architecture documents:
+- `docs/baseagent/ARCHITECTURE.md` - BaseAgent core architecture
+- `docs/baseagent/contextual_dynamic_architecture.md` - Context-preserving architecture (recommended)
+- `docs/platform/database_architecture.md` - Platform database schema
+- `docs/agentbuilder/ARCHITECTURE.md` - AgentBuilder system design
 
 The recommended approach is the contextual dynamic architecture which preserves the complete context chain from user requirements through design to implementation, enabling better AI-assisted development.
 

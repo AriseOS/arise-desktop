@@ -47,6 +47,7 @@ data:
   databases:
     sessions: ${data.root}/sessions.db    # Session storage
     kv: ${data.root}/agent_kv.db          # Key-value storage
+    storage: ${data.root}/storage.db      # Storage agent database
 
   # Vector database directory
   chroma_db: ${data.root}/chroma_db

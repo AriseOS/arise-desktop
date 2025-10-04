@@ -227,7 +227,7 @@ class AgentWorkflowStep(BaseModel):
     description: str = Field(default="", description="步骤描述")
     
     # Agent配置
-    agent_type: str = Field(..., description="Agent类型: text_agent | tool_agent | code_agent | if | while")
+    agent_type: str = Field(..., description="Agent类型: text_agent | tool_agent | code_agent | if | while | foreach")
     agent_instruction: str = Field(default="", description="Agent执行指令，描述Agent要做什么")
     user_task: Optional[str] = Field(default=None, description="用户具体任务内容")
     
@@ -256,12 +256,17 @@ class AgentWorkflowStep(BaseModel):
     timeout: int = Field(default=300, description="超时时间")
     retry_count: int = Field(default=0, description="重试次数")
     
-    # 控制流相关字段 (仅当agent_type为if或while时使用)
+    # 控制流相关字段 (仅当agent_type为if/while/foreach时使用)
     then: Optional[List['AgentWorkflowStep']] = Field(default=None, description="if条件为真时执行的步骤")
     else_: Optional[List['AgentWorkflowStep']] = Field(default=None, alias="else", description="if条件为假时执行的步骤")
-    steps: Optional[List['AgentWorkflowStep']] = Field(default=None, description="while循环体步骤")
-    max_iterations: Optional[int] = Field(default=10, description="while最大循环次数")
-    loop_timeout: Optional[int] = Field(default=300, description="while循环超时时间")
+    steps: Optional[List['AgentWorkflowStep']] = Field(default=None, description="while/foreach循环体步骤")
+    max_iterations: Optional[int] = Field(default=10, description="while/foreach最大循环次数")
+    loop_timeout: Optional[int] = Field(default=300, description="while/foreach循环超时时间")
+
+    # foreach 特有配置
+    source: Optional[str] = Field(default=None, description="foreach遍历的源列表变量名（如 '{{all_product_urls}}'）")
+    item_var: Optional[str] = Field(default="item", description="foreach当前项的变量名")
+    index_var: Optional[str] = Field(default="index", description="foreach当前索引的变量名")
 
     # Variable Agent 特有配置
     operation: Optional[str] = Field(default=None, description="Variable operation type")

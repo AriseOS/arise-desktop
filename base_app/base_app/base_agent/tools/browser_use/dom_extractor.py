@@ -111,30 +111,50 @@ class DOMExtractor:
                         return simplified
                 
                 
-                is_interactive = self._is_interactive_cached(node)
+                # Get visibility (follow browser-use official logic)
+                original_is_visible = getattr(node, 'is_visible', False)
                 # Override visibility if include_non_visible is True
-                original_is_visible = getattr(node, 'snapshot_node', None) and getattr(node, 'is_visible', False)
                 is_visible = True if getattr(self, '_include_non_visible', False) else original_is_visible
                 is_scrollable = getattr(node, 'is_actually_scrollable', False)
-                
-                should_include = (is_interactive and is_visible) or is_scrollable or getattr(node, 'children_and_shadow_roots', [])
-                
+                has_shadow_content = bool(getattr(node, 'children_and_shadow_roots', []))
+
+                # Enhanced shadow DOM detection (follow browser-use official logic)
+                is_shadow_host = any(
+                    child.node_type == NodeType.DOCUMENT_FRAGMENT_NODE
+                    for child in getattr(node, 'children_and_shadow_roots', [])
+                )
+
+                # Override visibility for elements with validation attributes (follow browser-use)
+                if not is_visible and node.attributes:
+                    has_validation_attrs = any(
+                        attr.startswith(('aria-', 'pseudo'))
+                        for attr in node.attributes.keys()
+                    )
+                    if has_validation_attrs:
+                        is_visible = True
+
+                # Include if visible, scrollable, has children, or is shadow host (follow browser-use)
+                # Note: Don't check is_interactive here - that's done in _assign_interactive_indices
+                should_include = is_visible or is_scrollable or has_shadow_content or is_shadow_host
+
                 if should_include:
                     simplified = SimplifiedNode(original_node=node, children=[])
-                    
+
                     for child in getattr(node, 'children_and_shadow_roots', []):
                         simplified_child = self._create_simplified_tree(child)
                         if simplified_child:
                             simplified.children.append(simplified_child)
-                    
-                    if (is_interactive and is_visible) or is_scrollable or simplified.children:
+
+                    # Return if meaningful or has meaningful children (follow browser-use)
+                    if is_visible or is_scrollable or simplified.children:
                         return simplified
                         
             elif node.node_type == NodeType.TEXT_NODE:
+                # Get visibility (follow browser-use official logic)
+                original_is_visible = node.snapshot_node and node.is_visible
                 # Override visibility if include_non_visible is True
-                original_is_visible = getattr(node, 'snapshot_node', None) and getattr(node, 'is_visible', False)
                 is_visible = True if getattr(self, '_include_non_visible', False) else original_is_visible
-                if (is_visible and getattr(node, 'node_value', None) and 
+                if (is_visible and getattr(node, 'node_value', None) and
                     node.node_value.strip() and len(node.node_value.strip()) > 1):
                     return SimplifiedNode(original_node=node, children=[])
             
@@ -157,14 +177,15 @@ class DOMExtractor:
                     optimized_children.append(optimized_child)
             node.children = optimized_children
             
-            is_interactive_opt = self._is_interactive_cached(node.original_node)
+            # Get visibility (follow browser-use official logic)
+            original_is_visible = node.original_node.snapshot_node and node.original_node.is_visible
             # Override visibility if include_non_visible is True
-            original_is_visible = (getattr(node.original_node, 'snapshot_node', None) and 
-                                 getattr(node.original_node, 'is_visible', False))
             is_visible = True if getattr(self, '_include_non_visible', False) else original_is_visible
-            
-            if ((is_interactive_opt and is_visible) or
-                getattr(node.original_node, 'is_actually_scrollable', False) or
+
+            # Keep meaningful nodes (follow browser-use official logic)
+            # Note: Don't check is_interactive here - that's done in _assign_interactive_indices
+            if (is_visible or
+                node.original_node.is_actually_scrollable or
                 node.original_node.node_type == NodeType.TEXT_NODE or
                 node.children):
                 return node
@@ -612,26 +633,56 @@ class DOMExtractor:
         
         return '\n'.join(formatted_lines)
 
-    def extract_llm_view(self, dom_dict: Dict) -> str:
+    def extract_llm_view(self, dom_dict: Dict, include_xpath: bool = True) -> str:
         """Extract LLM view from already simplified DOM dictionary
-        
+
         Since extract_dom_dict() now applies layered filtering, this method
         just converts the simplified dict to compact JSON format.
-        
+
         Args:
             dom_dict: Simplified DOM dictionary from extract_dom_dict()
-            
+            include_xpath: If False, remove xpath fields to save tokens (default: True)
+
         Returns:
             str: Compact JSON string for LLM consumption
         """
         try:
+            # Remove xpath if not needed
+            if not include_xpath:
+                dom_dict = self._remove_xpath_recursive(dom_dict)
+
             # DOM dict is already simplified by extract_dom_dict, just convert to JSON
             import json
             return json.dumps(dom_dict, separators=(',', ':'), ensure_ascii=False)
-            
+
         except Exception as e:
             logger.error(f"Error extracting LLM view: {e}")
             return "{}"
+
+    def _remove_xpath_recursive(self, node: Dict) -> Dict:
+        """Recursively remove xpath fields from DOM dict to save tokens
+
+        Args:
+            node: DOM node dictionary
+
+        Returns:
+            Dict: DOM dict without xpath fields
+        """
+        if not isinstance(node, dict):
+            return node
+
+        # Create a copy to avoid modifying original
+        node = node.copy()
+
+        # Remove xpath if present
+        if 'xpath' in node:
+            del node['xpath']
+
+        # Recursively process children
+        if 'children' in node and isinstance(node['children'], list):
+            node['children'] = [self._remove_xpath_recursive(child) for child in node['children']]
+
+        return node
     
     def _apply_layered_filtering(self, node):
         """Apply layered filtering: full info for content elements, minimal for containers
@@ -717,7 +768,7 @@ class DOMExtractor:
             # "xpath", "structural_path", "id", "class",
             "id", "class",
             "xpath",
-            "structural_path",
+            # "structural_path",
             # Interactive information
             "interactive_index",
             # Other useful attributes
@@ -748,17 +799,18 @@ def extract_dom_dict(serialized_dom) -> Dict:
     return extractor.extract_dom_dict(serialized_dom)
 
 
-def extract_llm_view(dom_dict: Dict) -> str:
+def extract_llm_view(dom_dict: Dict, include_xpath: bool = True) -> str:
     """Extract simplified view for LLM from DOM dictionary
-    
+
     Args:
         dom_dict: DOM dictionary from extract_dom_dict()
-        
+        include_xpath: If False, remove xpath fields to save tokens (default: True)
+
     Returns:
         str: Compact JSON string for LLM
     """
     extractor = DOMExtractor()
-    return extractor.extract_llm_view(dom_dict)
+    return extractor.extract_llm_view(dom_dict, include_xpath=include_xpath)
 
 
 def format_dict_as_text(dom_dict: Dict) -> str:

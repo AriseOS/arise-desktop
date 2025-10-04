@@ -167,7 +167,7 @@ class WorkflowValidator:
             
             # 验证 agent_type
             agent_type = step.get('agent_type')
-            if agent_type not in ['text_agent', 'tool_agent', 'code_agent', 'variable', 'scraper_agent', 'if', 'while']:
+            if agent_type not in ['text_agent', 'tool_agent', 'code_agent', 'variable', 'scraper_agent', 'if', 'while', 'foreach']:
                 errors.append(f"{step_prefix}: 不支持的 agent_type '{agent_type}'")
             
             # 验证控制流特定配置
@@ -182,6 +182,11 @@ class WorkflowValidator:
                     errors.append(f"{step_prefix}: while类型必须有condition字段")
                 if 'steps' not in step:
                     errors.append(f"{step_prefix}: while类型必须有steps字段")
+            elif agent_type == 'foreach':
+                if 'source' not in step:
+                    errors.append(f"{step_prefix}: foreach类型必须有source字段")
+                if 'steps' not in step:
+                    errors.append(f"{step_prefix}: foreach类型必须有steps字段")
             elif agent_type in self.AGENT_SPECIFIC_FIELDS:
                 # 验证普通agent类型特定配置
                 required_fields = self.AGENT_SPECIFIC_FIELDS[agent_type]
@@ -236,14 +241,14 @@ class WorkflowValidator:
                 step_outputs = step.get('outputs', {})
                 if 'final_response' in step_outputs.values():
                     return True
-                
+
                 # 递归检查控制流中的步骤
                 if step.get('agent_type') == 'if':
                     if 'then' in step and check_steps_for_final_response(step['then']):
                         return True
                     if 'else' in step and check_steps_for_final_response(step['else']):
                         return True
-                elif step.get('agent_type') == 'while':
+                elif step.get('agent_type') in ['while', 'foreach']:
                     if 'steps' in step and check_steps_for_final_response(step['steps']):
                         return True
             return False
@@ -456,18 +461,31 @@ class WorkflowConfigLoader:
             step.max_iterations = step_config.get('max_iterations', 10)
             step.loop_timeout = step_config.get('timeout', 300)
 
+        elif step_config['agent_type'] == 'foreach':
+            # 处理foreach循环体
+            if 'steps' in step_config:
+                step.steps = [self._create_workflow_step(sub_step) for sub_step in step_config['steps']]
+
+            # 处理foreach配置
+            step.source = step_config.get('source')  # 源列表变量
+            step.item_var = step_config.get('item_var', 'item')  # 当前项变量名
+            step.index_var = step_config.get('index_var', 'index')  # 当前索引变量名
+            step.max_iterations = step_config.get('max_iterations', 100)  # 最大迭代次数
+            step.loop_timeout = step_config.get('loop_timeout', 600)  # 超时时间
+
         elif step_config['agent_type'] == 'variable':
-            # 处理Variable Agent特有配置
-            step.operation = step_config.get('operation')
-            step.data = step_config.get('data')
-            step.source = step_config.get('source')
-            step.field = step_config.get('field')
-            step.value = step_config.get('value')
-            step.expression = step_config.get('expression')
-            step.updates = step_config.get('updates')
-            step.current_page = step_config.get('current_page')
-            step.max_pages = step_config.get('max_pages')
-            step.items_found = step_config.get('items_found')
+            # 处理Variable Agent特有配置 - 从inputs中获取
+            inputs = step_config.get('inputs', {})
+            step.operation = inputs.get('operation')
+            step.data = inputs.get('data')
+            step.source = inputs.get('source')
+            step.field = inputs.get('field')
+            step.value = inputs.get('value')
+            step.expression = inputs.get('expression')
+            step.updates = inputs.get('updates')
+            step.current_page = inputs.get('current_page')
+            step.max_pages = inputs.get('max_pages')
+            step.items_found = inputs.get('items_found')
 
         return step
 
