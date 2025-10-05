@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AgentCrafter Extension</title>
+  <style>
+    body {
+      width: 350px;
+      min-height: 400px;
+      margin: 0;
+      padding: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+
+    .header h1 {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 600;
+    }
+
+    .header p {
+      margin: 5px 0 0;
+      font-size: 14px;
+      opacity: 0.9;
+    }
+
+    .card {
+      background: rgba(255, 255, 255, 0.95);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 12px;
+      color: #333;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+
+    .card h3 {
+      margin: 0 0 12px;
+      font-size: 16px;
+      font-weight: 600;
+      color: #667eea;
+    }
+
+    .btn {
+      width: 100%;
+      padding: 12px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.3s;
+      margin-bottom: 8px;
+    }
+
+    .btn-primary {
+      background: #667eea;
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: #5568d3;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 8px rgba(102, 126, 234, 0.3);
+    }
+
+    .btn-secondary {
+      background: #48bb78;
+      color: white;
+    }
+
+    .btn-secondary:hover {
+      background: #38a169;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 8px rgba(72, 187, 120, 0.3);
+    }
+
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .status {
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      text-align: center;
+      margin-bottom: 12px;
+    }
+
+    .status-info {
+      background: #bee3f8;
+      color: #2c5282;
+    }
+
+    .status-success {
+      background: #c6f6d5;
+      color: #22543d;
+    }
+
+    .status-error {
+      background: #fed7d7;
+      color: #742a2a;
+    }
+
+    .input-group {
+      margin-bottom: 12px;
+    }
+
+    .input-group label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .input-group input {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+
+    .input-group input:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+
+    .footer {
+      text-align: center;
+      margin-top: 16px;
+      font-size: 12px;
+      opacity: 0.8;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>🤖 AgentCrafter</h1>
+    <p>Workflow Automation Extension</p>
+  </div>
+
+  <div id="status-message"></div>
+
+  <div class="card">
+    <h3>Quick Actions</h3>
+    <button id="capture-page" class="btn btn-primary">
+      📸 Capture Current Page
+    </button>
+    <button id="run-workflow" class="btn btn-secondary">
+      ▶️ Run Workflow
+    </button>
+    <button id="open-dashboard" class="btn btn-primary">
+      🏠 Open Dashboard
+    </button>
+  </div>
+
+  <div class="card">
+    <h3>Page Information</h3>
+    <div class="input-group">
+      <label>Current URL:</label>
+      <input type="text" id="current-url" readonly>
+    </div>
+    <div class="input-group">
+      <label>Page Title:</label>
+      <input type="text" id="page-title" readonly>
+    </div>
+  </div>
+
+  <div class="footer">
+    <p>AgentCrafter v1.0.0</p>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
