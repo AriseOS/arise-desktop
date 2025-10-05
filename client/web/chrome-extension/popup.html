@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -65,7 +65,7 @@
       color: white;
     }
 
-    .btn-primary:hover {
+    .btn-primary:hover:not(:disabled) {
       background: #5568d3;
       transform: translateY(-2px);
       box-shadow: 0 4px 8px rgba(102, 126, 234, 0.3);
@@ -76,10 +76,21 @@
       color: white;
     }
 
-    .btn-secondary:hover {
+    .btn-secondary:hover:not(:disabled) {
       background: #38a169;
       transform: translateY(-2px);
       box-shadow: 0 4px 8px rgba(72, 187, 120, 0.3);
+    }
+
+    .btn-danger {
+      background: #f56565;
+      color: white;
+    }
+
+    .btn-danger:hover:not(:disabled) {
+      background: #e53e3e;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 8px rgba(245, 101, 101, 0.3);
     }
 
     .btn:disabled {
@@ -136,11 +147,49 @@
       border-color: #667eea;
     }
 
+    .input-group input[type="password"] {
+      font-family: 'Courier New', monospace;
+    }
+
     .footer {
       text-align: center;
       margin-top: 16px;
       font-size: 12px;
       opacity: 0.8;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    .user-info {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 8px;
+      background: #f7fafc;
+      border-radius: 6px;
+    }
+
+    .user-info .username {
+      font-weight: 600;
+      color: #667eea;
+    }
+
+    .loading {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid #f3f3f3;
+      border-top: 2px solid #667eea;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin-right: 8px;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
     }
   </style>
 </head>
@@ -152,33 +201,68 @@
 
   <div id="status-message"></div>
 
-  <div class="card">
-    <h3>Quick Actions</h3>
-    <button id="capture-page" class="btn btn-primary">
-      📸 Capture Current Page
-    </button>
-    <button id="run-workflow" class="btn btn-secondary">
-      ▶️ Run Workflow
-    </button>
-    <button id="open-dashboard" class="btn btn-primary">
-      🏠 Open Dashboard
-    </button>
-  </div>
-
-  <div class="card">
-    <h3>Page Information</h3>
-    <div class="input-group">
-      <label>Current URL:</label>
-      <input type="text" id="current-url" readonly>
+  <!-- Login Page -->
+  <div id="login-page" class="hidden">
+    <div class="card">
+      <h3>登录</h3>
+      <form id="login-form">
+        <div class="input-group">
+          <label>用户名</label>
+          <input type="text" id="username" required placeholder="请输入用户名">
+        </div>
+        <div class="input-group">
+          <label>密码</label>
+          <input type="password" id="password" required placeholder="请输入密码">
+        </div>
+        <button type="submit" class="btn btn-primary" id="login-btn">
+          登录
+        </button>
+      </form>
     </div>
-    <div class="input-group">
-      <label>Page Title:</label>
-      <input type="text" id="page-title" readonly>
+    <div class="footer">
+      <p>AgentCrafter v1.0.0</p>
     </div>
   </div>
 
-  <div class="footer">
-    <p>AgentCrafter v1.0.0</p>
+  <!-- Main Page (after login) -->
+  <div id="main-page" class="hidden">
+    <div class="card" style="padding: 8px 12px;">
+      <div class="user-info">
+        <span>👤 <span class="username" id="display-username"></span></span>
+        <button class="btn btn-danger" id="logout-btn" style="width: auto; padding: 6px 12px; margin: 0; font-size: 12px;">
+          退出登录
+        </button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>快速操作</h3>
+      <button id="capture-page" class="btn btn-primary">
+        📸 捕获当前页面
+      </button>
+      <button id="run-workflow" class="btn btn-secondary">
+        ▶️ 运行工作流
+      </button>
+      <button id="open-dashboard" class="btn btn-primary">
+        🏠 打开控制台
+      </button>
+    </div>
+
+    <div class="card">
+      <h3>页面信息</h3>
+      <div class="input-group">
+        <label>当前 URL:</label>
+        <input type="text" id="current-url" readonly>
+      </div>
+      <div class="input-group">
+        <label>页面标题:</label>
+        <input type="text" id="page-title" readonly>
+      </div>
+    </div>
+
+    <div class="footer">
+      <p>AgentCrafter v1.0.0</p>
+    </div>
   </div>
 
   <script src="popup.js"></script>
