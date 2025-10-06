@@ -1,7 +1,7 @@
 // Popup script for AgentCrafter Chrome Extension
 
 // Page elements
-let loginPage, mainPage, loginForm;
+let loginPage, mainPage, aboutPage, loginForm;
 let currentUser = null;
 
 // Initialize on DOM load
@@ -11,6 +11,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Get page elements
   loginPage = document.getElementById('login-page');
   mainPage = document.getElementById('main-page');
+  aboutPage = document.getElementById('about-page');
   loginForm = document.getElementById('login-form');
 
   // Check login status
@@ -52,12 +53,21 @@ async function checkLoginStatus() {
 function showLoginPage() {
   loginPage.classList.remove('hidden');
   mainPage.classList.add('hidden');
+  aboutPage.classList.add('hidden');
 }
 
 // Show main page
 function showMainPage() {
   loginPage.classList.add('hidden');
   mainPage.classList.remove('hidden');
+  aboutPage.classList.add('hidden');
+}
+
+// Show about page
+function showAboutPage() {
+  loginPage.classList.add('hidden');
+  mainPage.classList.add('hidden');
+  aboutPage.classList.remove('hidden');
 }
 
 // Setup event listeners
@@ -72,6 +82,9 @@ function setupEventListeners() {
   document.getElementById('menu-account').addEventListener('click', handleMenuAccount);
   document.getElementById('menu-about').addEventListener('click', handleMenuAbout);
   document.getElementById('menu-logout').addEventListener('click', handleLogout);
+
+  // Back button
+  document.getElementById('back-to-main').addEventListener('click', showMainPage);
 }
 
 // Handle login
@@ -190,8 +203,7 @@ function handleMenuAccount() {
 
 function handleMenuAbout() {
   console.log('关于');
-  showStatus('ℹ️ AgentCrafter v1.0.0', 'info');
-  // TODO: Implement about page
+  showAboutPage();
 }
 
 // Show status message
