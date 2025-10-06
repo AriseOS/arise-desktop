@@ -1,19 +1,19 @@
 import React from 'react'
 
-function MainPage({ currentUser, onNavigate, onLogout }) {
+function MainPage({ currentUser, onNavigate, onLogout, showStatus }) {
   const menuItems = [
     {
       section: 'Workflow',
       items: [
-        { id: 'record', title: '录制', icon: 'record', onClick: () => alert('Recording feature coming soon') },
-        { id: 'chat', title: '对话', icon: 'chat', onClick: () => alert('Chat feature coming soon') },
+        { id: 'record', title: '录制', icon: 'record', onClick: () => showStatus('📹 录制功能开发中...', 'info') },
+        { id: 'chat', title: '对话', icon: 'chat', onClick: () => showStatus('💬 对话功能开发中...', 'info') },
         { id: 'my', title: '我的', icon: 'my', onClick: () => onNavigate('my-workflows') },
       ]
     },
     {
       section: '其他',
       items: [
-        { id: 'account', title: '账户', icon: 'account', onClick: () => alert('Account settings coming soon') },
+        { id: 'account', title: '账户', icon: 'account', onClick: () => showStatus('👤 账户设置功能开发中...', 'info') },
         { id: 'about', title: '关于', icon: 'about', onClick: () => onNavigate('about') },
         { id: 'logout', title: '退出登录', icon: 'logout', onClick: onLogout },
       ]

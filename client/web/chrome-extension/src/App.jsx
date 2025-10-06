@@ -4,11 +4,13 @@ import MainPage from './pages/MainPage'
 import MyWorkflowsPage from './pages/MyWorkflowsPage'
 import WorkflowDetailPage from './pages/WorkflowDetailPage'
 import AboutPage from './pages/AboutPage'
+import StatusMessage from './components/StatusMessage'
 
 function App() {
   const [currentPage, setCurrentPage] = useState('login')
   const [currentUser, setCurrentUser] = useState(null)
   const [selectedWorkflowId, setSelectedWorkflowId] = useState(null)
+  const [statusMessage, setStatusMessage] = useState({ text: '', type: 'info' })
 
   useEffect(() => {
     checkLoginStatus()
@@ -52,8 +54,22 @@ function App() {
     setCurrentPage(page)
   }
 
+  const showStatus = (text, type = 'info') => {
+    setStatusMessage({ text, type })
+  }
+
+  const hideStatus = () => {
+    setStatusMessage({ text: '', type: 'info' })
+  }
+
   return (
     <div className="app">
+      <StatusMessage
+        message={statusMessage.text}
+        type={statusMessage.type}
+        onClose={hideStatus}
+      />
+
       {currentPage === 'login' && (
         <LoginPage onLogin={handleLogin} />
       )}
@@ -62,6 +78,7 @@ function App() {
           currentUser={currentUser}
           onNavigate={navigateTo}
           onLogout={handleLogout}
+          showStatus={showStatus}
         />
       )}
       {currentPage === 'my-workflows' && (

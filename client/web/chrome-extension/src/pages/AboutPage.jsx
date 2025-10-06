@@ -12,7 +12,7 @@ function AboutPage({ onNavigate }) {
             <path d="M19 12H5M12 19l-7-7 7-7"/>
           </svg>
         </button>
-        <div className="page-title">About</div>
+        <div className="page-title">关于</div>
       </div>
 
       <div className="about-content">

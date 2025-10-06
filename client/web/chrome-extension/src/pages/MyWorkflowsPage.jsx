@@ -24,7 +24,7 @@ function MyWorkflowsPage({ currentUser, onNavigate }) {
 
       if (!response.ok) {
         if (response.status === 401) {
-          alert('Login expired, please login again')
+          alert('登录已过期，请重新登录')
           return
         }
         throw new Error(`API error: ${response.status}`)
@@ -34,7 +34,7 @@ function MyWorkflowsPage({ currentUser, onNavigate }) {
       setWorkflows(data)
     } catch (err) {
       console.error('Load workflows error:', err)
-      setError('Failed to load workflows')
+      setError('加载工作流失败')
     } finally {
       setLoading(false)
     }
@@ -55,21 +55,21 @@ function MyWorkflowsPage({ currentUser, onNavigate }) {
             <path d="M19 12H5M12 19l-7-7 7-7"/>
           </svg>
         </button>
-        <div className="page-title">My Workflows</div>
+        <div className="page-title">我的 Workflow</div>
       </div>
 
       <div className="workflow-list">
         {loading && (
           <div className="empty-state">
             <div className="empty-state-icon">⏳</div>
-            <div className="empty-state-title">Loading...</div>
+            <div className="empty-state-title">加载中...</div>
           </div>
         )}
 
         {error && (
           <div className="empty-state">
             <div className="empty-state-icon">⚠️</div>
-            <div className="empty-state-title">Error</div>
+            <div className="empty-state-title">错误</div>
             <div className="empty-state-desc">{error}</div>
           </div>
         )}
@@ -77,8 +77,8 @@ function MyWorkflowsPage({ currentUser, onNavigate }) {
         {!loading && !error && workflows.length === 0 && (
           <div className="empty-state">
             <div className="empty-state-icon">📋</div>
-            <div className="empty-state-title">No Workflows</div>
-            <div className="empty-state-desc">Create a workflow via recording or chat</div>
+            <div className="empty-state-title">还没有 Workflow</div>
+            <div className="empty-state-desc">您可以通过录制或对话创建 Workflow</div>
           </div>
         )}
 

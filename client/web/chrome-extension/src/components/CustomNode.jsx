@@ -33,19 +33,19 @@ function CustomNode({ data }) {
           <div className="node-detail-content" onClick={(e) => e.stopPropagation()}>
             <h3>{data.label}</h3>
             <div className="detail-item">
-              <div className="detail-label">Type:</div>
-              <div className="detail-value">{data.type || 'N/A'}</div>
+              <div className="detail-label">类型:</div>
+              <div className="detail-value">{data.type || '无'}</div>
             </div>
             <div className="detail-item">
-              <div className="detail-label">Description:</div>
-              <div className="detail-value">{data.description || 'No description'}</div>
+              <div className="detail-label">描述:</div>
+              <div className="detail-value">{data.description || '无描述'}</div>
             </div>
             <div className="detail-item">
               <div className="detail-label">ID:</div>
-              <div className="detail-value">{data.id || 'N/A'}</div>
+              <div className="detail-value">{data.id || '无'}</div>
             </div>
             <button className="close-modal-btn" onClick={() => setShowModal(false)}>
-              Close
+              关闭
             </button>
           </div>
         </div>

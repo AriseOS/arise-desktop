@@ -48,7 +48,7 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate }) {
       setWorkflowData(data)
     } catch (err) {
       console.error('Load workflow error:', err)
-      setError('Failed to load workflow data')
+      setError('加载工作流数据失败')
     } finally {
       setLoading(false)
     }
@@ -65,21 +65,21 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate }) {
             <path d="M19 12H5M12 19l-7-7 7-7"/>
           </svg>
         </button>
-        <div className="page-title">Workflow Detail</div>
+        <div className="page-title">Workflow 详情</div>
       </div>
 
       <div className="workflow-detail-content">
         {loading && (
           <div className="empty-state">
             <div className="empty-state-icon">⏳</div>
-            <div className="empty-state-title">Loading...</div>
+            <div className="empty-state-title">加载中...</div>
           </div>
         )}
 
         {error && (
           <div className="empty-state">
             <div className="empty-state-icon">⚠️</div>
-            <div className="empty-state-title">Error</div>
+            <div className="empty-state-title">错误</div>
             <div className="empty-state-desc">{error}</div>
           </div>
         )}
@@ -111,7 +111,7 @@ function WorkflowVisualization({ workflowData }) {
     return (
       <div className="empty-state">
         <div className="empty-state-icon">📋</div>
-        <div className="empty-state-title">No workflow data</div>
+        <div className="empty-state-title">无流程数据</div>
       </div>
     )
   }
@@ -119,8 +119,8 @@ function WorkflowVisualization({ workflowData }) {
   return (
     <>
       <div className="workflow-info">
-        <h3>Workflow Structure</h3>
-        <p>{workflowData.steps.length} steps · {workflowData.connections?.length || 0} connections</p>
+        <h3>Workflow 结构</h3>
+        <p>{workflowData.steps.length} 个步骤 · {workflowData.connections?.length || 0} 个连接</p>
       </div>
       <div className="workflow-canvas">
         <ReactFlowProvider>

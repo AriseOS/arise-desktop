@@ -15,7 +15,7 @@ function LoginPage({ onLogin }) {
     e.preventDefault()
 
     if (!username || !password) {
-      showMessage('Please enter username and password', 'error')
+      showMessage('请输入用户名和密码', 'error')
       return
     }
 
@@ -39,11 +39,11 @@ function LoginPage({ onLogin }) {
 
         onLogin(data.access_token, data.user.id, data.user.username)
       } else {
-        showMessage('Login failed', 'error')
+        showMessage('登录失败', 'error')
       }
     } catch (error) {
       console.error('Login error:', error)
-      showMessage('Network error', 'error')
+      showMessage('网络错误', 'error')
     } finally {
       setLoading(false)
     }
@@ -63,30 +63,30 @@ function LoginPage({ onLogin }) {
       </div>
 
       <div className="card">
-        <h3>Login</h3>
+        <h3>登录</h3>
         <form onSubmit={handleSubmit}>
           <div className="input-group">
-            <label>Username</label>
+            <label>用户名</label>
             <input
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="Enter username"
+              placeholder="请输入用户名"
               disabled={loading}
             />
           </div>
           <div className="input-group">
-            <label>Password</label>
+            <label>密码</label>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter password"
+              placeholder="请输入密码"
               disabled={loading}
             />
           </div>
           <button type="submit" className="btn btn-primary" disabled={loading}>
-            {loading ? 'Logging in...' : 'Login'}
+            {loading ? '登录中...' : '登录'}
           </button>
         </form>
       </div>
