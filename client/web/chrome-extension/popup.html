@@ -48,6 +48,87 @@
       color: #667eea;
     }
 
+    /* iOS Settings style */
+    .settings-section {
+      background: rgba(255, 255, 255, 0.95);
+      border-radius: 12px;
+      margin-bottom: 16px;
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    }
+
+    .settings-section-title {
+      font-size: 13px;
+      font-weight: 400;
+      color: rgba(255, 255, 255, 0.85);
+      text-transform: uppercase;
+      margin: 20px 0 8px 12px;
+      letter-spacing: 0.5px;
+    }
+
+    .settings-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      background: rgba(255, 255, 255, 0.95);
+      border-bottom: 0.5px solid rgba(0, 0, 0, 0.08);
+      cursor: pointer;
+      transition: background 0.2s;
+      color: #333;
+    }
+
+    .settings-item:hover {
+      background: rgba(102, 126, 234, 0.05);
+    }
+
+    .settings-item:last-child {
+      border-bottom: none;
+    }
+
+    .settings-item-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex: 1;
+    }
+
+    .settings-item-icon {
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .settings-item-icon svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    .settings-item-text {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .settings-item-title {
+      font-size: 15px;
+      font-weight: 400;
+      color: #1c1c1e;
+    }
+
+    .settings-item-subtitle {
+      font-size: 13px;
+      color: #8e8e93;
+      margin-top: 2px;
+    }
+
+    .settings-item-arrow {
+      color: #c7c7cc;
+      font-size: 14px;
+    }
+
     .btn {
       width: 100%;
       padding: 12px;
@@ -226,37 +307,98 @@
 
   <!-- Main Page (after login) -->
   <div id="main-page" class="hidden">
-    <div class="card" style="padding: 8px 12px;">
-      <div class="user-info">
-        <span>👤 <span class="username" id="display-username"></span></span>
-        <button class="btn btn-danger" id="logout-btn" style="width: auto; padding: 6px 12px; margin: 0; font-size: 12px;">
-          退出登录
-        </button>
+    <!-- Workflow Section -->
+    <div class="settings-section-title">Workflow</div>
+    <div class="settings-section">
+      <div class="settings-item" id="menu-record">
+        <div class="settings-item-left">
+          <div class="settings-item-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#667eea" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <circle cx="12" cy="12" r="3" fill="#667eea"></circle>
+            </svg>
+          </div>
+          <div class="settings-item-text">
+            <div class="settings-item-title">录制</div>
+          </div>
+        </div>
+        <div class="settings-item-arrow">›</div>
+      </div>
+      <div class="settings-item" id="menu-chat">
+        <div class="settings-item-left">
+          <div class="settings-item-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#667eea" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+            </svg>
+          </div>
+          <div class="settings-item-text">
+            <div class="settings-item-title">对话</div>
+          </div>
+        </div>
+        <div class="settings-item-arrow">›</div>
+      </div>
+      <div class="settings-item" id="menu-my">
+        <div class="settings-item-left">
+          <div class="settings-item-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#667eea" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 11l3 3L22 4"></path>
+              <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+            </svg>
+          </div>
+          <div class="settings-item-text">
+            <div class="settings-item-title">我的</div>
+          </div>
+        </div>
+        <div class="settings-item-arrow">›</div>
       </div>
     </div>
 
-    <div class="card">
-      <h3>快速操作</h3>
-      <button id="capture-page" class="btn btn-primary">
-        📸 捕获当前页面
-      </button>
-      <button id="run-workflow" class="btn btn-secondary">
-        ▶️ 运行工作流
-      </button>
-      <button id="open-dashboard" class="btn btn-primary">
-        🏠 打开控制台
-      </button>
-    </div>
-
-    <div class="card">
-      <h3>页面信息</h3>
-      <div class="input-group">
-        <label>当前 URL:</label>
-        <input type="text" id="current-url" readonly>
+    <!-- Other Section -->
+    <div class="settings-section-title">其他</div>
+    <div class="settings-section">
+      <div class="settings-item" id="menu-account">
+        <div class="settings-item-left">
+          <div class="settings-item-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#667eea" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+              <circle cx="12" cy="7" r="4"></circle>
+            </svg>
+          </div>
+          <div class="settings-item-text">
+            <div class="settings-item-title">账户</div>
+          </div>
+        </div>
+        <div class="settings-item-arrow">›</div>
       </div>
-      <div class="input-group">
-        <label>页面标题:</label>
-        <input type="text" id="page-title" readonly>
+      <div class="settings-item" id="menu-about">
+        <div class="settings-item-left">
+          <div class="settings-item-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#667eea" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="16" x2="12" y2="12"></line>
+              <line x1="12" y1="8" x2="12.01" y2="8"></line>
+            </svg>
+          </div>
+          <div class="settings-item-text">
+            <div class="settings-item-title">关于</div>
+          </div>
+        </div>
+        <div class="settings-item-arrow">›</div>
+      </div>
+      <div class="settings-item" id="menu-logout">
+        <div class="settings-item-left">
+          <div class="settings-item-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#667eea" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+              <polyline points="16 17 21 12 16 7"></polyline>
+              <line x1="21" y1="12" x2="9" y2="12"></line>
+            </svg>
+          </div>
+          <div class="settings-item-text">
+            <div class="settings-item-title">退出登录</div>
+          </div>
+        </div>
+        <div class="settings-item-arrow">›</div>
       </div>
     </div>
 

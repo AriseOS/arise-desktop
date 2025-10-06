@@ -1,7 +1,7 @@
 // Popup script for AgentCrafter Chrome Extension
 
 // Page elements
-let loginPage, mainPage, loginForm, logoutBtn;
+let loginPage, mainPage, loginForm;
 let currentUser = null;
 
 // Initialize on DOM load
@@ -12,7 +12,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   loginPage = document.getElementById('login-page');
   mainPage = document.getElementById('main-page');
   loginForm = document.getElementById('login-form');
-  logoutBtn = document.getElementById('logout-btn');
 
   // Check login status
   await checkLoginStatus();
@@ -59,27 +58,6 @@ function showLoginPage() {
 function showMainPage() {
   loginPage.classList.add('hidden');
   mainPage.classList.remove('hidden');
-
-  // Update user info
-  if (currentUser) {
-    document.getElementById('display-username').textContent = currentUser.username;
-  }
-
-  // Load current tab info
-  loadCurrentTabInfo();
-}
-
-// Load current tab information
-async function loadCurrentTabInfo() {
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab) {
-      document.getElementById('current-url').value = tab.url;
-      document.getElementById('page-title').value = tab.title;
-    }
-  } catch (error) {
-    console.error('Error loading tab info:', error);
-  }
 }
 
 // Setup event listeners
@@ -87,13 +65,13 @@ function setupEventListeners() {
   // Login form submit
   loginForm.addEventListener('submit', handleLogin);
 
-  // Logout button
-  logoutBtn.addEventListener('click', handleLogout);
-
-  // Main page buttons
-  document.getElementById('capture-page').addEventListener('click', handleCapturePage);
-  document.getElementById('run-workflow').addEventListener('click', handleRunWorkflow);
-  document.getElementById('open-dashboard').addEventListener('click', handleOpenDashboard);
+  // Menu items
+  document.getElementById('menu-record').addEventListener('click', handleMenuRecord);
+  document.getElementById('menu-chat').addEventListener('click', handleMenuChat);
+  document.getElementById('menu-my').addEventListener('click', handleMenuMy);
+  document.getElementById('menu-account').addEventListener('click', handleMenuAccount);
+  document.getElementById('menu-about').addEventListener('click', handleMenuAbout);
+  document.getElementById('menu-logout').addEventListener('click', handleLogout);
 }
 
 // Handle login
@@ -185,78 +163,35 @@ async function handleLogout() {
   }
 }
 
-// Handle capture page
-async function handleCapturePage() {
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
-    // Send message to content script to capture page info
-    chrome.tabs.sendMessage(tab.id, { action: 'capturePage' }, (response) => {
-      if (chrome.runtime.lastError) {
-        showStatus('❌ 页面捕获失败', 'error');
-        return;
-      }
-
-      if (response && response.success) {
-        showStatus('✅ 页面捕获成功！', 'success');
-        console.log('Captured data:', response.data);
-
-        // Store captured data
-        chrome.storage.local.set({
-          lastCapture: {
-            ...response.data,
-            timestamp: new Date().toISOString()
-          }
-        });
-      }
-    });
-  } catch (error) {
-    showStatus('❌ 页面捕获出错', 'error');
-    console.error('Capture error:', error);
-  }
+// Menu handlers
+function handleMenuRecord() {
+  console.log('录制功能');
+  showStatus('📹 录制功能开发中...', 'info');
+  // TODO: Implement record functionality
 }
 
-// Handle run workflow
-async function handleRunWorkflow() {
-  if (!currentUser || !currentUser.token) {
-    showStatus('⚠️ 请先登录', 'error');
-    showLoginPage();
-    return;
-  }
-
-  try {
-    showStatus('⏳ 工作流运行中...', 'info');
-
-    // Call backend API to run workflow
-    const response = await fetch('http://localhost:8000/api/v1/agents/start', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${currentUser.token}`
-      },
-      body: JSON.stringify({
-        user_id: currentUser.userId,
-        agent_id: 'browser-session-test-workflow'
-      })
-    });
-
-    if (response.ok) {
-      showStatus('✅ 工作流已启动！', 'success');
-    } else if (response.status === 401) {
-      showStatus('⚠️ 登录已过期，请重新登录', 'error');
-      handleLogout();
-    } else {
-      showStatus('❌ 工作流启动失败', 'error');
-    }
-  } catch (error) {
-    showStatus('❌ 工作流运行出错', 'error');
-    console.error('Workflow error:', error);
-  }
+function handleMenuChat() {
+  console.log('对话功能');
+  showStatus('💬 对话功能开发中...', 'info');
+  // TODO: Implement chat functionality
 }
 
-// Handle open dashboard
-function handleOpenDashboard() {
-  chrome.tabs.create({ url: 'http://localhost:3000' });
+function handleMenuMy() {
+  console.log('我的 Workflow');
+  showStatus('📋 我的 Workflow 功能开发中...', 'info');
+  // TODO: Implement my workflows functionality
+}
+
+function handleMenuAccount() {
+  console.log('账户设置');
+  showStatus('👤 账户设置功能开发中...', 'info');
+  // TODO: Implement account settings
+}
+
+function handleMenuAbout() {
+  console.log('关于');
+  showStatus('ℹ️ AgentCrafter v1.0.0', 'info');
+  // TODO: Implement about page
 }
 
 // Show status message
