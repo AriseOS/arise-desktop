@@ -350,12 +350,13 @@ async def get_agent_info(
 
 @app.get("/api/agents", response_model=list[AgentListItem])
 async def list_user_agents(
+    default: bool = False,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """列出用户的所有 Agent"""
-    agents = agent_build_service.list_user_agents(current_user.id, db)
-    
+    agents = agent_build_service.list_user_agents(current_user.id, db, default=default)
+
     return [AgentListItem(**agent) for agent in agents]
 
 @app.get("/api/agents/{agent_id}/workflow")

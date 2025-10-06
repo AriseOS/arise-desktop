@@ -389,7 +389,8 @@
     /* Fixed height for all pages */
     #login-page,
     #main-page,
-    #about-page {
+    #about-page,
+    #my-page {
       min-height: 100%;
       display: flex;
       flex-direction: column;
@@ -403,6 +404,78 @@
     #about-page .about-content {
       flex: 1;
       overflow-y: auto;
+    }
+
+    #my-page .workflow-list {
+      flex: 1;
+      overflow-y: auto;
+    }
+
+    /* My Workflows page */
+    .workflow-item {
+      background: rgba(255, 255, 255, 0.95);
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      transition: background 0.2s;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    }
+
+    .workflow-item:hover {
+      background: rgba(102, 126, 234, 0.05);
+    }
+
+    .workflow-item-info {
+      flex: 1;
+    }
+
+    .workflow-item-name {
+      font-size: 15px;
+      font-weight: 500;
+      color: #1c1c1e;
+      margin-bottom: 4px;
+    }
+
+    .workflow-item-desc {
+      font-size: 13px;
+      color: #8e8e93;
+    }
+
+    .workflow-item-arrow {
+      color: #c7c7cc;
+      font-size: 14px;
+    }
+
+    .empty-state {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 40px 20px;
+    }
+
+    .empty-state-icon {
+      font-size: 64px;
+      margin-bottom: 16px;
+      opacity: 0.3;
+    }
+
+    .empty-state-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #1c1c1e;
+      margin-bottom: 8px;
+    }
+
+    .empty-state-desc {
+      font-size: 14px;
+      color: #8e8e93;
     }
 
     .user-info {
@@ -570,6 +643,26 @@
         </div>
         <div class="settings-item-arrow">›</div>
       </div>
+    </div>
+
+    <div class="footer">
+      <p>AgentCrafter v1.0.0</p>
+    </div>
+  </div>
+
+  <!-- My Workflows Page -->
+  <div id="my-page" class="hidden">
+    <div class="page-header">
+      <button class="back-button" id="back-from-my">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#667eea" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M19 12H5M12 19l-7-7 7-7"/>
+        </svg>
+      </button>
+      <div class="page-title">我的 Workflow</div>
+    </div>
+
+    <div id="workflow-list-container" class="workflow-list">
+      <!-- Workflows will be loaded here -->
     </div>
 
     <div class="footer">

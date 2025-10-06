@@ -296,14 +296,14 @@ class AgentBuildService:
             "created_at": agent.created_at.isoformat()
         }
     
-    def list_user_agents(self, user_id: int, db: Session) -> list:
+    def list_user_agents(self, user_id: int, db: Session, default: bool = False) -> list:
         """列出用户的所有Agent"""
         agents = db.query(GeneratedAgent).filter(
             GeneratedAgent.user_id == user_id,
             GeneratedAgent.status == "active"
         ).order_by(GeneratedAgent.created_at.desc()).all()
-        
-        return [
+
+        agent_list = [
             {
                 "agent_id": agent.agent_id,
                 "name": agent.name,
@@ -313,6 +313,18 @@ class AgentBuildService:
             }
             for agent in agents
         ]
+
+        # If no agents and default=True, return sample workflow
+        if not agent_list and default:
+            return [{
+                "agent_id": "sample-workflow",
+                "name": "Browser Session Test Workflow",
+                "description": "Sample workflow demonstrating browser automation and data collection",
+                "cost_analysis": "sample",
+                "created_at": datetime.utcnow().isoformat()
+            }]
+
+        return agent_list
 
 
 # 全局服务实例
