@@ -92,6 +92,7 @@ function App() {
           currentUser={currentUser}
           workflowId={selectedWorkflowId}
           onNavigate={navigateTo}
+          showStatus={showStatus}
         />
       )}
       {currentPage === 'about' && (

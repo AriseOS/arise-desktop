@@ -15,10 +15,11 @@ const nodeTypes = {
   custom: CustomNode,
 }
 
-function WorkflowDetailPage({ currentUser, workflowId, onNavigate }) {
+function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus }) {
   const [workflowData, setWorkflowData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [isRunning, setIsRunning] = useState(false)
 
   useEffect(() => {
     loadWorkflowData()
@@ -54,6 +55,34 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate }) {
     }
   }
 
+  const handleRunWorkflow = async () => {
+    if (isRunning) return
+
+    setIsRunning(true)
+
+    try {
+      // TODO: 调用运行workflow的API
+      // const response = await fetch(`http://localhost:8000/api/agents/${workflowId}/execute`, {
+      //   method: 'POST',
+      //   headers: {
+      //     'Content-Type': 'application/json',
+      //     'Authorization': `Bearer ${currentUser.token}`
+      //   }
+      // })
+
+      // 模拟运行过程
+      await new Promise(resolve => setTimeout(resolve, 2000))
+
+      // 执行完成后的处理
+      console.log('Workflow execution completed')
+    } catch (err) {
+      console.error('Run workflow error:', err)
+      showStatus('❌ 执行失败', 'error')
+    } finally {
+      setIsRunning(false)
+    }
+  }
+
   return (
     <div className="page workflow-detail-page">
       <div className="page-header">
@@ -66,6 +95,25 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate }) {
           </svg>
         </button>
         <div className="page-title">Workflow 详情</div>
+        <button
+          className="run-button"
+          onClick={handleRunWorkflow}
+          disabled={isRunning || loading}
+        >
+          {isRunning ? (
+            <>
+              <span className="loading-spinner"></span>
+              <span>运行中</span>
+            </>
+          ) : (
+            <>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+              </svg>
+              <span>运行</span>
+            </>
+          )}
+        </button>
       </div>
 
       <div className="workflow-detail-content">
@@ -118,10 +166,6 @@ function WorkflowVisualization({ workflowData }) {
 
   return (
     <>
-      <div className="workflow-info">
-        <h3>Workflow 结构</h3>
-        <p>{workflowData.steps.length} 个步骤 · {workflowData.connections?.length || 0} 个连接</p>
-      </div>
       <div className="workflow-canvas">
         <ReactFlowProvider>
           <ReactFlow
