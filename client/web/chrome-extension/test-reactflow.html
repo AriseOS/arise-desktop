@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ReactFlow Test</title>
+  <style>
+    body { margin: 0; padding: 20px; font-family: sans-serif; }
+    #root {
+      width: 350px;
+      height: 550px;
+      border: 2px solid #ccc;
+      display: flex;
+      flex-direction: column;
+    }
+    .header {
+      padding: 10px;
+      background: #f0f0f0;
+      border-bottom: 1px solid #ccc;
+    }
+    .canvas {
+      flex: 1;
+      background: white;
+      position: relative;
+    }
+  </style>
+</head>
+<body>
+  <h1>ReactFlow Test Page</h1>
+  <p>If ReactFlow renders properly, you should see nodes and connections below:</p>
+
+  <div id="root">
+    <div class="header">
+      <h3>Sample Workflow</h3>
+      <p>6 steps · 5 connections</p>
+    </div>
+    <div class="canvas" id="canvas"></div>
+  </div>
+
+  <script type="module">
+    // This would test ReactFlow rendering in isolation
+    // You can load the built popup.js here to test
+    console.log('Test page loaded');
+    console.log('Canvas height:', document.getElementById('canvas').offsetHeight);
+  </script>
+
+  <h2>Debug Info</h2>
+  <div id="debug">
+    <p>Open Console (F12) to see debug information</p>
+  </div>
+
+  <script>
+    // Display computed height
+    window.addEventListener('load', () => {
+      const canvas = document.getElementById('canvas');
+      const height = canvas.offsetHeight;
+      const debug = document.getElementById('debug');
+      debug.innerHTML += `<p>Canvas computed height: <strong>${height}px</strong></p>`;
+
+      if (height === 0) {
+        debug.innerHTML += '<p style="color: red;">⚠️ Canvas height is 0! ReactFlow will not render.</p>';
+      } else {
+        debug.innerHTML += '<p style="color: green;">✓ Canvas has height, ReactFlow should render.</p>';
+      }
+    });
+  </script>
+</body>
+</html>

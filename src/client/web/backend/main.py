@@ -366,11 +366,68 @@ async def get_agent_workflow(
     db: Session = Depends(get_db)
 ):
     """获取 Agent 的工作流数据"""
+    # Handle sample workflow
+    if agent_id == "sample-workflow":
+        return {
+            "agent_id": agent_id,
+            "steps": [
+                {
+                    "id": "start",
+                    "name": "Start",
+                    "type": "start",
+                    "description": "Browser session sharing test workflow start"
+                },
+                {
+                    "id": "get-example-title",
+                    "name": "Get Example.com Title",
+                    "type": "scraper_agent",
+                    "description": "Visit example.com and extract page title"
+                },
+                {
+                    "id": "get-baidu-hot",
+                    "name": "Get Baidu Hot Search",
+                    "type": "scraper_agent",
+                    "description": "Access Baidu hot search page and get the first hot search term"
+                },
+                {
+                    "id": "summarize-results",
+                    "name": "Summarize Results",
+                    "type": "text_agent",
+                    "description": "Summarize the collected data"
+                },
+                {
+                    "id": "prepare-output",
+                    "name": "Prepare Output",
+                    "type": "text_agent",
+                    "description": "Format the final output"
+                },
+                {
+                    "id": "end",
+                    "name": "End",
+                    "type": "end",
+                    "description": "Workflow completed"
+                }
+            ],
+            "connections": [
+                {"from": "start", "to": "get-example-title"},
+                {"from": "get-example-title", "to": "get-baidu-hot"},
+                {"from": "get-baidu-hot", "to": "summarize-results"},
+                {"from": "summarize-results", "to": "prepare-output"},
+                {"from": "prepare-output", "to": "end"}
+            ],
+            "metadata": {
+                "name": "Browser Session Test Workflow",
+                "description": "Sample workflow demonstrating browser automation and data collection",
+                "capabilities": ["browser_automation", "data_extraction", "text_processing"],
+                "cost_analysis": "sample"
+            }
+        }
+
     agent_info = agent_build_service.get_generated_agent(agent_id, current_user.id, db)
-    
+
     if not agent_info:
         raise HTTPException(status_code=404, detail="Agent 不存在或无权访问")
-    
+
     return {
         "agent_id": agent_id,
         "workflow": agent_info["workflow_data"],

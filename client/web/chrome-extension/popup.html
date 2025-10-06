@@ -411,6 +411,130 @@
       overflow-y: auto;
     }
 
+    #workflow-detail-page {
+      min-height: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .workflow-detail-content {
+      flex: 1;
+      overflow-y: auto;
+      padding-bottom: 16px;
+    }
+
+    .workflow-canvas {
+      background: rgba(255, 255, 255, 0.95);
+      border-radius: 12px;
+      padding: 16px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+      overflow-x: auto;
+    }
+
+    .workflow-node {
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .workflow-node:hover .node-rect {
+      filter: brightness(0.95);
+    }
+
+    .workflow-node:hover .node-text {
+      font-weight: 600;
+    }
+
+    .node-rect {
+      transition: filter 0.2s;
+    }
+
+    .workflow-info {
+      background: rgba(255, 255, 255, 0.95);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 12px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    }
+
+    .workflow-info h3 {
+      margin: 0 0 8px;
+      font-size: 16px;
+      font-weight: 600;
+      color: #1c1c1e;
+    }
+
+    .workflow-info p {
+      margin: 0;
+      font-size: 13px;
+      color: #8e8e93;
+      line-height: 1.5;
+    }
+
+    .node-detail-modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10000;
+      padding: 16px;
+    }
+
+    .node-detail-content {
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      max-width: 90%;
+      max-height: 80%;
+      overflow-y: auto;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+    }
+
+    .node-detail-content h3 {
+      margin: 0 0 16px;
+      font-size: 18px;
+      font-weight: 600;
+      color: #667eea;
+    }
+
+    .node-detail-content .detail-item {
+      margin-bottom: 12px;
+    }
+
+    .node-detail-content .detail-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: #1c1c1e;
+      margin-bottom: 4px;
+    }
+
+    .node-detail-content .detail-value {
+      font-size: 13px;
+      color: #3c3c43;
+      line-height: 1.5;
+    }
+
+    .close-modal-btn {
+      margin-top: 16px;
+      width: 100%;
+      padding: 10px;
+      background: #667eea;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+
+    .close-modal-btn:hover {
+      background: #5568d3;
+    }
+
     /* My Workflows page */
     .workflow-item {
       background: rgba(255, 255, 255, 0.95);
@@ -663,6 +787,26 @@
 
     <div id="workflow-list-container" class="workflow-list">
       <!-- Workflows will be loaded here -->
+    </div>
+
+    <div class="footer">
+      <p>AgentCrafter v1.0.0</p>
+    </div>
+  </div>
+
+  <!-- Workflow Detail Page -->
+  <div id="workflow-detail-page" class="hidden">
+    <div class="page-header">
+      <button class="back-button" id="back-from-workflow">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#667eea" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M19 12H5M12 19l-7-7 7-7"/>
+        </svg>
+      </button>
+      <div class="page-title">Workflow 详情</div>
+    </div>
+
+    <div id="workflow-detail-content" class="workflow-detail-content">
+      <!-- Workflow canvas will be rendered here -->
     </div>
 
     <div class="footer">
