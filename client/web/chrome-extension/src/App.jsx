@@ -5,6 +5,7 @@ import MyWorkflowsPage from './pages/MyWorkflowsPage'
 import WorkflowDetailPage from './pages/WorkflowDetailPage'
 import AboutPage from './pages/AboutPage'
 import RecordPage from './pages/RecordPage'
+import ChatPage from './pages/ChatPage'
 import StatusMessage from './components/StatusMessage'
 
 function App() {
@@ -117,6 +118,12 @@ function App() {
       )}
       {currentPage === 'record' && (
         <RecordPage
+          onNavigate={navigateTo}
+          showStatus={showStatus}
+        />
+      )}
+      {currentPage === 'chat' && (
+        <ChatPage
           onNavigate={navigateTo}
           showStatus={showStatus}
         />
