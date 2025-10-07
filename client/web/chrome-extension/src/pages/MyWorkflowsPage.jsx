@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 
-function MyWorkflowsPage({ currentUser, onNavigate }) {
+function MyWorkflowsPage({ currentUser, onNavigate, onLogout }) {
   const [workflows, setWorkflows] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -24,7 +24,9 @@ function MyWorkflowsPage({ currentUser, onNavigate }) {
 
       if (!response.ok) {
         if (response.status === 401) {
-          alert('登录已过期，请重新登录')
+          // 登录过期，清除登录信息并跳转到登录页
+          await chrome.storage.local.clear()
+          onLogout()
           return
         }
         throw new Error(`API error: ${response.status}`)

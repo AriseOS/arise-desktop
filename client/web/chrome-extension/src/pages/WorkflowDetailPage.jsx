@@ -15,7 +15,7 @@ const nodeTypes = {
   custom: CustomNode,
 }
 
-function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus }) {
+function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, onLogout }) {
   const [workflowData, setWorkflowData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -39,6 +39,12 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus })
       })
 
       if (!response.ok) {
+        if (response.status === 401) {
+          // 登录过期，清除登录信息并跳转到登录页
+          await chrome.storage.local.clear()
+          onLogout()
+          return
+        }
         throw new Error(`API error: ${response.status}`)
       }
 
@@ -61,20 +67,38 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus })
     setIsRunning(true)
 
     try {
-      // TODO: 调用运行workflow的API
-      // const response = await fetch(`http://localhost:8000/api/agents/${workflowId}/execute`, {
-      //   method: 'POST',
-      //   headers: {
-      //     'Content-Type': 'application/json',
-      //     'Authorization': `Bearer ${currentUser.token}`
-      //   }
-      // })
+      // 将sample-workflow映射到实际的workflow ID
+      const actualWorkflowId = workflowId === 'sample-workflow'
+        ? 'browser-session-test-workflow'
+        : workflowId
 
-      // 模拟运行过程
-      await new Promise(resolve => setTimeout(resolve, 2000))
+      // 调用执行workflow的API
+      const response = await fetch(`http://localhost:8000/api/agents/workflow/${actualWorkflowId}/execute`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${currentUser.token}`
+        }
+      })
 
-      // 执行完成后的处理
-      console.log('Workflow execution completed')
+      if (!response.ok) {
+        if (response.status === 401) {
+          // 登录过期，清除登录信息并跳转到登录页
+          await chrome.storage.local.clear()
+          onLogout()
+          return
+        }
+        throw new Error(`API error: ${response.status}`)
+      }
+
+      const result = await response.json()
+      console.log('Workflow execution completed:', result)
+
+      if (result.success) {
+        showStatus('✅ 执行成功', 'success')
+      } else {
+        showStatus('❌ 执行失败', 'error')
+      }
     } catch (err) {
       console.error('Run workflow error:', err)
       showStatus('❌ 执行失败', 'error')

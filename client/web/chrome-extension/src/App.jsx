@@ -85,6 +85,7 @@ function App() {
         <MyWorkflowsPage
           currentUser={currentUser}
           onNavigate={navigateTo}
+          onLogout={handleLogout}
         />
       )}
       {currentPage === 'workflow-detail' && (
@@ -93,6 +94,7 @@ function App() {
           workflowId={selectedWorkflowId}
           onNavigate={navigateTo}
           showStatus={showStatus}
+          onLogout={handleLogout}
         />
       )}
       {currentPage === 'about' && (
