@@ -4,6 +4,7 @@ import MainPage from './pages/MainPage'
 import MyWorkflowsPage from './pages/MyWorkflowsPage'
 import WorkflowDetailPage from './pages/WorkflowDetailPage'
 import AboutPage from './pages/AboutPage'
+import RecordPage from './pages/RecordPage'
 import StatusMessage from './components/StatusMessage'
 
 function App() {
@@ -18,7 +19,7 @@ function App() {
 
   const checkLoginStatus = async () => {
     try {
-      const result = await chrome.storage.local.get(['userToken', 'userId', 'username'])
+      const result = await chrome.storage.local.get(['userToken', 'userId', 'username', 'currentPage', 'selectedWorkflowId'])
 
       if (result.userToken && result.userId) {
         setCurrentUser({
@@ -26,7 +27,15 @@ function App() {
           userId: result.userId,
           username: result.username
         })
-        setCurrentPage('main')
+        // Restore previous page state
+        if (result.currentPage && result.currentPage !== 'login') {
+          setCurrentPage(result.currentPage)
+          if (result.selectedWorkflowId) {
+            setSelectedWorkflowId(result.selectedWorkflowId)
+          }
+        } else {
+          setCurrentPage('main')
+        }
       } else {
         setCurrentPage('login')
       }
@@ -47,9 +56,15 @@ function App() {
     setCurrentPage('login')
   }
 
-  const navigateTo = (page, data = {}) => {
+  const navigateTo = async (page, data = {}) => {
     if (data.workflowId) {
       setSelectedWorkflowId(data.workflowId)
+      await chrome.storage.local.set({
+        currentPage: page,
+        selectedWorkflowId: data.workflowId
+      })
+    } else {
+      await chrome.storage.local.set({ currentPage: page })
     }
     setCurrentPage(page)
   }
@@ -99,6 +114,12 @@ function App() {
       )}
       {currentPage === 'about' && (
         <AboutPage onNavigate={navigateTo} />
+      )}
+      {currentPage === 'record' && (
+        <RecordPage
+          onNavigate={navigateTo}
+          showStatus={showStatus}
+        />
       )}
     </div>
   )

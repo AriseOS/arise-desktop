@@ -5,7 +5,7 @@ function MainPage({ currentUser, onNavigate, onLogout, showStatus }) {
     {
       section: 'Workflow',
       items: [
-        { id: 'record', title: '录制', icon: 'record', onClick: () => showStatus('📹 录制功能开发中...', 'info') },
+        { id: 'record', title: '录制', icon: 'record', onClick: () => onNavigate('record') },
         { id: 'chat', title: '对话', icon: 'chat', onClick: () => showStatus('💬 对话功能开发中...', 'info') },
         { id: 'my', title: '我的', icon: 'my', onClick: () => onNavigate('my-workflows') },
       ]
