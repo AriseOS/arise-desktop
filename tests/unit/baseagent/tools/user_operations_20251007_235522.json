@@ -1,0 +1,152 @@
+{
+  "session_info": {
+    "start_time": "2025-10-07T23:55:22.064494",
+    "total_operations": 7
+  },
+  "operations": [
+    {
+      "type": "test",
+      "timestamp": 1759852501268,
+      "url": "about:blank",
+      "page_title": "Starting agent 8665...",
+      "element": {},
+      "data": {
+        "message": "binding verification"
+      }
+    },
+    {
+      "type": "click",
+      "timestamp": 1759852504412,
+      "url": "about:blank",
+      "page_title": "Starting agent 8665...",
+      "element": {
+        "xpath": "//*[@id=\"pretty-loading-animation\"]",
+        "id": "pretty-loading-animation",
+        "tagName": "DIV",
+        "className": "",
+        "textContent": "",
+        "href": "",
+        "src": "",
+        "name": "",
+        "type": "",
+        "value": ""
+      },
+      "data": {
+        "button": 0,
+        "ctrlKey": false,
+        "shiftKey": false,
+        "altKey": false,
+        "clientX": 521,
+        "clientY": 636
+      }
+    },
+    {
+      "type": "navigate",
+      "timestamp": 1759852510224.377,
+      "url": "http://example.com/",
+      "page_title": "Navigated Page",
+      "element": {}
+    },
+    {
+      "type": "click",
+      "timestamp": 1759852514839,
+      "url": "http://example.com/",
+      "page_title": "Example Domain",
+      "element": {
+        "xpath": "//div/p[1]",
+        "id": "",
+        "tagName": "P",
+        "className": "",
+        "textContent": "This domain is for use in illustrative examples in documents. You may use this\n    domain in literat",
+        "href": "",
+        "src": "",
+        "name": "",
+        "type": "",
+        "value": ""
+      },
+      "data": {
+        "button": 0,
+        "ctrlKey": false,
+        "shiftKey": false,
+        "altKey": false,
+        "clientX": 874,
+        "clientY": 205
+      }
+    },
+    {
+      "type": "click",
+      "timestamp": 1759852516982,
+      "url": "http://example.com/",
+      "page_title": "Example Domain",
+      "element": {
+        "xpath": "//div/p[1]",
+        "id": "",
+        "tagName": "P",
+        "className": "",
+        "textContent": "This domain is for use in illustrative examples in documents. You may use this\n    domain in literat",
+        "href": "",
+        "src": "",
+        "name": "",
+        "type": "",
+        "value": ""
+      },
+      "data": {
+        "button": 0,
+        "ctrlKey": false,
+        "shiftKey": false,
+        "altKey": false,
+        "clientX": 914,
+        "clientY": 203
+      }
+    },
+    {
+      "type": "select",
+      "timestamp": 1759852516999,
+      "url": "http://example.com/",
+      "page_title": "Example Domain",
+      "element": {
+        "xpath": "//div/p[1]",
+        "id": "",
+        "tagName": "P",
+        "className": "",
+        "textContent": "This domain is for use in illustrative examples in documents. You may use this\n    domain in literat",
+        "href": "",
+        "src": "",
+        "name": "",
+        "type": "",
+        "value": ""
+      },
+      "data": {
+        "selectedText": "illustrative",
+        "textLength": 12,
+        "rangeStart": 26,
+        "rangeEnd": 38,
+        "singleElement": true
+      }
+    },
+    {
+      "type": "copy_action",
+      "timestamp": 1759852517378,
+      "url": "http://example.com/",
+      "page_title": "Example Domain",
+      "element": {
+        "xpath": "//div/p[1]",
+        "id": "",
+        "tagName": "P",
+        "className": "",
+        "textContent": "This domain is for use in illustrative examples in documents. You may use this\n    domain in literat",
+        "href": "",
+        "src": "",
+        "name": "",
+        "type": "",
+        "value": ""
+      },
+      "data": {
+        "copiedText": "illustrative",
+        "textLength": 12,
+        "copyMethod": "selection",
+        "singleElement": true
+      }
+    }
+  ]
+}

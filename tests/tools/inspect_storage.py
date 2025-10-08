@@ -24,10 +24,9 @@ from typing import List, Dict, Any, Optional
 
 # Add project path
 project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
-sys.path.insert(0, str(project_root / "base_app"))
+sys.path.insert(0, str(project_root / "src"))
 
-from base_app.server.core.config_service import ConfigService
+from base_app.base_app.server.core.config_service import ConfigService
 
 
 class StorageInspector:

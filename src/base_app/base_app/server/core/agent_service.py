@@ -9,7 +9,7 @@ from typing import Dict, Optional, List, Any
 from datetime import datetime
 import logging
 
-from base_app.base_agent.core import BaseAgent, AgentConfig, AgentStatus
+from ...base_agent.core import BaseAgent, AgentConfig, AgentStatus
 from .config_service import ConfigService
 from ..storage import SessionStorage, SQLiteSessionStorage, SessionModel, MessageModel
 

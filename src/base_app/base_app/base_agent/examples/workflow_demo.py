@@ -4,7 +4,7 @@ Workflow 模块演示示例
 """
 import asyncio
 import logging
-from base_app.base_agent.core import (
+from ..core import (
     BaseAgent, AgentConfig, WorkflowStep, Workflow, StepType, ErrorHandling
 )
 

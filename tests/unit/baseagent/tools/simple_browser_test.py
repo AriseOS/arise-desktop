@@ -10,14 +10,14 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-# 添加 base_app 目录到路径
-base_app_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../base_app'))
-sys.path.insert(0, base_app_path)
+# 添加 src 目录到路径
+src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../src'))
+sys.path.insert(0, src_path)
 
 from browser_use.browser.session import BrowserSession
 from browser_use.browser.profile import BrowserProfile
-from base_app.base_agent.tools.browser_use.user_behavior.monitor import SimpleUserBehaviorMonitor
-from base_app.server.core.config_service import ConfigService
+from base_app.base_app.base_agent.tools.browser_use.user_behavior.monitor import SimpleUserBehaviorMonitor
+from base_app.base_app.server.core.config_service import ConfigService
 
 
 async def test_behavior_monitoring():

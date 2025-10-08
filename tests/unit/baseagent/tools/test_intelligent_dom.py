@@ -10,8 +10,8 @@ import sys
 from pprint import pprint
 from pathlib import Path
 
-# Add the base_app directory to Python path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../../base_app'))
+# Add the src directory to Python path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../../src'))
 
 from browser_use.browser.session import BrowserSession
 from browser_use.browser.profile import BrowserProfile
@@ -19,10 +19,10 @@ from browser_use import Tools
 from browser_use.tools.views import GoToUrlAction
 from browser_use.agent.views import ActionModel
 from browser_use.dom.service import DomService
-from base_app.base_agent.tools.browser_use.dom_extractor import (
+from base_app.base_app.base_agent.tools.browser_use.dom_extractor import (
     extract_dom_dict, extract_llm_view, format_dict_as_text, DOMExtractor
 )
-from base_app.server.core.config_service import ConfigService
+from base_app.base_app.server.core.config_service import ConfigService
 
 
 class GoToUrlActionModel(ActionModel):

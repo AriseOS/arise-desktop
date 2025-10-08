@@ -19,10 +19,9 @@ from datetime import datetime
 
 # Add project path to sys.path
 project_root = Path(__file__).parent.parent.parent.parent.parent
-sys.path.insert(0, str(project_root))
-sys.path.insert(0, str(project_root / "base_app"))
+sys.path.insert(0, str(project_root / "src"))
 
-from base_app.base_agent.memory.memory_manager import MemoryManager
+from base_app.base_app.base_agent.memory.memory_manager import MemoryManager
 
 
 class MockConfigService:

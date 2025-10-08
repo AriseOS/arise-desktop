@@ -20,10 +20,9 @@ import json
 
 # Add project path to sys.path
 project_root = Path(__file__).parent.parent.parent.parent.parent
-sys.path.insert(0, str(project_root))
-sys.path.insert(0, str(project_root / "base_app"))
+sys.path.insert(0, str(project_root / "src"))
 
-from base_app.base_agent.memory.sqlite_kv_storage import SQLiteKVStorage
+from base_app.base_app.base_agent.memory.sqlite_kv_storage import SQLiteKVStorage
 
 
 class MockConfigService:

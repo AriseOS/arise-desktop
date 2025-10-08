@@ -13,11 +13,10 @@ from datetime import datetime
 
 # Add project path
 project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
-sys.path.insert(0, str(project_root / "base_app"))
+sys.path.insert(0, str(project_root / "src"))
 
 try:
-    from base_app.server.core.config_service import ConfigService
+    from base_app.base_app.server.core.config_service import ConfigService
     CONFIG_SERVICE_AVAILABLE = True
 except ImportError:
     CONFIG_SERVICE_AVAILABLE = False

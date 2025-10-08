@@ -460,12 +460,12 @@ class BaseAgent:
             provider_type = self.provider_config.get('type', 'openai')
             
             if provider_type == 'openai':
-                from ..providers.openai_provider import OpenAIProvider
+                from common.llm import OpenAIProvider
                 api_key = self.provider_config.get('api_key')
                 model_name = self.provider_config.get('model_name')
                 self.provider = OpenAIProvider(api_key=api_key, model_name=model_name)
             elif provider_type == 'anthropic':
-                from ..providers.anthropic_provider import AnthropicProvider
+                from common.llm import AnthropicProvider
                 api_key = self.provider_config.get('api_key')
                 model_name = self.provider_config.get('model_name')
                 self.provider = AnthropicProvider(api_key=api_key, model_name=model_name)

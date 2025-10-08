@@ -8,8 +8,9 @@ __version__ = "1.0.0"
 __author__ = "BaseApp Team"
 __description__ = "AI Agent Assistant Application"
 
-from .base_agent.core import BaseAgent
-from .server.main import create_app, run_server
-from .cli.main import cli
+# Lazy imports to avoid circular dependencies when package is imported
+# from .base_agent.core import BaseAgent
+# from .server.main import create_app, run_server
+# from .cli.main import cli
 
-__all__ = ["BaseAgent", "create_app", "run_server", "cli"]
+# __all__ = ["BaseAgent", "create_app", "run_server", "cli"]

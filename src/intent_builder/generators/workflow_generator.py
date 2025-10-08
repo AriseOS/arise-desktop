@@ -12,8 +12,8 @@ import yaml
 
 from ..core.metaflow import MetaFlow
 from .prompt_builder import PromptBuilder
-from .llm_service import LLMService
 from ..validators.yaml_validator import WorkflowYAMLValidator
+from common.llm import BaseProvider, AnthropicProvider
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ class WorkflowGenerator:
 
     def __init__(
         self,
-        llm_service: Optional[LLMService] = None,
+        llm_provider: Optional[BaseProvider] = None,
         prompt_builder: Optional[PromptBuilder] = None,
         validator: Optional[WorkflowYAMLValidator] = None,
         max_retries: int = 3
@@ -37,12 +37,12 @@ class WorkflowGenerator:
         Initialize WorkflowGenerator
 
         Args:
-            llm_service: LLM service for generating workflow
+            llm_provider: LLM provider for generating workflow (defaults to AnthropicProvider)
             prompt_builder: Prompt builder for constructing prompts
             validator: YAML validator for validating generated workflow
             max_retries: Maximum number of retries on failure
         """
-        self.llm_service = llm_service or LLMService()
+        self.llm_provider = llm_provider or AnthropicProvider()
         self.prompt_builder = prompt_builder or PromptBuilder()
         self.validator = validator or WorkflowYAMLValidator()
         self.max_retries = max_retries
@@ -74,7 +74,11 @@ class WorkflowGenerator:
                 logger.info(f"Generation attempt {attempt + 1}/{self.max_retries}")
 
                 # Call LLM to generate workflow
-                workflow_yaml = await self.llm_service.generate(prompt)
+                # Use empty system prompt as prompt already contains all instructions
+                workflow_yaml = await self.llm_provider.generate_response("", prompt)
+
+                # Extract YAML if wrapped in code blocks
+                workflow_yaml = self._extract_yaml(workflow_yaml)
 
                 # Validate generated YAML
                 is_valid, error_message = self.validator.validate(workflow_yaml)
@@ -143,6 +147,31 @@ Please fix the issues and regenerate the workflow YAML. Make sure to:
 Regenerate the workflow:
 """
         return prompt + feedback
+
+    def _extract_yaml(self, text: str) -> str:
+        """
+        Extract YAML from markdown code blocks if present
+
+        Args:
+            text: Raw LLM response
+
+        Returns:
+            Extracted YAML string
+        """
+        # Check for ```yaml code blocks
+        if "```yaml" in text:
+            start = text.find("```yaml") + 7
+            end = text.find("```", start)
+            return text[start:end].strip()
+
+        # Check for ``` code blocks
+        if "```" in text:
+            start = text.find("```") + 3
+            end = text.find("```", start)
+            return text[start:end].strip()
+
+        # Return as-is if no code blocks
+        return text.strip()
 
 
 # Convenience function

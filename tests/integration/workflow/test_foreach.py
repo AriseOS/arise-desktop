@@ -19,13 +19,12 @@ from pathlib import Path
 
 # Add project path to sys.path
 project_root = Path(__file__).parent.parent.parent.parent
-sys.path.insert(0, str(project_root))
-sys.path.insert(0, str(project_root / "base_app"))
+sys.path.insert(0, str(project_root / "src"))
 
-from base_app.base_agent.core.base_agent import BaseAgent
-from base_app.base_agent.core.schemas import AgentConfig
-from base_app.base_agent.workflows.workflow_loader import load_workflow
-from base_app.server.core.config_service import ConfigService
+from base_app.base_app.base_agent.core.base_agent import BaseAgent
+from base_app.base_app.base_agent.core.schemas import AgentConfig
+from base_app.base_app.base_agent.workflows.workflow_loader import load_workflow
+from base_app.base_app.server.core.config_service import ConfigService
 
 
 class ForeachLoopTester:

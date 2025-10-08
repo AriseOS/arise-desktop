@@ -20,10 +20,10 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
-# Add base_app to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../../base_app'))
+# Add src to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../../src'))
 
-from base_app.server.core.config_service import ConfigService
+from base_app.base_app.server.core.config_service import ConfigService
 
 # DOM collection imports
 from browser_use.browser.session import BrowserSession
@@ -32,12 +32,12 @@ from browser_use import Tools
 from browser_use.tools.views import GoToUrlAction, ScrollAction
 from browser_use.agent.views import ActionModel
 from browser_use.dom.service import DomService
-from base_app.base_agent.tools.browser_use.dom_extractor import (
+from base_app.base_app.base_agent.tools.browser_use.dom_extractor import (
     extract_dom_dict, extract_llm_view, DOMExtractor
 )
 
 # Script generation imports
-from base_app.base_agent.providers.anthropic_provider import AnthropicProvider
+from common.llm import AnthropicProvider
 
 
 class GoToUrlActionModel(ActionModel):

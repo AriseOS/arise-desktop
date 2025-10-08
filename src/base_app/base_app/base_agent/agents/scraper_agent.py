@@ -9,8 +9,7 @@ from datetime import datetime
 
 from .base_agent import BaseStepAgent, AgentMetadata
 from ..core.schemas import AgentContext
-from ..providers.openai_provider import OpenAIProvider
-from ..providers.anthropic_provider import AnthropicProvider
+from common.llm import OpenAIProvider, AnthropicProvider
 
 try:
     from browser_use import Tools

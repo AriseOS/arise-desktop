@@ -25,15 +25,13 @@ from unittest.mock import MagicMock
 
 # Add project path to sys.path
 project_root = Path(__file__).parent.parent.parent.parent.parent
-sys.path.insert(0, str(project_root))
-sys.path.insert(0, str(project_root / "base_app"))
+sys.path.insert(0, str(project_root / "src"))
 
-from base_app.base_agent.agents.storage_agent import StorageAgent
-from base_app.base_agent.core.schemas import AgentContext, AgentInput, AgentOutput
-from base_app.base_agent.memory.memory_manager import MemoryManager
-from base_app.server.core.config_service import ConfigService
-from base_app.base_agent.providers.openai_provider import OpenAIProvider
-from base_app.base_agent.providers.anthropic_provider import AnthropicProvider
+from base_app.base_app.base_agent.agents.storage_agent import StorageAgent
+from base_app.base_app.base_agent.core.schemas import AgentContext, AgentInput, AgentOutput
+from base_app.base_app.base_agent.memory.memory_manager import MemoryManager
+from base_app.base_app.server.core.config_service import ConfigService
+from common.llm import OpenAIProvider, AnthropicProvider
 
 
 class TestStorageAgent:
