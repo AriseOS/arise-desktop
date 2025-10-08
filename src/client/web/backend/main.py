@@ -246,6 +246,11 @@ async def login(user_data: UserLogin, db: Session = Depends(get_db)):
         )
     )
 
+@app.get("/api/ping")
+async def ping(current_user: User = Depends(get_current_user)):
+    """简单的认证检查 - 用于定期验证token是否有效"""
+    return {"status": "ok", "user_id": current_user.id}
+
 @app.get("/api/me", response_model=UserResponse)
 async def get_current_user_info(current_user: User = Depends(get_current_user)):
     """获取当前用户信息"""

@@ -165,4 +165,66 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   }
 });
 
+// Periodic authentication check (every 15 seconds)
+const AUTH_CHECK_INTERVAL = 15000; // 15 seconds
+let authCheckTimer = null;
+
+async function checkAuthStatus() {
+  try {
+    const storage = await chrome.storage.local.get(['userToken', 'userId', 'username']);
+
+    if (!storage.userToken) {
+      // No token, skip check
+      return;
+    }
+
+    // Use lightweight ping API to check auth status
+    const response = await fetch('http://localhost:8000/api/ping', {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${storage.userToken}`
+      }
+    });
+
+    if (response.status === 401) {
+      console.log('❌ Auth check failed - token invalid or expired (401)');
+
+      // Clear user data
+      await chrome.storage.local.remove(['userToken', 'userId', 'username', 'currentPage', 'selectedWorkflowId']);
+
+      // Notify any open popups to redirect to login
+      chrome.runtime.sendMessage({
+        action: 'authExpired'
+      }).catch(() => {
+        // Ignore error if no popup is open
+      });
+
+      console.log('✅ User logged out due to token expiration');
+    } else if (response.ok) {
+      console.log('✅ Auth check passed');
+    } else {
+      console.log(`⚠️ Auth check: unexpected status ${response.status}`);
+    }
+  } catch (error) {
+    // Network error, don't log out user
+    console.debug('Auth check network error (ignored):', error.message);
+  }
+}
+
+// Start periodic auth check
+function startAuthCheck() {
+  if (authCheckTimer) {
+    clearInterval(authCheckTimer);
+  }
+
+  authCheckTimer = setInterval(checkAuthStatus, AUTH_CHECK_INTERVAL);
+  console.log(`🔐 Started periodic auth check (every ${AUTH_CHECK_INTERVAL / 1000}s)`);
+
+  // Run first check immediately
+  checkAuthStatus();
+}
+
+// Start auth check on extension load
+startAuthCheck();
+
 console.log('Background script initialization complete');

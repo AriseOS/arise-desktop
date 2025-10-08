@@ -16,6 +16,22 @@ function App() {
 
   useEffect(() => {
     checkLoginStatus()
+
+    // Listen for auth expiration from background script
+    const handleMessage = (message, sender, sendResponse) => {
+      if (message.action === 'authExpired') {
+        console.log('⚠️ Auth expired, redirecting to login')
+        handleLogout()
+        showStatus('🔐 登录已过期，请重新登录', 'warning')
+      }
+    }
+
+    chrome.runtime.onMessage.addListener(handleMessage)
+
+    // Cleanup
+    return () => {
+      chrome.runtime.onMessage.removeListener(handleMessage)
+    }
   }, [])
 
   const checkLoginStatus = async () => {
