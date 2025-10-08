@@ -14,6 +14,7 @@ import json
 from database import get_db, init_db, User, ChatHistory, AgentBuildSession, GeneratedAgent
 from auth import auth_service
 from agent_service import agent_build_service
+from recording_service import recording_service
 
 # 初始化数据库
 init_db()
@@ -565,6 +566,172 @@ async def websocket_agent_chat(websocket: WebSocket, agent_id: str):
             
     except WebSocketDisconnect:
         manager.disconnect_chat(websocket, agent_id)
+
+# ===== Recording API =====
+
+class RecordingStartRequest(BaseModel):
+    title: str
+    description: Optional[str] = ""
+
+class RecordingStopRequest(BaseModel):
+    session_id: str
+
+class RecordingOperationRequest(BaseModel):
+    session_id: str
+    operation: dict
+
+@app.post("/api/recording/start")
+async def start_recording(
+    request: RecordingStartRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Start a new workflow recording session"""
+    # Create recording session
+    result = await recording_service.create_session(
+        title=request.title,
+        description=request.description or "",
+        user_id=current_user.id
+    )
+
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=result.get("error", "Failed to start recording")
+        )
+
+    return result
+
+@app.post("/api/recording/stop")
+async def stop_recording(
+    request: RecordingStopRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Stop a recording session and return captured operations"""
+    from database import RecordingSessionDB
+    import json
+
+    # Stop recording session
+    result = await recording_service.stop_session(
+        session_id=request.session_id,
+        user_id=current_user.id
+    )
+
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=result.get("error", "Recording session not found")
+        )
+
+    # Get session data for JSON export
+    session_data = await recording_service.get_session_data(
+        session_id=request.session_id,
+        user_id=current_user.id
+    )
+
+    # Format as standard JSON structure
+    from datetime import datetime
+    export_data = {
+        "session_info": {
+            "session_id": request.session_id,
+            "title": session_data.get("title", ""),
+            "description": session_data.get("description", ""),
+            "start_time": session_data.get("start_time", datetime.utcnow().isoformat()),
+            "total_operations": len(result.get("operations", []))
+        },
+        "operations": result.get("operations", [])
+    }
+
+    # Print JSON data before saving
+    print(f"\n{'='*80}")
+    print(f"📝 Recording Session Completed: {request.session_id}")
+    print(f"{'='*80}")
+    print("\n🎬 Generated JSON Structure:")
+    print(json.dumps(export_data, indent=2, ensure_ascii=False))
+    print(f"\n{'='*80}")
+
+    # Save to database
+    try:
+        db_session = RecordingSessionDB(
+            session_id=request.session_id,
+            user_id=current_user.id,
+            title=session_data.get("title", ""),
+            description=session_data.get("description", ""),
+            recording_data=json.dumps(export_data, ensure_ascii=False),
+            operation_count=len(result.get("operations", [])),
+            started_at=datetime.fromisoformat(session_data.get("start_time")),
+            stopped_at=datetime.utcnow()
+        )
+
+        db.add(db_session)
+        db.commit()
+        db.refresh(db_session)
+
+        print(f"✅ Recording saved to database with ID: {db_session.id}")
+        print(f"{'='*80}\n")
+
+    except Exception as e:
+        print(f"❌ Failed to save recording to database: {e}")
+        import traceback
+        traceback.print_exc()
+        db.rollback()
+
+    return result
+
+@app.get("/api/recording/status/{session_id}")
+async def get_recording_status(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get status of a recording session"""
+    # Get session status
+    status_data = await recording_service.get_session_status(
+        session_id=session_id,
+        user_id=current_user.id
+    )
+
+    if not status_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Recording session not found"
+        )
+
+    return status_data
+
+@app.post("/api/recording/operation")
+async def add_recording_operation(
+    request: RecordingOperationRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Add an operation to a recording session (from Chrome extension)"""
+    session_id = request.session_id
+
+    # Get session
+    if session_id not in recording_service.active_sessions:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Recording session not found"
+        )
+
+    session = recording_service.active_sessions[session_id]
+
+    # Verify user owns this session
+    if session.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Unauthorized"
+        )
+
+    # Add operation
+    session.add_operation(request.operation)
+
+    return {
+        "success": True,
+        "operation_count": len(session.operation_list)
+    }
 
 @app.get("/api/health")
 async def health_check():

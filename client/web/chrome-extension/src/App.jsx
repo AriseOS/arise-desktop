@@ -118,6 +118,7 @@ function App() {
       )}
       {currentPage === 'record' && (
         <RecordPage
+          currentUser={currentUser}
           onNavigate={navigateTo}
           showStatus={showStatus}
         />

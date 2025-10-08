@@ -55,6 +55,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
     return true;
   }
+
+  if (request.action === 'sendOperation') {
+    sendOperationToBackend(request.sessionId, request.token, request.operation)
+      .then(result => {
+        sendResponse({ success: true, operation_count: result.operation_count });
+      })
+      .catch(error => {
+        sendResponse({ success: false, error: error.message });
+      });
+    return true;
+  }
 });
 
 // Capture tab screenshot
@@ -66,6 +77,34 @@ async function captureTabScreenshot() {
     return dataUrl;
   } catch (error) {
     console.error('Error capturing screenshot:', error);
+    throw error;
+  }
+}
+
+// Send operation to backend
+async function sendOperationToBackend(sessionId, token, operation) {
+  try {
+    const apiEndpoint = 'http://localhost:8000';
+
+    const response = await fetch(`${apiEndpoint}/api/recording/operation`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        session_id: sessionId,
+        operation: operation
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Error sending operation to backend:', error);
     throw error;
   }
 }
