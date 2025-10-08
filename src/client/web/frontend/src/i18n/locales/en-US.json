@@ -1,0 +1,119 @@
+{
+  "common": {
+    "login": "Login",
+    "register": "Register",
+    "logout": "Logout",
+    "username": "Username",
+    "password": "Password",
+    "email": "Email",
+    "save": "Save",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "delete": "Delete",
+    "edit": "Edit",
+    "create": "Create",
+    "submit": "Submit",
+    "back": "Back",
+    "next": "Next",
+    "prev": "Previous",
+    "loading": "Loading...",
+    "success": "Success",
+    "error": "Error",
+    "warning": "Warning",
+    "info": "Info"
+  },
+  "nav": {
+    "home": "Home",
+    "workspace": "Workspace",
+    "dashboard": "Dashboard",
+    "profile": "Profile",
+    "logout": "Logout",
+    "backToHome": "Back to Home"
+  },
+  "home": {
+    "welcome": "Welcome, {username}!",
+    "title": "ami.dev",
+    "subtitle": "Use AI-powered tools to quickly create, deploy, and manage your intelligent agent applications",
+    "dialogTitle": "Dialog",
+    "dialogSubtitle": "Describe the application or feature you want to create, and AI will help you implement it",
+    "placeholder": "For example: Create a todo management app with task categorization, priority settings, and progress tracking...",
+    "startBuilding": "Start Building",
+    "quickGenerate": "Press {key} + Enter to generate quickly",
+    "tryExamples": "Try these examples:",
+    "footer": "Built with advanced AI technology",
+    "examples": {
+      "taskApp": "Create a task management app",
+      "ecommerce": "Design an e-commerce homepage",
+      "chatbot": "Build a chatbot",
+      "dashboard": "Develop a data analysis dashboard"
+    },
+    "messages": {
+      "pleaseLogin": "Please login first to use the dialog feature",
+      "enterRequirement": "Please enter your requirements",
+      "buildStarted": "Agent building started! Redirecting to workspace...",
+      "buildFailed": "Failed to start agent building"
+    },
+    "building": "Building..."
+  },
+  "login": {
+    "title": "ami.dev",
+    "subtitle": "Login to your account",
+    "usernameRequired": "Please enter username",
+    "passwordRequired": "Please enter password",
+    "noAccount": "Don't have an account?",
+    "registerNow": "Register now"
+  },
+  "workspace": {
+    "title": "Workspace",
+    "welcome": "Welcome, {username}!",
+    "agentOutput": "Agent Output",
+    "running": "Running",
+    "dialog": "Dialog",
+    "userRequirement": "Describe new modification requirements:",
+    "placeholder": "Describe the features you want to create or modify, for example: Create a todo app with add, delete, mark complete features...",
+    "startGenerate": "Start Generate",
+    "stop": "Stop",
+    "quickKey": "Press {key} + Enter to start generating",
+    "workflow": "User Agent Logic Display (workflow)",
+    "preview": "User Agent {platform} Preview",
+    "platforms": {
+      "frontend": "Frontend",
+      "android": "Android"
+    },
+    "waitingToStart": "Waiting to start generation...",
+    "agentThinking": "Agent is thinking...",
+    "waitingToBuild": "Waiting to start building",
+    "buildProcess": "Agent will display build process and logic flow here",
+    "previewArea": "Preview Area",
+    "previewDescription": "Generated {platform} will be displayed here",
+    "previewTypes": {
+      "frontend": "frontend interface",
+      "android": "Android app"
+    },
+    "previewButtons": {
+      "frontend": "Frontend Preview",
+      "android": "Android Emulator"
+    },
+    "workflowSteps": {
+      "analysis": "Requirements Analysis",
+      "analysisDesc": "Analyzing user input requirements...",
+      "design": "Architecture Design",
+      "designDesc": "Designing application architecture and component structure",
+      "codegen": "Code Generation",
+      "codegenDesc": "Generating corresponding code files",
+      "deploy": "Test & Deploy",
+      "deployDesc": "Testing generated code and deploying"
+    },
+    "workflowStatus": {
+      "completed": "Completed",
+      "running": "Running",
+      "error": "Error",
+      "pending": "Pending"
+    },
+    "messages": {
+      "startAnalysis": "Starting user requirements analysis: {input}",
+      "underDevelopment": "Agent generation feature is under development, stay tuned!",
+      "userStopped": "User stopped the generation process"
+    }
+  }
+}

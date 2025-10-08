@@ -1,0 +1,58 @@
+/* App.css */
+.App {
+  text-align: left;
+}
+
+/* 自定义滚动条样式 */
+.ant-list-item:hover {
+  background-color: transparent !important;
+}
+
+/* 聊天框样式优化 */
+.chat-message {
+  transition: all 0.3s ease;
+}
+
+.chat-message:hover {
+  transform: translateY(-1px);
+}
+
+/* 响应式布局 */
+@media (max-width: 768px) {
+  .ant-layout-header {
+    padding: 0 16px;
+  }
+  
+  .ant-layout-content {
+    padding: 16px;
+  }
+}
+
+/* 自定义按钮样式 */
+.ant-btn-primary {
+  background-color: #1890ff;
+  border-color: #1890ff;
+}
+
+.ant-btn-primary:hover {
+  background-color: #40a9ff;
+  border-color: #40a9ff;
+}
+
+/* 卡片阴影效果 */
+.ant-card {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+}
+
+/* 输入框样式 */
+.ant-input, .ant-input-password {
+  border-radius: 6px;
+}
+
+/* 头像样式 */
+.ant-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
