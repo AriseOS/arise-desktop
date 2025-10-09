@@ -1,3 +1,0 @@
-"""
-Agentcrafter Web Backend
-"""

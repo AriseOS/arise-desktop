@@ -1,6 +1,0 @@
-# 需要安装的依赖包
-npm install qiankun
-npm install --save-dev @types/qiankun
-
-# 可选：用于微前端通信
-npm install rxjs

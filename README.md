@@ -52,8 +52,16 @@ cd agentcrafter
 
 2. **配置环境变量**
 ```bash
-cp .env.example .env
-# 编辑 .env 文件，设置必要的 API Key
+# Set LLM API keys as system environment variables
+export OPENAI_API_KEY=your_openai_key
+export ANTHROPIC_API_KEY=your_anthropic_key
+```
+
+3. **Configure Web Backend** (optional)
+```bash
+# Copy and edit backend configuration
+cp src/client/web/config/backend.yaml.example src/client/web/config/backend.yaml
+# Edit backend.yaml to configure database, server settings, etc.
 ```
 
 4. **本地开发部署**

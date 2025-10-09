@@ -28,9 +28,9 @@ data:
 agent:
   name: Test Agent
   llm:
-    provider: openai
-    model: gpt-3.5-turbo  # Use cheaper model for tests
-    api_key: ${OPENAI_API_KEY}
+    provider: anthropic
+    model: claude-sonnet-4-5
+    api_key: ${ANTHROPIC_API_KEY}
   memory:
     enabled: false  # Disable memory for tests
     provider: mem0

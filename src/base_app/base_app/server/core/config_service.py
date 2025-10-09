@@ -227,23 +227,44 @@ class ConfigService:
             else:
                 return default
 
-        # Handle config internal references ${data.root}/xxx
+        # Handle config internal references ${data.root}/xxx and environment variables ${OPENAI_API_KEY}
         if isinstance(current, str) and '${' in current:
-            import re
-            pattern = r'\$\{([^}]+)\}'
-
-            def replace_ref(match):
-                ref_key = match.group(1)
-                # Check if it's an environment variable (all caps or contains underscore)
-                if ref_key.isupper() or '_' in ref_key:
-                    return os.getenv(ref_key, match.group(0))
-                # Otherwise treat as nested config reference
-                ref_value = self._get_nested_value(self.config_data, ref_key, match.group(0))
-                return str(ref_value)
-
-            current = re.sub(pattern, replace_ref, current)
+            current = self._expand_variables(current)
 
         return current
+
+    def _expand_variables(self, value: str) -> str:
+        """
+        Expand variable references in config values
+
+        Supports:
+        - Environment variables: ${OPENAI_API_KEY}, ${ANTHROPIC_API_KEY}
+        - Config references: ${data.root}/logs
+        """
+        import re
+        pattern = r'\$\{([^}]+)\}'
+
+        def replace_ref(match):
+            ref_key = match.group(1)
+
+            # First check if it's an environment variable
+            # Environment variables are usually ALL_CAPS or contain underscores
+            if ref_key.isupper() or '_' in ref_key:
+                env_value = os.getenv(ref_key)
+                if env_value is not None:
+                    return env_value
+                # If env var not found, try as config reference
+                # (fallthrough to config reference check below)
+
+            # Try as nested config reference (e.g., ${data.root})
+            ref_value = self._get_nested_value(self.config_data, ref_key, None)
+            if ref_value is not None:
+                return str(ref_value)
+
+            # If neither env var nor config reference found, return original
+            return match.group(0)
+
+        return re.sub(pattern, replace_ref, value)
     
     def set(self, key: str, value: Any):
         """设置配置值"""

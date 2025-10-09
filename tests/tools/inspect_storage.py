@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 """
-Interactive Storage Database Inspector
+Storage Agent Inspector - Aligned with StorageAgent Logic
 
-Inspect StorageAgent databases interactively:
-- View all collections and tables
-- View table schemas
-- Query data from collections
-- View cached SQL scripts
-- Export data
+This tool is designed to match StorageAgent's mental model:
+- Collections (logical) = {collection}_{user_id} (physical table)
+- Cache keys: storage_{operation}_{collection}_{user_id}[_{hash}]
+
+Two main sections:
+1. Collection Management (data view/delete aligned with storage_agent)
+2. Cache Management (script view/delete)
 
 Usage:
-    python inspect_storage.py
-    python inspect_storage.py --config /path/to/test_config.yaml
+    python inspect_storage.py                    # Interactive mode
+    python inspect_storage.py --list-collections # List all collections
+    python inspect_storage.py --clear-collection daily_products --user default_user
+    python inspect_storage.py --list-cache       # List all cached scripts
 """
 
 import asyncio
@@ -19,8 +22,7 @@ import sys
 import json
 import aiosqlite
 from pathlib import Path
-from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 # Add project path
 project_root = Path(__file__).parent.parent.parent
@@ -29,34 +31,51 @@ sys.path.insert(0, str(project_root / "src"))
 from base_app.base_app.server.core.config_service import ConfigService
 
 
-class StorageInspector:
-    """Interactive storage database inspector"""
+class StorageAgentInspector:
+    """
+    Inspector tool aligned with StorageAgent's logic
+
+    Key Concepts (matching storage_agent.py):
+    - Collection: Logical name (e.g., "daily_products")
+    - Table: Physical name = {collection}_{user_id}
+    - Cache: storage_{operation}_{collection}_{user_id}[_{hash}]
+    """
 
     def __init__(self, config_path: Optional[str] = None):
         """Initialize inspector with config"""
         if not config_path:
-            # Default to test config
             config_path = str(project_root / "tests" / "test_config.yaml")
 
         self.config_service = ConfigService(config_path=config_path)
         self.storage_db = str(self.config_service.get_path('data.databases.storage'))
         self.kv_db = str(self.config_service.get_path('data.databases.kv'))
 
-        print(f"\n{'=' * 70}")
-        print("Storage Database Inspector")
-        print(f"{'=' * 70}")
+        print(f"\n{'=' * 80}")
+        print("Storage Agent Inspector (Aligned with StorageAgent Logic)")
+        print(f"{'=' * 80}")
         print(f"Storage DB: {self.storage_db}")
-        print(f"KV DB: {self.kv_db}")
-        print(f"{'=' * 70}\n")
+        print(f"KV Cache DB: {self.kv_db}")
+        print(f"{'=' * 80}\n")
 
-    async def list_tables(self) -> List[str]:
-        """List all tables in storage database and return table names"""
-        print("\n📊 Collections (Tables):")
-        print("-" * 70)
+    # ============================================================================
+    # SECTION 1: Collection Management (Aligned with StorageAgent)
+    # ============================================================================
+
+    async def list_collections(self) -> List[Tuple[str, str, str]]:
+        """
+        List all collections (matching storage_agent's view)
+
+        Returns:
+            List of (collection_name, user_id, table_name) tuples
+        """
+        print("\n📦 Collections (StorageAgent View):")
+        print("-" * 80)
 
         if not Path(self.storage_db).exists():
-            print("❌ Storage database does not exist")
+            print("  ℹ️  Storage database does not exist yet")
             return []
+
+        collections = []
 
         async with aiosqlite.connect(self.storage_db) as db:
             cursor = await db.execute("""
@@ -70,54 +89,228 @@ class StorageInspector:
                 print("  (No collections found)")
                 return []
 
-            table_names = []
             for i, (table_name,) in enumerate(tables, 1):
-                table_names.append(table_name)
-
-                # Parse collection and user from table name
-                # Format: {collection}_{user_id}
+                # Parse: {collection}_{user_id}
                 parts = table_name.rsplit('_', 1)
                 if len(parts) == 2:
                     collection, user_id = parts
-                    display_name = f"{collection} (user: {user_id})"
                 else:
-                    display_name = table_name
+                    collection = table_name
+                    user_id = "unknown"
 
                 # Get row count
                 cursor = await db.execute(f"SELECT COUNT(*) FROM {table_name}")
-                count = (await cursor.fetchone())[0]
+                row_count = (await cursor.fetchone())[0]
 
-                print(f"  [{i}] {table_name}")
-                print(f"      {display_name} - {count} rows")
+                # Get cached schema status
+                cache_key = f"storage_insert_{collection}_{user_id}"
+                has_cache = await self._check_cache_exists(cache_key)
+                cache_status = "✅" if has_cache else "❌"
 
-            return table_names
+                collections.append((collection, user_id, table_name))
 
-    async def show_schema(self, table_name: str):
-        """Show table schema"""
-        print(f"\n📋 Schema for: {table_name}")
-        print("-" * 70)
+                print(f"  [{i}] Collection: {collection}")
+                print(f"      User: {user_id} | Table: {table_name}")
+                print(f"      Rows: {row_count} | Schema Cache: {cache_status}")
+                print()
+
+        return collections
+
+    async def show_collection_detail(self, collection: str, user_id: str = "default_user"):
+        """
+        Show collection details (matching storage_agent's perspective)
+
+        Shows:
+        - Table schema (from storage.db)
+        - Cached schema (from kv.db)
+        - Recent data samples
+        - All related cache entries
+        """
+        table_name = f"{collection}_{user_id}"
+
+        print(f"\n📋 Collection Detail: {collection} (user: {user_id})")
+        print(f"Physical Table: {table_name}")
+        print("-" * 80)
+
+        # 1. Table Schema (from storage.db)
+        if not Path(self.storage_db).exists():
+            print("❌ Storage database does not exist")
+            return
 
         async with aiosqlite.connect(self.storage_db) as db:
+            # Check if table exists
+            cursor = await db.execute("""
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name = ?
+            """, (table_name,))
+
+            if not await cursor.fetchone():
+                print(f"❌ Collection not found: {collection}")
+                return
+
+            # Show schema
+            print("\n1️⃣  Table Schema (storage.db):")
             cursor = await db.execute(f"PRAGMA table_info({table_name})")
             columns = await cursor.fetchall()
 
-            if not columns:
-                print(f"❌ Table '{table_name}' not found")
-                return
-
-            print("\nColumns:")
             for col_id, name, type_, notnull, default, pk in columns:
-                pk_marker = " [PK]" if pk else ""
-                notnull_marker = " [NOT NULL]" if notnull else ""
-                default_marker = f" [DEFAULT: {default}]" if default else ""
-                print(f"  - {name}: {type_}{pk_marker}{notnull_marker}{default_marker}")
+                markers = []
+                if pk:
+                    markers.append("PRIMARY KEY")
+                if notnull:
+                    markers.append("NOT NULL")
+                if default:
+                    markers.append(f"DEFAULT {default}")
 
-    async def query_data(self, table_name: str, limit: int = 10):
-        """Query data from table"""
-        print(f"\n📄 Data from: {table_name} (limit: {limit})")
-        print("-" * 70)
+                marker_str = f" [{', '.join(markers)}]" if markers else ""
+                print(f"   - {name}: {type_}{marker_str}")
+
+            # Show row count
+            cursor = await db.execute(f"SELECT COUNT(*) FROM {table_name}")
+            row_count = (await cursor.fetchone())[0]
+            print(f"\n   Total Records: {row_count}")
+
+            # Show sample data
+            if row_count > 0:
+                print("\n   Recent Records (latest 3):")
+                db.row_factory = aiosqlite.Row
+                cursor = await db.execute(
+                    f"SELECT * FROM {table_name} ORDER BY created_at DESC LIMIT 3"
+                )
+                rows = await cursor.fetchall()
+
+                for i, row in enumerate(rows, 1):
+                    print(f"\n   Record {i}:")
+                    for key in row.keys():
+                        value = row[key]
+                        if isinstance(value, str) and len(value) > 80:
+                            value = value[:80] + "..."
+                        print(f"     {key}: {value}")
+
+        # 2. Cached Schema (from kv.db)
+        cache_key = f"storage_insert_{collection}_{user_id}"
+        cached_schema = await self._get_cached_schema(cache_key)
+
+        print(f"\n2️⃣  Cached Schema (kv.db):")
+        if cached_schema:
+            print(f"   Cache Key: {cache_key}")
+            print(f"   Field Order: {cached_schema.get('field_order', [])}")
+            print(f"\n   CREATE TABLE SQL:")
+            print(f"   {cached_schema.get('create_table_sql', 'N/A')}")
+            print(f"\n   INSERT SQL:")
+            print(f"   {cached_schema.get('insert_sql', 'N/A')}")
+        else:
+            print(f"   ❌ No cached schema found (cache key: {cache_key})")
+
+        # 3. All related cache entries
+        print(f"\n3️⃣  All Related Cache Entries:")
+        related_caches = await self._find_related_caches(collection, user_id)
+
+        if related_caches:
+            for cache_key, cache_info in related_caches.items():
+                operation_type = self._parse_cache_operation(cache_key)
+                print(f"   - {cache_key}")
+                print(f"     Type: {operation_type}")
+                print(f"     Updated: {cache_info['updated_at']}")
+        else:
+            print(f"   (No cache entries for this collection)")
+
+    async def clear_collection(self, collection: str, user_id: str = "default_user", confirm: bool = True) -> bool:
+        """
+        Clear collection completely (aligned with storage_agent logic)
+
+        This removes:
+        1. Physical table: {collection}_{user_id}
+        2. All cache entries: storage_*_{collection}_{user_id}*
+
+        This ensures the next store will create a fresh schema.
+        """
+        table_name = f"{collection}_{user_id}"
+
+        print(f"\n🧹 Clear Collection: {collection} (user: {user_id})")
+        print(f"   Physical table: {table_name}")
+        print("-" * 80)
+
+        # Confirm
+        if confirm:
+            response = input(f"⚠️  This will delete:\n"
+                           f"   - Table: {table_name}\n"
+                           f"   - All cache: storage_*_{collection}_{user_id}*\n"
+                           f"   Continue? (yes/no): ").strip().lower()
+            if response != 'yes':
+                print("❌ Cancelled")
+                return False
+
+        success = True
+        deleted_items = []
+
+        # 1. Drop table
+        if Path(self.storage_db).exists():
+            async with aiosqlite.connect(self.storage_db) as db:
+                cursor = await db.execute("""
+                    SELECT name FROM sqlite_master
+                    WHERE type='table' AND name = ?
+                """, (table_name,))
+
+                if await cursor.fetchone():
+                    await db.execute(f"DROP TABLE {table_name}")
+                    await db.commit()
+                    deleted_items.append(f"Table: {table_name}")
+                    print(f"  ✅ Dropped table: {table_name}")
+                else:
+                    print(f"  ℹ️  Table not found: {table_name}")
+
+        # 2. Delete all related cache entries
+        if Path(self.kv_db).exists():
+            related_caches = await self._find_related_caches(collection, user_id)
+
+            if related_caches:
+                async with aiosqlite.connect(self.kv_db) as db:
+                    for cache_key in related_caches.keys():
+                        await db.execute("DELETE FROM kv_storage WHERE key = ?", (cache_key,))
+                        deleted_items.append(f"Cache: {cache_key}")
+                        print(f"  ✅ Deleted cache: {cache_key}")
+                    await db.commit()
+            else:
+                print(f"  ℹ️  No cache entries found")
+
+        if deleted_items:
+            print(f"\n✅ Collection '{collection}' cleared successfully!")
+            print(f"   Deleted {len(deleted_items)} items")
+        else:
+            print(f"\n⚠️  Collection '{collection}' does not exist")
+
+        return success
+
+    async def query_collection_data(
+        self,
+        collection: str,
+        user_id: str = "default_user",
+        limit: int = 10,
+        filters: Optional[Dict] = None
+    ):
+        """Query data from collection (simple version, matching storage_agent view)"""
+        table_name = f"{collection}_{user_id}"
+
+        print(f"\n📄 Query Collection: {collection} (user: {user_id})")
+        print(f"   Limit: {limit}")
+        print("-" * 80)
+
+        if not Path(self.storage_db).exists():
+            print("❌ Storage database does not exist")
+            return
 
         async with aiosqlite.connect(self.storage_db) as db:
+            # Check if table exists
+            cursor = await db.execute("""
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name = ?
+            """, (table_name,))
+
+            if not await cursor.fetchone():
+                print(f"❌ Collection not found: {collection}")
+                return
+
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
                 f"SELECT * FROM {table_name} ORDER BY created_at DESC LIMIT ?",
@@ -129,26 +322,34 @@ class StorageInspector:
                 print("  (No data)")
                 return
 
-            # Convert to dicts
-            data = [dict(row) for row in rows]
-
-            # Pretty print
-            for i, record in enumerate(data, 1):
-                print(f"\n  Record {i}:")
-                for key, value in record.items():
-                    # Truncate long values
+            print(f"\nFound {len(rows)} records:\n")
+            for i, row in enumerate(rows, 1):
+                print(f"Record {i}:")
+                for key in row.keys():
+                    value = row[key]
                     if isinstance(value, str) and len(value) > 100:
                         value = value[:100] + "..."
-                    print(f"    {key}: {value}")
+                    print(f"  {key}: {value}")
+                print()
 
-    async def list_cached_scripts(self, pattern: str = "") -> List[str]:
-        """List all cached scripts and return script keys"""
-        print(f"\n🔧 Cached Scripts{f' (pattern: {pattern})' if pattern else ''}")
-        print("-" * 70)
+    # ============================================================================
+    # SECTION 2: Cache Management (Script View/Delete)
+    # ============================================================================
+
+    async def list_all_caches(self, pattern: str = "") -> List[str]:
+        """
+        List all cache entries (organized by collection)
+
+        Cache key format: storage_{operation}_{collection}_{user_id}[_{hash}]
+        """
+        print(f"\n🔧 Cache Entries{f' (pattern: {pattern})' if pattern else ''}:")
+        print("-" * 80)
 
         if not Path(self.kv_db).exists():
-            print("❌ KV database does not exist")
+            print("  ℹ️  KV cache database does not exist yet")
             return []
+
+        cache_keys = []
 
         async with aiosqlite.connect(self.kv_db) as db:
             if pattern:
@@ -156,37 +357,54 @@ class StorageInspector:
                     SELECT key, user_id, created_at, updated_at
                     FROM kv_storage
                     WHERE key LIKE ?
-                    ORDER BY updated_at DESC
+                    ORDER BY key
                 """, (f"%{pattern}%",))
             else:
                 cursor = await db.execute("""
                     SELECT key, user_id, created_at, updated_at
                     FROM kv_storage
-                    ORDER BY updated_at DESC
+                    WHERE key LIKE 'storage_%'
+                    ORDER BY key
                 """)
-            scripts = await cursor.fetchall()
 
-            if not scripts:
-                print(f"  (No scripts{f' matching {pattern}' if pattern else ''})")
+            caches = await cursor.fetchall()
+
+            if not caches:
+                print(f"  (No cache entries{f' matching {pattern}' if pattern else ''})")
                 return []
 
-            script_keys = []
-            for i, (key, user_id, created_at, updated_at) in enumerate(scripts, 1):
-                script_keys.append(key)
-                script_type = self._get_script_type(key)
-                print(f"  [{i}] {key}")
-                print(f"      Type: {script_type} | User: {user_id}")
-                print(f"      Updated: {updated_at}")
+            # Group by collection
+            by_collection = {}
+            for key, user_id, created_at, updated_at in caches:
+                parsed = self._parse_cache_key(key)
+                if parsed:
+                    collection_key = f"{parsed['collection']}_{parsed['user_id']}"
+                    if collection_key not in by_collection:
+                        by_collection[collection_key] = []
+                    by_collection[collection_key].append({
+                        'key': key,
+                        'operation': parsed['operation'],
+                        'updated_at': updated_at
+                    })
+                    cache_keys.append(key)
 
-            return script_keys
+            # Display grouped by collection
+            for i, (collection_key, entries) in enumerate(by_collection.items(), 1):
+                print(f"\n  [{i}] Collection: {collection_key}")
+                for entry in entries:
+                    op_type = self._parse_cache_operation(entry['key'])
+                    print(f"      - {op_type}: {entry['key']}")
+                    print(f"        Updated: {entry['updated_at']}")
 
-    async def show_script_detail(self, key: str):
-        """Show detailed information for a specific script"""
-        print(f"\n🔍 Script Detail: {key}")
-        print("-" * 70)
+        return cache_keys
+
+    async def show_cache_detail(self, cache_key: str):
+        """Show detailed cache content"""
+        print(f"\n🔍 Cache Detail: {cache_key}")
+        print("-" * 80)
 
         if not Path(self.kv_db).exists():
-            print("❌ KV database does not exist")
+            print("❌ KV cache database does not exist")
             return
 
         async with aiosqlite.connect(self.kv_db) as db:
@@ -194,309 +412,197 @@ class StorageInspector:
                 SELECT user_id, value, created_at, updated_at
                 FROM kv_storage
                 WHERE key = ?
-            """, (key,))
+            """, (cache_key,))
+
             result = await cursor.fetchone()
 
             if not result:
-                print(f"❌ Script not found: {key}")
+                print(f"❌ Cache not found: {cache_key}")
                 return
 
             user_id, value_json, created_at, updated_at = result
-            print(f"  User: {user_id}")
-            print(f"  Created: {created_at}")
-            print(f"  Updated: {updated_at}")
-            print(f"  Type: {self._get_script_type(key)}")
+            parsed = self._parse_cache_key(cache_key)
+
+            print(f"User: {user_id}")
+            print(f"Created: {created_at}")
+            print(f"Updated: {updated_at}")
+            if parsed:
+                print(f"Collection: {parsed['collection']}")
+                print(f"Operation: {parsed['operation']}")
 
             try:
                 value = json.loads(value_json)
-
-                # Show content based on script type
-                if "storage_" in key:
-                    # StorageAgent scripts
-                    if "insert" in key:
-                        if "create_table_sql" in value:
-                            print(f"\n  CREATE TABLE SQL:")
-                            print(f"  {value['create_table_sql']}")
-                        if "insert_sql" in value:
-                            print(f"\n  INSERT SQL:")
-                            print(f"  {value['insert_sql']}")
-                        if "field_order" in value:
-                            print(f"\n  Field Order: {value['field_order']}")
-                    elif "query" in key:
-                        if "query_sql" in value:
-                            print(f"\n  QUERY SQL:")
-                            print(f"  {value['query_sql']}")
-                        if "params_order" in value:
-                            print(f"\n  Params Order: {value['params_order']}")
-                    elif "export" in key:
-                        if "query_sql" in value:
-                            print(f"\n  EXPORT SQL:")
-                            print(f"  {value['query_sql']}")
-                        if "format" in value:
-                            print(f"\n  Format: {value['format']}")
-
-                elif "scraper_script_" in key:
-                    # ScraperAgent scripts
-                    print(f"\n  Python Script:")
-                    print(f"  {'-' * 60}")
-                    print(value if isinstance(value, str) else json.dumps(value, indent=2))
-
-                else:
-                    # Unknown type, show raw JSON
-                    print(f"\n  Value:")
-                    print(json.dumps(value, indent=2, ensure_ascii=False))
-
+                print(f"\nCache Content:")
+                print(json.dumps(value, indent=2, ensure_ascii=False))
             except json.JSONDecodeError:
-                print(f"  ⚠️  Value is not valid JSON")
-                print(f"  Raw value: {value_json[:200]}")
+                print(f"⚠️  Value is not valid JSON")
+                print(f"Raw: {value_json[:200]}")
 
-    async def delete_script(self, key: str) -> bool:
-        """Delete a cached script by key"""
-        print(f"\n🗑️  Deleting script: {key}")
-        print("-" * 70)
+    async def delete_cache(self, cache_key: str, confirm: bool = True) -> bool:
+        """Delete a specific cache entry"""
+        print(f"\n🗑️  Delete Cache: {cache_key}")
+        print("-" * 80)
 
-        if not Path(self.kv_db).exists():
-            print("❌ KV database does not exist")
-            return False
-
-        async with aiosqlite.connect(self.kv_db) as db:
-            # Check if exists
-            cursor = await db.execute("SELECT key FROM kv_storage WHERE key = ?", (key,))
-            if not await cursor.fetchone():
-                print(f"❌ Script not found: {key}")
-                return False
-
-            # Delete
-            await db.execute("DELETE FROM kv_storage WHERE key = ?", (key,))
-            await db.commit()
-            print(f"✅ Deleted: {key}")
-            return True
-
-    async def drop_table(self, table_name: str) -> bool:
-        """Drop a table (collection) from storage database"""
-        print(f"\n🗑️  Dropping table: {table_name}")
-        print("-" * 70)
-
-        if not Path(self.storage_db).exists():
-            print("❌ Storage database does not exist")
-            return False
-
-        async with aiosqlite.connect(self.storage_db) as db:
-            # Check if table exists
-            cursor = await db.execute("""
-                SELECT name FROM sqlite_master
-                WHERE type='table' AND name = ?
-            """, (table_name,))
-            if not await cursor.fetchone():
-                print(f"❌ Table not found: {table_name}")
-                return False
-
-            # Confirm
-            confirm = input(f"⚠️  Are you sure you want to drop '{table_name}'? (yes/no): ").strip().lower()
-            if confirm != 'yes':
+        if confirm:
+            response = input(f"⚠️  Delete this cache? (yes/no): ").strip().lower()
+            if response != 'yes':
                 print("❌ Cancelled")
                 return False
 
-            # Drop table
-            await db.execute(f"DROP TABLE {table_name}")
+        if not Path(self.kv_db).exists():
+            print("❌ KV cache database does not exist")
+            return False
+
+        async with aiosqlite.connect(self.kv_db) as db:
+            cursor = await db.execute("SELECT key FROM kv_storage WHERE key = ?", (cache_key,))
+            if not await cursor.fetchone():
+                print(f"❌ Cache not found: {cache_key}")
+                return False
+
+            await db.execute("DELETE FROM kv_storage WHERE key = ?", (cache_key,))
             await db.commit()
-            print(f"✅ Dropped: {table_name}")
+            print(f"✅ Deleted: {cache_key}")
             return True
 
-    def _get_script_type(self, key: str) -> str:
-        """Get script type from key"""
-        if "storage_insert" in key:
-            return "StorageAgent INSERT"
-        elif "storage_query" in key:
-            return "StorageAgent QUERY"
-        elif "storage_export" in key:
-            return "StorageAgent EXPORT"
-        elif "scraper_script_" in key:
-            return "ScraperAgent Script"
-        return "UNKNOWN"
+    # ============================================================================
+    # Helper Methods
+    # ============================================================================
 
-    async def export_table(self, table_name: str, output_file: str):
-        """Export table data to JSON file"""
-        print(f"\n💾 Exporting: {table_name} → {output_file}")
-        print("-" * 70)
+    async def _check_cache_exists(self, cache_key: str) -> bool:
+        """Check if a cache key exists"""
+        if not Path(self.kv_db).exists():
+            return False
 
-        async with aiosqlite.connect(self.storage_db) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute(f"SELECT * FROM {table_name}")
+        async with aiosqlite.connect(self.kv_db) as db:
+            cursor = await db.execute(
+                "SELECT key FROM kv_storage WHERE key = ?",
+                (cache_key,)
+            )
+            return await cursor.fetchone() is not None
+
+    async def _get_cached_schema(self, cache_key: str) -> Optional[Dict]:
+        """Get cached schema for a collection"""
+        if not Path(self.kv_db).exists():
+            return None
+
+        async with aiosqlite.connect(self.kv_db) as db:
+            cursor = await db.execute(
+                "SELECT value FROM kv_storage WHERE key = ?",
+                (cache_key,)
+            )
+            result = await cursor.fetchone()
+
+            if result:
+                try:
+                    return json.loads(result[0])
+                except json.JSONDecodeError:
+                    return None
+            return None
+
+    async def _find_related_caches(self, collection: str, user_id: str) -> Dict[str, Dict]:
+        """Find all cache entries related to a collection"""
+        if not Path(self.kv_db).exists():
+            return {}
+
+        related = {}
+        pattern = f"storage_%_{collection}_{user_id}%"
+
+        async with aiosqlite.connect(self.kv_db) as db:
+            cursor = await db.execute("""
+                SELECT key, created_at, updated_at, value
+                FROM kv_storage
+                WHERE key LIKE ?
+            """, (pattern,))
+
             rows = await cursor.fetchall()
 
-            data = [dict(row) for row in rows]
+            for key, created_at, updated_at, value in rows:
+                related[key] = {
+                    'created_at': created_at,
+                    'updated_at': updated_at,
+                    'value': value
+                }
 
-            with open(output_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
+        return related
 
-            print(f"✅ Exported {len(data)} records to {output_file}")
+    def _parse_cache_key(self, cache_key: str) -> Optional[Dict[str, str]]:
+        """
+        Parse cache key into components
 
-    async def interactive_menu(self):
-        """Interactive menu"""
-        table_list = []  # Cache table list
-        script_list = []  # Cache script list
-
-        while True:
-            print("\n" + "=" * 70)
-            print("Commands:")
-            print("  1. List all collections (tables)")
-            print("  2. Show table schema")
-            print("  3. Query table data")
-            print("  4. Drop table (collection)")
-            print("  5. Export table to JSON")
-            print("  6. List all cached scripts")
-            print("  7. Show script detail")
-            print("  8. Delete script")
-            print("  9. Show statistics")
-            print("  q. Quit")
-            print("=" * 70)
-
-            choice = input("\nEnter command: ").strip()
-
-            if choice == '1':
-                table_list = await self.list_tables()
-
-            elif choice == '2':
-                table = self._prompt_for_table(table_list)
-                if table:
-                    await self.show_schema(table)
-
-            elif choice == '3':
-                table = self._prompt_for_table(table_list)
-                if table:
-                    limit = input("Limit (default 10): ").strip()
-                    limit = int(limit) if limit else 10
-                    await self.query_data(table, limit)
-
-            elif choice == '4':
-                table = self._prompt_for_table(table_list)
-                if table:
-                    success = await self.drop_table(table)
-                    if success:
-                        table_list = []  # Clear cache
-
-            elif choice == '5':
-                table = self._prompt_for_table(table_list)
-                if table:
-                    output = input("Output file path: ").strip()
-                    if output:
-                        await self.export_table(table, output)
-
-            elif choice == '6':
-                pattern = input("Search pattern (press Enter for all): ").strip()
-                script_list = await self.list_cached_scripts(pattern)
-
-            elif choice == '7':
-                script = self._prompt_for_script(script_list)
-                if script:
-                    await self.show_script_detail(script)
-
-            elif choice == '8':
-                script = self._prompt_for_script(script_list)
-                if script:
-                    success = await self.delete_script(script)
-                    if success:
-                        script_list = []  # Clear cache
-
-            elif choice == '9':
-                await self.show_statistics()
-
-            elif choice.lower() == 'q':
-                print("\nGoodbye!")
-                break
-
-            else:
-                print("❌ Invalid command")
-
-    def _prompt_for_table(self, table_list: List[str]) -> Optional[str]:
-        """Prompt user to select a table by number or name"""
-        if not table_list:
-            print("⚠️  Please list tables first (command 1)")
+        Format: storage_{operation}_{collection}_{user_id}[_{hash}]
+        Examples:
+        - storage_insert_daily_products_default_user
+        - storage_query_daily_products_default_user_abc123
+        """
+        if not cache_key.startswith('storage_'):
             return None
 
-        print("\nSelect table:")
-        print("  - Enter table number (e.g., 1, 2, 3)")
-        print("  - Or enter full table name")
-
-        choice = input("Table: ").strip()
-
-        # Try as number first
-        if choice.isdigit():
-            idx = int(choice) - 1
-            if 0 <= idx < len(table_list):
-                return table_list[idx]
-            else:
-                print(f"❌ Invalid number. Valid range: 1-{len(table_list)}")
-                return None
-
-        # Try as table name
-        if choice in table_list:
-            return choice
-
-        # Try fuzzy match
-        for table in table_list:
-            if choice in table:
-                print(f"✓ Matched: {table}")
-                return table
-
-        print(f"❌ Table not found: {choice}")
-        return None
-
-    def _prompt_for_script(self, script_list: List[str]) -> Optional[str]:
-        """Prompt user to select a script by number or key name"""
-        if not script_list:
-            print("⚠️  Please list scripts first (command 6)")
+        parts = cache_key.split('_', 3)
+        if len(parts) < 4:
             return None
 
-        print("\nSelect script:")
-        print("  - Enter script number (e.g., 1, 2, 3)")
-        print("  - Or enter full script key")
+        # parts[0] = 'storage'
+        # parts[1] = operation (insert/query/export)
+        # parts[2] = first part of collection name
+        # parts[3] = rest (collection_user_id[_hash])
 
-        choice = input("Script: ").strip()
+        operation = parts[1]
 
-        # Try as number first
-        if choice.isdigit():
-            idx = int(choice) - 1
-            if 0 <= idx < len(script_list):
-                return script_list[idx]
+        # Parse collection and user_id from remainder
+        remainder = parts[2] + '_' + parts[3]
+
+        # Try to split by last occurrence of _{user_id}
+        # Assume user_id doesn't contain '_'
+        remainder_parts = remainder.rsplit('_', 1)
+        if len(remainder_parts) == 2:
+            potential_collection, potential_user = remainder_parts
+
+            # Check if there's a hash suffix
+            if '_' in potential_user:
+                user_parts = potential_user.split('_', 1)
+                user_id = user_parts[0]
+                hash_suffix = user_parts[1]
             else:
-                print(f"❌ Invalid number. Valid range: 1-{len(script_list)}")
-                return None
+                user_id = potential_user
+                hash_suffix = None
 
-        # Try as script key
-        if choice in script_list:
-            return choice
+            return {
+                'operation': operation,
+                'collection': potential_collection,
+                'user_id': user_id,
+                'hash': hash_suffix
+            }
 
-        # Try fuzzy match
-        for script in script_list:
-            if choice in script:
-                print(f"✓ Matched: {script}")
-                return script
-
-        print(f"❌ Script not found: {choice}")
         return None
+
+    def _parse_cache_operation(self, cache_key: str) -> str:
+        """Get human-readable operation type from cache key"""
+        if 'storage_insert' in cache_key:
+            return "INSERT Schema"
+        elif 'storage_query' in cache_key:
+            return "QUERY SQL"
+        elif 'storage_export' in cache_key:
+            return "EXPORT SQL"
+        return "UNKNOWN"
 
     async def show_statistics(self):
         """Show database statistics"""
-        print("\n📈 Database Statistics")
-        print("-" * 70)
+        print("\n📈 Statistics:")
+        print("-" * 80)
 
-        # Storage DB stats
+        # Storage DB
         if Path(self.storage_db).exists():
             size = Path(self.storage_db).stat().st_size
-            print(f"Storage DB Size: {size:,} bytes ({size/1024:.2f} KB)")
+            print(f"Storage DB: {size:,} bytes ({size/1024:.2f} KB)")
 
             async with aiosqlite.connect(self.storage_db) as db:
-                # Count tables
                 cursor = await db.execute("""
                     SELECT COUNT(*) FROM sqlite_master
                     WHERE type='table' AND name NOT LIKE 'sqlite_%'
                 """)
                 table_count = (await cursor.fetchone())[0]
-                print(f"Total Collections: {table_count}")
+                print(f"Collections: {table_count}")
 
-                # Total rows
                 cursor = await db.execute("""
                     SELECT name FROM sqlite_master
                     WHERE type='table' AND name NOT LIKE 'sqlite_%'
@@ -508,63 +614,151 @@ class StorageInspector:
                     total_rows += (await cursor.fetchone())[0]
                 print(f"Total Records: {total_rows}")
         else:
-            print("Storage DB: Not found")
+            print("Storage DB: Not created yet")
 
         print()
 
-        # KV DB stats
+        # KV Cache DB
         if Path(self.kv_db).exists():
             size = Path(self.kv_db).stat().st_size
-            print(f"KV DB Size: {size:,} bytes ({size/1024:.2f} KB)")
+            print(f"KV Cache DB: {size:,} bytes ({size/1024:.2f} KB)")
 
             async with aiosqlite.connect(self.kv_db) as db:
-                cursor = await db.execute("SELECT COUNT(*) FROM kv_storage")
+                cursor = await db.execute("""
+                    SELECT COUNT(*) FROM kv_storage
+                    WHERE key LIKE 'storage_%'
+                """)
                 count = (await cursor.fetchone())[0]
-                print(f"Cached Scripts: {count}")
+                print(f"Storage Cache Entries: {count}")
         else:
-            print("KV DB: Not found")
+            print("KV Cache DB: Not created yet")
+
+    # ============================================================================
+    # Interactive Menu
+    # ============================================================================
+
+    async def interactive_menu(self):
+        """Interactive menu (aligned with storage_agent concepts)"""
+        while True:
+            print("\n" + "=" * 80)
+            print("Storage Agent Inspector")
+            print("=" * 80)
+            print("\n📦 COLLECTION MANAGEMENT (Data):")
+            print("  1. List all collections")
+            print("  2. Show collection detail")
+            print("  3. Query collection data")
+            print("  4. Clear collection (table + cache)")
+            print("\n🔧 CACHE MANAGEMENT (Scripts):")
+            print("  5. List all cache entries")
+            print("  6. Show cache detail")
+            print("  7. Delete cache entry")
+            print("\n📈 STATISTICS:")
+            print("  8. Show statistics")
+            print("\n  q. Quit")
+            print("=" * 80)
+
+            choice = input("\nCommand: ").strip()
+
+            if choice == '1':
+                await self.list_collections()
+
+            elif choice == '2':
+                collection = input("Collection name: ").strip()
+                if collection:
+                    user_id = input("User ID (default: default_user): ").strip() or "default_user"
+                    await self.show_collection_detail(collection, user_id)
+
+            elif choice == '3':
+                collection = input("Collection name: ").strip()
+                if collection:
+                    user_id = input("User ID (default: default_user): ").strip() or "default_user"
+                    limit = input("Limit (default: 10): ").strip()
+                    limit = int(limit) if limit else 10
+                    await self.query_collection_data(collection, user_id, limit)
+
+            elif choice == '4':
+                collection = input("Collection name: ").strip()
+                if collection:
+                    user_id = input("User ID (default: default_user): ").strip() or "default_user"
+                    await self.clear_collection(collection, user_id)
+
+            elif choice == '5':
+                pattern = input("Search pattern (Enter for all): ").strip()
+                await self.list_all_caches(pattern)
+
+            elif choice == '6':
+                cache_key = input("Cache key: ").strip()
+                if cache_key:
+                    await self.show_cache_detail(cache_key)
+
+            elif choice == '7':
+                cache_key = input("Cache key: ").strip()
+                if cache_key:
+                    await self.delete_cache(cache_key)
+
+            elif choice == '8':
+                await self.show_statistics()
+
+            elif choice.lower() == 'q':
+                print("\nGoodbye!")
+                break
+
+            else:
+                print("❌ Invalid command")
 
 
 async def main():
     """Main function"""
     import argparse
 
-    parser = argparse.ArgumentParser(description='Inspect StorageAgent databases')
-    parser.add_argument(
-        '--config',
-        help='Path to config file (default: tests/test_config.yaml)'
+    parser = argparse.ArgumentParser(
+        description='Storage Agent Inspector (Aligned with StorageAgent)',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Interactive mode
+  python inspect_storage.py
+
+  # List collections
+  python inspect_storage.py --list-collections
+
+  # Clear a collection completely
+  python inspect_storage.py --clear-collection daily_products --user default_user
+
+  # List cache entries
+  python inspect_storage.py --list-cache
+
+  # Show statistics
+  python inspect_storage.py --stats
+        """
     )
-    parser.add_argument(
-        '--list',
-        action='store_true',
-        help='List all collections and exit'
-    )
-    parser.add_argument(
-        '--scripts',
-        action='store_true',
-        help='Show cached scripts and exit'
-    )
-    parser.add_argument(
-        '--stats',
-        action='store_true',
-        help='Show statistics and exit'
-    )
+
+    parser.add_argument('--config', help='Config file path')
+    parser.add_argument('--list-collections', action='store_true', help='List all collections')
+    parser.add_argument('--list-cache', action='store_true', help='List all cache entries')
+    parser.add_argument('--stats', action='store_true', help='Show statistics')
+    parser.add_argument('--clear-collection', metavar='NAME', help='Clear collection (table + cache)')
+    parser.add_argument('--user', default='default_user', help='User ID (default: default_user)')
 
     args = parser.parse_args()
 
-    inspector = StorageInspector(config_path=args.config)
+    inspector = StorageAgentInspector(config_path=args.config)
 
     # Quick commands
-    if args.list:
-        await inspector.list_tables()
+    if args.list_collections:
+        await inspector.list_collections()
         return
 
-    if args.scripts:
-        await inspector.list_cached_scripts()
+    if args.list_cache:
+        await inspector.list_all_caches()
         return
 
     if args.stats:
         await inspector.show_statistics()
+        return
+
+    if args.clear_collection:
+        await inspector.clear_collection(args.clear_collection, args.user, confirm=True)
         return
 
     # Interactive mode

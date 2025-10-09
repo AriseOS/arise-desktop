@@ -99,9 +99,12 @@ class ScraperAgent(BaseStepAgent):
         # browser-use 组件将在initialize时设置
         self.browser_session = None
         self.controller = None
-    
+
+        # Provider will be set in initialize
+        self.provider = None
+
     async def initialize(self, context: AgentContext) -> bool:
-        """初始化Agent，从context获取浏览器会话"""
+        """初始化Agent，从context获取浏览器会话和provider"""
         try:
             # 从context获取浏览器会话（懒加载）
             session_info = await context.get_browser_session()
@@ -109,6 +112,13 @@ class ScraperAgent(BaseStepAgent):
             # 设置browser-use组件
             self.browser_session = session_info.session
             self.controller = session_info.controller
+
+            # Get provider from context.agent_instance (BaseAgent)
+            if context.agent_instance and hasattr(context.agent_instance, 'provider'):
+                self.provider = context.agent_instance.provider
+                logger.info(f"ScraperAgent got provider from BaseAgent: {type(self.provider).__name__}")
+            else:
+                logger.warning("ScraperAgent: No provider available from context, will fail if LLM is needed")
 
             # 标记已初始化
             self.is_initialized = True
@@ -442,6 +452,8 @@ class ScraperAgent(BaseStepAgent):
                 logger.warning(f"    LLM view length: {len(llm_view)} chars")
                 logger.warning(f"    LLM view content: {llm_view}")
                 logger.warning(f"    DOM dict tag: {dom_dict.get('tag')}")
+            logger.info(f"    LLM view length: {len(llm_view)} chars")
+            logger.info(f"    LLM view content: {llm_view[:100]}...")
 
             # 调试模式: 保存DOM结构
             if self.debug_mode:
@@ -731,9 +743,11 @@ Extract data now:"""
 
             logger.info(f"📊 Debug: final prompt length = {len(prompt)} chars")
 
-            # Get LLM response
-            llm_provider = AnthropicProvider()
-            response = await llm_provider.generate_response(
+            # Get LLM response using provider from context
+            if not self.provider:
+                raise RuntimeError("No LLM provider available. ScraperAgent must be initialized with context.")
+
+            response = await self.provider.generate_response(
                 system_prompt="You are a data extraction expert. Return only JSON array, no markdown, no explanations.",
                 user_prompt=prompt
             )
@@ -922,8 +936,11 @@ def collect_scattered_data(container_node):
 - 只返回Python代码，不要解释文字
 - 根据DOM结构和用户需求选择最合适的策略
 """
-            llm_provider = AnthropicProvider()
-            response = await llm_provider.generate_response(
+            # Use provider from context
+            if not self.provider:
+                raise RuntimeError("No LLM provider available. ScraperAgent must be initialized with context.")
+
+            response = await self.provider.generate_response(
                 system_prompt="""你是网页数据提取专家。根据提供的三步指导，分析DOM结构生成提取脚本。优先使用Class定位，确保跨页面兼容性。只返回Python代码，不要解释。""",
                 user_prompt=prompt
             )

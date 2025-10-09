@@ -228,6 +228,9 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
         """Store single data record"""
         table_name = f"{collection}_{user_id}"
 
+        # Log table and data info for debugging
+        self.logger.info(f"Storing to table: {table_name}, data fields: {list(data.keys())}")
+
         # Generate cache key
         cache_key = f"storage_insert_{collection}_{user_id}"
 
@@ -253,7 +256,9 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
             })
 
             cached = await context.memory_manager.get_data(cache_key)
-            self.logger.info(f"Cached INSERT script for {table_name}")
+            self.logger.info(f"Cached INSERT script for {table_name}, schema fields: {cached['field_order']}")
+        else:
+            self.logger.info(f"Using cached schema for {table_name}, schema fields: {cached['field_order']}")
 
         # Validate data fields
         self._validate_fields(data, cached["field_order"])

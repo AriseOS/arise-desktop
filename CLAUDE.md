@@ -9,6 +9,27 @@ AgentCrafter is a natural language-driven Agent building platform consisting of 
 2. **Agent Builder System** - AI-assisted agent generation using tools like Claude Code
 3. **Web Platform** - Multi-user management interface and runtime environment
 
+## Project Structure
+
+```
+agentcrafter/
+├── src/                    # All source code
+│   ├── common/             # Shared services and utilities
+│   │   └── llm/           # LLM providers (Anthropic, OpenAI)
+│   ├── base_app/          # BaseAgent framework
+│   ├── intent_builder/    # Intent-based workflow generation
+│   └── agent_builder/     # AI-assisted agent development
+├── docs/                  # Documentation
+├── tests/                 # Test suite
+├── client/                # Web client
+└── ...
+```
+
+**Important**: All source code is under `src/` directory. When importing modules, use:
+- `from src.base_app.xxx import yyy`
+- `from src.common.llm import AnthropicProvider`
+- `from src.intent_builder.xxx import yyy`
+
 ## Development Commands
 
 ### Python Backend Development
@@ -16,7 +37,7 @@ AgentCrafter is a natural language-driven Agent building platform consisting of 
 **BaseApp (Core Agent Framework)**
 ```bash
 # Install BaseApp dependencies
-cd base_app
+cd src/base_app
 pip install -r requirements.txt
 
 # Run BaseApp CLI
@@ -95,18 +116,26 @@ pre-commit run --all-files
 
 ### Core Framework Structure
 
-**BaseAgent System** (`base_app/`)
-- **Core Framework**: `base_app/base_agent/core/` - BaseAgent class, workflow engine, state management
-- **Agent Types**: `base_app/base_agent/agents/` - TextAgent, ToolAgent, CodeAgent implementations
-- **Tools Integration**: `base_app/base_agent/tools/` - Browser automation, Android tools, memory management
-- **Providers**: `base_app/base_agent/providers/` - LLM provider abstraction (OpenAI, Anthropic)
-- **Workflows**: `base_app/base_agent/workflows/` - YAML-based workflow definitions and loader
-- **Memory System**: `base_app/base_agent/memory/` - Three-layer memory architecture (Variables, KV Storage, Long-term Memory)
+**Common Services** (`src/common/`)
+- **LLM Providers**: `src/common/llm/` - Shared LLM provider abstraction (OpenAI, Anthropic)
 
-**Agent Builder System** (`agent_builder/`)
+**BaseAgent System** (`src/base_app/`)
+- **Core Framework**: `src/base_app/base_agent/core/` - BaseAgent class, workflow engine, state management
+- **Agent Types**: `src/base_app/base_agent/agents/` - TextAgent, ToolAgent, CodeAgent implementations
+- **Tools Integration**: `src/base_app/base_agent/tools/` - Browser automation, Android tools, memory management
+- **Workflows**: `src/base_app/base_agent/workflows/` - YAML-based workflow definitions and loader
+- **Memory System**: `src/base_app/base_agent/memory/` - Three-layer memory architecture (Variables, KV Storage, Long-term Memory)
+
+**Agent Builder System** (`src/agent_builder/`)
 - **ProjectManagerAgent**: Intelligent development assistant that analyzes requirements and guides code generation
 - **ToolKnowledgeBase**: Comprehensive database of tool capabilities for intelligent recommendations
 - **Claude Integration**: Interface for calling Claude Code and other AI tools to generate agents
+
+**Intent Builder System** (`src/intent_builder/`)
+- **MetaFlow**: Intermediate representation between Intent Memory Graph and Workflow
+- **Workflow Generator**: LLM-based workflow generation from MetaFlow
+- **Prompt Builder**: Comprehensive prompt engineering for workflow generation
+- **Validators**: YAML structure and field validation
 
 **Web Platform** (`client/web/`)
 - **Frontend**: React + TypeScript with Vite, Ant Design, Redux Toolkit
@@ -150,39 +179,29 @@ agent_sessions table  � Multi-session conversation support
 
 ### Environment Variables
 ```bash
-# Required for LLM providers
-OPENAI_API_KEY=your_openai_key
-ANTHROPIC_API_KEY=your_anthropic_key
-
-# Database configuration (multiple options)
-# Option 1: Full database URL
-DATABASE_URL=sqlite:///./agentcrafter_users.db
-# DATABASE_URL=postgresql://username:password@localhost/agentcrafter
-
-# Option 2: Database file path (SQLite only)
-# DATABASE_PATH=client/web/backend/agentcrafter_users.db
-
-# Backend server configuration
-BACKEND_HOST=0.0.0.0
-BACKEND_PORT=8000
-BACKEND_RELOAD=true
-LOG_LEVEL=INFO
-
-# Security configuration
-SECRET_KEY=your-secret-key-here-change-in-production
-
-# BaseApp specific
-BASEAPP_HOST=0.0.0.0
-BASEAPP_PORT=8888
+# Required for LLM providers (set as system environment variables)
+export OPENAI_API_KEY=your_openai_key
+export ANTHROPIC_API_KEY=your_anthropic_key
 ```
 
 ### Key Configuration Files
-- `base_app/config/baseapp.yaml` - BaseApp runtime configuration
-- `base_app/base_agent/workflows/builtin/user-qa-workflow.yaml` - Default workflow definition
-- `client/web/backend/config.py` - Backend configuration management
-- `client/web/backend/agentcrafter_users.db` - Main user database
-- `client/web/.env.example` - Environment configuration template
-- `.env` files for environment-specific settings
+
+**BaseApp Configuration:**
+- `src/base_app/config/baseapp.yaml` - BaseApp runtime configuration
+- `src/base_app/base_agent/workflows/builtin/user-qa-workflow.yaml` - Default workflow definition
+
+**Web Platform Configuration:**
+- `src/client/web/config/backend.yaml` - Web backend configuration (database, server, security)
+- `src/client/web/config/backend.yaml.example` - Configuration template
+- `src/client/web/backend/config.py` - Configuration loader and management
+
+**Database:**
+- Default location: `dbfiles/agentcrafter.db` (configurable in backend.yaml)
+
+**Configuration Priority (Web Platform):**
+1. Environment variables (e.g., `BACKEND_SERVER_PORT`)
+2. YAML configuration file (`backend.yaml`)
+3. Code defaults
 
 ## Database Schema
 

@@ -1,8 +1,8 @@
 agent:
   llm:
-    api_key: ${OPENAI_API_KEY}
-    model: gpt-4o
-    provider: openai
+    api_key: ${ANTHROPIC_API_KEY}
+    model: claude-sonnet-4-5
+    provider: anthropic
   memory:
     config:
       embedder:

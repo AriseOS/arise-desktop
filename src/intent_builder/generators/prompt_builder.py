@@ -8,6 +8,7 @@ Builds comprehensive prompts including:
 - Few-shot example
 - MetaFlow input
 """
+from pathlib import Path
 
 
 class PromptBuilder:
@@ -15,10 +16,43 @@ class PromptBuilder:
 
     def __init__(self):
         """Initialize PromptBuilder"""
+        # Load external specs first (needed by _get_workflow_spec)
+        self._load_agent_specs()
+
         self.system_role = self._get_system_role()
         self.workflow_spec = self._get_workflow_spec()
         self.conversion_requirements = self._get_conversion_requirements()
         self.example = self._get_example()
+
+    def _load_agent_specs(self):
+        """Load agent specifications from external files"""
+        # Find specs directory relative to this file
+        # prompt_builder.py is at: intent_builder/generators/prompt_builder.py
+        # specs are at: docs/baseagent/scraper_agent_spec.md
+        project_root = Path(__file__).parent.parent.parent.parent
+        specs_dir = project_root / "docs" / "baseagent"
+
+        # Load scraper_agent spec
+        scraper_spec_file = specs_dir / "scraper_agent_spec.md"
+        if scraper_spec_file.exists():
+            with open(scraper_spec_file, 'r', encoding='utf-8') as f:
+                self.scraper_agent_spec = f.read()
+        else:
+            # Fallback to basic inline spec if file not found
+            print(f"Warning: scraper_agent_spec.md not found at {scraper_spec_file}, using fallback")
+            self.scraper_agent_spec = """**Purpose**: Extract structured data from web pages
+
+**DOM Scope Rules**:
+- Use "full" when user needs ALL matching elements (keywords: "所有", "列表", "all")
+- Use "partial" for specific content extraction
+
+**Example**:
+```yaml
+- agent_type: "scraper_agent"
+  inputs:
+    extraction_method: "script"
+    dom_scope: "full"  # Use "full" for lists, "partial" for details
+```"""
 
     def build(self, metaflow_yaml: str) -> str:
         """
@@ -71,8 +105,8 @@ Your responsibilities:
 5. Produce valid, executable workflow YAML"""
 
     def _get_workflow_spec(self) -> str:
-        """Get simplified workflow specification"""
-        return """# BaseAgent Workflow Specification (Simplified)
+        """Get complete workflow specification with agent details"""
+        spec = """# BaseAgent Workflow Specification
 
 ## Basic Structure
 
@@ -88,7 +122,7 @@ metadata:
 
 inputs:
   <input_name>:
-    type: <type>
+    type: <type>              # string | integer | boolean | array | object
     description: <description>
     required: <bool>
     default: <value>
@@ -114,34 +148,92 @@ steps:
     timeout: 300
 ```
 
-## Agent Types
+## Agent Types & Specifications
 
-1. **variable**: Variable management (initialize, set, append, etc.)
-   - Operations: set, append, increment, decrement, etc.
+### 1. variable - Variable Management
+**Purpose**: Initialize, set, append, or manipulate variables
 
-2. **tool_agent**: Browser automation using browser_use tool
-   - For: navigate, click, input, wait, scroll
+```yaml
+- id: "step-id"
+  agent_type: "variable"
+  agent_instruction: "Initialize/set/append variables"
+  inputs:
+    operation: "set"          # set | append | increment | decrement
+    data:                     # For set operation
+      var_name: value
+    source: "{{list_var}}"    # For append operation
+    data: "{{item}}"          # Item to append
+  outputs:
+    result: "variable_name"
+```
 
-3. **scraper_agent**: Data extraction from web pages
-   - extraction_method: "script" | "llm"
-   - data_requirements with output_format and sample_data
+### 2. scraper_agent - Web Data Extraction
 
-4. **storage_agent**: Persist data to database
-   - operation: "store"
-   - collection: collection name
+{scraper_agent_spec}
 
-5. **foreach**: Loop over a list
-   - source: "{{variable}}"
-   - item_var: variable name for current item
-   - steps: list of steps in loop body
+### 3. tool_agent - Browser Automation
+**Purpose**: Execute browser operations (navigate, click, input, etc.)
 
-## Key Fields
+```yaml
+- id: "step-id"
+  agent_type: "tool_agent"
+  agent_instruction: "Navigate/click/input on page"
+  inputs:
+    task_description: "Specific task to accomplish"
+    allowed_tools: ["browser_use"]
+    confidence_threshold: 0.7
+  outputs:
+    result: "result_var"
+    tool_used: "tool_var"
+```
 
-- **agent_instruction**: What the agent should do (human-readable)
-- **inputs**: Input parameters, can reference variables with {{variable}}
-- **outputs**: Map output fields to variable names
-- **source**: For foreach, the list variable to iterate over
-- **item_var**: For foreach, the variable name for current item"""
+### 4. storage_agent - Data Persistence
+**Purpose**: Store, query, or export data to database
+
+```yaml
+- id: "step-id"
+  agent_type: "storage_agent"
+  agent_instruction: "Store/query/export data"
+  inputs:
+    operation: "store"              # "store" | "query" | "export"
+    collection: "collection_name"   # Table name (auto-suffixed with user_id)
+    data: "{{variable}}"            # Data to store (for store operation)
+  outputs:
+    message: "message_var"
+    rows_stored: "count_var"
+```
+
+### 5. foreach - List Iteration
+**Purpose**: Loop over a list and execute steps for each item
+
+```yaml
+- id: "step-id"
+  agent_type: "foreach"
+  description: "Loop description"
+  source: "{{list_variable}}"       # List to iterate
+  item_var: "current_item"          # Variable name for current item
+  index_var: "item_index"           # Variable name for current index
+  max_iterations: 50
+  loop_timeout: 600
+  steps:
+    - id: "substep"
+      agent_type: "scraper_agent"
+      inputs:
+        target_path: "{{current_item.url}}"
+      # ...
+```
+
+## Variable References
+
+- Use `{{variable_name}}` to reference variables
+- Access object fields: `{{object.field}}`
+- Access array elements: `{{array[0]}}`
+- Available in: inputs, agent_instruction, condition fields"""
+
+        # Replace scraper_agent spec placeholder with loaded spec
+        spec = spec.replace("{scraper_agent_spec}", self.scraper_agent_spec)
+
+        return spec
 
     def _get_conversion_requirements(self) -> str:
         """Get conversion requirements and rules"""
@@ -184,16 +276,101 @@ When you see loop + extract + store:
 
 ## 2. Operations → Agent Type
 
-### navigate, click, wait
+### When to Use scraper_agent vs tool_agent
+
+**scraper_agent**: For simple navigation + data extraction
+- Can directly visit URL via `target_path` parameter
+- Automatically handles page loading and extraction
+- Use for: direct URL access → extract data
+
+**tool_agent**: For complex browser interactions ONLY
+- Use when: login, authentication, form submission, dynamic content waiting
+- Use `allowed_tools: ["browser_use"]` for browser automation
+
+**IMPORTANT Optimization**:
+If MetaFlow contains multiple click/navigate operations but the intent is just to reach a final URL:
+→ Skip intermediate clicks, use **scraper_agent** with the final URL directly!
+
+Example:
+```yaml
+# MetaFlow: Multiple clicks to navigate
+operations:
+  - type: click  # Click menu button
+  - type: click  # Click category link
+  - type: navigate  # Final URL: https://site.com/category
+
+# Optimized Workflow: Direct navigation
+- agent_type: "scraper_agent"
+  inputs:
+    target_path: "https://site.com/category"  # Jump to final URL directly!
+```
+
+### Operation Mapping
+
+**navigate operation (URL is known)**
+→ **scraper_agent** with target_path (NO tool_agent needed!)
+
+**Multiple clicks that end with navigate (navigation intent)**
+→ Analyze: Is the real intent just to reach a URL?
+→ YES: Use **scraper_agent** with final URL directly (skip clicks!)
+→ NO (login/auth required): Use **tool_agent** with browser_use
+
+**Complex interactions (login, form, dynamic content)**
 → **tool_agent** with tools: ["browser_use"]
 
-### extract operations
+**extract operations**
 → **scraper_agent** with:
 - extraction_method: "script" (prefer) or "llm"
 - data_requirements:
   - user_description: from intent_description
-  - output_format: infer from extract target fields
-  - sample_data: use extract.value as examples
+  - output_format: combine ALL extract targets from same page into ONE output_format
+  - sample_data: use extract.value as examples (format depends on extraction type - see below)
+
+**CRITICAL - sample_data Format Rules**:
+- **Extracting a LIST of items** (value is []): sample_data MUST be a list
+  ```yaml
+  sample_data:
+    - url: "https://example.com/product1"
+    - url: "https://example.com/product2"
+  ```
+- **Extracting a SINGLE object** (multiple fields): sample_data MUST be a dict
+  ```yaml
+  sample_data:
+    title: "Product Title"
+    price: "19.99"
+  ```
+
+**Important - Multiple Extracts**:
+If multiple extract operations target the same page, combine them into ONE scraper_agent with multiple fields in output_format.
+
+```yaml
+# MetaFlow: Multiple extracts
+operations:
+  - type: extract
+    target: "title"
+    value: "Coffee Maker"
+  - type: extract
+    target: "price"
+    value: "$99.99"
+  - type: extract
+    target: "rating"
+    value: "4.5"
+
+# Workflow: ONE scraper_agent with all fields
+- agent_type: "scraper_agent"
+  inputs:
+    data_requirements:
+      output_format:
+        title: "Product title"
+        price: "Product price"
+        rating: "Product rating"
+      sample_data:
+        title: "Coffee Maker"
+        price: "$99.99"
+        rating: "4.5"
+  outputs:
+    extracted_data: "product_info"  # Contains all fields
+```
 
 ### store operation
 → **storage_agent** with:
@@ -332,21 +509,14 @@ steps:
       all_product_details: "all_product_details"
     timeout: 10
 
-  - id: "navigate-to-site"
-    name: "Navigate to coffee page"
-    agent_type: "tool_agent"
-    description: "Open coffee products page"
-    agent_instruction: "Navigate to https://example.com/coffee"
-    inputs:
-      tools: ["browser_use"]
-    timeout: 30
-
+  # Simple URL access → scraper_agent handles it directly!
   - id: "extract-product-urls"
     name: "Extract product URLs"
     agent_type: "scraper_agent"
-    description: "Extract all product URLs from the page"
-    agent_instruction: "Extract all product URLs from coffee page"
+    description: "Navigate to coffee page and extract all product URLs"
+    agent_instruction: "Visit coffee category page and extract all product URLs"
     inputs:
+      target_path: "https://example.com/coffee"  # scraper_agent navigates automatically
       extraction_method: "script"
       data_requirements:
         user_description: "Extract all product URLs"
@@ -393,8 +563,8 @@ steps:
               title: "Product title"
               price: "Product price"
             sample_data:
-              - title: "Product Title"
-                price: "19.99"
+              title: "Product Title"
+              price: "19.99"
         outputs:
           extracted_data: "product_info"
         timeout: 45
