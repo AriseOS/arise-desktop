@@ -37,7 +37,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["tracking.js"],
+      "resources": ["behavior_tracker.js"],
       "matches": ["<all_urls>"]
     }
   ]

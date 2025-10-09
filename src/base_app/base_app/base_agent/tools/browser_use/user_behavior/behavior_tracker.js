@@ -161,13 +161,20 @@
                 data: additionalData || {}
             };
 
-            // Send to Python via CDP binding
+            // Auto-detect environment and use appropriate communication method
             if (window.reportUserBehavior) {
+                // Browser-use environment: Use CDP binding
                 try {
                     window.reportUserBehavior(JSON.stringify(data));
                 } catch (e) {
-                    console.warn('Failed to report user behavior:', e);
+                    console.warn('Failed to report user behavior via CDP:', e);
                 }
+            } else {
+                // Chrome Extension environment: Use window.postMessage
+                window.postMessage({
+                    source: 'agentcrafter-tracker',
+                    operation: data
+                }, '*');
             }
         }
     };

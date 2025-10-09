@@ -42,17 +42,25 @@
     function injectTrackingScript() {
         const script = document.createElement('script');
         script.id = 'agentcrafter-tracker';
-        script.src = chrome.runtime.getURL('tracking.js');
+        const scriptUrl = chrome.runtime.getURL('behavior_tracker.js');
+
+        console.log('🔧 Attempting to inject behavior tracker from:', scriptUrl);
+        script.src = scriptUrl;
 
         script.onload = () => {
-            console.log('✅ Tracking script injected and loaded');
+            console.log('✅ Behavior tracker script loaded successfully');
+            console.log('🔍 Checking if tracker initialized...');
+            setTimeout(() => {
+                console.log('🔍 window._simpleUserBehaviorMonitorInitialized:', window._simpleUserBehaviorMonitorInitialized);
+            }, 100);
         };
 
         script.onerror = (error) => {
-            console.error('❌ Failed to load tracking script:', error);
+            console.error('❌ Failed to load behavior tracker:', error);
         };
 
         (document.head || document.documentElement).appendChild(script);
+        console.log('📝 Script element added to DOM');
     }
 
     function removeTrackingScript() {
@@ -65,15 +73,27 @@
 
     // Listen for operations from injected script
     window.addEventListener('message', async function(event) {
+        console.log('📨 Message received:', event.data);
+
         // Only accept messages from same window
-        if (event.source !== window) return;
+        if (event.source !== window) {
+            console.log('⏭️ Ignoring: not from same window');
+            return;
+        }
 
         // Only accept messages from our tracker
-        if (!event.data || event.data.source !== 'agentcrafter-tracker') return;
+        if (!event.data || event.data.source !== 'agentcrafter-tracker') {
+            console.log('⏭️ Ignoring: not from tracker, source:', event.data?.source);
+            return;
+        }
+
+        console.log('✅ Message is from tracker');
 
         // Only send if recording
         if (!recordingSessionId || !userToken) {
             console.warn('⚠️ Not recording or no token - ignoring operation');
+            console.warn('   recordingSessionId:', recordingSessionId);
+            console.warn('   userToken:', userToken ? 'exists' : 'missing');
             return;
         }
 
