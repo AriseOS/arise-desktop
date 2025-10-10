@@ -31,7 +31,7 @@ from base_app.base_app.base_agent.agents.storage_agent import StorageAgent
 from base_app.base_app.base_agent.core.schemas import AgentContext, AgentInput, AgentOutput
 from base_app.base_app.base_agent.memory.memory_manager import MemoryManager
 from base_app.base_app.server.core.config_service import ConfigService
-from common.llm import OpenAIProvider, AnthropicProvider
+from src.common.llm import OpenAIProvider, AnthropicProvider
 
 
 class TestStorageAgent:

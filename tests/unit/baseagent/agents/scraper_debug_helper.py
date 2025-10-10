@@ -37,7 +37,7 @@ from base_app.base_app.base_agent.tools.browser_use.dom_extractor import (
 )
 
 # Script generation imports
-from common.llm import AnthropicProvider
+from src.common.llm import AnthropicProvider
 
 
 class GoToUrlActionModel(ActionModel):

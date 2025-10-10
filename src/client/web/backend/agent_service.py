@@ -10,10 +10,15 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
 
+# 添加 src 路径以支持 common 模块导入
+src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
+sys.path.insert(0, src_path)
+
 # 添加 agent_builder 路径
 agent_builder_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../agent_builder'))
 sys.path.insert(0, agent_builder_path)
 
+print(f"Src 路径: {src_path}")
 print(f"AgentBuilder 路径: {agent_builder_path}")
 print(f"路径是否存在: {os.path.exists(agent_builder_path)}")
 
