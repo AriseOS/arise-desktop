@@ -1,32 +1,33 @@
 import React, { useState, useEffect } from 'react'
 
-function IntentionPage({ onNavigate, showStatus, recordingData }) {
-  const [intentions, setIntentions] = useState([])
+function MetaflowPage({ onNavigate, showStatus, recordingData }) {
+  const [metaflows, setMetaflows] = useState([])
+  const [isEditing, setIsEditing] = useState(false)
 
   useEffect(() => {
     if (recordingData && recordingData.operations) {
-      // Generate intentions from recording operations
-      const generatedIntentions = generateIntentions(recordingData.operations)
-      setIntentions(generatedIntentions)
+      // Generate metaflows from recording operations
+      const generatedMetaflows = generateMetaflows(recordingData.operations)
+      setMetaflows(generatedMetaflows)
     }
   }, [recordingData])
 
-  const generateIntentions = (operations) => {
-    // Simple intention generation logic
-    // Group operations by page/context
-    const intentions = [
+  const generateMetaflows = (operations) => {
+    // Simple metaflow generation logic
+    // Similar to intentions but more detailed
+    const metaflows = [
       {
         id: 'start',
         type: 'start',
         name: 'Start',
-        description: 'Workflow start point'
+        description: 'Metaflow start point'
       }
     ]
 
-    // Add navigate intention if there's a navigation
+    // Add navigate metaflow if there's a navigation
     const navigationOps = operations.filter(op => op.type === 'navigation' || op.type === 'page_load')
     if (navigationOps.length > 0) {
-      intentions.push({
+      metaflows.push({
         id: 'navigate',
         type: 'navigate',
         name: 'Navigate to Website',
@@ -37,10 +38,10 @@ function IntentionPage({ onNavigate, showStatus, recordingData }) {
       })
     }
 
-    // Add interaction intentions
+    // Add interaction metaflows
     const clickOps = operations.filter(op => op.type === 'click')
     if (clickOps.length > 0) {
-      intentions.push({
+      metaflows.push({
         id: 'interact',
         type: 'interact',
         name: 'User Interactions',
@@ -51,8 +52,8 @@ function IntentionPage({ onNavigate, showStatus, recordingData }) {
       })
     }
 
-    // Add extract intention if needed
-    intentions.push({
+    // Add extract metaflow if needed
+    metaflows.push({
       id: 'extract',
       type: 'extract',
       name: 'Extract Data',
@@ -62,18 +63,18 @@ function IntentionPage({ onNavigate, showStatus, recordingData }) {
       }
     })
 
-    // Add end intention
-    intentions.push({
+    // Add end metaflow
+    metaflows.push({
       id: 'end',
       type: 'end',
       name: 'End',
-      description: 'Workflow completed'
+      description: 'Metaflow completed'
     })
 
-    return intentions
+    return metaflows
   }
 
-  const getIntentionIcon = (type) => {
+  const getMetaflowIcon = (type) => {
     switch (type) {
       case 'start':
         return '🚀'
@@ -92,7 +93,7 @@ function IntentionPage({ onNavigate, showStatus, recordingData }) {
     }
   }
 
-  const getIntentionColor = (type) => {
+  const getMetaflowColor = (type) => {
     switch (type) {
       case 'start':
         return '#10b981'
@@ -111,42 +112,66 @@ function IntentionPage({ onNavigate, showStatus, recordingData }) {
     }
   }
 
+  const handleEdit = () => {
+    setIsEditing(!isEditing)
+    if (!isEditing) {
+      showStatus('📝 进入编辑模式', 'info')
+    } else {
+      showStatus('✅ 保存成功', 'success')
+    }
+  }
+
   const handleNext = () => {
-    onNavigate('metaflow', { recordingData })
+    showStatus('✅ 进入下一步：生成 Workflow', 'success')
+    // TODO: Navigate to workflow generation
+    // For now, go back to main page
+    setTimeout(() => {
+      onNavigate('main')
+    }, 1000)
   }
 
   return (
-    <div className="page intention-page">
+    <div className="page metaflow-page">
       <div className="page-header">
         <button
           className="back-button"
-          onClick={() => onNavigate('main')}
+          onClick={() => onNavigate('intention')}
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="#667eea" strokeWidth="2">
             <path d="M19 12H5M12 19l-7-7 7-7"/>
           </svg>
         </button>
-        <div className="page-title">意图</div>
+        <div className="page-title">Metaflow</div>
+        <button
+          className="run-button"
+          onClick={handleEdit}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+          <span>{isEditing ? '保存' : '编辑'}</span>
+        </button>
       </div>
 
-      <div className="intention-content">
-        {/* Intention Visualization */}
-        <div className="intention-visualization">
-          {intentions.map((intention, index) => (
-            <React.Fragment key={intention.id}>
+      <div className="metaflow-content">
+        {/* Metaflow Visualization */}
+        <div className="metaflow-visualization">
+          {metaflows.map((metaflow, index) => (
+            <React.Fragment key={metaflow.id}>
               <div
-                className="intention-node"
-                style={{ borderColor: getIntentionColor(intention.type) }}
+                className={`metaflow-node ${isEditing ? 'editable' : ''}`}
+                style={{ borderColor: getMetaflowColor(metaflow.type) }}
               >
-                <div className="intention-icon" style={{ backgroundColor: getIntentionColor(intention.type) }}>
-                  {getIntentionIcon(intention.type)}
+                <div className="metaflow-icon" style={{ backgroundColor: getMetaflowColor(metaflow.type) }}>
+                  {getMetaflowIcon(metaflow.type)}
                 </div>
-                <div className="intention-details">
-                  <div className="intention-name">{intention.name}</div>
-                  <div className="intention-description">{intention.description}</div>
-                  {intention.properties && (
-                    <div className="intention-properties">
-                      {Object.entries(intention.properties).map(([key, value]) => (
+                <div className="metaflow-details">
+                  <div className="metaflow-name">{metaflow.name}</div>
+                  <div className="metaflow-description">{metaflow.description}</div>
+                  {metaflow.properties && (
+                    <div className="metaflow-properties">
+                      {Object.entries(metaflow.properties).map(([key, value]) => (
                         <div key={key} className="property-item">
                           <span className="property-key">{key}:</span>
                           <span className="property-value">
@@ -160,8 +185,8 @@ function IntentionPage({ onNavigate, showStatus, recordingData }) {
               </div>
 
               {/* Arrow connector */}
-              {index < intentions.length - 1 && (
-                <div className="intention-arrow">
+              {index < metaflows.length - 1 && (
+                <div className="metaflow-arrow">
                   <svg width="24" height="40" viewBox="0 0 24 40">
                     <line x1="12" y1="0" x2="12" y2="32" stroke="#d1d5db" strokeWidth="2"/>
                     <polygon points="12,40 8,32 16,32" fill="#d1d5db"/>
@@ -173,12 +198,12 @@ function IntentionPage({ onNavigate, showStatus, recordingData }) {
         </div>
 
         {/* Action Bar */}
-        <div className="intention-actions">
+        <div className="metaflow-actions">
           <button
             className="start-record-button"
             onClick={handleNext}
           >
-            <span>下一步：生成 Metaflow</span>
+            <span>下一步：生成 Workflow</span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <path d="M5 12h14M12 5l7 7-7 7"/>
             </svg>
@@ -193,4 +218,4 @@ function IntentionPage({ onNavigate, showStatus, recordingData }) {
   )
 }
 
-export default IntentionPage
+export default MetaflowPage

@@ -6,6 +6,7 @@ import WorkflowDetailPage from './pages/WorkflowDetailPage'
 import AboutPage from './pages/AboutPage'
 import RecordPage from './pages/RecordPage'
 import IntentionPage from './pages/IntentionPage'
+import MetaflowPage from './pages/MetaflowPage'
 import ChatPage from './pages/ChatPage'
 import StatusMessage from './components/StatusMessage'
 
@@ -149,6 +150,13 @@ function App() {
       )}
       {currentPage === 'intention' && (
         <IntentionPage
+          onNavigate={navigateTo}
+          showStatus={showStatus}
+          recordingData={recordingData}
+        />
+      )}
+      {currentPage === 'metaflow' && (
+        <MetaflowPage
           onNavigate={navigateTo}
           showStatus={showStatus}
           recordingData={recordingData}
