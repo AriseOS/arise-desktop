@@ -5,6 +5,7 @@ import MyWorkflowsPage from './pages/MyWorkflowsPage'
 import WorkflowDetailPage from './pages/WorkflowDetailPage'
 import AboutPage from './pages/AboutPage'
 import RecordPage from './pages/RecordPage'
+import IntentionPage from './pages/IntentionPage'
 import ChatPage from './pages/ChatPage'
 import StatusMessage from './components/StatusMessage'
 
@@ -12,6 +13,7 @@ function App() {
   const [currentPage, setCurrentPage] = useState('login')
   const [currentUser, setCurrentUser] = useState(null)
   const [selectedWorkflowId, setSelectedWorkflowId] = useState(null)
+  const [recordingData, setRecordingData] = useState(null)
   const [statusMessage, setStatusMessage] = useState({ text: '', type: 'info' })
 
   useEffect(() => {
@@ -83,6 +85,12 @@ function App() {
     } else {
       await chrome.storage.local.set({ currentPage: page })
     }
+
+    // Handle recording data for intention page
+    if (data.recordingData) {
+      setRecordingData(data.recordingData)
+    }
+
     setCurrentPage(page)
   }
 
@@ -137,6 +145,13 @@ function App() {
           currentUser={currentUser}
           onNavigate={navigateTo}
           showStatus={showStatus}
+        />
+      )}
+      {currentPage === 'intention' && (
+        <IntentionPage
+          onNavigate={navigateTo}
+          showStatus={showStatus}
+          recordingData={recordingData}
         />
       )}
       {currentPage === 'chat' && (

@@ -181,6 +181,13 @@ function RecordPage({ onNavigate, showStatus, currentUser }) {
         // Reset form
         setTitle('')
         setDescription('')
+
+        // Navigate to intention page with recording data
+        console.log('Preparing to navigate to intention page with data:', result)
+        setTimeout(() => {
+          console.log('Calling onNavigate with intention page')
+          onNavigate('intention', { recordingData: result })
+        }, 800)
       } else {
         throw new Error(result.error || 'Failed to stop recording')
       }
