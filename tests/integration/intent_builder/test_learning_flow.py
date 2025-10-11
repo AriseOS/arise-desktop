@@ -20,6 +20,7 @@ from src.intent_builder.extractors.intent_extractor import IntentExtractor
 from src.intent_builder.core.intent_memory_graph import IntentMemoryGraph
 from src.intent_builder.storage.in_memory_storage import InMemoryIntentStorage
 from src.intent_builder.generators.metaflow_generator import MetaFlowGenerator
+from src.intent_builder.generators.workflow_generator import WorkflowGenerator
 from src.common.llm import AnthropicProvider
 
 # Configure logging

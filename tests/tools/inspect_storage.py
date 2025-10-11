@@ -1,20 +1,43 @@
 #!/usr/bin/env python3
 """
-Storage Agent Inspector - Aligned with StorageAgent Logic
+Storage Inspector - Unified Management for StorageAgent and ScraperAgent Caches
 
-This tool is designed to match StorageAgent's mental model:
-- Collections (logical) = {collection}_{user_id} (physical table)
-- Cache keys: storage_{operation}_{collection}_{user_id}[_{hash}]
+This tool manages both storage data and agent caches:
 
-Two main sections:
-1. Collection Management (data view/delete aligned with storage_agent)
-2. Cache Management (script view/delete)
+1. Collection Management (StorageAgent Data):
+   - Collections: logical name (e.g., "daily_products")
+   - Physical table: {collection}_{user_id}
+   - View, query, and clear collections
+
+2. Storage Cache Management (StorageAgent Scripts):
+   - Cache format: storage_{operation}_{collection}_{user_id}[_{hash}]
+   - View, inspect, and delete storage SQL caches
+
+3. Scraper Script Cache Management (ScraperAgent Scripts):
+   - Cache format: scraper_script_{hash}
+   - View script details, data requirements, DOM config
+   - Delete individual or clear all scraper scripts
 
 Usage:
-    python inspect_storage.py                    # Interactive mode
-    python inspect_storage.py --list-collections # List all collections
+    # Interactive mode (recommended)
+    python inspect_storage.py
+
+    # Collection management
+    python inspect_storage.py --list-collections
     python inspect_storage.py --clear-collection daily_products --user default_user
-    python inspect_storage.py --list-cache       # List all cached scripts
+
+    # Storage cache management
+    python inspect_storage.py --list-cache
+
+    # Scraper script management
+    python inspect_storage.py --list-scripts
+    python inspect_storage.py --show-script scraper_script_abc123
+    python inspect_storage.py --export-script scraper_script_abc123
+    python inspect_storage.py --export-script scraper_script_abc123 -o /path/to/output.py
+    python inspect_storage.py --clear-scripts
+
+    # Statistics
+    python inspect_storage.py --stats
 """
 
 import asyncio
@@ -51,9 +74,9 @@ class StorageAgentInspector:
         self.kv_db = str(self.config_service.get_path('data.databases.kv'))
 
         print(f"\n{'=' * 80}")
-        print("Storage Agent Inspector (Aligned with StorageAgent Logic)")
+        print("Storage Inspector - StorageAgent & ScraperAgent Cache Management")
         print(f"{'=' * 80}")
-        print(f"Storage DB: {self.storage_db}")
+        print(f"Storage DB:  {self.storage_db}")
         print(f"KV Cache DB: {self.kv_db}")
         print(f"{'=' * 80}\n")
 
@@ -333,7 +356,7 @@ class StorageAgentInspector:
                 print()
 
     # ============================================================================
-    # SECTION 2: Cache Management (Script View/Delete)
+    # SECTION 2: Storage Cache Management (StorageAgent Scripts)
     # ============================================================================
 
     async def list_all_caches(self, pattern: str = "") -> List[str]:
@@ -465,8 +488,311 @@ class StorageAgentInspector:
             return True
 
     # ============================================================================
+    # SECTION 3: Scraper Script Cache Management (ScraperAgent Scripts)
+    # ============================================================================
+
+    async def list_scraper_scripts(self) -> List[str]:
+        """
+        List all scraper script caches
+
+        Script key format: scraper_script_{hash}
+        """
+        print(f"\n🤖 Scraper Script Cache:")
+        print("-" * 80)
+
+        if not Path(self.kv_db).exists():
+            print("  ℹ️  KV cache database does not exist yet")
+            return []
+
+        script_keys = []
+
+        async with aiosqlite.connect(self.kv_db) as db:
+            cursor = await db.execute("""
+                SELECT key, user_id, created_at, updated_at
+                FROM kv_storage
+                WHERE key LIKE 'scraper_script_%'
+                ORDER BY updated_at DESC
+            """)
+
+            scripts = await cursor.fetchall()
+
+            if not scripts:
+                print(f"  (No scraper script caches)")
+                return []
+
+            for i, (key, user_id, created_at, updated_at) in enumerate(scripts, 1):
+                script_keys.append(key)
+                script_hash = key.replace('scraper_script_', '')
+                print(f"\n  [{i}] Script: {script_hash}")
+                print(f"      Key: {key}")
+                print(f"      User: {user_id}")
+                print(f"      Updated: {updated_at}")
+
+        return script_keys
+
+    async def show_scraper_script_detail(self, script_key: str, export_to_file: bool = False):
+        """Show detailed scraper script content
+        
+        Args:
+            script_key: Script key to show
+            export_to_file: If True, export script to a .py file
+        """
+        print(f"\n🔍 Scraper Script Detail: {script_key}")
+        print("-" * 80)
+
+        if not Path(self.kv_db).exists():
+            print("❌ KV cache database does not exist")
+            return
+
+        async with aiosqlite.connect(self.kv_db) as db:
+            cursor = await db.execute("""
+                SELECT user_id, value, created_at, updated_at
+                FROM kv_storage
+                WHERE key = ?
+            """, (script_key,))
+
+            result = await cursor.fetchone()
+
+            if not result:
+                print(f"❌ Script not found: {script_key}")
+                return
+
+            user_id, value_json, created_at, updated_at = result
+
+            print(f"User: {user_id}")
+            print(f"Created: {created_at}")
+            print(f"Updated: {updated_at}")
+
+            try:
+                script_data = json.loads(value_json)
+                
+                # Show metadata
+                print(f"\n📋 Metadata:")
+                print(f"  Version: {script_data.get('version', 'N/A')}")
+                print(f"  Created At: {script_data.get('created_at', 'N/A')}")
+                
+                # Show DOM config
+                dom_config = script_data.get('dom_config', {})
+                if dom_config:
+                    print(f"\n🌳 DOM Configuration:")
+                    print(f"  Generation Scope: {dom_config.get('generation_dom_scope', 'N/A')}")
+                    print(f"  Execution Scope: {dom_config.get('execution_dom_scope', 'N/A')}")
+                
+                # Show data requirements
+                data_req = script_data.get('data_requirements', {})
+                if data_req:
+                    print(f"\n📊 Data Requirements:")
+                    user_desc = data_req.get('user_description', '')
+                    if user_desc:
+                        print(f"  Description: {user_desc}")
+                    
+                    output_format = data_req.get('output_format', {})
+                    if output_format:
+                        print(f"  Fields:")
+                        for field, desc in output_format.items():
+                            print(f"    - {field}: {desc}")
+                
+                # Show script content
+                script_content = script_data.get('script_content', '')
+                if script_content:
+                    lines = script_content.split('\n')
+                    print(f"\n📝 Script Content ({len(lines)} lines, {len(script_content)} chars):")
+                    
+                    if export_to_file:
+                        # Export to file
+                        output_file = await self._export_script_to_file(
+                            script_key, script_data, script_content
+                        )
+                        print(f"  ✅ Exported to: {output_file}")
+                    else:
+                        print(f"  Preview (first 20 lines):")
+                        print("-" * 80)
+                        for i, line in enumerate(lines[:20], 1):
+                            print(f"  {i:3d} | {line}")
+                        if len(lines) > 20:
+                            print(f"  ... ({len(lines) - 20} more lines)")
+                        print("-" * 80)
+                        print(f"\n  💡 Tip: Use --export-script to save full content to file")
+                
+            except json.JSONDecodeError as e:
+                print(f"⚠️  Value is not valid JSON: {e}")
+                print(f"Raw (first 200 chars): {value_json[:200]}")
+
+    async def delete_scraper_script(self, script_key: str, confirm: bool = True) -> bool:
+        """Delete a scraper script cache"""
+        print(f"\n🗑️  Delete Scraper Script: {script_key}")
+        print("-" * 80)
+
+        if confirm:
+            response = input(f"⚠️  Delete this script cache? (yes/no): ").strip().lower()
+            if response != 'yes':
+                print("❌ Cancelled")
+                return False
+
+        if not Path(self.kv_db).exists():
+            print("❌ KV cache database does not exist")
+            return False
+
+        async with aiosqlite.connect(self.kv_db) as db:
+            cursor = await db.execute("SELECT key FROM kv_storage WHERE key = ?", (script_key,))
+            if not await cursor.fetchone():
+                print(f"❌ Script not found: {script_key}")
+                return False
+
+            await db.execute("DELETE FROM kv_storage WHERE key = ?", (script_key,))
+            await db.commit()
+            print(f"✅ Deleted: {script_key}")
+            return True
+
+    async def clear_all_scraper_scripts(self, confirm: bool = True) -> bool:
+        """Clear all scraper script caches"""
+        print(f"\n🧹 Clear All Scraper Scripts")
+        print("-" * 80)
+
+        if not Path(self.kv_db).exists():
+            print("❌ KV cache database does not exist")
+            return False
+
+        # Count scripts first
+        async with aiosqlite.connect(self.kv_db) as db:
+            cursor = await db.execute("""
+                SELECT COUNT(*) FROM kv_storage
+                WHERE key LIKE 'scraper_script_%'
+            """)
+            count = (await cursor.fetchone())[0]
+
+            if count == 0:
+                print("  ℹ️  No scraper scripts to delete")
+                return True
+
+            print(f"  Found {count} scraper script(s)")
+
+            if confirm:
+                response = input(f"⚠️  Delete all {count} scraper scripts? (yes/no): ").strip().lower()
+                if response != 'yes':
+                    print("❌ Cancelled")
+                    return False
+
+            await db.execute("DELETE FROM kv_storage WHERE key LIKE 'scraper_script_%'")
+            await db.commit()
+            print(f"✅ Deleted {count} scraper script(s)")
+            return True
+
+    async def export_scraper_script(self, script_key: str, output_path: Optional[str] = None) -> Optional[str]:
+        """Export scraper script to a Python file
+        
+        Args:
+            script_key: Script key to export
+            output_path: Custom output path (optional, defaults to current directory)
+            
+        Returns:
+            Path to exported file, or None if failed
+        """
+        if not Path(self.kv_db).exists():
+            print("❌ KV cache database does not exist")
+            return None
+
+        async with aiosqlite.connect(self.kv_db) as db:
+            cursor = await db.execute("""
+                SELECT value FROM kv_storage WHERE key = ?
+            """, (script_key,))
+
+            result = await cursor.fetchone()
+
+            if not result:
+                print(f"❌ Script not found: {script_key}")
+                return None
+
+            try:
+                script_data = json.loads(result[0])
+                script_content = script_data.get('script_content', '')
+                
+                if not script_content:
+                    print("❌ Script content is empty")
+                    return None
+
+                return await self._export_script_to_file(
+                    script_key, script_data, script_content, output_path
+                )
+
+            except json.JSONDecodeError as e:
+                print(f"❌ Failed to parse script data: {e}")
+                return None
+
+    # ============================================================================
     # Helper Methods
     # ============================================================================
+
+    async def _export_script_to_file(
+        self, 
+        script_key: str, 
+        script_data: Dict, 
+        script_content: str,
+        output_path: Optional[str] = None
+    ) -> str:
+        """Export script content to a Python file with metadata header
+        
+        Args:
+            script_key: Script key
+            script_data: Full script data dictionary
+            script_content: Script content string
+            output_path: Custom output path (optional)
+            
+        Returns:
+            Path to exported file
+        """
+        # Determine output file path
+        if output_path:
+            output_file = Path(output_path)
+        else:
+            # Default: current directory with script key as filename
+            script_hash = script_key.replace('scraper_script_', '')
+            output_file = Path.cwd() / f"{script_hash}.py"
+
+        # Build file content with metadata header
+        lines = []
+        lines.append('"""')
+        lines.append(f'Exported Scraper Script: {script_key}')
+        lines.append('')
+        
+        # Metadata
+        lines.append('Metadata:')
+        lines.append(f'  Version: {script_data.get("version", "N/A")}')
+        lines.append(f'  Created: {script_data.get("created_at", "N/A")}')
+        
+        # DOM config
+        dom_config = script_data.get('dom_config', {})
+        if dom_config:
+            lines.append('')
+            lines.append('DOM Configuration:')
+            lines.append(f'  Generation Scope: {dom_config.get("generation_dom_scope", "N/A")}')
+            lines.append(f'  Execution Scope: {dom_config.get("execution_dom_scope", "N/A")}')
+        
+        # Data requirements
+        data_req = script_data.get('data_requirements', {})
+        if data_req:
+            lines.append('')
+            lines.append('Data Requirements:')
+            user_desc = data_req.get('user_description', '')
+            if user_desc:
+                lines.append(f'  Description: {user_desc}')
+            
+            output_format = data_req.get('output_format', {})
+            if output_format:
+                lines.append('  Fields:')
+                for field, desc in output_format.items():
+                    lines.append(f'    - {field}: {desc}')
+        
+        lines.append('"""')
+        lines.append('')
+        
+        # Add script content
+        lines.append(script_content)
+        
+        # Write to file
+        output_file.write_text('\n'.join(lines), encoding='utf-8')
+        
+        return str(output_file.absolute())
 
     async def _check_cache_exists(self, cache_key: str) -> bool:
         """Check if a cache key exists"""
@@ -624,12 +950,26 @@ class StorageAgentInspector:
             print(f"KV Cache DB: {size:,} bytes ({size/1024:.2f} KB)")
 
             async with aiosqlite.connect(self.kv_db) as db:
+                # Storage cache entries
                 cursor = await db.execute("""
                     SELECT COUNT(*) FROM kv_storage
                     WHERE key LIKE 'storage_%'
                 """)
-                count = (await cursor.fetchone())[0]
-                print(f"Storage Cache Entries: {count}")
+                storage_count = (await cursor.fetchone())[0]
+                print(f"Storage Cache Entries: {storage_count}")
+
+                # Scraper script entries
+                cursor = await db.execute("""
+                    SELECT COUNT(*) FROM kv_storage
+                    WHERE key LIKE 'scraper_script_%'
+                """)
+                scraper_count = (await cursor.fetchone())[0]
+                print(f"Scraper Script Entries: {scraper_count}")
+
+                # Total cache entries
+                cursor = await db.execute("SELECT COUNT(*) FROM kv_storage")
+                total_count = (await cursor.fetchone())[0]
+                print(f"Total Cache Entries: {total_count}")
         else:
             print("KV Cache DB: Not created yet")
 
@@ -648,12 +988,18 @@ class StorageAgentInspector:
             print("  2. Show collection detail")
             print("  3. Query collection data")
             print("  4. Clear collection (table + cache)")
-            print("\n🔧 CACHE MANAGEMENT (Scripts):")
-            print("  5. List all cache entries")
-            print("  6. Show cache detail")
-            print("  7. Delete cache entry")
+            print("\n🔧 STORAGE CACHE MANAGEMENT (StorageAgent):")
+            print("  5. List storage cache entries")
+            print("  6. Show storage cache detail")
+            print("  7. Delete storage cache entry")
+            print("\n🤖 SCRAPER SCRIPT CACHE MANAGEMENT (ScraperAgent):")
+            print("  8. List scraper scripts")
+            print("  9. Show scraper script detail")
+            print("  10. Export scraper script to file")
+            print("  11. Delete scraper script")
+            print("  12. Clear all scraper scripts")
             print("\n📈 STATISTICS:")
-            print("  8. Show statistics")
+            print("  13. Show statistics")
             print("\n  q. Quit")
             print("=" * 80)
 
@@ -697,6 +1043,30 @@ class StorageAgentInspector:
                     await self.delete_cache(cache_key)
 
             elif choice == '8':
+                await self.list_scraper_scripts()
+
+            elif choice == '9':
+                script_key = input("Script key: ").strip()
+                if script_key:
+                    await self.show_scraper_script_detail(script_key)
+
+            elif choice == '10':
+                script_key = input("Script key: ").strip()
+                if script_key:
+                    output_path = input("Output path (Enter for current dir): ").strip() or None
+                    result = await self.export_scraper_script(script_key, output_path)
+                    if result:
+                        print(f"✅ Exported to: {result}")
+
+            elif choice == '11':
+                script_key = input("Script key: ").strip()
+                if script_key:
+                    await self.delete_scraper_script(script_key)
+
+            elif choice == '12':
+                await self.clear_all_scraper_scripts()
+
+            elif choice == '13':
                 await self.show_statistics()
 
             elif choice.lower() == 'q':
@@ -719,26 +1089,46 @@ Examples:
   # Interactive mode
   python inspect_storage.py
 
-  # List collections
+  # Collection management
   python inspect_storage.py --list-collections
-
-  # Clear a collection completely
   python inspect_storage.py --clear-collection daily_products --user default_user
 
-  # List cache entries
+  # Storage cache management
   python inspect_storage.py --list-cache
 
-  # Show statistics
+  # Scraper script management
+  python inspect_storage.py --list-scripts
+  python inspect_storage.py --show-script scraper_script_abc123
+  python inspect_storage.py --export-script scraper_script_abc123
+  python inspect_storage.py --export-script scraper_script_abc123 -o /path/to/output.py
+  python inspect_storage.py --delete-script scraper_script_abc123
+  python inspect_storage.py --clear-scripts
+
+  # Statistics
   python inspect_storage.py --stats
         """
     )
 
     parser.add_argument('--config', help='Config file path')
+    
+    # Collection management
     parser.add_argument('--list-collections', action='store_true', help='List all collections')
-    parser.add_argument('--list-cache', action='store_true', help='List all cache entries')
-    parser.add_argument('--stats', action='store_true', help='Show statistics')
     parser.add_argument('--clear-collection', metavar='NAME', help='Clear collection (table + cache)')
+    
+    # Storage cache management
+    parser.add_argument('--list-cache', action='store_true', help='List storage cache entries')
+    
+    # Scraper script management
+    parser.add_argument('--list-scripts', action='store_true', help='List scraper scripts')
+    parser.add_argument('--show-script', metavar='KEY', help='Show scraper script detail')
+    parser.add_argument('--export-script', metavar='KEY', help='Export scraper script to file')
+    parser.add_argument('--output', '-o', metavar='PATH', help='Output path for exported script')
+    parser.add_argument('--delete-script', metavar='KEY', help='Delete scraper script')
+    parser.add_argument('--clear-scripts', action='store_true', help='Clear all scraper scripts')
+    
+    # Other options
     parser.add_argument('--user', default='default_user', help='User ID (default: default_user)')
+    parser.add_argument('--stats', action='store_true', help='Show statistics')
 
     args = parser.parse_args()
 
@@ -759,6 +1149,28 @@ Examples:
 
     if args.clear_collection:
         await inspector.clear_collection(args.clear_collection, args.user, confirm=True)
+        return
+
+    if args.list_scripts:
+        await inspector.list_scraper_scripts()
+        return
+
+    if args.show_script:
+        await inspector.show_scraper_script_detail(args.show_script)
+        return
+
+    if args.export_script:
+        result = await inspector.export_scraper_script(args.export_script, args.output)
+        if result:
+            print(f"\n✅ Script exported successfully to: {result}")
+        return
+
+    if args.delete_script:
+        await inspector.delete_scraper_script(args.delete_script, confirm=True)
+        return
+
+    if args.clear_scripts:
+        await inspector.clear_all_scraper_scripts(confirm=True)
         return
 
     # Interactive mode

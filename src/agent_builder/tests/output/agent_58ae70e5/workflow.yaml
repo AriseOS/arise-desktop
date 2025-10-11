@@ -1,0 +1,18 @@
+metadata:
+  created_at: '2025-07-22T10:37:16.476767'
+  description: AgentBuilder自动生成的工作流，包含3个步骤
+  name: agentbuilder_workflow_build_58
+  version: 1.0.0
+steps:
+- agent_type: text_agent
+  description: 分析用户输入，识别具体意图和需要的处理方式。
+  instruction: 使用意图识别模型分析用户输入，提取用户意图和相关语义上下文。
+  name: 用户意图分析
+- agent_type: text_agent
+  description: 从用户输入中提取会议时间和参与者信息。
+  instruction: 使用llm_extract工具从用户输入中提取会议时间和参与者信息。
+  name: 信息提取
+- agent_type: tool_agent
+  description: 使用企业微信的会议插件，自动预约会议。
+  instruction: 使用企业微信的会议插件，根据提供的信息自动预约会议。
+  name: 企业微信会议预约

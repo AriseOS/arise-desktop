@@ -4,7 +4,7 @@ Workflow Test Runner
 Run and test workflow YAML files with different configurations
 
 Usage:
-    python run_workflow.py <workflow_name> [options]
+    python run_workflow.py <workflow_name_or_path> [options]
 
 Examples:
     # Run built-in workflow
@@ -12,6 +12,10 @@ Examples:
 
     # Run user workflow
     python run_workflow.py paginated-scraper-workflow --url "https://example.com" --max-pages 2
+
+    # Run workflow from file path (relative or absolute)
+    python run_workflow.py ../../test_data/coffee_allegro/output/workflow.yaml --json '{"target_url": "https://allegro.pl"}'
+    python run_workflow.py /path/to/workflow.yaml --verbose
 
     # Run with custom config
     python run_workflow.py my-workflow --config config.yaml --verbose
@@ -172,7 +176,15 @@ class WorkflowTestRunner:
         # Load workflow
         self.logger.info(f"Loading workflow: {workflow_name}")
         try:
-            workflow = load_workflow(workflow_name)
+            # Check if workflow_name is a file path
+            workflow_path = Path(workflow_name)
+            if workflow_path.exists() and workflow_path.is_file():
+                self.logger.info(f"Loading workflow from file: {workflow_path}")
+                workflow = load_workflow(str(workflow_path))
+            else:
+                # Try as workflow name (from workflows directory)
+                workflow = load_workflow(workflow_name)
+            
             self.logger.info(f"Loaded workflow: {workflow.name} v{workflow.version}")
             self.logger.info(f"Steps: {len(workflow.steps)}")
         except Exception as e:

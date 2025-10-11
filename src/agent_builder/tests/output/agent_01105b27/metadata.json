@@ -1,0 +1,31 @@
+{
+  "name": "agentbuilder_workflow_build_01",
+  "agent_id": "01105b27",
+  "description": "AgentBuilder自动生成的工作流，包含3个步骤",
+  "capabilities": [
+    "工具调用: browser_use",
+    "自然语言理解与生成",
+    "工具调用: android_use"
+  ],
+  "interface": {
+    "input": "字符串或字典格式的用户输入",
+    "output": "AgentResult对象，包含处理结果",
+    "methods": [
+      "initialize() - 初始化Agent",
+      "execute(input_data) - 执行主要功能",
+      "_setup_workflow() - 设置工作流"
+    ]
+  },
+  "cost_analysis": "低成本 - 主要使用现有功能",
+  "created_at": "2025-07-22T00:22:10.667252",
+  "steps_count": 3,
+  "workflow_complexity": "unknown",
+  "required_tools": [
+    "android_use",
+    "browser_use"
+  ],
+  "tools_description": {
+    "android_use": "工具 android_use 用于Agent的功能实现",
+    "browser_use": "工具 browser_use 用于Agent的功能实现"
+  }
+}

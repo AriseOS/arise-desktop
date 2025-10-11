@@ -48,14 +48,7 @@ class ScraperAgent(BaseStepAgent):
     - script模式自动检查KV缓存，无需手动区分初始化/执行阶段
     """
     
-    SYSTEM_PROMPT = """你是专业的网页数据提取代码生成专家。基于 browser-use 库生成高效、稳定的数据提取脚本。
-
-重要原则:
-1. 使用 browser-use 的官方 API，不要自己封装
-2. 根据元素的 index 进行交互和数据提取
-3. 充分利用 DOM 结构信息生成稳定的选择器
-4. 包含完整的异常处理
-5. 只返回 Python 代码，不要其他说明文字"""
+    SYSTEM_PROMPT = """你是网页数据提取专家。根据提供的三步指导，分析DOM结构生成提取脚本。只返回Python代码，不要解释。"""
     
     def __init__(self,
                  config_service=None,
@@ -818,6 +811,27 @@ Extract data now:"""
             
             # 使用提供的DOM数据执行提取
             result = execute_func(serialized_dom, dom_dict, max_items)
+            
+            # 🐛 临时调试：打印脚本执行结果
+            logger.info("=" * 80)
+            logger.info("🐛 DEBUG: Script Execution Result")
+            logger.info("=" * 80)
+            logger.info(f"Success: {result.get('success')}")
+            logger.info(f"Total Count: {result.get('total_count')}")
+            logger.info(f"Error: {result.get('error')}")
+            logger.info(f"Max Items Requested: {max_items}")
+            
+            if result.get('data'):
+                logger.info(f"\n📋 Extracted Data (first 5):")
+                for i, item in enumerate(result['data'][:5], 1):
+                    logger.info(f"  [{i}] {item}")
+                if len(result['data']) > 5:
+                    logger.info(f"  ... and {len(result['data']) - 5} more items")
+            else:
+                logger.warning("⚠️  No data extracted!")
+            
+            logger.info("=" * 80)
+            
             return result
             
         except Exception as e:
@@ -941,7 +955,7 @@ def collect_scattered_data(container_node):
                 raise RuntimeError("No LLM provider available. ScraperAgent must be initialized with context.")
 
             response = await self.provider.generate_response(
-                system_prompt="""你是网页数据提取专家。根据提供的三步指导，分析DOM结构生成提取脚本。优先使用Class定位，确保跨页面兼容性。只返回Python代码，不要解释。""",
+                system_prompt=self.SYSTEM_PROMPT,
                 user_prompt=prompt
             )
             

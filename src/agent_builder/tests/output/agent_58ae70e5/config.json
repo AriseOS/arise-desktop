@@ -1,0 +1,16 @@
+{
+  "name": "agentbuilder_workflow_build_58",
+  "agent_id": "58ae70e5",
+  "description": "AgentBuilder自动生成的工作流，包含3个步骤",
+  "llm_provider": "openai",
+  "llm_model": "gpt-4o",
+  "api_key": "${OPENAI_API_KEY}",
+  "tools": [
+    "browser_use"
+  ],
+  "capabilities": [
+    "自然语言理解与生成",
+    "工具调用: browser_use"
+  ],
+  "created_at": "2025-07-22T10:37:16.478388"
+}

@@ -95,6 +95,16 @@ class ScraperDebugHelper:
                 "sample_data": [
                     {"url": "https://allegro.pl/oferta/example-product-123"}
                 ]
+            },
+            "workflow_url_list": {
+                "user_description": "Extract all coffee product URLs from the product listing",
+                "output_format": {
+                    "url": "Product URL"
+                },
+                "sample_data": [
+                    {"url": "https://allegro.pl/oferta/kawa-ziarnista-1kg-brazylia-santos-swiezo-palona-100-arabica-tommy-cafe-12786896326"},
+                    {"url": "https://allegro.pl/oferta/example-product-2"}
+                ]
             }
         }
     
@@ -111,6 +121,9 @@ class ScraperDebugHelper:
             headless=False,
             user_data_dir=user_data_dir,
             keep_alive=True,
+            # Increase wait times for complex pages like Allegro
+            minimum_wait_page_load_time=2.0,  # Wait 2s for initial page load
+            wait_for_network_idle_page_load_time=3.0,  # Wait 3s for dynamic content
         )
         
         browser_session = None
@@ -121,7 +134,6 @@ class ScraperDebugHelper:
             await browser_session.start()
             
             tools = Tools()
-            dom_service = DomService(browser_session)
             
             # Navigate
             print(f"Navigating to {url}...")
@@ -135,6 +147,10 @@ class ScraperDebugHelper:
                 print(f"Navigation failed: {nav_result.error}")
                 return False
 
+            # Extra wait for page to fully load (before BrowserStateRequestEvent)
+            print("Waiting 5 seconds for page to fully load...")
+            await asyncio.sleep(5)
+            
             # Wait for page stability using BrowserStateRequestEvent (same as ScraperAgent fix)
             print("Waiting for page stability...")
             from browser_use.browser.events import BrowserStateRequestEvent
@@ -184,8 +200,6 @@ class ScraperDebugHelper:
                 "url": url,
                 "current_url": current_url,
                 "collection_time": datetime.now().isoformat(),
-                "serialized_dom": serialized_dom,
-                "enhanced_dom": enhanced_dom,
                 "partial_scope": {
                     "target_dom": partial_dom,
                     "dom_dict": partial_dict,
@@ -195,8 +209,7 @@ class ScraperDebugHelper:
                     "target_dom": full_dom,
                     "dom_dict": full_dict,
                     "llm_view": full_llm_view
-                },
-                "timing": timing
+                }
             }
             
             # Save to file
@@ -449,7 +462,7 @@ def collect_scattered_data(container_node):
 """
             llm_provider = AnthropicProvider()
             response = await llm_provider.generate_response(
-                system_prompt="""你是网页数据提取专家。根据提供的三步指导，分析DOM结构生成提取脚本。优先使用Class定位，确保跨页面兼容性。只返回Python代码，不要解释。""",
+                system_prompt="""你是网页数据提取专家。根据提供的三步指导，分析DOM结构生成提取脚本。只返回Python代码，不要解释。""",
                 user_prompt=prompt
             )
             
@@ -651,7 +664,7 @@ async def main():
                        help='dom: collect DOM data, generate: create script, exec: execute script, list: show data')
     parser.add_argument('--url', help='URL for DOM collection')
     parser.add_argument('--name', help='Test data name')
-    parser.add_argument('--requirement-type', choices=['product_detail', 'product_list', 'url_list'],
+    parser.add_argument('--requirement-type', choices=['product_detail', 'product_list', 'url_list', 'workflow_url_list'],
                        default='product_detail', help='Type of data requirements to use')
     parser.add_argument('--dom-scope', choices=['partial', 'full'], default='partial',
                        help='DOM scope for script execution (generation always uses partial)')

@@ -9,12 +9,18 @@ Validates:
 """
 import logging
 import yaml
-from typing import Tuple
+from typing import Tuple, Optional
 from pydantic import ValidationError
 
-from base_app.base_app.base_agent.core.schemas import Workflow
-
 logger = logging.getLogger(__name__)
+
+# Try to import Workflow schema, but don't fail if not available
+try:
+    from src.base_app.base_app.base_agent.core.schemas import Workflow
+    WORKFLOW_SCHEMA_AVAILABLE = True
+except (ImportError, ModuleNotFoundError):
+    WORKFLOW_SCHEMA_AVAILABLE = False
+    logger.warning("Workflow schema not available, skipping Pydantic validation")
 
 
 class WorkflowYAMLValidator:
@@ -75,12 +81,13 @@ class WorkflowYAMLValidator:
                     return False, f"Step {i}: {error}"
 
             # 8. Validate with Pydantic model (optional, more strict)
-            try:
-                Workflow(**data)
-            except ValidationError as e:
-                logger.warning(f"Pydantic validation failed: {str(e)}")
-                # Don't fail on Pydantic errors, they might be too strict
-                # return False, f"Pydantic validation failed: {str(e)}"
+            if WORKFLOW_SCHEMA_AVAILABLE:
+                try:
+                    Workflow(**data)
+                except ValidationError as e:
+                    logger.warning(f"Pydantic validation failed: {str(e)}")
+                    # Don't fail on Pydantic errors, they might be too strict
+                    # return False, f"Pydantic validation failed: {str(e)}"
 
             # 9. Check for final_response output
             has_final_response = self._check_final_response(data)

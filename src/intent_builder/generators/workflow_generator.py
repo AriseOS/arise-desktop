@@ -13,7 +13,7 @@ import yaml
 from ..core.metaflow import MetaFlow
 from .prompt_builder import PromptBuilder
 from ..validators.yaml_validator import WorkflowYAMLValidator
-from common.llm import BaseProvider, AnthropicProvider
+from src.common.llm import BaseProvider, AnthropicProvider
 
 logger = logging.getLogger(__name__)
 
