@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react'
 function MetaflowPage({ onNavigate, showStatus, recordingData }) {
   const [metaflows, setMetaflows] = useState([])
   const [isEditing, setIsEditing] = useState(false)
+  const [editingNode, setEditingNode] = useState(null)
 
   useEffect(() => {
     if (recordingData && recordingData.operations) {
@@ -118,7 +119,28 @@ function MetaflowPage({ onNavigate, showStatus, recordingData }) {
       showStatus('📝 进入编辑模式', 'info')
     } else {
       showStatus('✅ 保存成功', 'success')
+      setEditingNode(null)
     }
+  }
+
+  const handleNodeClick = (metaflow) => {
+    if (isEditing) {
+      setEditingNode(metaflow)
+    }
+  }
+
+  const handleSaveNode = (updatedNode) => {
+    setMetaflows(metaflows.map(node =>
+      node.id === updatedNode.id ? updatedNode : node
+    ))
+    setEditingNode(null)
+    showStatus('✅ 节点已更新', 'success')
+  }
+
+  const handleDeleteNode = (nodeId) => {
+    setMetaflows(metaflows.filter(node => node.id !== nodeId))
+    setEditingNode(null)
+    showStatus('✅ 节点已删除', 'success')
   }
 
   const handleNext = () => {
@@ -162,6 +184,7 @@ function MetaflowPage({ onNavigate, showStatus, recordingData }) {
               <div
                 className={`metaflow-node ${isEditing ? 'editable' : ''}`}
                 style={{ borderColor: getMetaflowColor(metaflow.type) }}
+                onClick={() => handleNodeClick(metaflow)}
               >
                 <div className="metaflow-icon" style={{ backgroundColor: getMetaflowColor(metaflow.type) }}>
                   {getMetaflowIcon(metaflow.type)}
@@ -213,6 +236,71 @@ function MetaflowPage({ onNavigate, showStatus, recordingData }) {
 
       <div className="footer">
         <p>AgentCrafter v1.0.0</p>
+      </div>
+
+      {/* Edit Modal */}
+      {editingNode && (
+        <EditNodeModal
+          node={editingNode}
+          onSave={handleSaveNode}
+          onDelete={handleDeleteNode}
+          onClose={() => setEditingNode(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+function EditNodeModal({ node, onSave, onDelete, onClose }) {
+  const [name, setName] = useState(node.name)
+  const [description, setDescription] = useState(node.description)
+
+  const handleSave = () => {
+    onSave({
+      ...node,
+      name,
+      description
+    })
+  }
+
+  return (
+    <div className="node-detail-modal" onClick={onClose}>
+      <div className="node-detail-content" onClick={(e) => e.stopPropagation()}>
+        <h3>编辑节点</h3>
+
+        <div className="detail-item">
+          <div className="detail-label">名称</div>
+          <input
+            type="text"
+            className="edit-input"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </div>
+
+        <div className="detail-item">
+          <div className="detail-label">描述</div>
+          <textarea
+            className="edit-textarea"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={3}
+          />
+        </div>
+
+        <div className="modal-actions">
+          <button className="delete-btn" onClick={() => onDelete(node.id)}>
+            删除节点
+          </button>
+          <div className="modal-actions-right">
+            <button className="cancel-btn" onClick={onClose}>
+              取消
+            </button>
+            <button className="save-btn" onClick={handleSave}>
+              保存
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   )
