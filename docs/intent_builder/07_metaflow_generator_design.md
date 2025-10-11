@@ -10,17 +10,18 @@
 
 ### 1.1 定义
 
-**MetaFlowGenerator** 负责从 Intent 列表生成 MetaFlow YAML。
+**MetaFlowGenerator** 负责从 IntentMemoryGraph（图结构）生成 MetaFlow YAML。
 
 ### 1.2 职责
 
-- **输入**: Intent List + Task Description + User Query
+- **输入**: IntentMemoryGraph (nodes + edges) + Task Description + User Query
 - **输出**: MetaFlow YAML
 - **核心任务**:
-  1. 将 Intent 列表组装成 MetaFlow 节点
-  2. 检测并生成循环结构
-  3. 推断隐式节点（如缺少的列表提取节点）
-  4. 推断数据流连接
+  1. 从图结构中选择相关路径（基于 User Query）
+  2. 将选中的 Intent 列表组装成 MetaFlow 节点
+  3. 检测并生成循环结构
+  4. 推断隐式节点（如缺少的列表提取节点）
+  5. 推断数据流连接
 
 ### 1.3 设计策略
 
@@ -47,11 +48,11 @@ MetaFlowGenerator
 ### 2.2 数据流
 
 ```
-Intent List + Task Description + User Query
+IntentMemoryGraph (nodes + edges) + Task Description + User Query
   ↓
-[1] Build Prompt (包含 Intent 信息和转换规则)
+[1] Build Prompt (包含 Graph 结构、Intent 信息和转换规则)
   ↓
-LLM
+LLM (选择相关路径 + 生成 MetaFlow)
   ↓
 [2] Extract YAML from Response
   ↓
@@ -59,6 +60,14 @@ LLM
   ↓
 MetaFlow Object
 ```
+
+**关键说明**:
+- **输入是图结构**: MetaFlowGenerator 接收的是完整的图（nodes + edges），而非预先筛选的 Intent 列表
+- **LLM 负责路径选择**: 当图有分支时（如 coffee 分支 vs book 分支），LLM 根据 User Query 选择相关路径
+- **示例**:
+  - Graph 包含两条路径: "coffee 产品信息收集" 和 "book 产品信息收集"
+  - User Query: "收集咖啡商品信息"
+  - LLM 识别并选择 coffee 分支的 Intent，过滤掉 book 分支
 
 ---
 
@@ -68,38 +77,48 @@ MetaFlow Object
 
 ```python
 class MetaFlowGenerator:
-    """从 Intent 列表生成 MetaFlow"""
+    """从 IntentMemoryGraph 生成 MetaFlow"""
 
     def __init__(self, llm_service: LLMService):
         self.llm = llm_service
 
     async def generate(
         self,
-        intents: List[Intent],
+        graph: IntentMemoryGraph,
         task_description: str,
         user_query: str
     ) -> MetaFlow:
         """
-        从 Intent 列表生成 MetaFlow
+        从 IntentMemoryGraph 生成 MetaFlow
 
         Args:
-            intents: Intent 列表（从 Graph 检索或提取）
+            graph: IntentMemoryGraph 对象（包含 nodes 和 edges）
             task_description: 任务的详细描述
-            user_query: 用户的查询（用于检测循环等）
+            user_query: 用户的查询（用于路径选择、循环检测等）
 
         Returns:
             MetaFlow 对象
-        """
-        # 1. 构建 Prompt
-        prompt = self._build_prompt(intents, task_description, user_query)
 
-        # 2. 调用 LLM 生成 MetaFlow YAML
+        说明:
+            - graph 包含完整的图结构（可能有多条分支路径）
+            - LLM 根据 user_query 选择相关路径上的 Intent
+            - 例如: Graph 包含 coffee 和 book 两条路径，user_query="收集咖啡信息"
+                    则 LLM 自动选择 coffee 分支，过滤掉 book 分支
+        """
+        # 1. 从图中获取所有 intents 和 edges
+        intents = graph.get_all_intents()
+        edges = graph.get_edges()  # List[Tuple[str, str]]
+
+        # 2. 构建 Prompt（包含图结构信息）
+        prompt = self._build_prompt(intents, edges, task_description, user_query)
+
+        # 3. 调用 LLM 生成 MetaFlow YAML（LLM 负责路径选择）
         response = await self.llm.generate_response("", prompt)
 
-        # 3. 提取 YAML（从 markdown code block）
+        # 4. 提取 YAML（从 markdown code block）
         metaflow_yaml = self._extract_yaml(response)
 
-        # 4. 解析并验证
+        # 5. 解析并验证
         metaflow = MetaFlow.from_yaml(metaflow_yaml)
 
         return metaflow
@@ -113,10 +132,11 @@ class MetaFlowGenerator:
 def _build_prompt(
     self,
     intents: List[Intent],
+    edges: List[Tuple[str, str]],
     task_desc: str,
     user_query: str
 ) -> str:
-    """构建 MetaFlow 生成提示词"""
+    """构建 MetaFlow 生成提示词（包含图结构信息）"""
 
     # 格式化 Intent 列表
     intent_descriptions = []
@@ -139,7 +159,13 @@ def _build_prompt(
             ]
         })
 
-    return f"""将以下意图列表转换为 MetaFlow YAML。
+    # 格式化边信息
+    edges_formatted = [
+        {"from": from_id, "to": to_id}
+        for from_id, to_id in edges
+    ]
+
+    return f"""将以下 Intent 图结构转换为 MetaFlow YAML。
 
 ## 任务描述
 {task_desc}
@@ -147,8 +173,19 @@ def _build_prompt(
 ## 用户查询
 {user_query}
 
-## 意图列表
+## Intent Graph 结构
+
+### Nodes (Intents)
 {json.dumps(intent_descriptions, indent=2, ensure_ascii=False)}
+
+### Edges (Intent 执行顺序)
+{json.dumps(edges_formatted, indent=2, ensure_ascii=False)}
+
+**重要说明 - 路径选择**:
+- 图中可能包含多条分支路径（例如: coffee 分支、book 分支等）
+- 你需要根据 "用户查询" 选择相关的路径
+- 只使用与用户查询相关的 Intent，忽略无关分支
+- 例如: 如果用户查询是 "收集咖啡信息"，则只选择 coffee 相关的 Intent，忽略 book 相关的 Intent
 
 ---
 
@@ -165,6 +202,7 @@ def _build_prompt(
 输出完整的 MetaFlow YAML（符合上述规范）。
 
 注意：
+- **路径过滤**: 只包含与用户查询相关的 Intent，忽略图中的无关分支
 - 只输出 YAML，不要其他解释
 - 确保 YAML 格式正确，可以被解析
 - 如果需要循环，检测用户查询中的关键词（"所有"、"每个"等）
@@ -450,11 +488,12 @@ def _extract_yaml(self, llm_response: str) -> str:
 
 ## 4. 完整示例
 
-### 4.1 输入
+### 4.1 输入 - 简单线性图
 
-**Intent List**:
+**IntentMemoryGraph** (简单线性路径):
 ```python
-[
+# Nodes
+intents = [
   Intent(
     id="intent_a3f5b2c1",
     description="导航到 Allegro 电商网站首页",
@@ -479,6 +518,12 @@ def _extract_yaml(self, llm_response: str) -> str:
       {"type": "copy_action", "data": {"copiedText": "..."}}
     ]
   )
+]
+
+# Edges (线性连接)
+edges = [
+  ("intent_a3f5b2c1", "intent_b7e4c8d2"),  # 首页 → 咖啡分类
+  ("intent_b7e4c8d2", "intent_c9f2d5e3"),  # 咖啡分类 → 产品详情
 ]
 ```
 
@@ -566,7 +611,70 @@ nodes:
 
 ---
 
-### 4.3 解析结果
+### 4.3 输入 - 分支图（路径选择场景）
+
+**IntentMemoryGraph** (包含两条分支路径):
+```python
+# Nodes - 包含 coffee 和 book 两条路径
+intents = [
+  # 共同的起点
+  Intent(
+    id="intent_homepage",
+    description="导航到 Allegro 电商网站首页",
+    operations=[...]
+  ),
+
+  # Coffee 分支
+  Intent(
+    id="intent_coffee_category",
+    description="通过菜单导航进入咖啡产品分类页面",
+    operations=[...]
+  ),
+  Intent(
+    id="intent_coffee_detail",
+    description="访问咖啡产品详情页，提取产品信息",
+    operations=[...]
+  ),
+
+  # Book 分支
+  Intent(
+    id="intent_book_category",
+    description="通过菜单导航进入图书产品分类页面",
+    operations=[...]
+  ),
+  Intent(
+    id="intent_book_detail",
+    description="访问图书产品详情页，提取产品信息",
+    operations=[...]
+  ),
+]
+
+# Edges - 展示分支结构
+edges = [
+  # 首页连接到两个分支
+  ("intent_homepage", "intent_coffee_category"),
+  ("intent_homepage", "intent_book_category"),
+
+  # Coffee 分支内部连接
+  ("intent_coffee_category", "intent_coffee_detail"),
+
+  # Book 分支内部连接
+  ("intent_book_category", "intent_book_detail"),
+]
+```
+
+**User Query** (选择 Coffee 分支):
+```
+"收集咖啡商品信息"
+```
+
+**期望结果**:
+- LLM 识别到 user_query 与 coffee 相关
+- 只选择 coffee 路径: homepage → coffee_category → coffee_detail
+- **过滤掉** book 相关的 Intent (intent_book_category, intent_book_detail)
+- 生成的 MetaFlow 只包含 3 个节点（不是 5 个）
+
+### 4.4 解析结果
 
 ```python
 metaflow = MetaFlow.from_yaml(metaflow_yaml)
@@ -671,19 +779,61 @@ async def test_generate_metaflow():
     llm = AnthropicProvider()
     generator = MetaFlowGenerator(llm)
 
-    intents = [
-        Intent(id="intent_1", description="导航到首页", operations=[...]),
-        Intent(id="intent_2", description="提取数据", operations=[...])
-    ]
+    # 创建简单的图结构
+    storage = InMemoryIntentStorage()
+    graph = IntentMemoryGraph(storage)
 
+    intent1 = Intent(id="intent_1", description="导航到首页", operations=[...])
+    intent2 = Intent(id="intent_2", description="提取数据", operations=[...])
+
+    graph.add_intent(intent1)
+    graph.add_intent(intent2)
+    graph.add_edge(intent1.id, intent2.id)
+
+    # 从图生成 MetaFlow
     metaflow = await generator.generate(
-        intents,
+        graph,
         "收集商品信息",
         "收集所有商品信息"
     )
 
     assert metaflow.version == "1.0"
-    assert len(metaflow.nodes) >= len(intents)
+    assert len(metaflow.nodes) >= 2
+
+@pytest.mark.asyncio
+async def test_generate_metaflow_with_branching():
+    """测试分支图的路径选择"""
+    llm = AnthropicProvider()
+    generator = MetaFlowGenerator(llm)
+
+    # 创建分支图结构
+    storage = InMemoryIntentStorage()
+    graph = IntentMemoryGraph(storage)
+
+    homepage = Intent(id="homepage", description="导航到首页", operations=[...])
+    coffee = Intent(id="coffee", description="进入咖啡分类", operations=[...])
+    book = Intent(id="book", description="进入图书分类", operations=[...])
+
+    graph.add_intent(homepage)
+    graph.add_intent(coffee)
+    graph.add_intent(book)
+
+    # 创建分支结构
+    graph.add_edge(homepage.id, coffee.id)
+    graph.add_edge(homepage.id, book.id)
+
+    # User query 指定 coffee 分支
+    metaflow = await generator.generate(
+        graph,
+        "收集商品信息",
+        "收集咖啡商品信息"
+    )
+
+    # 验证只包含 coffee 路径
+    intent_ids = [node.intent_id for node in metaflow.nodes if hasattr(node, 'intent_id')]
+    assert homepage.id in intent_ids
+    assert coffee.id in intent_ids
+    assert book.id not in intent_ids  # book 分支应该被过滤
 ```
 
 ---
@@ -693,10 +843,12 @@ async def test_generate_metaflow():
 ### 包含功能
 
 1. ✅ 基于 LLM 的 MetaFlow 生成
-2. ✅ 循环检测和生成
-3. ✅ 隐式节点推断
-4. ✅ 数据流连接
-5. ✅ YAML 解析和验证
+2. ✅ **从图结构输入（nodes + edges）**
+3. ✅ **基于 User Query 的路径选择**（过滤无关分支）
+4. ✅ 循环检测和生成
+5. ✅ 隐式节点推断
+6. ✅ 数据流连接
+7. ✅ YAML 解析和验证
 
 ### 不包含功能
 

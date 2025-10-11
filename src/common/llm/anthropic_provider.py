@@ -29,7 +29,7 @@ class AnthropicProvider(BaseProvider):
         """
         super().__init__(api_key, model_name)
         self.temperature = 0.7
-        self.max_tokens = 2048
+        self.max_tokens = 8192  # Increased from 2048 to handle large MetaFlow generation
     
     async def _initialize_client(self) -> None:
         """Initialize the Anthropic client"""

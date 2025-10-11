@@ -266,24 +266,39 @@ class SimpleUserBehaviorMonitor:
             const collector = {
                 getElementInfo: function(element) {
                     if (!element) return {};
-                    
-                    return {
-                        tagName: element.tagName || '',
-                        id: element.id || '',
-                        className: element.className || '',
-                        textContent: (element.textContent || '').slice(0, 100),
-                        href: element.href || '',
-                        src: element.src || '',
-                        name: element.name || '',
-                        type: element.type || '',
-                        value: element.value ? element.value.slice(0, 50) : ''
-                    };
+
+                    // Only include non-empty meaningful fields
+                    const info = {};
+
+                    // Core positioning fields (always include if present)
+                    if (element.tagName) info.tagName = element.tagName;
+                    if (element.id) info.id = element.id;
+                    if (element.className) info.className = element.className;
+
+                    // Semantic information (only if non-empty)
+                    const text = (element.textContent || '').trim();
+                    if (text) info.textContent = text.slice(0, 100);
+
+                    // Link-related (only if present)
+                    if (element.href) info.href = element.href;
+                    if (element.src) info.src = element.src;
+
+                    // Form-related (only for input/select/textarea)
+                    if (element.name) info.name = element.name;
+                    if (element.type) info.type = element.type;
+                    if (element.value) info.value = element.value.slice(0, 50);
+
+                    return info;
                 },
                 
                 report: function(type, element, additionalData) {
+                    // Generate human-readable timestamp
+                    const now = new Date();
+                    const timestamp = now.toISOString().slice(0, 19).replace('T', ' '); // "2025-10-10 17:52:57"
+
                     const data = {
                         type: type,
-                        timestamp: Date.now(),
+                        timestamp: timestamp,
                         url: window.location.href,
                         page_title: document.title,
                         element: element ? this.getElementInfo(element) : {},
@@ -299,14 +314,8 @@ class SimpleUserBehaviorMonitor:
             
             // 监控用户点击
             document.addEventListener('click', function(e) {
-                collector.report('click', e.target, {
-                    button: e.button,
-                    ctrlKey: e.ctrlKey,
-                    shiftKey: e.shiftKey,
-                    altKey: e.altKey,
-                    clientX: e.clientX,
-                    clientY: e.clientY
-                });
+                // For click: no additional data needed (element info is enough)
+                collector.report('click', e.target, {});
             }, true);
             
             // 监控输入事件
@@ -338,6 +347,32 @@ class SimpleUserBehaviorMonitor:
                 }
             }, 500);
             
+            // 监控文本选择
+            document.addEventListener('mouseup', function(e) {
+                const selection = window.getSelection();
+                const selectedText = selection ? selection.toString().trim() : '';
+
+                if (selectedText) {
+                    collector.report('select', e.target, {
+                        selectedText: selectedText,
+                        textLength: selectedText.length
+                    });
+                }
+            }, true);
+
+            // 监控复制操作
+            document.addEventListener('copy', function(e) {
+                const selection = window.getSelection();
+                const copiedText = selection ? selection.toString().trim() : '';
+
+                if (copiedText) {
+                    collector.report('copy_action', e.target, {
+                        copiedText: copiedText,
+                        textLength: copiedText.length
+                    });
+                }
+            }, true);
+
             // 监控滚动 (节流处理)
             let scrollTimeout;
             let lastScrollY = window.scrollY;
@@ -349,12 +384,11 @@ class SimpleUserBehaviorMonitor:
                     const scrollDelta = Math.abs(currentScrollY - lastScrollY);
                     const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
                     const scrollPercentage = maxScroll > 0 ? Math.round((currentScrollY / maxScroll) * 100) : 0;
-                    
+
                     if (scrollDelta > 50) { // 只报告大于50px的滚动
                         collector.report('scroll', null, {
-                            scrollDirection: scrollDirection,
-                            scrollDelta: scrollDelta,
-                            scrollPercentage: scrollPercentage
+                            direction: scrollDirection,
+                            distance: scrollDelta
                         });
                         lastScrollY = currentScrollY;
                     }
@@ -486,7 +520,7 @@ await browser_tool.cleanup()
 🎯 用户行为监控已启动 - 会话ID: session_20240115_143022
 ============================================================
 
-[14:30:45.123] 🔥 CLICK
+[2025-10-10 14:30:45] 🔥 CLICK
   📍 页面: 示例网站
   🌐 URL: https://example.com
   🖱️  元素: BUTTON
@@ -496,7 +530,7 @@ await browser_tool.cleanup()
   📍 位置: (450, 200)
 ------------------------------------------------------------
 
-[14:30:46.456] 🔥 INPUT
+[2025-10-10 14:30:46] 🔥 INPUT
   📍 页面: 示例网站
   🌐 URL: https://example.com
   ⌨️  输入框: INPUT
@@ -507,7 +541,7 @@ await browser_tool.cleanup()
   🔤 输入类型: insertText
 ------------------------------------------------------------
 
-[14:30:48.789] 🔥 NAVIGATE
+[2025-10-10 14:30:48] 🔥 NAVIGATE
   📍 页面: 新页面
   🌐 URL: https://example.com/new-page
   🔗 从: https://example.com

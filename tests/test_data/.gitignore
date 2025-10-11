@@ -1,0 +1,5 @@
+# Ignore runtime generated outputs
+*/output/*
+
+# But keep the directory structure
+!*/output/.gitkeep

@@ -4,58 +4,12 @@ MetaFlow data structures
 Based on: docs/intent_builder/metaflow_specification.md
 """
 import yaml
-from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field
 
+from .operation import Operation, ElementInfo
 
-class OperationType(str, Enum):
-    """Supported operation types"""
-    NAVIGATE = "navigate"
-    CLICK = "click"
-    INPUT = "input"
-    EXTRACT = "extract"
-    STORE = "store"
-    WAIT = "wait"
-    SCROLL = "scroll"
-
-
-class ElementInfo(BaseModel):
-    """DOM element information"""
-    xpath: Optional[str] = None
-    tagName: Optional[str] = Field(None, alias="tagName")
-    className: Optional[str] = Field(None, alias="className")
-    textContent: Optional[str] = Field(None, alias="textContent")
-    href: Optional[str] = None
-
-    class Config:
-        populate_by_name = True
-
-
-class Operation(BaseModel):
-    """Operation within an intent
-
-    Represents a single user operation (navigate, click, extract, etc.)
-    with full context information including DOM details.
-    """
-    type: OperationType
-    timestamp: Optional[int] = None
-    url: Optional[str] = None
-    page_title: Optional[str] = Field(None, alias="page_title")
-
-    # DOM element information
-    element: Optional[ElementInfo] = None
-
-    # Operation-specific data
-    target: Optional[str] = None  # For extract: field name
-    value: Optional[Any] = None   # For extract: actual extracted value
-    duration: Optional[int] = None  # For wait
-    direction: Optional[str] = None  # For scroll
-    distance: Optional[int] = None  # For scroll
-    params: Optional[Dict[str, Any]] = None  # For store and other params
-
-    class Config:
-        populate_by_name = True
+# Operation and ElementInfo are now imported from operation.py - unified definitions
 
 
 class MetaFlowNode(BaseModel):

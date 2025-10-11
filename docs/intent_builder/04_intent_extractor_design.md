@@ -326,7 +326,6 @@ def _build_extraction_prompt(
 ]
 ```
 """
-```
 
 #### Prompt 设计要点
 

@@ -115,38 +115,52 @@
         return index >= 0 ? index + 1 : 0;
     }
     
-    // Enhanced element info collector with XPath and ID
+    // Enhanced element info collector with XPath and ID - only non-empty fields
     const collector = {
         getElementInfo: function(element) {
             if (!element) return {};
-            
-            return {
-                // Primary identifiers (most important)
-                xpath: getElementXPath(element),
-                id: element.id || '',
-                
-                // Secondary information
-                tagName: element.tagName || '',
-                className: element.className || '',
-                textContent: (element.textContent || '').slice(0, 100),
-                href: element.href || '',
-                src: element.src || '',
-                name: element.name || '',
-                type: element.type || '',
-                value: element.value ? element.value.slice(0, 50) : ''
-            };
+
+            // Only include non-empty meaningful fields
+            const info = {};
+
+            // Core positioning fields (always include if present)
+            const xpath = getElementXPath(element);
+            if (xpath) info.xpath = xpath;
+
+            if (element.tagName) info.tagName = element.tagName;
+            if (element.id) info.id = element.id;
+            if (element.className) info.className = element.className;
+
+            // Semantic information (only if non-empty)
+            const text = (element.textContent || '').trim();
+            if (text) info.textContent = text.slice(0, 100);
+
+            // Link-related (only if present)
+            if (element.href) info.href = element.href;
+            if (element.src) info.src = element.src;
+
+            // Form-related (only for input/select/textarea)
+            if (element.name) info.name = element.name;
+            if (element.type) info.type = element.type;
+            if (element.value) info.value = element.value.slice(0, 50);
+
+            return info;
         },
         
         report: function(type, element, additionalData) {
+            // Generate human-readable timestamp
+            const now = new Date();
+            const timestamp = now.toISOString().slice(0, 19).replace('T', ' '); // "2025-10-10 17:52:57"
+
             const data = {
                 type: type,
-                timestamp: Date.now(),
+                timestamp: timestamp,
                 url: window.location.href,
                 page_title: document.title,
                 element: element ? this.getElementInfo(element) : {},
                 data: additionalData || {}
             };
-            
+
             // Send to Python via CDP binding
             if (window.reportUserBehavior) {
                 try {
@@ -207,10 +221,7 @@
                     
                     collector.report('select', targetElement, {
                         selectedText: selection.toString().slice(0, 200),
-                        textLength: selection.toString().length,
-                        rangeStart: range.startOffset,
-                        rangeEnd: range.endOffset,
-                        singleElement: range.startContainer === range.endContainer
+                        textLength: selection.toString().length
                     });
                 }
             }, 10);
@@ -226,15 +237,9 @@
         if (dragInfo.isDragging) {
             return;
         }
-        
-        collector.report('click', e.target, {
-            button: e.button,
-            ctrlKey: e.ctrlKey,
-            shiftKey: e.shiftKey,
-            altKey: e.altKey,
-            clientX: e.clientX,
-            clientY: e.clientY
-        });
+
+        // For click: no additional data needed (element info is enough)
+        collector.report('click', e.target, {});
     }, true);
     
     // Smart input monitoring: debounced + sensitive field filtering
@@ -305,9 +310,7 @@
                 
             collector.report('copy_action', targetElement, {
                 copiedText: selection.toString().slice(0, 200),
-                textLength: selection.toString().length,
-                copyMethod: 'selection',
-                singleElement: range.startContainer === range.endContainer  // Add flag to indicate precision level
+                textLength: selection.toString().length
             });
         }
     });
@@ -352,22 +355,19 @@
     // Monitor scrolling (throttled to avoid spam)
     let scrollTimeout;
     let lastScrollY = window.scrollY;
-    
+
     window.addEventListener('scroll', function() {
         clearTimeout(scrollTimeout);
         scrollTimeout = setTimeout(function() {
             const currentScrollY = window.scrollY;
             const scrollDirection = currentScrollY > lastScrollY ? 'down' : 'up';
             const scrollDelta = Math.abs(currentScrollY - lastScrollY);
-            const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
-            const scrollPercentage = maxScroll > 0 ? Math.round((currentScrollY / maxScroll) * 100) : 0;
-            
+
             // Only report scrolls greater than 50px to reduce noise
             if (scrollDelta > 50) {
                 collector.report('scroll', null, {
-                    scrollDirection: scrollDirection,
-                    scrollDelta: scrollDelta,
-                    scrollPercentage: scrollPercentage
+                    direction: scrollDirection,
+                    distance: scrollDelta
                 });
                 lastScrollY = currentScrollY;
             }

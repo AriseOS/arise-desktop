@@ -1,0 +1,32 @@
+{
+  "intents": [
+    {
+      "id": "intent_6c3e972a",
+      "description": "Navigate to Allegro homepage to begin coffee product price collection",
+      "operations": [],
+      "created_at": "2025-10-10T16:00:00",
+      "source_session_id": "session_demo_001"
+    },
+    {
+      "id": "intent_69544a61",
+      "description": "Navigate to the coffee category page to view coffee products",
+      "operations": [],
+      "created_at": "2025-10-10T16:00:01",
+      "source_session_id": "session_demo_001"
+    },
+    {
+      "id": "intent_7fe0c6bf",
+      "description": "Navigate to a specific coffee product detail page to view its information",
+      "operations": [],
+      "created_at": "2025-10-10T16:00:02",
+      "source_session_id": "session_demo_001"
+    },
+    {
+      "id": "intent_858a33a2",
+      "description": "Extract coffee product information including product name, price, and purchase statistics",
+      "operations": [],
+      "created_at": "2025-10-10T16:00:03",
+      "source_session_id": "session_demo_001"
+    }
+  ]
+}
