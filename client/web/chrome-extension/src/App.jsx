@@ -3,6 +3,7 @@ import LoginPage from './pages/LoginPage'
 import MainPage from './pages/MainPage'
 import MyWorkflowsPage from './pages/MyWorkflowsPage'
 import WorkflowDetailPage from './pages/WorkflowDetailPage'
+import WorkflowGenerationPage from './pages/WorkflowGenerationPage'
 import AboutPage from './pages/AboutPage'
 import RecordPage from './pages/RecordPage'
 import IntentionPage from './pages/IntentionPage'
@@ -157,6 +158,14 @@ function App() {
       )}
       {currentPage === 'metaflow' && (
         <MetaflowPage
+          onNavigate={navigateTo}
+          showStatus={showStatus}
+          recordingData={recordingData}
+        />
+      )}
+      {currentPage === 'workflow-generation' && (
+        <WorkflowGenerationPage
+          currentUser={currentUser}
           onNavigate={navigateTo}
           showStatus={showStatus}
           recordingData={recordingData}

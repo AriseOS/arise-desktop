@@ -1277,3 +1277,25 @@ body {
 .save-btn:hover {
   background: #5568d3;
 }
+
+/* Workflow Generation Page */
+.workflow-generation-page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.workflow-generation-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.workflow-save-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+  padding-top: 12px;
+}

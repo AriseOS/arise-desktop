@@ -144,12 +144,7 @@ function MetaflowPage({ onNavigate, showStatus, recordingData }) {
   }
 
   const handleNext = () => {
-    showStatus('✅ 进入下一步：生成 Workflow', 'success')
-    // TODO: Navigate to workflow generation
-    // For now, go back to main page
-    setTimeout(() => {
-      onNavigate('main')
-    }, 1000)
+    onNavigate('workflow-generation', { recordingData })
   }
 
   return (
