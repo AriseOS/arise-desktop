@@ -240,18 +240,30 @@ function MetaflowPage({ onNavigate, showStatus, recordingData }) {
 function EditNodeModal({ node, onSave, onDelete, onClose }) {
   const [name, setName] = useState(node.name)
   const [description, setDescription] = useState(node.description)
+  const [agentType, setAgentType] = useState(node.properties?.agent_type || '')
+  const [tool, setTool] = useState(node.properties?.tool || '')
+  const [instruction, setInstruction] = useState(node.properties?.instruction || '')
 
   const handleSave = () => {
     onSave({
       ...node,
       name,
-      description
+      description,
+      properties: {
+        ...node.properties,
+        agent_type: agentType,
+        tool: tool,
+        instruction: instruction
+      }
     })
   }
 
+  // Check if this is a start or end node (should not be fully editable)
+  const isSystemNode = node.type === 'start' || node.type === 'end'
+
   return (
     <div className="node-detail-modal" onClick={onClose}>
-      <div className="node-detail-content" onClick={(e) => e.stopPropagation()}>
+      <div className="node-detail-content edit-modal-scrollable" onClick={(e) => e.stopPropagation()}>
         <h3>编辑节点</h3>
 
         <div className="detail-item">
@@ -261,6 +273,7 @@ function EditNodeModal({ node, onSave, onDelete, onClose }) {
             className="edit-input"
             value={name}
             onChange={(e) => setName(e.target.value)}
+            disabled={isSystemNode}
           />
         </div>
 
@@ -271,13 +284,56 @@ function EditNodeModal({ node, onSave, onDelete, onClose }) {
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={3}
+            disabled={isSystemNode}
           />
         </div>
 
+        {!isSystemNode && (
+          <>
+            <div className="detail-item">
+              <div className="detail-label">Agent类型</div>
+              <select
+                className="edit-input"
+                value={agentType}
+                onChange={(e) => setAgentType(e.target.value)}
+              >
+                <option value="">选择Agent类型</option>
+                <option value="tool_agent">Tool Agent</option>
+                <option value="text_agent">Text Agent</option>
+                <option value="code_agent">Code Agent</option>
+              </select>
+            </div>
+
+            <div className="detail-item">
+              <div className="detail-label">工具</div>
+              <input
+                type="text"
+                className="edit-input"
+                value={tool}
+                onChange={(e) => setTool(e.target.value)}
+                placeholder="例如: browser_use, llm_extract"
+              />
+            </div>
+
+            <div className="detail-item">
+              <div className="detail-label">指令</div>
+              <textarea
+                className="edit-textarea"
+                value={instruction}
+                onChange={(e) => setInstruction(e.target.value)}
+                rows={4}
+                placeholder="输入该步骤的具体执行指令"
+              />
+            </div>
+          </>
+        )}
+
         <div className="modal-actions">
-          <button className="delete-btn" onClick={() => onDelete(node.id)}>
-            删除节点
-          </button>
+          {!isSystemNode && (
+            <button className="delete-btn" onClick={() => onDelete(node.id)}>
+              删除节点
+            </button>
+          )}
           <div className="modal-actions-right">
             <button className="cancel-btn" onClick={onClose}>
               取消

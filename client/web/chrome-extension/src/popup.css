@@ -1186,6 +1186,11 @@ body {
 }
 
 /* Edit Modal Styles */
+.edit-modal-scrollable {
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
 .edit-input {
   width: 100%;
   padding: 8px 12px;
@@ -1199,6 +1204,23 @@ body {
 .edit-input:focus {
   outline: none;
   border-color: #667eea;
+}
+
+.edit-input:disabled {
+  background: #f7fafc;
+  color: #8e8e93;
+  cursor: not-allowed;
+}
+
+.edit-input select,
+select.edit-input {
+  cursor: pointer;
+  background: white;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23667eea' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 36px;
 }
 
 .edit-textarea {
