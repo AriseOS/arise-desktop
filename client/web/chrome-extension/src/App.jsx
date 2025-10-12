@@ -88,7 +88,7 @@ function App() {
       await chrome.storage.local.set({ currentPage: page })
     }
 
-    // Handle recording data for intention page
+    // Handle recording data for intention page (in memory only, not persistent)
     if (data.recordingData) {
       setRecordingData(data.recordingData)
     }

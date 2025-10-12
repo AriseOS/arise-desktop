@@ -6,15 +6,13 @@ function MetaflowPage({ onNavigate, showStatus, recordingData }) {
   const [editingNode, setEditingNode] = useState(null)
 
   useEffect(() => {
-    if (recordingData && recordingData.operations) {
-      // Generate metaflows from recording operations
-      const generatedMetaflows = generateMetaflows(recordingData.operations)
-      setMetaflows(generatedMetaflows)
-    }
-  }, [recordingData])
+    // Always generate hardcoded metaflows (not dependent on actual recording data)
+    const generatedMetaflows = generateMetaflows()
+    setMetaflows(generatedMetaflows)
+  }, [])
 
-  const generateMetaflows = (operations) => {
-    // Generate metaflows with more details based on real workflow
+  const generateMetaflows = () => {
+    // Generate hardcoded metaflows with more details based on real workflow
     const metaflows = [
       {
         id: 'start',

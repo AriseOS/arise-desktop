@@ -21,9 +21,9 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
   const [isRunning, setIsRunning] = useState(false)
 
   useEffect(() => {
-    // Generate workflow from recording data
+    // Always generate hardcoded workflow (not dependent on actual recording data)
     generateWorkflowData()
-  }, [recordingData])
+  }, [])
 
   const generateWorkflowData = () => {
     setLoading(true)

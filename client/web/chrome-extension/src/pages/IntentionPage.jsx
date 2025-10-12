@@ -4,15 +4,13 @@ function IntentionPage({ onNavigate, showStatus, recordingData }) {
   const [intentions, setIntentions] = useState([])
 
   useEffect(() => {
-    if (recordingData && recordingData.operations) {
-      // Generate intentions from recording operations
-      const generatedIntentions = generateIntentions(recordingData.operations)
-      setIntentions(generatedIntentions)
-    }
-  }, [recordingData])
+    // Always generate hardcoded intentions (not dependent on actual recording data)
+    const generatedIntentions = generateIntentions()
+    setIntentions(generatedIntentions)
+  }, [])
 
-  const generateIntentions = (operations) => {
-    // Generate intentions based on real workflow data
+  const generateIntentions = () => {
+    // Generate hardcoded intentions based on real workflow data
     const intentions = [
       {
         id: 'start',
