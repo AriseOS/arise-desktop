@@ -12,63 +12,51 @@ function IntentionPage({ onNavigate, showStatus, recordingData }) {
   }, [recordingData])
 
   const generateIntentions = (operations) => {
-    // Simple intention generation logic
-    // Group operations by page/context
+    // Generate intentions based on real workflow data
     const intentions = [
       {
         id: 'start',
         type: 'start',
         name: 'Start',
         description: 'Workflow start point'
+      },
+      {
+        id: 'collect',
+        type: 'navigate',
+        name: 'Collect Wiki Activity Data',
+        description: 'Navigate to Wiki page and extract daily activity data',
+        properties: {
+          tool: 'browser_use',
+          action: 'navigate and extract'
+        }
+      },
+      {
+        id: 'generate',
+        type: 'process',
+        name: 'Generate Work Report',
+        description: 'Process collected data and generate formatted work report',
+        properties: {
+          tool: 'llm_extract',
+          action: 'summarize and format'
+        }
+      },
+      {
+        id: 'send',
+        type: 'interact',
+        name: 'Send Report to WeChat',
+        description: 'Send generated report to specified contact via WeChat',
+        properties: {
+          tool: 'browser_use',
+          action: 'send message'
+        }
+      },
+      {
+        id: 'end',
+        type: 'end',
+        name: 'End',
+        description: 'Workflow completed'
       }
     ]
-
-    // Add navigate intention if there's a navigation
-    const navigationOps = operations.filter(op => op.type === 'navigation' || op.type === 'page_load')
-    if (navigationOps.length > 0) {
-      intentions.push({
-        id: 'navigate',
-        type: 'navigate',
-        name: 'Navigate to Website',
-        description: `Open ${navigationOps[0].url || 'target website'}`,
-        properties: {
-          url: navigationOps[0].url
-        }
-      })
-    }
-
-    // Add interaction intentions
-    const clickOps = operations.filter(op => op.type === 'click')
-    if (clickOps.length > 0) {
-      intentions.push({
-        id: 'interact',
-        type: 'interact',
-        name: 'User Interactions',
-        description: `Perform ${clickOps.length} click action(s)`,
-        properties: {
-          operations: clickOps.length
-        }
-      })
-    }
-
-    // Add extract intention if needed
-    intentions.push({
-      id: 'extract',
-      type: 'extract',
-      name: 'Extract Data',
-      description: 'Extract relevant data from page',
-      properties: {
-        fields: ['target data']
-      }
-    })
-
-    // Add end intention
-    intentions.push({
-      id: 'end',
-      type: 'end',
-      name: 'End',
-      description: 'Workflow completed'
-    })
 
     return intentions
   }

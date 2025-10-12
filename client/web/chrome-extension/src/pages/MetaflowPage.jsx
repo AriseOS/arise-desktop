@@ -14,63 +14,54 @@ function MetaflowPage({ onNavigate, showStatus, recordingData }) {
   }, [recordingData])
 
   const generateMetaflows = (operations) => {
-    // Simple metaflow generation logic
-    // Similar to intentions but more detailed
+    // Generate metaflows with more details based on real workflow
     const metaflows = [
       {
         id: 'start',
         type: 'start',
         name: 'Start',
-        description: 'Metaflow start point'
+        description: 'Workflow initialization'
+      },
+      {
+        id: 'step-1',
+        type: 'navigate',
+        name: 'Collect Wiki Activity Data',
+        description: 'Use browser_use tool to navigate to user Wiki page and extract daily activity data. Input: Wiki URL, Output: Activity data in text format',
+        properties: {
+          agent_type: 'tool_agent',
+          tool: 'browser_use',
+          instruction: 'Navigate to provided Wiki URL and extract daily activity data'
+        }
+      },
+      {
+        id: 'step-2',
+        type: 'process',
+        name: 'Generate Work Report',
+        description: 'Use llm_extract tool to summarize and reorganize collected activity data into a formatted work report',
+        properties: {
+          agent_type: 'text_agent',
+          tool: 'llm_extract',
+          instruction: 'Process input activity data using llm_extract tool to generate formatted work report'
+        }
+      },
+      {
+        id: 'step-3',
+        type: 'interact',
+        name: 'Send Report to WeChat',
+        description: 'Use browser_use tool to simulate web operations and send the generated report to specified leader via WeChat. Input: Report text, Output: Send confirmation',
+        properties: {
+          agent_type: 'tool_agent',
+          tool: 'browser_use',
+          instruction: 'Use browser_use tool to send report to specified WeChat contact'
+        }
+      },
+      {
+        id: 'end',
+        type: 'end',
+        name: 'End',
+        description: 'Workflow completed successfully'
       }
     ]
-
-    // Add navigate metaflow if there's a navigation
-    const navigationOps = operations.filter(op => op.type === 'navigation' || op.type === 'page_load')
-    if (navigationOps.length > 0) {
-      metaflows.push({
-        id: 'navigate',
-        type: 'navigate',
-        name: 'Navigate to Website',
-        description: `Open ${navigationOps[0].url || 'target website'}`,
-        properties: {
-          url: navigationOps[0].url
-        }
-      })
-    }
-
-    // Add interaction metaflows
-    const clickOps = operations.filter(op => op.type === 'click')
-    if (clickOps.length > 0) {
-      metaflows.push({
-        id: 'interact',
-        type: 'interact',
-        name: 'User Interactions',
-        description: `Perform ${clickOps.length} click action(s)`,
-        properties: {
-          operations: clickOps.length
-        }
-      })
-    }
-
-    // Add extract metaflow if needed
-    metaflows.push({
-      id: 'extract',
-      type: 'extract',
-      name: 'Extract Data',
-      description: 'Extract relevant data from page',
-      properties: {
-        fields: ['target data']
-      }
-    })
-
-    // Add end metaflow
-    metaflows.push({
-      id: 'end',
-      type: 'end',
-      name: 'End',
-      description: 'Metaflow completed'
-    })
 
     return metaflows
   }

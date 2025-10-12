@@ -28,49 +28,60 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
   const generateWorkflowData = () => {
     setLoading(true)
 
-    // Simple workflow generation from recording data
+    // Generate workflow based on real workflow data structure
     // In a real implementation, this would call an API
     setTimeout(() => {
       const workflow = {
-        name: 'Generated Workflow',
-        description: 'Auto-generated from recording',
+        name: 'Wiki Activity Report Workflow',
+        description: 'Automatically collect Wiki activity data, generate work report, and send to WeChat',
         steps: [
           {
             id: 'step-start',
             type: 'start',
             name: 'Start',
-            description: 'Workflow start'
+            description: 'Initialize workflow',
+            agent_type: 'start'
           },
           {
-            id: 'step-navigate',
-            type: 'navigate',
-            name: 'Navigate',
-            description: 'Navigate to target page'
+            id: 'step-collect',
+            type: 'tool_agent',
+            name: 'Collect Wiki Activity Data',
+            description: 'Use browser_use tool to navigate to user Wiki page and extract daily activity data',
+            agent_type: 'tool_agent',
+            tool: 'browser_use',
+            instruction: 'Navigate to provided Wiki URL and extract daily activity data'
           },
           {
-            id: 'step-interact',
-            type: 'interact',
-            name: 'Interact',
-            description: 'Perform user interactions'
+            id: 'step-generate',
+            type: 'text_agent',
+            name: 'Generate Work Report',
+            description: 'Use llm_extract to process collected data and generate formatted work report',
+            agent_type: 'text_agent',
+            tool: 'llm_extract',
+            instruction: 'Process input activity data using llm_extract tool to generate formatted work report'
           },
           {
-            id: 'step-extract',
-            type: 'extract',
-            name: 'Extract',
-            description: 'Extract data from page'
+            id: 'step-send',
+            type: 'tool_agent',
+            name: 'Send Report to WeChat',
+            description: 'Use browser_use to send generated report to specified leader via WeChat',
+            agent_type: 'tool_agent',
+            tool: 'browser_use',
+            instruction: 'Use browser_use tool to send report to specified WeChat contact'
           },
           {
             id: 'step-end',
             type: 'end',
             name: 'End',
-            description: 'Workflow completed'
+            description: 'Workflow completed successfully',
+            agent_type: 'end'
           }
         ],
         connections: [
-          { from: 'step-start', to: 'step-navigate' },
-          { from: 'step-navigate', to: 'step-interact' },
-          { from: 'step-interact', to: 'step-extract' },
-          { from: 'step-extract', to: 'step-end' }
+          { from: 'step-start', to: 'step-collect' },
+          { from: 'step-collect', to: 'step-generate' },
+          { from: 'step-generate', to: 'step-send' },
+          { from: 'step-send', to: 'step-end' }
         ]
       }
 
