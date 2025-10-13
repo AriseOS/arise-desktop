@@ -2,6 +2,9 @@
 
 console.log('AgentCrafter extension background script loaded');
 
+// In-memory storage for captured operations (persists while background script runs)
+let capturedOperations = [];
+
 // Extension installation
 chrome.runtime.onInstalled.addListener((details) => {
   console.log('Extension installed/updated', details.reason);
@@ -18,7 +21,18 @@ chrome.runtime.onInstalled.addListener((details) => {
 
 // Listen for messages from content scripts or popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  console.log('Message received:', request);
+  // Get captured operations
+  if (request.action === 'getCapturedOperations') {
+    sendResponse({ success: true, operations: capturedOperations });
+    return true;
+  }
+
+  // Clear captured operations
+  if (request.action === 'clearCapturedOperations') {
+    capturedOperations = [];
+    sendResponse({ success: true });
+    return true;
+  }
 
   if (request.action === 'captureTab') {
     captureTabScreenshot()
@@ -57,6 +71,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === 'sendOperation') {
+    // Store operation in memory first
+    capturedOperations.push(request.operation);
+
+    // Then send to backend
     sendOperationToBackend(request.sessionId, request.token, request.operation)
       .then(result => {
         sendResponse({ success: true, operation_count: result.operation_count });

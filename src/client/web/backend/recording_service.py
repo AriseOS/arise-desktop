@@ -90,7 +90,17 @@ class RecordingService:
         """Create a new recording session"""
         session_id = f"rec_{uuid.uuid4().hex[:12]}"
 
-        # Check if user already has an active session
+        # Clean up any old inactive sessions for this user first
+        sessions_to_remove = []
+        for sid, s in self.active_sessions.items():
+            if s.user_id == user_id and not s.is_recording:
+                sessions_to_remove.append(sid)
+
+        for sid in sessions_to_remove:
+            del self.active_sessions[sid]
+            print(f"🧹 Cleaned up inactive session: {sid}")
+
+        # Check if user already has an ACTIVE recording session
         user_sessions = [s for s in self.active_sessions.values()
                         if s.user_id == user_id and s.is_recording]
 

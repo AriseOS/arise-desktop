@@ -3,6 +3,26 @@
 
 console.log('AgentCrafter extension content script loaded');
 
+// Listen for postMessage from behavior_tracker.js
+window.addEventListener('message', (event) => {
+  // Only accept messages from the same window
+  if (event.source !== window) return;
+
+  // Check if this is a message from behavior tracker
+  if (event.data && event.data.source === 'agentcrafter-tracker') {
+    console.log('Received operation from tracker:', event.data.operation);
+
+    // Forward the operation to popup
+    chrome.runtime.sendMessage({
+      action: 'operationCaptured',
+      operation: event.data.operation
+    }).catch(err => {
+      // Popup might not be open, that's ok
+      console.debug('Could not send operation to popup:', err);
+    });
+  }
+});
+
 // Listen for messages from popup or background script
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'capturePage') {
