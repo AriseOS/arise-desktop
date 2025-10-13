@@ -24,6 +24,8 @@ Usage:
 
     # Collection management
     python inspect_storage.py --list-collections
+    python inspect_storage.py --export-collection daily_products --user default_user
+    python inspect_storage.py --export-collection daily_products -o /path/to/output.csv --limit 100
     python inspect_storage.py --clear-collection daily_products --user default_user
 
     # Storage cache management
@@ -354,6 +356,115 @@ class StorageAgentInspector:
                         value = value[:100] + "..."
                     print(f"  {key}: {value}")
                 print()
+
+    async def export_collection_to_csv(
+        self,
+        collection: str,
+        user_id: str = "default_user",
+        output_path: Optional[str] = None,
+        limit: Optional[int] = None
+    ) -> Optional[str]:
+        """Export collection data to CSV file
+        
+        Args:
+            collection: Collection name
+            user_id: User ID (default: "default_user")
+            output_path: Custom output path (optional, defaults to ./{collection}_{user_id}.csv)
+            limit: Maximum number of rows to export (None = all)
+            
+        Returns:
+            Path to exported CSV file, or None if failed
+        """
+        import csv
+        
+        table_name = f"{collection}_{user_id}"
+        
+        print(f"\n📤 Export Collection to CSV: {collection} (user: {user_id})")
+        print("-" * 80)
+        
+        if not Path(self.storage_db).exists():
+            print("❌ Storage database does not exist")
+            return None
+        
+        # Generate output path if not specified
+        if not output_path:
+            output_path = f"./{collection}_{user_id}.csv"
+        
+        output_file = Path(output_path)
+        
+        async with aiosqlite.connect(self.storage_db) as db:
+            # Check if table exists
+            cursor = await db.execute("""
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name = ?
+            """, (table_name,))
+            
+            if not await cursor.fetchone():
+                print(f"❌ Collection not found: {collection}")
+                return None
+            
+            # Get total count
+            cursor = await db.execute(f"SELECT COUNT(*) FROM {table_name}")
+            total_count = (await cursor.fetchone())[0]
+            
+            if total_count == 0:
+                print("⚠️  Collection is empty, no data to export")
+                return None
+            
+            print(f"  Total records: {total_count}")
+            if limit:
+                print(f"  Export limit: {limit}")
+                export_count = min(total_count, limit)
+            else:
+                print(f"  Export limit: ALL")
+                export_count = total_count
+            
+            # Query data
+            db.row_factory = aiosqlite.Row
+            if limit:
+                cursor = await db.execute(
+                    f"SELECT * FROM {table_name} ORDER BY created_at DESC LIMIT ?",
+                    (limit,)
+                )
+            else:
+                cursor = await db.execute(f"SELECT * FROM {table_name} ORDER BY created_at DESC")
+            
+            rows = await cursor.fetchall()
+            
+            if not rows:
+                print("⚠️  No data to export")
+                return None
+            
+            # Write to CSV
+            try:
+                with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
+                    # Get column names from first row
+                    fieldnames = rows[0].keys()
+                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                    
+                    # Write header
+                    writer.writeheader()
+                    
+                    # Write data rows
+                    for row in rows:
+                        writer.writerow(dict(row))
+                
+                print(f"\n✅ Export successful!")
+                print(f"   File: {output_file.absolute()}")
+                print(f"   Rows: {len(rows)}")
+                print(f"   Columns: {len(fieldnames)}")
+                print(f"   Size: {output_file.stat().st_size:,} bytes")
+                
+                # Show column names
+                print(f"\n   Columns:")
+                for col in fieldnames:
+                    print(f"     • {col}")
+                
+                return str(output_file.absolute())
+                
+            except Exception as e:
+                print(f"❌ Failed to write CSV: {e}")
+                return None
 
     # ============================================================================
     # SECTION 2: Storage Cache Management (StorageAgent Scripts)
@@ -987,19 +1098,20 @@ class StorageAgentInspector:
             print("  1. List all collections")
             print("  2. Show collection detail")
             print("  3. Query collection data")
-            print("  4. Clear collection (table + cache)")
+            print("  4. Export collection to CSV")
+            print("  5. Clear collection (table + cache)")
             print("\n🔧 STORAGE CACHE MANAGEMENT (StorageAgent):")
-            print("  5. List storage cache entries")
-            print("  6. Show storage cache detail")
-            print("  7. Delete storage cache entry")
+            print("  6. List storage cache entries")
+            print("  7. Show storage cache detail")
+            print("  8. Delete storage cache entry")
             print("\n🤖 SCRAPER SCRIPT CACHE MANAGEMENT (ScraperAgent):")
-            print("  8. List scraper scripts")
-            print("  9. Show scraper script detail")
-            print("  10. Export scraper script to file")
-            print("  11. Delete scraper script")
-            print("  12. Clear all scraper scripts")
+            print("  9. List scraper scripts")
+            print("  10. Show scraper script detail")
+            print("  11. Export scraper script to file")
+            print("  12. Delete scraper script")
+            print("  13. Clear all scraper scripts")
             print("\n📈 STATISTICS:")
-            print("  13. Show statistics")
+            print("  14. Show statistics")
             print("\n  q. Quit")
             print("=" * 80)
 
@@ -1026,31 +1138,42 @@ class StorageAgentInspector:
                 collection = input("Collection name: ").strip()
                 if collection:
                     user_id = input("User ID (default: default_user): ").strip() or "default_user"
-                    await self.clear_collection(collection, user_id)
+                    output_path = input("Output path (Enter for ./{collection}_{user_id}.csv): ").strip() or None
+                    limit_input = input("Limit rows (Enter for ALL): ").strip()
+                    limit = int(limit_input) if limit_input else None
+                    result = await self.export_collection_to_csv(collection, user_id, output_path, limit)
+                    if result:
+                        print(f"\n💾 File saved: {result}")
 
             elif choice == '5':
-                pattern = input("Search pattern (Enter for all): ").strip()
-                await self.list_all_caches(pattern)
+                collection = input("Collection name: ").strip()
+                if collection:
+                    user_id = input("User ID (default: default_user): ").strip() or "default_user"
+                    await self.clear_collection(collection, user_id)
 
             elif choice == '6':
-                cache_key = input("Cache key: ").strip()
-                if cache_key:
-                    await self.show_cache_detail(cache_key)
+                pattern = input("Search pattern (Enter for all): ").strip()
+                await self.list_all_caches(pattern)
 
             elif choice == '7':
                 cache_key = input("Cache key: ").strip()
                 if cache_key:
-                    await self.delete_cache(cache_key)
+                    await self.show_cache_detail(cache_key)
 
             elif choice == '8':
-                await self.list_scraper_scripts()
+                cache_key = input("Cache key: ").strip()
+                if cache_key:
+                    await self.delete_cache(cache_key)
 
             elif choice == '9':
+                await self.list_scraper_scripts()
+
+            elif choice == '10':
                 script_key = input("Script key: ").strip()
                 if script_key:
                     await self.show_scraper_script_detail(script_key)
 
-            elif choice == '10':
+            elif choice == '11':
                 script_key = input("Script key: ").strip()
                 if script_key:
                     output_path = input("Output path (Enter for current dir): ").strip() or None
@@ -1058,15 +1181,15 @@ class StorageAgentInspector:
                     if result:
                         print(f"✅ Exported to: {result}")
 
-            elif choice == '11':
+            elif choice == '12':
                 script_key = input("Script key: ").strip()
                 if script_key:
                     await self.delete_scraper_script(script_key)
 
-            elif choice == '12':
+            elif choice == '13':
                 await self.clear_all_scraper_scripts()
 
-            elif choice == '13':
+            elif choice == '14':
                 await self.show_statistics()
 
             elif choice.lower() == 'q':
@@ -1113,7 +1236,9 @@ Examples:
     
     # Collection management
     parser.add_argument('--list-collections', action='store_true', help='List all collections')
+    parser.add_argument('--export-collection', metavar='NAME', help='Export collection to CSV')
     parser.add_argument('--clear-collection', metavar='NAME', help='Clear collection (table + cache)')
+    parser.add_argument('--limit', type=int, metavar='N', help='Limit rows for export (default: all)')
     
     # Storage cache management
     parser.add_argument('--list-cache', action='store_true', help='List storage cache entries')
@@ -1137,6 +1262,17 @@ Examples:
     # Quick commands
     if args.list_collections:
         await inspector.list_collections()
+        return
+
+    if args.export_collection:
+        result = await inspector.export_collection_to_csv(
+            args.export_collection, 
+            args.user, 
+            output_path=args.output,
+            limit=args.limit
+        )
+        if result:
+            print(f"\n✅ Collection exported successfully to: {result}")
         return
 
     if args.list_cache:

@@ -158,12 +158,20 @@ class ScraperAgent(BaseStepAgent):
             False
         )
 
-        # max_items 和 timeout
-        config['max_items'] = (
-            input_data.get('max_items') or
-            options.get('max_items') or
-            10
-        )
+        # max_items - 默认为 0 表示无限制（提取全部）
+        # 只有当用户明确指定数量时才设置限制
+        max_items_raw = input_data.get('max_items') or options.get('max_items')
+        
+        if max_items_raw is not None:
+            # 强制转换为整数，防止变量替换失败导致字符串传入
+            try:
+                config['max_items'] = int(max_items_raw)
+            except (ValueError, TypeError):
+                logger.warning(f"max_items 转换失败: {max_items_raw}，将提取全部数据")
+                config['max_items'] = 0
+        else:
+            # 用户未指定，默认提取全部
+            config['max_items'] = 0
 
         config['timeout'] = (
             input_data.get('timeout') or

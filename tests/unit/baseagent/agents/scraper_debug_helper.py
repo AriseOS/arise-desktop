@@ -563,7 +563,7 @@ def execute_extraction(serialized_dom, dom_dict, max_items: int = 100):
         for req_type, req_data in self.default_data_requirements.items():
             print(f"  • {req_type}: {req_data['user_description']}")
     
-    async def execute_script(self, name: str, script_file_path: str = None, requirement_type: str = "product_detail", dom_scope: str = "partial", max_items: int = 10):
+    async def execute_script(self, name: str, script_file_path: str = None, requirement_type: str = "product_detail", dom_scope: str = "partial", max_items: int = 0):
         """Execute a generated script
 
         Args:
@@ -669,7 +669,7 @@ async def main():
     parser.add_argument('--dom-scope', choices=['partial', 'full'], default='partial',
                        help='DOM scope for script execution (generation always uses partial)')
     parser.add_argument('--script-file', help='Specific script file to execute (optional)')
-    parser.add_argument('--max-items', type=int, default=10, help='Maximum items to extract')
+    parser.add_argument('--max-items', type=int, default=0, help='Maximum items to extract (0 = unlimited)')
     
     args = parser.parse_args()
     
