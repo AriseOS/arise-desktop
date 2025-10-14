@@ -5,20 +5,21 @@
   "description": "Chrome extension for AgentCrafter workflow automation",
   "permissions": [
     "activeTab",
+    "tabs",
     "storage",
-    "scripting"
+    "scripting",
+    "sidePanel"
   ],
   "host_permissions": [
     "http://localhost:8000/*",
     "http://localhost:3000/*"
   ],
   "action": {
-    "default_popup": "popup.html",
-    "default_icon": {
-      "16": "icons/icon16.png",
-      "48": "icons/icon48.png",
-      "128": "icons/icon128.png"
-    }
+    "default_popup": "popup-react.html",
+    "default_title": "AgentCrafter"
+  },
+  "side_panel": {
+    "default_path": "popup-react.html"
   },
   "background": {
     "service_worker": "background.js"
@@ -34,5 +35,11 @@
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["behavior_tracker.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }

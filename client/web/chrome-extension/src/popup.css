@@ -159,6 +159,31 @@ body {
   color: #8e8e93;
 }
 
+.side-panel-button {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: rgba(102, 126, 234, 0.1);
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: #667eea;
+  flex-shrink: 0;
+}
+
+.side-panel-button:hover {
+  background: rgba(102, 126, 234, 0.2);
+  transform: scale(1.05);
+}
+
+.side-panel-button svg {
+  width: 18px;
+  height: 18px;
+}
+
 /* Settings */
 .settings-section-title {
   font-size: 13px;
