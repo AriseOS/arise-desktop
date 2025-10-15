@@ -3,6 +3,11 @@
     "start_time": "2025-09-13T10:34:05.099163",
     "total_operations": 16
   },
+  "task_metadata": {
+    "task_description": "Collect coffee product information from Allegro including product name, price, and sales count",
+    "user_query": "Collect all coffee products from first page with title, price and sales",
+    "session_id": "session_allegro_demo_001"
+  },
   "operations": [
     {
       "type": "test",

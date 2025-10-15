@@ -4,11 +4,23 @@ End-to-End Integration Test: User Operations → Workflow
 Complete pipeline test:
 1. Learning Phase: User Operations → Intent Graph
 2. Generation Phase: Intent Graph + Query → MetaFlow → Workflow
+
+Usage:
+    # Test with Allegro data (default)
+    python test_end_to_end.py
+
+    # Test with Amazon data - modify TEST_NAME variable below
+    TEST_NAME = "coffee_amazon"
 """
 import json
 import logging
 import os
+import sys
 from pathlib import Path
+
+# Add project root to Python path
+project_root = Path(__file__).parent.parent.parent.parent
+sys.path.insert(0, str(project_root))
 
 import pytest
 
@@ -22,14 +34,23 @@ from src.common.llm import AnthropicProvider
 logging.basicConfig(level=logging.INFO, format='%(message)s', force=True)
 logger = logging.getLogger(__name__)
 
+# ===== Configuration: Change this to test different scenarios =====
+TEST_NAME = os.environ.get("TEST_NAME", "coffee_allegro")  # or "coffee_amazon"
+# ===================================================================
+
 
 class TestEndToEnd:
     """End-to-End Integration Test"""
 
     @pytest.fixture
-    def test_data_dir(self):
-        """Get test data directory"""
-        return Path(__file__).parent.parent.parent / "test_data" / "coffee_allegro"
+    def test_name(self):
+        """Get test scenario name"""
+        return TEST_NAME
+
+    @pytest.fixture
+    def test_data_dir(self, test_name):
+        """Get test data directory based on test name"""
+        return Path(__file__).parent.parent.parent / "test_data" / test_name
 
     @pytest.fixture
     def user_operations_json(self, test_data_dir):
@@ -46,11 +67,17 @@ class TestEndToEnd:
         return output_path
 
     @pytest.mark.asyncio
-    async def test_end_to_end_pipeline(self, user_operations_json, output_dir, test_data_dir):
+    async def test_end_to_end_pipeline(self, user_operations_json, output_dir, test_data_dir, test_name):
         """Complete pipeline: User Operations → Intent Graph → MetaFlow → Workflow"""
 
+        # Extract task metadata from JSON
+        task_metadata = user_operations_json.get("task_metadata", {})
+        task_description = task_metadata.get("task_description", "Collect data from website")
+        session_id = task_metadata.get("session_id", "session_demo_001")
+
         logger.info("\n" + "="*80)
-        logger.info("End-to-End Test: User Operations → Intent Graph → MetaFlow → Workflow")
+        logger.info(f"End-to-End Test: {test_name}")
+        logger.info(f"Task: {task_description}")
         logger.info("="*80 + "\n")
 
         # ===== Phase 1: Learning (User Operations → Intent Graph) =====
@@ -82,12 +109,15 @@ class TestEndToEnd:
                     pytest.skip("ANTHROPIC_API_KEY not set and no cached data")
 
                 logger.info("Extracting intents from User Operations...")
+                logger.info(f"Task Description: {task_description}")
+                logger.info(f"Session ID: {session_id}\n")
+
                 llm_provider = AnthropicProvider()
                 extractor = IntentExtractor(llm_provider=llm_provider)
                 intents = await extractor.extract_intents(
                     user_operations_json["operations"],
-                    task_description="Collect coffee product prices from Allegro",
-                    source_session_id="session_demo_001"
+                    task_description=task_description,
+                    source_session_id=session_id
                 )
                 logger.info(f"✓ Extracted {len(intents)} intents\n")
 
@@ -118,11 +148,11 @@ class TestEndToEnd:
         # Step 1: Generate MetaFlow
         logger.info("Step 1: Generating MetaFlow from Intent Graph...")
 
-        task_description = """User wants to collect coffee product information from Allegro.
-        Navigate to homepage, enter coffee category, extract product list, 
-        then for each product extract title, price and sales count."""
+        # Use task metadata from JSON
+        user_query = task_metadata.get("user_query", "Collect data from website")
 
-        user_query = "Collect all coffee products from first page with title, price and sales"
+        logger.info(f"Task Description: {task_description}")
+        logger.info(f"User Query: {user_query}\n")
 
         metaflow_generator = MetaFlowGenerator(llm_provider=AnthropicProvider())
         metaflow = await metaflow_generator.generate(
