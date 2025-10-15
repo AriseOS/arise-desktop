@@ -173,7 +173,7 @@ Output complete MetaFlow YAML (conforming to above specification).
 
 Notes:
 - **Path Filtering**: Only include Intents related to user query, ignore irrelevant branches in the graph
-- Only output YAML, no other explanations
+- Only output pure YAML content, DO NOT wrap in markdown code blocks (```yaml), no explanations
 - Ensure YAML format is correct and parsable
 - If loop is needed, detect keywords in user query ("all", "every", etc.)
 - If loop needs list data but not provided in Intent, insert implicit ExtractList node
