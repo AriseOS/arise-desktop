@@ -1,115 +1,169 @@
-# Intent Builder - 待讨论事项清单
+# Intent Builder - Implementation Status and Future Work
 
-**更新日期**: 2025-10-07
-
----
-
-## 已完成 ✅
-
-### 系统设计
-- [x] 系统整体设计（design_overview.md）
-- [x] MVP 范围界定
-- [x] Intent 数据结构（4个域：id, name, description, operations）
-- [x] Intent 粒度定义（粗粒度，基于页面状态变化）
-- [x] 循环推断策略（从用户描述关键词）
-- [x] 意图版本管理（MVP 不考虑）
-- [x] 存储方案（MVP 使用内存）
-
-### MetaFlow 设计
-- [x] MetaFlow 格式设计（metaflow_design.md）
-- [x] MetaFlow 职责边界（执行顺序 + 控制流，不包含数据流）
-- [x] 基本数据结构（图结构，YAML 格式）
-- [x] 数据流表示方式（不包含，由 LLM 推断）
-- [x] 循环表示方式（特殊节点 + 自然语言 description）
-- [x] 变量命名策略（生成 workflow 时由 LLM 决定）
-- [x] MetaFlow → YAML 映射关系（由 LLM 灵活决定）
-- [x] 可读性要求（人类可读优先）
-- [x] 格式选择（YAML + Pydantic）
-- [x] 扩展性设计（只加必要功能，保持可扩展）
-- [x] Operations 格式（从意图记忆中来，包含详细 DOM 信息）
-- [x] 节点 ID 来源（从意图记忆系统中获取）
-
-### WorkflowGenerator 设计
-- [x] MetaFlow → Workflow 生成策略讨论（discussions/03）
-- [x] WorkflowGenerator 设计文档（workflow_generator_design.md）
-- [x] LLM 决策点明确（Agent 类型、数据流、循环、Step 拆分）
-- [x] Operations 格式确认（已足够详细）
-- [x] Step 拆分原则（以 Step Agent 为最小单元）
-- [x] Prompt 设计方案（精简规范 + 1 个示例 + 重试机制）
+**Last Updated**: 2025-10-13
 
 ---
 
-## 待讨论 🔴
+## ✅ Completed - Core Implementation (Intent Builder v1)
 
-### P0 - 核心组件设计
+### System Design
+- [x] Overall system design (design_overview.md)
+- [x] MVP scope definition
+- [x] Intent data structure (4 fields: id, name, description, operations)
+- [x] Intent granularity definition (coarse-grained, based on page state changes)
+- [x] Loop inference strategy (from user description keywords)
+- [x] Intent versioning (not considered in MVP)
+- [x] Storage solution (MVP uses in-memory)
 
-#### 1. IntentExtractor（意图提取器）
-- [ ] 从 user_operations.json 切分意图的具体规则
-- [ ] 如何识别页面状态变化（URL 变化 + DOM 变化？）
-- [ ] 如何使用 LLM 生成 intent 的 name, description, operations
-- [ ] 粒度控制：什么时候应该合并操作，什么时候应该拆分
+### MetaFlow Design
+- [x] MetaFlow format design (metaflow_design.md)
+- [x] MetaFlow responsibility boundaries (execution order + control flow, excludes data flow)
+- [x] Basic data structures (graph structure, YAML format)
+- [x] Data flow representation (not included, inferred by LLM)
+- [x] Loop representation (special nodes + natural language description)
+- [x] Variable naming strategy (decided by LLM during workflow generation)
+- [x] MetaFlow → YAML mapping (flexibly decided by LLM)
+- [x] Readability requirements (human-readable first)
+- [x] Format selection (YAML + Pydantic)
+- [x] Extensibility design (add only necessary features, keep extensible)
+- [x] Operations format (from intent memory, includes detailed DOM info)
+- [x] Node ID source (obtained from intent memory system)
 
-#### 2. IntentMemoryGraph（意图记忆图）
-- [ ] 图的存储结构（节点 + 边）
-- [ ] 如何记录意图之间的连接关系
-- [ ] 如何记录和更新频率信息
-- [ ] MVP 使用什么实现（Python 字典 vs NetworkX）
+### WorkflowGenerator Design
+- [x] MetaFlow → Workflow generation strategy discussion (discussions/03)
+- [x] WorkflowGenerator design document (workflow_generator_design.md)
+- [x] LLM decision points clarified (Agent type, data flow, loops, Step splitting)
+- [x] Operations format confirmed (sufficiently detailed)
+- [x] Step splitting principles (Step Agent as minimum unit)
+- [x] Prompt design scheme (concise specs + 1 example + retry mechanism)
 
-#### 3. IntentRetriever（意图检索器）
-- [ ] 根据 user_description 检索意图的策略
-- [ ] 标签匹配的具体实现（关键词提取？）
-- [ ] 如何利用频率信息排序
-- [ ] 如何确定检索结果的数量和相关性
+### P0 - Core Components Implementation
 
-#### 4. MetaFlowGenerator（MetaFlow 生成器）
-- [ ] 如何将检索到的意图列表组装成 MetaFlow
-- [ ] 如何从 user_description 推断循环（关键词列表是什么？）
-- [ ] 如何确定循环的范围（哪些意图在循环内？）
-- [ ] 如何生成节点 ID
+#### 1. IntentExtractor ✅ COMPLETED
+**File**: `src/intent_builder/extractors/intent_extractor.py`
+- [x] URL-based segmentation rules from user_operations.json
+- [x] Page state change identification (URL change detection)
+- [x] LLM-based generation of intent name, description, operations
+- [x] Granularity control (through detailed prompt guidance)
 
-#### 5. WorkflowGenerator（Workflow 生成器）
-- [ ] **LLM Prompt 设计**（见下一节详细讨论）
-- [ ] 如何确保生成的 YAML 格式正确
-- [ ] 错误处理和重试策略
-- [ ] 性能优化（缓存？）
+#### 2. IntentMemoryGraph ✅ COMPLETED
+**File**: `src/intent_builder/core/intent_memory_graph.py`
+- [x] Graph storage structure (nodes + edges with abstract backend interface)
+- [x] Intent connection relationships recording
+- [x] MVP implementation (InMemoryIntentStorage + JSON persistence)
+- Note: Frequency information tracking deferred (not needed for MVP)
+
+#### 3. IntentRetriever ⚠️ ALTERNATIVE IMPLEMENTATION
+- Current implementation uses **LLM-based path selection** in MetaFlowGenerator
+- All intents passed to LLM, which filters based on user_query
+- This is a valid MVP strategy that avoids complex retrieval logic
+- Note: Semantic similarity search placeholder exists in `intent_memory_graph.py:282-313`
+
+#### 4. MetaFlowGenerator ✅ COMPLETED
+**File**: `src/intent_builder/generators/metaflow_generator.py`
+- [x] Assemble MetaFlow from retrieved intent list
+- [x] Infer loops from user_description (keyword detection)
+- [x] Determine loop scope (which intents are in loop)
+- [x] Generate node IDs
+- [x] Path selection and filtering by LLM
+
+#### 5. WorkflowGenerator ✅ COMPLETED
+**File**: `src/intent_builder/generators/workflow_generator.py`
+- [x] LLM Prompt design (using PromptBuilder)
+- [x] Ensure generated YAML format correctness (WorkflowYAMLValidator)
+- [x] Error handling and retry strategy (max_retries parameter)
+- [x] Generate BaseAgent Workflow from MetaFlow
+
+### End-to-End Pipeline ✅ TESTED
+**File**: `tests/integration/intent_builder/test_end_to_end.py`
+- [x] User Operations → Intent Graph → MetaFlow → Workflow
+- [x] Integration test with caching support
+- [x] Test data available: `tests/test_data/coffee_allegro/`
 
 ---
 
-## 待深入讨论 🟡
+## 🔵 Future Enhancements (Post-MVP)
 
-### MetaFlow → Workflow 生成细节
+### Performance Optimizations
+- [ ] Semantic similarity search for IntentRetriever
+  - Implement embedding-based intent retrieval
+  - Add reranking for better relevance
+  - See: `intent_memory_graph.py:282-313` (placeholder exists)
+- [ ] LLM response caching
+  - Cache MetaFlow generation results
+  - Cache Workflow generation results
+  - Implement cache invalidation strategy
+- [ ] Parallel processing
+  - Parallelize intent extraction for large operation sets
+  - Batch LLM requests where possible
 
-需要明确 LLM 在转换过程中的决策点：
+### Robustness Improvements
+- [ ] Better error handling
+  - More graceful degradation on LLM failures
+  - Better error messages for users
+  - Fallback strategies for each component
+- [ ] Validation enhancements
+  - More comprehensive YAML validation
+  - Semantic validation of generated workflows
+  - Runtime validation of workflow execution
 
-1. **Operations → Agent Type 映射**
-   - 哪些 operations 应该用 tool_agent？
-   - 哪些应该用 scraper_agent？
-   - 决策依据是什么？
+### Feature Enhancements
+- [ ] Intent deduplication and merging
+  - Detect duplicate intents across sessions
+  - Merge similar intents
+  - Track intent usage frequency
+- [ ] Multi-session learning
+  - Cross-session intent sharing
+  - User-specific intent memory
+  - Collaborative filtering for intent recommendation
+- [ ] Advanced loop detection
+  - Support nested loops
+  - Detect conditional loops
+  - Infer loop termination conditions
 
-2. **数据流推断**
-   - 如何识别意图之间需要传递的数据？
-   - 变量命名规则（page_state, product_list 等）
-   - 如何处理多个输出的情况？
-
-3. **循环结构生成**
-   - 从自然语言 description 如何生成 foreach 结构？
-   - 如何推断 source（循环来源）？
-   - 如何推断 item_var（循环变量名）？
-
-4. **Step 拆分策略**
-   - 一个意图的多个 operations 如何拆分成多个 step？
-   - 什么时候应该合并，什么时候应该拆分？
-
-5. **Prompt 设计**
-   - 需要提供什么样的上下文？
-   - 需要什么样的约束和示例？
-   - 如何确保输出格式正确？
+### Quality Improvements
+- [ ] Prompt engineering refinement
+  - A/B testing of different prompts
+  - Few-shot example optimization
+  - Domain-specific prompt tuning
+- [ ] Workflow optimization
+  - Simplify generated workflows
+  - Eliminate redundant steps
+  - Optimize variable passing
 
 ---
 
-## 下一步计划
+## 🎯 Related Systems
 
-1. 讨论 MetaFlow → Workflow 生成的 LLM 决策点
-2. 确定各个组件的设计方案
-3. 编写各组件的详细设计文档
-4. 制定实施计划
+### Intent Builder v2 (Advanced Architecture)
+**Location**: `src/intent_builder2/`
+
+A more sophisticated implementation using:
+- Cognitive phrases and ontology-based reasoning
+- Graph-based state and action representation
+- Advanced retrieval with embedding and reranking
+- Task decomposition with DAG planning
+
+**Status**: Separate experimental architecture
+**Note**: Consider consolidating with Intent Builder v1 or choosing one as the primary implementation
+
+---
+
+## 📝 Notes
+
+### Implementation Philosophy
+The current Intent Builder v1 follows the **MVP principle**:
+- LLM-based solutions prioritized over complex algorithms
+- Path selection handled by LLM rather than retrieval system
+- Simple in-memory storage with JSON persistence
+- Focus on end-to-end functionality over optimization
+
+This approach successfully delivers the core value proposition:
+**User Operations → Intent Memory → Reusable Workflows**
+
+### Next Steps
+1. ✅ All P0 components implemented and tested
+2. ✅ End-to-end pipeline validated
+3. 🔵 Consider production deployment and monitoring
+4. 🔵 Gather user feedback for prioritizing enhancements
+5. 🔵 Decide on Intent Builder v1 vs v2 convergence strategy
