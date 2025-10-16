@@ -181,21 +181,16 @@ class ConfigService:
         # 将点分割键转换为环境变量格式
         env_key = key.upper().replace('.', '_')
         env_key = f"BASEAPP_{env_key}"
-        
+
         value = os.getenv(env_key)
         if value is not None:
             # 尝试转换类型
             return self._convert_env_value(value)
-        
-        # 检查一些特殊的环境变量
-        special_mappings = {
-            "agent.llm.api_key": "OPENAI_API_KEY",
-            "anthropic.api_key": "ANTHROPIC_API_KEY"
-        }
-        
-        if key in special_mappings:
-            return os.getenv(special_mappings[key])
-        
+
+        # ❌ Removed special_mappings - let YAML ${VARIABLE} expansion handle it
+        # This was causing agent.llm.api_key to always read OPENAI_API_KEY
+        # even when baseapp.yaml specifies ${ANTHROPIC_API_KEY}
+
         return None
     
     def _convert_env_value(self, value: str) -> Any:
