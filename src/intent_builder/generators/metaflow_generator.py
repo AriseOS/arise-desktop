@@ -89,14 +89,30 @@ class MetaFlowGenerator:
         logger.info(f"Extracted YAML first 200 chars:\n{metaflow_yaml[:200]}")
         logger.info("=" * 80)
 
-        # 5. Parse and validate
+        # 5. Parse YAML to dict
         try:
-            metaflow = MetaFlow.from_yaml(metaflow_yaml)
+            import yaml
+            metaflow_dict = yaml.safe_load(metaflow_yaml)
         except Exception as e:
-            logger.error(f"Failed to parse MetaFlow YAML: {e}")
+            logger.error(f"Failed to parse YAML: {e}")
             logger.error("=" * 80)
             logger.error("FAILED YAML CONTENT:")
             logger.error(metaflow_yaml)
+            logger.error("=" * 80)
+            raise
+
+        # 6. Fill operations in dict before creating MetaFlow object
+        self._fill_operations_in_dict(metaflow_dict, graph)
+
+        # 7. Create MetaFlow object from filled dict
+        try:
+            metaflow_yaml_filled = yaml.dump(metaflow_dict, allow_unicode=True, sort_keys=False)
+            metaflow = MetaFlow.from_yaml(metaflow_yaml_filled)
+        except Exception as e:
+            logger.error(f"Failed to create MetaFlow object: {e}")
+            logger.error("=" * 80)
+            logger.error("FAILED YAML CONTENT (after filling):")
+            logger.error(metaflow_yaml_filled)
             logger.error("=" * 80)
             raise
 
@@ -113,20 +129,17 @@ class MetaFlowGenerator:
     ) -> str:
         """Build MetaFlow generation prompt (includes graph structure)"""
 
-        # Format intent list
+        # Format intent list - only send id and description (not operations)
+        # Operations will be filled automatically after MetaFlow generation
         intent_descriptions = []
         for intent in intents:
-            # Convert operations to dict format - PRESERVE ALL FIELDS
-            operations_list = []
-            for op in intent.operations:
-                # Pydantic Operation has model_dump() method - use it directly
-                op_dict = op.model_dump(by_alias=True, exclude_none=True)
-                operations_list.append(op_dict)
+            # Only send operation types as summary (not full details)
+            operation_types = [op.type for op in intent.operations]
 
             intent_descriptions.append({
                 "id": intent.id,
                 "description": intent.description,
-                "operations": operations_list
+                "operation_types": operation_types  # Only types, not full operations
             })
 
         # Format edges
@@ -169,12 +182,20 @@ class MetaFlowGenerator:
 
 ## Output Requirements
 
-Output complete MetaFlow YAML (conforming to above specification).
+Output MetaFlow YAML structure WITHOUT operations field.
+
+IMPORTANT:
+- DO NOT include "operations" field in the output - it will be filled automatically
+- Only include: id, intent_id, intent_name, intent_description, inputs, outputs
+- For implicit nodes, you can include operations with placeholders (as shown in examples)
+
+Format:
+- Output the YAML in a markdown code block using ```yaml
+- Do not add any explanations outside the code block
+- Ensure YAML format is correct and parsable
 
 Notes:
 - **Path Filtering**: Only include Intents related to user query, ignore irrelevant branches in the graph
-- Only output pure YAML content, DO NOT wrap in markdown code blocks (```yaml), no explanations
-- Ensure YAML format is correct and parsable
 - If loop is needed, detect keywords in user query ("all", "every", etc.)
 - If loop needs list data but not provided in Intent, insert implicit ExtractList node
 """
@@ -401,3 +422,68 @@ Arrange by Intent order, but:
         # If no code block, assume entire response is YAML
         logger.debug("⚠️  No markdown code block found, using entire response")
         return llm_response.strip()
+
+    def _fill_operations_in_dict(self, metaflow_dict: dict, graph: IntentMemoryGraph):
+        """
+        Fill operations in dict before creating MetaFlow object
+
+        Args:
+            metaflow_dict: MetaFlow data as dict (from YAML)
+            graph: Intent Graph (source of truth for operations)
+        """
+        logger.info("Filling operations from Intent Graph...")
+
+        filled_count = 0
+        nodes = metaflow_dict.get('nodes', [])
+
+        for node in nodes:
+            # Handle regular nodes
+            if 'intent_id' in node:
+                intent_id = node['intent_id']
+
+                # Skip implicit nodes (they have placeholders)
+                if intent_id.startswith('implicit_'):
+                    logger.debug(f"Skipping implicit node: {node.get('id', 'unknown')}")
+                    continue
+
+                # Find corresponding Intent
+                intent = graph.get_intent(intent_id)
+                if intent:
+                    # Fill operations from Intent (convert to dict)
+                    operations_list = []
+                    for op in intent.operations:
+                        op_dict = op.model_dump(by_alias=True, exclude_none=True)
+                        operations_list.append(op_dict)
+
+                    node['operations'] = operations_list
+                    filled_count += 1
+                    logger.debug(f"✓ Filled operations for node {node.get('id', 'unknown')} from intent {intent_id}")
+                else:
+                    logger.warning(f"⚠️  Intent {intent_id} not found in graph for node {node.get('id', 'unknown')}")
+
+            # Handle loop nodes (recursively fill children)
+            if 'children' in node and node['children']:
+                for child in node['children']:
+                    if 'intent_id' in child:
+                        child_intent_id = child['intent_id']
+
+                        # Skip implicit nodes
+                        if child_intent_id.startswith('implicit_'):
+                            logger.debug(f"Skipping implicit child node: {child.get('id', 'unknown')}")
+                            continue
+
+                        intent = graph.get_intent(child_intent_id)
+                        if intent:
+                            # Fill operations from Intent
+                            operations_list = []
+                            for op in intent.operations:
+                                op_dict = op.model_dump(by_alias=True, exclude_none=True)
+                                operations_list.append(op_dict)
+
+                            child['operations'] = operations_list
+                            filled_count += 1
+                            logger.debug(f"✓ Filled operations for child node {child.get('id', 'unknown')} from intent {child_intent_id}")
+                        else:
+                            logger.warning(f"⚠️  Intent {child_intent_id} not found in graph for child node {child.get('id', 'unknown')}")
+
+        logger.info(f"✓ Filled operations for {filled_count} nodes from Intent Graph")

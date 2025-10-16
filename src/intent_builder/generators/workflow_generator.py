@@ -152,26 +152,39 @@ Regenerate the workflow:
         """
         Extract YAML from markdown code blocks if present
 
+        Handles various formats:
+        - ```yaml\nYAML_CONTENT\n```
+        - ```\nYAML_CONTENT\n```
+        - YAML_CONTENT (no code blocks)
+
         Args:
             text: Raw LLM response
 
         Returns:
             Extracted YAML string
         """
+        text = text.strip()
+
         # Check for ```yaml code blocks
-        if "```yaml" in text:
-            start = text.find("```yaml") + 7
-            end = text.find("```", start)
-            return text[start:end].strip()
+        if text.startswith("```yaml"):
+            # Remove opening ```yaml
+            text = text[7:].strip()
+            # Remove closing ```
+            if text.endswith("```"):
+                text = text[:-3].strip()
+            return text
 
         # Check for ``` code blocks
-        if "```" in text:
-            start = text.find("```") + 3
-            end = text.find("```", start)
-            return text[start:end].strip()
+        if text.startswith("```"):
+            # Remove opening ```
+            text = text[3:].strip()
+            # Remove closing ```
+            if text.endswith("```"):
+                text = text[:-3].strip()
+            return text
 
         # Return as-is if no code blocks
-        return text.strip()
+        return text
 
 
 # Convenience function

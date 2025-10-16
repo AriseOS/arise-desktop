@@ -84,10 +84,18 @@ Please convert the following MetaFlow to BaseAgent Workflow YAML:
 
 # Output Requirements
 
-- Output ONLY the workflow YAML, no explanations
+- Output the workflow YAML in a markdown code block using ```yaml
+- Do not add any explanations outside the code block
 - Ensure the YAML is valid and can be parsed
 - Follow the workflow specification exactly
 - Include all necessary fields (apiVersion, kind, metadata, steps, etc.)
+
+Example format:
+```yaml
+apiVersion: "agentcrafter.io/v1"
+kind: "Workflow"
+...
+```
 """
         return prompt
 

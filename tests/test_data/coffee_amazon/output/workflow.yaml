@@ -1,0 +1,150 @@
+apiVersion: "agentcrafter.io/v1"
+kind: "Workflow"
+
+metadata:
+  name: "amazon-coffee-collection-workflow"
+  description: "Collect coffee product information from Amazon including product name, price, and customer ratings"
+  version: "1.0.0"
+  tags: ["scraper", "amazon", "coffee", "collection"]
+
+inputs:
+  max_products:
+    type: "integer"
+    description: "Maximum number of products to collect"
+    required: false
+    default: 20
+
+outputs:
+  all_product_details:
+    type: "array"
+    description: "Collected product information including name, price, and ratings"
+  final_response:
+    type: "string"
+    description: "Workflow completion message"
+
+config:
+  max_execution_time: 1800
+  enable_parallel: false
+  enable_cache: true
+
+steps:
+  - id: "init-vars"
+    name: "Initialize variables"
+    agent_type: "variable"
+    description: "Initialize data collection variables"
+    agent_instruction: "Initialize product collection variables"
+    inputs:
+      operation: "set"
+      data:
+        all_product_urls: []
+        all_product_details: []
+    outputs:
+      all_product_urls: "all_product_urls"
+      all_product_details: "all_product_details"
+    timeout: 10
+
+  - id: "extract-product-urls"
+    name: "Extract product URLs"
+    agent_type: "scraper_agent"
+    description: "Navigate to Amazon coffee category and extract all product URLs"
+    agent_instruction: "Visit Amazon coffee products page with customer rating filter and extract all product URLs"
+    inputs:
+      target_path: "https://www.amazon.com/s?i=grocery&rh=n%3A23783759011%2Cp_72%3A4-&s=featured-rank"
+      extraction_method: "script"
+      dom_scope: "full"
+      data_requirements:
+        user_description: "Extract all coffee product URLs from the listing page"
+        output_format:
+          url: "Product detail page URL"
+        sample_data:
+          - url: "https://www.amazon.com/product1"
+          - url: "https://www.amazon.com/product2"
+    outputs:
+      extracted_data: "product_urls"
+    timeout: 60
+
+  - id: "save-urls"
+    name: "Save product URLs"
+    agent_type: "variable"
+    description: "Save extracted URLs to variable"
+    agent_instruction: "Save product URLs to collection variable"
+    inputs:
+      operation: "set"
+      data:
+        all_product_urls: "{{product_urls}}"
+    outputs:
+      all_product_urls: "all_product_urls"
+    timeout: 10
+
+  - id: "collect-product-details"
+    name: "Collect product details"
+    agent_type: "foreach"
+    description: "Iterate through all coffee products and extract name, price, and ratings for each"
+    source: "{{all_product_urls}}"
+    item_var: "current_product"
+    index_var: "product_index"
+    max_iterations: 20
+    loop_timeout: 1200
+    steps:
+      - id: "scrape-product-info"
+        name: "Scrape product information"
+        agent_type: "scraper_agent"
+        description: "Extract product name, price, and customer ratings"
+        agent_instruction: "Visit product detail page and extract product name, price, and customer ratings"
+        inputs:
+          target_path: "{{current_product.url}}"
+          extraction_method: "llm"
+          dom_scope: "partial"
+          data_requirements:
+            user_description: "Extract product name, price, and customer ratings from Amazon product page"
+            output_format:
+              product_name: "Product name"
+              product_price: "Product price"
+              product_ratings: "Customer ratings count"
+            sample_data:
+              product_name: "Lavazza House Blend Perfetto Ground Coffee 12oz Bag, Medium Roast, Full-bodied, Intensity 3/5, 100% Arabica, Ideal for Drip Brewers, (Pack of 1) - Package May Vary"
+              product_price: "$12.99"
+              product_ratings: "8,168 ratings"
+        outputs:
+          extracted_data: "product_info"
+        timeout: 60
+
+      - id: "append-product"
+        name: "Add product to collection"
+        agent_type: "variable"
+        description: "Append product info to collection list"
+        agent_instruction: "Add product information to collection"
+        inputs:
+          operation: "append"
+          source: "{{all_product_details}}"
+          data: "{{product_info}}"
+        outputs:
+          result: "all_product_details"
+        timeout: 10
+
+      - id: "store-product"
+        name: "Store product to database"
+        agent_type: "storage_agent"
+        description: "Persist product information to database"
+        agent_instruction: "Store product information to database"
+        inputs:
+          operation: "store"
+          collection: "amazon_coffee_products"
+          data: "{{product_info}}"
+        outputs:
+          message: "store_message"
+          rows_stored: "rows_stored"
+        timeout: 15
+
+  - id: "prepare-output"
+    name: "Prepare final output"
+    agent_type: "variable"
+    description: "Organize collection results and prepare final response"
+    agent_instruction: "Prepare final output with collected product details"
+    inputs:
+      operation: "set"
+      data:
+        final_response: "Successfully collected {{product_index}} coffee products from Amazon with name, price, and ratings information"
+    outputs:
+      final_response: "final_response"
+    timeout: 10
