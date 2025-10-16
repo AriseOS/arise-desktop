@@ -69,7 +69,7 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
     try {
       // 将sample-workflow映射到实际的workflow ID
       const actualWorkflowId = workflowId === 'sample-workflow'
-        ? 'browser-session-test-workflow'
+        ? 'allegro-coffee-collection-workflow'
         : workflowId
 
       // Try to use existing Chrome browser via CDP
