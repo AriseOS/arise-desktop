@@ -28,6 +28,9 @@ agent:
     browser:
       headless: true
       timeout: 30
+      # Optional: CDP URL to connect to existing browser (e.g., http://localhost:9222)
+      # If set, will connect to existing browser instead of launching new one
+      cdp_url: null
     enabled:
     - browser
     - memory

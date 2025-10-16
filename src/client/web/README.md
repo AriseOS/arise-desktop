@@ -53,6 +53,12 @@ npm install
 cd ..
 ```
 
+### 5. 启动浏览器
+
+```bash
+./setup_debug_profile.sh
+```
+
 ## 启动服务
 
 ### 方法一：使用启动脚本（推荐）

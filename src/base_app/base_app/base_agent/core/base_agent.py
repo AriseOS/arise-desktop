@@ -681,8 +681,33 @@ class BaseAgent:
     def _create_browser_tool(self) -> Optional[BaseTool]:
         """创建浏览器工具"""
         try:
-            from ..tools.browser_use import BrowserTool
-            return BrowserTool()
+            from ..tools.browser_use import BrowserTool, BrowserConfig
+
+            # Read browser config from ConfigService if available
+            browser_config = BrowserConfig()
+            if self.config_service:
+                # Get config values from YAML
+                headless = self.config_service.get('agent.tools.browser.headless', True)
+                cdp_url = self.config_service.get('agent.tools.browser.cdp_url', None)
+                timeout = self.config_service.get('agent.tools.browser.timeout', 30)
+
+                # Get LLM config for browser tool
+                llm_model = self.config_service.get('agent.llm.model', 'gpt-4o')
+                llm_api_key = self.config_service.get('agent.llm.api_key')
+
+                browser_config = BrowserConfig(
+                    headless=headless,
+                    cdp_url=cdp_url,
+                    llm_model=llm_model,
+                    llm_api_key=llm_api_key
+                )
+
+                if cdp_url:
+                    logger.info(f"Browser tool configured to connect to existing browser at: {cdp_url}")
+                else:
+                    logger.info(f"Browser tool will launch new browser (headless={headless})")
+
+            return BrowserTool(config=browser_config)
         except ImportError as e:
             logger.error(f"无法导入浏览器工具: {e}")
             return None

@@ -449,14 +449,21 @@ async def get_agent_workflow(
 @app.get("/api/agents/workflow/{workflow_name}/execute")
 async def execute_workflow(
     workflow_name: str,
+    cdp_url: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """执行指定的工作流"""
+    """执行指定的工作流
+
+    Args:
+        workflow_name: Workflow name to execute
+        cdp_url: Optional CDP URL to connect to existing browser (e.g., http://localhost:9222)
+    """
     print(f"Received execute workflow request:")
     print(f"  Workflow Name: {workflow_name}")
     print(f"  User ID: {current_user.id}")
     print(f"  User Name: {current_user.username}")
+    print(f"  CDP URL: {cdp_url if cdp_url else 'Not provided (will launch new browser)'}")
     
     from base_app.base_agent.core.base_agent import BaseAgent
     from base_app.base_agent.core.schemas import AgentConfig
@@ -468,12 +475,12 @@ async def execute_workflow(
         try:
             # 初始化配置服务
             config_service = ConfigService()
-            
+
             # 获取LLM配置
             llm_provider = config_service.get('agent.llm.provider', 'openai')
             llm_model = config_service.get('agent.llm.model', 'gpt-4o')
             api_key = config_service.get('agent.llm.api_key')
-            
+
             # 创建BaseAgent配置
             agent_config = AgentConfig(
                 name="WorkflowTestRunner",
@@ -481,21 +488,38 @@ async def execute_workflow(
                 llm_model=llm_model,
                 api_key=api_key or ""
             )
-            
+
             # 创建provider配置
             provider_config = {
                 'type': llm_provider,
                 'api_key': api_key if api_key else None,
                 'model_name': llm_model
             }
-            
+
             # 创建BaseAgent实例
             base_agent = BaseAgent(
                 agent_config,
                 config_service=config_service,
                 provider_config=provider_config
             )
-            
+
+            # If CDP URL is provided, override browser tool config
+            if cdp_url:
+                print(f"🔗 Overriding browser config to connect to: {cdp_url}")
+                from base_app.base_agent.tools.browser_use import BrowserTool, BrowserConfig
+
+                browser_config = BrowserConfig(
+                    headless=False,  # Existing browser is not headless
+                    cdp_url=cdp_url,
+                    llm_model=llm_model,
+                    llm_api_key=api_key
+                )
+
+                # Re-register browser tool with CDP config
+                browser_tool = BrowserTool(config=browser_config)
+                base_agent.register_tool('browser', browser_tool)
+                print(f"✅ Browser tool configured to use CDP: {cdp_url}")
+
             # 初始化BaseAgent
             await base_agent.initialize()
             
