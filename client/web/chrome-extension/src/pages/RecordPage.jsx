@@ -230,11 +230,11 @@ function RecordPage({ onNavigate, showStatus, currentUser }) {
           console.error('Failed to clear operations:', err)
         })
 
-        // Navigate to intention page with recording data (keep UI unchanged until navigation)
-        console.log('Preparing to navigate to intention page with data:', result)
+        // Navigate to metaflow page with recording data (keep UI unchanged until navigation)
+        console.log('Preparing to navigate to metaflow page with data:', result)
         setTimeout(() => {
-          console.log('Calling onNavigate with intention page')
-          onNavigate('intention', { recordingData: result })
+          console.log('Calling onNavigate with metaflow page')
+          onNavigate('metaflow', { recordingData: result })
         }, 300)
       } else {
         throw new Error(result.error || 'Failed to stop recording')
