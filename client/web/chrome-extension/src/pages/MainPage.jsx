@@ -1,20 +1,6 @@
 import React from 'react'
 
 function MainPage({ currentUser, onNavigate, onLogout, showStatus }) {
-  const handleOpenInSidePanel = async () => {
-    try {
-      // Get current window
-      const currentWindow = await chrome.windows.getCurrent()
-      // Open in side panel
-      await chrome.sidePanel.open({ windowId: currentWindow.id })
-      showStatus('✅ 侧边栏已打开', 'success')
-      // Popup will auto-close when user clicks outside
-    } catch (error) {
-      console.error('Failed to open side panel:', error)
-      showStatus('❌ 打开侧边栏失败', 'error')
-    }
-  }
-
   const menuItems = [
     {
       section: 'Workflow',
@@ -85,16 +71,6 @@ function MainPage({ currentUser, onNavigate, onLogout, showStatus }) {
           <div className="app-name">AgentCrafter</div>
           <div className="app-description">Workflow Automation Extension</div>
         </div>
-        <button
-          className="side-panel-button"
-          onClick={handleOpenInSidePanel}
-          title="在侧边栏打开"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-            <line x1="15" y1="3" x2="15" y2="21"></line>
-          </svg>
-        </button>
       </div>
 
       {menuItems.map((section, idx) => (
