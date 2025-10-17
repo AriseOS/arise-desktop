@@ -688,7 +688,6 @@ class BaseAgent:
             if self.config_service:
                 # Get config values from YAML
                 headless = self.config_service.get('agent.tools.browser.headless', True)
-                cdp_url = self.config_service.get('agent.tools.browser.cdp_url', None)
                 timeout = self.config_service.get('agent.tools.browser.timeout', 30)
 
                 # Get LLM config for browser tool
@@ -697,15 +696,11 @@ class BaseAgent:
 
                 browser_config = BrowserConfig(
                     headless=headless,
-                    cdp_url=cdp_url,
                     llm_model=llm_model,
                     llm_api_key=llm_api_key
                 )
 
-                if cdp_url:
-                    logger.info(f"Browser tool configured to connect to existing browser at: {cdp_url}")
-                else:
-                    logger.info(f"Browser tool will launch new browser (headless={headless})")
+                logger.info(f"Browser tool will launch new browser (headless={headless})")
 
             return BrowserTool(config=browser_config)
         except ImportError as e:

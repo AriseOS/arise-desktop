@@ -97,10 +97,26 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
     showStatus('🚀 运行中...', 'info')
 
     try {
-      // TODO: Call actual workflow execution API
-      await new Promise(resolve => setTimeout(resolve, 2000))
+      const response = await fetch(`http://localhost:8000/api/agents/workflow/allegro-coffee-collection-workflow/execute`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${currentUser.token}`
+        }
+      })
 
-      showStatus('✅ 执行成功', 'success')
+      if (!response.ok) {
+        throw new Error(`Workflow execution failed: ${response.status}`)
+      }
+
+      const result = await response.json()
+      console.log('Workflow execution completed:', result)
+
+      if (result.success) {
+        showStatus('✅ 执行成功', 'success')
+      } else {
+        showStatus('❌ 执行失败', 'error')
+      }
     } catch (err) {
       console.error('Run workflow error:', err)
       showStatus('❌ 执行失败', 'error')

@@ -99,8 +99,7 @@ class BrowserSessionManager:
         session_id: str,
         config_service=None,
         headless: bool = False,
-        keep_alive: bool = True,
-        cdp_url: Optional[str] = None
+        keep_alive: bool = True
     ) -> BrowserSessionInfo:
         """
         获取或创建browser-use会话
@@ -110,7 +109,6 @@ class BrowserSessionManager:
             config_service: 配置服务，用于获取用户数据目录
             headless: 是否无头模式
             keep_alive: 是否保持会话
-            cdp_url: CDP URL for connecting to existing browser (e.g., http://localhost:9222)
 
         Returns:
             BrowserSessionInfo: 包含session和controller
@@ -126,35 +124,37 @@ class BrowserSessionManager:
         # 创建新的browser-use会话
         logger.info(f"创建新的浏览器会话: {session_id}")
 
-        # 如果提供了CDP URL，使用CDP连接模式
-        if cdp_url:
-            logger.info(f"🔗 使用CDP连接到现有浏览器: {cdp_url}")
-            profile = BrowserProfile(
-                cdp_url=cdp_url,
-                is_local=True,  # Important for local Chrome
-                headless=False,  # Existing browser is visible
-                keep_alive=True,  # Don't close browser when done
-            )
+        # 获取用户数据目录
+        if config_service:
+            user_data_dir = str(config_service.get_path("data.browser_data"))
         else:
-            # 传统模式：启动新浏览器
-            # 获取用户数据目录
-            if config_service:
-                user_data_dir = str(config_service.get_path("data.browser_data"))
-            else:
-                import tempfile
-                user_data_dir = tempfile.mkdtemp(prefix="browser_data_")
-                logger.warning(f"未提供config_service，使用临时目录: {user_data_dir}")
+            import tempfile
+            user_data_dir = tempfile.mkdtemp(prefix="browser_data_")
+            logger.warning(f"未提供config_service，使用临时目录: {user_data_dir}")
 
-            # 创建browser-use的BrowserProfile
-            profile = BrowserProfile(
-                headless=headless,
-                user_data_dir=user_data_dir,
-                keep_alive=keep_alive,  # 保持浏览器运行
-                proxy=None  # 可以添加代理配置
-            )
+        # 创建browser-use的BrowserProfile
+        logger.info(f"⚠️  [DEBUG] Setting highlight_elements=False in BrowserProfile")
+        profile = BrowserProfile(
+            headless=headless,
+            user_data_dir=user_data_dir,
+            keep_alive=keep_alive,  # 保持浏览器运行
+            proxy=None,  # 可以添加代理配置
+            highlight_elements=False,  # Disable yellow highlight boxes
+        )
+        logger.info(f"✅ [DEBUG] BrowserProfile created with highlight_elements={profile.highlight_elements}")
 
         # 创建BrowserSession
-        session = BrowserSession(browser_profile=profile)
+        logger.info(f"⚠️  [DEBUG] Creating BrowserSession with highlight_elements=False")
+        session = BrowserSession(
+            browser_profile=profile,
+            highlight_elements=False  # Explicitly disable yellow highlight boxes
+        )
+        logger.info(f"✅ [DEBUG] BrowserSession created, checking highlight_elements attribute...")
+        # Check if session inherited the setting
+        if hasattr(session, 'highlight_elements'):
+            logger.info(f"✅ [DEBUG] BrowserSession.highlight_elements = {session.highlight_elements}")
+        if hasattr(session, '_browser_profile') and hasattr(session._browser_profile, 'highlight_elements'):
+            logger.info(f"✅ [DEBUG] BrowserSession._browser_profile.highlight_elements = {session._browser_profile.highlight_elements}")
 
         # 启动浏览器
         await session.start()

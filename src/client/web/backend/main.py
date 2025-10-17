@@ -26,6 +26,9 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Global browser session manager
+global_browser_session_info = None
+
 # 配置 CORS
 app.add_middleware(
     CORSMiddleware,
@@ -91,6 +94,71 @@ manager = ConnectionManager()
 
 # 设置 WebSocket 管理器到 agent_build_service
 agent_build_service.set_websocket_manager(manager)
+
+# Startup event: Initialize global browser session
+@app.on_event("startup")
+async def startup_event():
+    """Initialize global browser session on backend startup"""
+    global global_browser_session_info
+
+    try:
+        print("\n" + "="*80)
+        print("🌐 Initializing global browser session...")
+        print("="*80)
+
+        from base_app.base_agent.tools.browser_session_manager import BrowserSessionManager
+        from base_app.server.core.config_service import ConfigService
+
+        # Get browser session manager instance
+        session_manager = await BrowserSessionManager.get_instance()
+
+        # Load config service
+        config_service = ConfigService()
+
+        # Get browser config
+        headless = config_service.get('agent.tools.browser.headless', False)
+
+        # Create global browser session with fixed session_id="global"
+        global_browser_session_info = await session_manager.get_or_create_session(
+            session_id="global",
+            config_service=config_service,
+            headless=headless,
+            keep_alive=True
+        )
+
+        print(f"✅ Global browser session created successfully!")
+        print(f"   Session ID: global")
+        print(f"   Headless: {headless}")
+        print("="*80 + "\n")
+
+    except Exception as e:
+        print(f"❌ Failed to initialize global browser session: {e}")
+        import traceback
+        traceback.print_exc()
+        # Don't fail server startup if browser initialization fails
+        global_browser_session_info = None
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup global browser session on backend shutdown"""
+    global global_browser_session_info
+
+    if global_browser_session_info:
+        try:
+            print("\n" + "="*80)
+            print("🔻 Cleaning up global browser session...")
+            print("="*80)
+
+            from base_app.base_agent.tools.browser_session_manager import BrowserSessionManager
+
+            session_manager = await BrowserSessionManager.get_instance()
+            await session_manager.close_session("global", force=True)
+
+            print("✅ Global browser session closed successfully!")
+            print("="*80 + "\n")
+
+        except Exception as e:
+            print(f"❌ Failed to cleanup global browser session: {e}")
 
 # Pydantic 模型
 class UserCreate(BaseModel):
@@ -449,7 +517,6 @@ async def get_agent_workflow(
 @app.get("/api/agents/workflow/{workflow_name}/execute")
 async def execute_workflow(
     workflow_name: str,
-    cdp_url: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -457,13 +524,11 @@ async def execute_workflow(
 
     Args:
         workflow_name: Workflow name to execute
-        cdp_url: Optional CDP URL to connect to existing browser (e.g., http://localhost:9222)
     """
     print(f"Received execute workflow request:")
     print(f"  Workflow Name: {workflow_name}")
     print(f"  User ID: {current_user.id}")
     print(f"  User Name: {current_user.username}")
-    print(f"  CDP URL: {cdp_url if cdp_url else 'Not provided (will launch new browser)'}")
     
     from base_app.base_agent.core.base_agent import BaseAgent
     from base_app.base_agent.core.schemas import AgentConfig
@@ -503,29 +568,17 @@ async def execute_workflow(
                 provider_config=provider_config
             )
 
-            # If CDP URL is provided, override browser tool config
-            if cdp_url:
-                print(f"🔗 Overriding browser config to connect to: {cdp_url}")
-                from base_app.base_agent.tools.browser_use import BrowserTool, BrowserConfig
-
-                browser_config = BrowserConfig(
-                    headless=False,  # Existing browser is not headless
-                    cdp_url=cdp_url,
-                    llm_model=llm_model,
-                    llm_api_key=api_key
-                )
-
-                # Re-register browser tool with CDP config
-                browser_tool = BrowserTool(config=browser_config)
-                base_agent.register_tool('browser', browser_tool)
-                print(f"✅ Browser tool configured to use CDP: {cdp_url}")
-
             # 初始化BaseAgent
             await base_agent.initialize()
-            
+
             # 加载工作流
             workflow = load_workflow(workflow_name)
-            
+
+            # Force workflow to use global browser session
+            original_workflow_name = workflow.name
+            workflow.name = "global"  # Force use global session
+            print(f"🔄 Forcing workflow '{original_workflow_name}' to use global browser session")
+
             # 执行工作流
             result = await base_agent.run_workflow(
                 workflow=workflow,

@@ -49,7 +49,8 @@ class WorkflowTestRunner:
         self,
         config_path: Optional[str] = None,
         verbose: bool = False,
-        user_id: str = "test_user"
+        user_id: str = "test_user",
+        force_session_id: str = None
     ):
         """Initialize workflow runner
 
@@ -57,6 +58,7 @@ class WorkflowTestRunner:
             config_path: Path to config file (optional)
             verbose: Enable verbose logging
             user_id: User ID for memory isolation (default: "test_user")
+            force_session_id: Force a specific session ID for browser reuse testing (optional)
         """
         # Setup logging
         log_level = logging.DEBUG if verbose else logging.INFO
@@ -66,8 +68,9 @@ class WorkflowTestRunner:
         )
         self.logger = logging.getLogger(__name__)
 
-        # Store user_id
+        # Store user_id and force_session_id
         self.user_id = user_id
+        self.force_session_id = force_session_id
 
         # Load configuration
         try:
@@ -184,9 +187,15 @@ class WorkflowTestRunner:
             else:
                 # Try as workflow name (from workflows directory)
                 workflow = load_workflow(workflow_name)
-            
+
             self.logger.info(f"Loaded workflow: {workflow.name} v{workflow.version}")
             self.logger.info(f"Steps: {len(workflow.steps)}")
+
+            # Force session ID if specified (for test-reuse mode)
+            if self.force_session_id:
+                original_name = workflow.name
+                workflow.name = self.force_session_id
+                self.logger.info(f"Forcing workflow name from '{original_name}' to '{self.force_session_id}' for browser session reuse")
         except Exception as e:
             self.logger.error(f"Failed to load workflow: {e}")
             raise
@@ -261,17 +270,22 @@ class WorkflowTestRunner:
             raise
 
         finally:
-            # Cleanup browser session if used
-            if self.context._browser_session_manager:
-                await self.context._browser_session_manager.cleanup()
-                self.logger.info("Browser session cleaned up")
+            # Release browser session reference (don't close browser)
+            # The browser will be kept alive and reused by next workflow execution
+            pass
 
     async def cleanup(self):
-        """Cleanup resources"""
+        """Cleanup resources
+
+        Note: Browser sessions are NOT closed to allow reuse across multiple workflow runs.
+        To manually close all browser sessions, you can call:
+        BrowserSessionManager.get_instance().close_all_sessions()
+        """
+        # Don't close browser sessions - keep them alive for reuse
         if self.context and self.context._browser_session_manager:
-            # Force close all browser sessions
-            await self.context._browser_session_manager.close_all_sessions()
-            self.logger.info("All browser sessions closed")
+            self.logger.info("Browser sessions kept alive for reuse")
+            # Uncomment the line below if you want to force close all sessions on exit:
+            # await self.context._browser_session_manager.close_all_sessions()
 
 
 def parse_input_data(args) -> Dict[str, Any]:
@@ -401,11 +415,34 @@ async def main():
         action='store_true',
         help='List available workflows and exit'
     )
+    parser.add_argument(
+        '--test-reuse',
+        nargs='*',
+        metavar='WORKFLOW',
+        help='Execute multiple workflows to test browser session reuse (same process). Usage: --test-reuse workflow_a workflow_b'
+    )
 
     args = parser.parse_args()
 
     # Handle list command
-    if args.list or (not args.workflow and not args.list):
+    if args.list:
+        workflows = list_workflows()
+        print("Available Workflows:")
+        print("\nBuilt-in Workflows:")
+        for wf in workflows['builtin']:
+            print(f"  - {wf}")
+        print("\nUser Workflows:")
+        if workflows['user']:
+            for wf in workflows['user']:
+                print(f"  - {wf}")
+        else:
+            print("  (none)")
+        return
+
+    # Check if we have a workflow to execute
+    # In test-reuse mode, workflows can be provided via --test-reuse
+    # Otherwise, we need the positional workflow argument
+    if not args.workflow and (args.test_reuse is None or len(args.test_reuse) == 0):
         workflows = list_workflows()
         print("Available Workflows:")
         print("\nBuilt-in Workflows:")
@@ -423,10 +460,14 @@ async def main():
     input_data = parse_input_data(args)
 
     # Create and run workflow
+    # In test-reuse mode, force a fixed session ID so different workflows share the same browser
+    force_session_id = "test-reuse-session" if args.test_reuse is not None else None
+
     runner = WorkflowTestRunner(
         config_path=args.config,
         verbose=args.verbose,
-        user_id=args.user_id
+        user_id=args.user_id,
+        force_session_id=force_session_id
     )
 
     try:
@@ -436,15 +477,83 @@ async def main():
             llm_model=args.llm_model
         )
 
-        # Run workflow
-        result = await runner.run_workflow(
-            workflow_name=args.workflow,
-            input_data=input_data,
-            save_result=args.save
-        )
+        # Check if test-reuse mode
+        if args.test_reuse is not None:
+            # Determine workflows to execute
+            if len(args.test_reuse) == 0:
+                # No workflows specified, use main workflow twice
+                workflows = [args.workflow, args.workflow]
+            elif len(args.test_reuse) == 1:
+                # One workflow specified, execute it twice
+                workflows = [args.test_reuse[0], args.test_reuse[0]]
+            else:
+                # Two or more workflows specified, use first two
+                workflows = args.test_reuse[:2]
 
-        # Exit with appropriate code
-        sys.exit(0 if result.success else 1)
+            print("\n" + "=" * 80)
+            print("🧪 BROWSER SESSION REUSE TEST MODE")
+            print("=" * 80)
+            print(f"Will execute workflows in the same process:")
+            print(f"  1️⃣  {workflows[0]}")
+            print(f"  2️⃣  {workflows[1]}")
+            print(f"\nSession ID: test-reuse-session (forced for both workflows)")
+            print("Expected: Second execution should REUSE the browser session")
+            print("=" * 80 + "\n")
+
+            results = []
+
+            for idx, workflow_name in enumerate(workflows, 1):
+                if idx == 1:
+                    print("\n" + "=" * 80)
+                    print(f"🚀 EXECUTION {idx}/{len(workflows)} - Workflow: {workflow_name}")
+                    print("   Should create new browser session")
+                    print("=" * 80 + "\n")
+                else:
+                    print("\n" + "=" * 80)
+                    print(f"🔄 EXECUTION {idx}/{len(workflows)} - Workflow: {workflow_name}")
+                    print("   Should REUSE existing browser session")
+                    print("=" * 80 + "\n")
+
+                result = await runner.run_workflow(
+                    workflow_name=workflow_name,
+                    input_data=input_data,
+                    save_result=args.save
+                )
+
+                results.append(result)
+                print(f"\n✅ Execution {idx} completed: success={result.success}")
+                print(f"   Workflow: {workflow_name}")
+                print(f"   Execution time: {result.total_execution_time:.2f}s\n")
+
+                # Wait between executions (but not after the last one)
+                if idx < len(workflows):
+                    print("⏳ Waiting 5 seconds before next execution...\n")
+                    await asyncio.sleep(5)
+
+            # Summary
+            print("\n" + "=" * 80)
+            print("📊 TEST SUMMARY")
+            print("=" * 80)
+            for idx, (workflow_name, result) in enumerate(zip(workflows, results), 1):
+                print(f"Execution {idx} ({workflow_name}): {result.success} ({result.total_execution_time:.2f}s)")
+            print("\n🔍 Check the logs above for:")
+            print("  1st run: '创建新的浏览器会话: {workflow_name}'")
+            print("  2nd run: '复用现有浏览器会话: {workflow_name}, 引用计数: X'")
+            print("=" * 80 + "\n")
+
+            # Exit based on all results
+            all_success = all(r.success for r in results)
+            sys.exit(0 if all_success else 1)
+        else:
+            # Normal single execution
+            result = await runner.run_workflow(
+                workflow_name=args.workflow,
+                input_data=input_data,
+                save_result=args.save
+            )
+
+            # Exit with appropriate code
+            sys.exit(0 if result.success else 1)
 
     except KeyboardInterrupt:
         print("\nInterrupted by user")

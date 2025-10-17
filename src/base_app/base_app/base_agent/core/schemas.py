@@ -169,25 +169,12 @@ class AgentContext(BaseModel):
             # 获取配置服务
             config_service = getattr(self.agent_instance, 'config_service', None)
 
-            # Try to get CDP URL from browser tool config if available
-            cdp_url = None
-            if hasattr(self.agent_instance, 'tools') and 'browser' in self.agent_instance.tools:
-                browser_tool = self.agent_instance.tools['browser']
-                if hasattr(browser_tool, 'browser_config') and browser_tool.browser_config:
-                    cdp_url = browser_tool.browser_config.cdp_url
-                    if cdp_url:
-                        if self.logger:
-                            self.logger.info(f"🔗 Found CDP URL in browser tool config: {cdp_url}")
-                        else:
-                            logger.info(f"🔗 Found CDP URL in browser tool config: {cdp_url}")
-
             # 创建或获取会话
             self._browser_session_info = await self._browser_session_manager.get_or_create_session(
                 session_id=self.workflow_id,
                 config_service=config_service,
                 headless=False,  # 可以从配置中读取
-                keep_alive=True,
-                cdp_url=cdp_url  # Pass CDP URL if found
+                keep_alive=True
             )
 
             if self.logger:

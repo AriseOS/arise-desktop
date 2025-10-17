@@ -67,17 +67,8 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
     setIsRunning(true)
 
     try {
-      // 将sample-workflow映射到实际的workflow ID
-      const actualWorkflowId = workflowId === 'sample-workflow'
-        ? 'allegro-coffee-collection-workflow'
-        : workflowId
-
-      // Try to use existing Chrome browser via CDP
-      // Assumes Chrome is running with --remote-debugging-port=9222
-      const cdpUrl = 'http://localhost:9222'
-
-      // 调用执行workflow的API，传递CDP URL
-      const response = await fetch(`http://localhost:8000/api/agents/workflow/${actualWorkflowId}/execute?cdp_url=${encodeURIComponent(cdpUrl)}`, {
+      // 固定运行 allegro-coffee-collection-workflow
+      const response = await fetch(`http://localhost:8000/api/agents/workflow/allegro-coffee-collection-workflow/execute`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',

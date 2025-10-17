@@ -30,9 +30,6 @@ class BrowserConfig(ToolConfig):
     user_agent: Optional[str] = Field(default=None, description="用户代理")
     proxy: Optional[str] = Field(default=None, description="代理设置")
 
-    # CDP connection config - connect to existing browser
-    cdp_url: Optional[str] = Field(default=None, description="CDP URL to connect to existing browser (e.g., 'http://localhost:9222')")
-
     # LLM 配置
     llm_model: str = Field(default="gpt-4o", description="LLM 模型")
     llm_api_key: Optional[str] = Field(default=None, description="LLM API Key")
@@ -224,36 +221,12 @@ class BrowserTool(BaseTool):
                 if self.llm is None:
                     raise RuntimeError("LLM初始化失败")
 
-            # Check if we should connect to existing browser via CDP
-            browser_session = None
-            if self.browser_config.cdp_url:
-                from browser_use.browser.profile import BrowserProfile
-                from browser_use.browser.session import BrowserSession
-
-                logger.info(f"🔗 Connecting to existing browser via CDP: {self.browser_config.cdp_url}")
-
-                # Create BrowserSession with CDP URL (following official example)
-                try:
-                    browser_session = BrowserSession(
-                        browser_profile=BrowserProfile(
-                            cdp_url=self.browser_config.cdp_url,
-                            is_local=True,  # Important: specify this is a local Chrome instance
-                            keep_alive=True,  # Don't close browser when done
-                        )
-                    )
-                    logger.info(f"✅ Created BrowserSession with CDP connection")
-                except Exception as e:
-                    logger.error(f"❌ Failed to create CDP BrowserSession: {e}")
-                    logger.info("ℹ️  Falling back to launching new browser")
-                    browser_session = None
-
             # 创建新的 browser-use Agent 实例，参数直接对齐
             self.current_agent = Agent(
                 task=task,
                 llm=self.llm,
                 max_actions=max_actions,
-                use_vision=use_vision,
-                browser_session=browser_session  # Pass browser_session (not browser_profile!)
+                use_vision=use_vision
             )
 
             # 执行任务
@@ -266,8 +239,7 @@ class BrowserTool(BaseTool):
                     "task": task,
                     "max_actions": max_actions,
                     "use_vision": use_vision,
-                    "context": context,
-                    "connected_to_existing_browser": bool(self.browser_config.cdp_url)
+                    "context": context
                 },
                 message=f"任务执行完成: {task}",
                 status=ToolStatus.SUCCESS
