@@ -6,62 +6,160 @@ function MetaflowPage({ onNavigate, showStatus, recordingData }) {
   const [editingNode, setEditingNode] = useState(null)
 
   useEffect(() => {
-    // Always generate hardcoded metaflows (not dependent on actual recording data)
+    // Generate metaflows from actual metaflow.yaml data
     const generatedMetaflows = generateMetaflows()
     setMetaflows(generatedMetaflows)
   }, [])
 
+  const inferNodeType = (node) => {
+    if (node.type === 'loop') return 'loop';
+
+    const operations = node.operations || [];
+    const hasNavigate = operations.some(op => op.type === 'navigate');
+    const hasClick = operations.some(op => op.type === 'click');
+    const hasExtract = operations.some(op => op.type === 'extract');
+    const hasSelect = operations.some(op => op.type === 'select' || op.type === 'copy_action');
+
+    if (hasExtract) return 'extract';
+    if (hasSelect) return 'extract';
+    if (hasNavigate || hasClick) return 'navigate';
+
+    return 'process';
+  }
+
   const generateMetaflows = () => {
-    // Generate hardcoded metaflows with more details based on real workflow
+    // Real metaflow.yaml data converted to JavaScript object
+    const metaflowData = {
+      version: '1.0',
+      task_description: 'Collect all coffee products from first page with title, price and sales',
+      nodes: [
+        {
+          id: 'node_1',
+          intent_id: 'intent_6c3e972a',
+          intent_name: 'NavigateToAllegro',
+          intent_description: 'Navigate to Allegro homepage to begin coffee product price collection',
+          operations: [
+            { type: 'test', timestamp: '2025-09-13 10:32:54', url: 'about:blank' },
+            { type: 'navigate', timestamp: '2025-09-13 10:32:57', url: 'https://allegro.pl/' }
+          ]
+        },
+        {
+          id: 'node_2',
+          intent_id: 'intent_69544a61',
+          intent_name: 'NavigateToCoffeeCategory',
+          intent_description: 'Navigate to the coffee category page to view coffee products',
+          operations: [
+            { type: 'click', timestamp: '2025-09-13 10:32:58', url: 'https://allegro.pl/' },
+            { type: 'click', timestamp: '2025-09-13 10:33:00', url: 'https://allegro.pl/' },
+            { type: 'navigate', timestamp: '2025-09-13 10:33:02', url: 'https://allegro.pl/kategoria/produkty-spozywcze-kawa-74030' }
+          ]
+        },
+        {
+          id: 'node_3',
+          intent_id: 'implicit_extract_list',
+          intent_name: 'ExtractProductList',
+          intent_description: 'Extract coffee product list from first page (inferred node)',
+          operations: [
+            { type: 'extract', element: { xpath: '<PLACEHOLDER>', tagName: 'A' }, target: 'product_urls', value: [] }
+          ]
+        },
+        {
+          id: 'node_4',
+          type: 'loop',
+          description: 'Iterate through all coffee products, extract title, price and sales count for each',
+          source: '{{product_urls}}',
+          item_var: 'current_product',
+          children: [
+            {
+              id: 'node_4_1',
+              intent_id: 'intent_7fe0c6bf',
+              intent_name: 'NavigateToProductDetail',
+              intent_description: 'Navigate to a specific coffee product detail page to view its information',
+              operations: [
+                { type: 'click', timestamp: '2025-09-13 10:33:04' },
+                { type: 'navigate', timestamp: '2025-09-13 10:33:05' }
+              ]
+            },
+            {
+              id: 'node_4_2',
+              intent_id: 'intent_b7f99df2',
+              intent_name: 'ExtractProductDetails',
+              intent_description: 'Extract coffee product details including name, price, and purchase statistics',
+              operations: [
+                { type: 'click', timestamp: '2025-09-13 10:33:08' },
+                { type: 'select', timestamp: '2025-09-13 10:33:08' },
+                { type: 'copy_action', timestamp: '2025-09-13 10:33:08' }
+              ]
+            }
+          ]
+        }
+      ]
+    };
+
     const metaflows = [
       {
         id: 'start',
         type: 'start',
         name: 'Start',
-        description: 'Workflow initialization'
-      },
-      {
-        id: 'step-1',
-        type: 'navigate',
-        name: 'Collect Wiki Activity Data',
-        description: 'Use browser_use tool to navigate to user Wiki page and extract daily activity data. Input: Wiki URL, Output: Activity data in text format',
-        properties: {
-          agent_type: 'tool_agent',
-          tool: 'browser_use',
-          instruction: 'Navigate to provided Wiki URL and extract daily activity data'
-        }
-      },
-      {
-        id: 'step-2',
-        type: 'process',
-        name: 'Generate Work Report',
-        description: 'Use llm_extract tool to summarize and reorganize collected activity data into a formatted work report',
-        properties: {
-          agent_type: 'text_agent',
-          tool: 'llm_extract',
-          instruction: 'Process input activity data using llm_extract tool to generate formatted work report'
-        }
-      },
-      {
-        id: 'step-3',
-        type: 'interact',
-        name: 'Send Report to WeChat',
-        description: 'Use browser_use tool to simulate web operations and send the generated report to specified leader via WeChat. Input: Report text, Output: Send confirmation',
-        properties: {
-          agent_type: 'tool_agent',
-          tool: 'browser_use',
-          instruction: 'Use browser_use tool to send report to specified WeChat contact'
-        }
-      },
-      {
-        id: 'end',
-        type: 'end',
-        name: 'End',
-        description: 'Workflow completed successfully'
+        description: metaflowData.task_description
       }
-    ]
+    ];
 
-    return metaflows
+    // Convert nodes to metaflow format
+    metaflowData.nodes.forEach(node => {
+      if (node.type === 'loop') {
+        // Add loop node
+        metaflows.push({
+          id: node.id,
+          type: 'loop',
+          name: 'Loop: Extract Product Details',
+          description: node.description,
+          properties: {
+            source: node.source,
+            item_var: node.item_var
+          }
+        });
+
+        // Add children nodes
+        if (node.children) {
+          node.children.forEach(child => {
+            const childType = inferNodeType(child);
+            metaflows.push({
+              id: child.id,
+              type: childType,
+              name: child.intent_name,
+              description: child.intent_description,
+              properties: {
+                intent_id: child.intent_id,
+                operations_count: child.operations ? child.operations.length : 0,
+                parent: node.id
+              }
+            });
+          });
+        }
+      } else {
+        const nodeType = inferNodeType(node);
+        metaflows.push({
+          id: node.id,
+          type: nodeType,
+          name: node.intent_name,
+          description: node.intent_description,
+          properties: {
+            intent_id: node.intent_id,
+            operations_count: node.operations ? node.operations.length : 0
+          }
+        });
+      }
+    });
+
+    metaflows.push({
+      id: 'end',
+      type: 'end',
+      name: 'End',
+      description: 'Workflow completed successfully'
+    });
+
+    return metaflows;
   }
 
   const getMetaflowIcon = (type) => {
@@ -76,6 +174,8 @@ function MetaflowPage({ onNavigate, showStatus, recordingData }) {
         return '📊'
       case 'process':
         return '⚙️'
+      case 'loop':
+        return '🔄'
       case 'end':
         return '✅'
       default:
@@ -95,6 +195,8 @@ function MetaflowPage({ onNavigate, showStatus, recordingData }) {
         return '#3b82f6'
       case 'process':
         return '#06b6d4'
+      case 'loop':
+        return '#ec4899'
       case 'end':
         return '#10b981'
       default:

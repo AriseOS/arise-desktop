@@ -28,62 +28,152 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
   const generateWorkflowData = () => {
     setLoading(true)
 
-    // Generate workflow based on real workflow data structure
-    // In a real implementation, this would call an API
+    // Real workflow.yaml data converted to JavaScript object
     setTimeout(() => {
-      const workflow = {
-        name: 'Wiki Activity Report Workflow',
-        description: 'Automatically collect Wiki activity data, generate work report, and send to WeChat',
+      const workflowYaml = {
+        apiVersion: "agentcrafter.io/v1",
+        kind: "Workflow",
+        metadata: {
+          name: "allegro-coffee-collection-workflow",
+          description: "Collect all coffee products from first page with title, price and sales",
+          version: "1.0.0",
+          tags: ["scraper", "allegro", "coffee", "collection"]
+        },
         steps: [
           {
-            id: 'step-start',
-            type: 'start',
-            name: 'Start',
-            description: 'Initialize workflow',
-            agent_type: 'start'
+            id: "init-vars",
+            name: "Initialize variables",
+            agent_type: "variable",
+            description: "Initialize data collection variables",
+            agent_instruction: "Initialize product collection variables"
           },
           {
-            id: 'step-collect',
-            type: 'tool_agent',
-            name: 'Collect Wiki Activity Data',
-            description: 'Use browser_use tool to navigate to user Wiki page and extract daily activity data',
-            agent_type: 'tool_agent',
-            tool: 'browser_use',
-            instruction: 'Navigate to provided Wiki URL and extract daily activity data'
+            id: "extract-product-urls",
+            name: "Extract product URLs",
+            agent_type: "scraper_agent",
+            description: "Navigate to coffee category and extract all product URLs from first page",
+            agent_instruction: "Visit Allegro coffee category page and extract all product URLs"
           },
           {
-            id: 'step-generate',
-            type: 'text_agent',
-            name: 'Generate Work Report',
-            description: 'Use llm_extract to process collected data and generate formatted work report',
-            agent_type: 'text_agent',
-            tool: 'llm_extract',
-            instruction: 'Process input activity data using llm_extract tool to generate formatted work report'
+            id: "save-urls",
+            name: "Save product URLs",
+            agent_type: "variable",
+            description: "Save extracted URLs to variable",
+            agent_instruction: "Save product URLs to collection variable"
           },
           {
-            id: 'step-send',
-            type: 'tool_agent',
-            name: 'Send Report to WeChat',
-            description: 'Use browser_use to send generated report to specified leader via WeChat',
-            agent_type: 'tool_agent',
-            tool: 'browser_use',
-            instruction: 'Use browser_use tool to send report to specified WeChat contact'
+            id: "collect-product-details",
+            name: "Collect product details",
+            agent_type: "foreach",
+            description: "Iterate through all coffee products, extract title, price and sales count for each",
+            source: "{{all_product_urls}}",
+            item_var: "current_product",
+            steps: [
+              {
+                id: "scrape-product-details",
+                name: "Scrape product details",
+                agent_type: "scraper_agent",
+                description: "Extract product title, price and sales count",
+                agent_instruction: "Visit product page and extract title, price and sales information"
+              },
+              {
+                id: "append-product",
+                name: "Add product to list",
+                agent_type: "variable",
+                description: "Append product info to collection",
+                agent_instruction: "Add product to collection list"
+              },
+              {
+                id: "store-product",
+                name: "Store product to database",
+                agent_type: "storage_agent",
+                description: "Persist product information to database",
+                agent_instruction: "Store product details to database"
+              }
+            ]
           },
           {
-            id: 'step-end',
-            type: 'end',
-            name: 'End',
-            description: 'Workflow completed successfully',
-            agent_type: 'end'
+            id: "prepare-output",
+            name: "Prepare final output",
+            agent_type: "variable",
+            description: "Organize collection results",
+            agent_instruction: "Prepare final output with collected products"
           }
-        ],
-        connections: [
-          { from: 'step-start', to: 'step-collect' },
-          { from: 'step-collect', to: 'step-generate' },
-          { from: 'step-generate', to: 'step-send' },
-          { from: 'step-send', to: 'step-end' }
         ]
+      };
+
+      // Transform to workflow visualization format
+      const steps = [
+        {
+          id: 'step-start',
+          type: 'start',
+          name: 'Start',
+          description: workflowYaml.metadata.description,
+          agent_type: 'start'
+        }
+      ];
+
+      // Convert workflow steps
+      workflowYaml.steps.forEach(step => {
+        if (step.agent_type === 'foreach') {
+          // Add foreach loop node
+          steps.push({
+            id: step.id,
+            type: 'foreach',
+            name: step.name,
+            description: step.description,
+            agent_type: step.agent_type,
+            source: step.source,
+            item_var: step.item_var
+          });
+
+          // Add child steps
+          if (step.steps) {
+            step.steps.forEach(childStep => {
+              steps.push({
+                id: childStep.id,
+                type: childStep.agent_type,
+                name: childStep.name,
+                description: childStep.description,
+                agent_type: childStep.agent_type,
+                parent: step.id
+              });
+            });
+          }
+        } else {
+          steps.push({
+            id: step.id,
+            type: step.agent_type,
+            name: step.name,
+            description: step.description,
+            agent_type: step.agent_type
+          });
+        }
+      });
+
+      steps.push({
+        id: 'step-end',
+        type: 'end',
+        name: 'End',
+        description: 'Workflow completed successfully',
+        agent_type: 'end'
+      });
+
+      // Generate connections
+      const connections = [];
+      for (let i = 0; i < steps.length - 1; i++) {
+        connections.push({
+          from: steps[i].id,
+          to: steps[i + 1].id
+        });
       }
+
+      const workflow = {
+        name: workflowYaml.metadata.name,
+        description: workflowYaml.metadata.description,
+        steps: steps,
+        connections: connections
+      };
 
       setWorkflowData(workflow)
       setLoading(false)
@@ -270,8 +360,20 @@ const nodeColor = (node) => {
       return '#52c41a'
     case 'end':
       return '#ff4d4f'
-    default:
+    case 'foreach':
+      return '#ec4899'
+    case 'variable':
+      return '#06b6d4'
+    case 'scraper_agent':
+      return '#8b5cf6'
+    case 'storage_agent':
+      return '#f59e0b'
+    case 'tool_agent':
       return '#3b82f6'
+    case 'text_agent':
+      return '#10b981'
+    default:
+      return '#6b7280'
   }
 }
 
