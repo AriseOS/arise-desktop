@@ -5,8 +5,8 @@
 }
 
 body {
-  width: 350px;
-  height: 550px;
+  min-width: 350px;
+  min-height: 550px;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
   background: #f2f2f7;
   color: #1c1c1e;
@@ -16,10 +16,13 @@ body {
 #root {
   width: 100%;
   height: 100%;
+  display: flex;
+  justify-content: center;
 }
 
 .app {
   width: 100%;
+  max-width: 800px;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -393,7 +396,6 @@ body {
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
   min-height: 0;
 }
 
@@ -403,6 +405,7 @@ body {
   padding: 16px;
   margin-bottom: 12px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  flex-shrink: 0;
 }
 
 .workflow-info h3 {
@@ -419,14 +422,14 @@ body {
 }
 
 .workflow-canvas {
-  flex: 1;
   background: rgba(255, 255, 255, 0.95);
   border-radius: 12px;
   overflow: hidden;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
   min-height: 300px;
-  height: 100%;
+  height: clamp(300px, calc(100vh - 200px), 700px);
   position: relative;
+  flex-shrink: 0;
 }
 
 .workflow-canvas > div {
@@ -1261,17 +1264,18 @@ body {
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  min-height: 0;
 }
 
 .metaflow-visualization {
-  flex: 1;
   background: rgba(255, 255, 255, 0.95);
   border-radius: 12px;
   padding: 16px;
   margin-bottom: 12px;
+  max-height: clamp(300px, calc(100vh - 200px), 700px);
   overflow-y: auto;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  flex-shrink: 0;
 }
 
 .metaflow-node {
@@ -1350,6 +1354,7 @@ body {
   display: flex;
   gap: 8px;
   flex-shrink: 0;
+  margin-top: auto;
 }
 
 /* Edit Modal Styles */
@@ -1478,7 +1483,6 @@ select.edit-input {
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
   min-height: 0;
 }
 
