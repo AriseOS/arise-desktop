@@ -4,6 +4,7 @@ import MainPage from './pages/MainPage'
 import MyWorkflowsPage from './pages/MyWorkflowsPage'
 import WorkflowDetailPage from './pages/WorkflowDetailPage'
 import WorkflowGenerationPage from './pages/WorkflowGenerationPage'
+import WorkflowResultPage from './pages/WorkflowResultPage'
 import AboutPage from './pages/AboutPage'
 import RecordPage from './pages/RecordPage'
 import IntentionPage from './pages/IntentionPage'
@@ -16,6 +17,7 @@ function App() {
   const [currentUser, setCurrentUser] = useState(null)
   const [selectedWorkflowId, setSelectedWorkflowId] = useState(null)
   const [recordingData, setRecordingData] = useState(null)
+  const [currentTaskId, setCurrentTaskId] = useState(null)
   const [statusMessage, setStatusMessage] = useState({ text: '', type: 'info' })
 
   useEffect(() => {
@@ -91,6 +93,11 @@ function App() {
     // Handle recording data for intention page (in memory only, not persistent)
     if (data.recordingData) {
       setRecordingData(data.recordingData)
+    }
+
+    // Handle taskId for result page (in memory only)
+    if (data.taskId) {
+      setCurrentTaskId(data.taskId)
     }
 
     setCurrentPage(page)
@@ -169,6 +176,14 @@ function App() {
           onNavigate={navigateTo}
           showStatus={showStatus}
           recordingData={recordingData}
+        />
+      )}
+      {currentPage === 'workflow-result' && (
+        <WorkflowResultPage
+          currentUser={currentUser}
+          onNavigate={navigateTo}
+          showStatus={showStatus}
+          taskId={currentTaskId}
         />
       )}
       {currentPage === 'chat' && (

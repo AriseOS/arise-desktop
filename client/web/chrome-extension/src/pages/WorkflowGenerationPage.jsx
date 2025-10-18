@@ -212,6 +212,10 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
           setIsRunning(false)
           if (taskInfo.result && taskInfo.result.success) {
             showStatus('✅ 执行成功', 'success')
+            // Navigate to result page
+            setTimeout(() => {
+              onNavigate('workflow-result', { taskId: taskId })
+            }, 1000)
           } else {
             showStatus('⚠️ 执行完成但有错误', 'warning')
           }
