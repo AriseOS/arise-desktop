@@ -180,11 +180,66 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
     }, 500)
   }
 
+  const pollTaskStatus = async (taskId) => {
+    const pollInterval = 2000 // Poll every 2 seconds
+    const maxAttempts = 300 // Max 10 minutes (300 * 2s)
+    let attempts = 0
+
+    const poll = async () => {
+      if (attempts >= maxAttempts) {
+        showStatus('❌ 执行超时', 'error')
+        setIsRunning(false)
+        return
+      }
+
+      try {
+        const response = await fetch(`http://localhost:8000/api/agents/workflow/task/${taskId}/status`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${currentUser.token}`
+          }
+        })
+
+        if (!response.ok) {
+          throw new Error(`Failed to get task status: ${response.status}`)
+        }
+
+        const taskInfo = await response.json()
+        console.log('Task status:', taskInfo)
+
+        if (taskInfo.status === 'completed') {
+          setIsRunning(false)
+          if (taskInfo.result && taskInfo.result.success) {
+            showStatus('✅ 执行成功', 'success')
+          } else {
+            showStatus('⚠️ 执行完成但有错误', 'warning')
+          }
+          return
+        } else if (taskInfo.status === 'failed') {
+          setIsRunning(false)
+          showStatus(`❌ 执行失败: ${taskInfo.error || '未知错误'}`, 'error')
+          return
+        } else if (taskInfo.status === 'running') {
+          // Continue polling
+          attempts++
+          setTimeout(poll, pollInterval)
+        }
+      } catch (err) {
+        console.error('Poll task status error:', err)
+        showStatus('❌ 获取状态失败', 'error')
+        setIsRunning(false)
+      }
+    }
+
+    poll()
+  }
+
   const handleRunWorkflow = async () => {
     if (isRunning) return
 
     setIsRunning(true)
-    showStatus('🚀 运行中...', 'info')
+    showStatus('🚀 开始执行...', 'info')
 
     try {
       const response = await fetch(`http://localhost:8000/api/agents/workflow/allegro-coffee-collection-workflow/execute`, {
@@ -200,17 +255,18 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
       }
 
       const result = await response.json()
-      console.log('Workflow execution completed:', result)
+      console.log('Workflow execution started:', result)
 
-      if (result.success) {
-        showStatus('✅ 执行成功', 'success')
+      if (result.success && result.task_id) {
+        // Start polling for task status
+        pollTaskStatus(result.task_id)
       } else {
-        showStatus('❌ 执行失败', 'error')
+        showStatus('❌ 启动失败', 'error')
+        setIsRunning(false)
       }
     } catch (err) {
       console.error('Run workflow error:', err)
-      showStatus('❌ 执行失败', 'error')
-    } finally {
+      showStatus('❌ 启动失败', 'error')
       setIsRunning(false)
     }
   }

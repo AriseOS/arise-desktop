@@ -29,6 +29,9 @@ app = FastAPI(
 # Global browser session manager
 global_browser_session_info = None
 
+# Global workflow task status storage
+workflow_tasks: Dict[str, Dict] = {}
+
 # 配置 CORS
 app.add_middleware(
     CORSMiddleware,
@@ -529,15 +532,37 @@ async def execute_workflow(
     print(f"  Workflow Name: {workflow_name}")
     print(f"  User ID: {current_user.id}")
     print(f"  User Name: {current_user.username}")
-    
+
     from base_app.base_agent.core.base_agent import BaseAgent
     from base_app.base_agent.core.schemas import AgentConfig
     from base_app.base_agent.workflows.workflow_loader import load_workflow
     from base_app.server.core.config_service import ConfigService
     import asyncio
-    
-    async def run_workflow_async():
+    import uuid
+
+    # Generate task ID
+    task_id = f"task_{workflow_name}_{uuid.uuid4().hex[:8]}"
+
+    # Initialize task status
+    workflow_tasks[task_id] = {
+        "task_id": task_id,
+        "workflow_name": workflow_name,
+        "status": "running",
+        "progress": 0,
+        "message": "Workflow execution started",
+        "user_id": current_user.id,
+        "started_at": datetime.utcnow().isoformat(),
+        "completed_at": None,
+        "result": None,
+        "error": None
+    }
+
+    async def run_workflow_async(task_id: str):
         try:
+            # Update status
+            workflow_tasks[task_id]["message"] = "Initializing workflow"
+            workflow_tasks[task_id]["progress"] = 10
+
             # 初始化配置服务
             config_service = ConfigService()
 
@@ -561,6 +586,9 @@ async def execute_workflow(
                 'model_name': llm_model
             }
 
+            workflow_tasks[task_id]["message"] = "Creating BaseAgent instance"
+            workflow_tasks[task_id]["progress"] = 20
+
             # 创建BaseAgent实例
             base_agent = BaseAgent(
                 agent_config,
@@ -569,9 +597,13 @@ async def execute_workflow(
             )
 
             # 初始化BaseAgent
+            workflow_tasks[task_id]["message"] = "Initializing BaseAgent"
+            workflow_tasks[task_id]["progress"] = 30
             await base_agent.initialize()
 
             # 加载工作流
+            workflow_tasks[task_id]["message"] = "Loading workflow"
+            workflow_tasks[task_id]["progress"] = 40
             workflow = load_workflow(workflow_name)
 
             # Force workflow to use global browser session
@@ -580,31 +612,77 @@ async def execute_workflow(
             print(f"🔄 Forcing workflow '{original_workflow_name}' to use global browser session")
 
             # 执行工作流
+            workflow_tasks[task_id]["message"] = "Executing workflow"
+            workflow_tasks[task_id]["progress"] = 50
+
             result = await base_agent.run_workflow(
                 workflow=workflow,
                 input_data={}
             )
-            
-            print(f"Workflow execution completed with success: {result.success}")
+
+            # Update completion status
+            workflow_tasks[task_id]["status"] = "completed"
+            workflow_tasks[task_id]["progress"] = 100
+            workflow_tasks[task_id]["message"] = "Workflow execution completed"
+            workflow_tasks[task_id]["completed_at"] = datetime.utcnow().isoformat()
+            workflow_tasks[task_id]["result"] = {
+                "success": result.success,
+                "data": str(result.final_result) if hasattr(result, 'final_result') else None
+            }
+
+            print(f"✅ Workflow execution completed with success: {result.success}")
             return result
         except Exception as e:
-            print(f"Failed to execute workflow: {e}")
+            # Update error status
+            workflow_tasks[task_id]["status"] = "failed"
+            workflow_tasks[task_id]["message"] = f"Workflow execution failed: {str(e)}"
+            workflow_tasks[task_id]["completed_at"] = datetime.utcnow().isoformat()
+            workflow_tasks[task_id]["error"] = str(e)
+
+            print(f"❌ Failed to execute workflow: {e}")
             import traceback
             traceback.print_exc()
-            raise
-    
-    # 在后台执行工作流
-    asyncio.create_task(run_workflow_async())
-    print(f"Started workflow execution for {workflow_name}")
 
-    # 这里只是打印参数请求，不实际处理
+    # 在后台执行工作流
+    asyncio.create_task(run_workflow_async(task_id))
+    print(f"Started workflow execution for {workflow_name} with task_id: {task_id}")
+
     return {
         "success": True,
-        "message": f"Workflow {workflow_name} execute request received",
+        "task_id": task_id,
+        "message": f"Workflow {workflow_name} execution started",
         "workflow_name": workflow_name,
         "user_id": current_user.id,
         "timestamp": datetime.utcnow().isoformat()
     }
+
+@app.get("/api/agents/workflow/task/{task_id}/status")
+async def get_workflow_task_status(
+    task_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get workflow task execution status
+
+    Args:
+        task_id: Task ID returned from execute endpoint
+    """
+    if task_id not in workflow_tasks:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found"
+        )
+
+    task_info = workflow_tasks[task_id]
+
+    # Verify user owns this task
+    if task_info["user_id"] != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Unauthorized to access this task"
+        )
+
+    return task_info
 
 # WebSocket 路由
 
