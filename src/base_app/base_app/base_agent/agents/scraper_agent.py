@@ -391,6 +391,50 @@ class ScraperAgent(BaseStepAgent):
             return ActionResult(success=False, error=str(e))
 
     
+    async def _get_current_page_dom(self) -> tuple:
+        """Get DOM from current page with stability check
+
+        Returns:
+            tuple: (target_dom, dom_dict, llm_view)
+        """
+        from browser_use.browser.events import BrowserStateRequestEvent
+        from ..tools.browser_use.dom_extractor import extract_dom_dict, extract_llm_view, DOMExtractor
+
+        # Wait for page stability
+        logger.debug("Dispatching BrowserStateRequestEvent to ensure page stability...")
+        event = self.browser_session.event_bus.dispatch(
+            BrowserStateRequestEvent(
+                include_dom=True,
+                include_screenshot=False,
+                include_recent_events=False
+            )
+        )
+        browser_state = await event.event_result(raise_if_any=True, raise_if_none=False)
+        logger.debug("Page stability wait completed, DOM is ready")
+
+        # Get enhanced DOM from cache
+        enhanced_dom = self.browser_session._dom_watchdog.enhanced_dom_tree
+        if enhanced_dom is None:
+            raise RuntimeError("DOM tree is None after BrowserStateRequestEvent - page may have failed to load")
+
+        # Extract DOM based on scope
+        extractor = DOMExtractor()
+        if self.dom_scope == "full":
+            target_dom, _ = extractor.serialize_accessible_elements_custom(
+                enhanced_dom, include_non_visible=True
+            )
+        else:
+            target_dom, _ = extractor.serialize_accessible_elements_custom(
+                enhanced_dom, include_non_visible=False
+            )
+
+        # Convert to DOM structures
+        dom_dict = extract_dom_dict(target_dom)
+        include_xpath = (self.extraction_method == 'script')
+        llm_view = extract_llm_view(dom_dict, include_xpath=include_xpath)
+
+        return target_dom, dom_dict, llm_view
+
     async def _extract_data_from_current_page(
         self,
         data_requirements: str,
@@ -399,62 +443,33 @@ class ScraperAgent(BaseStepAgent):
         context: Optional[AgentContext] = None,
         config: Optional[Dict] = None
     ) -> Dict[str, Any]:
-        """从当前页面提取数据的统一入口"""
+        """Extract data from current page"""
 
         try:
-            # Wait for page stability before extracting DOM
-            # This triggers browser-use's _wait_for_stable_network() via BrowserStateRequestEvent
-            from browser_use.browser.events import BrowserStateRequestEvent
+            # Get DOM from current page
+            target_dom, dom_dict, llm_view = await self._get_current_page_dom()
 
-            logger.debug("Dispatching BrowserStateRequestEvent to ensure page stability...")
-            event = self.browser_session.event_bus.dispatch(
-                BrowserStateRequestEvent(
-                    include_dom=True,
-                    include_screenshot=False,  # We don't need screenshot for data extraction
-                    include_recent_events=False
-                )
-            )
-            # Directly await event_result() without awaiting the event itself
-            browser_state = await event.event_result(raise_if_any=True, raise_if_none=False)
-            logger.debug("Page stability wait completed, DOM is ready")
-
-            # Use the enhanced_dom from DOMWatchdog cache (already built during BrowserStateRequestEvent)
-            # DO NOT call self.dom_service.get_serialized_dom_tree() again because:
-            # 1. DOMWatchdog and ScraperAgent's dom_service use different DomService instances
-            # 2. Calling get_serialized_dom_tree() again would rebuild DOM without waiting for page stability
-            # 3. This causes race conditions where we get incomplete/empty DOM
-            enhanced_dom = self.browser_session._dom_watchdog.enhanced_dom_tree
-            if enhanced_dom is None:
-                raise RuntimeError("DOM tree is None after BrowserStateRequestEvent - page may have failed to load")
-
-            # 使用新的DOM API
-            from ..tools.browser_use.dom_extractor import extract_dom_dict, extract_llm_view, DOMExtractor
-
-            extractor = DOMExtractor()
-            # 根据配置选择目标DOM
-            if self.dom_scope == "full":
-                target_dom, _ = extractor.serialize_accessible_elements_custom(
-                    enhanced_dom, include_non_visible=True
-                )
-            else:
-                target_dom, _ = extractor.serialize_accessible_elements_custom(
-                    enhanced_dom, include_non_visible=False
-                )
-
-            # 转换为DOM字典结构
-            dom_dict = extract_dom_dict(target_dom)
-            # LLM 模式不需要 xpath（节省 token），script 模式需要 xpath（用于生成定位代码）
-            include_xpath = (self.extraction_method == 'script')
-            llm_view = extract_llm_view(dom_dict, include_xpath=include_xpath)
-
-            # Check if DOM is too small (likely incomplete or empty)
+            # Check if DOM is too small and retry if needed
             if len(llm_view) <= 100:
                 logger.warning("⚠️  DOM appears too small - page may not be fully loaded")
                 logger.warning(f"    LLM view length: {len(llm_view)} chars")
                 logger.warning(f"    LLM view content: {llm_view}")
                 logger.warning(f"    DOM dict tag: {dom_dict.get('tag')}")
-            logger.info(f"    LLM view length: {len(llm_view)} chars")
-            logger.info(f"    LLM view content: {llm_view[:100]}...")
+                logger.warning(f"    Waiting 2 seconds and retrying DOM extraction...")
+
+                # Wait for page to fully load
+                await asyncio.sleep(2)
+
+                # Retry DOM extraction
+                logger.info("Retrying DOM extraction after wait...")
+                target_dom, dom_dict, llm_view = await self._get_current_page_dom()
+
+                logger.info(f"    After retry - LLM view length: {len(llm_view)} chars")
+                if len(llm_view) <= 100:
+                    logger.error("⚠️  DOM still too small after retry - proceeding anyway")
+
+            logger.info(f"    Final LLM view length: {len(llm_view)} chars")
+            logger.info(f"    Final LLM view content: {llm_view[:100]}...")
 
             # 调试模式: 保存DOM结构
             if self.debug_mode:
@@ -531,34 +546,15 @@ class ScraperAgent(BaseStepAgent):
                 logger.info(f"脚本不存在，自动生成: {script_key}")
                 logger.info(f"脚本生成使用 partial DOM 以节省 token")
 
-                # Wait for page stability before getting DOM for script generation
-                from browser_use.browser.events import BrowserStateRequestEvent
-                logger.debug("Dispatching BrowserStateRequestEvent for script generation...")
-                event = self.browser_session.event_bus.dispatch(
-                    BrowserStateRequestEvent(
-                        include_dom=True,
-                        include_screenshot=False,
-                        include_recent_events=False
-                    )
-                )
-                await event.event_result(raise_if_any=True, raise_if_none=False)
-                logger.debug("Page stability wait completed for script generation")
+                # Temporarily switch to partial scope for script generation
+                original_scope = self.dom_scope
+                self.dom_scope = 'partial'
 
-                # Use the enhanced_dom from DOMWatchdog cache (already built during BrowserStateRequestEvent)
-                enhanced_dom = self.browser_session._dom_watchdog.enhanced_dom_tree
-                if enhanced_dom is None:
-                    raise RuntimeError("DOM tree is None after BrowserStateRequestEvent - page may have failed to load")
+                # Get DOM for script generation
+                partial_dom, partial_dict, partial_llm_view = await self._get_current_page_dom()
 
-                from ..tools.browser_use.dom_extractor import extract_dom_dict, extract_llm_view, DOMExtractor
-                extractor = DOMExtractor()
-
-                # Force partial DOM for script generation
-                partial_dom, _ = extractor.serialize_accessible_elements_custom(
-                    enhanced_dom, include_non_visible=False
-                )
-                partial_dict = extract_dom_dict(partial_dom)
-                # Script generation needs xpath for element location
-                partial_llm_view = extract_llm_view(partial_dict, include_xpath=True)
+                # Restore original scope
+                self.dom_scope = original_scope
 
                 # Build DOM analysis data with PARTIAL DOM
                 dom_analysis = {
@@ -875,16 +871,25 @@ Extract data now:"""
             user_description = data_requirements.get('user_description', '')
             output_format = data_requirements.get('output_format', {})
             sample_data = data_requirements.get('sample_data', [])
-            
+            xpath_hints = data_requirements.get('xpath_hints', {})
+
             # Build field descriptions
             fields_description = ""
             for field_name, field_desc in output_format.items():
                 fields_description += f"- {field_name}: {field_desc}\n"
-            
+
             # Build sample descriptions
             sample_description = ""
             if sample_data and len(sample_data) > 0:
                 sample_description = f"\n\n参考样例数据，用户给出的当前页面期望的结果：\n{json.dumps(sample_data, indent=2, ensure_ascii=False)}"
+
+            # Build xpath hints description
+            xpath_hints_description = ""
+            if xpath_hints:
+                xpath_hints_description = "\n\n## 用户演示时采集的 XPath 提示（仅供参考）：\n"
+                for field_name, xpath in xpath_hints.items():
+                    xpath_hints_description += f"- {field_name}: {xpath}\n"
+                xpath_hints_description += "\n**注意**：这些 xpath 来自用户演示页面，可能不完全适用于当前页面。请根据实际 DOM 结构灵活调整。"
             
             # Simplified scraper prompt - clear instructions with minimal examples
             prompt = f"""
@@ -905,9 +910,15 @@ DOM是嵌套字典结构，每个元素包含：
 - **模式提取**：提取重复数据（如搜索结果列表、商品列表）
 
 定位策略（优先级）：
-1. **Class定位**（首选）- 通过CSS类名，灵活适应单个/多个元素
-2. **XPath定位** - 精确路径定位
-3. **内容特征定位** - 通过href/text等内容匹配
+1. **XPath提示优先** - 如果提供了 xpath_hints，先尝试在 DOM 中验证这些 xpath 是否有效
+2. **Class定位**（首选）- 通过CSS类名，灵活适应单个/多个元素
+3. **XPath定位** - 精确路径定位
+4. **内容特征定位** - 通过href/text等内容匹配
+
+**如何使用 XPath 提示**：
+- 如果 xpath_hint 能在当前 DOM 中定位到目标元素 → 基于它生成通用模式
+- 如果 xpath_hint 无效或不存在 → 自行分析 DOM 寻找最佳策略
+- 可以从 xpath_hint 中提取有用信息（如 class 名称）来辅助定位
 
 **跨DOM数据提取策略**：当数据分散在多个相邻元素中时：
 1. 先定位到任意一个目标数据元素（通过class或内容）
@@ -944,7 +955,7 @@ def collect_scattered_data(container_node):
 用户需求：{user_description}
 
 输出字段说明：
-{fields_description}{sample_description}
+{fields_description}{sample_description}{xpath_hints_description}
 
 **重要**：这是样例页面，生成的脚本要能适用于内容不同但结构相似的其他页面。
 

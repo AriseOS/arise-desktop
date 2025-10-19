@@ -13,8 +13,21 @@ class ConfigService:
     
     def __init__(self, config_path: Optional[str] = None):
         self.config_data: Dict[str, Any] = {}
+        # Detect project root first
+        self.project_root = self._find_project_root()
         self.config_path = self._find_config_file(config_path)
         self._load_config()
+    
+    def _find_project_root(self) -> Path:
+        """Find project root directory (agentcrafter/)"""
+        # Method 1: Via environment variable
+        if project_root_env := os.getenv("PROJECT_ROOT"):
+            return Path(project_root_env).resolve()
+        
+        # Method 2: Find from config file location
+        # ConfigService is at: base_app/base_app/server/core/config_service.py
+        # Project root: ../../../../ (up 4 levels to agentcrafter/)
+        return Path(__file__).parent.parent.parent.parent.parent.resolve()
     
     def _find_config_file(self, config_path: Optional[str] = None) -> str:
         """查找配置文件"""
@@ -241,6 +254,10 @@ class ConfigService:
 
         def replace_ref(match):
             ref_key = match.group(1)
+            
+            # Special case: PROJECT_ROOT
+            if ref_key == 'PROJECT_ROOT':
+                return str(self.project_root)
 
             # First check if it's an environment variable
             # Environment variables are usually ALL_CAPS or contain underscores

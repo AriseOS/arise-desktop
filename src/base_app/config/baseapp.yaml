@@ -38,6 +38,18 @@ app:
   port: 8000
   version: 1.0.0
 
+# Web backend configuration (merged from backend.yaml)
+web:
+  server:
+    host: 0.0.0.0
+    port: 8000
+    reload: true  # Enable hot reload in development
+  security:
+    # IMPORTANT: Change this in production!
+    secret_key: ${SECRET_KEY:-your-secret-key-here-change-in-production}
+    algorithm: HS256
+    access_token_expire_minutes: 30
+
 # Data storage configuration
 data:
   # Root directory for all data files
@@ -46,8 +58,9 @@ data:
   # Database files
   databases:
     sessions: ${data.root}/sessions.db    # Session storage
-    kv: ${data.root}/agent_kv.db          # Key-value storage
+    kv: ${data.root}/agent_kv.db          # Key-value storage (script cache, variables)
     storage: ${data.root}/storage.db      # Storage agent database
+    users: ${data.root}/agentcrafter_users.db  # Web backend user authentication database
 
   # Vector database directory
   chroma_db: ${data.root}/chroma_db

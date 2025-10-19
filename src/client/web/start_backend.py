@@ -35,13 +35,33 @@ def main():
     
     # 启动服务器
     print("启动后端服务器...")
-    from backend.config import get_server_config, print_config
     
-    # 打印配置信息
-    print_config()
+    # Import ConfigService
+    sys.path.insert(0, str(os.path.join(os.path.dirname(__file__), '..', '..', 'base_app')))
+    from base_app.server.core.config_service import ConfigService
+    
+    # Initialize ConfigService
+    config_service = ConfigService()
+    
+    # Print configuration
+    print("=" * 60)
+    print("AgentCrafter Backend Configuration")
+    print("=" * 60)
+    print(f"Config file: {config_service.config_path}")
+    print(f"Server: {config_service.get('web.server.host')}:{config_service.get('web.server.port')}")
+    print(f"Reload: {config_service.get('web.server.reload')}")
+    print(f"Data root: {config_service.get('data.root')}")
+    print("=" * 60)
+    
+    # Get server configuration
+    server_config = {
+        "host": config_service.get('web.server.host', '0.0.0.0'),
+        "port": config_service.get('web.server.port', 8000),
+        "reload": config_service.get('web.server.reload', True),
+        "log_level": config_service.get('logging.level', 'info').lower()
+    }
     
     import uvicorn
-    server_config = get_server_config()
     uvicorn.run("main:app", **server_config)
 
 if __name__ == "__main__":

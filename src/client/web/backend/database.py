@@ -7,9 +7,38 @@ from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 import os
 from pathlib import Path
-from config import get_database_url, get_database_config
 
-# 数据库配置 - 通过配置文件管理
+# 使用 ConfigService 统一管理配置
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "base_app"))
+from base_app.server.core.config_service import ConfigService
+
+# 初始化配置服务
+_config_service = ConfigService()
+
+# 从 baseapp.yaml 获取用户数据库配置
+def get_database_url() -> str:
+    """Get database URL from ConfigService"""
+    db_path = _config_service.get('data.databases.users')
+    if not db_path:
+        raise ValueError("Database path not configured in baseapp.yaml: data.databases.users")
+    
+    # Expand user directory
+    db_path = os.path.expanduser(db_path)
+    return f"sqlite:///{db_path}"
+
+def get_database_config() -> dict:
+    """Get database configuration"""
+    db_url = get_database_url()
+    config = {"url": db_url}
+    
+    # SQLite specific configuration
+    if "sqlite" in db_url:
+        config["connect_args"] = {"check_same_thread": False}
+    
+    return config
+
+# 数据库配置 - 通过 ConfigService 管理
 DATABASE_URL = get_database_url()
 db_config = get_database_config()
 

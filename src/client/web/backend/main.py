@@ -589,11 +589,12 @@ async def execute_workflow(
             workflow_tasks[task_id]["message"] = "Creating BaseAgent instance"
             workflow_tasks[task_id]["progress"] = 20
 
-            # 创建BaseAgent实例
+            # 创建BaseAgent实例 (传递 user_id 实现 Memory 隔离)
             base_agent = BaseAgent(
                 agent_config,
                 config_service=config_service,
-                provider_config=provider_config
+                provider_config=provider_config,
+                user_id=str(current_user.id)  # 传递用户ID，同一用户的多次请求可以共享 Memory（如脚本缓存）
             )
 
             # 初始化BaseAgent

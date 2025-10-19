@@ -328,11 +328,21 @@ operations:
 
 **extract operations**
 → **scraper_agent** with:
-- extraction_method: "script" (prefer) or "llm"
+- extraction_method: "script" (DEFAULT - prefer script unless explicitly need LLM)
 - data_requirements:
   - user_description: from intent_description
   - output_format: combine ALL extract targets from same page into ONE output_format
   - sample_data: use extract.value as examples (format depends on extraction type - see below)
+  - xpath_hints: Extract xpath from operation.element.xpath and map to field names
+    ```yaml
+    # Extract xpath from MetaFlow operations:
+    xpath_hints:
+      target_field: "operation.element.xpath"
+
+    # Example:
+    # MetaFlow operation: {type: extract, target: "url", element: {xpath: "//a[@class='link']"}}
+    # → xpath_hints: {url: "//a[@class='link']"}
+    ```
 
 **CRITICAL - sample_data Format Rules**:
 - **Extracting a LIST of items** (value is []): sample_data MUST be a list
@@ -395,13 +405,20 @@ One intent can generate multiple workflow steps:
 
 ## 4. extraction_method Selection
 
-Prefer "script" method when:
-- There are precise xpath/selectors in operations
-- Extracting simple fields (title, price, etc.)
+**CRITICAL - Always prefer "script" method by default!**
 
-Use "llm" method when:
-- Need semantic understanding
-- Complex data extraction
+Use "script" method when (DEFAULT):
+- MetaFlow operations contain xpath/selectors (MUST use script!)
+- Extracting list data (URLs, items, etc.)
+- Extracting detail page fields (title, price, rating, etc.)
+- Any structured data extraction with known fields
+
+Only use "llm" method when:
+- User explicitly requests semantic understanding
+- Extremely complex/unstructured data that cannot be scripted
+- When there's no consistent DOM pattern to follow
+
+**Rule**: If MetaFlow extract operation has `element.xpath`, MUST use `extraction_method: "script"`
 
 ## 5. Variable Naming
 
@@ -440,7 +457,7 @@ nodes:
       - type: extract
         target: "product_urls"
         element:
-          xpath: "//article//a"
+          xpath: "//article//a[@class='product-link']"
         value: []
     outputs:
       product_urls: "product_urls"
@@ -459,9 +476,13 @@ nodes:
             url: "{{current_product.url}}"
           - type: extract
             target: "title"
+            element:
+              xpath: "//h1[@class='product-title']"
             value: "Product Title"
           - type: extract
             target: "price"
+            element:
+              xpath: "//span[@class='price']"
             value: "19.99"
           - type: store
             params:
@@ -530,6 +551,8 @@ steps:
         user_description: "Extract all product URLs"
         output_format:
           url: "Product URL"
+        xpath_hints:
+          url: "//article//a[@class='product-link']"
     outputs:
       extracted_data: "product_urls"
     timeout: 30
@@ -573,6 +596,9 @@ steps:
             sample_data:
               title: "Product Title"
               price: "19.99"
+            xpath_hints:
+              title: "//h1[@class='product-title']"
+              price: "//span[@class='price']"
         outputs:
           extracted_data: "product_info"
         timeout: 45
