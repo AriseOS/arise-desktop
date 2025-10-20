@@ -1,6 +1,6 @@
 version: '1.0'
-task_description: Collect all coffee products from first page with title, price and
-  sales
+task_description: Collect coffee product information from Allegro including product
+  name, price, and sales count
 nodes:
 - id: node_1
   intent_id: intent_6c3e972a
@@ -67,8 +67,8 @@ nodes:
     product_urls: product_urls
 - id: node_4
   type: loop
-  description: Iterate through all coffee products, extract title, price and sales
-    count for each
+  description: Iterate through all coffee products on first page, extract detailed
+    information
   source: '{{product_urls}}'
   item_var: current_product
   children:
@@ -160,7 +160,7 @@ nodes:
         xpath: //*[@id="showproduct-right-column-wrapper"]/div/div[1]/div/div/div[2]/div/div/div/div/div/section/div[1]/div[1]
         tagName: DIV
         className: _7030e_qVLm-
-        textContent: 'cena 69,50 złAllegro Smart! to darmowe dostawy i zwroty: Kurierem,
+        textContent: 'cena 69,50 złAllegro Smart! to darmowe dostawy i zwroty: Kurierem,
           do Automatów paczkowych i Punktów'
       data: {}
     - type: select
@@ -172,10 +172,10 @@ nodes:
         xpath: //*[@id="showproduct-right-column-wrapper"]/div/div[1]/div/div/div[2]/div/div/div/div/div/section/div[1]/div[1]
         tagName: DIV
         className: _7030e_qVLm-
-        textContent: 'cena 69,50 złAllegro Smart! to darmowe dostawy i zwroty: Kurierem,
+        textContent: 'cena 69,50 złAllegro Smart! to darmowe dostawy i zwroty: Kurierem,
           do Automatów paczkowych i Punktów'
       data:
-        selectedText: 'cena69,50 zł
+        selectedText: 'cena69,50 zł
 
           '
         textLength: 13
@@ -188,10 +188,10 @@ nodes:
         xpath: //*[@id="showproduct-right-column-wrapper"]/div/div[1]/div/div/div[2]/div/div/div/div/div/section/div[1]/div[1]
         tagName: DIV
         className: _7030e_qVLm-
-        textContent: 'cena 69,50 złAllegro Smart! to darmowe dostawy i zwroty: Kurierem,
+        textContent: 'cena 69,50 złAllegro Smart! to darmowe dostawy i zwroty: Kurierem,
           do Automatów paczkowych i Punktów'
       data:
-        copiedText: 'cena69,50 zł
+        copiedText: 'cena69,50 zł
 
           '
         textLength: 13
@@ -204,7 +204,7 @@ nodes:
         xpath: //*[@id="showproduct-left-column-wrapper"]/div/div[1]/div/div/div/div/div/div[1]/div/div/div[1]/div/div[2]/div/div[1]/div
         tagName: DIV
         className: mpof_ki
-        textContent: '|3 308 osób kupiło ostatnio'
+        textContent: '|3 308 osób kupiło ostatnio'
       data: {}
     - type: select
       timestamp: '2025-09-13 10:33:15'
@@ -215,9 +215,9 @@ nodes:
         xpath: //*[@id="showproduct-left-column-wrapper"]/div/div[1]/div/div/div/div/div/div[1]/div/div/div[1]/div/div[2]/div/div[1]/div/div[2]
         tagName: DIV
         className: mgmw_3z mp7g_oh mryx_8 mryx_0_s
-        textContent: 3 308 osób kupiło ostatnio
+        textContent: 3 308 osób kupiło ostatnio
       data:
-        selectedText: 3 308 osób kupiło ostatnio
+        selectedText: 3 308 osób kupiło ostatnio
         textLength: 26
     - type: copy_action
       timestamp: '2025-09-13 10:33:15'
@@ -228,11 +228,11 @@ nodes:
         xpath: //*[@id="showproduct-left-column-wrapper"]/div/div[1]/div/div/div/div/div/div[1]/div/div/div[1]/div/div[2]/div/div[1]/div/div[2]
         tagName: DIV
         className: mgmw_3z mp7g_oh mryx_8 mryx_0_s
-        textContent: 3 308 osób kupiło ostatnio
+        textContent: 3 308 osób kupiło ostatnio
       data:
-        copiedText: 3 308 osób kupiło ostatnio
+        copiedText: 3 308 osób kupiło ostatnio
         textLength: 26
     outputs:
-      product_title: product_title
+      product_name: product_name
       product_price: product_price
       sales_count: sales_count

@@ -267,8 +267,11 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
         values = []
         for field in cached["field_order"]:
             value = data[field]
+            # Handle None values - convert to empty string
+            if value is None:
+                value = ""
             # Convert complex types to JSON
-            if isinstance(value, (dict, list)):
+            elif isinstance(value, (dict, list)):
                 value = json.dumps(value, ensure_ascii=False)
             values.append(value)
 
