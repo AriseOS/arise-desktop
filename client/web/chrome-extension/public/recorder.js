@@ -5,6 +5,27 @@
     let recordingSessionId = null;
     let userToken = null;
 
+    // Check if there's an active recording session on page load
+    async function checkAndRestoreRecordingState() {
+        try {
+            const result = await chrome.storage.local.get(['activeRecordingSession', 'recordingToken']);
+            if (result.activeRecordingSession && result.recordingToken) {
+                console.log('🔄 Restoring recording state on new page:', result.activeRecordingSession);
+                recordingSessionId = result.activeRecordingSession;
+                userToken = result.recordingToken;
+                // Inject tracking script for this page
+                injectTrackingScript();
+            } else {
+                console.log('ℹ️ No active recording session');
+            }
+        } catch (error) {
+            console.error('❌ Error checking recording state:', error);
+        }
+    }
+
+    // Restore recording state when script loads
+    checkAndRestoreRecordingState();
+
     // Listen for messages from popup to start/stop recording
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         console.log('📨 Recorder received message:', request.action);
@@ -20,20 +41,39 @@
         return true;
     });
 
-    function startRecording(sessionId, token) {
+    async function startRecording(sessionId, token) {
         recordingSessionId = sessionId;
         userToken = token;
         console.log('🎬 Recording started:', sessionId);
         console.log('🔑 Token set:', token ? 'Yes' : 'No');
 
+        // Save recording state to storage so it persists across page navigations
+        try {
+            await chrome.storage.local.set({
+                activeRecordingSession: sessionId,
+                recordingToken: token
+            });
+            console.log('💾 Recording state saved to storage');
+        } catch (error) {
+            console.error('❌ Error saving recording state:', error);
+        }
+
         // Inject behavior tracking script
         injectTrackingScript();
     }
 
-    function stopRecording() {
+    async function stopRecording() {
         recordingSessionId = null;
         userToken = null;
         console.log('⏹️ Recording stopped');
+
+        // Clear recording state from storage
+        try {
+            await chrome.storage.local.remove(['activeRecordingSession', 'recordingToken']);
+            console.log('🗑️ Recording state cleared from storage');
+        } catch (error) {
+            console.error('❌ Error clearing recording state:', error);
+        }
 
         // Remove tracking script
         removeTrackingScript();
