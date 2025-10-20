@@ -28,16 +28,16 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
   const generateWorkflowData = () => {
     setLoading(true)
 
-    // Real workflow.yaml data converted to JavaScript object
+    // Workflow data from tests/test_data/coffee_allegro/output/workflow.yaml
     setTimeout(() => {
       const workflowYaml = {
         apiVersion: "agentcrafter.io/v1",
         kind: "Workflow",
         metadata: {
           name: "allegro-coffee-collection-workflow",
-          description: "Collect all coffee products from first page with title, price and sales",
+          description: "Collect coffee product information from Allegro including product name, price, and sales count",
           version: "1.0.0",
-          tags: ["scraper", "allegro", "coffee", "collection"]
+          tags: ["scraper", "allegro", "coffee", "price-collection"]
         },
         steps: [
           {
@@ -49,7 +49,7 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
           },
           {
             id: "extract-product-urls",
-            name: "Extract product URLs",
+            name: "Extract coffee product URLs",
             agent_type: "scraper_agent",
             description: "Navigate to coffee category and extract all product URLs from first page",
             agent_instruction: "Visit Allegro coffee category page and extract all product URLs"
@@ -65,22 +65,22 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
             id: "collect-product-details",
             name: "Collect product details",
             agent_type: "foreach",
-            description: "Iterate through all coffee products, extract title, price and sales count for each",
+            description: "Iterate through all coffee products and extract detailed information",
             source: "{{all_product_urls}}",
             item_var: "current_product",
             steps: [
               {
-                id: "scrape-product-details",
-                name: "Scrape product details",
+                id: "scrape-product-info",
+                name: "Scrape product information",
                 agent_type: "scraper_agent",
-                description: "Extract product title, price and sales count",
-                agent_instruction: "Visit product page and extract title, price and sales information"
+                description: "Extract product name, price, and sales count",
+                agent_instruction: "Visit product detail page and extract name, price, and sales count"
               },
               {
                 id: "append-product",
-                name: "Add product to list",
+                name: "Add product to collection",
                 agent_type: "variable",
-                description: "Append product info to collection",
+                description: "Append product information to collection list",
                 agent_instruction: "Add product to collection list"
               },
               {
@@ -88,7 +88,7 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
                 name: "Store product to database",
                 agent_type: "storage_agent",
                 description: "Persist product information to database",
-                agent_instruction: "Store product details to database"
+                agent_instruction: "Store coffee product information to database"
               }
             ]
           },
@@ -96,8 +96,8 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
             id: "prepare-output",
             name: "Prepare final output",
             agent_type: "variable",
-            description: "Organize collection results",
-            agent_instruction: "Prepare final output with collected products"
+            description: "Organize collection results and prepare final response",
+            agent_instruction: "Prepare final output with collection summary"
           }
         ]
       };

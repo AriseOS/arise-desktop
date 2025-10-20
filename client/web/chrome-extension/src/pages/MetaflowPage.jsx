@@ -28,10 +28,10 @@ function MetaflowPage({ onNavigate, showStatus, recordingData }) {
   }
 
   const generateMetaflows = () => {
-    // Real metaflow.yaml data converted to JavaScript object
+    // Metaflow data from tests/test_data/coffee_allegro/output/metaflow.yaml
     const metaflowData = {
       version: '1.0',
-      task_description: 'Collect all coffee products from first page with title, price and sales',
+      task_description: 'Collect coffee product information from Allegro including product name, price, and sales count',
       nodes: [
         {
           id: 'node_1',
@@ -66,7 +66,7 @@ function MetaflowPage({ onNavigate, showStatus, recordingData }) {
         {
           id: 'node_4',
           type: 'loop',
-          description: 'Iterate through all coffee products, extract title, price and sales count for each',
+          description: 'Iterate through all coffee products on first page, extract detailed information',
           source: '{{product_urls}}',
           item_var: 'current_product',
           children: [

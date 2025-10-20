@@ -415,7 +415,9 @@ class ScraperAgent(BaseStepAgent):
         # Get enhanced DOM from cache
         enhanced_dom = self.browser_session._dom_watchdog.enhanced_dom_tree
         if enhanced_dom is None:
-            raise RuntimeError("DOM tree is None after BrowserStateRequestEvent - page may have failed to load")
+            logger.warning("⚠️  DOM tree is None after BrowserStateRequestEvent - page may not be fully loaded, will retry")
+            # Return minimal DOM to trigger retry logic in caller
+            return "", {}, "[]"
 
         # Extract DOM based on scope
         extractor = DOMExtractor()
