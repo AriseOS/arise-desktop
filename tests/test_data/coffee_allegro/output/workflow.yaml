@@ -60,6 +60,7 @@ steps:
         sample_data:
           - url: "https://allegro.pl/oferta/kawa-ziarnista-1kg-brazylia-santos-swiezo-palona-100-arabica-tommy-cafe-12786896326"
           - url: "https://allegro.pl/oferta/example-product-2"
+          - url: "https://allegro.pl/events/clicks?emission_unit_id=571bff70-d855-409a-9345-4159498483d6&emission_id=cefdee88-876f-4ace-9a1b-d65876a7e71c&type=OFFER&ts=1760958164482&redirect=https%3A%2F%2Fallegro.pl%2Foferta%2Fkawa-ziarnista-1kg-brazylia-cerrado-swiezo-palona-arabica-100-singleorigin-9664732492%3Fbi_s%3Dads%26bi_m%3Dproductlisting%253Adesktop%253Acategory%26bi_c%3DNTBiOGI0OTktYzUxNC00MWM4LTgwZmUtODhjYzVkMjQxOTcwAA%26bi_t%3Dape&placement=productlisting:desktop:category&sig=f3409ee77124290ba4e8db88fe52e010"
         xpath_hints:
           url: "//*[@id=\"search-results\"]/div[5]/div[2]/div/div/div/div/div/ul/li[1]/article/div/div[2]/div[1]/div/h2/a"
     outputs:
