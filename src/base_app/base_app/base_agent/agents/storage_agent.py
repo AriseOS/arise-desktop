@@ -196,7 +196,8 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
         """Store data to collection"""
         collection = input_data.get('collection')
         data = input_data.get('data')
-        user_id = context.variables.get('user_id', 'default_user')
+        # Get user_id from MemoryManager (single source of truth)
+        user_id = context.memory_manager.user_id if context.memory_manager else 'default_user'
 
         # Handle list of data
         if isinstance(data, list):
@@ -231,8 +232,8 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
         # Log table and data info for debugging
         self.logger.info(f"Storing to table: {table_name}, data fields: {list(data.keys())}")
 
-        # Generate cache key
-        cache_key = f"storage_insert_{collection}_{user_id}"
+        # Generate cache key (no user_id needed, MemoryManager handles isolation)
+        cache_key = f"storage_insert_{collection}"
 
         # Try to load cached script
         cached = await context.memory_manager.get_data(cache_key)
@@ -287,18 +288,19 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
         filters = input_data.get('filters', {})
         limit = input_data.get('limit')
         order_by = input_data.get('order_by')
-        user_id = context.variables.get('user_id', 'default_user')
+        # Get user_id from MemoryManager (single source of truth)
+        user_id = context.memory_manager.user_id if context.memory_manager else 'default_user'
 
         table_name = f"{collection}_{user_id}"
 
-        # Generate cache key (include query config hash)
+        # Generate cache key (include query config hash, no user_id - MemoryManager handles isolation)
         query_config = {
             "filters": filters,
             "order_by": order_by,
             "limit": limit
         }
         config_hash = self._hash_config(query_config)
-        cache_key = f"storage_query_{collection}_{user_id}_{config_hash}"
+        cache_key = f"storage_query_{collection}_{config_hash}"
 
         # Try to load cached script
         cached = await context.memory_manager.get_data(cache_key)
@@ -343,17 +345,18 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
         format_type = input_data.get('format')
         output_path = input_data.get('output_path')
         filters = input_data.get('filters', {})
-        user_id = context.variables.get('user_id', 'default_user')
+        # Get user_id from MemoryManager (single source of truth)
+        user_id = context.memory_manager.user_id if context.memory_manager else 'default_user'
 
         table_name = f"{collection}_{user_id}"
 
-        # Generate cache key
+        # Generate cache key (no user_id - MemoryManager handles isolation)
         export_config = {
             "filters": filters,
             "format": format_type
         }
         config_hash = self._hash_config(export_config)
-        cache_key = f"storage_export_{collection}_{user_id}_{config_hash}"
+        cache_key = f"storage_export_{collection}_{config_hash}"
 
         # Try to load cached script
         cached = await context.memory_manager.get_data(cache_key)
