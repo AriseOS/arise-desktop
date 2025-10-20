@@ -3,21 +3,21 @@ kind: "Workflow"
 
 metadata:
   name: "allegro-coffee-collection-workflow"
-  description: "Collect all coffee products from first page with title, price and sales"
+  description: "Collect coffee product information from Allegro including product name, price, and sales count"
   version: "1.0.0"
-  tags: ["scraper", "allegro", "coffee", "collection"]
+  tags: ["scraper", "allegro", "coffee", "price-collection"]
 
 inputs:
   max_products:
     type: "integer"
-    description: "Maximum products to collect"
+    description: "Maximum number of products to collect"
     required: false
     default: 50
 
 outputs:
   product_details:
     type: "array"
-    description: "Collected product information"
+    description: "Collected coffee product information"
   final_response:
     type: "string"
     description: "Completion message"
@@ -44,7 +44,7 @@ steps:
     timeout: 10
 
   - id: "extract-product-urls"
-    name: "Extract product URLs"
+    name: "Extract coffee product URLs"
     agent_type: "scraper_agent"
     description: "Navigate to coffee category and extract all product URLs from first page"
     agent_instruction: "Visit Allegro coffee category page and extract all product URLs"
@@ -52,16 +52,19 @@ steps:
       target_path: "https://allegro.pl/kategoria/produkty-spozywcze-kawa-74030"
       extraction_method: "script"
       dom_scope: "full"
+      max_items: 10
       data_requirements:
-        user_description: "Extract all coffee product URLs from the product listing"
+        user_description: "Extract all coffee product URLs from the listing page"
         output_format:
-          url: "Product URL"
+          url: "Product detail page URL"
         sample_data:
           - url: "https://allegro.pl/oferta/kawa-ziarnista-1kg-brazylia-santos-swiezo-palona-100-arabica-tommy-cafe-12786896326"
           - url: "https://allegro.pl/oferta/example-product-2"
+        xpath_hints:
+          url: "//*[@id=\"search-results\"]/div[5]/div[2]/div/div/div/div/div/ul/li[1]/article/div/div[2]/div[1]/div/h2/a"
     outputs:
       extracted_data: "product_urls"
-    timeout: 45
+    timeout: 60
 
   - id: "save-urls"
     name: "Save product URLs"
@@ -79,39 +82,44 @@ steps:
   - id: "collect-product-details"
     name: "Collect product details"
     agent_type: "foreach"
-    description: "Iterate through all coffee products, extract title, price and sales count for each"
+    description: "Iterate through all coffee products and extract detailed information"
     source: "{{all_product_urls}}"
     item_var: "current_product"
     index_var: "product_index"
-    loop_timeout: 900
+    max_iterations: 50
+    loop_timeout: 1200
     steps:
-      - id: "scrape-product-details"
-        name: "Scrape product details"
+      - id: "scrape-product-info"
+        name: "Scrape product information"
         agent_type: "scraper_agent"
-        description: "Extract product title, price and sales count"
-        agent_instruction: "Visit product page and extract title, price and sales information"
+        description: "Extract product name, price, and sales count"
+        agent_instruction: "Visit product detail page and extract name, price, and sales count"
         inputs:
           target_path: "{{current_product.url}}"
           extraction_method: "llm"
           dom_scope: "partial"
           data_requirements:
-            user_description: "Extract product title, price and sales count"
+            user_description: "Extract coffee product details including name, price, and purchase statistics"
             output_format:
-              title: "Product title"
-              price: "Product price"
-              sales_count: "Number of people who bought recently"
+              product_name: "Coffee product name"
+              product_price: "Product price"
+              sales_count: "Number of people who purchased recently"
             sample_data:
-              title: "Kawa ziarnista 1kg BRAZYLIA Santos Świeżo Palona 100% ARABICA Tommy Cafe"
-              price: "69,50 zł"
+              product_name: "Kawa ziarnista 1kg BRAZYLIA Santos Świeżo Palona 100% ARABICA Tommy Cafe"
+              product_price: "69,50 zł"
               sales_count: "3 308 osób kupiło ostatnio"
+            xpath_hints:
+              product_name: "//*[@id=\"showproduct-left-column-wrapper\"]/div/div[1]/div/div/div/div/div/div[1]/div/div/div[1]/div/h1"
+              product_price: "//*[@id=\"showproduct-right-column-wrapper\"]/div/div[1]/div/div/div[2]/div/div/div/div/div/section/div[1]/div[1]"
+              sales_count: "//*[@id=\"showproduct-left-column-wrapper\"]/div/div[1]/div/div/div/div/div/div[1]/div/div/div[1]/div/div[2]/div/div[1]/div/div[2]"
         outputs:
           extracted_data: "product_info"
         timeout: 60
 
       - id: "append-product"
-        name: "Add product to list"
+        name: "Add product to collection"
         agent_type: "variable"
-        description: "Append product info to collection"
+        description: "Append product information to collection list"
         agent_instruction: "Add product to collection list"
         inputs:
           operation: "append"
@@ -125,7 +133,7 @@ steps:
         name: "Store product to database"
         agent_type: "storage_agent"
         description: "Persist product information to database"
-        agent_instruction: "Store product details to database"
+        agent_instruction: "Store coffee product information to database"
         inputs:
           operation: "store"
           collection: "allegro_coffee_products"
@@ -137,13 +145,13 @@ steps:
   - id: "prepare-output"
     name: "Prepare final output"
     agent_type: "variable"
-    description: "Organize collection results"
-    agent_instruction: "Prepare final output with collected products"
+    description: "Organize collection results and prepare final response"
+    agent_instruction: "Prepare final output with collection summary"
     inputs:
       operation: "set"
       data:
         product_details: "{{all_product_details}}"
-        final_response: "Successfully collected {{product_index}} coffee products from Allegro"
+        final_response: "Successfully collected {{product_index}} coffee products from Allegro with name, price, and sales count"
     outputs:
       product_details: "product_details"
       final_response: "final_response"
