@@ -4,6 +4,7 @@ function RecordPage({ onNavigate, showStatus, currentUser }) {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [isRecording, setIsRecording] = useState(false)
+  const [isGenerating, setIsGenerating] = useState(false)
   const [sessionId, setSessionId] = useState(null)
   const [capturedOperations, setCapturedOperations] = useState([])
   const operationsRef = useRef([])
@@ -224,18 +225,23 @@ function RecordPage({ onNavigate, showStatus, currentUser }) {
 
         showStatus(`✅ 录制完成，捕获 ${result.operation_count} 个操作`, 'success')
 
+        // Stop recording UI state
+        setIsRecording(false)
+        setIsGenerating(true)
+
         // Clear recording state and captured operations
         await clearRecordingState()
         chrome.runtime.sendMessage({ action: 'clearCapturedOperations' }).catch(err => {
           console.error('Failed to clear operations:', err)
         })
 
-        // Navigate to metaflow page with recording data (keep UI unchanged until navigation)
+        // Show generating state for 2 seconds, then navigate
         console.log('Preparing to navigate to metaflow page with data:', result)
         setTimeout(() => {
           console.log('Calling onNavigate with metaflow page')
+          setIsGenerating(false)
           onNavigate('metaflow', { recordingData: result })
-        }, 300)
+        }, 2000)
       } else {
         throw new Error(result.error || 'Failed to stop recording')
       }
@@ -331,10 +337,18 @@ function RecordPage({ onNavigate, showStatus, currentUser }) {
           )}
 
           <button
-            className={`start-record-button ${isRecording ? 'recording' : ''}`}
+            className={`start-record-button ${isRecording ? 'recording' : ''} ${isGenerating ? 'generating' : ''}`}
             onClick={isRecording ? handleStopRecord : handleStartRecord}
+            disabled={isGenerating}
           >
-            {isRecording ? (
+            {isGenerating ? (
+              <>
+                <svg className="spinning" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10" strokeDasharray="60" strokeDashoffset="30" strokeLinecap="round"></circle>
+                </svg>
+                <span>生成中...</span>
+              </>
+            ) : isRecording ? (
               <>
                 <svg viewBox="0 0 24 24" fill="currentColor">
                   <rect x="6" y="6" width="12" height="12"></rect>

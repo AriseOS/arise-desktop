@@ -791,12 +791,24 @@ body {
   animation: pulse 2s infinite;
 }
 
+.start-record-button.generating {
+  background: #f59e0b;
+}
+
+.start-record-button.generating:hover {
+  background: #f59e0b;
+}
+
 .recording-indicator {
   width: 12px;
   height: 12px;
   background: white;
   border-radius: 50%;
   animation: blink 1.5s infinite;
+}
+
+.spinning {
+  animation: spin 1s linear infinite;
 }
 
 @keyframes pulse {

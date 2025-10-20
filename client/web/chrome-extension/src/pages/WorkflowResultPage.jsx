@@ -12,42 +12,22 @@ function WorkflowResultPage({ currentUser, onNavigate, showStatus, taskId }) {
     setLoading(true)
 
     try {
-      // Hardcoded demo data - 30 rows of Allegro coffee products
+      // Demo data from allegro_coffee_products_test_user.csv - 10 rows
       const demoData = {
         workflow_name: "allegro-coffee-collection-workflow",
-        total_items: 30,
-        fields: ["Product Title", "Price (PLN)"],
+        total_items: 10,
+        fields: ["Product Name", "Price", "Sales Count"],
         data: [
-          ["Lavazza Qualita Oro Coffee Beans 1kg", "89.99"],
-          ["Tchibo Exclusive Coffee Ground 250g", "24.50"],
-          ["Starbucks Pike Place Roast Whole Bean 200g", "32.90"],
-          ["Illy Classico Medium Roast Ground Coffee 250g", "42.00"],
-          ["Jacobs Kronung Coffee Ground 500g", "28.75"],
-          ["Nescafe Gold Blend Instant Coffee 200g", "34.99"],
-          ["Davidoff Cafe Rich Aroma Instant Coffee 100g", "45.50"],
-          ["Carte Noire Original Ground Coffee 250g", "36.80"],
-          ["Pellini Top Arabica 100% Coffee Beans 500g", "52.00"],
-          ["Julius Meinl Jubileum Coffee Beans 500g", "48.90"],
-          ["Segafredo Zanetti Intermezzo Coffee Beans 1kg", "78.50"],
-          ["Dallmayr Prodomo Ground Coffee 500g", "44.20"],
-          ["Paulig Presidentti Original Coffee Beans 400g", "38.60"],
-          ["Melitta Auslese Coffee Ground 500g", "31.90"],
-          ["Tchibo Familia Ground Coffee 250g", "22.40"],
-          ["Lavazza Crema e Gusto Ground Coffee 250g", "26.50"],
-          ["Illy Intenso Bold Roast Ground Coffee 250g", "43.80"],
-          ["Kimbo Espresso Napoletano Coffee Beans 1kg", "72.00"],
-          ["Hausbrandt Trieste Coffee Beans 1kg", "84.50"],
-          ["Danesi Caffe Doppio Coffee Beans 1kg", "91.00"],
-          ["Carraro Globo Coffee Beans 1kg", "68.90"],
-          ["Bristot Classico Coffee Beans 1kg", "75.50"],
-          ["Torrie Superior Coffee Ground 250g", "29.90"],
-          ["Mokate Gold 3in1 Instant Coffee Box 20x18g", "18.50"],
-          ["Woseba Strong Coffee Ground 500g", "33.00"],
-          ["Jacobs Velvet Aroma Coffee Ground 250g", "25.80"],
-          ["Nescafe Classic Instant Coffee 200g", "28.90"],
-          ["Maxwell House Original Ground Coffee 750g", "41.50"],
-          ["Folgers Classic Roast Ground Coffee 320g", "35.20"],
-          ["Tim Hortons Original Blend Ground Coffee 300g", "37.80"]
+          ["Kawa ziarnista mieszana Dallmayr Crema d Oro 1000 g", "64,99 zł", "3 272 osoby kupiły ostatnio"],
+          ["SEGAFREDO INTERMEZZO 1 KG-Kawa ziarnista", "57,97 zł", "6 029 osób kupiło ostatnio"],
+          ["Kawa ziarnista 1KG OLOMEGA ARABICA 100% Świeżo Palona Blue Orca + GRATIS", "74,99 zł", "1 696 osób kupiło ostatnio"],
+          ["Kawa ziarnista Tchibo Eduscho Family 1 kg", "49,50 zł", "3 513 osób kupiło ostatnio"],
+          ["COSTA PROFESSIONAL 1KG SIGNATURE MEDIUM ROAST KAWA ZIARNISTA", "69,29 zł", "2 683 osoby kupiły ostatnio"],
+          ["Kawa ziarnista 1kg ITALIANA BELLAGIO ROAST -Świeżo palona BLUE ORCA +GRATIS", "72,99 zł", "3 511 osób kupiło tę ofertę"],
+          ["Kawa Ziarnista Lavazza Mieszana Crema e Aroma 1kg Ziarno Do Ekspresu", "73,89 zł", "3 207 osób kupiło tę ofertę"],
+          ["Kawa ziarnista 1kg TOPACIO - ŚWIEŻO PALONA BLUE ORCA 100% ARABICA +GRATIS", "67,99 zł", "5 620 osób kupiło ostatnio"],
+          ["Kawa ziarnista Arabica Lavazza Qualita Oro 1000 g", "74,99 zł", "3 237 osób kupiło ostatnio"],
+          ["Kawa ziarnista Brazylia 1kg Świeżo Palona - 100% Arabica - Monte Carmelo", "71,95 zł", "3 293 osoby kupiły ostatnio"]
         ]
       }
 
@@ -139,7 +119,7 @@ function WorkflowResultPage({ currentUser, onNavigate, showStatus, taskId }) {
             <div className="result-table-container">
               <div className="result-table-header">
                 <span className="table-title">数据预览</span>
-                <span className="table-subtitle">显示前 15 条数据</span>
+                <span className="table-subtitle">共 {resultData.total_items} 条数据</span>
               </div>
 
               <div className="result-table-wrapper">
@@ -153,7 +133,7 @@ function WorkflowResultPage({ currentUser, onNavigate, showStatus, taskId }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {resultData.data.slice(0, 15).map((row, rowIdx) => (
+                    {resultData.data.map((row, rowIdx) => (
                       <tr key={rowIdx}>
                         <td className="row-number">{rowIdx + 1}</td>
                         {row.map((cell, cellIdx) => (
@@ -164,12 +144,6 @@ function WorkflowResultPage({ currentUser, onNavigate, showStatus, taskId }) {
                   </tbody>
                 </table>
               </div>
-
-              {resultData.total_items > 15 && (
-                <div className="table-footer">
-                  还有 {resultData.total_items - 15} 条数据未显示，请下载完整CSV查看
-                </div>
-              )}
             </div>
           </>
         )}
