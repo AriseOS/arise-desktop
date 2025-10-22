@@ -10,6 +10,7 @@ import ReactFlow, {
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 import CustomNode from '../components/CustomNode'
+import { getWorkflow, DEFAULT_WORKFLOW } from '../config/workflows'
 
 const nodeTypes = {
   custom: CustomNode,
@@ -19,6 +20,7 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
   const [workflowData, setWorkflowData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [isRunning, setIsRunning] = useState(false)
+  const [currentWorkflowKey, setCurrentWorkflowKey] = useState(DEFAULT_WORKFLOW)
 
   useEffect(() => {
     // Always generate hardcoded workflow (not dependent on actual recording data)
@@ -28,79 +30,9 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
   const generateWorkflowData = () => {
     setLoading(true)
 
-    // Workflow data from tests/test_data/coffee_allegro/output/workflow.yaml
+    // Load workflow from config
     setTimeout(() => {
-      const workflowYaml = {
-        apiVersion: "agentcrafter.io/v1",
-        kind: "Workflow",
-        metadata: {
-          name: "allegro-coffee-collection-workflow",
-          description: "Collect coffee product information from Allegro including product name, price, and sales count",
-          version: "1.0.0",
-          tags: ["scraper", "allegro", "coffee", "price-collection"]
-        },
-        steps: [
-          {
-            id: "init-vars",
-            name: "Initialize variables",
-            agent_type: "variable",
-            description: "Initialize data collection variables",
-            agent_instruction: "Initialize product collection variables"
-          },
-          {
-            id: "extract-product-urls",
-            name: "Extract coffee product URLs",
-            agent_type: "scraper_agent",
-            description: "Navigate to coffee category and extract all product URLs from first page",
-            agent_instruction: "Visit Allegro coffee category page and extract all product URLs"
-          },
-          {
-            id: "save-urls",
-            name: "Save product URLs",
-            agent_type: "variable",
-            description: "Save extracted URLs to variable",
-            agent_instruction: "Save product URLs to collection variable"
-          },
-          {
-            id: "collect-product-details",
-            name: "Collect product details",
-            agent_type: "foreach",
-            description: "Iterate through all coffee products and extract detailed information",
-            source: "{{all_product_urls}}",
-            item_var: "current_product",
-            steps: [
-              {
-                id: "scrape-product-info",
-                name: "Scrape product information",
-                agent_type: "scraper_agent",
-                description: "Extract product name, price, and sales count",
-                agent_instruction: "Visit product detail page and extract name, price, and sales count"
-              },
-              {
-                id: "append-product",
-                name: "Add product to collection",
-                agent_type: "variable",
-                description: "Append product information to collection list",
-                agent_instruction: "Add product to collection list"
-              },
-              {
-                id: "store-product",
-                name: "Store product to database",
-                agent_type: "storage_agent",
-                description: "Persist product information to database",
-                agent_instruction: "Store coffee product information to database"
-              }
-            ]
-          },
-          {
-            id: "prepare-output",
-            name: "Prepare final output",
-            agent_type: "variable",
-            description: "Organize collection results and prepare final response",
-            agent_instruction: "Prepare final output with collection summary"
-          }
-        ]
-      };
+      const workflowYaml = getWorkflow(currentWorkflowKey);
 
       // Transform to workflow visualization format
       const steps = [
@@ -180,7 +112,7 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
     }, 500)
   }
 
-  const pollTaskStatus = async (taskId, startTime) => {
+  const pollTaskStatus = async (taskId, startTime, workflowName) => {
     const pollInterval = 2000 // Poll every 2 seconds
     const maxAttempts = 300 // Max 10 minutes (300 * 2s)
     let attempts = 0
@@ -220,7 +152,7 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
             // Navigate to result page with time range
             setTimeout(() => {
               onNavigate('workflow-result', {
-                workflowName: 'allegro-coffee-collection-workflow',
+                workflowName: workflowName,
                 startTime: startTime,
                 endTime: endTime
               })
@@ -258,8 +190,12 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
     const now = new Date()
     const startTime = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().replace('Z', '')
 
+    // Get current workflow name from config
+    const currentWorkflow = getWorkflow(currentWorkflowKey)
+    const workflowName = currentWorkflow.metadata.name
+
     try {
-      const response = await fetch(`http://localhost:8000/api/agents/workflow/allegro-coffee-collection-workflow/execute`, {
+      const response = await fetch(`http://localhost:8000/api/agents/workflow/${workflowName}/execute`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -275,8 +211,8 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
       console.log('Workflow execution started:', result)
 
       if (result.success && result.task_id) {
-        // Start polling for task status, pass startTime
-        pollTaskStatus(result.task_id, startTime)
+        // Start polling for task status, pass startTime and workflowName
+        pollTaskStatus(result.task_id, startTime, workflowName)
       } else {
         showStatus('❌ 启动失败', 'error')
         setIsRunning(false)
