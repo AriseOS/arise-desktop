@@ -66,6 +66,10 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
 
     setIsRunning(true)
 
+    // 记录开始时间（本地时间格式以匹配数据库）
+    const now = new Date()
+    const startTime = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().replace('Z', '')
+
     try {
       // 固定运行 allegro-coffee-collection-workflow
       const response = await fetch(`http://localhost:8000/api/agents/workflow/allegro-coffee-collection-workflow/execute`, {
@@ -87,12 +91,55 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
       }
 
       const result = await response.json()
-      console.log('Workflow execution completed:', result)
+      console.log('Workflow execution started:', result)
 
-      if (result.success) {
-        showStatus('✅ 执行成功', 'success')
-      } else {
-        showStatus('❌ 执行失败', 'error')
+      // Poll task status until completion
+      const taskId = result.task_id
+      let completed = false
+      let pollCount = 0
+      const maxPolls = 60 // 最多轮询60次（5分钟）
+
+      while (!completed && pollCount < maxPolls) {
+        await new Promise(resolve => setTimeout(resolve, 5000)) // 等待5秒
+
+        const statusResponse = await fetch(`http://localhost:8000/api/agents/workflow/task/${taskId}/status`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${currentUser.token}`
+          }
+        })
+
+        if (statusResponse.ok) {
+          const statusData = await statusResponse.json()
+          console.log('Task status:', statusData.status, `(${statusData.progress}%)`)
+
+          if (statusData.status === 'completed' || statusData.status === 'failed') {
+            completed = true
+
+            // 记录结束时间（本地时间格式以匹配数据库）
+            const endNow = new Date()
+            const endTime = new Date(endNow.getTime() - endNow.getTimezoneOffset() * 60000).toISOString().replace('Z', '')
+
+            if (statusData.status === 'completed') {
+              showStatus('✅ 执行成功', 'success')
+              // 导航到结果页面，传递时间范围
+              onNavigate('workflow-result', {
+                workflowName: 'allegro-coffee-collection-workflow',
+                startTime: startTime,
+                endTime: endTime
+              })
+            } else {
+              showStatus('❌ 执行失败', 'error')
+            }
+          }
+        }
+
+        pollCount++
+      }
+
+      if (!completed) {
+        showStatus('⚠️ 执行超时', 'warning')
       }
     } catch (err) {
       console.error('Run workflow error:', err)

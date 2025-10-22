@@ -79,6 +79,8 @@ function App() {
     setCurrentPage('login')
   }
 
+  const [navigationParams, setNavigationParams] = useState({})
+
   const navigateTo = async (page, data = {}) => {
     if (data.workflowId) {
       setSelectedWorkflowId(data.workflowId)
@@ -99,6 +101,9 @@ function App() {
     if (data.taskId) {
       setCurrentTaskId(data.taskId)
     }
+
+    // Store all navigation params for pages that need them
+    setNavigationParams(data)
 
     setCurrentPage(page)
   }
@@ -183,7 +188,7 @@ function App() {
           currentUser={currentUser}
           onNavigate={navigateTo}
           showStatus={showStatus}
-          taskId={currentTaskId}
+          params={navigationParams}
         />
       )}
       {currentPage === 'chat' && (

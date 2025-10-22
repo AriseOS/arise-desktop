@@ -1,8 +1,13 @@
 import React, { useState, useEffect } from 'react'
 
-function WorkflowResultPage({ currentUser, onNavigate, showStatus, taskId }) {
+function WorkflowResultPage({ currentUser, onNavigate, showStatus, params }) {
   const [resultData, setResultData] = useState(null)
   const [loading, setLoading] = useState(true)
+
+  // Extract parameters passed from WorkflowDetailPage
+  const workflowName = params?.workflowName || 'allegro-coffee-collection-workflow'
+  const startTime = params?.startTime
+  const endTime = params?.endTime
 
   useEffect(() => {
     loadResultData()
@@ -12,29 +17,66 @@ function WorkflowResultPage({ currentUser, onNavigate, showStatus, taskId }) {
     setLoading(true)
 
     try {
-      // Demo data from allegro_coffee_products_test_user.csv - 10 rows
-      const demoData = {
-        workflow_name: "allegro-coffee-collection-workflow",
-        total_items: 10,
-        fields: ["Product Name", "Price", "Sales Count"],
-        data: [
-          ["Kawa ziarnista mieszana Dallmayr Crema d Oro 1000 g", "64,99 zł", "3 272 osoby kupiły ostatnio"],
-          ["SEGAFREDO INTERMEZZO 1 KG-Kawa ziarnista", "57,97 zł", "6 029 osób kupiło ostatnio"],
-          ["Kawa ziarnista 1KG OLOMEGA ARABICA 100% Świeżo Palona Blue Orca + GRATIS", "74,99 zł", "1 696 osób kupiło ostatnio"],
-          ["Kawa ziarnista Tchibo Eduscho Family 1 kg", "49,50 zł", "3 513 osób kupiło ostatnio"],
-          ["COSTA PROFESSIONAL 1KG SIGNATURE MEDIUM ROAST KAWA ZIARNISTA", "69,29 zł", "2 683 osoby kupiły ostatnio"],
-          ["Kawa ziarnista 1kg ITALIANA BELLAGIO ROAST -Świeżo palona BLUE ORCA +GRATIS", "72,99 zł", "3 511 osób kupiło tę ofertę"],
-          ["Kawa Ziarnista Lavazza Mieszana Crema e Aroma 1kg Ziarno Do Ekspresu", "73,89 zł", "3 207 osób kupiło tę ofertę"],
-          ["Kawa ziarnista 1kg TOPACIO - ŚWIEŻO PALONA BLUE ORCA 100% ARABICA +GRATIS", "67,99 zł", "5 620 osób kupiło ostatnio"],
-          ["Kawa ziarnista Arabica Lavazza Qualita Oro 1000 g", "74,99 zł", "3 237 osób kupiło ostatnio"],
-          ["Kawa ziarnista Brazylia 1kg Świeżo Palona - 100% Arabica - Monte Carmelo", "71,95 zł", "3 293 osoby kupiły ostatnio"]
-        ]
+      // Build API URL with time range parameters
+      let apiUrl = `http://localhost:8000/api/agents/workflow/${workflowName}/results?`
+      const queryParams = []
+
+      if (startTime) {
+        queryParams.push(`begin=${encodeURIComponent(startTime)}`)
+      }
+      if (endTime) {
+        queryParams.push(`end=${encodeURIComponent(endTime)}`)
       }
 
-      // Simulate API delay
-      await new Promise(resolve => setTimeout(resolve, 500))
+      apiUrl += queryParams.join('&')
 
-      setResultData(demoData)
+      console.log('Fetching workflow results:', apiUrl)
+
+      const response = await fetch(apiUrl, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${currentUser.token}`
+        }
+      })
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          await chrome.storage.local.clear()
+          onNavigate('login')
+          return
+        }
+        throw new Error(`API error: ${response.status}`)
+      }
+
+      const apiData = await response.json()
+      console.log('Workflow results received:', apiData)
+
+      // Transform API response to display format
+      const results = apiData.results || []
+
+      // Extract field names from first result (excluding system fields)
+      const systemFields = ['id', 'created_at']
+      const dataFields = results.length > 0
+        ? Object.keys(results[0]).filter(key => !systemFields.includes(key))
+        : []
+
+      // Transform results to table data
+      const tableData = results.map(item =>
+        dataFields.map(field => item[field] || '')
+      )
+
+      const displayData = {
+        workflow_name: apiData.workflow_name,
+        total_items: apiData.total_results,
+        fields: dataFields.map(field =>
+          field.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
+        ),
+        data: tableData,
+        time_range: apiData.time_range
+      }
+
+      setResultData(displayData)
       setLoading(false)
     } catch (err) {
       console.error('Load result data error:', err)

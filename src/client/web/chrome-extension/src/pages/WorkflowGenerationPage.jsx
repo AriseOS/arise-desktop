@@ -180,7 +180,7 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
     }, 500)
   }
 
-  const pollTaskStatus = async (taskId) => {
+  const pollTaskStatus = async (taskId, startTime) => {
     const pollInterval = 2000 // Poll every 2 seconds
     const maxAttempts = 300 // Max 10 minutes (300 * 2s)
     let attempts = 0
@@ -210,11 +210,20 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
 
         if (taskInfo.status === 'completed') {
           setIsRunning(false)
+
+          // Record end time in local timezone to match database format
+          const endNow = new Date()
+          const endTime = new Date(endNow.getTime() - endNow.getTimezoneOffset() * 60000).toISOString().replace('Z', '')
+
           if (taskInfo.result && taskInfo.result.success) {
             showStatus('✅ 执行成功', 'success')
-            // Navigate to result page
+            // Navigate to result page with time range
             setTimeout(() => {
-              onNavigate('workflow-result', { taskId: taskId })
+              onNavigate('workflow-result', {
+                workflowName: 'allegro-coffee-collection-workflow',
+                startTime: startTime,
+                endTime: endTime
+              })
             }, 1000)
           } else {
             showStatus('⚠️ 执行完成但有错误', 'warning')
@@ -245,6 +254,10 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
     setIsRunning(true)
     showStatus('🚀 开始执行...', 'info')
 
+    // Record start time in local timezone to match database format
+    const now = new Date()
+    const startTime = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().replace('Z', '')
+
     try {
       const response = await fetch(`http://localhost:8000/api/agents/workflow/allegro-coffee-collection-workflow/execute`, {
         method: 'GET',
@@ -262,8 +275,8 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
       console.log('Workflow execution started:', result)
 
       if (result.success && result.task_id) {
-        // Start polling for task status
-        pollTaskStatus(result.task_id)
+        // Start polling for task status, pass startTime
+        pollTaskStatus(result.task_id, startTime)
       } else {
         showStatus('❌ 启动失败', 'error')
         setIsRunning(false)

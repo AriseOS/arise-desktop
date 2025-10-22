@@ -685,6 +685,89 @@ async def get_workflow_task_status(
 
     return task_info
 
+@app.get("/api/agents/workflow/{workflow_name}/results")
+async def get_workflow_results(
+    workflow_name: str,
+    begin: Optional[str] = None,
+    end: Optional[str] = None,
+    limit: Optional[int] = None,
+    current_user: User = Depends(get_current_user)
+):
+    """Get results from workflow executions stored in storage.db
+
+    Args:
+        workflow_name: Name of the workflow (e.g., 'allegro-coffee-collection-workflow')
+        begin: Optional start time filter (ISO format, e.g., '2025-10-20T19:00:00')
+        end: Optional end time filter (ISO format, e.g., '2025-10-20T20:00:00')
+        limit: Optional limit on number of results
+
+    Returns:
+        Results data from the workflow's storage collection
+    """
+    import aiosqlite
+    from pathlib import Path
+
+    # Get storage database path
+    storage_db_path = Path.home() / ".local/share/baseapp/storage.db"
+
+    # Map workflow name to collection name
+    if workflow_name == "allegro-coffee-collection-workflow":
+        collection = "allegro_coffee_products"
+    else:
+        # Generic: use workflow name as collection
+        collection = workflow_name.replace("-workflow", "").replace("-", "_")
+
+    table_name = f"{collection}_{current_user.id}"
+
+    try:
+        async with aiosqlite.connect(str(storage_db_path)) as sqlite_db:
+            sqlite_db.row_factory = aiosqlite.Row
+
+            # Build query with time range filter
+            query = f"SELECT * FROM {table_name}"
+            params = []
+            conditions = []
+
+            if begin:
+                conditions.append("created_at >= ?")
+                params.append(begin)
+
+            if end:
+                conditions.append("created_at <= ?")
+                params.append(end)
+
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+
+            query += " ORDER BY created_at DESC"
+
+            if limit:
+                query += " LIMIT ?"
+                params.append(limit)
+
+            cursor = await sqlite_db.execute(query, params)
+            rows = await cursor.fetchall()
+
+            # Convert to list of dicts
+            results = [dict(row) for row in rows]
+
+            return {
+                "workflow_name": workflow_name,
+                "collection": collection,
+                "total_results": len(results),
+                "time_range": {
+                    "begin": begin,
+                    "end": end
+                },
+                "results": results
+            }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to query workflow results: {str(e)}"
+        )
+
 # WebSocket 路由
 
 @app.websocket("/ws/agents/build/{build_id}")
