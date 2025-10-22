@@ -14,6 +14,9 @@ This Chrome extension uses React and ReactFlow for workflow visualization. It re
 ```bash
 # Install dependencies
 npm install
+
+# Copy manifest to dist
+cp manifest.json dist/manifest.json
 ```
 
 ## Development
@@ -24,6 +27,9 @@ npm run watch
 
 # Or one-time build
 npm run build
+
+# Copy manifest to dist
+cp manifest.json dist/manifest.json
 ```
 
 ## Load Extension in Chrome
