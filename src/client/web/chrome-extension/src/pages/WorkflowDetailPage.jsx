@@ -10,6 +10,7 @@ import ReactFlow, {
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 import CustomNode from '../components/CustomNode'
+import { DEFAULT_CONFIG_KEY, getConfig } from '../config/index'
 
 const nodeTypes = {
   custom: CustomNode,
@@ -71,8 +72,12 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
     const startTime = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().replace('Z', '')
 
     try {
-      // 固定运行 allegro-coffee-collection-workflow
-      const response = await fetch(`http://localhost:8000/api/agents/workflow/allegro-coffee-collection-workflow/execute`, {
+      // Get current workflow configuration
+      const config = getConfig(DEFAULT_CONFIG_KEY)
+      const workflowName = config.workflow.metadata.name
+
+      // Run the configured workflow
+      const response = await fetch(`http://localhost:8000/api/agents/workflow/${workflowName}/execute`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -124,8 +129,10 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
             if (statusData.status === 'completed') {
               showStatus('✅ 执行成功', 'success')
               // 导航到结果页面，传递时间范围
+              const config = getConfig(DEFAULT_CONFIG_KEY)
+              const workflowName = config.workflow.metadata.name
               onNavigate('workflow-result', {
-                workflowName: 'allegro-coffee-collection-workflow',
+                workflowName: workflowName,
                 startTime: startTime,
                 endTime: endTime
               })

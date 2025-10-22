@@ -66,11 +66,160 @@ export const METAFLOWS = {
         ]
       }
     ]
+  },
+  'amazon-coffee-collection': {
+    version: '1.0',
+    task_description: 'Collect coffee product information from Amazon including product name, price, and customer ratings',
+    nodes: [
+      {
+        id: 'node_1',
+        intent_id: 'intent_bc50bc29',
+        intent_name: 'NavigateToAmazonCoffee',
+        intent_description: "Navigate to Amazon's coffee products category page with customer rating filter",
+        operations: [
+          {
+            type: 'test',
+            timestamp: '2025-10-15 17:15:07',
+            url: 'about:blank',
+            page_title: 'Starting agent 5367...',
+            data: { message: 'binding verification' }
+          },
+          {
+            type: 'navigate',
+            timestamp: '2025-10-15 17:15:13',
+            url: 'https://www.amazon.com/s?i=grocery&rh=n%3A23783759011%2Cp_72%3A4-&s=featured-rank',
+            page_title: 'Navigated Page'
+          }
+        ]
+      },
+      {
+        id: 'node_2',
+        intent_id: 'implicit_extract_list',
+        intent_name: 'ExtractProductList',
+        intent_description: 'Extract coffee product list (inferred node)',
+        operations: [
+          {
+            type: 'extract',
+            element: { xpath: '<PLACEHOLDER>', tagName: 'A' },
+            target: 'product_urls',
+            value: []
+          }
+        ],
+        outputs: {
+          product_urls: 'product_urls'
+        }
+      },
+      {
+        id: 'node_3',
+        type: 'loop',
+        description: 'Iterate through all coffee products, extract name, price and ratings for each',
+        source: '{{product_urls}}',
+        item_var: 'current_product',
+        children: [
+          {
+            id: 'node_3_1',
+            intent_id: 'intent_f3331686',
+            intent_name: 'NavigateToProductDetail',
+            intent_description: 'Navigate to Lavazza coffee product detail page',
+            operations: [
+              {
+                type: 'click',
+                timestamp: '2025-10-15 09:15:22',
+                url: 'https://www.amazon.com/s?i=grocery&rh=n%3A23783759011%2Cp_72%3A4-&s=featured-rank',
+                page_title: 'Amazon.com',
+                element: {
+                  xpath: '//*[@id="0b44d025-afdb-40ce-889b-fedbb3136b83"]/div/div/span/div/div/div[3]/div[1]/a/h2',
+                  tagName: 'H2',
+                  className: 'a-size-base-plus a-spacing-none a-color-base a-text-normal'
+                }
+              },
+              {
+                type: 'navigate',
+                timestamp: '2025-10-15 17:15:22',
+                page_title: 'Navigated Page'
+              }
+            ],
+            inputs: {
+              product_url: '{{current_product.url}}'
+            }
+          },
+          {
+            id: 'node_3_2',
+            intent_id: 'intent_8dedc8d0',
+            intent_name: 'ExtractProductInfo',
+            intent_description: 'Extract Lavazza coffee product information including product name and customer ratings',
+            operations: [
+              {
+                type: 'click',
+                timestamp: '2025-10-15 09:15:29',
+                element: {
+                  xpath: '//*[@id="productTitle"]',
+                  tagName: 'SPAN',
+                  className: 'a-size-large product-title-word-break',
+                  id: 'productTitle'
+                }
+              },
+              {
+                type: 'select',
+                timestamp: '2025-10-15 09:15:29',
+                element: {
+                  xpath: '//*[@id="productTitle"]',
+                  tagName: 'SPAN',
+                  id: 'productTitle'
+                },
+                data: {
+                  selectedText: 'Lavazza House Blend Perfetto Ground Coffee 12oz Bag, Medium Roast, Full-bodied, Intensity 3/5, 100% Arabica, Ideal for Drip Brewers, (Pack of 1) - Package May Vary',
+                  textLength: 163
+                }
+              },
+              {
+                type: 'scroll',
+                timestamp: '2025-10-15 09:15:31',
+                data: {
+                  direction: 'down',
+                  distance: 68
+                }
+              },
+              {
+                type: 'click',
+                timestamp: '2025-10-15 09:15:34',
+                element: {
+                  xpath: '//*[@id="flavor_name_5"]/span/input',
+                  tagName: 'INPUT',
+                  className: 'a-button-input',
+                  type: 'submit'
+                }
+              },
+              {
+                type: 'select',
+                timestamp: '2025-10-15 09:15:40',
+                element: {
+                  xpath: '//*[@id="acrCustomerReviewText"]',
+                  tagName: 'SPAN',
+                  className: 'a-size-base',
+                  id: 'acrCustomerReviewText',
+                  textContent: '8,168 ratings'
+                },
+                data: {
+                  selectedText: '8,168 ratings',
+                  textLength: 13
+                }
+              }
+            ],
+            outputs: {
+              product_name: 'product_name',
+              product_price: 'product_price',
+              product_ratings: 'product_ratings'
+            }
+          }
+        ]
+      }
+    ]
   }
 }
 
 // Default metaflow key
-export const DEFAULT_METAFLOW = 'allegro-coffee-collection'
+export const DEFAULT_METAFLOW = 'amazon-coffee-collection'
 
 // Get metaflow by key
 export function getMetaflow(metaflowKey) {

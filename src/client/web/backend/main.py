@@ -711,8 +711,13 @@ async def get_workflow_results(
     storage_db_path = Path.home() / ".local/share/baseapp/storage.db"
 
     # Map workflow name to collection name
-    if workflow_name == "allegro-coffee-collection-workflow":
-        collection = "allegro_coffee_products"
+    workflow_collection_map = {
+        "allegro-coffee-collection-workflow": "allegro_coffee_products",
+        "amazon-coffee-collection-workflow": "amazon_coffee_products"
+    }
+
+    if workflow_name in workflow_collection_map:
+        collection = workflow_collection_map[workflow_name]
     else:
         # Generic: use workflow name as collection
         collection = workflow_name.replace("-workflow", "").replace("-", "_")

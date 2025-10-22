@@ -11,11 +11,17 @@ export const WORKFLOW_METAFLOW_MAP = {
     metaflowKey: 'allegro-coffee-collection',
     displayName: 'Allegro Coffee Collection',
     description: 'Collect coffee product information from Allegro'
+  },
+  'amazon-coffee-collection': {
+    workflowKey: 'amazon-coffee-collection',
+    metaflowKey: 'amazon-coffee-collection',
+    displayName: 'Amazon Coffee Collection',
+    description: 'Collect coffee product information from Amazon'
   }
 }
 
 // Default configuration key
-export const DEFAULT_CONFIG_KEY = 'allegro-coffee-collection'
+export const DEFAULT_CONFIG_KEY = 'amazon-coffee-collection'
 
 // Get workflow and metaflow by config key
 export function getConfig(configKey) {
