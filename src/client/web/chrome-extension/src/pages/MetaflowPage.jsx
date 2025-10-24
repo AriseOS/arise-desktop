@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react'
-import { getMetaflow, DEFAULT_METAFLOW } from '../config/metaflows'
+import { getMetaflow } from '../config/metaflows'
+import { DEFAULT_CONFIG_KEY, getConfig } from '../config/index'
 
 function MetaflowPage({ onNavigate, showStatus, recordingData }) {
   const [metaflows, setMetaflows] = useState([])
   const [isEditing, setIsEditing] = useState(false)
   const [editingNode, setEditingNode] = useState(null)
-  const [currentMetaflowKey, setCurrentMetaflowKey] = useState(DEFAULT_METAFLOW)
+  const [currentMetaflowKey, setCurrentMetaflowKey] = useState(DEFAULT_CONFIG_KEY)
 
   useEffect(() => {
     // Generate metaflows from actual metaflow.yaml data
@@ -44,13 +45,33 @@ function MetaflowPage({ onNavigate, showStatus, recordingData }) {
 
     // Convert nodes to metaflow format
     metaflowData.nodes.forEach(node => {
-      if (node.type === 'loop') {
+      if (node.type === 'branch_start') {
+        // Add branch start node
+        metaflows.push({
+          id: node.id,
+          type: 'branch_start',
+          name: node.intent_name,
+          description: node.intent_description,
+          properties: {
+            branches: node.branches
+          }
+        });
+      } else if (node.type === 'branch_end') {
+        // Add branch end node
+        metaflows.push({
+          id: node.id,
+          type: 'branch_end',
+          name: node.intent_name,
+          description: node.intent_description
+        });
+      } else if (node.type === 'loop') {
         // Add loop node
         metaflows.push({
           id: node.id,
           type: 'loop',
           name: 'Loop: Extract Product Details',
           description: node.description,
+          branch: node.branch,
           properties: {
             source: node.source,
             item_var: node.item_var
@@ -66,6 +87,7 @@ function MetaflowPage({ onNavigate, showStatus, recordingData }) {
               type: childType,
               name: child.intent_name,
               description: child.intent_description,
+              branch: node.branch,
               properties: {
                 intent_id: child.intent_id,
                 operations_count: child.operations ? child.operations.length : 0,
@@ -81,6 +103,7 @@ function MetaflowPage({ onNavigate, showStatus, recordingData }) {
           type: nodeType,
           name: node.intent_name,
           description: node.intent_description,
+          branch: node.branch,
           properties: {
             intent_id: node.intent_id,
             operations_count: node.operations ? node.operations.length : 0
@@ -103,6 +126,10 @@ function MetaflowPage({ onNavigate, showStatus, recordingData }) {
     switch (type) {
       case 'start':
         return '🚀'
+      case 'branch_start':
+        return '🔀'
+      case 'branch_end':
+        return '🔗'
       case 'navigate':
         return '🌐'
       case 'interact':
@@ -124,6 +151,10 @@ function MetaflowPage({ onNavigate, showStatus, recordingData }) {
     switch (type) {
       case 'start':
         return '#10b981'
+      case 'branch_start':
+        return '#f59e0b'
+      case 'branch_end':
+        return '#f59e0b'
       case 'navigate':
         return '#8b5cf6'
       case 'interact':
@@ -139,6 +170,137 @@ function MetaflowPage({ onNavigate, showStatus, recordingData }) {
       default:
         return '#6b7280'
     }
+  }
+
+  const renderMetaflowNode = (metaflow) => {
+    return (
+      <div
+        className={`metaflow-node ${isEditing ? 'editable' : ''}`}
+        style={{ borderColor: getMetaflowColor(metaflow.type) }}
+        onClick={() => handleNodeClick(metaflow)}
+      >
+        <div className="metaflow-icon" style={{ backgroundColor: getMetaflowColor(metaflow.type) }}>
+          {getMetaflowIcon(metaflow.type)}
+        </div>
+        <div className="metaflow-details">
+          <div className="metaflow-name">{metaflow.name}</div>
+          <div className="metaflow-description">{metaflow.description}</div>
+          {metaflow.properties && (
+            <div className="metaflow-properties">
+              {Object.entries(metaflow.properties).map(([key, value]) => (
+                <div key={key} className="property-item">
+                  <span className="property-key">{key}:</span>
+                  <span className="property-value">
+                    {typeof value === 'object' ? JSON.stringify(value) : String(value)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  const renderMetaflowNodes = () => {
+    const elements = []
+    let i = 0
+
+    while (i < metaflows.length) {
+      const metaflow = metaflows[i]
+
+      // Check if this is a branch_start node
+      if (metaflow.type === 'branch_start') {
+        // Render branch_start node
+        elements.push(
+          <React.Fragment key={metaflow.id}>
+            {renderMetaflowNode(metaflow)}
+            <div className="metaflow-arrow">
+              <svg width="24" height="40" viewBox="0 0 24 40">
+                <line x1="12" y1="0" x2="12" y2="32" stroke="#d1d5db" strokeWidth="2"/>
+                <polygon points="12,40 8,32 16,32" fill="#d1d5db"/>
+              </svg>
+            </div>
+          </React.Fragment>
+        )
+
+        // Find branch_end node
+        let branchEndIndex = i + 1
+        while (branchEndIndex < metaflows.length && metaflows[branchEndIndex].type !== 'branch_end') {
+          branchEndIndex++
+        }
+
+        // Group nodes by branch
+        const branchNodes = {}
+        for (let j = i + 1; j < branchEndIndex; j++) {
+          const node = metaflows[j]
+          const branch = node.branch || 'default'
+          if (!branchNodes[branch]) {
+            branchNodes[branch] = []
+          }
+          branchNodes[branch].push(node)
+        }
+
+        // Render branches
+        const branches = Object.keys(branchNodes)
+        if (branches.length > 0) {
+          elements.push(
+            <div key={`parallel-${metaflow.id}`} className="parallel-branches">
+              {branches.map((branchName, branchIndex) => (
+                <div key={branchName} className="parallel-branch">
+                  {branchNodes[branchName].map((node, nodeIndex) => (
+                    <React.Fragment key={node.id}>
+                      {renderMetaflowNode(node)}
+                      {nodeIndex < branchNodes[branchName].length - 1 && (
+                        <div className="metaflow-arrow">
+                          <svg width="24" height="40" viewBox="0 0 24 40">
+                            <line x1="12" y1="0" x2="12" y2="32" stroke="#d1d5db" strokeWidth="2"/>
+                            <polygon points="12,40 8,32 16,32" fill="#d1d5db"/>
+                          </svg>
+                        </div>
+                      )}
+                    </React.Fragment>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )
+        }
+
+        // Skip to branch_end
+        i = branchEndIndex
+
+        // Render merge arrow before branch_end
+        if (i < metaflows.length) {
+          elements.push(
+            <div key={`merge-arrow-${i}`} className="metaflow-arrow">
+              <svg width="24" height="40" viewBox="0 0 24 40">
+                <line x1="12" y1="0" x2="12" y2="32" stroke="#d1d5db" strokeWidth="2"/>
+                <polygon points="12,40 8,32 16,32" fill="#d1d5db"/>
+              </svg>
+            </div>
+          )
+        }
+      } else {
+        // Regular node
+        elements.push(
+          <React.Fragment key={metaflow.id}>
+            {renderMetaflowNode(metaflow)}
+            {i < metaflows.length - 1 && (
+              <div className="metaflow-arrow">
+                <svg width="24" height="40" viewBox="0 0 24 40">
+                  <line x1="12" y1="0" x2="12" y2="32" stroke="#d1d5db" strokeWidth="2"/>
+                  <polygon points="12,40 8,32 16,32" fill="#d1d5db"/>
+                </svg>
+              </div>
+            )}
+          </React.Fragment>
+        )
+        i++
+      }
+    }
+
+    return elements
   }
 
   const handleEdit = () => {
@@ -202,45 +364,7 @@ function MetaflowPage({ onNavigate, showStatus, recordingData }) {
       <div className="metaflow-content">
         {/* Metaflow Visualization */}
         <div className="metaflow-visualization">
-          {metaflows.map((metaflow, index) => (
-            <React.Fragment key={metaflow.id}>
-              <div
-                className={`metaflow-node ${isEditing ? 'editable' : ''}`}
-                style={{ borderColor: getMetaflowColor(metaflow.type) }}
-                onClick={() => handleNodeClick(metaflow)}
-              >
-                <div className="metaflow-icon" style={{ backgroundColor: getMetaflowColor(metaflow.type) }}>
-                  {getMetaflowIcon(metaflow.type)}
-                </div>
-                <div className="metaflow-details">
-                  <div className="metaflow-name">{metaflow.name}</div>
-                  <div className="metaflow-description">{metaflow.description}</div>
-                  {metaflow.properties && (
-                    <div className="metaflow-properties">
-                      {Object.entries(metaflow.properties).map(([key, value]) => (
-                        <div key={key} className="property-item">
-                          <span className="property-key">{key}:</span>
-                          <span className="property-value">
-                            {typeof value === 'object' ? JSON.stringify(value) : String(value)}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Arrow connector */}
-              {index < metaflows.length - 1 && (
-                <div className="metaflow-arrow">
-                  <svg width="24" height="40" viewBox="0 0 24 40">
-                    <line x1="12" y1="0" x2="12" y2="32" stroke="#d1d5db" strokeWidth="2"/>
-                    <polygon points="12,40 8,32 16,32" fill="#d1d5db"/>
-                  </svg>
-                </div>
-              )}
-            </React.Fragment>
-          ))}
+          {renderMetaflowNodes()}
         </div>
 
         {/* Action Bar */}

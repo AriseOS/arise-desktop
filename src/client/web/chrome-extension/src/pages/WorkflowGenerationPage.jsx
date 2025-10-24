@@ -10,7 +10,8 @@ import ReactFlow, {
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 import CustomNode from '../components/CustomNode'
-import { getWorkflow, DEFAULT_WORKFLOW } from '../config/workflows'
+import { getWorkflow } from '../config/workflows'
+import { DEFAULT_CONFIG_KEY } from '../config/index'
 
 const nodeTypes = {
   custom: CustomNode,
@@ -20,7 +21,7 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
   const [workflowData, setWorkflowData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [isRunning, setIsRunning] = useState(false)
-  const [currentWorkflowKey, setCurrentWorkflowKey] = useState(DEFAULT_WORKFLOW)
+  const [currentWorkflowKey, setCurrentWorkflowKey] = useState(DEFAULT_CONFIG_KEY)
 
   useEffect(() => {
     // Always generate hardcoded workflow (not dependent on actual recording data)
@@ -47,7 +48,26 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
 
       // Convert workflow steps
       workflowYaml.steps.forEach(step => {
-        if (step.agent_type === 'foreach') {
+        if (step.type === 'branch_start') {
+          // Add branch start node
+          steps.push({
+            id: step.id,
+            type: 'branch_start',
+            name: step.name,
+            description: step.description,
+            agent_type: 'branch_start',
+            branches: step.branches
+          });
+        } else if (step.type === 'branch_end') {
+          // Add branch end node
+          steps.push({
+            id: step.id,
+            type: 'branch_end',
+            name: step.name,
+            description: step.description,
+            agent_type: 'branch_end'
+          });
+        } else if (step.agent_type === 'foreach') {
           // Add foreach loop node
           steps.push({
             id: step.id,
@@ -55,6 +75,7 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
             name: step.name,
             description: step.description,
             agent_type: step.agent_type,
+            branch: step.branch,
             source: step.source,
             item_var: step.item_var
           });
@@ -68,6 +89,7 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
                 name: childStep.name,
                 description: childStep.description,
                 agent_type: childStep.agent_type,
+                branch: step.branch,
                 parent: step.id
               });
             });
@@ -75,10 +97,11 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
         } else {
           steps.push({
             id: step.id,
-            type: step.agent_type,
+            type: step.agent_type || step.type,
             name: step.name,
             description: step.description,
-            agent_type: step.agent_type
+            agent_type: step.agent_type || step.type,
+            branch: step.branch
           });
         }
       });
@@ -91,13 +114,50 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
         agent_type: 'end'
       });
 
-      // Generate connections
+      // Generate connections with parallel support
       const connections = [];
+
       for (let i = 0; i < steps.length - 1; i++) {
-        connections.push({
-          from: steps[i].id,
-          to: steps[i + 1].id
-        });
+        const currentStep = steps[i];
+        const nextStep = steps[i + 1];
+
+        // Handle branch_start connections
+        if (currentStep.type === 'branch_start') {
+          // Connect to first step of each branch
+          const branches = currentStep.branches || [];
+          branches.forEach(branchName => {
+            const firstBranchStep = steps.find(s => s.branch === branchName);
+            if (firstBranchStep) {
+              connections.push({
+                from: currentStep.id,
+                to: firstBranchStep.id
+              });
+            }
+          });
+          continue;
+        }
+
+        // Handle branch_end connections
+        if (nextStep.type === 'branch_end') {
+          // Only connect if current step is the last in its branch
+          const sameBranchSteps = steps.filter(s => s.branch === currentStep.branch);
+          const lastInBranch = sameBranchSteps[sameBranchSteps.length - 1];
+          if (currentStep.id === lastInBranch.id) {
+            connections.push({
+              from: currentStep.id,
+              to: nextStep.id
+            });
+          }
+          continue;
+        }
+
+        // Regular sequential connections (same branch or no branch)
+        if (!currentStep.branch || currentStep.branch === nextStep.branch) {
+          connections.push({
+            from: currentStep.id,
+            to: nextStep.id
+          });
+        }
       }
 
       const workflow = {
@@ -369,6 +429,9 @@ const nodeColor = (node) => {
       return '#52c41a'
     case 'end':
       return '#ff4d4f'
+    case 'branch_start':
+    case 'branch_end':
+      return '#f59e0b'
     case 'foreach':
       return '#ec4899'
     case 'variable':
@@ -397,15 +460,77 @@ const transformWorkflowData = (workflowData) => {
   const nodes = []
   const edges = []
 
-  // Compact layout for small screen - vertical flow
+  // Layout configuration
   const verticalGap = 80
+  const amazonYOffset = 15  // Amazon branch slightly lower
+  let currentY = 0
+  let branchStartIndex = -1
+  let branchEndIndex = -1
+  let branchStartY = 0
 
+  // Find branch start and end indices
+  workflowData.steps.forEach((step, index) => {
+    if (step.type === 'branch_start') {
+      branchStartIndex = index
+    } else if (step.type === 'branch_end') {
+      branchEndIndex = index
+    }
+  })
+
+  // Group branch steps by branch and calculate positions
+  const branchStepIndices = { allegro: [], amazon: [] }
+  if (branchStartIndex !== -1 && branchEndIndex !== -1) {
+    workflowData.steps.forEach((step, index) => {
+      if (index > branchStartIndex && index < branchEndIndex) {
+        if (step.branch === 'allegro') {
+          branchStepIndices.allegro.push(index)
+        } else if (step.branch === 'amazon') {
+          branchStepIndices.amazon.push(index)
+        }
+      }
+    })
+  }
+
+  // Process steps
   workflowData.steps.forEach((step, index) => {
     let className = ''
+    let position = { x: 50, y: currentY }
+
     if (step.type === 'start') {
       className = 'start-node'
+      currentY += verticalGap
     } else if (step.type === 'end') {
       className = 'end-node'
+      currentY += verticalGap
+    } else if (step.type === 'branch_start') {
+      className = 'branch-node'
+      branchStartY = currentY + verticalGap  // Record Y after branch_start
+      currentY += verticalGap
+    } else if (step.type === 'branch_end') {
+      className = 'branch-node'
+      // Calculate Y after branch section based on max branch length
+      const maxBranchLength = Math.max(branchStepIndices.allegro.length, branchStepIndices.amazon.length)
+      const branchEndY = branchStartY + (maxBranchLength * verticalGap)
+      position = { x: 50, y: branchEndY }
+      currentY = branchEndY + verticalGap
+    } else if (branchStartIndex !== -1 && branchEndIndex !== -1 &&
+               index > branchStartIndex && index < branchEndIndex) {
+      // This step is inside branch section
+      if (step.branch === 'allegro') {
+        // Left branch (Allegro) - calculate Y based on position in allegro array
+        const allegroIndex = branchStepIndices.allegro.indexOf(index)
+        const yPos = branchStartY + (allegroIndex * verticalGap)
+        position = { x: -80, y: yPos }
+      } else if (step.branch === 'amazon') {
+        // Right branch (Amazon) - calculate Y based on position in amazon array, with slight offset
+        const amazonIndex = branchStepIndices.amazon.indexOf(index)
+        const yPos = branchStartY + (amazonIndex * verticalGap) + amazonYOffset
+        position = { x: 180, y: yPos }
+      }
+      // Don't increment currentY for branch steps
+    } else {
+      // Regular steps outside parallel section
+      currentY += verticalGap
     }
 
     nodes.push({
@@ -415,13 +540,15 @@ const transformWorkflowData = (workflowData) => {
         label: step.name || step.type || `Step ${index + 1}`,
         description: step.description || '',
         type: step.type || '',
+        branch: step.branch,
         ...step
       },
-      position: { x: 50, y: index * verticalGap },
+      position: position,
       className: className,
     })
   })
 
+  // Use connections from workflowData
   if (workflowData.connections) {
     workflowData.connections.forEach((connection, index) => {
       edges.push({
@@ -431,15 +558,6 @@ const transformWorkflowData = (workflowData) => {
         type: 'smoothstep',
       })
     })
-  } else {
-    for (let i = 0; i < nodes.length - 1; i++) {
-      edges.push({
-        id: `e${i}-${i + 1}`,
-        source: nodes[i].id,
-        target: nodes[i + 1].id,
-        type: 'smoothstep',
-      })
-    }
   }
 
   console.log('Generated nodes:', nodes)

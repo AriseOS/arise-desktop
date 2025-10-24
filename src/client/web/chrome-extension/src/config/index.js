@@ -1,11 +1,17 @@
 // Centralized configuration for workflows and metaflows
 
-import { WORKFLOWS, DEFAULT_WORKFLOW, getWorkflow, getWorkflowKeys } from './workflows'
-import { METAFLOWS, DEFAULT_METAFLOW, getMetaflow, getMetaflowKeys } from './metaflows'
+import { WORKFLOWS, getWorkflow, getWorkflowKeys } from './workflows'
+import { METAFLOWS, getMetaflow, getMetaflowKeys } from './metaflows'
 
 // Workflow-Metaflow mapping
 // Each workflow should have a corresponding metaflow with the same key
 export const WORKFLOW_METAFLOW_MAP = {
+  'cross-market-product-selection': {
+    workflowKey: 'cross-market-product-selection',
+    metaflowKey: 'cross-market-product-selection',
+    displayName: 'Cross-Market Product Selection',
+    description: 'Analyze coffee product opportunities by comparing Poland (Allegro) and US (Amazon) markets'
+  },
   'allegro-coffee-collection': {
     workflowKey: 'allegro-coffee-collection',
     metaflowKey: 'allegro-coffee-collection',
@@ -21,7 +27,7 @@ export const WORKFLOW_METAFLOW_MAP = {
 }
 
 // Default configuration key
-export const DEFAULT_CONFIG_KEY = 'amazon-coffee-collection'
+export const DEFAULT_CONFIG_KEY = 'cross-market-product-selection'
 
 // Get workflow and metaflow by config key
 export function getConfig(configKey) {
@@ -41,11 +47,9 @@ export function getConfigKeys() {
 // Re-export for convenience
 export {
   WORKFLOWS,
-  DEFAULT_WORKFLOW,
   getWorkflow,
   getWorkflowKeys,
   METAFLOWS,
-  DEFAULT_METAFLOW,
   getMetaflow,
   getMetaflowKeys
 }

@@ -455,6 +455,15 @@ body {
 
 .node-content {
   text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.node-icon {
+  font-size: 18px;
+  line-height: 1;
 }
 
 .node-label {
@@ -1364,6 +1373,53 @@ body {
   display: flex;
   justify-content: center;
   margin: -4px 0;
+}
+
+/* Parallel branches styles */
+.parallel-branches {
+  display: flex;
+  gap: 24px;
+  justify-content: center;
+  padding: 12px 0;
+  position: relative;
+}
+
+.parallel-branch {
+  flex: 1;
+  max-width: 300px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.parallel-branch::before {
+  content: '';
+  position: absolute;
+  top: -20px;
+  left: 50%;
+  width: 2px;
+  height: 20px;
+  background: #d1d5db;
+  transform: translateX(-50%);
+}
+
+.parallel-branch::after {
+  content: '';
+  position: absolute;
+  bottom: -20px;
+  left: 50%;
+  width: 2px;
+  height: 20px;
+  background: #d1d5db;
+  transform: translateX(-50%);
+}
+
+.parallel-branches .metaflow-node {
+  margin-bottom: 0;
+}
+
+.parallel-branches .metaflow-arrow {
+  margin: 8px 0;
 }
 
 .metaflow-actions {
