@@ -128,23 +128,37 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
             input_data = input_data.data
 
         if not isinstance(input_data, dict):
+            logger.error(f"❌ Input validation failed: input_data is not a dict, got {type(input_data)}")
             return False
 
         operation = input_data.get('operation')
         if operation not in ['store', 'query', 'export']:
+            logger.error(f"❌ Input validation failed: invalid operation '{operation}', must be 'store', 'query', or 'export'")
             return False
 
         collection = input_data.get('collection')
         if not collection or not isinstance(collection, str):
+            logger.error(f"❌ Input validation failed: collection is missing or not a string, got {collection}")
             return False
 
         if operation == 'store':
             data = input_data.get('data')
             if not data:
+                logger.error(f"❌ Input validation failed: 'data' field is missing or empty for store operation")
+                logger.error(f"   Input keys: {list(input_data.keys())}")
                 return False
             if isinstance(data, list):
-                return all(isinstance(item, dict) for item in data)
-            return isinstance(data, dict)
+                if len(data) == 0:
+                    logger.error(f"❌ Input validation failed: data list is empty (no items to store)")
+                    return False
+                if not all(isinstance(item, dict) for item in data):
+                    logger.error(f"❌ Input validation failed: data list contains non-dict items")
+                    return False
+                return True
+            if isinstance(data, dict):
+                return True
+            logger.error(f"❌ Input validation failed: data must be dict or list of dicts, got {type(data)}")
+            return False
 
         elif operation == 'query':
             return True  # filters, limit, order_by are optional
@@ -152,7 +166,13 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
         elif operation == 'export':
             format_type = input_data.get('format')
             output_path = input_data.get('output_path')
-            return format_type in ['csv', 'excel', 'json'] and isinstance(output_path, str)
+            if format_type not in ['csv', 'excel', 'json']:
+                logger.error(f"❌ Input validation failed: invalid format '{format_type}', must be 'csv', 'excel', or 'json'")
+                return False
+            if not isinstance(output_path, str):
+                logger.error(f"❌ Input validation failed: output_path must be a string, got {type(output_path)}")
+                return False
+            return True
 
         return False
 

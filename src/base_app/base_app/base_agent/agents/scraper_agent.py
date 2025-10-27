@@ -328,7 +328,7 @@ class ScraperAgent(BaseStepAgent):
                 # All navigation happens in the same tab
                 action_data = {'go_to_url': GoToUrlAction(url=url, new_tab=False)}
                 result = await self.controller.act(GoToUrlActionModel(**action_data), self.browser_session)
-                # await asyncio.sleep(3)  # browser-use already waits for page load via _wait_for_stable_network()
+                await asyncio.sleep(5)  # browser-use already waits for page load via _wait_for_stable_network()
 
                 # Check for explicit failure
                 if result.success is False:
