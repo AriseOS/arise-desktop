@@ -52,28 +52,99 @@ function WorkflowResultPage({ currentUser, onNavigate, showStatus, params }) {
       const apiData = await response.json()
       console.log('Workflow results received:', apiData)
 
-      // Transform API response to display format
-      const results = apiData.results || []
+      // Check if results is an object (multi-collection) or array (single collection)
+      const isObjectFormat = apiData.results && typeof apiData.results === 'object' && !Array.isArray(apiData.results)
 
-      // Extract field names from first result (excluding system fields)
-      const systemFields = ['id', 'created_at']
-      const dataFields = results.length > 0
-        ? Object.keys(results[0]).filter(key => !systemFields.includes(key))
-        : []
+      // Determine if multi-collection based on number of collections
+      // If only 1 collection, treat as single collection for better UX
+      const isMultiCollection = isObjectFormat && apiData.collections && apiData.collections.length > 1
 
-      // Transform results to table data
-      const tableData = results.map(item =>
-        dataFields.map(field => item[field] || '')
-      )
+      let displayData
 
-      const displayData = {
-        workflow_name: apiData.workflow_name,
-        total_items: apiData.total_results,
-        fields: dataFields.map(field =>
-          field.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
-        ),
-        data: tableData,
-        time_range: apiData.time_range
+      if (isObjectFormat && isMultiCollection) {
+        // Handle multi-collection results
+        const collections = Object.keys(apiData.results)
+        const systemFields = ['id', 'created_at']
+
+        // Process each collection
+        const collectionsData = collections.map(collectionName => {
+          const results = apiData.results[collectionName] || []
+
+          // Extract field names from first result
+          const dataFields = results.length > 0
+            ? Object.keys(results[0]).filter(key => !systemFields.includes(key))
+            : []
+
+          // Transform results to table data
+          const tableData = results.map(item =>
+            dataFields.map(field => item[field] || '')
+          )
+
+          return {
+            name: collectionName,
+            displayName: collectionName.split('_').map(word =>
+              word.charAt(0).toUpperCase() + word.slice(1)
+            ).join(' '),
+            count: results.length,
+            fields: dataFields.map(field =>
+              field.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
+            ),
+            data: tableData
+          }
+        })
+
+        displayData = {
+          workflow_name: apiData.workflow_name,
+          total_items: apiData.total_results,
+          collections: collectionsData,
+          isMultiCollection: true,
+          time_range: apiData.time_range
+        }
+      } else if (isObjectFormat && !isMultiCollection) {
+        // Handle single collection in object format (new backend format)
+        const collectionName = Object.keys(apiData.results)[0]
+        const results = apiData.results[collectionName] || []
+        const systemFields = ['id', 'created_at']
+        const dataFields = results.length > 0
+          ? Object.keys(results[0]).filter(key => !systemFields.includes(key))
+          : []
+
+        const tableData = results.map(item =>
+          dataFields.map(field => item[field] || '')
+        )
+
+        displayData = {
+          workflow_name: apiData.workflow_name,
+          total_items: apiData.total_results,
+          fields: dataFields.map(field =>
+            field.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
+          ),
+          data: tableData,
+          isMultiCollection: false,
+          time_range: apiData.time_range
+        }
+      } else {
+        // Handle old array format (backward compatibility)
+        const results = Array.isArray(apiData.results) ? apiData.results : []
+        const systemFields = ['id', 'created_at']
+        const dataFields = results.length > 0
+          ? Object.keys(results[0]).filter(key => !systemFields.includes(key))
+          : []
+
+        const tableData = results.map(item =>
+          dataFields.map(field => item[field] || '')
+        )
+
+        displayData = {
+          workflow_name: apiData.workflow_name,
+          total_items: apiData.total_results,
+          fields: dataFields.map(field =>
+            field.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
+          ),
+          data: tableData,
+          isMultiCollection: false,
+          time_range: apiData.time_range
+        }
       }
 
       setResultData(displayData)
@@ -88,25 +159,46 @@ function WorkflowResultPage({ currentUser, onNavigate, showStatus, params }) {
   const downloadCSV = () => {
     if (!resultData) return
 
-    // Generate CSV content
-    const headers = resultData.fields.join(',')
-    const rows = resultData.data.map(row => row.map(cell => `"${cell}"`).join(',')).join('\n')
-    const csvContent = `${headers}\n${rows}`
+    if (resultData.isMultiCollection) {
+      // Download separate CSV for each collection
+      resultData.collections.forEach(collection => {
+        const headers = collection.fields.join(',')
+        const rows = collection.data.map(row => row.map(cell => `"${cell}"`).join(',')).join('\n')
+        const csvContent = `${headers}\n${rows}`
 
-    // Create download link
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
-    const link = document.createElement('a')
-    const url = URL.createObjectURL(blob)
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+        const link = document.createElement('a')
+        const url = URL.createObjectURL(blob)
 
-    link.setAttribute('href', url)
-    link.setAttribute('download', `${resultData.workflow_name}_results.csv`)
-    link.style.visibility = 'hidden'
+        link.setAttribute('href', url)
+        link.setAttribute('download', `${resultData.workflow_name}_${collection.name}.csv`)
+        link.style.visibility = 'hidden'
 
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+      })
+      showStatus(`✅ 已下载 ${resultData.collections.length} 个CSV文件`, 'success')
+    } else {
+      // Single collection CSV download
+      const headers = resultData.fields.join(',')
+      const rows = resultData.data.map(row => row.map(cell => `"${cell}"`).join(',')).join('\n')
+      const csvContent = `${headers}\n${rows}`
 
-    showStatus('✅ CSV文件已下载', 'success')
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+      const link = document.createElement('a')
+      const url = URL.createObjectURL(blob)
+
+      link.setAttribute('href', url)
+      link.setAttribute('download', `${resultData.workflow_name}_results.csv`)
+      link.style.visibility = 'hidden'
+
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+
+      showStatus('✅ CSV文件已下载', 'success')
+    }
   }
 
   return (
@@ -152,41 +244,85 @@ function WorkflowResultPage({ currentUser, onNavigate, showStatus, params }) {
                 <span className="summary-label">采集数量</span>
                 <span className="summary-value">{resultData.total_items} 条</span>
               </div>
-              <div className="summary-item">
-                <span className="summary-label">字段数量</span>
-                <span className="summary-value">{resultData.fields.length} 个</span>
-              </div>
+              {!resultData.isMultiCollection && (
+                <div className="summary-item">
+                  <span className="summary-label">字段数量</span>
+                  <span className="summary-value">{resultData.fields.length} 个</span>
+                </div>
+              )}
+              {resultData.isMultiCollection && (
+                <div className="summary-item">
+                  <span className="summary-label">数据源</span>
+                  <span className="summary-value">{resultData.collections.length} 个</span>
+                </div>
+              )}
             </div>
 
-            <div className="result-table-container">
-              <div className="result-table-header">
-                <span className="table-title">数据预览</span>
-                <span className="table-subtitle">共 {resultData.total_items} 条数据</span>
-              </div>
+            {resultData.isMultiCollection ? (
+              // Multi-collection display
+              resultData.collections.map((collection, collectionIdx) => (
+                <div key={collectionIdx} className="result-table-container">
+                  <div className="result-table-header">
+                    <span className="table-title">{collection.displayName}</span>
+                    <span className="table-subtitle">共 {collection.count} 条数据</span>
+                  </div>
 
-              <div className="result-table-wrapper">
-                <table className="result-table">
-                  <thead>
-                    <tr>
-                      <th>#</th>
-                      {resultData.fields.map((field, idx) => (
-                        <th key={idx}>{field}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {resultData.data.map((row, rowIdx) => (
-                      <tr key={rowIdx}>
-                        <td className="row-number">{rowIdx + 1}</td>
-                        {row.map((cell, cellIdx) => (
-                          <td key={cellIdx}>{cell}</td>
+                  <div className="result-table-wrapper">
+                    <table className="result-table">
+                      <thead>
+                        <tr>
+                          <th>#</th>
+                          {collection.fields.map((field, idx) => (
+                            <th key={idx}>{field}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {collection.data.map((row, rowIdx) => (
+                          <tr key={rowIdx}>
+                            <td className="row-number">{rowIdx + 1}</td>
+                            {row.map((cell, cellIdx) => (
+                              <td key={cellIdx}>{cell}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))
+            ) : (
+              // Single collection display
+              <div className="result-table-container">
+                <div className="result-table-header">
+                  <span className="table-title">数据预览</span>
+                  <span className="table-subtitle">共 {resultData.total_items} 条数据</span>
+                </div>
+
+                <div className="result-table-wrapper">
+                  <table className="result-table">
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        {resultData.fields.map((field, idx) => (
+                          <th key={idx}>{field}</th>
                         ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {resultData.data.map((row, rowIdx) => (
+                        <tr key={rowIdx}>
+                          <td className="row-number">{rowIdx + 1}</td>
+                          {row.map((cell, cellIdx) => (
+                            <td key={cellIdx}>{cell}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
+            )}
           </>
         )}
       </div>

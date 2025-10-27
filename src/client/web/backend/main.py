@@ -710,61 +710,78 @@ async def get_workflow_results(
     # Get storage database path
     storage_db_path = Path.home() / ".local/share/baseapp/storage.db"
 
-    # Map workflow name to collection name
+    # Map workflow name to collection name(s)
+    # Single collection workflows use string, multi-collection workflows use list
     workflow_collection_map = {
         "allegro-coffee-collection-workflow": "allegro_coffee_products",
-        "amazon-coffee-collection-workflow": "amazon_coffee_products"
+        "amazon-coffee-collection-workflow": "amazon_coffee_products",
+        "coffee-market-analysis-workflow": ["allegro_products", "amazon_products"]
     }
 
+    # Determine collections to query
     if workflow_name in workflow_collection_map:
-        collection = workflow_collection_map[workflow_name]
+        collection_config = workflow_collection_map[workflow_name]
+        collections = collection_config if isinstance(collection_config, list) else [collection_config]
     else:
         # Generic: use workflow name as collection
         collection = workflow_name.replace("-workflow", "").replace("-", "_")
-
-    table_name = f"{collection}_{current_user.id}"
+        collections = [collection]
 
     try:
         async with aiosqlite.connect(str(storage_db_path)) as sqlite_db:
             sqlite_db.row_factory = aiosqlite.Row
 
-            # Build query with time range filter
-            query = f"SELECT * FROM {table_name}"
-            params = []
-            conditions = []
+            all_results = {}
+            total_count = 0
 
-            if begin:
-                conditions.append("created_at >= ?")
-                params.append(begin)
+            # Query each collection
+            for collection in collections:
+                table_name = f"{collection}_{current_user.id}"
 
-            if end:
-                conditions.append("created_at <= ?")
-                params.append(end)
+                # Build query with time range filter
+                query = f"SELECT * FROM {table_name}"
+                params = []
+                conditions = []
 
-            if conditions:
-                query += " WHERE " + " AND ".join(conditions)
+                if begin:
+                    conditions.append("created_at >= ?")
+                    params.append(begin)
 
-            query += " ORDER BY created_at DESC"
+                if end:
+                    conditions.append("created_at <= ?")
+                    params.append(end)
 
-            if limit:
-                query += " LIMIT ?"
-                params.append(limit)
+                if conditions:
+                    query += " WHERE " + " AND ".join(conditions)
 
-            cursor = await sqlite_db.execute(query, params)
-            rows = await cursor.fetchall()
+                query += " ORDER BY created_at DESC"
 
-            # Convert to list of dicts
-            results = [dict(row) for row in rows]
+                if limit:
+                    query += " LIMIT ?"
+                    params.append(limit)
+
+                try:
+                    cursor = await sqlite_db.execute(query, params)
+                    rows = await cursor.fetchall()
+
+                    # Convert to list of dicts
+                    results = [dict(row) for row in rows]
+                    all_results[collection] = results
+                    total_count += len(results)
+                except Exception as e:
+                    # If table doesn't exist or query fails, skip this collection
+                    print(f"Warning: Failed to query {table_name}: {str(e)}")
+                    all_results[collection] = []
 
             return {
                 "workflow_name": workflow_name,
-                "collection": collection,
-                "total_results": len(results),
+                "collections": list(all_results.keys()),
+                "total_results": total_count,
                 "time_range": {
                     "begin": begin,
                     "end": end
                 },
-                "results": results
+                "results": all_results
             }
 
     except Exception as e:

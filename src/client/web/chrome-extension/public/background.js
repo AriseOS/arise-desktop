@@ -19,6 +19,13 @@ chrome.runtime.onInstalled.addListener((details) => {
   }
 });
 
+// Initialize Side Panel behavior - open on action click
+chrome.sidePanel
+  .setPanelBehavior({ openPanelOnActionClick: true })
+  .catch((error) => console.error('Error setting side panel behavior:', error));
+
+console.log('Side panel behavior initialized: openPanelOnActionClick = true');
+
 // Listen for messages from content scripts or popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   // Get captured operations
