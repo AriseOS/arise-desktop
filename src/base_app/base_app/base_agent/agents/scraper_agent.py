@@ -276,6 +276,11 @@ class ScraperAgent(BaseStepAgent):
 
             # 返回结果
             if extraction_result["success"]:
+                # Log extraction results in one line
+                data_preview = extraction_result["data"][:2] if extraction_result["total_count"] > 0 else []
+                preview_str = f"{data_preview[0]}" if len(data_preview) > 0 else "[]"
+                logger.info(f"✅ Extracted {extraction_result['total_count']} items using {config['extraction_method']} | Preview: {preview_str}")
+
                 return self._create_response(
                     True,
                     f'成功提取{extraction_result["total_count"]}条数据',
@@ -289,6 +294,7 @@ class ScraperAgent(BaseStepAgent):
                     }
                 )
             else:
+                logger.error(f"❌ Data extraction failed: {extraction_result.get('error', 'Unknown error')}")
                 return self._create_response(
                     False,
                     f'数据提取失败',
@@ -513,40 +519,36 @@ class ScraperAgent(BaseStepAgent):
         timeout: int,
         context: Optional[AgentContext] = None
     ) -> Dict[str, Any]:
-        """使用脚本模式提取数据 - 自动检查KV缓存"""
+        """Extract data using script mode - file-based caching with Claude SDK"""
+        from pathlib import Path
+
         try:
-            # Generate script key based on data requirements (dom_scope不影响key，因为脚本是通用的)
+            # Generate script key and workspace path
             script_key = self._generate_script_key(data_requirements)
 
-            # Try to load script from KV
+            if not self.config_service:
+                raise RuntimeError("ConfigService required for file-based script storage")
+
+            scripts_root = self.config_service.get_path("data.scripts")
+            script_workspace = scripts_root / script_key
+            script_file = script_workspace / "extraction_script.py"
+
+            # Check if script already exists (file-based cache)
             generated_script = None
 
-            # Diagnostic logging
-            if not context:
-                logger.error("❌ Context为None - 无法访问memory_manager")
-            elif not context.memory_manager:
-                logger.error(f"❌ memory_manager为None - context存在但memory_manager未初始化")
-                logger.error(f"   Context信息: workflow_id={context.workflow_id}, step_id={context.step_id}")
-                logger.error(f"   Context has agent_instance: {hasattr(context, 'agent_instance')}")
-            else:
-                logger.info(f"✅ Context和memory_manager都存在")
-                logger.info(f"   memory_manager类型: {type(context.memory_manager).__name__}")
-                logger.info(f"   KV storage启用: {context.memory_manager.is_kv_storage_enabled()}")
+            if script_file.exists():
+                # Load cached script from file
+                script_content = script_file.read_text(encoding='utf-8')
+                logger.info(f"✅ Loaded cached script from {script_file}")
+                logger.info(f"   Script size: {len(script_content)} chars")
 
-            if context and context.memory_manager:
-                script_data = await context.memory_manager.get_data(script_key)
-                if script_data and 'script_content' in script_data:
-                    generated_script = script_data['script_content']
-                    logger.info(f"✅ 使用缓存的脚本: {script_key}")
-                else:
-                    logger.info(f"📝 KV中未找到脚本: {script_key}（将生成新脚本）")
+                # Wrap the script with execution wrapper (same as fresh generation)
+                generated_script = self._extract_and_wrap_code(script_content)
             else:
-                logger.warning("脚本缓存未启用，每次都会重新生成脚本（消耗更多token和时间）")
-
-            # If no cached script, generate new one using PARTIAL DOM (to save tokens)
-            if not generated_script:
-                logger.info(f"脚本不存在，自动生成: {script_key}")
-                logger.info(f"脚本生成使用 partial DOM 以节省 token")
+                # Generate new script using Claude SDK
+                logger.info(f"📝 Script not found at {script_file}")
+                logger.info(f"   Generating new script with Claude SDK...")
+                logger.info(f"   Using partial DOM to save tokens during generation")
 
                 # Temporarily switch to partial scope for script generation
                 original_scope = self.dom_scope
@@ -568,35 +570,19 @@ class ScraperAgent(BaseStepAgent):
                     }
                 }
 
+                # Generate script using Claude SDK
                 generated_script = await self._generate_extraction_script_with_llm(
                     dom_analysis, data_requirements, [], None
                 )
 
-                # Store script to KV
-                if context and context.memory_manager:
-                    script_data = {
-                        "script_content": generated_script,
-                        "data_requirements": data_requirements,
-                        "dom_config": {
-                            "generation_dom_scope": "partial",  # 记录生成时使用的DOM范围
-                            "execution_dom_scope": self.dom_scope  # 记录执行时的DOM范围配置
-                        },
-                        "created_at": datetime.now().isoformat(),
-                        "version": "7.1"
-                    }
-                    await context.memory_manager.set_data(script_key, script_data)
-                    logger.info(f"脚本已存储到KV: {script_key}")
-
-                # Debug mode: save to file
-                if self.debug_mode:
-                    logger.info(f"=== 生成新脚本 ===")
-                    logger.info(f"脚本长度: {len(generated_script)} 字符")
-                    logger.info(f"生成使用 DOM: partial (节省token)")
-                    logger.info(f"执行使用 DOM: {self.dom_scope}")
-                    await self._save_script_to_file(generated_script, script_key)
+                logger.info(f"✅ Script generated successfully by Claude SDK")
+                logger.info(f"   Script workspace: {script_workspace}")
+                logger.info(f"   Script file: {script_file}")
+                logger.info(f"   Generated using: partial DOM (token optimization)")
+                logger.info(f"   Execution will use: {self.dom_scope} DOM")
 
             # Execute script with user-specified DOM scope (target_dom is already scoped)
-            logger.info(f"脚本执行使用 {self.dom_scope} DOM")
+            logger.info(f"Executing script with {self.dom_scope} DOM scope")
             return await self._execute_generated_script_direct(
                 generated_script, target_dom, dom_dict, max_items
             )
@@ -817,27 +803,6 @@ Extract data now:"""
             
             # 使用提供的DOM数据执行提取
             result = execute_func(serialized_dom, dom_dict, max_items)
-            
-            # 🐛 临时调试：打印脚本执行结果
-            logger.info("=" * 80)
-            logger.info("🐛 DEBUG: Script Execution Result")
-            logger.info("=" * 80)
-            logger.info(f"Success: {result.get('success')}")
-            logger.info(f"Total Count: {result.get('total_count')}")
-            logger.info(f"Error: {result.get('error')}")
-            logger.info(f"Max Items Requested: {max_items}")
-            
-            if result.get('data'):
-                logger.info(f"\n📋 Extracted Data (first 5):")
-                for i, item in enumerate(result['data'][:5], 1):
-                    logger.info(f"  [{i}] {item}")
-                if len(result['data']) > 5:
-                    logger.info(f"  ... and {len(result['data']) - 5} more items")
-            else:
-                logger.warning("⚠️  No data extracted!")
-            
-            logger.info("=" * 80)
-            
             return result
             
         except Exception as e:
@@ -851,136 +816,228 @@ Extract data now:"""
                                                  interaction_steps: List[Dict],
                                                  example_data: Optional[str] = None,
                                                  max_dom_chars: int = 250000) -> str:
-        """Generate data extraction script using LLM with enhanced strategy guidance
+        """Generate data extraction script using Claude Agent SDK with iterative refinement
 
         Args:
-            dom_analysis: DOM analysis data
-            data_requirements: Data requirements
-            interaction_steps: Interaction steps
-            example_data: Example data
-            max_dom_chars: Maximum DOM characters to prevent token overflow (default: 250k chars ≈ 140k tokens)
+            dom_analysis: DOM analysis data containing dom_dict and llm_view
+            data_requirements: Data requirements dictionary
+            interaction_steps: Interaction steps (unused in Claude SDK mode)
+            example_data: Example data (unused in Claude SDK mode)
+            max_dom_chars: Maximum DOM characters (unused - Claude can grep the file)
+
+        Returns:
+            Generated script content as string
+
+        Raises:
+            RuntimeError: If Claude SDK script generation fails
         """
+        from common.llm import ClaudeAgentProvider
+        from pathlib import Path
 
         try:
-            llm_view = dom_analysis['llm_view']
+            # 1. Create working directory for this script
+            script_key = self._generate_script_key(data_requirements)
 
-            # Truncate DOM if too large to prevent token overflow
-            if len(llm_view) > max_dom_chars:
-                logger.warning(f"DOM truncated from {len(llm_view)} to {max_dom_chars} chars to prevent token overflow")
-                llm_view = llm_view[:max_dom_chars] + '\n... [DOM TRUNCATED]'
-            
-            # Parse data_requirements format
+            if not self.config_service:
+                raise RuntimeError("ConfigService not available - required for Claude SDK integration")
+
+            scripts_root = self.config_service.get_path("data.scripts")
+            working_dir = scripts_root / script_key
+            working_dir.mkdir(parents=True, exist_ok=True)
+
+            logger.info(f"Claude SDK workspace created: {working_dir}")
+
+            # 2. Save input files for Claude to read
+            # Save data requirements
+            requirement_file = working_dir / "requirement.json"
+            requirement_file.write_text(
+                json.dumps(data_requirements, indent=2, ensure_ascii=False),
+                encoding='utf-8'
+            )
+
+            # Save DOM data (dom_dict, not llm_view - Claude can grep it)
+            dom_file = working_dir / "dom_data.json"
+            dom_dict = dom_analysis.get('dom_dict', {})
+            dom_file.write_text(
+                json.dumps(dom_dict, indent=2, ensure_ascii=False),
+                encoding='utf-8'
+            )
+
+            logger.info(f"Input files saved: requirement.json ({requirement_file.stat().st_size} bytes), "
+                       f"dom_data.json ({dom_file.stat().st_size} bytes)")
+
+            # 3. Build Claude SDK prompt
             user_description = data_requirements.get('user_description', '')
             output_format = data_requirements.get('output_format', {})
             sample_data = data_requirements.get('sample_data', [])
             xpath_hints = data_requirements.get('xpath_hints', {})
 
             # Build field descriptions
-            fields_description = ""
-            for field_name, field_desc in output_format.items():
-                fields_description += f"- {field_name}: {field_desc}\n"
+            fields_description = "\n".join([f"- {name}: {desc}" for name, desc in output_format.items()])
 
-            # Build sample descriptions
+            # Build sample data description
             sample_description = ""
-            if sample_data and len(sample_data) > 0:
-                sample_description = f"\n\n参考样例数据，用户给出的当前页面期望的结果：\n{json.dumps(sample_data, indent=2, ensure_ascii=False)}"
+            if sample_data:
+                sample_description = f"\n\nExpected output example:\n{json.dumps(sample_data, indent=2, ensure_ascii=False)}"
 
-            # Build xpath hints description
+            # Build xpath hints
             xpath_hints_description = ""
             if xpath_hints:
-                xpath_hints_description = "\n\n## 用户演示时采集的 XPath 提示（仅供参考）：\n"
-                for field_name, xpath in xpath_hints.items():
-                    xpath_hints_description += f"- {field_name}: {xpath}\n"
-                xpath_hints_description += "\n**注意**：这些 xpath 来自用户演示页面，可能不完全适用于当前页面。请根据实际 DOM 结构灵活调整。"
-            
-            # Simplified scraper prompt - clear instructions with minimal examples
-            prompt = f"""
-## 第一步：理解DOM遍历
-DOM是嵌套字典结构，每个元素包含：
-- tag: HTML标签名
-- text: 文本内容
-- class: CSS类名
-- href: 链接地址
-- xpath: XPath路径
-- children: 子元素数组
+                hints_list = "\n".join([f"- {name}: {xpath}" for name, xpath in xpath_hints.items()])
+                xpath_hints_description = f"\n\nXPath hints from user demo (reference only):\n{hints_list}"
 
-遍历方法：递归访问 node.get('children', [])
+            # Build Claude SDK prompt
+            prompt = f"""# Web Scraping Script Generation Task
 
-## 第二步：任务分析和策略选择
-判断任务类型：
-- **精准提取**：提取特定字段（如商品详情页的标题、价格）
-- **模式提取**：提取重复数据（如搜索结果列表、商品列表）
+## Working Directory Structure
 
-定位策略（优先级）：
-1. **XPath提示优先** - 如果提供了 xpath_hints，先尝试在 DOM 中验证这些 xpath 是否有效
-2. **Class定位**（首选）- 通过CSS类名，灵活适应单个/多个元素
-3. **XPath定位** - 精确路径定位
-4. **内容特征定位** - 通过href/text等内容匹配
+You are working in: `{working_dir}`
 
-**如何使用 XPath 提示**：
-- 如果 xpath_hint 能在当前 DOM 中定位到目标元素 → 基于它生成通用模式
-- 如果 xpath_hint 无效或不存在 → 自行分析 DOM 寻找最佳策略
-- 可以从 xpath_hint 中提取有用信息（如 class 名称）来辅助定位
+**Files available:**
+- `requirement.json` - Data extraction requirements
+- `dom_data.json` - DOM structure of the webpage (JSON format)
 
-**跨DOM数据提取策略**：当数据分散在多个相邻元素中时：
-1. 先定位到任意一个目标数据元素（通过class或内容）
-2. 向上查找该元素的父容器
-3. 遍历父容器的所有子元素，收集并组合数据
+**Files to create:**
+- `extraction_script.py` - Main extraction script
 
-关键函数示例：
+## Task Overview
+
+Generate a Python script that extracts data from a webpage DOM structure according to user requirements.
+
+## Step 1: Read Input Files
+
+First, read the input files to understand the requirements:
+- Read `requirement.json` to see what data needs to be extracted
+- Read `dom_data.json` to understand the webpage structure (use Grep/Read tools to explore)
+
+## Step 2: Understand DOM Structure
+
+The DOM data is in JSON format with this structure:
 ```python
-def find_parent_by_xpath(node, levels_up=1):
-    # 根据xpath向上查找父容器
-    xpath = node.get('xpath', '')
-    if not xpath:
-        return None
-    # XPath向上查找：移除最后N级路径
-    parts = xpath.split('/')
-    if len(parts) > levels_up:
-        parent_xpath = '/'.join(parts[:-levels_up])
-        return find_by_xpath(dom_dict, parent_xpath)
-    return None
-
-def collect_scattered_data(container_node):
-    # 在容器内收集所有子元素的文本
-    texts = []
-    if container_node and 'children' in container_node:
-        for child in container_node.get('children', []):
-            if isinstance(child, dict):
-                text = child.get('text', '').strip()
-                if text:
-                    texts.append(text)
-    return ''.join(texts)
+{{
+    "tag": "div",           # HTML tag name
+    "text": "content",      # Text content
+    "class": "item",        # CSS class
+    "href": "url",          # Link URL
+    "xpath": "/html/...",   # XPath location
+    "children": [...]       # Nested children
+}}
 ```
 
-## 第三步：理解具体需求
-用户需求：{user_description}
+Use Grep to search for specific patterns in dom_data.json, for example:
+- Search for class names: grep -i '"class".*product' dom_data.json
+- Search for specific tags: grep -i '"tag".*"h2"' dom_data.json
 
-输出字段说明：
+## Step 3: Data Extraction Requirements
+
+**User Description:** {user_description}
+
+**Fields to extract:**
 {fields_description}{sample_description}{xpath_hints_description}
 
-**重要**：这是样例页面，生成的脚本要能适用于内容不同但结构相似的其他页面。
+## Step 4: Generate extraction_script.py
 
-## DOM结构：
-{llm_view}
+Create a file named `extraction_script.py` with this function:
 
-## 要求：
-请生成 extract_data_from_page(serialized_dom, dom_dict) 函数：
-- 返回: List[Dict[str, Any]]
-- 包含错误处理
-- 只返回Python代码，不要解释文字
-- 根据DOM结构和用户需求选择最合适的策略
+```python
+def extract_data_from_page(serialized_dom, dom_dict) -> List[Dict[str, Any]]:
+    \"\"\"
+    Extract data from DOM structure
+
+    Args:
+        serialized_dom: SerializedDOMTree object (browser-use library)
+        dom_dict: DOM structure as nested dictionary
+
+    Returns:
+        List of dictionaries, each containing extracted fields
+    \"\"\"
+    # Your implementation here
+    pass
+```
+
+**Requirements:**
+1. Function must be named `extract_data_from_page`
+2. Parameters: `serialized_dom` and `dom_dict`
+3. Return type: `List[Dict[str, Any]]`
+4. Include proper error handling
+5. Use recursive traversal of dom_dict to find target elements
+6. Handle cases where elements might not exist
+
+**Common patterns:**
+- For list extraction: Find repeating container elements, extract fields from each
+- For single item: Navigate to specific element and extract fields
+- Use XPath hints as reference, but adapt to actual DOM structure
+
+## Step 5: Test and Validate
+
+After generating the script:
+1. Create a test file `test_script.py` that:
+   - Loads dom_data.json
+   - Calls extract_data_from_page() with the DOM data
+   - Validates output format matches requirements
+   - Prints extracted data
+
+2. Run the test: `python test_script.py`
+
+3. If errors occur:
+   - Analyze the error message
+   - Fix the extraction_script.py
+   - Re-run the test
+   - Repeat until test passes
+
+## Step 6: Final Verification
+
+Ensure:
+- extraction_script.py exists and is syntactically correct
+- Test passes without errors
+- Output data matches expected format from requirement.json
+
+---
+
+**Important Notes:**
+- This is a sample page - the script should work on pages with similar structure but different content
+- Use flexible selectors (class names, patterns) rather than hardcoded values
+- Handle missing elements gracefully (return empty list or skip items)
+- The DOM structure in dom_data.json represents the actual webpage HTML structure
+
+Start by reading requirement.json and dom_data.json to understand the task!
 """
-            # Use provider from context
-            if not self.provider:
-                raise RuntimeError("No LLM provider available. ScraperAgent must be initialized with context.")
 
-            response = await self.provider.generate_response(
-                system_prompt=self.SYSTEM_PROMPT,
-                user_prompt=prompt
+            # 4. Initialize Claude Agent Provider
+            claude_provider = ClaudeAgentProvider(config_service=self.config_service)
+            logger.info("Claude Agent Provider initialized")
+
+            # 5. Run Claude SDK to generate and test script
+            max_iterations = self.config_service.get("claude_agent.default_max_iterations", 50)
+
+            logger.info(f"Starting Claude SDK task with max_iterations={max_iterations}")
+            result = await claude_provider.run_task(
+                prompt=prompt,
+                working_dir=working_dir,
+                max_iterations=max_iterations
             )
-            
-            return self._extract_and_wrap_code(response)
+
+            # 6. Check result
+            if not result.success:
+                error_msg = f"Claude SDK script generation failed after {result.iterations} iterations: {result.error}"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
+
+            logger.info(f"Claude SDK completed successfully in {result.iterations} iterations")
+
+            # 7. Read generated script
+            script_file = working_dir / "extraction_script.py"
+            if not script_file.exists():
+                raise FileNotFoundError(
+                    f"extraction_script.py not found in {working_dir}. "
+                    f"Claude SDK completed but did not create the expected file."
+                )
+
+            script_content = script_file.read_text(encoding='utf-8')
+            logger.info(f"Script loaded from {script_file} ({len(script_content)} chars)")
+
+            # 8. Wrap script with execution wrapper (same as before)
+            return self._extract_and_wrap_code(script_content)
             
         except Exception as e:
             logger.error(f"LLM script generation failed: {e}")

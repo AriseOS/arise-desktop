@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
 """
-ScraperAgent Debug Helper - DOM collection and script generation
+ScraperAgent Debug Helper - DOM collection and script generation with Claude SDK
 
 Usage:
   # Collect DOM data
   python scraper_debug_helper.py --mode dom --url "https://allegro.pl/oferta/some-product" --name "product_page"
 
-  # Generate script using ScraperAgent's logic
-  python scraper_debug_helper.py --mode generate --name "product_page"
+  # Generate script using Claude Agent SDK (multi-turn iterative generation)
+  python scraper_debug_helper.py --mode generate --name "product_page" --requirement-type product_detail
 
-The script uses the exact same data_requirements format and LLM prompts as ScraperAgent.
+  # Execute generated script
+  python scraper_debug_helper.py --mode exec --name "product_page" --requirement-type product_detail
+
+  # List available data
+  python scraper_debug_helper.py --mode list
+
+The script uses Claude Agent SDK for iterative script generation and testing,
+matching the new ScraperAgent implementation.
 """
 
 import asyncio
@@ -37,7 +44,7 @@ from base_app.base_app.base_agent.tools.browser_use.dom_extractor import (
 )
 
 # Script generation imports
-from src.common.llm import AnthropicProvider
+from common.llm import ClaudeAgentProvider
 
 
 class GoToUrlActionModel(ActionModel):
@@ -105,36 +112,83 @@ class ScraperDebugHelper:
                     {"url": "https://allegro.pl/oferta/kawa-ziarnista-1kg-brazylia-santos-swiezo-palona-100-arabica-tommy-cafe-12786896326"},
                     {"url": "https://allegro.pl/oferta/example-product-2"}
                 ]
+            },
+            # Workflow Scenario 3: Allegro product detail extraction (converted from LLM to script mode for testing)
+            "allegro_product_detail": {
+                "user_description": "Extract coffee product details including name, price, and purchase statistics",
+                "output_format": {
+                    "title": "Product title",
+                    "price": "Product price",
+                    "purchases": "Number of recent purchases"
+                },
+                "sample_data": {
+                    "title": "Kawa ziarnista 1kg BRAZYLIA Santos Świeżo Palona 100% ARABICA Tommy Cafe",
+                    "price": "69,50 zł",
+                    "purchases": "3 308 osób kupiło ostatnio"
+                },
+                "xpath_hints": {
+                    "title": "//*[@id=\"showproduct-left-column-wrapper\"]/div/div[1]/div/div/div/div/div/div[1]/div/div/div[1]/div/h1",
+                    "price": "//*[@id=\"showproduct-right-column-wrapper\"]/div/div[1]/div/div/div[2]/div/div/div/div/div/section/div[1]/div[1]",
+                    "purchases": "//*[@id=\"showproduct-left-column-wrapper\"]/div/div[1]/div/div/div/div/div/div[1]/div/div/div[1]/div/div[2]/div/div[1]/div/div[2]"
+                }
+            },
+            # Workflow Scenario 4: Amazon product detail extraction (converted from LLM to script mode for testing)
+            "amazon_product_detail": {
+                "user_description": "Extract coffee product information including product name and customer ratings",
+                "output_format": {
+                    "title": "Product title",
+                    "ratings": "Customer ratings count"
+                },
+                "sample_data": {
+                    "title": "Lavazza House Blend Perfetto Ground Coffee 12oz Bag, Medium Roast, Full-bodied, Intensity 3/5, 100% Arabica, Ideal for Drip Brewers, (Pack of 1) - Package May Vary",
+                    "ratings": "8,168 ratings"
+                },
+                "xpath_hints": {
+                    "title": "//*[@id=\"productTitle\"]",
+                    "ratings": "//*[@id=\"acrCustomerReviewText\"]"
+                }
             }
         }
     
     async def collect_dom(self, url: str, name: str):
-        """Collect DOM data from URL"""
+        """Collect DOM data from URL and save directly to workspace for Claude SDK
+
+        This creates a workspace directory with:
+        - dom_data.json: DOM structure in dict format (for Claude to explore)
+        - metadata.json: URL, collection time, and other metadata
+        """
 
         print(f"=== DOM Collection for '{name}' ===")
         print(f"URL: {url}")
 
+        # Create workspace directory
+        import hashlib
+        workspace_key = f"dom_{name}_{hashlib.md5(url.encode()).hexdigest()[:8]}"
+        workspace_dir = self.data_dir / "workspaces" / workspace_key
+        workspace_dir.mkdir(parents=True, exist_ok=True)
+
+        print(f"📁 Workspace: {workspace_dir}")
+
         # Browser setup - get user data dir from config
         user_data_dir = str(self.config_service.get_path("data.browser_data"))
-        
+
         profile = BrowserProfile(
             headless=False,
             user_data_dir=user_data_dir,
             keep_alive=True,
-            # Increase wait times for complex pages like Allegro
-            minimum_wait_page_load_time=2.0,  # Wait 2s for initial page load
-            wait_for_network_idle_page_load_time=3.0,  # Wait 3s for dynamic content
+            minimum_wait_page_load_time=2.0,
+            wait_for_network_idle_page_load_time=3.0,
         )
-        
+
         browser_session = None
-        
+
         try:
             print("Starting browser...")
             browser_session = BrowserSession(browser_profile=profile)
             await browser_session.start()
-            
+
             tools = Tools()
-            
+
             # Navigate
             print(f"Navigating to {url}...")
             goto_action = {'go_to_url': GoToUrlAction(url=url)}
@@ -147,11 +201,11 @@ class ScraperDebugHelper:
                 print(f"Navigation failed: {nav_result.error}")
                 return False
 
-            # Extra wait for page to fully load (before BrowserStateRequestEvent)
+            # Wait for page to fully load
             print("Waiting 5 seconds for page to fully load...")
             await asyncio.sleep(5)
-            
-            # Wait for page stability using BrowserStateRequestEvent (same as ScraperAgent fix)
+
+            # Wait for page stability
             print("Waiting for page stability...")
             from browser_use.browser.events import BrowserStateRequestEvent
 
@@ -165,75 +219,62 @@ class ScraperDebugHelper:
             browser_state = await event.event_result(raise_if_any=True, raise_if_none=False)
             print("✅ Page stability complete")
 
-            # Extract DOM (same as ScraperAgent) - use DOMWatchdog cache
+            # Extract DOM
             print("Extracting DOM data...")
             enhanced_dom = browser_session._dom_watchdog.enhanced_dom_tree
             if enhanced_dom is None:
-                raise RuntimeError("DOM tree is None after BrowserStateRequestEvent - page may have failed to load")
-            
+                raise RuntimeError("DOM tree is None - page may have failed to load")
+
             current_url = await browser_session.get_current_page_url()
-            
+
             # Use ScraperAgent's DOM extraction logic
             extractor = DOMExtractor()
-            
-            # Get partial DOM (visible elements only, like ScraperAgent default)
+
+            # Get partial DOM (visible elements only - used for script generation)
             partial_dom, _ = extractor.serialize_accessible_elements_custom(
                 enhanced_dom, include_non_visible=False
             )
-            
-            # Get full DOM for comparison
-            full_dom, _ = extractor.serialize_accessible_elements_custom(
-                enhanced_dom, include_non_visible=True
-            )
-            
-            # Convert to dict format
-            partial_dict = extract_dom_dict(partial_dom)
-            full_dict = extract_dom_dict(full_dom)
-            
-            # Generate LLM views
-            partial_llm_view = extract_llm_view(partial_dict)
-            full_llm_view = extract_llm_view(full_dict)
-            
-            # Save all DOM data (same format as ScraperAgent would use)
-            dom_data = {
+
+            # Convert to dict format (this is what Claude SDK will use)
+            dom_dict = extract_dom_dict(partial_dom)
+
+            print(f"📊 DOM dict size: {len(json.dumps(dom_dict))} chars")
+
+            # Save DOM data to workspace
+            dom_file = workspace_dir / "dom_data.json"
+            with open(dom_file, 'w', encoding='utf-8') as f:
+                json.dump(dom_dict, f, indent=2, ensure_ascii=False)
+
+            print(f"✅ DOM data saved: {dom_file.name} ({dom_file.stat().st_size} bytes)")
+
+            # Save metadata
+            metadata = {
                 "name": name,
                 "url": url,
                 "current_url": current_url,
                 "collection_time": datetime.now().isoformat(),
-                "partial_scope": {
-                    "target_dom": partial_dom,
-                    "dom_dict": partial_dict,
-                    "llm_view": partial_llm_view
-                },
-                "full_scope": {
-                    "target_dom": full_dom,
-                    "dom_dict": full_dict,
-                    "llm_view": full_llm_view
-                }
+                "workspace_key": workspace_key,
+                "dom_scope": "partial"  # Always use partial for generation
             }
-            
-            # Save to file
-            output_file = self.data_dir / f"{name}_dom.json"
-            with open(output_file, 'w', encoding='utf-8') as f:
-                json.dump(dom_data, f, indent=2, ensure_ascii=False, default=str)
-            
-            print(f"✅ DOM data saved to: {output_file}")
-            print(f"📊 Partial elements: {len(str(partial_dict))} chars")
-            print(f"📊 Full elements: {len(str(full_dict))} chars")
-            
-            meaningful_partial = json.loads(partial_llm_view) if partial_llm_view != "[]" else []
-            meaningful_full = json.loads(full_llm_view) if full_llm_view != "[]" else []
-            print(f"🤖 Meaningful partial: {len(meaningful_partial)} elements")
-            print(f"🤖 Meaningful full: {len(meaningful_full)} elements")
-            
+
+            metadata_file = workspace_dir / "metadata.json"
+            with open(metadata_file, 'w', encoding='utf-8') as f:
+                json.dump(metadata, f, indent=2, ensure_ascii=False)
+
+            print(f"✅ Metadata saved: {metadata_file.name}")
+
+            print(f"\n📦 Workspace ready for script generation:")
+            print(f"   Location: {workspace_dir}")
+            print(f"   Files: dom_data.json, metadata.json")
+
             return True
-            
+
         except Exception as e:
-            print(f"DOM collection error: {e}")
+            print(f"❌ DOM collection error: {e}")
             import traceback
             traceback.print_exc()
             return False
-        
+
         finally:
             if browser_session:
                 try:
@@ -242,30 +283,61 @@ class ScraperDebugHelper:
                 except Exception as e:
                     print(f"Error closing browser: {e}")
     
-    async def generate_script(self, name: str, requirement_type: str = "product_detail"):
-        """Generate script using ScraperAgent's exact logic and prompts
+    async def generate_script_with_claude_sdk(self, name: str, requirement_type: str = "product_detail"):
+        """Generate script using Claude Agent SDK
 
-        Note: Script generation ALWAYS uses partial DOM (matching ScraperAgent v5.0 token optimization)
+        Reads DOM data from workspace and generates script with iterative testing.
         """
-
-        print(f"=== Script Generation for '{name}' ===")
+        print(f"=== Script Generation with Claude SDK for '{name}' ===")
         print(f"Requirement type: {requirement_type}")
-        print(f"⚡ Token Optimization: Always using PARTIAL DOM for script generation")
+        print(f"🤖 Using Claude Agent SDK for iterative generation and testing")
 
-        # Load DOM data
-        dom_file = self.data_dir / f"{name}_dom.json"
+        # Find workspace for this name
+        workspaces_dir = self.data_dir / "workspaces"
+        if not workspaces_dir.exists():
+            print(f"❌ No workspaces found. Run --mode dom first.")
+            return False
+
+        # Find matching workspace
+        workspace_pattern = f"dom_{name}_*"
+        matching_workspaces = list(workspaces_dir.glob(workspace_pattern))
+
+        if not matching_workspaces:
+            print(f"❌ No workspace found for '{name}'")
+            print(f"   Searched for: {workspace_pattern}")
+            print(f"   In directory: {workspaces_dir}")
+            print(f"\nAvailable workspaces:")
+            for ws in workspaces_dir.iterdir():
+                if ws.is_dir():
+                    print(f"   - {ws.name}")
+            return False
+
+        # Use the most recent workspace
+        workspace_dir = sorted(matching_workspaces)[-1]
+        print(f"📁 Using workspace: {workspace_dir.name}")
+
+        # Check required files
+        dom_file = workspace_dir / "dom_data.json"
+        metadata_file = workspace_dir / "metadata.json"
+
         if not dom_file.exists():
-            print(f"❌ DOM data not found: {dom_file}")
-            print("Run with --mode dom first to collect DOM data")
+            print(f"❌ dom_data.json not found in workspace")
             return False
 
         try:
+            # Load DOM data
             with open(dom_file, 'r', encoding='utf-8') as f:
-                dom_data = json.load(f)
+                dom_dict = json.load(f)
 
-            print(f"✅ Loaded DOM data from: {dom_file}")
+            print(f"✅ Loaded DOM data: {len(json.dumps(dom_dict))} chars")
 
-            # Get data requirements (same as test_scraper_agent_with_script.py)
+            # Load metadata if available
+            if metadata_file.exists():
+                with open(metadata_file, 'r', encoding='utf-8') as f:
+                    metadata = json.load(f)
+                print(f"✅ Loaded metadata: {metadata.get('url', 'N/A')}")
+
+            # Get data requirements
             if requirement_type not in self.default_data_requirements:
                 print(f"❌ Unknown requirement type: {requirement_type}")
                 print(f"Available types: {list(self.default_data_requirements.keys())}")
@@ -273,368 +345,354 @@ class ScraperDebugHelper:
 
             data_requirements = self.default_data_requirements[requirement_type]
 
-            # ALWAYS use partial DOM for script generation (token optimization)
-            dom_info = dom_data['partial_scope']
+            # Create script generation workspace in the same directory
+            print(f"📝 Adding requirement.json to workspace...")
 
-            target_dom = dom_info['target_dom']
-            dom_dict = dom_info['dom_dict']
-            llm_view = dom_info['llm_view']
-
-            print(f"Using PARTIAL DOM for generation (saves 50-80% tokens)")
-            print(f"LLM view length: {len(llm_view)} chars")
-            
-            # Build DOM analysis (same structure as ScraperAgent)
-            dom_analysis = {
-                'serialized_dom': target_dom,
-                'dom_dict': dom_dict,
-                'llm_view': llm_view,
-                'dom_config': {
-                    'dom_scope': 'partial'  # Always partial for generation
-                }
-            }
-
-            # Call ScraperAgent's exact LLM generation function
-            print("Calling ScraperAgent's LLM generation logic...")
-            script_content = await self._generate_extraction_script_with_llm(
-                dom_analysis,
-                data_requirements,
-                []  # interaction_steps
+            requirement_file = workspace_dir / "requirement.json"
+            requirement_file.write_text(
+                json.dumps(data_requirements, indent=2, ensure_ascii=False),
+                encoding='utf-8'
             )
 
-            # Save script
-            timestamp = int(datetime.now().timestamp())
-            script_file = self.data_dir / f"{name}_script_{requirement_type}_{timestamp}.py"
-            
-            with open(script_file, 'w', encoding='utf-8') as f:
-                f.write(f"# Generated script for '{name}'\n")
-                f.write(f"# Requirement type: {requirement_type}\n")
-                f.write(f"# Generation DOM: partial (token optimization)\n")
-                f.write(f"# Execution DOM: can use partial or full\n")
-                f.write(f"# Generated at: {datetime.now().isoformat()}\n")
-                f.write("# Data requirements:\n")
-                # Fix: Add # to each line of JSON
-                json_str = json.dumps(data_requirements, indent=2, ensure_ascii=False)
-                for line in json_str.split('\n'):
-                    f.write(f"# {line}\n")
-                f.write("# " + "=" * 70 + "\n\n")
-                f.write(script_content)
+            print(f"✅ Requirement file saved: {requirement_file.stat().st_size} bytes")
 
-            print(f"✅ Script saved to: {script_file}")
-
-            # Print for manual testing
-            print("\n" + "=" * 80)
-            print("🔧 MANUAL TESTING DATA")
-            print("=" * 80)
-
-            print(f"\n📋 Data Requirements:")
-            print(json.dumps(data_requirements, indent=2, ensure_ascii=False))
-
-            print(f"\n📝 Generated Script:")
-            print("-" * 50)
-            print(script_content)
-
-            print(f"\n🤖 LLM View (first 1000 chars):")
-            print("-" * 50)
-            print(llm_view[:1000] + ("..." if len(llm_view) > 1000 else ""))
-
-            print(f"\n🧪 Manual Test Commands:")
-            print("-" * 50)
-            print("# 1. Load DOM data (can test with partial or full)")
-            print(f"import json")
-            print(f"dom_data = json.load(open('{dom_file}'))")
-            print(f"# Use partial DOM:")
-            print(f"dom_dict = dom_data['partial_scope']['dom_dict']")
-            print(f"serialized_dom = dom_data['partial_scope']['target_dom']")
-            print(f"# OR use full DOM:")
-            print(f"# dom_dict = dom_data['full_scope']['dom_dict']")
-            print(f"# serialized_dom = dom_data['full_scope']['target_dom']")
-            print("")
-            print("# 2. Execute script")
-            print(f"exec(open('{script_file}').read())")
-            print("")
-            print("# 3. Test extraction")
-            print("result = execute_extraction(serialized_dom, dom_dict, 10)")
-            print("print(json.dumps(result, indent=2, ensure_ascii=False))")
-            
-            return True
-            
-        except Exception as e:
-            print(f"Script generation error: {e}")
-            import traceback
-            traceback.print_exc()
-            return False
-    
-    async def _generate_extraction_script_with_llm(self, 
-                                                 dom_analysis: dict, 
-                                                 data_requirements: dict,
-                                                 interaction_steps: list) -> str:
-        """ScraperAgent's exact LLM generation function (copy from scraper_agent.py)"""
-        
-        try:
-            llm_view = dom_analysis['llm_view']
-            
-            # Parse data_requirements (same as ScraperAgent)
+            # Build Claude SDK prompt (same as ScraperAgent)
             user_description = data_requirements.get('user_description', '')
             output_format = data_requirements.get('output_format', {})
             sample_data = data_requirements.get('sample_data', [])
-            
-            # Build field descriptions
-            fields_description = ""
-            for field_name, field_desc in output_format.items():
-                fields_description += f"- {field_name}: {field_desc}\n"
-            
-            # Build sample descriptions
+            xpath_hints = data_requirements.get('xpath_hints', {})
+
+            fields_description = "\n".join([f"- {name}: {desc}" for name, desc in output_format.items()])
+
             sample_description = ""
-            if sample_data and len(sample_data) > 0:
-                sample_description = f"\n\n参考样例数据，用户给出的当前页面期望的结果：\n{json.dumps(sample_data, indent=2, ensure_ascii=False)}"
-            
-            # Simplified scraper prompt - clear instructions with minimal examples
-            prompt = f"""
-## 第一步：理解DOM遍历
-DOM是嵌套字典结构，每个元素包含：
-- tag: HTML标签名
-- text: 文本内容
-- class: CSS类名
-- href: 链接地址
-- xpath: XPath路径
-- children: 子元素数组
+            if sample_data:
+                sample_description = f"\n\nExpected output example:\n{json.dumps(sample_data, indent=2, ensure_ascii=False)}"
 
-遍历方法：递归访问 node.get('children', [])
+            xpath_hints_description = ""
+            if xpath_hints:
+                hints_list = "\n".join([f"- {name}: {xpath}" for name, xpath in xpath_hints.items()])
+                xpath_hints_description = f"\n\nXPath hints from user demo (reference only):\n{hints_list}"
 
-## 第二步：任务分析和策略选择
-判断任务类型：
-- **精准提取**：提取特定字段（如商品详情页的标题、价格）
-- **模式提取**：提取重复数据（如搜索结果列表、商品列表）
+            prompt = f"""# Web Scraping Script Generation Task
 
-定位策略（优先级）：
-1. **Class定位**（首选）- 通过CSS类名，灵活适应单个/多个元素
-2. **XPath定位** - 精确路径定位
-3. **内容特征定位** - 通过href/text等内容匹配
+## Working Directory Structure
 
-**跨DOM数据提取策略**：当数据分散在多个相邻元素中时：
-1. 先定位到任意一个目标数据元素（通过class或内容）
-2. 向上查找该元素的父容器
-3. 遍历父容器的所有子元素，收集并组合数据
+You are working in: `{workspace_dir}`
 
-关键函数示例：
+**Files available:**
+- `requirement.json` - Data extraction requirements
+- `dom_data.json` - DOM structure of the webpage (JSON format)
+
+**Files to create:**
+- `extraction_script.py` - Main extraction script
+
+## Task Overview
+
+Generate a Python script that extracts data from a webpage DOM structure according to user requirements.
+
+## Step 1: Read Input Files
+
+First, read the input files to understand the requirements:
+- Read `requirement.json` to see what data needs to be extracted
+- Read `dom_data.json` to understand the webpage structure (use Grep/Read tools to explore)
+
+## Step 2: Understand DOM Structure
+
+The DOM data is in JSON format with this structure:
 ```python
-def find_parent_by_xpath(node, levels_up=1):
-    # 根据xpath向上查找父容器
-    xpath = node.get('xpath', '')
-    if not xpath:
-        return None
-    # XPath向上查找：移除最后N级路径
-    parts = xpath.split('/')
-    if len(parts) > levels_up:
-        parent_xpath = '/'.join(parts[:-levels_up])
-        return find_by_xpath(dom_dict, parent_xpath)
-    return None
-
-def collect_scattered_data(container_node):
-    # 在容器内收集所有子元素的文本
-    texts = []
-    if container_node and 'children' in container_node:
-        for child in container_node.get('children', []):
-            if isinstance(child, dict):
-                text = child.get('text', '').strip()
-                if text:
-                    texts.append(text)
-    return ''.join(texts)
+{{
+    "tag": "div",           # HTML tag name
+    "text": "content",      # Text content
+    "class": "item",        # CSS class
+    "href": "url",          # Link URL
+    "xpath": "/html/...",   # XPath location
+    "children": [...]       # Nested children
+}}
 ```
 
-## 第三步：理解具体需求
-用户需求：{user_description}
+Use Grep to search for specific patterns in dom_data.json, for example:
+- Search for class names: grep -i '"class".*product' dom_data.json
+- Search for specific tags: grep -i '"tag".*"h2"' dom_data.json
 
-输出字段说明：
-{fields_description}{sample_description}
+## Step 3: Data Extraction Requirements
 
-**重要**：这是样例页面，生成的脚本要能适用于内容不同但结构相似的其他页面。
+**User Description:** {user_description}
 
-## DOM结构：
-{llm_view}
+**Fields to extract:**
+{fields_description}{sample_description}{xpath_hints_description}
 
-## 要求：
-请生成 extract_data_from_page(serialized_dom, dom_dict) 函数：
-- 返回: List[Dict[str, Any]]
-- 包含错误处理
-- 只返回Python代码，不要解释文字
-- 根据DOM结构和用户需求选择最合适的策略
+## Step 4: Generate extraction_script.py
+
+Create a file named `extraction_script.py` with this function:
+
+```python
+def extract_data_from_page(serialized_dom, dom_dict) -> List[Dict[str, Any]]:
+    \"\"\"
+    Extract data from DOM structure
+
+    Args:
+        serialized_dom: SerializedDOMTree object (browser-use library)
+        dom_dict: DOM structure as nested dictionary
+
+    Returns:
+        List of dictionaries, each containing extracted fields
+    \"\"\"
+    # Your implementation here
+    pass
+```
+
+**Requirements:**
+1. Function must be named `extract_data_from_page`
+2. Parameters: `serialized_dom` and `dom_dict`
+3. Return type: `List[Dict[str, Any]]`
+4. Include proper error handling
+5. Use recursive traversal of dom_dict to find target elements
+6. Handle cases where elements might not exist
+
+**Common patterns:**
+- For list extraction: Find repeating container elements, extract fields from each
+- For single item: Navigate to specific element and extract fields
+- Use XPath hints as reference, but adapt to actual DOM structure
+
+## Step 5: Test and Validate
+
+After generating the script:
+1. Create a test file `test_script.py` that:
+   - Loads dom_data.json
+   - Calls extract_data_from_page() with the DOM data
+   - Validates output format matches requirements
+   - Prints extracted data
+
+2. Run the test: `python test_script.py`
+
+3. If errors occur:
+   - Analyze the error message
+   - Fix the extraction_script.py
+   - Re-run the test
+   - Repeat until test passes
+
+## Step 6: Final Verification
+
+Ensure:
+- extraction_script.py exists and is syntactically correct
+- Test passes without errors
+- Output data matches expected format from requirement.json
+
+---
+
+**Important Notes:**
+- This is a sample page - the script should work on pages with similar structure but different content
+- Use flexible selectors (class names, patterns) rather than hardcoded values
+- Handle missing elements gracefully (return empty list or skip items)
+- The DOM structure in dom_data.json represents the actual webpage HTML structure
+
+Start by reading requirement.json and dom_data.json to understand the task!
 """
-            llm_provider = AnthropicProvider()
-            response = await llm_provider.generate_response(
-                system_prompt="""你是网页数据提取专家。根据提供的三步指导，分析DOM结构生成提取脚本。只返回Python代码，不要解释。""",
-                user_prompt=prompt
+
+            # Initialize Claude Agent Provider
+            print("🚀 Initializing Claude Agent SDK...")
+            claude_provider = ClaudeAgentProvider(config_service=self.config_service)
+
+            # Run Claude SDK
+            max_iterations = self.config_service.get("claude_agent.default_max_iterations", 50)
+            print(f"🔄 Running Claude SDK (max {max_iterations} iterations)...")
+
+            result = await claude_provider.run_task(
+                prompt=prompt,
+                working_dir=workspace_dir,
+                max_iterations=max_iterations
             )
-            
-            return self._extract_and_wrap_code(response)
-            
+
+            # Check result
+            if not result.success:
+                error_msg = f"Claude SDK failed after {result.iterations} iterations: {result.error}"
+                print(f"❌ {error_msg}")
+                return False
+
+            print(f"✅ Claude SDK completed successfully in {result.iterations} iterations")
+
+            # Read generated script
+            script_file = workspace_dir / "extraction_script.py"
+            if not script_file.exists():
+                print(f"❌ extraction_script.py not found in {workspace_dir}")
+                return False
+
+            script_content = script_file.read_text(encoding='utf-8')
+            print(f"✅ Script loaded: {len(script_content)} chars")
+
+            # Update metadata with generation info
+            if metadata_file.exists():
+                with open(metadata_file, 'r', encoding='utf-8') as f:
+                    metadata = json.load(f)
+            else:
+                metadata = {}
+
+            metadata.update({
+                "script_generated": True,
+                "generation_time": datetime.now().isoformat(),
+                "requirement_type": requirement_type,
+                "iterations": result.iterations
+            })
+
+            with open(metadata_file, 'w', encoding='utf-8') as f:
+                json.dump(metadata, f, indent=2, ensure_ascii=False)
+
+            # Print summary
+            print("\n" + "=" * 80)
+            print("📊 GENERATION SUMMARY")
+            print("=" * 80)
+            print(f"✅ Success: {result.success}")
+            print(f"🔄 Iterations: {result.iterations}")
+            print(f"📁 Workspace: {workspace_dir}")
+            print(f"📝 Files generated:")
+            print(f"   - extraction_script.py")
+            print(f"   - test_script.py (if created by Claude)")
+            print(f"   - requirement.json")
+            print(f"   - metadata.json (updated)")
+            print(f"\n💡 To execute: python scraper_debug_helper.py --mode exec --name {name} --requirement-type {requirement_type}")
+
+            return True
+
         except Exception as e:
-            print(f"LLM script generation failed: {e}")
-            raise Exception(f"LLM script generation failed: {e}")
-    
-    def _extract_and_wrap_code(self, response: str) -> str:
-        """ScraperAgent's exact code extraction and wrapping logic"""
-        # Extract code blocks
-        if "```python" in response:
-            start = response.find("```python") + 9
-            end = response.find("```", start)
-            code = response[start:end].strip()
-        elif "```" in response:
-            start = response.find("```") + 3
-            end = response.find("```", start)
-            code = response[start:end].strip()
-        else:
-            code = response.strip()
-        
-        # ScraperAgent's exact wrapper
-        return f'''
-import json
-import logging
-from typing import List, Dict, Any
-from pathlib import Path
+            print(f"❌ Claude SDK generation error: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
 
-{code}
-
-def execute_extraction(serialized_dom, dom_dict, max_items: int = 100):
-    """Execute data extraction wrapper function"""
-    import logging
-    logger = logging.getLogger(__name__)
-    
-    try:
-        # Extract all available data
-        all_data = extract_data_from_page(serialized_dom, dom_dict)
-        
-        # Apply quantity limit at wrapper level
-        if isinstance(all_data, list):
-            limited_data = all_data[:max_items] if max_items > 0 else all_data
-            return {{
-                "success": True,
-                "data": limited_data,
-                "total_count": len(limited_data),
-                "error": None
-            }}
-        else:
-            return {{
-                "success": True,
-                "data": all_data,
-                "total_count": 1 if all_data else 0,
-                "error": None
-            }}
-    except Exception as e:
-        logger.error("Data extraction failed: " + str(e))
-        return {{
-            "success": False,
-            "data": [],
-            "total_count": 0,
-            "error": str(e)
-        }}
-'''
-    
     def list_data(self):
-        """List available DOM data and generated scripts"""
-        print("=== Available Data ===")
-        
-        # List DOM data
-        dom_files = list(self.data_dir.glob("*_dom.json"))
-        script_files = list(self.data_dir.glob("*_script_*.py"))
-        
-        if dom_files:
-            print("\n📁 DOM Data:")
-            for dom_file in dom_files:
-                name = dom_file.stem.replace("_dom", "")
+        """List available workspaces and their status"""
+        print("=== Available Workspaces ===")
+
+        workspaces_dir = self.data_dir / "workspaces"
+        if not workspaces_dir.exists():
+            print("No workspaces found. Use --mode dom to collect DOM data first.")
+            return
+
+        workspaces = list(workspaces_dir.glob("dom_*"))
+
+        if not workspaces:
+            print("No workspaces found. Use --mode dom to collect DOM data first.")
+            return
+
+        print(f"\n📁 Found {len(workspaces)} workspace(s):\n")
+
+        for workspace in sorted(workspaces):
+            metadata_file = workspace / "metadata.json"
+            dom_file = workspace / "dom_data.json"
+            script_file = workspace / "extraction_script.py"
+            requirement_file = workspace / "requirement.json"
+
+            # Parse name from workspace key
+            parts = workspace.name.split('_')
+            name = parts[1] if len(parts) > 1 else "unknown"
+
+            print(f"  📦 {name} ({workspace.name})")
+
+            # Read metadata
+            if metadata_file.exists():
                 try:
-                    with open(dom_file, 'r', encoding='utf-8') as f:
-                        dom_data = json.load(f)
-                    print(f"  • {name}")
-                    print(f"    URL: {dom_data.get('current_url', 'N/A')}")
-                    print(f"    Time: {dom_data.get('collection_time', 'N/A')}")
+                    with open(metadata_file, 'r', encoding='utf-8') as f:
+                        metadata = json.load(f)
+                    print(f"     URL: {metadata.get('url', 'N/A')}")
+                    print(f"     Collected: {metadata.get('collection_time', 'N/A')[:19]}")
+
+                    if metadata.get('script_generated'):
+                        print(f"     ✅ Script generated ({metadata.get('iterations', '?')} iterations)")
+                        print(f"        Type: {metadata.get('requirement_type', 'N/A')}")
+                        print(f"        Time: {metadata.get('generation_time', 'N/A')[:19]}")
+                    else:
+                        print(f"     ⏳ No script generated yet")
                 except Exception as e:
-                    print(f"  • {name} (error reading: {e})")
-        
-        if script_files:
-            print("\n📜 Generated Scripts:")
-            for script_file in script_files:
-                print(f"  • {script_file.name}")
-        
-        if not dom_files and not script_files:
-            print("No data found. Use --mode dom to collect DOM data first.")
-        
-        print(f"\n📋 Available requirement types:")
+                    print(f"     ⚠️  Error reading metadata: {e}")
+
+            # Check files
+            files_status = []
+            if dom_file.exists():
+                files_status.append("dom_data.json")
+            if requirement_file.exists():
+                files_status.append("requirement.json")
+            if script_file.exists():
+                files_status.append("extraction_script.py")
+
+            if files_status:
+                print(f"     Files: {', '.join(files_status)}")
+
+            print()
+
+        print(f"📋 Available requirement types:")
         for req_type, req_data in self.default_data_requirements.items():
             print(f"  • {req_type}: {req_data['user_description']}")
     
     async def execute_script(self, name: str, script_file_path: str = None, requirement_type: str = "product_detail", dom_scope: str = "partial", max_items: int = 0):
-        """Execute a generated script
-
-        Args:
-            name: Test data name
-            script_file_path: Specific script file path (optional)
-            requirement_type: Type of requirement (for finding script)
-            dom_scope: DOM scope for execution ('partial' or 'full')
-            max_items: Maximum items to extract
-        """
+        """Execute a generated script from workspace"""
 
         print(f"=== Script Execution for '{name}' ===")
-        print(f"Execution DOM scope: {dom_scope}")
-        print(f"Max items: {max_items}")
+        print(f"Max items: {max_items if max_items > 0 else 'unlimited'}")
 
-        # Find script file
+        # Find workspace
         if script_file_path:
             script_file = Path(script_file_path)
+            workspace_dir = script_file.parent
         else:
-            # Find the most recent script file matching criteria (no dom_scope in filename anymore)
-            pattern = f"{name}_script_{requirement_type}_*.py"
-            script_files = sorted(self.data_dir.glob(pattern), reverse=True)
-            if not script_files:
-                print(f"❌ No script files found matching pattern: {pattern}")
-                print("Available scripts:")
-                all_scripts = list(self.data_dir.glob(f"{name}_script_*.py"))
-                for script in all_scripts:
-                    print(f"  • {script.name}")
-                return False
-            script_file = script_files[0]
+            workspaces_dir = self.data_dir / "workspaces"
+            workspace_pattern = f"dom_{name}_*"
+            matching_workspaces = list(workspaces_dir.glob(workspace_pattern))
 
-        # Load cached DOM data
-        dom_file = self.data_dir / f"{name}_dom.json"
+            if not matching_workspaces:
+                print(f"❌ No workspace found for '{name}'")
+                return False
+
+            workspace_dir = sorted(matching_workspaces)[-1]
+            script_file = workspace_dir / "extraction_script.py"
+
+        print(f"📁 Workspace: {workspace_dir.name}")
+
+        # Check files exist
+        dom_file = workspace_dir / "dom_data.json"
+
+        if not script_file.exists():
+            print(f"❌ Script not found: {script_file}")
+            print(f"   Run --mode generate first")
+            return False
+
         if not dom_file.exists():
             print(f"❌ DOM data not found: {dom_file}")
             return False
-        
+
         try:
-            # Load files
+            # Load data
             with open(dom_file, 'r', encoding='utf-8') as f:
-                dom_data = json.load(f)
-            
+                dom_dict = json.load(f)
+
             with open(script_file, 'r', encoding='utf-8') as f:
                 script_content = f.read()
-            
-            print(f"✅ Loaded script: {script_file.name}")
-            print(f"✅ Loaded DOM data: {dom_file.name}")
-            
-            # Get DOM data for specified scope
-            scope_data = dom_data[f'{dom_scope}_scope']
-            serialized_dom = scope_data['target_dom']
-            dom_dict = scope_data['dom_dict']
-            
+
+            print(f"✅ Loaded files")
             print(f"🚀 Executing script...")
-            
-            # Fixed execution - use shared namespace for all functions
+
+            # Execute
             script_namespace = globals().copy()
             exec(script_content, script_namespace, script_namespace)
-            
-            # Get the function from the execution environment
-            execute_extraction = script_namespace.get('execute_extraction')
-            if not execute_extraction:
-                print("❌ Script missing execute_extraction function")
+
+            extract_data_from_page = script_namespace.get('extract_data_from_page')
+            if not extract_data_from_page:
+                print("❌ Missing extract_data_from_page function")
                 return False
-            
-            result = execute_extraction(serialized_dom, dom_dict, max_items)
-            
+
+            result_data = extract_data_from_page(None, dom_dict)
+
+            # Format result
+            if isinstance(result_data, list):
+                limited_data = result_data[:max_items] if max_items > 0 else result_data
+                result = {"success": True, "data": limited_data, "total_count": len(limited_data), "error": None}
+            else:
+                result = {"success": True, "data": result_data, "total_count": 1 if result_data else 0, "error": None}
+
             # Display results
             print("\n" + "=" * 60)
             print("📊 EXECUTION RESULTS")
             print("=" * 60)
-            
+
             if result.get("success"):
                 print(f"✅ Success: {result['total_count']} items extracted")
                 if result['data']:
@@ -643,9 +701,7 @@ def execute_extraction(serialized_dom, dom_dict, max_items: int = 100):
                         print(f"[{i}] {json.dumps(item, indent=2, ensure_ascii=False)}")
                     if len(result['data']) > 3:
                         print(f"... and {len(result['data']) - 3} more items")
-            else:
-                print(f"❌ Failed: {result.get('error', 'Unknown error')}")
-            
+
             print(f"\n📄 Full result:")
             print(json.dumps(result, indent=2, ensure_ascii=False))
 
@@ -658,43 +714,45 @@ def execute_extraction(serialized_dom, dom_dict, max_items: int = 100):
             return False
 
 
+
+
 async def main():
-    parser = argparse.ArgumentParser(description='ScraperAgent Debug Helper')
+    parser = argparse.ArgumentParser(description='ScraperAgent Debug Helper - Claude SDK Integration')
     parser.add_argument('--mode', choices=['dom', 'generate', 'exec', 'list'], required=True,
-                       help='dom: collect DOM data, generate: create script, exec: execute script, list: show data')
+                       help='dom: collect DOM data, generate: create script with Claude SDK, exec: execute script, list: show data')
     parser.add_argument('--url', help='URL for DOM collection')
     parser.add_argument('--name', help='Test data name')
-    parser.add_argument('--requirement-type', choices=['product_detail', 'product_list', 'url_list', 'workflow_url_list'],
+    parser.add_argument('--requirement-type', choices=['product_detail', 'product_list', 'url_list', 'workflow_url_list', 'allegro_product_detail', 'amazon_product_detail'],
                        default='product_detail', help='Type of data requirements to use')
     parser.add_argument('--dom-scope', choices=['partial', 'full'], default='partial',
                        help='DOM scope for script execution (generation always uses partial)')
     parser.add_argument('--script-file', help='Specific script file to execute (optional)')
     parser.add_argument('--max-items', type=int, default=0, help='Maximum items to extract (0 = unlimited)')
-    
+
     args = parser.parse_args()
-    
+
     helper = ScraperDebugHelper()
-    
+
     if args.mode == 'list':
         helper.list_data()
         return
-    
+
     if args.mode == 'dom':
         if not args.url or not args.name:
             print("❌ --url and --name required for DOM collection")
             return
-        
+
         success = await helper.collect_dom(args.url, args.name)
         print("✅ DOM collection completed" if success else "❌ DOM collection failed")
-    
+
     elif args.mode == 'generate':
         if not args.name:
             print("❌ --name required for script generation")
             return
 
-        success = await helper.generate_script(args.name, args.requirement_type)
+        success = await helper.generate_script_with_claude_sdk(args.name, args.requirement_type)
         print("✅ Script generation completed" if success else "❌ Script generation failed")
-    
+
     elif args.mode == 'exec':
         if not args.name:
             print("❌ --name required for script execution")

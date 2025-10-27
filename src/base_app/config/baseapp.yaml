@@ -3,6 +3,19 @@ agent:
     api_key: ${ANTHROPIC_API_KEY}
     model: claude-sonnet-4-5
     provider: anthropic
+
+  # Claude Agent SDK configuration (for multi-turn iterative tasks)
+  claude_agent:
+    api_key: ${ANTHROPIC_API_KEY}
+    model: claude-sonnet-4-5
+    default_max_iterations: 50
+    default_tools:
+      - Read
+      - Write
+      - Edit
+      - Bash
+      - Glob
+
   memory:
     config:
       embedder:
@@ -68,6 +81,15 @@ data:
   # Browser related directories
   browser_data: ~/.cache/baseapp/browser_data   # Browser user data
   debug: ${data.root}/debug                     # Debug output
+
+  # Claude Agent SDK working directories
+  scripts: ${data.root}/scripts                 # Generated scripts workspace
+  # Each script generation creates a subdirectory under scripts/
+  # Example: scripts/scraper_script_abc123/
+  #   - requirement.json       # Data requirements
+  #   - dom_data.json         # DOM data
+  #   - extraction_script.py  # Generated script
+  #   - metadata.yaml         # Script metadata
 
 logging:
   backup_count: 5

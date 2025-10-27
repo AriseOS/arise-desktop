@@ -330,7 +330,7 @@ operations:
 → **scraper_agent** with:
 - extraction_method: "script" (DEFAULT - prefer script unless explicitly need LLM)
 - data_requirements:
-  - user_description: from intent_description
+  - user_description: from intent_description + include website name from context (URL domain or intent prefix)
   - output_format: combine ALL extract targets from same page into ONE output_format
   - sample_data: use extract.value as examples (format depends on extraction type - see below)
   - xpath_hints: Extract xpath from operation.element.xpath and map to field names
