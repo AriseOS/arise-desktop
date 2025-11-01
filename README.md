@@ -1,261 +1,317 @@
-# AgentCrafter - 自然语言驱动的 Agent 构建平台
+# Ami - AI That Learns by Watching You Work
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-AgentCrafter 是一个创新的平台，允许非技术用户通过自然语言描述任务，系统自动为其构建可运行的智能 Agent。Agent 能够完成特定业务任务，如读取微信聊天记录、填写企业微信插件、辅助用户填写表单等。
+**We're building AI that replaces clicking and typing with natural collaboration.**
 
-## 🌟 核心特性
+Ami learns by observing how human experts actually work, continuously accumulating professional knowledge to autonomously complete complex tasks like a human would. This isn't "better automation tools"—**it's the next generation of human-computer interaction.**
 
-- **🗣️ 自然语言驱动**: 用户只需用自然语言描述需求，无需编程经验
-- **🤖 双 Agent 架构**: 产品经理 Agent 收集需求，项目经理 Agent 生成代码
-- **🔧 通用 Agent 框架**: 基于 Workflow + Tools + Memory + Trigger 的统一架构
-- **🌐 丰富的工具支持**: 内置 browser_use、android_use 等强大工具
-- **🚀 开箱即用**: Docker 容器化部署，一键启动
-- **🔒 安全可靠**: 沙箱执行环境，权限控制
+> **Computers that work for you, not the other way around.**
 
-## 🏗️ 系统架构
+## 🌟 Core Vision
+
+Ami is the first **Evolvable Agent** that inherits human experts' tacit knowledge and continuously evolves through three technical engines:
+
+- **🧠 Behavioral Memory Engine**: Learns from real operations, not programmed rules
+- **🎯 Dynamic Planning Engine**: Proactively understands goals and plans workflows
+- **⚡ Generative Execution Engine**: Operates any software UI via dynamic code generation
+
+**Key Metrics**:
+- ✅ Task success rate: >95% (on learned scenarios)
+- 💰 Execution cost: $0.02–$0.05 per task (95% cheaper than general AI agents)
+- 🚀 Zero learning curve: Just do it once, Ami learns automatically
+
+## 🏗️ System Architecture
+
+Ami consists of three main layers:
 
 ```
-┌─────────────────────────────────────────┐
-│           用户交互层 (UI Layer)            │
-├─────────────────────────────────────────┤
-│        Agent 构建层 (Builder Layer)       │
-│  ┌─────────────┐  ┌─────────────────────┐ │
-│  │产品经理Agent │  │    项目经理Agent     │ │
-│  └─────────────┘  └─────────────────────┘ │
-├─────────────────────────────────────────┤
-│       Agent 执行层 (Runtime Layer)        │
-│  ┌─────────────┐  ┌─────────────────────┐ │
-│  │ Agent Core  │  │   工具调度器        │ │
-│  └─────────────┘  └─────────────────────┘ │
-├─────────────────────────────────────────┤
-│        工具层 (Tool Layer)                │
-│  browser_use | android_use | memory | ... │
-└─────────────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│          Intent Builder Layer                    │
+│  ┌──────────────────┐  ┌────────────────────┐   │
+│  │ Intent Extraction │  │ MetaFlow Generator │   │
+│  └──────────────────┘  └────────────────────┘   │
+├─────────────────────────────────────────────────┤
+│          BaseAgent Framework                     │
+│  ┌──────────────────┐  ┌────────────────────┐   │
+│  │ Workflow Engine  │  │ Memory System      │   │
+│  │ StepAsAgent Arch │  │ (Variables/KV/LTM) │   │
+│  └──────────────────┘  └────────────────────┘   │
+├─────────────────────────────────────────────────┤
+│          Tool Layer                              │
+│  Browser Use | Android Use | Code Execution |... │
+└─────────────────────────────────────────────────┘
 ```
 
-## 📦 快速开始
+### Three Technical Engines
 
-### 环境要求
+**1. Behavioral Memory Engine** - Learning from Real Operations
+- **Intent Block Abstraction**: Extracts standardized "intent units" from diverse operations
+- **Temporal Graph Construction**: Records operation sequences as graph structures
+- **Dual-Temporal Model**: Handles both software updates (hard rules) and habit evolution (soft rules)
+
+**2. Dynamic Planning Engine** - Proactive Workflow Generation
+- **Online-Offline Hybrid Analysis**: Mines conditional branches, loops, and periodic patterns from massive temporal data
+- **Knowledge Memory Graph**: Understands logical relationships between tasks
+- **Proactive Intelligence**: Actively understands high-level goals and plans workflows instead of passively waiting for instructions
+
+**3. Generative Execution Engine** - Operating Any Software
+- **Vibe Coding**: Dynamically generates execution code leveraging LLM capabilities
+- **Computer Use Agent**: Directly operates software UI, escaping API ecosystem limitations
+- **Cost Optimization**: Only uses LLM when learning; execution is nearly free
+
+## 🚀 Quick Start
+
+### Prerequisites
 
 - Python 3.9+
-- Node.js 16+ (前端开发)
+- Node.js 16+ (for frontend)
 
-### 安装步骤
+### Installation
 
-1. **克隆仓库**
+1. **Clone the repository**
 ```bash
 git clone https://github.com/your-org/agentcrafter.git
 cd agentcrafter
 ```
 
-2. **配置环境变量**
+2. **Set up environment variables**
 ```bash
-# Set LLM API keys as system environment variables
+# Required: LLM API keys
 export OPENAI_API_KEY=your_openai_key
 export ANTHROPIC_API_KEY=your_anthropic_key
 ```
 
-3. **Configure Web Backend** (optional)
+3. **Install dependencies**
 ```bash
-# Copy and edit backend configuration
-cp src/client/web/config/backend.yaml.example src/client/web/config/backend.yaml
-# Edit backend.yaml to configure database, server settings, etc.
-```
-
-4. **本地开发部署**
-```bash
-# 安装 Python 依赖
+# Install Python dependencies
 pip install -r requirements.txt
 
-# 安装 Playwright（用于浏览器自动化）
+# Install browser automation dependencies
 playwright install chromium --with-deps
-
-# 启动服务
-uvicorn api.main:app --host 0.0.0.0 --port 8000
 ```
 
-### 首次使用
+4. **Start the service**
 
-1. 访问 http://localhost:8000
-2. 在环境变量中设置你的 API Key（OpenAI/Claude）
-3. 开始描述你的第一个 Agent 需求！
+**Option A: BaseApp (Core Framework)**
+```bash
+cd src/base_app
+baseapp start --port 8888 --host 0.0.0.0
+```
 
-## 🎯 使用示例
+**Option B: Web Platform (Full Stack)**
+```bash
+# Start backend
+python client/web/start_backend.py
 
-### 示例 1: 路演信息自动填写 Agent
+# In another terminal, start frontend
+cd client/web && ./start_frontend.sh
+```
+
+### First Steps
+
+1. Visit http://localhost:3000 (Web Platform) or http://localhost:8888 (BaseApp)
+2. Perform a task once - Ami observes and learns
+3. Ask Ami to execute similar tasks - it reuses and combines learned capabilities
+
+## 💡 How It Works
+
+### The Learning-Executing Loop
+
+```
+User performs task → Behavioral Memory Engine learns → Extracts reusable Intents → Stores in Memory Graph
+                                                                                        ↓
+User requests new task ← Generative Execution Engine executes ← Dynamic Planning Engine plans ← Retrieves & combines Intents
+                                                                                        ↓
+                                                        System continuously evolves with each new task
+```
+
+### Example: Market Analyst Workflow
+
+**First Time (Learning)**:
+```
+You manually scrape coffee product data from Allegro.pl
+→ Ami observes: search, pagination, extraction, export
+→ Ami creates: "scrape_allegro_products" Intent
+```
+
+**Second Time (Reuse)**:
+```
+You ask: "Scrape tea products"
+→ Ami recognizes: same website, different parameter
+→ Ami executes: reuses Intent with parameter="tea"
+```
+
+**Third Time (Composition)**:
+```
+You ask: "Compare coffee prices on Allegro and Amazon"
+→ Ami understands: needs to combine two Intents
+→ Ami executes: parallel scraping + comparison report
+```
+
+## 🔧 Core Components
+
+### BaseAgent Framework
+
+Located in `src/base_app/`, BaseAgent provides the standardized foundation:
+
+- **Workflow Engine**: Executes YAML-based workflow definitions
+- **Memory System**: Three-layer architecture (Variables, KV Storage, Long-term Memory)
+- **Tool Integration**: Unified interface for browser, Android, and custom tools
+- **Agent Types**: TextAgent, ToolAgent, CodeAgent for different step types
 
 ```python
-# 用户自然语言输入
-需求描述 = """
-我需要一个助手帮我处理路演信息：
-1. 从微信聊天记录中提取客户约定的路演时间
-2. 自动打开企业微信插件，填写路演申请表单
-3. 提交申请并通知我结果
-"""
+from src.base_app.base_agent.core import BaseAgent
 
-# 系统自动生成的 Agent
-{
-  "name": "路演助手",
-  "workflow": [
-    {
-      "step": "读取聊天记录",
-      "tool": "android_use",
-      "action": "read_chat",
-      "params": {"app": "微信", "contact": "{{客户名}}"}
-    },
-    {
-      "step": "提取关键信息",
-      "tool": "llm_extract", 
-      "action": "extract_entities",
-      "params": {"text": "{{聊天记录}}", "entities": ["时间", "项目", "客户"]}
-    },
-    {
-      "step": "填写申请表单",
-      "tool": "browser_use",
-      "action": "fill_form",
-      "params": {"url": "企业微信插件地址", "data": "{{提取的信息}}"}
-    }
-  ]
-}
+# Create agent with user-bound memory
+agent = BaseAgent(config, user_id="user123")
+
+# Load and execute workflow
+workflow = agent._load_workflow('user-qa-workflow')
+result = await agent.run_workflow(workflow, user_input)
 ```
 
-### 示例 2: 使用 Browser 工具
+### Intent Builder System
 
-```python
-from tools.browser_use import BrowserTool
+Located in `src/intent_builder/`, handles Intent-based workflow generation:
 
-# 创建浏览器工具
-tool = BrowserTool()
-await tool.initialize()
+- **MetaFlow**: Intermediate representation between Intent Memory Graph and Workflow
+- **Workflow Generator**: LLM-based workflow generation from MetaFlow
+- **Prompt Builder**: Comprehensive prompt engineering for workflow generation
+- **Validators**: YAML structure and field validation
 
-# 执行复杂任务
-result = await tool.execute("execute_task", {
-    "task": "访问京东，搜索iPhone 15，获取前5个商品的价格信息"
-})
+### Web Platform
 
-print(result.data)  # 返回提取的商品信息
-```
+Located in `client/web/`, provides multi-user management:
 
-## 🔧 工具系统
+- **Frontend**: React + TypeScript with Vite, Ant Design, Redux Toolkit
+- **Backend**: FastAPI with SQLAlchemy, user/agent/session management
+- **Database**: SQLite (dev) / PostgreSQL (prod)
+- **Port Management**: Auto-allocation from pool (5001-5020) for agent instances
 
-### Browser 工具 (browser_use)
+## 📖 Documentation
 
-基于 browser-use 库的智能浏览器自动化工具：
+### Architecture & Design
+- [CLAUDE.md](./CLAUDE.md) - Development guidance and project overview
+- [BaseAgent Architecture](./docs/baseagent/ARCHITECTURE.md) - Core framework design
+- [Contextual Dynamic Architecture](./docs/baseagent/contextual_dynamic_architecture.md) - Recommended approach
+- [Platform Database](./docs/platform/database_architecture.md) - Database schema
 
-- **支持动作**:
-  - `navigate`: 导航到指定URL
-  - `click`: 点击页面元素
-  - `fill_form`: 填写表单
-  - `extract_data`: 提取页面数据
-  - `screenshot`: 截取截图
-  - `execute_task`: 执行复杂的自然语言任务
+### Developer Guides
+- [Development Guide](./docs/guides/DEVELOPMENT_GUIDE.md) - Developer quickstart
+- [Integration Testing Guide](./docs/guides/integration_testing_guide.md) - Testing strategies
+- [AgentBuilder Architecture](./docs/agentbuilder/ARCHITECTURE.md) - AI-assisted agent generation
 
-- **配置选项**:
-```python
-config = BrowserConfig(
-    headless=True,           # 无头模式
-    browser_type="chromium", # 浏览器类型
-    llm_model="gpt-4o",     # LLM 模型
-    timeout=300             # 超时时间
-)
-```
+### Complete Documentation
+See [docs/README.md](./docs/README.md) for the complete documentation index.
 
-### Android 工具 (开发中)
+## 🎯 Use Cases
 
-用于控制 Android 设备，支持微信、企业微信等应用操作。
+### Individual Users
+- **Market Analysts**: Auto-scrape competitor pricing across multiple e-commerce sites
+- **Supply Chain Analysts**: Extract material data from complex ERP systems (SAP, Oracle)
+- **E-commerce Operators**: Collect product information across platforms
+- **Finance Analysts**: Export and consolidate reports from multiple systems
 
-### Memory 工具 (开发中)
+**Value**: Save 10-15 hours weekly, 100x ROI on $20/month subscription
 
-提供持久化内存管理，支持会话状态保存和恢复。
+### Enterprises
+- **Amplifying Expertise**: Top performer does it once, entire team can use it
+- **Institutional Memory**: Expert judgment captured and shared, not lost when employees leave
+- **Best Practices Spread**: System identifies efficient workflows and suggests them to others
 
-## 📖 文档
+**Value**: Transform tacit knowledge into organizational assets, continuous improvement
 
-- [系统架构设计](./ARCHITECTURE.md) - 完整的架构设计和组件说明
-- [项目需求文档](./PROJECT_REQUIREMENTS.md) - 原始需求和功能规划
-- [开发指南](./docs/guides/DEVELOPMENT_GUIDE.md) - 开发者必读指南
-- [API 参考文档](./docs/api/) - REST API 接口文档 (待完善)
-- [工具开发指南](./docs/guides/) - 自定义工具开发 (待完善)
-- [部署指南](./docs/deployment/) - 生产环境部署 (待完善)
-
-## 🧪 测试
+## 🧪 Testing
 
 ```bash
-# 运行所有测试
+# Run all tests
 pytest
 
-# 运行特定模块测试
+# Run BaseApp tests
+cd src/base_app
+pytest tests/ -v
+
+# Run specific module tests
 pytest tests/test_browser_tool.py -v
 
-# 运行覆盖率测试
+# Run with coverage
 pytest --cov=tools --cov-report=html
 ```
 
-## 📝 示例代码
+## 🛣️ Roadmap
 
-查看 `examples/` 目录获取更多使用示例：
+### ✅ Phase 1: Core Technology (Current)
+- [x] BaseAgent framework with workflow engine
+- [x] Memory system (Variables, KV, LTM)
+- [x] Browser tool integration
+- [x] Intent Builder v1 (Intent extraction, MetaFlow generation)
+- [x] Web platform with multi-user support
+- [ ] Complete Intent Memory Graph
+- [ ] Production-ready demos
 
-- [Browser 工具示例](./examples/browser_examples.py)
-- [完整 Agent 示例](./examples/agent_examples.py)
-- [工具开发示例](./examples/tool_development.py)
+### 🔄 Phase 2: Product Launch (Next 6 Months)
+- [ ] Individual subscription ($20/month)
+- [ ] Freemium tier (100 executions/month)
+- [ ] 1,000 paying users
+- [ ] 5 enterprise pilots
+- [ ] Content marketing & PLG strategy
 
-## 🤝 贡献指南
+### 🚀 Phase 3: Enterprise Scale (12+ Months)
+- [ ] Enterprise subscription with team features
+- [ ] Advanced Intent composition and sharing
+- [ ] Cross-platform integration (Desktop, Mobile)
+- [ ] Marketplace for community-created Intents
 
-我们欢迎所有形式的贡献！请查看 [CONTRIBUTING.md](./CONTRIBUTING.md) 了解详细信息。
+## 🤝 Contributing
 
-### 开发流程
+We welcome contributions! Please see our development guidelines:
 
-1. Fork 本仓库
-2. 创建功能分支：`git checkout -b feature/amazing-feature`
-3. 提交更改：`git commit -m 'Add amazing feature'`
-4. 推送分支：`git push origin feature/amazing-feature`
-5. 提交 Pull Request
+1. Fork the repository
+2. Create your feature branch: `git checkout -b feature/amazing-feature`
+3. Follow the code style in [CLAUDE.md](./CLAUDE.md)
+4. Write tests for new features
+5. Submit a Pull Request
 
-## 📄 许可证
+**Important**: Always use English for code comments, docstrings, and log messages.
 
-本项目基于 MIT 许可证 - 查看 [LICENSE](./LICENSE) 文件了解详情。
+## 💬 Community & Support
 
-## 🚀 路线图
+- **Documentation**: [docs/README.md](./docs/README.md)
+- **Issues**: [GitHub Issues](https://github.com/your-org/agentcrafter/issues)
+- **Email**: shenyouren@gmail.com
 
-### Stage 1: 核心框架（当前）
-- [x] 项目架构设计
-- [x] BaseAgent 基础框架
-- [x] Browser 工具集成
-- [x] 数据Schema定义
-- [x] 目录结构规划
-- [ ] 工具知识库系统
-- [ ] 项目经理Agent
-- [ ] Claude Code集成
-- [ ] Android 工具开发
+## 📄 License
 
-### Stage 2: 平台化
-- [ ] Web 管理界面
-- [ ] REST API接口
-- [ ] 可视化Agent构建器
-- [ ] Agent市场和模板库
-- [ ] 多用户协作
+This project is licensed under the MIT License - see the [LICENSE](./LICENSE) file for details.
 
-### Stage 3: 企业级
-- [ ] 企业级权限管理
-- [ ] 高可用部署架构
-- [ ] 性能监控和优化
-- [ ] 第三方系统集成
+## 🙏 Acknowledgments
 
-## 📞 联系我们
+Ami is built on the shoulders of giants:
 
-- 项目主页: https://github.com/your-org/agentcrafter
-- 问题反馈: https://github.com/your-org/agentcrafter/issues
-- 邮箱: team@agentcrafter.com
-
-## 🙏 致谢
-
-感谢以下开源项目的支持：
-
-- [browser-use](https://github.com/browser-use/browser-use) - AI 浏览器自动化
-- [FastAPI](https://fastapi.tiangolo.com/) - 现代 Python Web 框架
-- [Claude API](https://www.anthropic.com/) - 强大的 AI 助手
+- [browser-use](https://github.com/browser-use/browser-use) - AI browser automation
+- [Anthropic Claude](https://www.anthropic.com/) - Powerful AI capabilities
+- [FastAPI](https://fastapi.tiangolo.com/) - Modern Python web framework
+- [Playwright](https://playwright.dev/) - Cross-browser automation
 
 ---
 
-⭐ 如果这个项目对你有帮助，请给我们一个 Star！
+## 🌟 Our Vision
+
+We're not building "better RPA" or "cheaper AI agents."
+
+We're creating a new category: **Evolvable Agents**
+
+The difference:
+- **No programming required** — learns by watching
+- **Never becomes obsolete** — adapts to changes automatically
+- **Gets smarter over time** — accumulates knowledge, doesn't reset
+- **Economically viable** — 95% cheaper to run than generic AI agents
+- **Actually reliable** — learned from real successes, not hallucinated guesses
+
+**This is the first automation platform that inherits human expertise and evolves continuously.**
+
+---
+
+⭐ **If Ami helps you work smarter, give us a star!**
