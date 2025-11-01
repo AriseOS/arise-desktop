@@ -21,7 +21,7 @@ data:
   chroma_db: ${data.root}/test_chroma_db
 
   # Test browser related directories
-  browser_data: ~/.cache/baseapp-test/browser_data
+  browser_data: ~/.cache/baseapp/browser_data
   debug: ${data.root}/test_debug
 
 # Test agent configuration

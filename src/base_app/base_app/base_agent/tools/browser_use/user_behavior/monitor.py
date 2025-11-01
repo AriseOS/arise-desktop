@@ -102,7 +102,7 @@ class SimpleUserBehaviorMonitor:
             # 存储导航事件到操作列表 (只有主frame导航)
             nav_data = {
                 'type': 'navigate',
-                'timestamp': datetime.now().timestamp() * 1000,  # 毫秒时间戳
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 'url': url,
                 'page_title': 'Navigated Page',  # 页面标题可能还未加载
                 'element': {}
@@ -131,7 +131,7 @@ class SimpleUserBehaviorMonitor:
                 # 存储新tab事件到操作列表
                 tab_data = {
                     'type': 'newtab',
-                    'timestamp': datetime.now().timestamp() * 1000,  # 毫秒时间戳
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                     'url': url,
                     'page_title': 'New Tab',
                     'element': {},
@@ -155,7 +155,7 @@ class SimpleUserBehaviorMonitor:
                 # 存储关闭tab事件到操作列表
                 close_tab_data = {
                     'type': 'closetab',
-                    'timestamp': datetime.now().timestamp() * 1000,  # 毫秒时间戳
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                     'url': 'Unknown',  # 已关闭的tab无法获取URL
                     'page_title': 'Closed Tab',
                     'element': {},
@@ -324,7 +324,7 @@ class SimpleUserBehaviorMonitor:
                 test_expression = '''
                 window.reportUserBehavior(JSON.stringify({
                     type: "test",
-                    timestamp: Date.now(),
+                    timestamp: new Date().toISOString().slice(0, 19).replace('T', ' '),
                     url: window.location.href,
                     page_title: document.title,
                     element: {},
@@ -577,7 +577,7 @@ class SimpleUserBehaviorMonitor:
                 const report = (type, element, data) => {
                     if (window.reportUserBehavior) {
                         const payload = {
-                            type, timestamp: Date.now(), url: location.href,
+                            type, timestamp: new Date().toISOString().slice(0, 19).replace('T', ' '), url: location.href,
                             page_title: document.title, element: {}, data: data || {}
                         };
                         window.reportUserBehavior(JSON.stringify(payload));

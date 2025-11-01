@@ -82,6 +82,58 @@ Please convert the following MetaFlow to BaseAgent Workflow YAML:
 {metaflow_yaml}
 ```
 
+# CRITICAL - XPath Hints Generation
+
+**IMPORTANT**: When generating scraper_agent steps, you MUST extract xpath information from the MetaFlow operations and provide xpath_hints.
+
+**How to generate xpath_hints**:
+1. **Read task_description** from MetaFlow (first field in YAML above) - it describes what user demonstrated
+2. **Read operations** in each MetaFlow node - they contain element.xpath from user's actual browser actions
+3. **Map xpath to field names**: For each extract operation, create xpath_hints mapping:
+   ```yaml
+   # MetaFlow operation:
+   operations:
+     - type: extract
+       target: "product_name"
+       element:
+         xpath: "//h1[@class='product-title']"
+
+   # Workflow xpath_hints:
+   xpath_hints:
+     product_name: "//h1[@class='product-title']"
+   ```
+
+4. **Combine multiple extracts from same page**: If multiple extract operations target the same page, combine their xpaths into one scraper_agent step's xpath_hints
+
+**Example**:
+```yaml
+# MetaFlow has 3 extract operations on product page:
+operations:
+  - type: extract
+    target: "name"
+    element: {{xpath: "//h1[@class='title']"}}
+  - type: extract
+    target: "price"
+    element: {{xpath: "//span[@class='price']"}}
+  - type: extract
+    target: "rating"
+    element: {{xpath: "//div[@class='rating']"}}
+
+# Workflow should generate ONE scraper_agent with:
+- agent_type: "scraper_agent"
+  inputs:
+    data_requirements:
+      xpath_hints:
+        name: "//h1[@class='title']"
+        price: "//span[@class='price']"
+        rating: "//div[@class='rating']"
+```
+
+**WHY this is CRITICAL**:
+- XPath hints come from user's actual demonstrated actions
+- They provide exact DOM selectors, dramatically improving scraper accuracy
+- Without xpath_hints, scraper_agent must guess element locations
+
 # Output Requirements
 
 - Output the workflow YAML in a markdown code block using ```yaml
@@ -89,6 +141,7 @@ Please convert the following MetaFlow to BaseAgent Workflow YAML:
 - Ensure the YAML is valid and can be parsed
 - Follow the workflow specification exactly
 - Include all necessary fields (apiVersion, kind, metadata, steps, etc.)
+- **MUST include xpath_hints in scraper_agent steps** when extract operations have xpath data
 
 Example format:
 ```yaml
@@ -214,21 +267,43 @@ steps:
 ### 5. foreach - List Iteration
 **Purpose**: Loop over a list and execute steps for each item
 
+**IMPORTANT - Variable Scope**:
+- `item_var` and `index_var` are ONLY available inside the foreach loop
+- These variables are automatically cleaned up after the loop completes
+- They CANNOT be accessed in steps after the foreach step
+- If you need data from the loop, use variable agent to append to a global list
+
 ```yaml
 - id: "step-id"
   agent_type: "foreach"
   description: "Loop description"
   source: "{{list_variable}}"       # List to iterate
-  item_var: "current_item"          # Variable name for current item
-  index_var: "item_index"           # Variable name for current index
+  item_var: "current_item"          # Loop-local variable for current item
+  index_var: "item_index"           # Loop-local variable for current index
   max_iterations: 50
   loop_timeout: 600
   steps:
     - id: "substep"
       agent_type: "scraper_agent"
       inputs:
-        target_path: "{{current_item.url}}"
-      # ...
+        target_path: "{{current_item.url}}"  # Valid inside loop
+      outputs:
+        extracted_data: "product_info"
+
+    - id: "save-to-global"
+      agent_type: "variable"
+      agent_instruction: "Save to global variable"
+      inputs:
+        operation: "append"
+        source: "{{all_products}}"  # Global variable
+        data: "{{product_info}}"    # This becomes global
+      outputs:
+        result: "all_products"      # Global variable persists
+
+# After foreach completes:
+# {{current_item}} is NOT available (cleaned up)
+# {{item_index}} is NOT available (cleaned up)
+# {{all_products}} IS available (global variable)
 ```
 
 ## Variable References

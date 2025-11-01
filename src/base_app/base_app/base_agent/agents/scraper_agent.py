@@ -6,6 +6,7 @@ import random
 import logging
 from typing import Any, Dict, Optional, Union, List
 from datetime import datetime
+from pathlib import Path
 
 from .base_agent import BaseStepAgent, AgentMetadata
 from ..core.schemas import AgentContext
@@ -55,7 +56,8 @@ class ScraperAgent(BaseStepAgent):
                  metadata: Optional[AgentMetadata] = None,
                  extraction_method: str = 'llm',  # 默认值
                  dom_scope: str = 'partial',      # 默认值
-                 debug_mode: bool = False         # 默认值
+                 debug_mode: bool = False,        # 默认值
+                 auto_fix_missing_fields: bool = False  # 默认值
 ):
         """初始化，保留默认配置，运行时可覆盖
 
@@ -65,6 +67,7 @@ class ScraperAgent(BaseStepAgent):
             extraction_method: 默认提取方法 ('script' or 'llm')
             dom_scope: 默认DOM范围 ('partial' or 'full')
             debug_mode: 默认调试模式
+            auto_fix_missing_fields: 默认是否自动修复缺失字段（使用Claude Agent分析）
         """
         if not BROWSER_USE_AVAILABLE:
             raise ImportError("browser-use 库未安装，请先安装: pip install browser-use")
@@ -250,6 +253,10 @@ class ScraperAgent(BaseStepAgent):
         target_path = input_data['target_path']
         data_requirements = input_data['data_requirements']
         interaction_steps = input_data.get('interaction_steps', [])
+        auto_fix_missing_fields = input_data.get('auto_fix_missing_fields', False)
+
+        logger.info(f"📄 Starting scrape with target_path: {target_path}")
+        logger.debug(f"   config: {config}")
 
         try:
             # 使用config中的参数
@@ -271,8 +278,12 @@ class ScraperAgent(BaseStepAgent):
                 max_items,
                 timeout,
                 context=context,
-                config=config
+                config=config,
+                auto_fix_missing_fields=auto_fix_missing_fields
             )
+
+            # Anti-bot random behavior after extraction
+            await self._perform_anti_bot_behavior()
 
             # 返回结果
             if extraction_result["success"]:
@@ -280,6 +291,9 @@ class ScraperAgent(BaseStepAgent):
                 data_preview = extraction_result["data"][:2] if extraction_result["total_count"] > 0 else []
                 preview_str = f"{data_preview[0]}" if len(data_preview) > 0 else "[]"
                 logger.info(f"✅ Extracted {extraction_result['total_count']} items using {config['extraction_method']} | Preview: {preview_str}")
+
+                # Log full output for debugging
+                logger.info(f"📦 Full extracted_data output (type={type(extraction_result['data'])}, length={len(extraction_result['data'])}): {extraction_result['data']}")
 
                 return self._create_response(
                     True,
@@ -321,10 +335,12 @@ class ScraperAgent(BaseStepAgent):
             
             # Navigate through all URLs in the same tab
             for i, url in enumerate(urls):
+                logger.info(f"🔗 Attempting to navigate to: {url}")
+
                 # Create ActionModel
                 class GoToUrlActionModel(ActionModel):
                     go_to_url: GoToUrlAction | None = None
-                
+
                 # All navigation happens in the same tab
                 action_data = {'go_to_url': GoToUrlAction(url=url, new_tab=False)}
                 result = await self.controller.act(GoToUrlActionModel(**action_data), self.browser_session)
@@ -332,6 +348,7 @@ class ScraperAgent(BaseStepAgent):
 
                 # Check for explicit failure
                 if result.success is False:
+                    logger.error(f"❌ Navigation failed for URL: {url}, error: {result.error}")
                     return result
 
                 last_result = result
@@ -339,7 +356,29 @@ class ScraperAgent(BaseStepAgent):
                 # Add natural delay between navigations
                 # if i < len(urls) - 1:
                 #     await asyncio.sleep(random.uniform(3, 5))  # browser-use already handles page load timing
-            
+
+            # Execute interaction steps after navigation (if provided)
+            if interaction_steps:
+                logger.info(f"🎯 Executing {len(interaction_steps)} interaction steps...")
+                for idx, step in enumerate(interaction_steps):
+                    action_type = step.get('action_type', 'unknown')
+                    logger.info(f"   Step {idx + 1}/{len(interaction_steps)}: {action_type}")
+
+                    interaction_result = await self._execute_interaction_step(step)
+
+                    # Check if interaction failed
+                    if interaction_result.success is False:
+                        logger.error(f"❌ Interaction step {idx + 1} failed: {interaction_result.error}")
+                        return interaction_result
+
+                    # Add small delay between interactions for stability
+                    await asyncio.sleep(0.5)
+
+                logger.info(f"✅ All interaction steps completed successfully")
+
+                # Wait 3 seconds after all interaction steps to ensure content is loaded
+                await asyncio.sleep(3)
+
             # Return the last result (which should have success=None for successful navigation)
             return last_result if last_result else ActionResult(extracted_content="No navigation performed")
                 
@@ -348,55 +387,79 @@ class ScraperAgent(BaseStepAgent):
             return ActionResult(success=False, error=str(e))
 
     async def _execute_interaction_step(self, step_config: Dict) -> ActionResult:
-        """执行单个交互步骤"""
+        """Execute single interaction step (currently only supports scroll)"""
         try:
             action_type = step_config['action_type']
             parameters = step_config.get('parameters', {})
-            
-            if action_type == 'click':
-                class ClickActionModel(ActionModel):
-                    click_element_by_index: ClickElementAction | None = None
-                
-                action_data = {'click_element_by_index': ClickElementAction(
-                    index=parameters['index'],
-                    while_holding_ctrl=parameters.get('while_holding_ctrl', False)
-                )}
-                result = await self.controller.act(ClickActionModel(**action_data), self.browser_session)
-                
-            elif action_type == 'scroll':
+
+            if action_type == 'scroll':
+                # Create ScrollAction model
                 class ScrollActionModel(ActionModel):
                     scroll: ScrollAction | None = None
-                
+
                 action_data = {'scroll': ScrollAction(
                     down=parameters.get('down', True),
                     num_pages=parameters.get('num_pages', 1.0),
                     frame_element_index=parameters.get('frame_element_index')
                 )}
+
+                logger.debug(f"Scrolling: down={parameters.get('down', True)}, num_pages={parameters.get('num_pages', 1.0)}")
                 result = await self.controller.act(ScrollActionModel(**action_data), self.browser_session)
-                
-            elif action_type == 'input':
-                class InputActionModel(ActionModel):
-                    input_text: InputTextAction | None = None
-                
-                action_data = {'input_text': InputTextAction(
-                    index=parameters['index'],
-                    text=parameters['text'],
-                    clear_existing=parameters.get('clear_existing', True)
-                )}
-                result = await self.controller.act(InputActionModel(**action_data), self.browser_session)
-                
-            elif action_type == 'wait':
-                await asyncio.sleep(parameters.get('seconds', 2))
-                return ActionResult(success=True)
+
+                # Wait for page to stabilize after scroll
+                await asyncio.sleep(1)
+
+                return result
             else:
-                return ActionResult(success=False, error=f"不支持的交互类型: {action_type}")
-            
-            return result
+                logger.warning(f"Unsupported action type: {action_type}. Currently only 'scroll' is supported.")
+                return ActionResult(success=False, error=f"Unsupported action type: {action_type}. Only 'scroll' is currently supported.")
+
         except Exception as e:
-            logger.error(f"交互步骤执行失败: {e}")
+            logger.error(f"Interaction step failed: {e}")
             return ActionResult(success=False, error=str(e))
 
-    
+    async def _perform_anti_bot_behavior(self) -> None:
+        """Perform random scrolling and sleep to avoid anti-bot detection"""
+        try:
+            # Random number of scroll actions (1-3 times)
+            num_scrolls = random.randint(1, 3)
+            logger.info(f"🤖 Performing anti-bot behavior: {num_scrolls} random scrolls")
+
+            for i in range(num_scrolls):
+                # Random scroll direction and distance
+                scroll_down = random.choice([True, False])
+                scroll_pages = random.uniform(0.3, 1.0)  # 0.3 to 1 page
+
+                class ScrollActionModel(ActionModel):
+                    scroll: ScrollAction | None = None
+
+                action_data = {'scroll': ScrollAction(
+                    down=scroll_down,
+                    num_pages=scroll_pages,
+                    frame_element_index=None
+                )}
+
+                direction = "down" if scroll_down else "up"
+                logger.debug(f"   Scroll {i+1}/{num_scrolls}: {direction} {scroll_pages:.2f} pages")
+
+                await self.controller.act(ScrollActionModel(**action_data), self.browser_session)
+
+                # Random sleep between scrolls (1-3 seconds)
+                sleep_time = random.uniform(1, 3)
+                await asyncio.sleep(sleep_time)
+
+            # Final random sleep (2-5 seconds)
+            final_sleep = random.uniform(2, 5)
+            logger.info(f"   Final sleep: {final_sleep:.2f} seconds")
+            await asyncio.sleep(final_sleep)
+
+            logger.info(f"✅ Anti-bot behavior completed")
+
+        except Exception as e:
+            # Don't fail the entire scraping if anti-bot behavior fails
+            logger.warning(f"Anti-bot behavior failed (non-critical): {e}")
+
+
     async def _get_current_page_dom(self) -> tuple:
         """Get DOM from current page with stability check
 
@@ -449,7 +512,8 @@ class ScraperAgent(BaseStepAgent):
         max_items: int,
         timeout: int,
         context: Optional[AgentContext] = None,
-        config: Optional[Dict] = None
+        config: Optional[Dict] = None,
+        auto_fix_missing_fields: bool = False
     ) -> Dict[str, Any]:
         """Extract data from current page"""
 
@@ -498,7 +562,7 @@ class ScraperAgent(BaseStepAgent):
             # 根据配置的提取方法调用对应函数
             if self.extraction_method == 'script':
                 return await self._extract_with_script(
-                    target_dom, dom_dict, llm_view, data_requirements, max_items, timeout, context
+                    target_dom, dom_dict, llm_view, data_requirements, max_items, timeout, context, auto_fix_missing_fields
                 )
             else:
                 return await self._extract_with_llm(
@@ -517,7 +581,8 @@ class ScraperAgent(BaseStepAgent):
         data_requirements: Dict,
         max_items: int,
         timeout: int,
-        context: Optional[AgentContext] = None
+        context: Optional[AgentContext] = None,
+        auto_fix_missing_fields: bool = False
     ) -> Dict[str, Any]:
         """Extract data using script mode - file-based caching with Claude SDK"""
         from pathlib import Path
@@ -583,14 +648,273 @@ class ScraperAgent(BaseStepAgent):
 
             # Execute script with user-specified DOM scope (target_dom is already scoped)
             logger.info(f"Executing script with {self.dom_scope} DOM scope")
-            return await self._execute_generated_script_direct(
+            result = await self._execute_generated_script_direct(
                 generated_script, target_dom, dom_dict, max_items
             )
+
+            # Check if result has missing fields (None values or empty strings)
+            # Only do auto-fix if enabled in workflow inputs
+            if auto_fix_missing_fields and result.get("success") and result.get("data"):
+                missing_info = self._check_missing_fields(result["data"], data_requirements)
+
+                if missing_info["has_missing"]:
+                    logger.warning(f"⚠️  Detected {len(missing_info['missing_fields'])} missing/null fields in extraction result")
+                    logger.info("🔍 Calling Claude Agent to analyze the issue...")
+
+                    # Save current DOM to workspace (may be different from generation time)
+                    dom_failed_file = script_workspace / "dom_data_failed.json"
+                    dom_failed_file.write_text(
+                        json.dumps(dom_dict, indent=2, ensure_ascii=False),
+                        encoding='utf-8'
+                    )
+                    logger.info(f"📄 Saved current page DOM to dom_data_failed.json ({dom_failed_file.stat().st_size} bytes)")
+
+                    # Call Claude Agent to analyze and potentially fix
+                    analysis = await self._analyze_and_fix_with_claude(
+                        script_workspace=script_workspace,
+                        script_file=script_file,
+                        extraction_result=result,
+                        data_requirements=data_requirements,
+                        missing_fields=missing_info['missing_fields']
+                    )
+
+                    if analysis["should_fix"] and analysis["fixed"]:
+                        logger.info("✅ Claude Agent fixed the script! Re-executing...")
+                        # Re-execute with fixed script
+                        fixed_script = script_file.read_text(encoding='utf-8')
+                        wrapped_script = self._extract_and_wrap_code(fixed_script)
+                        result = await self._execute_generated_script_direct(
+                            wrapped_script, target_dom, dom_dict, max_items
+                        )
+                        logger.info("✅ Re-execution completed with fixed script")
+                    elif not analysis["should_fix"]:
+                        logger.info(f"✅ Analysis complete: {analysis['reason']}")
+                        logger.info("   Accepting missing fields as expected (data not in page)")
+                else:
+                    logger.warning(f"⚠️  Claude Agent could not fix the script: {analysis['reason']}")
+            elif result.get("success") and result.get("data"):
+                # Auto-fix disabled, just log if there are missing fields
+                missing_info = self._check_missing_fields(result["data"], data_requirements)
+                if missing_info["has_missing"]:
+                    logger.info(f"ℹ️  Detected {len(missing_info['missing_fields'])} missing/null fields: {missing_info['missing_fields']}")
+                    logger.info("   Auto-fix is disabled. Set 'auto_fix_missing_fields: true' to enable automatic script fixing.")
+
+            return result
 
         except Exception as e:
             logger.error(f"脚本模式提取失败: {e}")
             return self._create_error_result(str(e))
     
+    def _check_missing_fields(self, data: List[Dict], data_requirements: Dict) -> Dict:
+        """Check if extraction result has missing/null fields
+
+        Args:
+            data: Extracted data list
+            data_requirements: Data requirements with output_format
+
+        Returns:
+            Dict with:
+                - has_missing: bool
+                - missing_fields: List[str] - field names that are missing
+                - sample_items: List[Dict] - sample items showing missing values
+        """
+        if not data or not isinstance(data, list):
+            return {"has_missing": False, "missing_fields": [], "sample_items": []}
+
+        output_format = data_requirements.get('output_format', {})
+        if not output_format:
+            return {"has_missing": False, "missing_fields": [], "sample_items": []}
+
+        required_fields = set(output_format.keys())
+        missing_fields = set()
+        sample_items = []
+
+        # Check first few items for missing fields
+        for item in data[:3]:  # Check first 3 items
+            if not isinstance(item, dict):
+                continue
+
+            item_missing = {}
+            for field in required_fields:
+                value = item.get(field)
+                # Consider None, empty string, or missing field as "missing"
+                if value is None or value == "":
+                    missing_fields.add(field)
+                    item_missing[field] = value
+
+            if item_missing:
+                sample_items.append({"item": item, "missing": item_missing})
+
+        return {
+            "has_missing": len(missing_fields) > 0,
+            "missing_fields": list(missing_fields),
+            "sample_items": sample_items
+        }
+
+    async def _analyze_and_fix_with_claude(
+        self,
+        script_workspace: Path,
+        script_file: Path,
+        extraction_result: Dict,
+        data_requirements: Dict,
+        missing_fields: List[str]
+    ) -> Dict:
+        """Ask Claude Agent to analyze missing fields and potentially fix script
+
+        Args:
+            script_workspace: Script working directory
+            script_file: Path to extraction_script.py
+            extraction_result: Current extraction result with missing fields
+            data_requirements: Data requirements
+            missing_fields: List of missing field names
+
+        Returns:
+            Dict with:
+                - should_fix: bool - whether script needs fixing
+                - fixed: bool - whether script was successfully fixed
+                - reason: str - explanation
+        """
+        from common.llm import ClaudeAgentProvider
+
+        try:
+            # Build missing fields description with their meanings
+            output_format = data_requirements.get('output_format', {})
+            missing_fields_desc = []
+            for field in missing_fields:
+                desc = output_format.get(field, field)
+                missing_fields_desc.append(f"  - {field}: {desc}")
+
+            missing_fields_str = "\n".join(missing_fields_desc)
+
+            # Create analysis file with extraction result
+            analysis_file = script_workspace / "extraction_result.json"
+            analysis_file.write_text(
+                json.dumps({
+                    "extraction_result": extraction_result["data"][:5],  # First 5 items
+                    "missing_fields": missing_fields,
+                    "total_items": extraction_result.get("total_count", 0)
+                }, indent=2, ensure_ascii=False),
+                encoding='utf-8'
+            )
+            logger.info(f"📄 Saved extraction result to extraction_result.json")
+
+            # Build analysis prompt
+            prompt = f"""# Missing Fields Analysis and Fix Task
+
+## Problem
+The extraction script returned some fields as None or empty string.
+
+## Missing Fields
+{missing_fields_str}
+
+## Files Available
+- `extraction_script.py` - Current extraction script (may need fixing)
+- `dom_data_failed.json` - **DOM of the failed page** (use this for analysis)
+- `requirement.json` - Data extraction requirements
+- `extraction_result.json` - Current extraction result with missing fields
+
+## Your Task
+
+### Step 1: Analyze - Does the data exist in the page?
+
+Search for missing fields in `dom_data_failed.json`:
+```bash
+# Example: Search for reviews_count
+grep -i "review" dom_data_failed.json | head -20
+```
+
+Ask yourself:
+- Is the data present in the DOM?
+- Is it in a different format/location than expected?
+- Is it missing for all items or just some?
+
+### Step 2: Decide and Act
+
+**If data NOT in DOM:**
+- The page simply doesn't have this information
+- This is NOT a script problem
+- Report this by returning an error message like: "Field 'reviews_count' not found in DOM after thorough search"
+- DO NOT modify the script
+
+**If data EXISTS in DOM:**
+- The script has a bug - it should be extracting this data
+- Fix `extraction_script.py` to extract the missing fields
+- Make the script more robust:
+  - Use flexible selectors
+  - Add fallback logic
+  - Handle different DOM structures
+- Test with `python test_script.py` until all fields are extracted
+
+### Step 3: Verify
+
+After fixing (if needed):
+- Run the test script
+- Ensure the missing fields are now extracted
+- If still failing, iterate and fix again
+
+## Success Criteria
+
+- **If you fixed the script**: Test passes and fields are extracted
+- **If data not in page**: Clearly report which fields are missing from DOM
+
+Start by reading the files and analyzing the DOM!
+"""
+
+            # Initialize Claude Agent
+            claude_provider = ClaudeAgentProvider(config_service=self.config_service)
+            max_iterations = self.config_service.get("claude_agent.fix_max_iterations", 25)
+
+            logger.info(f"🔍 Starting Claude Agent analysis (max_iterations={max_iterations})")
+            result = await claude_provider.run_task(
+                prompt=prompt,
+                working_dir=script_workspace,
+                max_iterations=max_iterations
+            )
+
+            # Analyze Claude Agent's result
+            if result.success:
+                # Task completed successfully - script was fixed
+                logger.info(f"✅ Claude Agent completed in {result.iterations} iterations")
+
+                # Check if script was actually modified
+                script_modified = script_file.stat().st_mtime > analysis_file.stat().st_mtime
+
+                return {
+                    "should_fix": True,
+                    "fixed": True,
+                    "reason": f"Script fixed by Claude Agent. {result.output or ''}"
+                }
+            else:
+                # Task failed - either data not in page or couldn't fix
+                logger.warning(f"⚠️  Claude Agent task failed: {result.error}")
+
+                # Check error message to understand why
+                error_msg = result.error or ""
+                if "not found in dom" in error_msg.lower() or "no data" in error_msg.lower():
+                    # Data not in page
+                    return {
+                        "should_fix": False,
+                        "fixed": False,
+                        "reason": f"Data not found in page: {result.error}"
+                    }
+                else:
+                    # Couldn't fix the script
+                    return {
+                        "should_fix": True,
+                        "fixed": False,
+                        "reason": f"Failed to fix script: {result.error}"
+                    }
+
+        except Exception as e:
+            logger.error(f"Analysis and fix failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                "should_fix": False,
+                "fixed": False,
+                "reason": f"Error during analysis: {str(e)}"
+            }
+
     def _parse_llm_json(self, text: str) -> Optional[List[Dict]]:
         """Parse JSON from LLM response - simple and robust"""
         import re
@@ -660,6 +984,7 @@ class ScraperAgent(BaseStepAgent):
         user_desc = requirements.get('user_description', '')
         output_format = requirements.get('output_format', {})
         sample_data = requirements.get('sample_data', [])
+        xpath_hints = requirements.get('xpath_hints', {})
 
         # Truncate DOM if too large to prevent token overflow
         if len(llm_view) > max_dom_chars:
@@ -677,6 +1002,12 @@ class ScraperAgent(BaseStepAgent):
         if sample_data:
             sample = f"\n\nSample output:\n{json.dumps(sample_data, indent=2, ensure_ascii=False)}"
 
+        # Format xpath hints if provided
+        xpath_hints_text = ""
+        if xpath_hints:
+            hints_list = "\n".join([f"- {name}: {xpath}" for name, xpath in xpath_hints.items()])
+            xpath_hints_text = f"\n\nXPath hints (reference for element locations):\n{hints_list}\n\nNote: These XPath hints are REFERENCE ONLY from user demonstrations. Use them to understand which elements to extract, but adapt to the actual DOM structure if needed."
+
         return f"""Extract data from HTML DOM:
 
 Requirement: {user_desc}
@@ -684,7 +1015,7 @@ Fields:
 {fields}
 
 Max items: {max_items}
-DOM scope: {self.dom_scope}{sample}
+DOM scope: {self.dom_scope}{sample}{xpath_hints_text}
 
 HTML DOM:
 {llm_view}
@@ -935,6 +1266,44 @@ Use Grep to search for specific patterns in dom_data.json, for example:
 **Fields to extract:**
 {fields_description}{sample_description}{xpath_hints_description}
 
+**IMPORTANT - Understanding Extraction Scope**:
+
+1. **Read user_description carefully**: It tells you WHAT to extract and from WHERE
+   - Keywords like "weekly list", "main section", "team members" indicate the target area
+   - Keywords like "only", "just", "exclude" indicate limitations
+
+2. **Use xpath_hints as reference** (if provided):
+   - They show examples of element locations from user's demonstration
+   - Use them to understand DOM structure and element patterns
+   - **NOTE**: xpath_hints are HINTS, not strict requirements - adapt to actual DOM structure
+   - If exact xpath doesn't work, find similar patterns with same class/structure
+
+3. **Focus on the target area**:
+   - If user says "weekly leaderboard", look for elements within that section
+   - Ignore similar-looking data from other areas (sidebar, footer, recommendations)
+
+**Example**:
+```python
+# User description: "Extract products from weekly leaderboard"
+# xpath_hint: "//section[@class='weekly-list']//a"
+
+# Use hint to understand the structure:
+# - Products are in a section with class 'weekly-list'
+# - They are <a> tags
+
+# Your extraction logic:
+def extract_data_from_page(serialized_dom, dom_dict):
+    # Find the weekly list section (use class pattern from hint)
+    weekly_section = find_section_by_class(dom_dict, "weekly-list")
+    if weekly_section:
+        # Extract links only from this section
+        products = extract_links_from_container(weekly_section)
+    else:
+        # Fallback: adapt to similar patterns
+        products = find_product_list_container(dom_dict)
+    return products
+```
+
 ## Step 4: Generate extraction_script.py
 
 Create a file named `extraction_script.py` with this function:
@@ -975,11 +1344,17 @@ After generating the script:
    - Loads dom_data.json
    - Calls extract_data_from_page() with the DOM data
    - Validates output format matches requirements
-   - Prints extracted data
+   - Prints extracted data for review
 
 2. Run the test: `python test_script.py`
 
-3. If errors occur:
+3. **Validation Checklist**:
+   - ✅ All required fields are extracted
+   - ✅ Data format matches sample_data structure
+   - ✅ No errors during extraction
+   - ✅ Output data looks reasonable based on user_description
+
+4. If errors occur:
    - Analyze the error message
    - Fix the extraction_script.py
    - Re-run the test

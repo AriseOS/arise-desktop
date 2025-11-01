@@ -32,11 +32,29 @@ inputs:
 ```
 
 ## Output
+
+**CRITICAL**: `extracted_data` is ALWAYS a **List[Dict]**, even for single item extraction.
+
 ```yaml
 outputs:
-  extracted_data: "variable_name"  # Extracted data matching output_format
+  extracted_data: "variable_name"  # ALWAYS List[Dict], e.g. [{field: value}]
   message: "message_var"           # Status message (optional)
 ```
+
+**Return Type Rules**:
+- **List extraction** (multiple items): `[{url: "..."}, {url: "..."}, ...]`
+- **Single item extraction** (detail page): `[{name: "...", price: "..."}]` (list with 1 element)
+
+**How to Reference Extracted Data in Workflow**:
+- **In foreach loop**: Use the list directly
+  ```yaml
+  source: "{{product_urls}}"  # Iterate over the list
+  ```
+- **Access single item fields**: Use `.0` index to get first element
+  ```yaml
+  name: "{{product_info.0.name}}"      # Access first item's name field
+  price: "{{product_info.0.price}}"    # Access first item's price field
+  ```
 
 ## Examples
 
@@ -58,26 +76,36 @@ outputs:
     extracted_data: "product_urls"
 ```
 
-### Extract Details (Single)
+### Extract Details (Single Item)
 ```yaml
 - id: "scrape-detail"
   agent_type: "scraper_agent"
   agent_instruction: "Extract product details"
   inputs:
     target_path: "{{product.url}}"
-    extraction_method: "llm"
+    extraction_method: "script"
     data_requirements:
       user_description: "Extract product information"
       output_format:
         name: "Product name"
         price: "Price with currency"
         rating: "Rating"
-      sample_data:
-        - name: "Example"
-          price: "$99"
-          rating: "4.5"
+      sample_data:    # Single item: use dict (not list)
+        name: "Example Product"
+        price: "$99"
+        rating: "4.5"
   outputs:
-    extracted_data: "product_detail"
+    extracted_data: "product_detail"  # Returns [{name: "...", price: "...", rating: "..."}]
+
+# To use the extracted fields in next steps:
+- id: "use-product-info"
+  agent_type: "variable"
+  inputs:
+    operation: "set"
+    data:
+      display_name: "{{product_detail.0.name}}"     # Access via .0 index
+      display_price: "{{product_detail.0.price}}"
+      display_rating: "{{product_detail.0.rating}}"
 ```
 
 ## Extraction Methods

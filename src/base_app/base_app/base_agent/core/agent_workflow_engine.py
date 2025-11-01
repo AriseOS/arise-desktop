@@ -151,7 +151,7 @@ class AgentWorkflowEngine:
                 
                 # 如果步骤失败且没有设置继续执行，则停止
                 if not step_result.success:
-                    logger.error(f"步骤 {step.name} 执行失败: {step_result.message}")
+                    logger.error(f"步骤执行失败 [step_id={step.id}, name={step.name}, agent_type={step.agent_type}]: {step_result.message}")
                     break
             
             # 提取final_response作为最终结果
@@ -184,19 +184,21 @@ class AgentWorkflowEngine:
         step: AgentWorkflowStep,
         context: AgentContext
     ) -> StepResult:
-        """执行Agent步骤"""
+        """执行Agent步骤 - 统一入口处理变量解析"""
         step_start_time = time.time()
 
         try:
+            # 统一变量解析：获取解析后的字典
+            resolved_dict = self._resolve_step_variables(step, context)
+
             # 确定Agent类型
             agent_type = step.agent_type
 
-            # 解析步骤输入数据
-            resolved_input = await self._resolve_step_input(step, context)
+            # 获取解析后的inputs
+            resolved_inputs = resolved_dict.get('inputs', {})
 
             # 构建Agent输入
-            agent_input = await self._build_agent_input(step, agent_type, resolved_input, context)
-            # print(f"agent_input {agent_input}")
+            agent_input = await self._build_agent_input(step, agent_type, resolved_inputs, context)
 
             # 提取agent配置（从step的agent_config字段或inputs中）
             agent_config = {}
@@ -208,8 +210,8 @@ class AgentWorkflowEngine:
             # 2. 从inputs中提取特定的配置参数
             config_keys = ['extraction_method', 'dom_scope', 'debug_mode']
             for key in config_keys:
-                if key in resolved_input:
-                    agent_config[key] = resolved_input[key]
+                if key in resolved_inputs:
+                    agent_config[key] = resolved_inputs[key]
 
             # 执行Agent
             result = await self.agent_executor.execute_agent(
@@ -218,7 +220,7 @@ class AgentWorkflowEngine:
                 context,
                 agent_config
             )
-            
+
             return StepResult(
                 step_id=step.id,
                 success=getattr(result, 'success', True),
@@ -226,9 +228,9 @@ class AgentWorkflowEngine:
                 message=f"Agent {agent_type} 执行成功",
                 execution_time=time.time() - step_start_time
             )
-            
+
         except Exception as e:
-            logger.error(f"Agent步骤执行失败: {str(e)}")
+            logger.error(f"Agent步骤执行失败 [step_id={step.id}, name={step.name}, agent_type={step.agent_type}]: {str(e)}")
             return StepResult(
                 step_id=step.id,
                 success=False,
@@ -271,20 +273,22 @@ class AgentWorkflowEngine:
             })
         elif agent_type == "variable":
             # Variable agent uses step_config for operation details
-            step_data = getattr(step, 'data', {})
-            logger.debug(f"Variable agent step.data: {step_data}")
+            # Use resolved_input instead of step attributes to get parsed values
+            resolved_data = resolved_input.get('data', {})
+            logger.info(f"🔍 [VariableAgent] step_id={step.id}, resolved_data type: {type(resolved_data)}, preview: {str(resolved_data)[:200]}")
+
             metadata.update({
                 "step_config": {
-                    "operation": getattr(step, 'operation', 'set'),
-                    "data": step_data,
-                    "source": getattr(step, 'source', None),
-                    "field": getattr(step, 'field', None),
-                    "value": getattr(step, 'value', None),
-                    "expression": getattr(step, 'expression', None),
-                    "updates": getattr(step, 'updates', None),
-                    "current_page": getattr(step, 'current_page', None),
-                    "max_pages": getattr(step, 'max_pages', None),
-                    "items_found": getattr(step, 'items_found', None)
+                    "operation": resolved_input.get('operation', 'set'),
+                    "data": resolved_data,
+                    "source": resolved_input.get('source', None),
+                    "field": resolved_input.get('field', None),
+                    "value": resolved_input.get('value', None),
+                    "expression": resolved_input.get('expression', None),
+                    "updates": resolved_input.get('updates', None),
+                    "current_page": resolved_input.get('current_page', None),
+                    "max_pages": resolved_input.get('max_pages', None),
+                    "items_found": resolved_input.get('items_found', None)
                 },
                 "context": context
             })
@@ -296,6 +300,52 @@ class AgentWorkflowEngine:
         )
     
     
+    def _resolve_step_variables(self, step: AgentWorkflowStep, context: AgentContext) -> Dict[str, Any]:
+        """统一的步骤变量解析入口 - 返回解析后的字典，而不是重建step对象
+
+        这是唯一的变量解析入口，所有步骤执行前都会调用此方法
+
+        Args:
+            step: 原始步骤对象
+            context: 执行上下文
+
+        Returns:
+            解析后的字典，包含所有解析后的值
+        """
+        # 1. 将step转换为字典
+        step_dict = step.model_dump()
+
+        # 2. 递归解析字典中的所有值
+        resolved_dict = self._resolve_value_recursive(step_dict, context)
+
+        return resolved_dict
+
+    def _resolve_value_recursive(self, value: Any, context: AgentContext) -> Any:
+        """递归解析值中的所有变量引用
+
+        Args:
+            value: 要解析的值（可能是字符串、字典、列表或其他类型）
+            context: Agent执行上下文
+
+        Returns:
+            解析后的值
+        """
+        if isinstance(value, str):
+            # 解析字符串中的变量
+            return self._resolve_string_with_variables(value, context)
+        elif isinstance(value, dict):
+            # 递归解析字典中的所有值
+            resolved_dict = {}
+            for sub_key, sub_value in value.items():
+                resolved_dict[sub_key] = self._resolve_value_recursive(sub_value, context)
+            return resolved_dict
+        elif isinstance(value, list):
+            # 递归解析列表中的所有元素
+            return [self._resolve_value_recursive(item, context) for item in value]
+        else:
+            # 其他类型直接返回
+            return value
+
     def _resolve_variable(self, var_expression: str, context: AgentContext) -> Any:
         """解析变量表达式，支持嵌套属性访问（如 {{current_item.name}}）
 
@@ -305,55 +355,125 @@ class AgentWorkflowEngine:
 
         Returns:
             解析后的值
+
+        Raises:
+            ValueError: 如果变量不存在或无法访问嵌套属性
         """
         parts = var_expression.split('.')
         value = context.variables.get(parts[0])
 
-        # 如果变量不存在，返回原表达式
+        # 如果变量不存在，抛出错误
         if value is None:
-            return f"{{{{{var_expression}}}}}"
+            available_vars = list(context.variables.keys())
+            raise ValueError(
+                f"Variable '{parts[0]}' not found in context.\n"
+                f"  Trying to resolve: {{{{{{var_expression}}}}}}\n"
+                f"  Available variables: {available_vars}"
+            )
 
         # 遍历嵌套属性
         for part in parts[1:]:
             if isinstance(value, dict):
                 value = value.get(part)
+            elif isinstance(value, list):
+                # Support list index access and auto-unwrap single-item lists
+                if part.isdigit():
+                    # Explicit index access: {{list.0.field}} or {{list.1.field}}
+                    idx = int(part)
+                    if 0 <= idx < len(value):
+                        value = value[idx]
+                    else:
+                        raise ValueError(
+                            f"List index {idx} out of range.\n"
+                            f"  Trying to resolve: {{{{{{var_expression}}}}}}\n"
+                            f"  List has {len(value)} items (valid indices: 0-{len(value)-1})"
+                        )
+                elif len(value) == 1:
+                    # Auto-unwrap single-item list: {{list.field}} → {{list.0.field}}
+                    # This makes scraper_agent output more ergonomic for single-item extraction
+                    logger.debug(f"Auto-unwrapping single-item list for property access: {var_expression}")
+                    value = value[0]
+                    # Continue resolving the property on the unwrapped item
+                    if isinstance(value, dict):
+                        value = value.get(part)
+                    elif hasattr(value, part):
+                        value = getattr(value, part)
+                    else:
+                        raise ValueError(
+                            f"Cannot access property '{part}' on unwrapped list item of type {type(value).__name__}.\n"
+                            f"  Trying to resolve: {{{{{{var_expression}}}}}}\n"
+                            f"  Available properties: {list(value.keys()) if isinstance(value, dict) else 'N/A'}"
+                        )
+                else:
+                    raise ValueError(
+                        f"Cannot access property '{part}' on a list with {len(value)} items.\n"
+                        f"  Trying to resolve: {{{{{{var_expression}}}}}}\n"
+                        f"  Hint: Use numeric index to access specific item (e.g., {{{{list.0.{part}}}}})"
+                    )
             elif hasattr(value, part):
                 value = getattr(value, part)
             else:
-                # 无法访问，返回原表达式
-                return f"{{{{{var_expression}}}}}"
+                raise ValueError(
+                    f"Cannot access property '{part}' on {type(value).__name__}.\n"
+                    f"  Trying to resolve: {{{{{{var_expression}}}}}}\n"
+                    f"  Available properties: {list(value.keys()) if isinstance(value, dict) else 'N/A'}"
+                )
 
+            # Allow None values to pass through - this is normal for optional/missing fields
+            # Don't raise error, just return None and let the workflow continue
             if value is None:
-                return f"{{{{{var_expression}}}}}"
+                logger.debug(f"Property '{part}' resolved to None in expression: {var_expression}")
+                return None
 
         return value
 
-    async def _resolve_step_input(
-        self,
-        step: AgentWorkflowStep,
-        context: AgentContext
-    ) -> Dict[str, Any]:
-        """解析步骤输入数据"""
-        resolved_input = {}
 
-        for key, value in step.inputs.items():
-            if isinstance(value, str) and value.startswith("{{") and value.endswith("}}"):
-                var_expression = value[2:-2].strip()
-                resolved_input[key] = self._resolve_variable(var_expression, context)
-            elif isinstance(value, dict):
-                # 递归解析嵌套字典
-                resolved_dict = {}
-                for sub_key, sub_value in value.items():
-                    if isinstance(sub_value, str) and sub_value.startswith("{{") and sub_value.endswith("}}"):
-                        var_expression = sub_value[2:-2].strip()
-                        resolved_dict[sub_key] = self._resolve_variable(var_expression, context)
-                    else:
-                        resolved_dict[sub_key] = sub_value
-                resolved_input[key] = resolved_dict
+    def _resolve_string_with_variables(self, text: str, context: AgentContext) -> Any:
+        """解析字符串中的所有变量引用
+
+        支持以下格式：
+        - "{{variable}}" - 完整变量，直接返回变量值（可能是任意类型）
+        - "prefix {{variable}} suffix" - 字符串模板，变量会被转换为字符串后替换
+        - "{{var1}}/{{var2}}" - 多个变量的字符串模板
+
+        Args:
+            text: 包含变量引用的字符串
+            context: Agent执行上下文
+
+        Returns:
+            解析后的值（可能是字符串或其他类型）
+        """
+        import re
+
+        # 查找所有 {{variable}} 模式
+        pattern = r'\{\{([^}]+)\}\}'
+        matches = list(re.finditer(pattern, text))
+
+        if not matches:
+            # 没有变量，直接返回原文本
+            return text
+
+        # 如果整个字符串就是一个变量引用（如 "{{variable}}"）
+        if len(matches) == 1 and matches[0].group(0) == text:
+            var_expression = matches[0].group(1).strip()
+            return self._resolve_variable(var_expression, context)
+
+        # 否则是字符串模板，需要替换所有变量
+        result = text
+        for match in matches:
+            var_expression = match.group(1).strip()
+            var_value = self._resolve_variable(var_expression, context)
+
+            # 将变量值转换为字符串
+            if var_value is None:
+                var_str = f"{{{{{var_expression}}}}}"  # 保留未解析的变量
             else:
-                resolved_input[key] = value
+                var_str = str(var_value)
 
-        return resolved_input
+            # 替换变量引用
+            result = result.replace(match.group(0), var_str)
+
+        return result
     
     async def _update_context_variables(
         self, 
@@ -400,14 +520,18 @@ class AgentWorkflowEngine:
         return self.condition_evaluator.evaluate(condition, context.variables)
     
     async def _execute_if_step(self, step: AgentWorkflowStep, context: AgentContext) -> StepResult:
-        """执行if/else条件控制步骤"""
+        """执行if/else条件控制步骤 - 统一入口处理变量解析"""
         step_start_time = time.time()
-        
+
         try:
-            # 评估条件
-            condition_result = await self._evaluate_condition(step.condition, context)
+            # 统一变量解析：获取解析后的字典
+            resolved_dict = self._resolve_step_variables(step, context)
+
+            # 评估条件（使用解析后的condition）
+            resolved_condition = resolved_dict.get('condition', step.condition)
+            condition_result = await self._evaluate_condition(resolved_condition, context)
             logger.info(f"If条件 '{step.condition}' 评估结果: {condition_result}")
-            
+
             # 选择执行分支
             branch_executed = "then" if condition_result else "else"
             sub_steps = step.then if condition_result else step.else_
@@ -440,7 +564,7 @@ class AgentWorkflowEngine:
                 branch_executed=branch_executed,
                 sub_step_results=sub_step_results
             )
-            
+
         except Exception as e:
             logger.error(f"If步骤执行失败: {str(e)}")
             return StepResult(
@@ -453,12 +577,15 @@ class AgentWorkflowEngine:
             )
     
     async def _execute_while_step(self, step: AgentWorkflowStep, context: AgentContext) -> StepResult:
-        """执行while循环控制步骤"""
+        """执行while循环控制步骤 - 统一入口处理变量解析"""
         step_start_time = time.time()
-        max_iterations = step.max_iterations or 10
-        loop_timeout = step.loop_timeout or 300
-        
+
         try:
+            # 统一变量解析：获取解析后的字典
+            resolved_dict = self._resolve_step_variables(step, context)
+
+            max_iterations = step.max_iterations or 10
+            loop_timeout = step.loop_timeout or 300
             iterations_executed = 0
             sub_step_results = []
             exit_reason = "condition_false"
@@ -469,8 +596,9 @@ class AgentWorkflowEngine:
                     exit_reason = "timeout"
                     break
                 
-                # 评估循环条件
-                condition_result = await self._evaluate_condition(step.condition, context)
+                # 评估循环条件（使用解析后的condition）
+                resolved_condition = resolved_dict.get('condition', step.condition)
+                condition_result = await self._evaluate_condition(resolved_condition, context)
                 logger.info(f"While条件 '{step.condition}' 评估结果: {condition_result} (第{iterations_executed + 1}次)")
                 
                 if not condition_result:
@@ -480,7 +608,7 @@ class AgentWorkflowEngine:
                 # 执行循环体步骤
                 iteration_success = True
                 iteration_results = []
-                
+
                 if step.steps:
                     for sub_step in step.steps:
                         sub_result = await self._execute_single_step(sub_step, context)
@@ -515,7 +643,7 @@ class AgentWorkflowEngine:
                 exit_reason=exit_reason,
                 sub_step_results=sub_step_results
             )
-            
+
         except Exception as e:
             logger.error(f"While步骤执行失败: {str(e)}")
             return StepResult(
@@ -528,23 +656,30 @@ class AgentWorkflowEngine:
             )
     
     async def _execute_foreach_step(self, step: AgentWorkflowStep, context: AgentContext) -> StepResult:
-        """执行foreach循环控制步骤"""
+        """执行foreach循环控制步骤 - 只解析 source，不解析子步骤"""
         step_start_time = time.time()
-        max_iterations = step.max_iterations or 100
-        loop_timeout = step.loop_timeout or 600
 
         try:
-            # 解析source变量，获取要遍历的列表
+            # 只解析 source 变量，不解析子步骤（子步骤会在每次迭代中单独解析）
             source_var = step.source
             if not source_var:
                 raise ValueError("foreach步骤缺少source配置")
 
-            # 解析变量引用（移除 {{}} 包装）
-            source_var_name = source_var.strip("{} ")
-            source_list = context.variables.get(source_var_name)
+            # 解析 source 变量
+            if isinstance(source_var, str) and source_var.startswith('{{') and source_var.endswith('}}'):
+                var_expr = source_var[2:-2].strip()
+                source_list = self._resolve_variable(var_expr, context)
+            else:
+                source_list = source_var
+
+            max_iterations = step.max_iterations or 100
+            loop_timeout = step.loop_timeout or 600
+
+            if not source_list:
+                raise ValueError("foreach步骤的source解析后为空")
 
             if not isinstance(source_list, list):
-                raise ValueError(f"source变量 '{source_var_name}' 必须是列表，当前类型: {type(source_list)}")
+                raise ValueError(f"source 必须解析为列表，当前类型: {type(source_list)}, 值: {source_list}")
 
             logger.info(f"Foreach循环开始，遍历 {len(source_list)} 个元素")
 
