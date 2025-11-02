@@ -1582,7 +1582,7 @@ select.edit-input {
   max-height: calc(100vh - 150px);
   gap: 12px;
   overflow-y: scroll !important;
-  overflow-x: hidden;
+  overflow-x: auto;
 }
 
 .download-button {
@@ -1672,13 +1672,14 @@ select.edit-input {
 .result-table-wrapper {
   flex: 1;
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: auto;
   padding: 16px;
   min-height: 0;
 }
 
 .result-table {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
   font-size: 13px;
 }
@@ -1693,12 +1694,15 @@ select.edit-input {
   font-weight: 600;
   color: #1c1c1e;
   border-bottom: 2px solid #e2e8f0;
+  white-space: nowrap;
+  min-width: 100px;
 }
 
 .result-table td {
   padding: 12px;
   border-bottom: 1px solid #e2e8f0;
   color: #3c3c43;
+  min-width: 100px;
 }
 
 .result-table tbody tr:hover {

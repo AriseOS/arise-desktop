@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import jsPDF from 'jspdf'
 import html2canvas from 'html2canvas'
+import { DEFAULT_CONFIG_KEY, getWorkflow } from '../config/index'
 
 // Demo markdown content for coffee-market-analysis-workflow
 const DEMO_MARKDOWN = `# 咖啡市场对比调研报告（ Allegro vs. Amazon ）
@@ -94,7 +95,10 @@ function WorkflowResultPage({ currentUser, onNavigate, showStatus, params }) {
   const [loading, setLoading] = useState(true)
 
   // Extract parameters passed from WorkflowDetailPage
-  const workflowName = params?.workflowName || 'allegro-coffee-collection-workflow'
+  // If no workflowName is provided, use the default workflow from config
+  const defaultWorkflow = getWorkflow(DEFAULT_CONFIG_KEY)
+  const defaultWorkflowName = defaultWorkflow?.metadata?.name || 'allegro-coffee-collection-workflow'
+  const workflowName = params?.workflowName || defaultWorkflowName
   const startTime = params?.startTime
   const endTime = params?.endTime
 
@@ -165,8 +169,16 @@ function WorkflowResultPage({ currentUser, onNavigate, showStatus, params }) {
             : []
 
           // Transform results to table data
+          // Handle nested objects/arrays by converting to JSON string
           const tableData = results.map(item =>
-            dataFields.map(field => item[field] || '')
+            dataFields.map(field => {
+              const value = item[field]
+              if (value === null || value === undefined) return ''
+              if (typeof value === 'object') {
+                return JSON.stringify(value, null, 2)
+              }
+              return String(value)
+            })
           )
 
           return {
@@ -198,8 +210,16 @@ function WorkflowResultPage({ currentUser, onNavigate, showStatus, params }) {
           ? Object.keys(results[0]).filter(key => !systemFields.includes(key))
           : []
 
+        // Handle nested objects/arrays by converting to JSON string
         const tableData = results.map(item =>
-          dataFields.map(field => item[field] || '')
+          dataFields.map(field => {
+            const value = item[field]
+            if (value === null || value === undefined) return ''
+            if (typeof value === 'object') {
+              return JSON.stringify(value, null, 2)
+            }
+            return String(value)
+          })
         )
 
         displayData = {
@@ -220,8 +240,16 @@ function WorkflowResultPage({ currentUser, onNavigate, showStatus, params }) {
           ? Object.keys(results[0]).filter(key => !systemFields.includes(key))
           : []
 
+        // Handle nested objects/arrays by converting to JSON string
         const tableData = results.map(item =>
-          dataFields.map(field => item[field] || '')
+          dataFields.map(field => {
+            const value = item[field]
+            if (value === null || value === undefined) return ''
+            if (typeof value === 'object') {
+              return JSON.stringify(value, null, 2)
+            }
+            return String(value)
+          })
         )
 
         displayData = {
@@ -236,6 +264,7 @@ function WorkflowResultPage({ currentUser, onNavigate, showStatus, params }) {
         }
       }
 
+      console.log('Final display data:', displayData)
       setResultData(displayData)
       setLoading(false)
     } catch (err) {
@@ -432,7 +461,11 @@ function WorkflowResultPage({ currentUser, onNavigate, showStatus, params }) {
                           <tr key={rowIdx}>
                             <td className="row-number">{rowIdx + 1}</td>
                             {row.map((cell, cellIdx) => (
-                              <td key={cellIdx}>{cell}</td>
+                              <td key={cellIdx}>
+                                <div style={{ maxWidth: '300px', maxHeight: '200px', overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                                  {cell}
+                                </div>
+                              </td>
                             ))}
                           </tr>
                         ))}
@@ -464,7 +497,11 @@ function WorkflowResultPage({ currentUser, onNavigate, showStatus, params }) {
                         <tr key={rowIdx}>
                           <td className="row-number">{rowIdx + 1}</td>
                           {row.map((cell, cellIdx) => (
-                            <td key={cellIdx}>{cell}</td>
+                            <td key={cellIdx}>
+                              <div style={{ maxWidth: '300px', maxHeight: '200px', overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                                {cell}
+                              </div>
+                            </td>
                           ))}
                         </tr>
                       ))}

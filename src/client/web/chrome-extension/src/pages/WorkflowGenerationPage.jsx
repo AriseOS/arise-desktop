@@ -174,7 +174,7 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
 
   const pollTaskStatus = async (taskId, startTime, workflowName) => {
     const pollInterval = 2000 // Poll every 2 seconds
-    const maxAttempts = 300 // Max 10 minutes (300 * 2s)
+    const maxAttempts = 450 // Max 15 minutes (450 * 2s)
     let attempts = 0
 
     const poll = async () => {

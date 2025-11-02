@@ -599,6 +599,114 @@ export const WORKFLOWS = {
         timeout: 10
       }
     ]
+  },
+  'producthunt-weekly-leaderboard': {
+    apiVersion: "agentcrafter.io/v1",
+    kind: "Workflow",
+    metadata: {
+      name: "producthunt-weekly-leaderboard-scraper",
+      description: "从 Product Hunt 每周排行榜（Weekly Leaderboard）中抓取热门产品的详细信息，包括产品名称、描述、评分、评论数、关注者数以及团队成员信息",
+      version: "1.0.0",
+      tags: ["producthunt", "scraper", "weekly-leaderboard"]
+    },
+    inputs: {
+      max_products: {
+        type: "integer",
+        description: "Maximum number of products to scrape",
+        required: false,
+        default: 20
+      }
+    },
+    outputs: {
+      product_details: {
+        type: "array",
+        description: "Collected product information with team members"
+      },
+      final_response: {
+        type: "string",
+        description: "Completion message"
+      }
+    },
+    config: {
+      max_execution_time: 3600,
+      enable_parallel: false,
+      enable_cache: true
+    },
+    steps: [
+      {
+        id: "init-vars",
+        name: "Initialize variables",
+        agent_type: "variable",
+        description: "Initialize data collection variables",
+        agent_instruction: "Initialize product collection variables"
+      },
+      {
+        id: "extract-weekly-products",
+        name: "Extract weekly leaderboard products",
+        agent_type: "scraper_agent",
+        description: "Navigate to Product Hunt weekly leaderboard and extract all product URLs",
+        agent_instruction: "Visit Product Hunt weekly leaderboard page and extract all product URLs from the list"
+      },
+      {
+        id: "save-product-urls",
+        name: "Save product URLs",
+        agent_type: "variable",
+        description: "Save extracted product URLs to variable",
+        agent_instruction: "Save product URLs to collection variable"
+      },
+      {
+        id: "collect-product-details",
+        name: "Collect product details",
+        agent_type: "foreach",
+        description: "Iterate through products and collect detailed information including team members",
+        source: "{{all_product_urls}}",
+        item_var: "current_product",
+        steps: [
+          {
+            id: "scrape-product-info",
+            name: "Scrape product information",
+            agent_type: "scraper_agent",
+            description: "Extract product details from product page",
+            agent_instruction: "Visit Product Hunt product page and extract product name, tagline, description, rating, reviews, and followers"
+          },
+          {
+            id: "scrape-team-members",
+            name: "Scrape team members",
+            agent_type: "scraper_agent",
+            description: "Extract team member information from team page",
+            agent_instruction: "Navigate to Product Hunt product team page and extract all team member names and positions"
+          },
+          {
+            id: "merge-product-data",
+            name: "Merge product data with team info",
+            agent_type: "variable",
+            description: "Combine product information with team members",
+            agent_instruction: "Merge product details with team member information"
+          },
+          {
+            id: "append-product",
+            name: "Add product to collection",
+            agent_type: "variable",
+            description: "Append complete product info to collection",
+            agent_instruction: "Add product with team info to collection list"
+          },
+          {
+            id: "store-product",
+            name: "Store product to database",
+            agent_type: "storage_agent",
+            description: "Persist product information to database",
+            agent_instruction: "Store complete product information including team members to database"
+          }
+        ]
+      },
+      {
+        id: "prepare-output",
+        name: "Prepare final output",
+        agent_type: "variable",
+        description: "Organize collection results",
+        agent_instruction: "Prepare final output with collected product details"
+      }
+    ]
   }
 }
 

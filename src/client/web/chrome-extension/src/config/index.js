@@ -6,6 +6,12 @@ import { METAFLOWS, getMetaflow, getMetaflowKeys } from './metaflows'
 // Workflow-Metaflow mapping
 // Each workflow should have a corresponding metaflow with the same key
 export const WORKFLOW_METAFLOW_MAP = {
+  'producthunt-weekly-leaderboard': {
+    workflowKey: 'producthunt-weekly-leaderboard',
+    metaflowKey: 'producthunt-weekly-leaderboard',
+    displayName: 'ProductHunt Weekly Leaderboard',
+    description: 'Scrape top products from Product Hunt weekly leaderboard with detailed information and team members'
+  },
   'cross-market-product-selection': {
     workflowKey: 'cross-market-product-selection',
     metaflowKey: 'cross-market-product-selection',
@@ -27,7 +33,7 @@ export const WORKFLOW_METAFLOW_MAP = {
 }
 
 // Default configuration key
-export const DEFAULT_CONFIG_KEY = 'cross-market-product-selection'
+export const DEFAULT_CONFIG_KEY = 'producthunt-weekly-leaderboard'
 
 // Get workflow and metaflow by config key
 export function getConfig(configKey) {

@@ -397,6 +397,248 @@ export const METAFLOWS = {
         ]
       }
     ]
+  },
+  'producthunt-weekly-leaderboard': {
+    version: '1.0',
+    task_description: '从 Product Hunt 每周排行榜（Weekly Leaderboard）中抓取热门产品的详细信息，包括产品名称、描述、评分、评论数、关注者数以及团队成员信息。只抓取周排行榜中的产品，不抓取榜单之外的链接。',
+    nodes: [
+      {
+        id: 'node_1',
+        intent_id: 'intent_0fb81aa0',
+        intent_name: 'NavigateToProductHunt',
+        intent_description: 'Navigate to Product Hunt homepage',
+        operations: [
+          {
+            type: 'test',
+            timestamp: '2025-10-29 13:09:57',
+            url: 'about:blank',
+            page_title: 'Starting agent 8325...',
+            data: { message: 'binding verification' }
+          },
+          {
+            type: 'navigate',
+            timestamp: '2025-10-29 21:10:00',
+            url: 'https://www.producthunt.com/',
+            page_title: 'Navigated Page'
+          }
+        ]
+      },
+      {
+        id: 'node_2',
+        intent_id: 'intent_bdaa56fc',
+        intent_name: 'NavigateToLaunchArchive',
+        intent_description: 'Navigate to Product Hunt launch archive leaderboard page',
+        operations: [
+          {
+            type: 'click',
+            timestamp: '2025-10-29 13:10:01',
+            url: 'https://www.producthunt.com/',
+            page_title: 'Product Hunt – The best new products in tech.',
+            element: {
+              xpath: '//*[@id="root-container"]/div[1]/header/div/nav/ul/li[1]/div/div/div/a[1]/div/div[2]/div[1]',
+              tagName: 'DIV',
+              className: 'text-14 font-normal text-dark-gray text-primary',
+              textContent: 'Launch archive'
+            }
+          },
+          {
+            type: 'navigate',
+            timestamp: '2025-10-29 13:10:03',
+            url: 'https://www.producthunt.com/leaderboard/daily/2025/10/29?ref=header_nav',
+            page_title: 'Best of October 29, 2025 | Product Hunt'
+          }
+        ]
+      },
+      {
+        id: 'node_3',
+        intent_id: 'intent_f28f4b0d',
+        intent_name: 'SwitchToWeeklyLeaderboard',
+        intent_description: 'Switch to Weekly leaderboard view to browse weekly ranked products',
+        operations: [
+          {
+            type: 'click',
+            timestamp: '2025-10-29 13:10:05',
+            url: 'https://www.producthunt.com/leaderboard/daily/2025/10/29?ref=header_nav',
+            page_title: 'Best of October 29, 2025 | Product Hunt',
+            element: {
+              xpath: '//*[@id="root-container"]/div[3]/div/main/div/div/div[1]/div[1]/div[1]/a[2]',
+              tagName: 'A',
+              className: 'text-16 font-normal text-dark-gray styles_navTab__qdtGF hover:text-brand-500',
+              textContent: 'Weekly',
+              href: 'https://www.producthunt.com/leaderboard/weekly/2025/44'
+            }
+          },
+          {
+            type: 'navigate',
+            timestamp: '2025-10-29 13:10:06',
+            url: 'https://www.producthunt.com/leaderboard/weekly/2025/44',
+            page_title: 'Best of the week of October 27, 2025 | Product Hunt'
+          }
+        ]
+      },
+      {
+        id: 'node_4',
+        intent_id: 'intent_47ea1cd8',
+        intent_name: 'BrowseWeeklyLeaderboard',
+        intent_description: 'Browse the weekly leaderboard by scrolling through the product list',
+        operations: [
+          {
+            type: 'scroll',
+            timestamp: '2025-10-29 13:10:10',
+            url: 'https://www.producthunt.com/leaderboard/weekly/2025/44',
+            page_title: 'Best of the week of October 27, 2025 | Product Hunt',
+            data: { direction: 'down', distance: 2296 }
+          },
+          {
+            type: 'scroll',
+            timestamp: '2025-10-29 13:10:10',
+            url: 'https://www.producthunt.com/leaderboard/weekly/2025/44',
+            page_title: 'Best of the week of October 27, 2025 | Product Hunt',
+            data: { direction: 'up', distance: 2296 }
+          }
+        ]
+      },
+      {
+        id: 'node_5',
+        intent_id: 'implicit_extract_product_list',
+        intent_name: 'ExtractProductList',
+        intent_description: 'Extract product list from weekly leaderboard (inferred node)',
+        operations: [
+          {
+            type: 'extract',
+            element: { xpath: '<PLACEHOLDER>', tagName: 'A' },
+            target: 'product_urls',
+            value: []
+          }
+        ],
+        outputs: {
+          product_urls: 'product_urls'
+        }
+      },
+      {
+        id: 'node_6',
+        type: 'loop',
+        description: 'Iterate through weekly leaderboard products, extract detailed information for each product',
+        source: '{{product_urls}}',
+        item_var: 'current_product',
+        children: [
+          {
+            id: 'node_6_1',
+            intent_id: 'intent_5c4840b9',
+            intent_name: 'NavigateToProductDetail',
+            intent_description: "Navigate to the first product's detail page",
+            operations: [
+              {
+                type: 'click',
+                timestamp: '2025-10-29 13:10:12',
+                url: 'https://www.producthunt.com/leaderboard/weekly/2025/44',
+                page_title: 'Best of the week of October 27, 2025 | Product Hunt',
+                element: {
+                  xpath: '//*[@id="root-container"]/div[3]/div/main/div/div/section[1]/div/div[1]/a/span',
+                  tagName: 'SPAN',
+                  className: 'absolute inset-0'
+                }
+              },
+              {
+                type: 'navigate',
+                timestamp: '2025-10-29 13:10:16',
+                url: 'https://www.producthunt.com/products/v0',
+                page_title: 'v0 by Vercel: Full stack vibe coding platform. Created by Vercel. | Product Hunt'
+              }
+            ],
+            inputs: {
+              product_url: '{{current_product.url}}'
+            }
+          },
+          {
+            id: 'node_6_2',
+            intent_id: 'intent_0a55e329',
+            intent_name: 'ExtractProductInformation',
+            intent_description: 'Extract product information including company name, product name, tagline, and engagement metrics',
+            operations: [
+              {
+                type: 'click',
+                timestamp: '2025-10-29 13:10:20',
+                url: 'https://www.producthunt.com/products/v0',
+                element: {
+                  xpath: '//*[@id="root-container"]/div[3]/div/main/div[1]/div[1]/div[1]/div[1]/div/div[1]/h1',
+                  tagName: 'H1',
+                  className: 'text-24 font-semibold text-gray-900',
+                  textContent: 'v0 by Vercel'
+                }
+              },
+              {
+                type: 'select',
+                timestamp: '2025-10-29 13:10:20',
+                element: {
+                  xpath: '//*[@id="root-container"]/div[3]/div/main/div[1]/div[1]/div[1]/div[1]/div/div[1]/h1',
+                  tagName: 'H1',
+                  textContent: 'v0 by Vercel'
+                },
+                data: { selectedText: 'v0 by Vercel', textLength: 12 }
+              }
+            ],
+            outputs: {
+              product_info: 'product_info'
+            }
+          },
+          {
+            id: 'node_6_3',
+            intent_id: 'intent_5f7daeb8',
+            intent_name: 'NavigateToTeamPage',
+            intent_description: 'Navigate to the Team page to view team member information',
+            operations: [
+              {
+                type: 'click',
+                timestamp: '2025-10-29 13:10:40',
+                url: 'https://www.producthunt.com/products/v0',
+                element: {
+                  xpath: '//*[@id="root-container"]/div[3]/div/main/div[1]/ul/li[7]/a/span',
+                  tagName: 'SPAN',
+                  className: 'text-sm font-semibold',
+                  textContent: 'Team'
+                }
+              },
+              {
+                type: 'navigate',
+                timestamp: '2025-10-29 13:10:41',
+                url: 'https://www.producthunt.com/products/v0/makers',
+                page_title: 'v0 by Vercel Makers and Employees (2025) | Product Hunt'
+              }
+            ]
+          },
+          {
+            id: 'node_6_4',
+            intent_id: 'intent_c30bbd8b',
+            intent_name: 'ExtractTeamMembers',
+            intent_description: 'Extract team member information including names and positions from the Team page',
+            operations: [
+              {
+                type: 'scroll',
+                timestamp: '2025-10-29 13:10:42',
+                url: 'https://www.producthunt.com/products/v0/makers',
+                data: { direction: 'down', distance: 91 }
+              },
+              {
+                type: 'select',
+                timestamp: '2025-10-29 13:10:48',
+                url: 'https://www.producthunt.com/products/v0/makers',
+                element: {
+                  xpath: '//*[@id="root-container"]/div[3]/div/main/div[3]',
+                  tagName: 'DIV',
+                  className: 'grid grid-cols-1 gap-4 sm:grid-cols-2',
+                  textContent: 'Richárd KunkliMobile @ Vercelv0 for iOSFollowGary TokmanMobile @ Vercelv0 for iOSFollowEvil RabbitFo'
+                },
+                data: { selectedText: 'Richárd Kunkli\nMobile @ Vercel\nGary Tokman\nMobile @ Vercel\nEvil Rabbit\nFounding Designer at Vercel\nFernando Rojo\nHead of Mobile at Vercel', textLength: 414 }
+              }
+            ],
+            outputs: {
+              team_members: 'team_members'
+            }
+          }
+        ]
+      }
+    ]
   }
 }
 

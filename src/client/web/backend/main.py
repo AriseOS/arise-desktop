@@ -715,7 +715,8 @@ async def get_workflow_results(
     workflow_collection_map = {
         "allegro-coffee-collection-workflow": "allegro_coffee_products",
         "amazon-coffee-collection-workflow": "amazon_coffee_products",
-        "coffee-market-analysis-workflow": ["allegro_products", "amazon_products"]
+        "coffee-market-analysis-workflow": ["allegro_products", "amazon_products"],
+        "producthunt-weekly-leaderboard-scraper": "producthunt_weekly_products"
     }
 
     # Determine collections to query
