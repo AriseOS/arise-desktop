@@ -217,13 +217,21 @@ class IntentExtractor:
             for idx in operation_indices:
                 if 0 <= idx < len(segment):
                     op_dict = segment[idx]
+
+                    # Clean element data - convert empty dicts to None for string fields
+                    element = op_dict.get("element", {})
+                    if element:
+                        # Clean className if it's an empty dict
+                        if isinstance(element.get("className"), dict):
+                            element = {**element, "className": None}
+
                     intent_operations.append(
                         Operation(
                             type=op_dict.get("type", ""),
                             timestamp=op_dict.get("timestamp"),
                             url=op_dict.get("url"),
                             page_title=op_dict.get("page_title"),
-                            element=op_dict.get("element", {}),
+                            element=element if element else None,
                             data=op_dict.get("data", {})
                         )
                     )
@@ -307,6 +315,42 @@ IMPORTANT - Identify Meaningful vs Meaningless Operations:
 - Focus on operations that contribute to achieving the user's ACTUAL goal
 - Example: If user wants to "extract product data", a click on product info area that doesn't lead to navigation may just be an accidental interaction - include it in the extraction intent or ignore it, don't create a separate intent for it
 - Ask: "Does this operation represent a distinct user goal, or is it just a step/side-effect of achieving another goal?"
+
+CRITICAL - Operation Classification Rules:
+
+**Click Operations**:
+1. **Click for Navigation** (links, menu items, category buttons):
+   - Purpose: Navigate to a different page or section
+   - Should be grouped into a NAVIGATION intent
+   - Description should focus on WHERE the user wants to go, not HOW they click
+   - Example: "Click menu → click Coffee category" → Intent: "Navigate to coffee category page"
+
+2. **Click for Selection** (selecting content to copy):
+   - Purpose: Select data for extraction
+   - Should be grouped with subsequent copy/extract operations into EXTRACTION intent
+   - Example: "Click price → copy" → Part of extraction intent, not a separate click intent
+
+3. **Click for Interaction** (login buttons, form submissions, expand buttons):
+   - Purpose: Trigger actions like login, submit form, reveal hidden content
+   - Should be grouped as INTERACTION intent (if genuinely needed for the task)
+   - Example: "Click login → enter credentials → click submit" → Intent: "Log into user account"
+
+**Scroll Operations**:
+1. **Scroll for Browsing** (just viewing content):
+   - Purpose: User manually scrolling to view page content
+   - These are usually MEANINGLESS and should be FILTERED OUT
+   - Do NOT create separate scroll intents for these
+
+2. **Scroll for Loading More Content** (lazy loading, infinite scroll):
+   - Purpose: Trigger loading of additional content (e.g., more products)
+   - These are MEANINGFUL and should be kept
+   - Should be part of the extraction/navigation intent
+   - Example: "Scroll down to load more products → extract all products" → Intent: "Extract all product listings with pagination"
+
+**Key Principle**:
+- Focus on the USER'S SEMANTIC GOAL, not the mechanical operations
+- Clicks and scrolls are usually just MEANS to achieve a goal (navigate, extract, interact)
+- The intent description should describe the GOAL, not the detailed UI operations
 
 Operations Segment:
 {json.dumps(simplified_ops, indent=2, ensure_ascii=False)}

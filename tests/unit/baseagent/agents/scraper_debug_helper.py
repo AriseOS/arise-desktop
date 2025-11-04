@@ -230,13 +230,13 @@ class ScraperDebugHelper:
             # Use ScraperAgent's DOM extraction logic
             extractor = DOMExtractor()
 
-            # Get partial DOM (visible elements only - used for script generation)
-            partial_dom, _ = extractor.serialize_accessible_elements_custom(
-                enhanced_dom, include_non_visible=False
+            # Get full DOM (all elements - used for script generation)
+            full_dom, _ = extractor.serialize_accessible_elements_custom(
+                enhanced_dom, include_non_visible=True
             )
 
             # Convert to dict format (this is what Claude SDK will use)
-            dom_dict = extract_dom_dict(partial_dom)
+            dom_dict = extract_dom_dict(full_dom)
 
             print(f"📊 DOM dict size: {len(json.dumps(dom_dict))} chars")
 
@@ -254,7 +254,7 @@ class ScraperDebugHelper:
                 "current_url": current_url,
                 "collection_time": datetime.now().isoformat(),
                 "workspace_key": workspace_key,
-                "dom_scope": "partial"  # Always use partial for generation
+                "dom_scope": "full"  # Always use full for generation to capture all fields
             }
 
             metadata_file = workspace_dir / "metadata.json"
@@ -448,6 +448,46 @@ def extract_data_from_page(serialized_dom, dom_dict) -> List[Dict[str, Any]]:
 4. Include proper error handling
 5. Use recursive traversal of dom_dict to find target elements
 6. Handle cases where elements might not exist
+
+**CRITICAL - Code Robustness Requirements:**
+
+⚠️ **DO NOT hardcode numeric thresholds or specific values that depend on sample data:**
+
+❌ **BAD Examples (overfitting to sample data):**
+```python
+# DON'T hardcode text length limits based on sample
+if len(text) > 50:  # ❌ Assumes description is always long
+
+# DON'T hardcode minimum element counts based on sample
+if len(a_tags) >= 3:  # ❌ Assumes always have 3+ links
+
+# DON'T hardcode specific domain names from sample
+if 'tobenone.com' in href:  # ❌ Only works for one website
+
+# DON'T hardcode specific city/country names from sample
+if any(keyword in text for keyword in ['Hong Kong', 'USA']):  # ❌ Misses other locations
+```
+
+✅ **GOOD Examples (generic and flexible):**
+```python
+# Use flexible text matching
+if text and text.strip():  # ✅ Any non-empty text
+
+# Accept any number of elements
+for a_tag in a_tags:  # ✅ Works with 1 or many links
+
+# Use general patterns
+if 'http' in href or any(domain in href for domain in ['facebook', 'twitter', 'instagram', 'youtube']):  # ✅ Generic patterns
+
+# Use structural patterns for location
+if ',' in text and len(text) < 100:  # ✅ Matches "City, Country" pattern
+```
+
+**Key Principles:**
+1. **sample_data is just ONE example** - your script must work for OTHER pages with DIFFERENT content
+2. **Avoid magic numbers** - text lengths, element counts, specific values vary across pages
+3. **Use structural patterns** - look for class names, tag structures, not specific text values
+4. **Be permissive, not restrictive** - prefer "accept if exists" over "reject if doesn't match exact criteria"
 
 **Common patterns:**
 - For list extraction: Find repeating container elements, extract fields from each

@@ -197,27 +197,30 @@ class DOMExtractor:
             return node
     
     def _assign_interactive_indices_and_mark_new_nodes(self, node: SimplifiedNode | None) -> None:
-        """Assign interactive indices - Step 3 of serialization"""
+        """Assign interactive indices - Step 3 of serialization
+
+        Note: In browser-use 0.9.5+, SimplifiedNode uses @dataclass(slots=True) and doesn't
+        allow dynamic attributes. We store the mapping in selector_map and look it up later.
+        """
         try:
             if not node:
                 return
-            
+
             if not (hasattr(node, 'excluded_by_parent') and node.excluded_by_parent):
                 is_interactive_assign = self._is_interactive_cached(node.original_node)
                 # Override visibility if include_non_visible is True
-                original_is_visible = (getattr(node.original_node, 'snapshot_node', None) and 
+                original_is_visible = (getattr(node.original_node, 'snapshot_node', None) and
                                      getattr(node.original_node, 'is_visible', False))
                 is_visible = True if getattr(self, '_include_non_visible', False) else original_is_visible
-                
+
                 if is_interactive_assign and is_visible:
-                    node.interactive_index = self._interactive_counter
-                    node.original_node.element_index = self._interactive_counter
+                    # Store in selector_map (browser-use 0.9.5+ doesn't allow dynamic attributes on SimplifiedNode)
                     self._selector_map[self._interactive_counter] = node.original_node
                     self._interactive_counter += 1
-            
+
             for child in node.children:
                 self._assign_interactive_indices_and_mark_new_nodes(child)
-                
+
         except Exception as e:
             logger.error(f"Error in _assign_interactive_indices_and_mark_new_nodes: {e}")
     
@@ -226,26 +229,45 @@ class DOMExtractor:
         try:
             if not hasattr(node, 'node_id'):
                 return False
-                
+
             if node.node_id not in self._clickable_cache:
                 self._clickable_cache[node.node_id] = ClickableElementDetector.is_interactive(node)
-            
+
             return self._clickable_cache[node.node_id]
-            
+
         except Exception as e:
             logger.error(f"Error in _is_interactive_cached: {e}")
             return False
 
+    def _get_interactive_index(self, node: EnhancedDOMTreeNode) -> int | None:
+        """Get interactive index for a node by looking up selector_map
+
+        Args:
+            node: EnhancedDOMTreeNode to find index for
+
+        Returns:
+            int | None: The interactive index if node is in selector_map, None otherwise
+        """
+        try:
+            # Reverse lookup in selector_map
+            for index, mapped_node in self._selector_map.items():
+                if mapped_node.node_id == node.node_id:
+                    return index
+            return None
+        except Exception as e:
+            logger.error(f"Error in _get_interactive_index: {e}")
+            return None
+
     def extract_dom_dict(self, serialized_dom) -> Dict:
         """Extract DOM structure as simplified Python dictionary
-        
+
         Uses layered filtering strategy:
-        - Content elements: Keep full information for precise targeting  
+        - Content elements: Keep full information for precise targeting
         - Container elements: Only keep tag + children to reduce noise
-        
+
         Args:
             serialized_dom: SerializedDOM object (from any source)
-            
+
         Returns:
             Dict: Simplified nested dictionary structure optimized for both human and LLM consumption
         """
@@ -253,18 +275,25 @@ class DOMExtractor:
             # Check if DOM is valid
             if not hasattr(serialized_dom, '_root') or not serialized_dom._root:
                 return {
-                    "tag": "empty", 
+                    "tag": "empty",
                     "text": "Empty DOM tree (you might have to wait for the page to load)"
                 }
-            
+
+            # Store selector_map reference for _get_interactive_index() to use
+            if hasattr(serialized_dom, 'selector_map'):
+                self._selector_map = serialized_dom.selector_map
+            else:
+                # Fallback: initialize empty selector_map if not provided
+                self._selector_map = {}
+
             # No need for xpath precomputation - we'll calculate on demand
-            
+
             # First generate complete DOM dictionary
             full_dict = self._serialize_tree_to_dict(serialized_dom._root, depth=0, parent_structural_path="", parent_xpath="")
-            
+
             # Then apply layered filtering for consistency between human and LLM views
             simplified_dict = self._apply_layered_filtering(full_dict)
-            
+
             return simplified_dict
             
         except Exception as e:
@@ -374,9 +403,10 @@ class DOMExtractor:
                     "height": pos.height
                 }
             
-            # Only add interactive index if present
-            if hasattr(node, 'interactive_index') and node.interactive_index is not None:
-                node_dict["interactive_index"] = node.interactive_index
+            # Only add interactive index if present (lookup from selector_map)
+            interactive_index = self._get_interactive_index(node.original_node)
+            if interactive_index is not None:
+                node_dict["interactive_index"] = interactive_index
             
             # Collect text content from direct TEXT_NODE children and merge into this element
             direct_text_parts = []

@@ -54,6 +54,27 @@ class PromptBuilder:
     dom_scope: "full"  # Use "full" for lists, "partial" for details
 ```"""
 
+        # Load browser_agent spec
+        browser_spec_file = specs_dir / "browser_agent_spec.md"
+        if browser_spec_file.exists():
+            with open(browser_spec_file, 'r', encoding='utf-8') as f:
+                self.browser_agent_spec = f.read()
+        else:
+            # Fallback to basic inline spec if file not found
+            print(f"Warning: browser_agent_spec.md not found at {browser_spec_file}, using fallback")
+            self.browser_agent_spec = """**Purpose**: Navigate to pages and perform scrolling without data extraction
+
+**When to use**:
+- Intent is pure navigation (no data extraction)
+- Intent description contains: "navigate", "enter", "visit", "go to"
+
+**Example**:
+```yaml
+- agent_type: "browser_agent"
+  inputs:
+    target_url: "https://example.com/page"
+```"""
+
     def build(self, metaflow_yaml: str) -> str:
         """
         Build complete prompt for workflow generation
@@ -160,7 +181,7 @@ You are a Workflow Generation Expert. Your task is to convert MetaFlow (intent-b
 
 Your responsibilities:
 1. Understand user intents from MetaFlow operations
-2. Infer appropriate agent types (tool_agent, scraper_agent, variable, etc.)
+2. Infer appropriate agent types (browser_agent, scraper_agent, variable, storage_agent, etc.)
 3. Infer complete data flow (variables, inputs, outputs)
 4. Generate loops (foreach) from loop descriptions
 5. Produce valid, executable workflow YAML"""
@@ -228,25 +249,13 @@ steps:
     result: "variable_name"
 ```
 
-### 2. scraper_agent - Web Data Extraction
+### 2. browser_agent - Browser Navigation
+
+{browser_agent_spec}
+
+### 3. scraper_agent - Web Data Extraction
 
 {scraper_agent_spec}
-
-### 3. tool_agent - Browser Automation
-**Purpose**: Execute browser operations (navigate, click, input, etc.)
-
-```yaml
-- id: "step-id"
-  agent_type: "tool_agent"
-  agent_instruction: "Navigate/click/input on page"
-  inputs:
-    task_description: "Specific task to accomplish"
-    allowed_tools: ["browser_use"]
-    confidence_threshold: 0.7
-  outputs:
-    result: "result_var"
-    tool_used: "tool_var"
-```
 
 ### 4. storage_agent - Data Persistence
 **Purpose**: Store, query, or export data to database
@@ -264,7 +273,7 @@ steps:
     rows_stored: "count_var"
 ```
 
-### 5. foreach - List Iteration
+### 6. foreach - List Iteration
 **Purpose**: Loop over a list and execute steps for each item
 
 **IMPORTANT - Variable Scope**:
@@ -313,7 +322,8 @@ steps:
 - Access array elements: `{{array[0]}}`
 - Available in: inputs, agent_instruction, condition fields"""
 
-        # Replace scraper_agent spec placeholder with loaded spec
+        # Replace agent spec placeholders with loaded specs
+        spec = spec.replace("{browser_agent_spec}", self.browser_agent_spec)
         spec = spec.replace("{scraper_agent_spec}", self.scraper_agent_spec)
 
         return spec
@@ -359,47 +369,62 @@ When you see loop + extract + store:
 
 ## 2. Operations → Agent Type
 
-### When to Use scraper_agent vs tool_agent
+### When to Use browser_agent vs scraper_agent
 
-**scraper_agent**: For simple navigation + data extraction
-- Can directly visit URL via `target_path` parameter
-- Automatically handles page loading and extraction
-- Use for: direct URL access → extract data
+**browser_agent**: For pure navigation without data extraction
+- Use when intent is ONLY to navigate to a page
+- Intent description contains: "navigate", "enter", "visit", "go to", or click operations for navigation
+- If MetaFlow mentions clicks (e.g., "click menu → click category link"), semanticize to direct URL navigation
+- NO extract operations in the intent
+- Example: "Navigate to coffee category page"
 
-**tool_agent**: For complex browser interactions ONLY
-- Use when: login, authentication, form submission, dynamic content waiting
-- Use `allowed_tools: ["browser_use"]` for browser automation
+**scraper_agent**: For navigation + data extraction
+- Use when intent includes data extraction
+- Intent has extract operations
+- Can also navigate via `target_path` parameter
+- Example: "Extract product information from detail page"
 
-**IMPORTANT Optimization**:
-If MetaFlow contains multiple click/navigate operations but the intent is just to reach a final URL:
-→ Skip intermediate clicks, use **scraper_agent** with the final URL directly!
+**CRITICAL - Preserve Navigation Paths**:
+- **DO NOT** skip initial navigation steps (e.g., homepage → category page)
+- Each navigation intent should generate a **browser_agent** step
+- This prevents anti-bot detection and maintains proper session flow
+- Example:
+  ```yaml
+  # MetaFlow has 2 navigation intents:
+  # 1. "Navigate to homepage"
+  # 2. "Navigate to category page"
 
-Example:
-```yaml
-# MetaFlow: Multiple clicks to navigate
-operations:
-  - type: click  # Click menu button
-  - type: click  # Click category link
-  - type: navigate  # Final URL: https://site.com/category
+  # Workflow should generate 2 browser_agent steps:
+  - id: navigate-homepage
+    agent_type: browser_agent
+    inputs:
+      target_url: "https://site.com/"
 
-# Optimized Workflow: Direct navigation
-- agent_type: "scraper_agent"
-  inputs:
-    target_path: "https://site.com/category"  # Jump to final URL directly!
-```
+  - id: navigate-category
+    agent_type: browser_agent
+    inputs:
+      target_url: "https://site.com/category"
+  ```
 
-### Operation Mapping
+### Core Principles - How to Choose Agent Type
 
-**navigate operation (URL is known)**
-→ **scraper_agent** with target_path (NO tool_agent needed!)
+**Choose agent based on the Intent's semantic goal**:
 
-**Multiple clicks that end with navigate (navigation intent)**
-→ Analyze: Is the real intent just to reach a URL?
-→ YES: Use **scraper_agent** with final URL directly (skip clicks!)
-→ NO (login/auth required): Use **tool_agent** with browser_use
+1. **If the intent goal is to NAVIGATE to a page** → Use **browser_agent**
+   - Example: "Navigate to coffee category page"
+   - Example: "Go to homepage"
 
-**Complex interactions (login, form, dynamic content)**
-→ **tool_agent** with tools: ["browser_use"]
+2. **If the intent goal is to SCROLL for loading more content** → Use **browser_agent**
+   - Example: "Scroll down to load more products"
+   - Note: Scroll for browsing/viewing is usually filtered out in intent extraction phase
+
+3. **If the intent goal is to EXTRACT/COLLECT data** → Use **scraper_agent**
+   - Example: "Extract product information"
+   - Example: "Get all product URLs from the list"
+
+**Agent Capabilities**:
+- **browser_agent**: Pure navigation and page interactions (navigate to URL, scroll)
+- **scraper_agent**: Navigation + data extraction (can navigate AND extract data)
 
 **extract operations**
 → **scraper_agent** with:

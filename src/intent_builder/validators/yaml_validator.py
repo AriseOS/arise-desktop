@@ -127,7 +127,7 @@ class WorkflowYAMLValidator:
         # Validate agent_type
         valid_agent_types = [
             "variable",
-            "tool_agent",
+            "browser_agent",
             "scraper_agent",
             "storage_agent",
             "code_agent",

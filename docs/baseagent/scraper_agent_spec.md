@@ -10,7 +10,6 @@ Web scraping with browser automation. Extracts structured data from web pages.
 ### Required
 ```yaml
 inputs:
-  target_path: "https://example.com"          # Target URL to scrape
   data_requirements:
     user_description: "What to extract"       # Natural language description
     output_format:                            # Expected output structure
@@ -19,16 +18,19 @@ inputs:
       - field_name: "example value"
 ```
 
+**Note**: `target_path` is optional. If omitted, scraper_agent will use the current page (useful after browser_agent navigation).
+
 ### Optional
 ```yaml
 inputs:
-  extraction_method: "llm"        # "llm" | "script" (default: "llm")
-  dom_scope: "partial"            # "partial" | "full" (default: "partial")
-  session_id: "session-id"        # Browser session to reuse
-  use_shared_session: true        # Use shared session from workflow
+  target_path: "https://example.com"  # Target URL (if omitted, use current page)
+  extraction_method: "llm"            # "llm" | "script" (default: "llm")
+  dom_scope: "partial"                # "partial" | "full" (default: "partial")
+  session_id: "session-id"            # Browser session to reuse
+  use_shared_session: true            # Use shared session from workflow
   options:
-    max_items: 20                 # Max items to extract
-    timeout: 30                   # Timeout in seconds
+    max_items: 20                     # Max items to extract
+    timeout: 30                       # Timeout in seconds
 ```
 
 ## Output

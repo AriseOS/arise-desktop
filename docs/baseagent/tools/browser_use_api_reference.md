@@ -1,6 +1,9 @@
 # Browser-Use API Reference
 
-This document provides a comprehensive API reference for browser-use library version 0.7+, focusing on DOM manipulation, browser control actions, and data structures for LLM integration.
+This document provides a comprehensive API reference for browser-use library version 0.9+, focusing on DOM manipulation, browser control actions, and data structures for LLM integration.
+
+**Version:** 0.9.5+
+**Breaking Changes from 0.7:** Action API has been refactored - see Migration Guide below.
 
 ## Import Reference
 
@@ -14,18 +17,24 @@ from browser_use.llm.openai.chat import ChatOpenAI
 from browser_use.llm.anthropic.chat import ChatAnthropic
 from browser_use.llm.google.chat import ChatGoogle
 
-# Action models
+# Action models (v0.9+)
 from browser_use.tools.views import (
-    GoToUrlAction, ClickElementAction, InputTextAction,
-    ScrollAction, DoneAction, StructuredOutputAction
+    NavigateAction,  # Replaces GoToUrlAction (alias still available)
+    ClickElementAction,
+    InputTextAction,
+    ScrollAction,
+    DoneAction,
+    StructuredOutputAction
 )
-from browser_use.agent.views import ActionModel, ActionResult
+from browser_use.agent.views import ActionResult
+from browser_use.tools.registry.views import ActionModel  # Moved in v0.9+
 
 # Browser profile
 from browser_use.browser.profile import BrowserProfile
 
-# Backward compatibility (deprecated)
+# Backward compatibility
 from browser_use import Controller  # Alias for Tools
+from browser_use.tools.views import GoToUrlAction  # Alias for NavigateAction
 ```
 
 ## Core Architecture
@@ -228,12 +237,16 @@ All browser actions inherit from ActionModel base class. Import from `browser_us
 #### Navigation Actions
 
 ```python
-class SearchGoogleAction(BaseModel):
+class SearchAction(BaseModel):
     query: str                         # Search query string
+    engine: str = 'duckduckgo'        # Search engine: duckduckgo, google, bing
 
-class GoToUrlAction(BaseModel):
+class NavigateAction(BaseModel):      # Renamed from GoToUrlAction in v0.9+
     url: str                          # Target URL
     new_tab: bool = False             # Open in new tab
+
+# Backward compatibility alias
+GoToUrlAction = NavigateAction
 
 class NoParamsAction(BaseModel):      # For parameterless actions like go_back
     pass
@@ -261,8 +274,8 @@ class UploadFileAction(BaseModel):
 ```python
 class ScrollAction(BaseModel):
     down: bool                        # True=down, False=up
-    num_pages: float                  # Pages to scroll (0.5, 1.0, etc.)
-    frame_element_index: int = None   # Element to find scroll container
+    pages: float = 1.0               # Pages to scroll (0.5, 1.0, etc.) - renamed from num_pages in v0.9+
+    index: int | None = None         # Element index to scroll within - renamed from frame_element_index in v0.9+
 
 # Built-in scroll to text method
 async def scroll_to_text(text: str, browser_session: BrowserSession)
@@ -843,28 +856,58 @@ async def advanced_example():
 asyncio.run(advanced_example())
 ```
 
-### Migration from v0.6 to v0.7
+### Migration from v0.7 to v0.9
+
+**Key Changes in v0.9:**
+
+1. **ActionModel moved**: `browser_use.agent.views.ActionModel` → `browser_use.tools.registry.views.ActionModel`
+2. **NavigateAction replaces GoToUrlAction** (alias available for backward compatibility)
+3. **ScrollAction parameters renamed**:
+   - `num_pages` → `pages`
+   - `frame_element_index` → `index`
+4. **ActionModel usage changed** - Actions are now fields on ActionModel, not wrapper classes
 
 ```python
-# OLD API (v0.6)
-from browser_use import Agent
-from browser_use.llm import ChatOpenAI
-from browser_use.controller.service import Controller
-from browser_use.controller.views import GoToUrlAction
+# OLD API (v0.7)
+from browser_use.tools.views import GoToUrlAction, ScrollAction
+from browser_use.agent.views import ActionModel
 
-# NEW API (v0.7)
-from browser_use import Agent, Tools  # Tools replaces Controller
-from browser_use.llm.openai.chat import ChatOpenAI  # Specific import path
-from browser_use.tools.views import GoToUrlAction  # Moved to tools.views
-from browser_use.agent.views import ActionModel  # Action base model
+# Create wrapper class
+class GoToUrlActionModel(ActionModel):
+    go_to_url: GoToUrlAction | None = None
 
-# OLD: Controller usage
-controller = Controller()
-result = await controller.act(action, browser_session)
+# Execute action
+action_data = {'go_to_url': GoToUrlAction(url="https://example.com", new_tab=False)}
+result = await tools.act(GoToUrlActionModel(**action_data), browser_session)
 
-# NEW: Tools usage (Controller still works as alias)
-tools = Tools()  # or Controller() for backward compatibility
+# Scroll action
+class ScrollActionModel(ActionModel):
+    scroll: ScrollAction | None = None
+
+action_data = {'scroll': ScrollAction(down=True, num_pages=1.0, frame_element_index=None)}
+result = await tools.act(ScrollActionModel(**action_data), browser_session)
+
+# NEW API (v0.9+)
+from browser_use.tools.views import NavigateAction, ScrollAction
+from browser_use.tools.registry.views import ActionModel
+
+# Direct action creation - ActionModel has all registered actions as fields
+action = ActionModel(navigate=NavigateAction(url="https://example.com", new_tab=False))
 result = await tools.act(action, browser_session)
+
+# Scroll action with renamed parameters
+action = ActionModel(scroll=ScrollAction(down=True, pages=1.0, index=None))
+result = await tools.act(action, browser_session)
+
+# Backward compatibility - GoToUrlAction still works as alias
+from browser_use.tools.views import GoToUrlAction  # Alias for NavigateAction
+action = ActionModel(navigate=GoToUrlAction(url="https://example.com", new_tab=False))
 ```
 
-This API reference provides complete coverage of browser-use v0.7+ core functionality for DOM manipulation, browser control, and LLM integration. All methods and classes include proper type hints and comprehensive documentation for reliable programmatic usage.
+This API reference provides complete coverage of browser-use v0.9+ core functionality for DOM manipulation, browser control, and LLM integration. All methods and classes include proper type hints and comprehensive documentation for reliable programmatic usage.
+
+## Version History
+
+- **v0.9.5** (Current): ActionModel refactor, NavigateAction replaces GoToUrlAction, ScrollAction parameter renames
+- **v0.7**: Tools replaces Controller, action models moved to tools.views
+- **v0.6**: Initial stable release

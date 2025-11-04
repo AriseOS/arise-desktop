@@ -17,8 +17,8 @@ try:
     from browser_use.browser.session import BrowserSession
     from browser_use.browser.profile import BrowserProfile
     from browser_use.dom.service import DomService
-    from browser_use.tools.views import *
-    from browser_use.agent.views import ActionResult, ActionModel
+    from browser_use.browser.events import NavigateToUrlEvent, ScrollEvent
+    from browser_use.agent.views import ActionResult
     BROWSER_USE_AVAILABLE = True
     # Backward compatibility
     Controller = Tools
@@ -99,9 +99,21 @@ class ScraperAgent(BaseStepAgent):
         # Provider will be set in initialize
         self.provider = None
 
+    def _configure_cdp_logging(self):
+        """Configure CDP logging to reduce noise from non-fatal iframe errors"""
+        import logging
+        # Reduce CDP error logging for known non-fatal issues
+        # "Command can only be executed on top-level targets" errors are caught and handled
+        cdp_logger = logging.getLogger('cdp_use.client')
+        # Only show CRITICAL CDP errors, suppress ERROR level
+        cdp_logger.setLevel(logging.CRITICAL)
+
     async def initialize(self, context: AgentContext) -> bool:
         """初始化Agent，从context获取浏览器会话和provider"""
         try:
+            # Configure CDP logging to suppress non-fatal iframe errors
+            self._configure_cdp_logging()
+
             # 从context获取浏览器会话（懒加载）
             session_info = await context.get_browser_session()
 
@@ -209,9 +221,9 @@ class ScraperAgent(BaseStepAgent):
         else:
             return False
 
-        # 必需字段
-        required_fields = ['target_path', 'data_requirements']
-        return all(field in actual_data for field in required_fields)
+        # data_requirements 是必需的
+        # target_path 是可选的 - 如果为空或不存在，使用当前页面
+        return 'data_requirements' in actual_data
     
     async def execute(self, input_data: Any, context: AgentContext) -> Any:
         """执行代理任务"""
@@ -250,12 +262,15 @@ class ScraperAgent(BaseStepAgent):
 
     async def _handle_scrape(self, input_data: Dict, context: AgentContext, config: Dict) -> Dict:
         """统一的数据提取处理"""
-        target_path = input_data['target_path']
+        target_path = input_data.get('target_path')  # 可选，如果为空则使用当前页面
         data_requirements = input_data['data_requirements']
         interaction_steps = input_data.get('interaction_steps', [])
         auto_fix_missing_fields = input_data.get('auto_fix_missing_fields', False)
 
-        logger.info(f"📄 Starting scrape with target_path: {target_path}")
+        if target_path:
+            logger.info(f"📄 Starting scrape with target_path: {target_path}")
+        else:
+            logger.info(f"📄 Starting scrape on current page (no target_path)")
         logger.debug(f"   config: {config}")
 
         try:
@@ -263,14 +278,34 @@ class ScraperAgent(BaseStepAgent):
             max_items = config['max_items']
             timeout = config['timeout']
 
-            # 导航到目标页面并执行交互
-            navigate_result = await self._navigate_to_pages(target_path, interaction_steps)
+            # 如果有 target_path，导航到目标页面并执行交互
+            # 如果没有 target_path，直接使用当前页面
+            if target_path:
+                navigate_result = await self._navigate_to_pages(target_path, interaction_steps)
 
-            if navigate_result.success is False:
-                return self._create_response(
-                    False,
-                    f'页面导航失败: {navigate_result.error}'
-                )
+                if navigate_result.success is False:
+                    return self._create_response(
+                        False,
+                        f'页面导航失败: {navigate_result.error}'
+                    )
+            else:
+                # 没有 target_path，使用当前页面，但可能还有 interaction_steps (如 scroll)
+                if interaction_steps:
+                    logger.info(f"🎯 Executing {len(interaction_steps)} interaction steps on current page...")
+                    for idx, step in enumerate(interaction_steps):
+                        action_type = step.get('action_type', 'unknown')
+                        logger.info(f"   Step {idx + 1}/{len(interaction_steps)}: {action_type}")
+
+                        interaction_result = await self._execute_interaction_step(step)
+
+                        if interaction_result.success is False:
+                            return self._create_response(
+                                False,
+                                f'交互步骤 {idx + 1} 失败: {interaction_result.error}'
+                            )
+
+                    logger.info(f"✅ All interaction steps completed successfully")
+                    await asyncio.sleep(3)  # Wait for content stability
 
             # 提取数据
             extraction_result = await self._extract_data_from_current_page(
@@ -337,17 +372,16 @@ class ScraperAgent(BaseStepAgent):
             for i, url in enumerate(urls):
                 logger.info(f"🔗 Attempting to navigate to: {url}")
 
-                # Create ActionModel
-                class GoToUrlActionModel(ActionModel):
-                    go_to_url: GoToUrlAction | None = None
-
-                # All navigation happens in the same tab
-                action_data = {'go_to_url': GoToUrlAction(url=url, new_tab=False)}
-                result = await self.controller.act(GoToUrlActionModel(**action_data), self.browser_session)
+                # Use event system directly (v0.9+ recommended approach)
+                event = self.browser_session.event_bus.dispatch(
+                    NavigateToUrlEvent(url=url, new_tab=False)
+                )
+                await event
+                result = await event.event_result(raise_if_any=False, raise_if_none=False)
                 await asyncio.sleep(5)  # browser-use already waits for page load via _wait_for_stable_network()
 
                 # Check for explicit failure
-                if result.success is False:
+                if result and hasattr(result, 'success') and result.success is False:
                     logger.error(f"❌ Navigation failed for URL: {url}, error: {result.error}")
                     return result
 
@@ -367,7 +401,7 @@ class ScraperAgent(BaseStepAgent):
                     interaction_result = await self._execute_interaction_step(step)
 
                     # Check if interaction failed
-                    if interaction_result.success is False:
+                    if interaction_result and hasattr(interaction_result, 'success') and interaction_result.success is False:
                         logger.error(f"❌ Interaction step {idx + 1} failed: {interaction_result.error}")
                         return interaction_result
 
@@ -393,23 +427,23 @@ class ScraperAgent(BaseStepAgent):
             parameters = step_config.get('parameters', {})
 
             if action_type == 'scroll':
-                # Create ScrollAction model
-                class ScrollActionModel(ActionModel):
-                    scroll: ScrollAction | None = None
+                # Use event system directly (v0.9+ recommended approach)
+                scroll_down = parameters.get('down', True)
+                amount = int(parameters.get('num_pages', 1.0) * 500)  # Convert pages to pixels
+                direction = "down" if scroll_down else "up"
 
-                action_data = {'scroll': ScrollAction(
-                    down=parameters.get('down', True),
-                    num_pages=parameters.get('num_pages', 1.0),
-                    frame_element_index=parameters.get('frame_element_index')
-                )}
+                logger.debug(f"Scrolling: direction={direction}, amount={amount}px")
 
-                logger.debug(f"Scrolling: down={parameters.get('down', True)}, num_pages={parameters.get('num_pages', 1.0)}")
-                result = await self.controller.act(ScrollActionModel(**action_data), self.browser_session)
+                event = self.browser_session.event_bus.dispatch(
+                    ScrollEvent(direction=direction, amount=amount)
+                )
+                await event
+                result = await event.event_result(raise_if_any=False, raise_if_none=False)
 
                 # Wait for page to stabilize after scroll
                 await asyncio.sleep(1)
 
-                return result
+                return ActionResult(extracted_content=f"Scrolled {direction} {amount}px")
             else:
                 logger.warning(f"Unsupported action type: {action_type}. Currently only 'scroll' is supported.")
                 return ActionResult(success=False, error=f"Unsupported action type: {action_type}. Only 'scroll' is currently supported.")
@@ -429,20 +463,17 @@ class ScraperAgent(BaseStepAgent):
                 # Random scroll direction and distance
                 scroll_down = random.choice([True, False])
                 scroll_pages = random.uniform(0.3, 1.0)  # 0.3 to 1 page
-
-                class ScrollActionModel(ActionModel):
-                    scroll: ScrollAction | None = None
-
-                action_data = {'scroll': ScrollAction(
-                    down=scroll_down,
-                    num_pages=scroll_pages,
-                    frame_element_index=None
-                )}
-
                 direction = "down" if scroll_down else "up"
-                logger.debug(f"   Scroll {i+1}/{num_scrolls}: {direction} {scroll_pages:.2f} pages")
+                amount = int(scroll_pages * 500)  # Convert to pixels
 
-                await self.controller.act(ScrollActionModel(**action_data), self.browser_session)
+                logger.debug(f"   Scroll {i+1}/{num_scrolls}: {direction} {amount}px")
+
+                # Use event system directly
+                event = self.browser_session.event_bus.dispatch(
+                    ScrollEvent(direction=direction, amount=amount)
+                )
+                await event
+                await event.event_result(raise_if_any=False, raise_if_none=False)
 
                 # Random sleep between scrolls (1-3 seconds)
                 sleep_time = random.uniform(1, 3)
@@ -469,8 +500,10 @@ class ScraperAgent(BaseStepAgent):
         from browser_use.browser.events import BrowserStateRequestEvent
         from ..tools.browser_use.dom_extractor import extract_dom_dict, extract_llm_view, DOMExtractor
 
+        if not self.browser_session:
+            raise RuntimeError("Browser session is None")
+
         # Wait for page stability
-        logger.debug("Dispatching BrowserStateRequestEvent to ensure page stability...")
         event = self.browser_session.event_bus.dispatch(
             BrowserStateRequestEvent(
                 include_dom=True,
@@ -478,14 +511,11 @@ class ScraperAgent(BaseStepAgent):
                 include_recent_events=False
             )
         )
-        browser_state = await event.event_result(raise_if_any=True, raise_if_none=False)
-        logger.debug("Page stability wait completed, DOM is ready")
+        await event.event_result(raise_if_any=True, raise_if_none=False)
 
         # Get enhanced DOM from cache
         enhanced_dom = self.browser_session._dom_watchdog.enhanced_dom_tree
         if enhanced_dom is None:
-            logger.warning("⚠️  DOM tree is None after BrowserStateRequestEvent - page may not be fully loaded, will retry")
-            # Return minimal DOM to trigger retry logic in caller
             return "", {}, "[]"
 
         # Extract DOM based on scope
@@ -520,28 +550,6 @@ class ScraperAgent(BaseStepAgent):
         try:
             # Get DOM from current page
             target_dom, dom_dict, llm_view = await self._get_current_page_dom()
-
-            # Check if DOM is too small and retry if needed
-            if len(llm_view) <= 100:
-                logger.warning("⚠️  DOM appears too small - page may not be fully loaded")
-                logger.warning(f"    LLM view length: {len(llm_view)} chars")
-                logger.warning(f"    LLM view content: {llm_view}")
-                logger.warning(f"    DOM dict tag: {dom_dict.get('tag')}")
-                logger.warning(f"    Waiting 2 seconds and retrying DOM extraction...")
-
-                # Wait for page to fully load
-                await asyncio.sleep(2)
-
-                # Retry DOM extraction
-                logger.info("Retrying DOM extraction after wait...")
-                target_dom, dom_dict, llm_view = await self._get_current_page_dom()
-
-                logger.info(f"    After retry - LLM view length: {len(llm_view)} chars")
-                if len(llm_view) <= 100:
-                    logger.error("⚠️  DOM still too small after retry - proceeding anyway")
-
-            logger.info(f"    Final LLM view length: {len(llm_view)} chars")
-            logger.info(f"    Final LLM view content: {llm_view[:100]}...")
 
             # 调试模式: 保存DOM结构
             if self.debug_mode:
@@ -613,25 +621,26 @@ class ScraperAgent(BaseStepAgent):
                 # Generate new script using Claude SDK
                 logger.info(f"📝 Script not found at {script_file}")
                 logger.info(f"   Generating new script with Claude SDK...")
-                logger.info(f"   Using partial DOM to save tokens during generation")
+                logger.info(f"   Using full DOM for script generation (ensures all fields are captured)")
 
-                # Temporarily switch to partial scope for script generation
+                # Force full DOM for script generation to capture all page content
+                # This ensures the script can extract fields even if they're below the fold
                 original_scope = self.dom_scope
-                self.dom_scope = 'partial'
+                self.dom_scope = 'full'
 
-                # Get DOM for script generation
-                partial_dom, partial_dict, partial_llm_view = await self._get_current_page_dom()
+                # Get full DOM for script generation
+                generation_dom, generation_dict, generation_llm_view = await self._get_current_page_dom()
 
                 # Restore original scope
                 self.dom_scope = original_scope
 
-                # Build DOM analysis data with PARTIAL DOM
+                # Build DOM analysis data with FULL DOM
                 dom_analysis = {
-                    'serialized_dom': partial_dom,
-                    'dom_dict': partial_dict,
-                    'llm_view': partial_llm_view,
+                    'serialized_dom': generation_dom,
+                    'dom_dict': generation_dict,
+                    'llm_view': generation_llm_view,
                     'dom_config': {
-                        'dom_scope': 'partial'  # Always partial for generation
+                        'dom_scope': 'full'  # Always full for generation
                     }
                 }
 
@@ -643,7 +652,7 @@ class ScraperAgent(BaseStepAgent):
                 logger.info(f"✅ Script generated successfully by Claude SDK")
                 logger.info(f"   Script workspace: {script_workspace}")
                 logger.info(f"   Script file: {script_file}")
-                logger.info(f"   Generated using: partial DOM (token optimization)")
+                logger.info(f"   Generated using: full DOM (captures all page content)")
                 logger.info(f"   Execution will use: {self.dom_scope} DOM")
 
             # Execute script with user-specified DOM scope (target_dom is already scoped)
@@ -1220,162 +1229,81 @@ Extract data now:"""
             # Build Claude SDK prompt
             prompt = f"""# Web Scraping Script Generation Task
 
-## Working Directory Structure
+## Working Directory
 
 You are working in: `{working_dir}`
 
-**Files available:**
-- `requirement.json` - Data extraction requirements
-- `dom_data.json` - DOM structure of the webpage (JSON format)
+**Input files:**
+- `requirement.json` - What data to extract
+- `dom_data.json` - Webpage DOM structure (nested JSON)
 
-**Files to create:**
-- `extraction_script.py` - Main extraction script
+**Your task:**
+Create `extraction_script.py` that extracts data according to requirements.
 
-## Task Overview
+## Instructions
 
-Generate a Python script that extracts data from a webpage DOM structure according to user requirements.
+1. **Read the files** to understand requirements and DOM structure
+2. **Explore the DOM** using Grep/Read to find target elements
+3. **Write extraction script** that returns `List[Dict[str, Any]]`
 
-## Step 1: Read Input Files
+## Critical DOM Understanding
 
-First, read the input files to understand the requirements:
-- Read `requirement.json` to see what data needs to be extracted
-- Read `dom_data.json` to understand the webpage structure (use Grep/Read tools to explore)
-
-## Step 2: Understand DOM Structure
-
-The DOM data is in JSON format with this structure:
-```python
+DOM structure:
+```json
 {{
-    "tag": "div",           # HTML tag name
-    "text": "content",      # Text content
-    "class": "item",        # CSS class
-    "href": "url",          # Link URL
-    "xpath": "/html/...",   # XPath location
-    "children": [...]       # Nested children
+    "tag": "div",
+    "text": "...",      // Only THIS node's direct text (NOT children!)
+    "class": "...",
+    "children": [...]   // Nested child nodes
 }}
 ```
 
-Use Grep to search for specific patterns in dom_data.json, for example:
-- Search for class names: grep -i '"class".*product' dom_data.json
-- Search for specific tags: grep -i '"tag".*"h2"' dom_data.json
+**Key insight:** Modern websites split text across siblings:
+```json
+// Common pattern - number and label separated:
+{{
+    "tag": "div",
+    "children": [
+        {{"tag": "span", "text": "930"}},
+        {{"tag": "span", "text": "backers"}}
+    ]
+}}
+```
 
-## Step 3: Data Extraction Requirements
+**Your script must handle this** - combine text from parent/children when needed, not just read single `text` fields.
+
+## Requirements
+
+Function signature:
+```python
+def extract_data_from_page(serialized_dom, dom_dict) -> List[Dict[str, Any]]:
+    # Your implementation
+    pass
+```
+
+**Make it generic:**
+- Work on similar pages with different content
+- Use structural patterns (classes, tags), not hardcoded values
+- Handle missing elements gracefully
+
+## Data Requirements
 
 **User Description:** {user_description}
 
 **Fields to extract:**
 {fields_description}{sample_description}{xpath_hints_description}
 
-**IMPORTANT - Understanding Extraction Scope**:
+## Important Notes
 
-1. **Read user_description carefully**: It tells you WHAT to extract and from WHERE
-   - Keywords like "weekly list", "main section", "team members" indicate the target area
-   - Keywords like "only", "just", "exclude" indicate limitations
+- **sample_data is just ONE example** - script must work for other pages with different content
+- **xpath_hints are reference only** - use them to understand structure, then adapt to actual DOM
+- **Text may be split** across child nodes - combine when needed
+- **Avoid hardcoding** - no magic numbers, specific text values, or assumptions from sample
+- **Preserve DOM order** - DO NOT sort results. DOM order is meaningful (rankings, chronological, relevance)
 
-2. **Use xpath_hints as reference** (if provided):
-   - They show examples of element locations from user's demonstration
-   - Use them to understand DOM structure and element patterns
-   - **NOTE**: xpath_hints are HINTS, not strict requirements - adapt to actual DOM structure
-   - If exact xpath doesn't work, find similar patterns with same class/structure
+## Testing
 
-3. **Focus on the target area**:
-   - If user says "weekly leaderboard", look for elements within that section
-   - Ignore similar-looking data from other areas (sidebar, footer, recommendations)
-
-**Example**:
-```python
-# User description: "Extract products from weekly leaderboard"
-# xpath_hint: "//section[@class='weekly-list']//a"
-
-# Use hint to understand the structure:
-# - Products are in a section with class 'weekly-list'
-# - They are <a> tags
-
-# Your extraction logic:
-def extract_data_from_page(serialized_dom, dom_dict):
-    # Find the weekly list section (use class pattern from hint)
-    weekly_section = find_section_by_class(dom_dict, "weekly-list")
-    if weekly_section:
-        # Extract links only from this section
-        products = extract_links_from_container(weekly_section)
-    else:
-        # Fallback: adapt to similar patterns
-        products = find_product_list_container(dom_dict)
-    return products
-```
-
-## Step 4: Generate extraction_script.py
-
-Create a file named `extraction_script.py` with this function:
-
-```python
-def extract_data_from_page(serialized_dom, dom_dict) -> List[Dict[str, Any]]:
-    \"\"\"
-    Extract data from DOM structure
-
-    Args:
-        serialized_dom: SerializedDOMTree object (browser-use library)
-        dom_dict: DOM structure as nested dictionary
-
-    Returns:
-        List of dictionaries, each containing extracted fields
-    \"\"\"
-    # Your implementation here
-    pass
-```
-
-**Requirements:**
-1. Function must be named `extract_data_from_page`
-2. Parameters: `serialized_dom` and `dom_dict`
-3. Return type: `List[Dict[str, Any]]`
-4. Include proper error handling
-5. Use recursive traversal of dom_dict to find target elements
-6. Handle cases where elements might not exist
-
-**Common patterns:**
-- For list extraction: Find repeating container elements, extract fields from each
-- For single item: Navigate to specific element and extract fields
-- Use XPath hints as reference, but adapt to actual DOM structure
-
-## Step 5: Test and Validate
-
-After generating the script:
-1. Create a test file `test_script.py` that:
-   - Loads dom_data.json
-   - Calls extract_data_from_page() with the DOM data
-   - Validates output format matches requirements
-   - Prints extracted data for review
-
-2. Run the test: `python test_script.py`
-
-3. **Validation Checklist**:
-   - ✅ All required fields are extracted
-   - ✅ Data format matches sample_data structure
-   - ✅ No errors during extraction
-   - ✅ Output data looks reasonable based on user_description
-
-4. If errors occur:
-   - Analyze the error message
-   - Fix the extraction_script.py
-   - Re-run the test
-   - Repeat until test passes
-
-## Step 6: Final Verification
-
-Ensure:
-- extraction_script.py exists and is syntactically correct
-- Test passes without errors
-- Output data matches expected format from requirement.json
-
----
-
-**Important Notes:**
-- This is a sample page - the script should work on pages with similar structure but different content
-- Use flexible selectors (class names, patterns) rather than hardcoded values
-- Handle missing elements gracefully (return empty list or skip items)
-- The DOM structure in dom_data.json represents the actual webpage HTML structure
-
-Start by reading requirement.json and dom_data.json to understand the task!
+Create and run a test to validate your extraction_script.py works correctly.
 """
 
             # 4. Initialize Claude Agent Provider

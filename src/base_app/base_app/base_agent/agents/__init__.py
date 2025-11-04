@@ -2,7 +2,7 @@
 Agent-as-Step implementation module
 """
 from .base_agent import BaseStepAgent, AgentMetadata
-from .text_agent import TextAgent  
+from .text_agent import TextAgent
 from .tool_agent import ToolAgent
 from .code_agent import CodeAgent
 from .agent_registry import AgentRegistry
@@ -13,7 +13,7 @@ __all__ = [
     'BaseStepAgent',
     'AgentMetadata',
     'TextAgent',
-    'ToolAgent', 
+    'ToolAgent',
     'CodeAgent',
     'AgentRegistry',
     'AgentRouter',

@@ -9,13 +9,14 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 
 from .schemas import (
-    AgentWorkflowStep, WorkflowResult, StepResult, 
+    AgentWorkflowStep, WorkflowResult, StepResult,
     AgentContext, AgentInput, AgentOutput
 )
 from ..agents import (
     AgentRegistry, AgentRouter, AgentExecutor,
     TextAgent, ToolAgent, CodeAgent
 )
+from ..agents.browser_agent import BrowserAgent
 from ..agents.variable_agent import VariableAgent
 from ..agents.scraper_agent import ScraperAgent
 from ..agents.storage_agent import StorageAgent
@@ -90,6 +91,12 @@ class AgentWorkflowEngine:
         self.agent_registry.register_agent_factory(
             "storage_agent",
             lambda config: StorageAgent()
+        )
+
+        # 注册 Browser Agent 工厂
+        self.agent_registry.register_agent_factory(
+            "browser_agent",
+            lambda config: BrowserAgent()
         )
 
         logger.info(f"已注册内置Agent工厂: {self.agent_registry.list_agent_names()}")
@@ -383,11 +390,12 @@ class AgentWorkflowEngine:
                     if 0 <= idx < len(value):
                         value = value[idx]
                     else:
-                        raise ValueError(
-                            f"List index {idx} out of range.\n"
-                            f"  Trying to resolve: {{{{{{var_expression}}}}}}\n"
-                            f"  List has {len(value)} items (valid indices: 0-{len(value)-1})"
+                        # Return None for out-of-range access (graceful degradation)
+                        logger.warning(
+                            f"List index {idx} out of range (list has {len(value)} items). "
+                            f"Returning None for: {var_expression}"
                         )
+                        return None
                 elif len(value) == 1:
                     # Auto-unwrap single-item list: {{list.field}} → {{list.0.field}}
                     # This makes scraper_agent output more ergonomic for single-item extraction

@@ -97,11 +97,11 @@ class WorkflowValidator:
     }
     
     AGENT_SPECIFIC_FIELDS = {
-        'tool_agent': ['tools'],
         'code_agent': ['code'],
         'text_agent': ['text'],
         'variable': [],  # Variable agent doesn't require specific fields
-        'scraper_agent': []  # Scraper agent doesn't require specific fields
+        'scraper_agent': [],  # Scraper agent doesn't require specific fields
+        'browser_agent': []  # Browser agent doesn't require specific fields
     }
     
     def validate(self, config: Dict[str, Any]) -> List[str]:
@@ -167,7 +167,7 @@ class WorkflowValidator:
             
             # 验证 agent_type
             agent_type = step.get('agent_type')
-            if agent_type not in ['text_agent', 'tool_agent', 'code_agent', 'variable', 'scraper_agent', 'if', 'while', 'foreach']:
+            if agent_type not in ['text_agent', 'code_agent', 'variable', 'scraper_agent', 'browser_agent', 'storage_agent', 'if', 'while', 'foreach']:
                 errors.append(f"{step_prefix}: 不支持的 agent_type '{agent_type}'")
             
             # 验证控制流特定配置
