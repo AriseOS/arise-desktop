@@ -4,6 +4,9 @@ import jsPDF from 'jspdf'
 import html2canvas from 'html2canvas'
 import { DEFAULT_CONFIG_KEY, getWorkflow } from '../config/index'
 
+// Store blob URLs for cleanup
+const blobUrlsToCleanup = new Set()
+
 // Demo markdown content for coffee-market-analysis-workflow
 const DEMO_MARKDOWN = `# 咖啡市场对比调研报告（ Allegro vs. Amazon ）
 *——基于 2025 年 10 月公开商品数据*
@@ -104,6 +107,27 @@ function WorkflowResultPage({ currentUser, onNavigate, showStatus, params }) {
 
   useEffect(() => {
     loadResultData()
+
+    // Listen for blob URL cleanup messages from background script
+    const messageListener = (message) => {
+      if (message.action === 'revokeBlobUrl' && message.url) {
+        if (blobUrlsToCleanup.has(message.url)) {
+          URL.revokeObjectURL(message.url)
+          blobUrlsToCleanup.delete(message.url)
+          console.log('Cleaned up blob URL:', message.url)
+        }
+      }
+    }
+
+    chrome.runtime.onMessage.addListener(messageListener)
+
+    // Cleanup on unmount
+    return () => {
+      chrome.runtime.onMessage.removeListener(messageListener)
+      // Clean up any remaining blob URLs
+      blobUrlsToCleanup.forEach(url => URL.revokeObjectURL(url))
+      blobUrlsToCleanup.clear()
+    }
   }, [])
 
   const loadResultData = async () => {
@@ -310,56 +334,111 @@ function WorkflowResultPage({ currentUser, onNavigate, showStatus, params }) {
         heightLeft -= pdfHeight
       }
 
-      pdf.save('咖啡市场对比调研报告_Allegro_vs_Amazon.pdf')
-      showStatus('✅ PDF已下载', 'success')
+      // Get PDF as blob and create URL
+      const pdfBlob = pdf.output('blob')
+      const blobUrl = URL.createObjectURL(pdfBlob)
+      const filename = '咖啡市场对比调研报告_Allegro_vs_Amazon.pdf'
+
+      try {
+        // Track blob URL for later cleanup
+        blobUrlsToCleanup.add(blobUrl)
+
+        // Send to background script for download
+        const response = await chrome.runtime.sendMessage({
+          action: 'downloadFile',
+          blobUrl: blobUrl,
+          filename: filename
+        })
+
+        if (response && response.success) {
+          console.log(`Download initiated: ${filename} with ID: ${response.downloadId}`)
+          showStatus('✅ PDF已下载', 'success')
+        } else {
+          showStatus('❌ PDF下载失败', 'error')
+        }
+      } catch (error) {
+        console.error('Download error:', error)
+        showStatus('❌ PDF下载失败', 'error')
+      }
     } catch (error) {
       console.error('PDF generation error:', error)
       showStatus('❌ PDF生成失败', 'error')
     }
   }
 
-  const downloadCSV = () => {
+  const downloadCSV = async () => {
     if (!resultData) return
 
     if (resultData.isMultiCollection) {
       // Download separate CSV for each collection
-      resultData.collections.forEach(collection => {
+      let successCount = 0
+      for (const collection of resultData.collections) {
         const headers = collection.fields.join(',')
         const rows = collection.data.map(row => row.map(cell => `"${cell}"`).join(',')).join('\n')
         const csvContent = `${headers}\n${rows}`
 
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
-        const link = document.createElement('a')
-        const url = URL.createObjectURL(blob)
+        try {
+          // Create blob URL
+          const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+          const blobUrl = URL.createObjectURL(blob)
+          const filename = `${resultData.workflow_name}_${collection.name}.csv`
 
-        link.setAttribute('href', url)
-        link.setAttribute('download', `${resultData.workflow_name}_${collection.name}.csv`)
-        link.style.visibility = 'hidden'
+          // Track blob URL for later cleanup
+          blobUrlsToCleanup.add(blobUrl)
 
-        document.body.appendChild(link)
-        link.click()
-        document.body.removeChild(link)
-      })
-      showStatus(`✅ 已下载 ${resultData.collections.length} 个CSV文件`, 'success')
+          // Send to background script for download
+          const response = await chrome.runtime.sendMessage({
+            action: 'downloadFile',
+            blobUrl: blobUrl,
+            filename: filename
+          })
+
+          if (response && response.success) {
+            console.log(`Download initiated: ${filename} with ID: ${response.downloadId}`)
+            successCount++
+          }
+        } catch (error) {
+          console.error('Download error:', error)
+        }
+      }
+
+      if (successCount === resultData.collections.length) {
+        showStatus(`✅ 已下载 ${successCount} 个CSV文件`, 'success')
+      } else {
+        showStatus('❌ 部分CSV文件下载失败', 'error')
+      }
     } else {
       // Single collection CSV download
       const headers = resultData.fields.join(',')
       const rows = resultData.data.map(row => row.map(cell => `"${cell}"`).join(',')).join('\n')
       const csvContent = `${headers}\n${rows}`
 
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
-      const link = document.createElement('a')
-      const url = URL.createObjectURL(blob)
+      try {
+        // Create blob URL
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+        const blobUrl = URL.createObjectURL(blob)
+        const filename = `${resultData.workflow_name}_results.csv`
 
-      link.setAttribute('href', url)
-      link.setAttribute('download', `${resultData.workflow_name}_results.csv`)
-      link.style.visibility = 'hidden'
+        // Track blob URL for later cleanup
+        blobUrlsToCleanup.add(blobUrl)
 
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
+        // Send to background script for download
+        const response = await chrome.runtime.sendMessage({
+          action: 'downloadFile',
+          blobUrl: blobUrl,
+          filename: filename
+        })
 
-      showStatus('✅ CSV文件已下载', 'success')
+        if (response && response.success) {
+          console.log(`Download initiated: ${filename} with ID: ${response.downloadId}`)
+          showStatus('✅ CSV文件已下载', 'success')
+        } else {
+          showStatus('❌ CSV下载失败', 'error')
+        }
+      } catch (error) {
+        console.error('Download error:', error)
+        showStatus('❌ CSV下载失败', 'error')
+      }
     }
   }
 
