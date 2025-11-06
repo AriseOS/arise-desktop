@@ -180,6 +180,7 @@ function App() {
           onNavigate={navigateTo}
           showStatus={showStatus}
           recordingData={recordingData}
+          params={navigationParams}
         />
       )}
       {currentPage === 'workflow-generation' && (
