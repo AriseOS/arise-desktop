@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { getMetaflow } from '../config/metaflows'
 import { DEFAULT_CONFIG_KEY, getConfig } from '../config/index'
 
-function MetaflowPage({ onNavigate, showStatus, recordingData }) {
+function MetaflowPage({ onNavigate, showStatus, recordingData, params }) {
   const [metaflows, setMetaflows] = useState([])
   const [isEditing, setIsEditing] = useState(false)
   const [editingNode, setEditingNode] = useState(null)
@@ -342,7 +342,7 @@ function MetaflowPage({ onNavigate, showStatus, recordingData }) {
       <div className="page-header">
         <button
           className="back-button"
-          onClick={() => onNavigate('record')}
+          onClick={() => onNavigate(params?.fromPage || 'record')}
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="#667eea" strokeWidth="2">
             <path d="M19 12H5M12 19l-7-7 7-7"/>

@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { DEFAULT_CONFIG_KEY } from '../config/index'
 
 function ChatPage({ onNavigate, showStatus }) {
   const [title, setTitle] = useState('')
@@ -16,16 +17,30 @@ function ChatPage({ onNavigate, showStatus }) {
       return
     }
 
-    // TODO: 生成 Workflow
     setIsGenerating(true)
-    console.log('Generate workflow:', { title, description })
-    showStatus('🤖 开始生成 Workflow...', 'info')
+
+    // Only show generating status for non-analysis workflows
+    if (DEFAULT_CONFIG_KEY !== 'cross-market-product-selection') {
+      showStatus('🤖 开始生成 Workflow...', 'info')
+    }
+
+    // Simulate generation delay
+    setTimeout(() => {
+      setIsGenerating(false)
+
+      // Only show success status for non-analysis workflows
+      if (DEFAULT_CONFIG_KEY !== 'cross-market-product-selection') {
+        showStatus('✅ Workflow 生成成功', 'success')
+      }
+
+      // Navigate to appropriate page based on default config
+      const targetPage = DEFAULT_CONFIG_KEY === 'cross-market-product-selection' ? 'workflow-analysis' : 'metaflow'
+      onNavigate(targetPage, { fromPage: 'chat' })
+    }, 1000)
   }
 
   const handleStopGenerate = () => {
-    // TODO: 停止生成
     setIsGenerating(false)
-    console.log('Stop generating')
     showStatus('⏹️ 已停止生成', 'info')
   }
 

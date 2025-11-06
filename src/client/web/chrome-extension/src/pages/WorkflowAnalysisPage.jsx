@@ -41,7 +41,8 @@ function WorkflowAnalysisPage({ onNavigate, params }) {
 
         // Auto-navigate to metaflow after completion
         setTimeout(() => {
-          onNavigate('metaflow', params)
+          // Pass through the original fromPage so metaflow knows where to return
+          onNavigate('metaflow', { ...params, fromPage: params?.fromPage || 'record' })
         }, 500)
       }
     }, typingSpeed)

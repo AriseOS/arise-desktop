@@ -91,6 +91,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       });
     return true;
   }
+
+  // Handle file download requests
+  if (request.action === 'downloadFile') {
+    handleFileDownload(request.blobUrl, request.filename)
+      .then(downloadId => {
+        sendResponse({ success: true, downloadId });
+      })
+      .catch(error => {
+        sendResponse({ success: false, error: error.message });
+      });
+    return true;
+  }
 });
 
 // Capture tab screenshot
@@ -105,6 +117,75 @@ async function captureTabScreenshot() {
     throw error;
   }
 }
+
+// Store blob URLs to prevent premature cleanup
+const activeBlobUrls = new Map();
+
+// Handle file download from popup/sidepanel
+async function handleFileDownload(blobUrl, filename) {
+  try {
+    console.log(`Starting download: ${filename} from ${blobUrl}`);
+
+    // Start download
+    const downloadId = await chrome.downloads.download({
+      url: blobUrl,
+      filename: filename,
+      saveAs: false,
+      conflictAction: 'uniquify'
+    });
+
+    console.log(`Download started with ID: ${downloadId}`);
+
+    // Store the blob URL with download ID for cleanup after download completes
+    activeBlobUrls.set(downloadId, { url: blobUrl, filename: filename });
+
+    return downloadId;
+  } catch (error) {
+    console.error('Error downloading file:', error);
+    throw error;
+  }
+}
+
+// Listen for download completion to clean up blob URLs
+chrome.downloads.onChanged.addListener((delta) => {
+  if (delta.state && delta.state.current === 'complete') {
+    const downloadId = delta.id;
+    const blobInfo = activeBlobUrls.get(downloadId);
+
+    if (blobInfo) {
+      console.log(`Download completed: ${blobInfo.filename} (ID: ${downloadId})`);
+
+      // Send message to revoke the blob URL in the popup context
+      chrome.runtime.sendMessage({
+        action: 'revokeBlobUrl',
+        url: blobInfo.url
+      }).catch(() => {
+        // Popup might be closed, that's OK
+      });
+
+      // Clean up our tracking
+      activeBlobUrls.delete(downloadId);
+    }
+  }
+
+  // Handle download errors
+  if (delta.error) {
+    const downloadId = delta.id;
+    const blobInfo = activeBlobUrls.get(downloadId);
+
+    if (blobInfo) {
+      console.error(`Download failed: ${blobInfo.filename} - ${delta.error.current}`);
+
+      // Clean up
+      chrome.runtime.sendMessage({
+        action: 'revokeBlobUrl',
+        url: blobInfo.url
+      }).catch(() => {});
+
+      activeBlobUrls.delete(downloadId);
+    }
+  }
+});
 
 // Send operation to backend
 async function sendOperationToBackend(sessionId, token, operation) {

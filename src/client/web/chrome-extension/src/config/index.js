@@ -33,7 +33,7 @@ export const WORKFLOW_METAFLOW_MAP = {
 }
 
 // Default configuration key
-export const DEFAULT_CONFIG_KEY = 'producthunt-weekly-leaderboard'
+export const DEFAULT_CONFIG_KEY = 'cross-market-product-selection'
 
 // Get workflow and metaflow by config key
 export function getConfig(configKey) {

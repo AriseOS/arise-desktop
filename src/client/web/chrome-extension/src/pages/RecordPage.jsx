@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { DEFAULT_CONFIG_KEY } from '../config/index'
 
 function RecordPage({ onNavigate, showStatus, currentUser }) {
   const [title, setTitle] = useState('')
@@ -235,13 +236,13 @@ function RecordPage({ onNavigate, showStatus, currentUser }) {
           console.error('Failed to clear operations:', err)
         })
 
-        // Navigate to appropriate page based on workflow title
-        const targetPage = title === 'cross-market-product-selection' ? 'workflow-analysis' : 'metaflow'
+        // Navigate to appropriate page based on default config
+        const targetPage = DEFAULT_CONFIG_KEY === 'cross-market-product-selection' ? 'workflow-analysis' : 'metaflow'
         console.log(`Preparing to navigate to ${targetPage} page with data:`, result)
         setTimeout(() => {
           console.log(`Calling onNavigate with ${targetPage} page`)
           setIsGenerating(false)
-          onNavigate(targetPage, { recordingData: result })
+          onNavigate(targetPage, { recordingData: result, fromPage: 'record' })
         }, 2000)
       } else {
         throw new Error(result.error || 'Failed to stop recording')
