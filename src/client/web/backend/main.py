@@ -2,6 +2,7 @@
 Agentcrafter Web Backend - FastAPI 服务器
 """
 import uvicorn
+import logging
 from fastapi import FastAPI, HTTPException, Depends, status, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -11,10 +12,15 @@ from datetime import datetime
 from typing import Optional, Dict, List
 import json
 
+logger = logging.getLogger(__name__)
+
 from database import get_db, init_db, User, ChatHistory, AgentBuildSession, GeneratedAgent
 from auth import auth_service
 from agent_service import agent_build_service
 from recording_service import recording_service
+from storage_service import storage_service
+from learning_service import learning_service
+from workflow_service import workflow_service
 
 # 初始化数据库
 init_db()
@@ -109,8 +115,8 @@ async def startup_event():
         print("🌐 Initializing global browser session...")
         print("="*80)
 
-        from base_app.base_agent.tools.browser_session_manager import BrowserSessionManager
-        from base_app.server.core.config_service import ConfigService
+        from src.base_app.base_app.base_agent.tools.browser_session_manager import BrowserSessionManager
+        from src.base_app.base_app.server.core.config_service import ConfigService
 
         # Get browser session manager instance
         session_manager = await BrowserSessionManager.get_instance()
@@ -152,7 +158,7 @@ async def shutdown_event():
             print("🔻 Cleaning up global browser session...")
             print("="*80)
 
-            from base_app.base_agent.tools.browser_session_manager import BrowserSessionManager
+            from src.base_app.base_app.base_agent.tools.browser_session_manager import BrowserSessionManager
 
             session_manager = await BrowserSessionManager.get_instance()
             await session_manager.close_session("global", force=True)
@@ -847,6 +853,17 @@ class RecordingOperationRequest(BaseModel):
     session_id: str
     operation: dict
 
+# Learning Phase Models
+class ExtractIntentsRequest(BaseModel):
+    session_id: str
+
+class GenerateMetaflowRequest(BaseModel):
+    session_id: str
+
+# Workflow Models
+class GenerateWorkflowRequest(BaseModel):
+    session_id: str
+
 @app.post("/api/recording/start")
 async def start_recording(
     request: RecordingStartRequest,
@@ -944,6 +961,23 @@ async def stop_recording(
         traceback.print_exc()
         db.rollback()
 
+    # Save to file system storage
+    try:
+        storage_service.save_learning_operations(
+            user_id=current_user.id,
+            session_id=request.session_id,
+            operations=result.get("operations", []),
+            title=session_data.get("title", ""),
+            description=session_data.get("description", ""),
+            started_at=session_data.get("start_time", datetime.utcnow().isoformat()),
+            stopped_at=datetime.utcnow().isoformat()
+        )
+        print(f"✅ Recording saved to file system storage")
+    except Exception as e:
+        print(f"❌ Failed to save recording to file system: {e}")
+        import traceback
+        traceback.print_exc()
+
     return result
 
 @app.get("/api/recording/status/{session_id}")
@@ -998,6 +1032,207 @@ async def add_recording_operation(
     return {
         "success": True,
         "operation_count": len(session.operation_list)
+    }
+
+# ===== Learning Phase APIs =====
+
+@app.post("/api/learning/extract-intents")
+async def extract_intents(
+    request: ExtractIntentsRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Extract intents from recorded operations"""
+    try:
+        result = await learning_service.extract_intents(
+            user_id=current_user.id,
+            session_id=request.session_id
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Intent extraction failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Intent extraction failed: {str(e)}")
+
+@app.post("/api/learning/generate-metaflow")
+async def generate_metaflow(
+    request: GenerateMetaflowRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Generate MetaFlow from extracted intents"""
+    try:
+        result = await learning_service.generate_metaflow(
+            user_id=current_user.id,
+            session_id=request.session_id
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"MetaFlow generation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"MetaFlow generation failed: {str(e)}")
+
+@app.get("/api/learning/sessions")
+async def list_learning_sessions(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """List all learning sessions for current user"""
+    sessions = learning_service.list_sessions(current_user.id)
+    return {
+        "success": True,
+        "sessions": sessions,
+        "total": len(sessions)
+    }
+
+@app.get("/api/learning/sessions/{session_id}")
+async def get_learning_session(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get learning session details"""
+    session = learning_service.get_session_status(current_user.id, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {
+        "success": True,
+        "session": session
+    }
+
+@app.delete("/api/learning/sessions/{session_id}")
+async def delete_learning_session(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete a learning session"""
+    success = learning_service.delete_session(current_user.id, session_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {
+        "success": True,
+        "session_id": session_id,
+        "message": "Session deleted successfully"
+    }
+
+# ===== Workflow Management APIs =====
+
+@app.post("/api/workflows/generate")
+async def generate_workflow(
+    request: GenerateWorkflowRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Generate workflow from MetaFlow"""
+    try:
+        result = await workflow_service.generate_workflow(
+            user_id=current_user.id,
+            session_id=request.session_id
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Workflow generation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Workflow generation failed: {str(e)}")
+
+@app.get("/api/workflows")
+async def list_workflows(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """List all workflows for current user"""
+    workflows = workflow_service.list_workflows(current_user.id)
+    return {
+        "success": True,
+        "workflows": workflows,
+        "total": len(workflows)
+    }
+
+@app.get("/api/workflows/{workflow_name}")
+async def get_workflow_details(
+    workflow_name: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get workflow details"""
+    workflow = workflow_service.get_workflow(current_user.id, workflow_name)
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    return {
+        "success": True,
+        "workflow": workflow
+    }
+
+@app.delete("/api/workflows/{workflow_name}")
+async def delete_workflow(
+    workflow_name: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete a workflow"""
+    success = workflow_service.delete_workflow(current_user.id, workflow_name)
+    if not success:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    return {
+        "success": True,
+        "workflow_name": workflow_name,
+        "message": "Workflow deleted successfully"
+    }
+
+# ===== Workflow Execution APIs =====
+
+@app.post("/api/workflows/{workflow_name}/execute")
+async def execute_workflow_new(
+    workflow_name: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Execute a workflow"""
+    try:
+        result = await workflow_service.execute_workflow(
+            user_id=current_user.id,
+            workflow_name=workflow_name
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Workflow execution failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Workflow execution failed: {str(e)}")
+
+@app.get("/api/workflows/executions/{task_id}")
+async def get_execution_status_new(
+    task_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get workflow execution status"""
+    execution = workflow_service.get_execution_status(current_user.id, task_id)
+    if not execution:
+        raise HTTPException(status_code=404, detail="Execution not found")
+    return {
+        "success": True,
+        "execution": execution
+    }
+
+@app.get("/api/workflows/{workflow_name}/executions")
+async def list_workflow_executions(
+    workflow_name: str,
+    limit: int = 50,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """List execution history for a workflow"""
+    executions = workflow_service.list_executions(current_user.id, workflow_name, limit)
+    return {
+        "success": True,
+        "workflow_name": workflow_name,
+        "executions": executions,
+        "total": len(executions)
     }
 
 @app.get("/api/health")
