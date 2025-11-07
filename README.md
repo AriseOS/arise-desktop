@@ -24,25 +24,49 @@ Ami is the first **Evolvable Agent** that inherits human experts' tacit knowledg
 
 ## 🏗️ System Architecture
 
-Ami consists of three main layers:
+Ami v2.0 uses a **Local-First + Cloud-Enhanced** architecture with 4 core components:
 
 ```
-┌─────────────────────────────────────────────────┐
-│          Intent Builder Layer                    │
-│  ┌──────────────────┐  ┌────────────────────┐   │
-│  │ Intent Extraction │  │ MetaFlow Generator │   │
-│  └──────────────────┘  └────────────────────┘   │
-├─────────────────────────────────────────────────┤
-│          BaseAgent Framework                     │
-│  ┌──────────────────┐  ┌────────────────────┐   │
-│  │ Workflow Engine  │  │ Memory System      │   │
-│  │ StepAsAgent Arch │  │ (Variables/KV/LTM) │   │
-│  └──────────────────┘  └────────────────────┘   │
-├─────────────────────────────────────────────────┤
-│          Tool Layer                              │
-│  Browser Use | Android Use | Code Execution |... │
-└─────────────────────────────────────────────────┘
+┌────────────────────────────────────────┐
+│       User's Computer (Local)          │
+│                                        │
+│  ┌──────────────┐  ┌───────────────┐  │
+│  │ Desktop App  │  │   Chrome      │  │
+│  │  (Tauri)     │  │  Extension    │  │
+│  └──────┬───────┘  └───────┬───────┘  │
+│         │                  │          │
+│         └─────────┬────────┘          │
+│                   ↓                   │
+│    ┌─────────────────────────────┐   │
+│    │   Local Backend             │   │
+│    │   (Python + FastAPI)        │   │
+│    │                             │   │
+│    │   • Workflow Execution      │   │
+│    │   • Browser Automation      │   │
+│    │   • Local Storage (~/.ami)  │   │
+│    │   • Cloud API Proxy         │   │
+│    └────────────┬────────────────┘   │
+└─────────────────┼─────────────────────┘
+                  │ HTTPS
+                  ↓
+┌────────────────────────────────────────┐
+│     Cloud Backend (Server)             │
+│     (Python + FastAPI)                 │
+│                                        │
+│   • User Authentication                │
+│   • Intent Extraction (LLM)            │
+│   • MetaFlow Generation (LLM)          │
+│   • Workflow Generation (LLM)          │
+│   • Data Storage (File System + DB)    │
+└────────────────────────────────────────┘
 ```
+
+### Key Design Principles
+
+- **Local-First Execution**: Workflows run on your computer with your browser session - fast, private, and cost-effective
+- **Cloud-Powered Intelligence**: AI analysis (Intent extraction, Workflow generation) happens in the cloud with powerful LLMs
+- **Clean Separation**: Local Backend handles execution, Cloud Backend handles learning and storage
+- **User Privacy**: Sensitive operations stay local; only anonymized data used for improvement
 
 ### Three Technical Engines
 
@@ -92,28 +116,43 @@ pip install -r requirements.txt
 playwright install chromium --with-deps
 ```
 
-4. **Start the service**
+4. **Start the services**
 
-**Option A: BaseApp (Core Framework)**
+**Using convenience scripts (Recommended)**:
 ```bash
-cd src/base_app
-baseapp start --port 8888 --host 0.0.0.0
+# Start both backends
+./scripts/start_both_backends.sh
+
+# Or start individually
+./scripts/start_local_backend.sh   # Port 8000
+./scripts/start_cloud_backend.sh   # Port 9000
 ```
 
-**Option B: Web Platform (Full Stack)**
+**Or manually**:
 ```bash
-# Start backend
-python client/web/start_backend.py
+# Local Backend (Required - runs on your computer)
+cd src/local_backend
+pip install -r requirements.txt
+python main.py
+# Accessible at: http://localhost:8000
 
-# In another terminal, start frontend
-cd client/web && ./start_frontend.sh
+# Cloud Backend (Development - runs locally for testing)
+cd src/cloud_backend
+pip install -r requirements.txt
+python main.py
+# Accessible at: http://localhost:9000
 ```
 
 ### First Steps
 
-1. Visit http://localhost:3000 (Web Platform) or http://localhost:8888 (BaseApp)
-2. Perform a task once - Ami observes and learns
-3. Ask Ami to execute similar tasks - it reuses and combines learned capabilities
+1. Open your browser and install the Chrome Extension (dev mode)
+2. Click "Start Recording" and perform a task normally
+3. Click "Stop Recording" - Ami will generate a workflow
+4. Execute the workflow with one click - Ami handles the automation
+
+**API Documentation**:
+- Local Backend: http://localhost:8000/docs
+- Cloud Backend: http://localhost:9000/docs
 
 ## 💡 How It Works
 
@@ -152,59 +191,74 @@ You ask: "Compare coffee prices on Allegro and Amazon"
 
 ## 🔧 Core Components
 
-### BaseAgent Framework
+### 1️⃣ Chrome Extension (User Interface)
 
-Located in `src/base_app/`, BaseAgent provides the standardized foundation:
+**Location**: `src/chrome_extension/`
 
-- **Workflow Engine**: Executes YAML-based workflow definitions
-- **Memory System**: Three-layer architecture (Variables, KV Storage, Long-term Memory)
-- **Tool Integration**: Unified interface for browser, Android, and custom tools
-- **Agent Types**: TextAgent, ToolAgent, CodeAgent for different step types
+Records user operations in the browser:
+- Captures clicks, inputs, navigation
+- Real-time operation tracking
+- One-click workflow execution
+- Progress monitoring
+
+### 2️⃣ Local Backend (Execution Engine)
+
+**Location**: `src/local_backend/`
+
+Runs on your computer to execute workflows:
+- **Workflow Executor**: Loads and executes YAML workflows using BaseAgent
+- **Browser Manager**: Manages global browser session (reused across workflows)
+- **Storage Manager**: Local file system management (`~/.ami/`)
+- **Cloud Client**: Proxies requests to Cloud Backend (secure Token management)
 
 ```python
-from src.base_app.base_agent.core import BaseAgent
+from src.local_backend.services.workflow_executor import WorkflowExecutor
 
-# Create agent with user-bound memory
-agent = BaseAgent(config, user_id="user123")
-
-# Load and execute workflow
-workflow = agent._load_workflow('user-qa-workflow')
-result = await agent.run_workflow(workflow, user_input)
+executor = WorkflowExecutor()
+task_id = await executor.execute_workflow_async(user_id, workflow_name)
 ```
 
-### Intent Builder System
+### 3️⃣ Cloud Backend (AI Analysis)
 
-Located in `src/intent_builder/`, handles Intent-based workflow generation:
+**Location**: `src/cloud_backend/`
 
-- **MetaFlow**: Intermediate representation between Intent Memory Graph and Workflow
-- **Workflow Generator**: LLM-based workflow generation from MetaFlow
-- **Prompt Builder**: Comprehensive prompt engineering for workflow generation
-- **Validators**: YAML structure and field validation
+Runs on server to generate workflows:
+- **Recording Service**: Receives and stores user operations
+- **Intent Extraction**: LLM-based semantic understanding
+- **MetaFlow Generation**: Intermediate workflow representation
+- **Workflow Generation**: Creates executable YAML from MetaFlow
+- **Storage Service**: File system + PostgreSQL database
 
-### Web Platform
+### 4️⃣ BaseAgent Framework
 
-Located in `client/web/`, provides multi-user management:
+**Location**: `src/base_app/`
 
-- **Frontend**: React + TypeScript with Vite, Ant Design, Redux Toolkit
-- **Backend**: FastAPI with SQLAlchemy, user/agent/session management
-- **Database**: SQLite (dev) / PostgreSQL (prod)
-- **Port Management**: Auto-allocation from pool (5001-5020) for agent instances
+The core execution engine used by Local Backend:
+- **Workflow Engine**: Executes YAML-based workflow definitions
+- **Memory System**: Three-layer architecture (Variables, KV Storage, Long-term Memory)
+- **Tool Integration**: Browser automation, Android tools, custom tools
+- **Agent Types**: TextAgent, ToolAgent, CodeAgent for different step types
 
 ## 📖 Documentation
 
-### Architecture & Design
-- [CLAUDE.md](./CLAUDE.md) - Development guidance and project overview
-- [BaseAgent Architecture](./docs/baseagent/ARCHITECTURE.md) - Core framework design
-- [Contextual Dynamic Architecture](./docs/baseagent/contextual_dynamic_architecture.md) - Recommended approach
-- [Platform Database](./docs/platform/database_architecture.md) - Database schema
+### Quick Links
+- **[CLAUDE.md](./CLAUDE.md)** - AI development guide and project overview
+- **[docs/README.md](./docs/README.md)** - Complete documentation index
+
+### Architecture Documents
+- [v2.0 Architecture Overview](./docs/platform/architecture.md) - Complete system design
+- [Component Overview](./docs/platform/components_overview.md) - Four core components explained
+- [Refactoring Plan](./docs/platform/refactoring_plan_2025-11-07.md) - Migration to v2.0 architecture
+- [System Flow Analysis](./docs/platform/flow_analysis.md) - End-to-end data flow
+
+### Component Documentation
+- [BaseAgent Architecture](./docs/baseagent/ARCHITECTURE.md) - Core execution framework
+- [Local Backend README](./src/local_backend/README.md) - Local execution engine setup
+- [Cloud Backend README](./src/cloud_backend/README.md) - Cloud services setup
 
 ### Developer Guides
 - [Development Guide](./docs/guides/DEVELOPMENT_GUIDE.md) - Developer quickstart
-- [Integration Testing Guide](./docs/guides/integration_testing_guide.md) - Testing strategies
-- [AgentBuilder Architecture](./docs/agentbuilder/ARCHITECTURE.md) - AI-assisted agent generation
-
-### Complete Documentation
-See [docs/README.md](./docs/README.md) for the complete documentation index.
+- [Testing Guide](./tests/README.md) - How to run tests
 
 ## 🎯 Use Cases
 
@@ -242,26 +296,32 @@ pytest --cov=tools --cov-report=html
 
 ## 🛣️ Roadmap
 
-### ✅ Phase 1: Core Technology (Current)
+### ✅ Phase 1: Architecture Refactoring (Completed)
+- [x] Local Backend + Cloud Backend split architecture
 - [x] BaseAgent framework with workflow engine
-- [x] Memory system (Variables, KV, LTM)
-- [x] Browser tool integration
-- [x] Intent Builder v1 (Intent extraction, MetaFlow generation)
-- [x] Web platform with multi-user support
-- [ ] Complete Intent Memory Graph
-- [ ] Production-ready demos
+- [x] Browser tool integration with session reuse
+- [x] Chrome Extension for recording
+- [x] Intent Builder (Intent extraction, MetaFlow, Workflow generation)
+- [x] Storage unification (~/.ami/)
 
-### 🔄 Phase 2: Product Launch (Next 6 Months)
+### 🔄 Phase 2: MVP Development (Current - Q1 2025)
+- [ ] Desktop App (Tauri) with workflow management UI
+- [ ] Complete recording → generation → execution flow
+- [ ] Production deployment (Cloud Backend)
+- [ ] Beta testing with 50 users
+- [ ] Performance optimization (>95% success rate)
+
+### 🚀 Phase 3: Product Launch (Q2-Q3 2025)
 - [ ] Individual subscription ($20/month)
 - [ ] Freemium tier (100 executions/month)
 - [ ] 1,000 paying users
 - [ ] 5 enterprise pilots
 - [ ] Content marketing & PLG strategy
 
-### 🚀 Phase 3: Enterprise Scale (12+ Months)
+### 🌟 Phase 4: Enterprise Scale (Q4 2025+)
 - [ ] Enterprise subscription with team features
 - [ ] Advanced Intent composition and sharing
-- [ ] Cross-platform integration (Desktop, Mobile)
+- [ ] Cross-platform integration (Windows, Linux)
 - [ ] Marketplace for community-created Intents
 
 ## 🤝 Contributing

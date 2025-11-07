@@ -1,0 +1,96 @@
+# Ami Cloud Backend Configuration
+# Server-side AI analysis and data storage
+
+# Server Configuration
+server:
+  host: 0.0.0.0
+  port: 9000
+  debug: false
+  reload: false  # Set to true for development
+
+# Storage Configuration
+storage:
+  type: filesystem  # Options: filesystem, s3
+  base_path: ~/ami-server  # Base path for file storage
+
+  # S3 Configuration (uncomment to use)
+  # s3_bucket: ami-cloud-storage
+  # s3_region: us-east-1
+  # s3_access_key_env: AWS_ACCESS_KEY_ID
+  # s3_secret_key_env: AWS_SECRET_ACCESS_KEY
+
+# Database Configuration
+database:
+  type: sqlite  # Options: sqlite, postgresql
+
+  # SQLite Configuration (default)
+  sqlite:
+    path: ~/ami-server/database/ami.db
+
+  # PostgreSQL Configuration (uncomment to use)
+  # postgresql:
+  #   host: localhost
+  #   port: 5432
+  #   database: ami
+  #   user: ami_user
+  #   password_env: DB_PASSWORD
+
+# LLM Configuration
+llm:
+  default_provider: anthropic  # Options: anthropic, openai
+
+  # Anthropic Configuration
+  anthropic:
+    api_key_env: ANTHROPIC_API_KEY
+    model: claude-3-5-sonnet-20241022
+    max_tokens: 4096
+    temperature: 0.0
+
+  # OpenAI Configuration
+  openai:
+    api_key_env: OPENAI_API_KEY
+    model: gpt-4
+    max_tokens: 4096
+    temperature: 0.0
+
+# Workflow Generation Configuration
+workflow_generation:
+  save_intermediates: true  # Save intent_graph.json and metaflow.yaml
+  timeout_seconds: 300  # 5 minutes timeout
+  max_retries: 3
+  retry_delay_seconds: 5
+
+# Authentication Configuration
+auth:
+  secret_key_env: JWT_SECRET_KEY  # Set this environment variable
+  algorithm: HS256
+  access_token_expire_minutes: 60  # 1 hour
+  refresh_token_expire_days: 30
+
+# Logging Configuration
+logging:
+  level: INFO  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: "%(asctime)s [%(levelname)8s] %(message)s"
+  file: ~/ami-server/logs/cloud-backend.log
+  max_bytes: 10485760  # 10MB
+  backup_count: 5
+
+# CORS Configuration
+cors:
+  allow_origins:
+    - http://localhost:3000
+    - http://localhost:8000
+  allow_credentials: true
+  allow_methods:
+    - GET
+    - POST
+    - PUT
+    - DELETE
+  allow_headers:
+    - "*"
+
+# Rate Limiting (optional)
+# rate_limit:
+#   enabled: true
+#   requests_per_minute: 60
+#   burst: 10
