@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { DEFAULT_CONFIG_KEY } from '../config/index'
 
 function RecordPage({ onNavigate, showStatus, currentUser }) {
   const [title, setTitle] = useState('')
@@ -236,14 +235,82 @@ function RecordPage({ onNavigate, showStatus, currentUser }) {
           console.error('Failed to clear operations:', err)
         })
 
-        // Navigate to appropriate page based on default config
-        const targetPage = DEFAULT_CONFIG_KEY === 'cross-market-product-selection' ? 'workflow-analysis' : 'metaflow'
-        console.log(`Preparing to navigate to ${targetPage} page with data:`, result)
-        setTimeout(() => {
-          console.log(`Calling onNavigate with ${targetPage} page`)
-          setIsGenerating(false)
-          onNavigate(targetPage, { recordingData: result, fromPage: 'record' })
-        }, 2000)
+        // Step 1: Extract intents from recorded operations
+        try {
+          showStatus('🔍 提取意图中...', 'info')
+          console.log('Extracting intents from session:', sessionId)
+
+          const extractResponse = await fetch('http://localhost:8000/api/learning/extract-intents', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${currentUser.token}`
+            },
+            body: JSON.stringify({
+              session_id: sessionId
+            })
+          })
+
+          if (!extractResponse.ok) {
+            throw new Error(`Extract intents failed: ${extractResponse.status}`)
+          }
+
+          const extractResult = await extractResponse.json()
+          console.log('Intents extracted:', extractResult)
+          showStatus(`✅ 提取 ${extractResult.intents_count} 个意图`, 'success')
+
+          // Step 2: Generate MetaFlow from intents
+          showStatus('🔄 生成 MetaFlow 中...', 'info')
+          console.log('Generating MetaFlow from intents')
+
+          const metaflowResponse = await fetch('http://localhost:8000/api/learning/generate-metaflow', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${currentUser.token}`
+            },
+            body: JSON.stringify({
+              session_id: sessionId
+            })
+          })
+
+          if (!metaflowResponse.ok) {
+            throw new Error(`Generate metaflow failed: ${metaflowResponse.status}`)
+          }
+
+          const metaflowResult = await metaflowResponse.json()
+          console.log('MetaFlow generated:', metaflowResult)
+          showStatus(`✅ MetaFlow 已生成 (${metaflowResult.nodes_count} 个节点)`, 'success')
+
+          // Navigate to metaflow page with all generated data
+          console.log('Preparing to navigate to metaflow page with data')
+
+          setTimeout(() => {
+            console.log('Calling onNavigate with metaflow page')
+            setIsGenerating(false)
+            onNavigate('metaflow', {
+              recordingData: result,
+              intentsData: extractResult,
+              metaflowData: metaflowResult,
+              sessionId: sessionId,
+              fromPage: 'record'
+            })
+          }, 1000)
+        } catch (error) {
+          console.error('Post-processing error:', error)
+          showStatus(`⚠️ 后处理失败: ${error.message}`, 'error')
+
+          // Still navigate to metaflow page but without processed data
+          setTimeout(() => {
+            setIsGenerating(false)
+            onNavigate('metaflow', {
+              recordingData: result,
+              sessionId: sessionId,
+              fromPage: 'record',
+              error: error.message
+            })
+          }, 2000)
+        }
       } else {
         throw new Error(result.error || 'Failed to stop recording')
       }

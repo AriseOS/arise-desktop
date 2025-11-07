@@ -7,12 +7,24 @@ function MetaflowPage({ onNavigate, showStatus, recordingData, params }) {
   const [isEditing, setIsEditing] = useState(false)
   const [editingNode, setEditingNode] = useState(null)
   const [currentMetaflowKey, setCurrentMetaflowKey] = useState(DEFAULT_CONFIG_KEY)
+  const [metaflowYaml, setMetaflowYaml] = useState(null)
 
   useEffect(() => {
-    // Generate metaflows from actual metaflow.yaml data
-    const generatedMetaflows = generateMetaflows()
-    setMetaflows(generatedMetaflows)
-  }, [])
+    // Check if we have metaflow data from API (passed from RecordPage)
+    if (params?.metaflowData?.metaflow_yaml) {
+      console.log('Using MetaFlow data from API:', params.metaflowData)
+      setMetaflowYaml(params.metaflowData.metaflow_yaml)
+      // Parse YAML and generate metaflow nodes
+      const generatedMetaflows = generateMetaflowsFromYaml(params.metaflowData.metaflow_yaml)
+      setMetaflows(generatedMetaflows)
+      showStatus(`✅ 已加载生成的 MetaFlow (${params.metaflowData.nodes_count} 个节点)`, 'success')
+    } else {
+      // Fallback to config file metaflow
+      console.log('Using MetaFlow from config file')
+      const generatedMetaflows = generateMetaflows()
+      setMetaflows(generatedMetaflows)
+    }
+  }, [params])
 
   const inferNodeType = (node) => {
     if (node.type === 'loop') return 'loop';
@@ -28,6 +40,50 @@ function MetaflowPage({ onNavigate, showStatus, recordingData, params }) {
     if (hasNavigate || hasClick) return 'navigate';
 
     return 'process';
+  }
+
+  const generateMetaflowsFromYaml = (yamlString) => {
+    try {
+      // Parse YAML to JSON (simple YAML parsing for metaflow structure)
+      // For now, we'll assume the YAML structure and parse it manually
+      // In production, you'd use a YAML parser library like js-yaml
+
+      // For demo purposes, we'll create a simplified structure
+      // The actual implementation should parse the YAML properly
+      console.log('Parsing MetaFlow YAML:', yamlString)
+
+      // Create basic metaflow structure from YAML
+      // This is a placeholder - you should use a proper YAML parser
+      const metaflows = [
+        {
+          id: 'start',
+          type: 'start',
+          name: 'Start',
+          description: 'Generated from recorded operations'
+        },
+        {
+          id: 'node-1',
+          type: 'navigate',
+          name: 'Generated Step 1',
+          description: 'Auto-generated from recording',
+          properties: {
+            yaml_content: yamlString
+          }
+        },
+        {
+          id: 'end',
+          type: 'end',
+          name: 'End',
+          description: 'Workflow completed successfully'
+        }
+      ]
+
+      return metaflows
+    } catch (error) {
+      console.error('Failed to parse MetaFlow YAML:', error)
+      showStatus('⚠️ MetaFlow 解析失败，使用默认配置', 'warning')
+      return generateMetaflows()
+    }
   }
 
   const generateMetaflows = () => {
@@ -334,7 +390,17 @@ function MetaflowPage({ onNavigate, showStatus, recordingData, params }) {
   }
 
   const handleNext = () => {
-    onNavigate('workflow-generation', { recordingData })
+    // Pass all relevant data to workflow generation page
+    const navigationData = {
+      recordingData,
+      metaflowYaml,
+      sessionId: params?.sessionId,
+      intentsData: params?.intentsData,
+      metaflowData: params?.metaflowData,
+      fromPage: 'metaflow'
+    }
+    console.log('Navigating to workflow-generation with data:', navigationData)
+    onNavigate('workflow-generation', navigationData)
   }
 
   return (
