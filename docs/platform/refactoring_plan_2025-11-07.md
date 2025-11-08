@@ -1,9 +1,32 @@
 # Ami 系统重构计划
 
-**版本**: v2.0  
-**日期**: 2025-11-07  
-**状态**: ✅ Phase 1 & 2 已完成（60%）  
-**目标**: 将单体后端拆分为 Local Backend + Cloud Backend 双架构
+**版本**: v3.0 - Desktop App Only
+**日期**: 2025-11-08 (更新)
+**状态**: 📝 v3.0 规划中
+**目标**: Desktop App 完整方案（录制 + 生成 + 执行），基于 CDP 注入脚本
+
+---
+
+## 🎯 v3.0 核心策略调整
+
+**产品形态变更**:
+- ❌ v2.0: Desktop App + Chrome Extension 双前端
+- ✅ v3.0: **仅 Desktop App**，使用 CDP 注入脚本录制
+- 📦 未来可选: Extension 版本作为独立产品线
+
+**技术方案变更**:
+- ✅ CDP 注入脚本录制（复用现有 `behavior_tracker.js`）
+- ✅ Desktop App (Tauri) 包含完整能力
+- ✅ 不依赖 Chrome Extension
+
+---
+
+# 原计划（v2.0，已更新为 v3.0）
+
+**版本**: v2.0
+**日期**: 2025-11-07
+**状态**: ⚠️ 已调整为 v3.0
+**目标**: ~~Desktop App + Extension~~ → Desktop App Only
 
 ---
 
@@ -31,20 +54,23 @@
 - **到**：单 BaseAgent + 多 Workflow 模式
 
 **职责分离**：
-- **Local Backend**：执行控制 + 浏览器管理（用户电脑）
+- **App Backend**：执行控制 + 浏览器管理（用户电脑）
 - **Cloud Backend**：数据存储 + AI 分析（云端服务器）
 
-**MVP 产品形态**：
-- Desktop App (Tauri) + Chrome Extension + Cloud Backend
-- 本地录制 → 云端分析 → 本地执行
+**MVP 产品形态** (v3.0 更新)：
+- ~~Desktop App + Chrome Extension + Cloud Backend~~ (v2.0)
+- **Desktop App (Tauri) + App Backend + Cloud Backend** (v3.0)
+- **CDP 注入脚本录制** → 云端分析 → 本地执行
 
-### 1.2 核心决策
+### 1.2 核心决策 (v3.0 更新)
 
 ✅ **已确定的技术选型**：
-- Desktop App: **Tauri**
-- Local Backend: **Python + FastAPI**（独立进程，localhost:8000）
+- Desktop App: **Tauri** (React/Vue + Rust)
+- App Backend: **Python + FastAPI**（独立进程，localhost:8000）
+- **录制方式**: **CDP 注入脚本**（复用 `behavior_tracker.js`）
+- ~~Extension ↔ App Backend: WebSocket~~ (已移除)
+- Desktop App ↔ App Backend: **HTTP/WebSocket**
 - Cloud Backend: **Python + FastAPI**（独立部署）
-- Extension ↔ Local Backend: **WebSocket**
 - 打包方式: **直接携带 Python**（MVP，便于调试）
 - 平台支持: **macOS** 优先
 - 存储路径: **统一到 ~/.ami/**
@@ -97,12 +123,12 @@ Backend (单体)
 
 **目标架构**：
 ```
-Local Backend (用户电脑)          Cloud Backend (服务器)
-├── 录制控制                      ├── 用户管理
-├── Workflow 执行                 ├── 数据存储
-├── 浏览器管理                    ├── Intent 提取
-└── 云端 API 调用                 ├── MetaFlow 生成
-                                  └── Workflow 生成
+Desktop App (Tauri)              App Backend (用户电脑)           Cloud Backend (服务器)
+├── UI 界面                      ├── CDP 录制控制                  ├── 用户管理
+├── 进程管理                     ├── Workflow 执行                 ├── 数据存储
+└── API 调用                     ├── 浏览器管理 (复用 base_app)    ├── Intent 提取
+                                 └── 云端 API 调用                 ├── MetaFlow 生成
+                                                                   └── Workflow 生成
 ```
 
 ### 2.3 BaseAgent 过度设计
@@ -121,7 +147,7 @@ Local Backend (用户电脑)          Cloud Backend (服务器)
 
 ## 3. 目标架构
 
-### 3.1 整体架构图
+### 3.1 整体架构图 (v3.0 - Desktop App Only)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -129,38 +155,52 @@ Local Backend (用户电脑)          Cloud Backend (服务器)
 │                                                             │
 │  ┌───────────────────────────────────────────────────────┐ │
 │  │  Desktop App (Tauri)                                   │ │
-│  │  ├── Main Window (Workflow 管理界面)                   │ │
-│  │  ├── System Tray (后台运行)                            │ │
-│  │  └── Process Manager (监控 Local Backend)              │ │
-│  └────────────────────┬──────────────────────────────────┘ │
-│                       │                                     │
-│  ┌───────────────────────────────────────────────────────┐ │
-│  │  Chrome Browser                                        │ │
-│  │  ├── Chrome Extension (录制 + 触发执行)                │ │
-│  │  │   ├── Popup UI                                     │ │
-│  │  │   ├── Content Script (捕获事件)                    │ │
-│  │  │   └── Background Worker (WebSocket 客户端)         │ │
-│  │  └── 用户真实浏览环境                                  │ │
-│  └────────────────────┬──────────────────────────────────┘ │
-│                       │ WebSocket (ws://localhost:8000)     │
-│  ┌───────────────────────────────────────────────────────┐ │
-│  │  Local Backend (Python + FastAPI)                     │ │
-│  │  ├── main.py (FastAPI 入口)                           │ │
-│  │  ├── recording_controller.py (录制控制)                │ │
-│  │  ├── execution_controller.py (执行控制)                │ │
+│  │  ┌─────────────────────────────────────────────────┐  │ │
+│  │  │ Frontend (React/Vue)                             │  │ │
+│  │  │  ├─ 录制控制面板                                  │  │ │
+│  │  │  ├─ Workflow 列表页                              │  │ │
+│  │  │  └─ 执行监控面板                                  │  │ │
+│  │  └──────────────────┬──────────────────────────────┘  │ │
+│  │                     │ Tauri Commands                   │ │
+│  │  ┌──────────────────┴──────────────────────────────┐  │ │
+│  │  │ Backend (Rust)                                   │  │ │
+│  │  │  Tauri Commands:                                 │  │ │
+│  │  │  ├─ start_recording(url)                         │  │ │
+│  │  │  ├─ stop_recording(session_id)                   │  │ │
+│  │  │  ├─ execute_workflow(name)                       │  │ │
+│  │  │  └─ get_workflow_status(task_id)                 │  │ │
+│  │  │                                                   │  │ │
+│  │  │  调用 Python (PyO3 或 subprocess)                 │  │ │
+│  │  └──────────────────┬──────────────────────────────┘  │ │
+│  └─────────────────────┼─────────────────────────────────┘ │
+│                        │ Python 函数调用 (非 HTTP)         │
+│  ┌─────────────────────┴─────────────────────────────────┐ │
+│  │  App Backend (Python 库，非 HTTP 服务)               │ │
+│  │  ├── cdp_recorder.py (CDP 注入脚本) **新增**         │ │
 │  │  ├── storage_manager.py (本地文件管理)                 │ │
 │  │  ├── cloud_client.py (调用云端 API)                   │ │
-│  │  ├── browser_manager.py (全局浏览器会话)              │ │
-│  │  └── workflow_executor.py (BaseAgent 简化版)          │ │
+│  │  ├── browser_manager.py (复用 base_app)              │ │
+│  │  └── workflow_executor.py (复用 base_app)            │ │
+│  │                                                         │ │
+│  │  复用现有代码:                                          │ │
+│  │  ├── behavior_tracker.js (CDP 注入,需适配)           │ │
+│  │  └── base_app/base_agent/ (Workflow 执行引擎)        │ │
 │  │                                                         │ │
 │  │  本地存储:                                             │ │
-│  │  ~/.ami/                    │ │
+│  │  ~/.ami/                                               │ │
 │  │  ├── users/{user_id}/workflows/                        │ │
-│  │  ├── users/{user_id}/cache/                            │ │
+│  │  ├── users/{user_id}/recordings/                       │ │
 │  │  └── logs/                                             │ │
 │  └────────────────────┬──────────────────────────────────┘ │
+│                       │ CDP Binding                         │
+│  ┌────────────────────┴──────────────────────────────────┐ │
+│  │  Chrome Browser (Playwright + CDP)                    │ │
+│  │  ├── 注入 behavior_tracker.js                         │ │
+│  │  ├── window.reportUserBehavior() → Python            │ │
+│  │  └── 用户浏览器环境                                    │ │
+│  └───────────────────────────────────────────────────────┘ │
 └────────────────────────┼──────────────────────────────────┘
-                         │ HTTPS
+                         │ HTTPS (App Backend → Cloud)
 ┌────────────────────────┼──────────────────────────────────┐
 │                   Cloud Backend                            │
 │                   (https://api.ami.com)                     │
@@ -192,55 +232,75 @@ Local Backend (用户电脑)          Cloud Backend (服务器)
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 3.2 数据流
+### 3.2 数据流 (v3.0 更新)
 
-#### **录制流程**
+#### **录制流程 (CDP 注入脚本 + Tauri IPC)**
 ```
-1. Extension 开始录制
-   ↓ WebSocket: start_recording()
-2. Local Backend 创建 session
-   ↓
-3. 用户操作 → Extension 捕获事件
-   ↓ WebSocket: record_operation(operation)
-4. Local Backend 保存到本地文件
-   ~/.ami/users/{user_id}/recordings/{session_id}/operations.json
-   ↓
-5. Extension 停止录制
-   ↓ WebSocket: stop_recording()
-6. Local Backend 上传到云端
-   ↓ HTTPS POST: /api/recordings/upload
-7. Cloud Backend 保存 + 生成 Workflow (同步 30-60s)
-   - Intent Extraction (LLM)
-   - MetaFlow Generation (LLM)
-   - Workflow YAML Generation (LLM)
-   ↓ 返回: workflow_name
-8. Local Backend 下载 Workflow
-   ↓ HTTPS GET: /api/workflows/{name}/download
-9. 保存到本地
-   ~/.ami/users/{user_id}/workflows/{name}/workflow.yaml
-   ↓
-10. 通知 Extension："Workflow 已生成！"
+1. Desktop App Frontend: 用户点击"开始录制"
+   ↓ invoke("start_recording", {url: "https://..."})
+2. Desktop App Rust Backend: 接收 Tauri Command
+   ↓ 调用 Python 函数: start_recording(url)
+3. App Backend (Python): cdp_recorder.py
+   ↓ 启动 CDP 浏览器 (Playwright + CDP)
+   ↓ 设置 CDP Binding (window.reportUserBehavior)
+   ↓ 注入 behavior_tracker.js (复用现有代码)
+   ↓ 导航到 url
+   ↓ 返回: {"session_id": "xxx"}
+4. 用户在浏览器中操作
+   ↓ behavior_tracker.js 捕获事件
+   ↓ window.reportUserBehavior(JSON.stringify({type: "click", ...}))
+   ↓ CDP Binding → Python handle_runtime_binding()
+   ↓ operations.append(operation)
+5. Desktop App Frontend: 用户点击"停止录制"
+   ↓ invoke("stop_recording", {session_id: "xxx"})
+6. Desktop App Rust Backend: 接收 Tauri Command
+   ↓ 调用 Python 函数: stop_recording(session_id)
+7. App Backend (Python):
+   ↓ 停止监控，关闭浏览器
+   ↓ 保存 operations.json 到本地
+     ~/.ami/users/{user_id}/recordings/{session_id}/operations.json
+   ↓ 返回: {"operations_count": 42, "local_file_path": "..."}
+8. Desktop App Frontend: 用户填写意图 (title + description)
+   ↓ invoke("generate_workflow", {recording_id, title, description})
+9. Desktop App Rust Backend:
+   ↓ 调用 Python 函数: generate_workflow(...)
+10. App Backend (Python):
+    ↓ 上传到 Cloud Backend: HTTPS POST /api/recordings/upload
+    ↓ 调用生成 API: HTTPS POST /api/recordings/{id}/generate
+    ↓ 等待生成完成 (30-60s)
+    ↓ 下载 workflow.yaml: HTTPS GET /api/workflows/{name}/download
+    ↓ 保存到本地: ~/.ami/users/{user_id}/workflows/{name}/workflow.yaml
+    ↓ 返回: {"workflow_name": "xxx"}
+11. Desktop App: 显示 "Workflow 已生成！"
 ```
 
-#### **执行流程**
+#### **执行流程 (复用 base_app + Tauri IPC)**
 ```
-1. Extension 点击"执行"
-   ↓ WebSocket: execute_workflow(workflow_name)
-2. Local Backend 加载本地 Workflow
-   ~/.ami/users/{user_id}/workflows/{name}/workflow.yaml
-   ↓
-3. 强制设置 workflow.name = "global"
-   ↓
-4. BaseAgent (简化版) 执行
-   - 复用全局浏览器会话
-   - 执行各个 step
-   ↓
-5. 保存执行结果到本地
-   ~/.ami/users/{user_id}/workflows/{name}/executions/{id}/result.json
-   ↓
-6. 异步上报到云端（统计）
-   ↓ HTTPS POST: /api/executions/report
-7. 通知 Extension："执行完成！"
+1. Desktop App Frontend: 用户点击"执行"
+   ↓ invoke("execute_workflow", {workflow_name: "xxx"})
+2. Desktop App Rust Backend: 接收 Tauri Command
+   ↓ 调用 Python 函数: execute_workflow(workflow_name)
+   ↓ 返回: {"task_id": "xxx", "status": "running"}
+3. App Backend (Python): workflow_executor.py
+   ↓ 加载本地 workflow.yaml
+     ~/.ami/users/{user_id}/workflows/{name}/workflow.yaml
+   ↓ 创建 BaseAgent 实例 (复用 base_app)
+   ↓ 异步执行 workflow (不阻塞)
+4. BaseAgent 执行 Workflow:
+   - 复用全局浏览器会话 (BrowserSessionManager)
+   - 执行各个 step (TextAgent, ToolAgent, etc.)
+5. Desktop App Frontend: 轮询查询执行状态
+   ↓ invoke("get_workflow_status", {task_id: "xxx"})
+   ↓ 每 2 秒查询一次
+6. App Backend (Python): 返回实时状态
+   ↓ {"status": "running", "progress": 50, "current_step": "step_2"}
+7. 执行完成:
+   ↓ 保存结果到本地
+     ~/.ami/users/{user_id}/workflows/{name}/executions/{id}/result.json
+   ↓ (可选) 异步上报到云端: HTTPS POST /api/executions/report
+8. Desktop App Frontend: 获取最终结果
+   ↓ invoke("get_workflow_result", {task_id: "xxx"})
+   ↓ 显示执行结果
 ```
 
 ---
@@ -289,31 +349,34 @@ git checkout -b refactor/local-cloud-split
 
 ---
 
-### **阶段 1：创建 Local Backend（3 天）**
+### **阶段 1：创建 App Backend with CDP 录制（3 天）** v3.0 更新
 
 #### Step 1.1: 创建目录结构
 ```bash
-mkdir -p local-backend/{controllers,services,models,utils}
+mkdir -p src/clients/app_backend/{config,controllers,services,models,static}
 ```
 
 ```
-local-backend/
+src/clients/app_backend/          # 位置更新
 ├── main.py                       # FastAPI 入口
-├── config.py                     # 配置管理
+├── config/
+│   └── app-backend.yaml          # 配置文件
 ├── controllers/
-│   ├── recording_controller.py   # 录制控制
-│   ├── execution_controller.py   # 执行控制
-│   └── sync_controller.py        # 数据同步
+│   ├── recording_controller.py   # CDP 录制控制 **更新**
+│   └── execution_controller.py   # 执行控制
 ├── services/
+│   ├── cdp_recorder.py           # CDP 浏览器启动、注入脚本 **新增**
 │   ├── cloud_client.py           # Cloud API 客户端
-│   ├── browser_manager.py        # 浏览器会话管理
+│   ├── browser_manager.py        # 复用 base_app **更新**
 │   ├── storage_manager.py        # 本地文件管理
-│   └── workflow_executor.py      # Workflow 执行引擎
+│   └── workflow_executor.py      # 复用 base_app **更新**
 ├── models/
 │   ├── recording.py              # 录制数据模型
-│   └── workflow.py               # Workflow 模型
-├── utils/
-│   ├── encryption.py             # Token 加密
+│   └── execution.py              # 执行数据模型
+├── static/
+│   └── recorder.js               # 适配后的 behavior_tracker.js **新增**
+├── core/
+│   ├── config_service.py         # 配置管理
 │   └── logger.py                 # 日志配置
 ├── requirements.txt
 └── README.md
@@ -330,7 +393,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from controllers import recording_controller, execution_controller
 from services.browser_manager import BrowserManager
 
-app = FastAPI(title="Ami Local Backend", version="1.0.0")
+app = FastAPI(title="Ami App Backend", version="1.0.0")
 
 # CORS 配置
 app.add_middleware(
@@ -348,13 +411,13 @@ browser_manager = BrowserManager()
 async def startup():
     """启动时初始化全局浏览器会话"""
     await browser_manager.init_global_session()
-    print("✅ Local Backend started, browser session ready")
+    print("✅ App Backend started, browser session ready")
 
 @app.on_event("shutdown")
 async def shutdown():
     """关闭时清理资源"""
     await browser_manager.cleanup()
-    print("✅ Local Backend shutdown")
+    print("✅ App Backend shutdown")
 
 # WebSocket 路由
 @app.websocket("/ws")
@@ -690,10 +753,10 @@ async def recording_websocket(websocket: WebSocket):
         print(f"WebSocket error: {e}")
 ```
 
-#### Step 1.4: 测试 Local Backend
+#### Step 1.4: 测试 App Backend
 
 ```bash
-cd local-backend
+cd app-backend
 pip install -r requirements.txt
 python main.py
 ```
@@ -954,10 +1017,10 @@ data:
   logs: ${data.root}/logs
 ```
 
-#### Step 3.2: 更新 Local Backend 配置
+#### Step 3.2: 更新 App Backend 配置
 
 ```python
-# local-backend/config.py
+# app-backend/config.py
 
 from pathlib import Path
 import os
@@ -1003,7 +1066,7 @@ cd cloud-backend
 uvicorn main:app --host 0.0.0.0 --port 9000
 ```
 
-**Local Backend 配置**：
+**App Backend 配置**：
 ```python
 CLOUD_API_URL = "http://localhost:9000"
 ```
@@ -1037,47 +1100,156 @@ async def test_complete_workflow():
 
 ---
 
-### **阶段 5：清理旧代码（1 天）**
+### **阶段 5：Desktop App 开发（5 天）** v3.0 新增
 
-#### Step 5.1: 删除废弃代码
-
+#### Step 5.1: Tauri 项目初始化
 ```bash
-# 删除旧 Backend
-rm -rf src/client/web/backend/agent_service.py
-rm -rf src/client/web/backend/progress_tracker.py
-rm -rf src/client/web/frontend/
-
-# 删除旧数据库文件
-rm src/client/web/backend/agentcrafter_users.db
-
-# 删除测试文件（迁移到新位置）
-rm src/client/web/backend/test_*.py
+cd src/clients
+npm create tauri-app
+# 选择: desktop_app, React/Vue, TypeScript
 ```
 
-#### Step 5.2: 更新文档
+#### Step 5.2: Tauri Backend (Rust)
+```rust
+// src-tauri/src/app_backend.rs
 
-- 更新 README.md
-- 更新 CLAUDE.md
-- 标记旧 API 为废弃
+use std::process::{Command, Child};
+
+pub fn start_app_backend() -> Result<Child, std::io::Error> {
+    // 启动 App Backend 进程
+    Command::new("python")
+        .arg("../../app_backend/main.py")
+        .spawn()
+}
+
+pub fn stop_app_backend(child: &mut Child) {
+    child.kill().ok();
+}
+```
+
+```rust
+// src-tauri/src/main.rs
+
+#[tauri::command]
+async fn start_recording(url: String) -> Result<String, String> {
+    // 调用 App Backend API
+    let client = reqwest::Client::new();
+    let res = client.post("http://localhost:8000/api/recording/start")
+        .json(&serde_json::json!({"start_url": url}))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let body = res.json::<serde_json::Value>().await.map_err(|e| e.to_string())?;
+    Ok(body["session_id"].as_str().unwrap().to_string())
+}
+
+#[tauri::command]
+async fn stop_recording(session_id: String) -> Result<String, String> {
+    let client = reqwest::Client::new();
+    let res = client.post("http://localhost:8000/api/recording/stop")
+        .json(&serde_json::json!({"session_id": session_id}))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let body = res.json::<serde_json::Value>().await.map_err(|e| e.to_string())?;
+    Ok(body["recording_id"].as_str().unwrap().to_string())
+}
+```
+
+#### Step 5.3: Frontend UI (React/Vue)
+```typescript
+// src/pages/RecordingPage.tsx
+
+import { useState } from 'react';
+import { invoke } from '@tauri-apps/api/tauri';
+
+export function RecordingPage() {
+    const [isRecording, setIsRecording] = useState(false);
+    const [sessionId, setSessionId] = useState('');
+
+    const startRecording = async () => {
+        const sid = await invoke('start_recording', { url: 'https://google.com' });
+        setSessionId(sid);
+        setIsRecording(true);
+    };
+
+    const stopRecording = async () => {
+        await invoke('stop_recording', { sessionId });
+        setIsRecording(false);
+    };
+
+    return (
+        <div>
+            <h1>录制控制</h1>
+            {!isRecording ? (
+                <button onClick={startRecording}>开始录制</button>
+            ) : (
+                <button onClick={stopRecording}>停止录制</button>
+            )}
+        </div>
+    );
+}
+```
+
+#### Step 5.4: 集成测试
+- Desktop App → App Backend 通信测试
+- 完整流程测试（录制 → 生成 → 执行）
 
 ---
 
-## 6. 代码迁移计划
+### **阶段 6：清理旧代码（1 天）**
 
-### 6.1 迁移映射表
+#### Step 6.1: 暂停 Extension 开发
+```bash
+# 标记为暂停开发
+echo "# 暂停开发 - v3.0 优先 Desktop App" > src/clients/chrome-extension/PAUSED.md
+```
 
-| 源文件 | 目标位置 | 状态 | 说明 |
-|--------|----------|------|------|
-| `src/client/web/backend/main.py` | 拆分 | 🔄 | Local + Cloud 各一个 |
-| `src/client/web/backend/recording_service.py` | `local-backend/controllers/recording_controller.py` | ✅ | 录制控制在本地 |
-| `src/client/web/backend/workflow_service.py` | `local-backend/services/workflow_executor.py` | ✅ | 执行在本地 |
-| `src/client/web/backend/storage_service.py` | `local-backend/services/storage_manager.py` | ✅ | 本地文件管理 |
-| `src/client/web/backend/learning_service.py` | `cloud-backend/services/learning_service.py` | ✅ | 移到云端 |
-| `src/client/web/backend/auth.py` | `cloud-backend/api/auth.py` | ✅ | 认证在云端 |
-| `src/client/web/backend/database.py` | `cloud-backend/models/*.py` | 🔄 | 拆分并清理 |
-| `src/intent_builder/` | `cloud-backend/services/` | ✅ | 整合到云端 |
-| `src/client/web/backend/agent_service.py` | **删除** | ❌ | 已废弃 |
-| `src/client/web/frontend/` | **删除** | ❌ | 不需要 Web 前端 |
+#### Step 6.2: 删除废弃代码
+```bash
+# 删除旧 Backend
+rm -rf src/app_backend/  # 如果存在 v1.0/v2.0 的错误位置代码
+
+# 删除旧数据库文件（如果需要）
+# rm src/client/web/backend/agentcrafter_users.db
+```
+
+#### Step 6.3: 更新文档
+- 更新 README.md
+- 更新 CLAUDE.md
+- 标记 Extension 为暂停开发
+
+---
+
+## 6. 代码迁移计划 (v3.0 更新)
+
+### 6.1 迁移/复用映射表
+
+| 源文件/模块 | 目标位置 | 复用方式 | 说明 |
+|------------|---------|---------|------|
+| **CDP 录制脚本** (新增) | | | |
+| `chrome-extension/public/behavior_tracker.js` | `app_backend/static/recorder.js` | 复制&适配 | 修改发送端点到 localhost:8000 |
+| `chrome-extension/public/recorder.js` | `app_backend/static/recorder.js` | 复制&适配 | 添加 session_id 支持 |
+| **base_app 复用** | | | |
+| `base_app/base_agent/core/base_agent.py` | `app_backend/services/workflow_executor.py` | 直接调用 | Workflow 执行引擎 |
+| `base_app/base_agent/tools/browser_session_manager.py` | `app_backend/services/browser_manager.py` | 直接调用 | 浏览器会话管理 |
+| `base_app/base_agent/core/schemas.py` | `app_backend/models/` | 导入使用 | Workflow 数据模型 |
+| `base_app/server/core/config_service.py` | `app_backend/core/config_service.py` | 复制&简化 | 配置管理 |
+| **旧代码迁移** | | | |
+| `client/web/backend/learning_service.py` | `cloud_backend/services/learning_service.py` | 迁移 | 移到云端 |
+| `client/web/backend/auth.py` | `cloud_backend/api/auth.py` | 迁移 | 认证在云端 |
+| `intent_builder/` | `cloud_backend/services/` | 整合 | Intent 提取、MetaFlow 生成 |
+| **新实现** | | | |
+| N/A | `app_backend/services/cdp_recorder.py` | 新实现 | CDP 浏览器启动、注入脚本 |
+| N/A | `app_backend/services/cloud_client.py` | 新实现 | Cloud API 客户端 |
+| N/A | `app_backend/services/storage_manager.py` | 新实现 | 本地文件管理 |
+| N/A | `clients/desktop_app/` | 新实现 | Tauri Desktop App |
+| **暂停/删除** | | | |
+| `clients/chrome-extension/` | 暂停开发 | ⏸️ | v3.0 优先 Desktop App |
+| `client/web/backend/agent_service.py` | **删除** | ❌ | 已废弃 |
+| `client/web/frontend/` | **删除** | ❌ | 不需要 Web 前端 |
 
 ### 6.2 BaseAgent 调整
 
@@ -1172,8 +1344,8 @@ data:
   # 日志
   logs: ${data.root}/logs
 
-# Local Backend
-local_backend:
+# App Backend
+app_backend:
   host: 0.0.0.0
   port: 8000
   
@@ -1213,12 +1385,12 @@ python -c "from src.base_app.base_app.server.core.config_service import ConfigSe
 
 ---
 
-## 8. 测试策略
+## 8. 测试策略（v3.0）
 
-### 8.1 Local Backend 测试
+### 8.1 App Backend 测试
 
 ```python
-# local-backend/tests/conftest.py
+# src/clients/app_backend/tests/conftest.py
 
 import pytest
 from fastapi.testclient import TestClient
@@ -1232,84 +1404,206 @@ def client():
 def mock_cloud_client():
     # Mock Cloud API 响应
     pass
+
+@pytest.fixture
+async def cdp_browser():
+    # Mock CDP browser for testing
+    from services.cdp_recorder import CDPRecorder
+    recorder = CDPRecorder()
+    await recorder.start_browser("https://example.com")
+    yield recorder.browser
+    await recorder.stop_browser()
+```
+
+**测试用例**：
+```python
+# test_recording.py
+async def test_cdp_recording():
+    """Test CDP script injection and recording"""
+    recorder = CDPRecorder()
+    session_id = await recorder.start_recording("https://example.com")
+
+    # Simulate user operations
+    await recorder.page.click("#button")
+
+    operations = await recorder.get_operations()
+    assert len(operations) > 0
+    assert operations[0]["type"] == "click"
+
+# test_workflow_executor.py
+async def test_workflow_execution():
+    """Test BaseAgent workflow execution"""
+    from services.workflow_executor import WorkflowExecutor
+
+    executor = WorkflowExecutor()
+    result = await executor.execute(workflow_yaml, user_id="test_user")
+
+    assert result["success"] == True
 ```
 
 ### 8.2 Cloud Backend 测试
 
 ```python
-# cloud-backend/tests/test_workflow_generation.py
+# src/clients/cloud_backend/tests/test_workflow_generation.py
 
 async def test_generate_workflow():
     operations = load_test_operations()
-    
+
     recording_id = await upload_recording(operations)
     workflow_name = await generate_workflow(recording_id)
-    
+
     assert workflow_name.startswith("从-")
 ```
 
-### 8.3 端到端测试
+### 8.3 Desktop App 测试
+
+```rust
+// src/clients/desktop_app/src-tauri/tests/test_commands.rs
+
+#[tokio::test]
+async fn test_start_recording() {
+    let url = "https://example.com".to_string();
+    let result = start_recording(url).await;
+
+    assert!(result.is_ok());
+    let session_id = result.unwrap();
+    assert!(!session_id.is_empty());
+}
+
+#[tokio::test]
+async fn test_app_backend_connection() {
+    // Test if Desktop App can connect to App Backend
+    let client = reqwest::Client::new();
+    let res = client.get("http://localhost:8000/health")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), 200);
+}
+```
+
+### 8.4 端到端测试
 
 ```python
-# e2e-tests/test_complete_flow.py
+# tests/e2e/test_complete_flow.py
 
 async def test_recording_to_execution():
-    # 1. 启动 Local Backend
+    # v3.0: Desktop App + CDP recording flow
+
+    # 1. 启动 App Backend
+    app_backend = await start_app_backend()
+
     # 2. 启动 Cloud Backend (本地)
-    # 3. 模拟 Extension 录制
+    cloud_backend = await start_cloud_backend()
+
+    # 3. 模拟 Desktop App CDP 录制
+    recorder = CDPRecorder()
+    session_id = await recorder.start_recording("https://example.com")
+
+    # Simulate operations
+    await recorder.page.click("#login")
+    await recorder.page.fill("#username", "test")
+
+    operations = await recorder.stop_recording()
+
     # 4. 验证生成
+    workflow_yaml = await cloud_backend.generate_workflow(
+        operations=operations,
+        title="登录测试",
+        description="自动登录系统"
+    )
+    assert "steps:" in workflow_yaml
+
     # 5. 验证执行
-    pass
+    result = await app_backend.execute_workflow(workflow_yaml)
+    assert result["success"] == True
 ```
 
 ---
 
-## 9. 风险与缓解
+## 9. 风险与缓解（v3.0）
 
 ### 9.1 技术风险
 
 | 风险 | 影响 | 缓解措施 |
 |------|------|----------|
-| BaseAgent 重构破坏现有功能 | 高 | 保留旧代码，渐进式迁移 |
+| CDP 脚本注入失败或不稳定 | 高 | 复用已验证的 behavior_tracker.js，增加错误重试 |
+| Desktop App (Tauri) 学习曲线 | 中 | 先实现最小原型，参考官方示例 |
+| BaseAgent 接口不兼容 | 中 | 保留旧代码，通过适配层调用 |
 | Cloud API 性能问题（生成慢） | 中 | 加载动画、异步处理 |
-| WebSocket 连接不稳定 | 中 | 心跳检测、自动重连 |
+| 浏览器会话管理复杂度 | 中 | 复用 BrowserSessionManager，全局单例 |
 | 本地存储路径迁移失败 | 低 | 提供迁移脚本和回退 |
 
 ### 9.2 进度风险
 
 | 风险 | 缓解措施 |
 |------|----------|
+| Desktop App 开发时间超预期 | 先完成 App Backend + CDP，Desktop UI 可简化 |
+| 代码复用适配工作量大 | 优先直接调用 base_app 接口，避免重写 |
+| Extension 暂停导致功能缺失 | v3.0 完全替代 Extension 能力 |
 | 预估时间不足 | 分阶段交付，核心功能优先 |
-| 依赖阻塞 | Local 和 Cloud 并行开发 |
+
+### 9.3 产品风险
+
+| 风险 | 缓解措施 |
+|------|----------|
+| 用户需要安装桌面应用（vs 浏览器插件） | 强调 Desktop App 更强大、无权限限制 |
+| Desktop App 跨平台兼容性 | Tauri 天然支持 macOS/Windows/Linux |
+| Extension 用户流失 | 未来可独立开发 Extension 版本 |
 
 ---
 
-## 10. 时间计划
+## 10. 时间计划（v3.0）
 
-### 总时间：约 15 天
+### 总时间：约 18 天（新增 Desktop App 开发）
 
 | 阶段 | 时间 | 关键里程碑 |
 |------|------|------------|
 | 阶段 0：准备 | 1 天 | 文档、分支准备 |
-| 阶段 1：Local Backend | 3 天 | Local Backend 可独立运行 |
-| 阶段 2：Cloud Backend | 5 天 | Cloud Backend 可本地测试 |
-| 阶段 3：配置改造 | 2 天 | 路径统一，配置生效 |
-| 阶段 4：测试验证 | 3 天 | 完整流程跑通 |
-| 阶段 5：清理 | 1 天 | 删除旧代码，更新文档 |
+| 阶段 1：App Backend（CDP 录制） | 4 天 | CDP 录制功能可用，脚本注入成功 |
+| 阶段 2：App Backend（执行） | 2 天 | BaseAgent 集成，workflow 执行 |
+| 阶段 3：Cloud Backend | 5 天 | Workflow 生成可本地测试 |
+| 阶段 4：Desktop App（Tauri） | 4 天 | 桌面应用基本界面和 API 调用 |
+| 阶段 5：配置改造 | 1 天 | 路径统一，配置生效 |
+| 阶段 6：测试验证 | 2 天 | 端到端流程跑通 |
+| 阶段 7：清理 | 1 天 | 标记旧代码，更新文档 |
 
 ### Gantt 图
 
 ```
-Week 1:
-Mon-Tue: 准备 + Local Backend 框架
-Wed-Fri: Local Backend 核心功能
+Week 1 (Days 1-5):
+Day 1: 准备 + 文档更新
+Day 2-3: App Backend CDP 录制框架
+Day 4-5: CDP 脚本注入和录制测试
 
-Week 2:
-Mon-Fri: Cloud Backend 开发
+Week 2 (Days 6-10):
+Day 6-7: App Backend Workflow 执行集成
+Day 8-10: Cloud Backend 基础框架
 
-Week 3:
-Mon-Tue: 配置改造
-Wed-Fri: 测试 + 清理
+Week 3 (Days 11-15):
+Day 11-13: Cloud Backend Workflow 生成
+Day 14-15: Desktop App Tauri 初始化
+
+Week 4 (Days 16-18):
+Day 16-17: Desktop App UI 和 API 集成
+Day 18: 测试 + 清理
+```
+
+### 关键路径
+
+```
+准备 (1天)
+   ↓
+App Backend CDP 录制 (4天) ← 关键：复用 behavior_tracker.js
+   ↓
+App Backend 执行 (2天) ← 关键：调用 base_app
+   ↓
+Cloud Backend (5天) || Desktop App (4天) ← 可并行
+   ↓
+集成测试 (2天)
+   ↓
+清理 (1天)
 ```
 
 ---
@@ -1336,48 +1630,42 @@ Wed-Fri: 测试 + 清理
 
 | 版本 | 日期 | 变更内容 |
 |------|------|----------|
-| v1.0 | 2025-11-07 | 初始版本 |
+| v1.0 | 2025-11-07 | 初始版本 (Extension + Desktop App 双产品线) |
+| v2.0 | 2025-11-07 | Phase 1 & 2 完成，更新进度 |
+| v3.0 | 2025-11-08 | **重大变更**: 暂停 Extension，专注 Desktop App Only。使用 CDP 注入脚本录制，无需浏览器插件。新增 Desktop App (Tauri) 和 cdp_recorder.py 组件 |
 
 ---
 
+## 📊 当前进度（2025-11-08 更新 - v3.0）
 
----
-
-## 📊 当前进度（2025-11-07 更新）
-
-**重构进度**: 60% ✅
+**重构进度**: 5% ⏳ (v3.0 重新规划)
 
 | 阶段 | 状态 | 进度 |
 |------|------|------|
-| 阶段 1: 基础架构搭建 | ✅ 完成 | 100% |
-| 阶段 2: 代码迁移 | ✅ 完成 | 100% |
-| 阶段 3: 配置系统改造 | ✅ 完成 | 100% |
-| 阶段 4: 测试与验证 | ⏳ 进行中 | 30% |
-| 阶段 5: 文档与清理 | ⏳ 进行中 | 70% |
+| 阶段 0: 准备与文档更新 | ⏳ 进行中 | 80% |
+| 阶段 1: App Backend (CDP 录制) | ⏸️ 待开始 | 0% |
+| 阶段 2: App Backend (执行) | ⏸️ 待开始 | 0% |
+| 阶段 3: Cloud Backend | ⏸️ 待开始 | 0% |
+| 阶段 4: Desktop App (Tauri) | ⏸️ 待开始 | 0% |
+| 阶段 5: 配置改造 | ⏸️ 待开始 | 0% |
+| 阶段 6: 测试验证 | ⏸️ 待开始 | 0% |
+| 阶段 7: 清理 | ⏸️ 待开始 | 0% |
 
-**已完成的工作**:
-- ✅ Local Backend 完全可运行（4个服务整合）
-- ✅ Cloud Backend 完全可运行（Storage Service）
-- ✅ 存储路径统一到 ~/.ami
-- ✅ 真实文件读写（不是 mock）
-- ✅ 全局浏览器会话管理
-- ✅ 完整文档体系
+**v3.0 核心变更**:
+- 🎯 **产品策略**: 暂停 Extension，专注 Desktop App
+- 🔧 **录制方式**: CDP 注入 behavior_tracker.js（无需 Extension）
+- 📦 **代码复用**: 直接调用 base_app，复用 behavior_tracker.js
+- 🖥️ **新增组件**: Desktop App (Tauri)，cdp_recorder.py
 
-**下一步**:
-1. 集成 Intent Builder 到 Cloud Backend
-2. 实现完整的录制→生成→执行流程
-3. 标记旧代码为 deprecated
-4. 数据库集成（PostgreSQL）
+**已完成的工作** (v3.0):
+- ✅ v3.0 策略文档更新（refactoring_plan_2025-11-07.md）
+- ✅ 架构图更新（Desktop App + CDP）
+- ✅ 数据流更新（CDP 录制流程）
+- ✅ 代码复用映射表
 
----
+**下一步** (v3.0):
+1. 更新 app_backend_requirements.md（CDP 录制需求）
+2. 更新 app_backend_design.md（CDP 架构设计）
+3. 创建 PAUSED.md 在 chrome-extension 目录
+4. 开始实现 App Backend CDP 录制功能
 
-## 变更记录
-
-| 版本 | 日期 | 变更内容 |
-|------|------|----------|
-| v1.0 | 2025-11-07 | 初始版本 |
-| v2.0 | 2025-11-07 | Phase 1 & 2 完成，更新进度 |
-
----
-
-详细完成报告请查看：[PHASE_2_COMPLETE.md](../../PHASE_2_COMPLETE.md)

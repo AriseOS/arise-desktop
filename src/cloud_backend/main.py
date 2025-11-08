@@ -189,109 +189,217 @@ async def register(data: dict):
 @app.post("/api/recordings/upload")
 async def upload_recording(data: dict):
     """
-    上传录制数据
-    
+    Upload recording and add intents to user's Intent Memory Graph (async)
+
     Body:
         {
             "user_id": "user123",
+            "task_description": "Search for coffee on Google",  # User's description of what they did
             "operations": [...]
         }
-        
+
     Returns:
         {"recording_id": "..."}
+
+    Note: Intent extraction happens in background. Graph is updated asynchronously.
     """
     user_id = data.get("user_id")
+    task_description = data.get("task_description", "")
     operations = data.get("operations", [])
-    
+
     if not user_id:
         raise HTTPException(400, "Missing user_id")
-    
+
     if not operations:
         raise HTTPException(400, "Missing operations")
-    
+
     recording_id = str(uuid.uuid4())
-    
-    # 保存到服务器文件系统
-    file_path = storage_service.save_recording(user_id, recording_id, operations)
-    
-    # TODO: 保存元数据到 PostgreSQL
-    # recording = Recording(
-    #     id=recording_id,
-    #     user_id=user_id,
-    #     file_path=file_path,
-    #     operations_count=len(operations)
-    # )
-    # db.add(recording)
-    # db.commit()
-    
+
+    # Save recording to filesystem (with task_description)
+    file_path = storage_service.save_recording(
+        user_id,
+        recording_id,
+        operations,
+        task_description=task_description
+    )
+
     logger.info(f"Recording uploaded: {recording_id} ({len(operations)} ops)")
+    if task_description:
+        logger.info(f"  Task: {task_description}")
+
+    # Start background task to extract intents and add to user's graph
+    asyncio.create_task(
+        add_intents_to_user_graph_background(
+            user_id,
+            recording_id,
+            operations,
+            task_description
+        )
+    )
+
     return {"recording_id": recording_id}
 
-@app.post("/api/recordings/{recording_id}/generate")
-async def generate_workflow(recording_id: str, data: dict):
+
+async def add_intents_to_user_graph_background(
+    user_id: str,
+    recording_id: str,
+    operations: list,
+    task_description: str
+):
+    """Background task: Extract intents from operations and add to user's Intent Graph"""
+    try:
+        logger.info(f"🔄 Background: Adding intents from recording {recording_id} to user {user_id}'s graph")
+        if task_description:
+            logger.info(f"   Task description: {task_description}")
+
+        # Get user's Intent Graph file path
+        graph_filepath = storage_service.get_user_intent_graph_path(user_id)
+
+        # Extract intents and add to graph (with task_description)
+        new_intents_count = await workflow_generation_service.add_intents_to_graph(
+            operations=operations,
+            graph_filepath=graph_filepath,
+            task_description=task_description
+        )
+
+        logger.info(f"✅ Background: Added {new_intents_count} intents from recording {recording_id}")
+
+    except Exception as e:
+        logger.error(f"❌ Background: Failed to add intents from recording {recording_id}: {e}")
+        import traceback
+        traceback.print_exc()
+
+@app.post("/api/users/{user_id}/generate_metaflow")
+async def generate_metaflow(user_id: str, data: dict):
     """
-    生成 Workflow（同步，30-60 秒）
-    
+    Generate MetaFlow from user's Intent Memory Graph
+
     Body:
         {
-            "user_id": "user123",
-            "task_description": "从 allegro 抓取咖啡数据"  (可选)
+            "task_description": "Search coffee on Google"
         }
-    
+
     Returns:
         {
-            "workflow_name": "...",
+            "metaflow_id": "metaflow_xxx",
+            "status": "success"
+        }
+    """
+    task_description = data.get("task_description")
+
+    if not task_description:
+        raise HTTPException(400, "Missing task_description")
+
+    logger.info(f"🚀 Generating MetaFlow for user {user_id}")
+    logger.info(f"   Task: {task_description}")
+
+    try:
+        # Get user's Intent Graph file path
+        graph_filepath = storage_service.get_user_intent_graph_path(user_id)
+
+        # Check if graph exists
+        from pathlib import Path
+        if not Path(graph_filepath).exists():
+            raise HTTPException(404, f"User {user_id} has no Intent Graph yet. Please upload recordings first.")
+
+        # Generate MetaFlow from Intent Graph
+        metaflow_yaml = await workflow_generation_service.generate_metaflow_from_graph_file(
+            graph_filepath=graph_filepath,
+            task_description=task_description
+        )
+
+        # Generate metaflow_id
+        metaflow_id = f"metaflow_{uuid.uuid4().hex[:12]}"
+
+        # Save MetaFlow to server filesystem
+        storage_service.save_metaflow(
+            user_id=user_id,
+            metaflow_id=metaflow_id,
+            metaflow_yaml=metaflow_yaml,
+            task_description=task_description
+        )
+
+        logger.info(f"✅ MetaFlow generated and saved: {metaflow_id}")
+
+        return {
+            "metaflow_id": metaflow_id,
+            "metaflow_yaml": metaflow_yaml,
+            "task_description": task_description,
+            "status": "success"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ MetaFlow generation failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"MetaFlow generation failed: {str(e)}")
+
+
+@app.post("/api/metaflows/{metaflow_id}/generate_workflow")
+async def generate_workflow_from_metaflow(metaflow_id: str, data: dict):
+    """
+    Generate Workflow YAML from MetaFlow
+
+    Body:
+        {
+            "user_id": "user123"
+        }
+
+    Returns:
+        {
+            "workflow_name": "workflow_xxx",
             "status": "success"
         }
     """
     user_id = data.get("user_id")
-    task_description = data.get("task_description")  # 可选
-    
+
     if not user_id:
         raise HTTPException(400, "Missing user_id")
-    
-    # 读取录制数据
-    recording_data = storage_service.get_recording(user_id, recording_id)
-    if not recording_data:
-        raise HTTPException(404, f"Recording not found: {recording_id}")
-    
-    operations = recording_data.get("operations", [])
-    
-    logger.info(f"🚀 Generating workflow for recording: {recording_id} ({len(operations)} ops)")
-    
+
+    # Load MetaFlow data
+    metaflow_data = storage_service.get_metaflow(user_id, metaflow_id)
+    if not metaflow_data:
+        raise HTTPException(404, f"MetaFlow not found: {metaflow_id}")
+
+    metaflow_yaml = metaflow_data.get("metaflow_yaml")
+
+    logger.info(f"🚀 Generating Workflow from MetaFlow: {metaflow_id}")
+
     try:
-        # 调用 Workflow Generation Service
-        result = await workflow_generation_service.generate_workflow_from_operations(
-            operations=operations,
-            task_description=task_description
+        # Generate Workflow from MetaFlow
+        workflow_yaml = await workflow_generation_service.generate_workflow_from_metaflow(
+            metaflow_yaml=metaflow_yaml
         )
-        
-        workflow_name = result["workflow_name"]
-        workflow_yaml = result["workflow_yaml"]
-        metaflow_yaml = result.get("metaflow_yaml")
-        intent_graph_json = result.get("intent_graph_json")
-        
-        # 保存到服务器文件系统
+
+        # Extract workflow_name from YAML
+        import yaml
+        workflow_dict = yaml.safe_load(workflow_yaml)
+        workflow_name = workflow_dict.get("name", f"workflow_{uuid.uuid4().hex[:12]}")
+
+        # Save Workflow to server filesystem
         storage_service.save_workflow(
             user_id=user_id,
             workflow_name=workflow_name,
             workflow_yaml=workflow_yaml,
-            metaflow_yaml=metaflow_yaml,
-            intent_graph=intent_graph_json
+            metaflow_yaml=metaflow_yaml
         )
-        
+
         logger.info(f"✅ Workflow generated and saved: {workflow_name}")
-        
+
         return {
             "workflow_name": workflow_name,
+            "workflow_yaml": workflow_yaml,
             "status": "success"
         }
-        
+
     except Exception as e:
         logger.error(f"❌ Workflow generation failed: {e}")
         import traceback
         traceback.print_exc()
         raise HTTPException(500, f"Workflow generation failed: {str(e)}")
+
 
 # ===== Workflows API =====
 

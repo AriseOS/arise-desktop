@@ -65,7 +65,7 @@ Ami v2.0 uses a **Local-First + Cloud-Enhanced** architecture with 4 core compon
 
 - **Local-First Execution**: Workflows run on your computer with your browser session - fast, private, and cost-effective
 - **Cloud-Powered Intelligence**: AI analysis (Intent extraction, Workflow generation) happens in the cloud with powerful LLMs
-- **Clean Separation**: Local Backend handles execution, Cloud Backend handles learning and storage
+- **Clean Separation**: App Backend handles execution, Cloud Backend handles learning and storage
 - **User Privacy**: Sensitive operations stay local; only anonymized data used for improvement
 
 ### Three Technical Engines
@@ -124,14 +124,14 @@ playwright install chromium --with-deps
 ./scripts/start_both_backends.sh
 
 # Or start individually
-./scripts/start_local_backend.sh   # Port 8000
+./scripts/start_app_backend.sh   # Port 8000
 ./scripts/start_cloud_backend.sh   # Port 9000
 ```
 
 **Or manually**:
 ```bash
-# Local Backend (Required - runs on your computer)
-cd src/local_backend
+# App Backend (Required - runs on your computer)
+cd src/app_backend
 pip install -r requirements.txt
 python main.py
 # Accessible at: http://localhost:8000
@@ -151,7 +151,7 @@ python main.py
 4. Execute the workflow with one click - Ami handles the automation
 
 **API Documentation**:
-- Local Backend: http://localhost:8000/docs
+- App Backend: http://localhost:8000/docs
 - Cloud Backend: http://localhost:9000/docs
 
 ## 💡 How It Works
@@ -201,9 +201,9 @@ Records user operations in the browser:
 - One-click workflow execution
 - Progress monitoring
 
-### 2️⃣ Local Backend (Execution Engine)
+### 2️⃣ App Backend (Execution Engine)
 
-**Location**: `src/local_backend/`
+**Location**: `src/app_backend/`
 
 Runs on your computer to execute workflows:
 - **Workflow Executor**: Loads and executes YAML workflows using BaseAgent
@@ -212,7 +212,7 @@ Runs on your computer to execute workflows:
 - **Cloud Client**: Proxies requests to Cloud Backend (secure Token management)
 
 ```python
-from src.local_backend.services.workflow_executor import WorkflowExecutor
+from src.app_backend.services.workflow_executor import WorkflowExecutor
 
 executor = WorkflowExecutor()
 task_id = await executor.execute_workflow_async(user_id, workflow_name)
@@ -233,7 +233,7 @@ Runs on server to generate workflows:
 
 **Location**: `src/base_app/`
 
-The core execution engine used by Local Backend:
+The core execution engine used by App Backend:
 - **Workflow Engine**: Executes YAML-based workflow definitions
 - **Memory System**: Three-layer architecture (Variables, KV Storage, Long-term Memory)
 - **Tool Integration**: Browser automation, Android tools, custom tools
@@ -253,7 +253,7 @@ The core execution engine used by Local Backend:
 
 ### Component Documentation
 - [BaseAgent Architecture](./docs/baseagent/ARCHITECTURE.md) - Core execution framework
-- [Local Backend README](./src/local_backend/README.md) - Local execution engine setup
+- [App Backend README](./src/app_backend/README.md) - Local execution engine setup
 - [Cloud Backend README](./src/cloud_backend/README.md) - Cloud services setup
 
 ### Developer Guides
@@ -297,7 +297,7 @@ pytest --cov=tools --cov-report=html
 ## 🛣️ Roadmap
 
 ### ✅ Phase 1: Architecture Refactoring (Completed)
-- [x] Local Backend + Cloud Backend split architecture
+- [x] App Backend + Cloud Backend split architecture
 - [x] BaseAgent framework with workflow engine
 - [x] Browser tool integration with session reuse
 - [x] Chrome Extension for recording

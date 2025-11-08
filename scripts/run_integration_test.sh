@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 echo "Prerequisites:"
-echo "  - Local Backend running on localhost:8000"
+echo "  - App Backend running on localhost:8000"
 echo "  - Cloud Backend running on localhost:9000"
 echo ""
 echo "Tip: Run './scripts/start_both_backends.sh' first"

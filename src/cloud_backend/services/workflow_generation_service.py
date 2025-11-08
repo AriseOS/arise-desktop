@@ -55,143 +55,148 @@ class WorkflowGenerationService:
         
         logger.info(f"✅ Workflow Generation Service initialized with {llm_provider_name}")
     
-    async def generate_workflow_from_operations(
+    async def add_intents_to_graph(
         self,
         operations: List[Dict],
-        task_description: Optional[str] = None,
-        user_query: Optional[str] = None
-    ) -> Dict[str, str]:
+        graph_filepath: str,
+        task_description: Optional[str] = None
+    ) -> int:
         """
-        从 operations 生成 Workflow（完整流程）
-        
+        Extract intents from operations and add to existing Intent Memory Graph
+
         Args:
-            operations: 用户操作列表
-            task_description: 任务描述（可选，从 operations 推断）
-            user_query: 用户查询（可选，默认等于 task_description）
-            
+            operations: User operation list
+            graph_filepath: Path to existing intent_graph.json file
+            task_description: User's description of what they did (optional, can be empty)
+
         Returns:
-            {
-                "workflow_yaml": "...",
-                "metaflow_yaml": "...",
-                "intent_graph_json": "...",
-                "workflow_name": "..."
-            }
+            Number of new intents added
         """
-        logger.info(f"🚀 Starting workflow generation from {len(operations)} operations")
-        
-        # 1. 推断 task_description（如果没有提供）
-        if not task_description:
-            task_description = self._infer_task_description(operations)
-            logger.info(f"📝 Inferred task: {task_description}")
-        
-        # 2. user_query 默认等于 task_description
-        if not user_query:
-            user_query = task_description
-        
-        # 3. Intent Extraction
+        logger.info(f"🚀 Adding intents from {len(operations)} operations to graph")
+
+        if task_description:
+            logger.info(f"📝 User task description: {task_description}")
+        else:
+            logger.info(f"📝 No task description provided")
+
+        # Intent Extraction (with user's task_description if provided)
         logger.info("1️⃣  Extracting intents...")
-        intents = await self.intent_extractor.extract_intents(
+        new_intents = await self.intent_extractor.extract_intents(
             operations=operations,
-            task_description=task_description,
+            task_description=task_description or "",  # Empty string if not provided
             source_session_id="cloud-backend"
         )
-        logger.info(f"   ✅ Extracted {len(intents)} intents")
-        
-        # 4. Build Intent Memory Graph
-        logger.info("2️⃣  Building Intent Memory Graph...")
+        logger.info(f"   ✅ Extracted {len(new_intents)} new intents")
+
+        # 3. Load existing Intent Graph or create new one
+        from pathlib import Path
         storage = InMemoryIntentStorage()
+
+        if Path(graph_filepath).exists():
+            logger.info(f"2️⃣  Loading existing graph from {graph_filepath}")
+            storage.load(graph_filepath)
+            existing_count = len(storage.get_all_intents())
+            logger.info(f"   ✅ Loaded {existing_count} existing intents")
+        else:
+            logger.info(f"2️⃣  Creating new graph (file doesn't exist yet)")
+            existing_count = 0
+
         graph = IntentMemoryGraph(storage=storage)
-        for intent in intents:
+
+        # 4. Add new intents to graph
+        logger.info("3️⃣  Adding new intents to graph...")
+        for intent in new_intents:
             graph.add_intent(intent)
-        
-        # 自动连接（基于依赖关系）
-        for i in range(len(intents) - 1):
-            graph.add_edge(intents[i].id, intents[i + 1].id)
-        
-        logger.info(f"   ✅ Graph built: {len(graph.get_all_intents())} nodes, {len(graph.get_edges())} edges")
-        
-        # 5. MetaFlow Generation
-        logger.info("3️⃣  Generating MetaFlow...")
+
+        # Auto-connect new intents based on sequential order
+        for i in range(len(new_intents) - 1):
+            graph.add_edge(new_intents[i].id, new_intents[i + 1].id)
+
+        # 5. Save updated graph
+        logger.info(f"4️⃣  Saving updated graph to {graph_filepath}")
+        storage.save(graph_filepath)
+
+        total_intents = len(graph.get_all_intents())
+        logger.info(f"   ✅ Graph updated: {total_intents} total intents ({len(new_intents)} new)")
+
+        return len(new_intents)
+
+    async def generate_metaflow_from_graph_file(
+        self,
+        graph_filepath: str,
+        task_description: str,
+        user_query: Optional[str] = None
+    ) -> str:
+        """
+        Generate MetaFlow from Intent Graph file (Step 2: Intent Graph + task_description → MetaFlow)
+
+        This will filter relevant intents from the graph based on task_description.
+
+        Args:
+            graph_filepath: Path to intent_graph.json file
+            task_description: User's task description
+            user_query: Optional user query (defaults to task_description)
+
+        Returns:
+            metaflow_yaml: MetaFlow YAML string
+        """
+        logger.info(f"🚀 Generating MetaFlow from Intent Graph")
+        logger.info(f"   Task: {task_description}")
+
+        # 1. Load Intent Memory Graph from file
+        from pathlib import Path
+        if not Path(graph_filepath).exists():
+            raise FileNotFoundError(f"Intent Graph file not found: {graph_filepath}")
+
+        storage = InMemoryIntentStorage()
+        storage.load(graph_filepath)
+
+        graph = IntentMemoryGraph(storage=storage)
+        logger.info(f"   ✅ Graph loaded: {len(graph.get_all_intents())} intents")
+
+        # 2. Generate MetaFlow (MetaFlowGenerator will filter relevant intents)
+        if not user_query:
+            user_query = task_description
+
+        logger.info("2️⃣  Generating MetaFlow...")
         metaflow = await self.metaflow_generator.generate(
             graph=graph,
             task_description=task_description,
             user_query=user_query
         )
         logger.info(f"   ✅ MetaFlow generated: {len(metaflow.nodes)} nodes")
-        
-        # 6. Workflow Generation
+
+        # 3. Serialize MetaFlow
+        metaflow_yaml = metaflow.to_yaml()
+
+        logger.info(f"✅ MetaFlow generation complete")
+        return metaflow_yaml
+
+    async def generate_workflow_from_metaflow(
+        self,
+        metaflow_yaml: str
+    ) -> str:
+        """
+        Generate Workflow YAML from MetaFlow (Step 3: MetaFlow → Workflow)
+
+        Args:
+            metaflow_yaml: MetaFlow YAML string
+
+        Returns:
+            workflow_yaml: Workflow YAML string
+        """
+        logger.info(f"🚀 Generating Workflow from MetaFlow")
+
+        # 1. Parse MetaFlow
+        from src.intent_builder.core.metaflow import MetaFlow
+        metaflow = MetaFlow.from_yaml(metaflow_yaml)
+
+        logger.info(f"   MetaFlow: {len(metaflow.nodes)} nodes")
+
+        # 2. Generate Workflow
         logger.info("4️⃣  Generating Workflow...")
         workflow_yaml = await self.workflow_generator.generate(metaflow)
         logger.info(f"   ✅ Workflow generated ({len(workflow_yaml)} chars)")
-        
-        # 7. 生成 workflow_name
-        workflow_name = self._generate_workflow_name(workflow_yaml, task_description)
-        
-        # 8. Serialize intermediate artifacts
-        metaflow_yaml = metaflow.to_yaml()
 
-        # Serialize intent graph manually (IntentMemoryGraph doesn't have to_json)
-        import json
-        intent_graph_data = {
-            "intents": {
-                intent.id: intent.to_dict()
-                for intent in graph.get_all_intents()
-            },
-            "edges": graph.get_edges(),
-            "metadata": {
-                "created_at": graph.get_metadata()["created_at"].isoformat(),
-                "last_updated": graph.get_metadata()["last_updated"].isoformat(),
-                "version": "2.0"
-            },
-            "stats": graph.get_stats()
-        }
-        intent_graph_json = json.dumps(intent_graph_data, ensure_ascii=False, indent=2)
-
-        logger.info(f"✅ Workflow generation complete: {workflow_name}")
-
-        return {
-            "workflow_yaml": workflow_yaml,
-            "metaflow_yaml": metaflow_yaml,
-            "intent_graph_json": intent_graph_json,
-            "workflow_name": workflow_name
-        }
-    
-    def _infer_task_description(self, operations: List[Dict]) -> str:
-        """
-        从 operations 推断任务描述
-        
-        简单策略：提取第一个 URL 的域名
-        """
-        for op in operations:
-            if op.get("type") == "navigate" and op.get("url"):
-                url = op["url"]
-                # 提取域名
-                import re
-                match = re.search(r'https?://([^/]+)', url)
-                if match:
-                    domain = match.group(1)
-                    return f"从 {domain} 抓取数据"
-        
-        return "网页数据抓取任务"
-    
-    def _generate_workflow_name(self, workflow_yaml: str, task_description: str) -> str:
-        """
-        从 workflow YAML 生成名称
-        
-        策略：
-        1. 提取 workflow.yaml 中的 name 字段
-        2. 如果没有，基于 task_description 生成
-        """
-        try:
-            workflow_dict = yaml.safe_load(workflow_yaml)
-            if "name" in workflow_dict:
-                return workflow_dict["name"]
-        except:
-            pass
-        
-        # 基于 task_description 生成（简化版）
-        # 移除特殊字符，用短横线连接
-        import re
-        name = re.sub(r'[^\w\s-]', '', task_description)
-        name = re.sub(r'[-\s]+', '-', name).strip('-')
-        return name[:50]  # 限制长度
+        logger.info(f"✅ Workflow generation complete")
+        return workflow_yaml

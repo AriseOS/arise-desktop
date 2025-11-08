@@ -8,12 +8,17 @@ Test directory organized by system architecture (v2.0)
 
 ```
 tests/
-├── cloud-backend/          # Cloud Backend tests
+├── cloud_backend/          # Cloud Backend tests
 │   ├── test_storage_service.py
 │   ├── test_workflow_generation.py
 │   └── test_api_endpoints.py
 │
-├── local-backend/          # Local Backend tests (placeholder)
+├── app_backend/            # App Backend HTTP daemon tests
+│   ├── test_http_daemon.py          # Python HTTP API tests
+│   ├── test_http_daemon.sh          # Shell HTTP API tests
+│   ├── test_daemon_jsonrpc.py       # Legacy JSON-RPC tests
+│   ├── manual_test_daemon.sh        # Legacy manual tests
+│   └── README.md                    # App Backend test docs
 │
 ├── integration/            # Integration tests
 │   ├── test_integration.py         # Full system integration
@@ -63,7 +68,10 @@ pytest tests/ -v
 **Run specific test categories:**
 ```bash
 # Cloud Backend tests
-pytest tests/cloud-backend/ -v
+pytest tests/cloud_backend/ -v
+
+# App Backend tests
+pytest tests/app_backend/ -v
 
 # Integration tests
 pytest tests/integration/ -v
@@ -74,12 +82,21 @@ pytest tests/unit/ -v
 
 **Run specific test file:**
 ```bash
-pytest tests/cloud-backend/test_workflow_generation.py -v
+pytest tests/cloud_backend/test_workflow_generation.py -v
 ```
 
 **Run specific test function:**
 ```bash
-pytest tests/cloud-backend/test_workflow_generation.py::test_generate_workflow_from_operations -v
+pytest tests/cloud_backend/test_workflow_generation.py::test_generate_workflow_from_operations -v
+```
+
+**Run App Backend HTTP tests:**
+```bash
+# Python tests
+python tests/app_backend/test_http_daemon.py
+
+# Shell tests
+./tests/app_backend/test_http_daemon.sh
 ```
 
 ---
@@ -97,12 +114,16 @@ Tests for Cloud Backend functionality:
 - Cloud Backend running on localhost:9000
 - LLM API key (ANTHROPIC_API_KEY or OPENAI_API_KEY)
 
-### 2. Local Backend Tests (`tests/local-backend/`)
+### 2. App Backend Tests (`tests/app_backend/`)
 
-Tests for Local Backend functionality (placeholder for future tests):
-- Storage Manager
-- Workflow Executor
-- Cloud Client
+Tests for App Backend HTTP daemon:
+- **HTTP API Tests**: Recording, workflow generation, execution
+- **Legacy JSON-RPC Tests**: Deprecated stdin/stdout communication
+
+**Requirements:**
+- App Backend HTTP daemon running on localhost:8765
+
+See `tests/app_backend/README.md` for detailed test documentation.
 
 ### 3. Integration Tests (`tests/integration/`)
 
@@ -112,7 +133,7 @@ End-to-end system tests:
 - **workflow/**: Workflow execution tests
 
 **Requirements:**
-- Both Local Backend (port 8000) and Cloud Backend (port 9000) running
+- Both App Backend (port 8000) and Cloud Backend (port 9000) running
 
 ### 4. Unit Tests (`tests/unit/`)
 
@@ -188,11 +209,12 @@ open htmlcov/index.html
 
 All test scripts are located in `scripts/`:
 
-- **start_local_backend.sh** - Start Local Backend only
+- **start_http_daemon.sh** - Start App Backend HTTP daemon
 - **start_cloud_backend.sh** - Start Cloud Backend only
 - **start_both_backends.sh** - Start both backends
 - **run_cloud_tests.sh** - Run Cloud Backend tests (auto-starts if needed)
 - **run_integration_test.sh** - Run full integration test
+- **run_desktop_app.sh** - Start Tauri desktop app (if using)
 
 ---
 

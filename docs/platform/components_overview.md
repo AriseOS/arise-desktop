@@ -21,7 +21,7 @@ Ami 系统由四个核心组件构成，职责清晰分离：
 │         │                       │          │
 │         ↓                       ↓          │
 │  ┌─────────────────────────────────────┐  │
-│  │     Local Backend                   │  │
+│  │     App Backend                    │  │
 │  │     (Python + FastAPI)              │  │
 │  │     localhost:8000                  │  │
 │  └───────────────┬─────────────────────┘  │
@@ -43,7 +43,7 @@ Ami 系统由四个核心组件构成，职责清晰分离：
 系统主控制中心，用户的主要操作界面
 
 ### **职责**
-- ✅ 启动和监控 Local Backend（独立进程）
+- ✅ 启动和监控 App Backend（独立进程）
 - ✅ 提供 Workflow 管理界面
   - Workflow 列表（显示所有可用的自动化流程）
   - Workflow 详情（查看步骤、执行历史）
@@ -58,18 +58,18 @@ Ami 系统由四个核心组件构成，职责清晰分离：
 - 嵌入 **Python Backend**（打包在一起分发）
 
 ### **与其他组件的关系**
-- → **Local Backend**: HTTP/WebSocket (localhost:8000)
+- → **App Backend**: HTTP/WebSocket (localhost:8000)
   - 启动 Backend 进程
   - 调用 API 管理 Workflow
   - 监控 Backend 健康状态
   
-- → **Cloud Backend**: HTTPS（通过 Local Backend 转发）
+- → **Cloud Backend**: HTTPS（通过 App Backend 转发）
   - 不直接调用 Cloud API
-  - 所有云端请求通过 Local Backend
+  - 所有云端请求通过 App Backend
 
 - → **Chrome Extension**: 无直接通信
   - Extension 独立工作
-  - 都通过 Local Backend 协调
+  - 都通过 App Backend 协调
 
 ### **用户场景**
 ```
@@ -94,7 +94,7 @@ Ami 系统由四个核心组件构成，职责清晰分离：
 ### **职责**
 - ✅ **录制**用户操作
   - 捕获点击、输入、导航等事件
-  - 实时发送到 Local Backend
+  - 实时发送到 App Backend
   
 - ✅ **快速执行** Workflow
   - 在浏览器中直接触发执行
@@ -111,22 +111,22 @@ Ami 系统由四个核心组件构成，职责清晰分离：
 - **Popup UI**（用户交互）
 
 ### **与其他组件的关系**
-- → **Local Backend**: WebSocket (ws://localhost:8000)
+- → **App Backend**: WebSocket (ws://localhost:8000)
   - 发送录制事件
   - 触发 Workflow 执行
   - 接收执行进度更新
   
 - ❌ **不直接**与 Cloud Backend 通信
   - 原因 1：安全性（避免暴露 Token）
-  - 原因 2：一致性（统一由 Local Backend 管理）
+  - 原因 2：一致性（统一由 App Backend 管理）
   
 - → **Desktop App**: 无直接通信
   - 独立工作
-  - 都通过 Local Backend 协调
+  - 都通过 App Backend 协调
 
 ### **为什么不让 Extension 直接调 Cloud API？**
 1. **安全性**：Extension 代码容易被查看，不应包含 Cloud API Token
-2. **一致性**：所有云端通信统一由 Local Backend 管理（Token、重试、错误处理）
+2. **一致性**：所有云端通信统一由 App Backend 管理（Token、重试、错误处理）
 3. **离线能力**：本地缓存的 Workflow 可以在 Extension 中直接执行，无需云端
 
 ### **用户场景**
@@ -148,7 +148,7 @@ Extension 显示："正在生成 Workflow..."
 
 ---
 
-## 3️⃣ Local Backend
+## 3️⃣ App Backend
 
 ### **定位**
 用户电脑上的执行引擎和云端代理
@@ -228,7 +228,7 @@ Extension 显示："正在生成 Workflow..."
   - 上传、下载、生成
   - 统计上报
 
-### **为什么需要 Local Backend？**
+### **为什么需要 App Backend？**
 1. **执行控制**：需要 Python 的 BaseAgent 来控制浏览器（Extension 做不到）
 2. **安全代理**：统一管理 Cloud Token，Extension 和 Desktop App 不直接暴露
 3. **本地缓存**：离线时也能执行已有 Workflow
@@ -264,7 +264,7 @@ Token 管理（刷新、过期）
 
 #### **4.2 录制数据处理**
 ```
-接收 operations.json（从 Local Backend）
+接收 operations.json（从 App Backend）
   ↓
 保存到服务器文件系统
   /var/lib/ami/recordings/{user_id}/{session_id}/operations.json
@@ -298,12 +298,12 @@ Intent Extraction（调用 Claude/GPT）
   - 服务器文件系统: /var/lib/ami/workflows/{user_id}/{name}/workflow.yaml
   - PostgreSQL: 元数据（名称、创建时间等）
   ↓
-提供下载 API（供 Local Backend 拉取）
+提供下载 API（供 App Backend 拉取）
 ```
 
 #### **4.5 统计分析**
 ```
-接收执行上报（从 Local Backend）
+接收执行上报（从 App Backend）
   - workflow_name
   - status (success/failed)
   - duration
@@ -324,12 +324,12 @@ Intent Extraction（调用 Claude/GPT）
 - **Anthropic Claude** / **OpenAI GPT**
 
 ### **与其他组件的关系**
-- ← **Local Backend**: HTTPS (api.ami.com)
+- ← **App Backend**: HTTPS (api.ami.com)
   - 接收上传、生成请求
   - 提供下载、查询 API
   
 - ❌ **不直接**与 Desktop App 或 Extension 通信
-  - 所有通信通过 Local Backend 中转
+  - 所有通信通过 App Backend 中转
 
 ### **为什么数据要在远程服务器？**
 1. **AI 分析**：需要调用 LLM（本地网络不稳定）
@@ -349,7 +349,7 @@ Intent Extraction（调用 Claude/GPT）
 └─────────────────────────────────────────────────────────────────┘
 Extension 捕获操作
   ↓ WebSocket
-Local Backend 保存到本地文件
+App Backend 保存到本地文件
   ~/.ami/users/123/recordings/abc/operations.json
 
 ┌─────────────────────────────────────────────────────────────────┐
@@ -357,7 +357,7 @@ Local Backend 保存到本地文件
 └─────────────────────────────────────────────────────────────────┘
 用户停止录制
   ↓
-Local Backend 上传 operations.json
+App Backend 上传 operations.json
   ↓ HTTPS POST /api/recordings/upload
 Cloud Backend 保存到 S3 + PostgreSQL
   返回 recording_id
@@ -365,7 +365,7 @@ Cloud Backend 保存到 S3 + PostgreSQL
 ┌─────────────────────────────────────────────────────────────────┐
 │  3. 生成阶段（云端 AI 分析，30-60 秒）                            │
 └─────────────────────────────────────────────────────────────────┘
-Local Backend 触发生成
+App Backend 触发生成
   ↓ HTTPS POST /api/recordings/{id}/generate
 Cloud Backend:
   ├─ Intent Extraction (Claude API)
@@ -379,11 +379,11 @@ Cloud Backend:
 ┌─────────────────────────────────────────────────────────────────┐
 │  4. 下载阶段（云端 → 本地）                                       │
 └─────────────────────────────────────────────────────────────────┘
-Local Backend 下载 Workflow
+App Backend 下载 Workflow
   ↓ HTTPS GET /api/workflows/{name}/download
 Cloud Backend 返回 workflow.yaml
   ↓
-Local Backend 保存到本地
+App Backend 保存到本地
   ~/.ami/users/123/workflows/从-allegro-抓取咖啡/workflow.yaml
 
 ┌─────────────────────────────────────────────────────────────────┐
@@ -391,7 +391,7 @@ Local Backend 保存到本地
 └─────────────────────────────────────────────────────────────────┘
 用户触发执行（Extension 或 Desktop App）
   ↓ WebSocket / HTTP
-Local Backend:
+App Backend:
   ├─ 加载本地 workflow.yaml
   ├─ 强制设置 workflow.name = "global"
   └─ BaseAgent 执行（复用全局浏览器）
@@ -402,7 +402,7 @@ Local Backend:
 ┌─────────────────────────────────────────────────────────────────┐
 │  6. 上报阶段（本地 → 云端，异步）                                │
 └─────────────────────────────────────────────────────────────────┘
-Local Backend 后台上报统计
+App Backend 后台上报统计
   ↓ HTTPS POST /api/executions/report
 Cloud Backend 记录：
   - workflow_name
@@ -421,7 +421,7 @@ Cloud Backend 记录：
 |------|------|------|
 | **Desktop App** | 用户界面 | 完整的 Workflow 管理体验 |
 | **Extension** | 录制 + 快捷执行 | 在浏览器中便捷操作 |
-| **Local Backend** | 执行 + 代理 | 控制浏览器、保护隐私、本地缓存 |
+| **App Backend** | 执行 + 代理 | 控制浏览器、保护隐私、本地缓存 |
 | **Cloud Backend** | AI + 存储 | 强大算力、数据积累、知识网络 |
 
 ### **关键设计决策**
@@ -440,7 +440,7 @@ Cloud Backend 记录：
    - 成本低（不需要云端浏览器实例）
    - 隐私好（登录状态在本地）
 
-4. **为什么需要 Local Backend？**
+4. **为什么需要 App Backend？**
    - Extension 是 JavaScript，无法运行 Python BaseAgent
    - 需要统一管理 Cloud Token（安全）
    - 需要本地缓存（离线执行）
@@ -452,7 +452,7 @@ Cloud Backend 记录：
 **四大组件，各司其职**：
 - 🖥️ **Desktop App**：主控制中心
 - 🌐 **Chrome Extension**：录制和快速执行
-- ⚙️ **Local Backend**：执行引擎 + 云端代理
+- ⚙️ **App Backend**：执行引擎 + 云端代理
 - ☁️ **Cloud Backend**：AI 分析 + 数据存储
 
 **数据流向**：

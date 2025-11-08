@@ -1,0 +1,31 @@
+server:
+  host: 0.0.0.0
+  port: 8000
+  debug: false
+
+storage:
+  base_path: auto
+
+data:
+  browser_data: ${storage.base_path}/browser_data
+  scripts: ${storage.base_path}/scripts
+  databases:
+    kv: ${storage.base_path}/databases/kv.db
+
+browser:
+  headless: false
+  timeout: 30
+
+cloud:
+  api_url: http://127.0.0.1:9000
+  timeout: 120
+
+logging:
+  level: INFO
+  path: ${storage.base_path}/logs/app-backend.log
+
+cors:
+  allow_origins:
+    - chrome-extension://*
+    - http://localhost:*
+  allow_credentials: true

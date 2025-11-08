@@ -32,7 +32,7 @@
 
 - **本地优先**：录制和执行在用户电脑本地，保护隐私，降低成本
 - **云端智能**：数据分析和 Workflow 生成在云端，利用强大算力和 LLM
-- **职责分离**：Local Backend（执行控制）与 Cloud Backend（数据分析）清晰分离
+- **职责分离**：App Backend（执行控制）与 Cloud Backend（数据分析）清晰分离
 - **用户体验**：Desktop App + Chrome Extension 双界面，满足不同使用场景
 
 ### 1.3 技术选型
@@ -41,7 +41,7 @@
 |------|--------|------|
 | Desktop App | Tauri (Rust + Web) | 轻量、跨平台、原生性能 |
 | Chrome Extension | Manifest V3 | 录制真实浏览器环境，保留登录状态 |
-| Local Backend | Python 3.12 + FastAPI | 复用 BaseAgent，异步支持 |
+| App Backend | Python 3.12 + FastAPI | 复用 BaseAgent，异步支持 |
 | Cloud Backend | Python 3.12 + FastAPI | 与本地一致，易于维护 |
 | BaseAgent | Python (browser-use) | 成熟的 Workflow 执行引擎 |
 | 数据库（云端） | PostgreSQL | 可靠性、扩展性 |
@@ -74,7 +74,7 @@ Ami 系统由四个核心组件构成：
 │           │ 启动/监控                            │ WebSocket      │
 │           ↓                                     ↓                │
 │  ┌──────────────────────────────────────────────────────────┐   │
-│  │           Local Backend (Python + FastAPI)               │   │
+│  │           App Backend (Python + FastAPI)                │   │
 │  │           localhost:8000                                 │   │
 │  │  ┌──────────────────────────────────────────────────┐    │   │
 │  │  │ • Recording Controller (录制控制)                 │    │   │
@@ -110,7 +110,7 @@ Ami 系统由四个核心组件构成：
 **定位**：系统主控制中心
 
 **职责**：
-- 启动和监控 Local Backend（独立进程）
+- 启动和监控 App Backend（独立进程）
 - 提供 Workflow 管理界面（列表、详情、执行控制）
 - 系统托盘（后台运行）
 - 用户登录界面（调用 Cloud API）
@@ -122,8 +122,8 @@ Ami 系统由四个核心组件构成：
 - 嵌入 Python Backend（打包后随 App 分发）
 
 **与其他组件通信**：
-- → Local Backend: HTTP/WebSocket (localhost:8000)
-- → Cloud Backend: HTTPS (通过 Local Backend 转发)
+- → App Backend: HTTP/WebSocket (localhost:8000)
+- → Cloud Backend: HTTPS (通过 App Backend 转发)
 
 ---
 
@@ -143,17 +143,17 @@ Ami 系统由四个核心组件构成：
 - Popup UI（用户交互界面）
 
 **与其他组件通信**：
-- → Local Backend: WebSocket (ws://localhost:8000)
+- → App Backend: WebSocket (ws://localhost:8000)
 - ❌ 不直接与 Cloud Backend 通信
 
 **为什么不直接调 Cloud API？**
 - 安全性：避免暴露 Cloud API Token 在 Extension 代码中
-- 一致性：所有云端通信统一由 Local Backend 管理
+- 一致性：所有云端通信统一由 App Backend 管理
 - 离线能力：本地缓存的 Workflow 可以直接执行
 
 ---
 
-#### **Local Backend**
+#### **App Backend**
 **定位**：用户电脑上的执行引擎和云端代理
 
 **职责**：
@@ -233,7 +233,7 @@ Ami 系统由四个核心组件构成：
 - Anthropic Claude / OpenAI GPT
 
 **与其他组件通信**：
-- ← Local Backend: HTTPS (api.ami.com)
+- ← App Backend: HTTPS (api.ami.com)
 - ❌ 不直接与 Desktop App 或 Extension 通信
 
 ---
@@ -334,7 +334,7 @@ Content Script captures events
   ↓ (2) 封装为 Operation 对象
 Background Service Worker
   ↓ (3) HTTP POST
-Local Backend API (/api/recording/operation)
+App Backend API (/api/recording/operation)
   ↓ (4) 追加到文件
 ~/agentcrafter/storage/users/{user_id}/learning/{session_id}/operations.json
 
@@ -345,7 +345,7 @@ Local Backend API (/api/recording/operation)
 
 User clicks "Stop Recording"
   ↓
-Local Backend reads operations.json
+App Backend reads operations.json
   ↓ (5) HTTPS POST
 Cloud API (/api/recordings/upload)
   ↓ (6) 保存到云端存储
@@ -376,7 +376,7 @@ Client receives response
 
 User clicks "Execute" in Extension/App
   ↓ (16) HTTP GET
-Local Backend (/api/workflows/{name})
+App Backend (/api/workflows/{name})
   ↓ (17) 检查本地缓存
 If not exists:
   ↓ (18) HTTPS GET
@@ -805,7 +805,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.base_app.base_app.base_agent.tools.browser_session_manager import BrowserSessionManager
 import asyncio
 
-app = FastAPI(title="Ami Local Backend")
+app = FastAPI(title="Ami App Backend")
 
 # CORS 配置（允许 Extension 和 Desktop App 访问）
 app.add_middleware(

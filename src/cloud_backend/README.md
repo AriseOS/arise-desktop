@@ -59,5 +59,5 @@ export STORAGE_PATH=/var/lib/ami/storage
 
 ## 与其他组件通信
 
-- ← **Local Backend**: HTTPS (api.ami.com 或 localhost:9000)
+- ← **App Backend**: HTTPS (api.ami.com 或 localhost:9000)
 - ❌ 不直接与 Desktop App 或 Extension 通信

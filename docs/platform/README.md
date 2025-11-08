@@ -26,13 +26,13 @@ Ami 系统 = 4 个核心组件
 
 1. Desktop App (Tauri)    - 主控制中心
 2. Chrome Extension       - 录制 + 快速执行
-3. Local Backend          - 执行引擎 + 云端代理
+3. App Backend           - 执行引擎 + 云端代理
 4. Cloud Backend          - AI 分析 + 数据存储
 ```
 
 ### 存储路径
 
-- **Local Backend**: `~/.ami/`
+- **App Backend**: `~/.ami/`
 - **Cloud Backend**: `~/.ami/` (开发) 或 `/var/lib/ami/` (生产)
 
 ---
