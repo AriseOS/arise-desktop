@@ -64,41 +64,47 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
         setWorkflowName(result.workflow_name)
         setWorkflowYaml(result.workflow_yaml)
 
-        // Parse workflow YAML and create visualization data
-        // For now, create a simple structure
-        const workflow = {
-          name: result.workflow_name,
-          description: 'Generated workflow from recording',
-          steps: [
-            {
-              id: 'step-start',
-              type: 'start',
-              name: 'Start',
-              description: 'Workflow start',
-              agent_type: 'start'
-            },
-            {
-              id: 'step-1',
-              type: 'tool_agent',
-              name: 'Generated Step',
-              description: 'Auto-generated from MetaFlow',
-              agent_type: 'tool_agent'
-            },
-            {
-              id: 'step-end',
-              type: 'end',
-              name: 'End',
-              description: 'Workflow completed',
-              agent_type: 'end'
-            }
-          ],
-          connections: [
-            { from: 'step-start', to: 'step-1' },
-            { from: 'step-1', to: 'step-end' }
-          ]
+        // Use visualization JSON from backend
+        if (result.workflow_json) {
+          console.log('Using workflow visualization JSON from backend:', result.workflow_json)
+          setWorkflowData(result.workflow_json)
+        } else {
+          // Fallback: create simple structure
+          console.warn('No workflow_json in response, using fallback')
+          const workflow = {
+            name: result.workflow_name,
+            description: 'Generated workflow from recording',
+            steps: [
+              {
+                id: 'step-start',
+                type: 'start',
+                name: 'Start',
+                description: 'Workflow start',
+                agent_type: 'start'
+              },
+              {
+                id: 'step-1',
+                type: 'tool_agent',
+                name: 'Generated Step',
+                description: 'Auto-generated from MetaFlow',
+                agent_type: 'tool_agent'
+              },
+              {
+                id: 'step-end',
+                type: 'end',
+                name: 'End',
+                description: 'Workflow completed',
+                agent_type: 'end'
+              }
+            ],
+            connections: [
+              { from: 'step-start', to: 'step-1' },
+              { from: 'step-1', to: 'step-end' }
+            ]
+          }
+          setWorkflowData(workflow)
         }
 
-        setWorkflowData(workflow)
         showStatus(`✅ Workflow 已生成: ${result.workflow_name}`, 'success')
       } else {
         throw new Error(result.error || 'Workflow generation failed')

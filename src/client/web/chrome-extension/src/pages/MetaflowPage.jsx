@@ -11,11 +11,12 @@ function MetaflowPage({ onNavigate, showStatus, recordingData, params }) {
 
   useEffect(() => {
     // Check if we have metaflow data from API (passed from RecordPage)
-    if (params?.metaflowData?.metaflow_yaml) {
-      console.log('Using MetaFlow data from API:', params.metaflowData)
+    if (params?.metaflowData?.metaflow_json) {
+      console.log('Using MetaFlow JSON data from API:', params.metaflowData)
       setMetaflowYaml(params.metaflowData.metaflow_yaml)
-      // Parse YAML and generate metaflow nodes
-      const generatedMetaflows = generateMetaflowsFromYaml(params.metaflowData.metaflow_yaml)
+
+      // Use the visualization JSON directly from backend
+      const generatedMetaflows = generateMetaflowsFromJson(params.metaflowData.metaflow_json)
       setMetaflows(generatedMetaflows)
       showStatus(`✅ 已加载生成的 MetaFlow (${params.metaflowData.nodes_count} 个节点)`, 'success')
     } else {
@@ -42,46 +43,31 @@ function MetaflowPage({ onNavigate, showStatus, recordingData, params }) {
     return 'process';
   }
 
-  const generateMetaflowsFromYaml = (yamlString) => {
+  const generateMetaflowsFromJson = (metaflowJson) => {
     try {
-      // Parse YAML to JSON (simple YAML parsing for metaflow structure)
-      // For now, we'll assume the YAML structure and parse it manually
-      // In production, you'd use a YAML parser library like js-yaml
+      console.log('Using MetaFlow JSON from backend:', metaflowJson)
 
-      // For demo purposes, we'll create a simplified structure
-      // The actual implementation should parse the YAML properly
-      console.log('Parsing MetaFlow YAML:', yamlString)
+      // Backend already provides the visualization structure
+      // We just need to map it to our frontend format
+      const metaflows = metaflowJson.nodes.map(node => ({
+        id: node.id,
+        type: node.type,
+        name: node.name,
+        description: node.description,
+        properties: node.properties || {}
+      }))
 
-      // Create basic metaflow structure from YAML
-      // This is a placeholder - you should use a proper YAML parser
-      const metaflows = [
-        {
-          id: 'start',
-          type: 'start',
-          name: 'Start',
-          description: 'Generated from recorded operations'
-        },
-        {
-          id: 'node-1',
-          type: 'navigate',
-          name: 'Generated Step 1',
-          description: 'Auto-generated from recording',
-          properties: {
-            yaml_content: yamlString
-          }
-        },
-        {
-          id: 'end',
-          type: 'end',
-          name: 'End',
-          description: 'Workflow completed successfully'
-        }
-      ]
+      // Add edges information if needed
+      if (metaflowJson.edges) {
+        // Store edges for later use if needed
+        console.log('MetaFlow edges:', metaflowJson.edges)
+      }
 
+      console.log('Converted metaflows:', metaflows)
       return metaflows
     } catch (error) {
-      console.error('Failed to parse MetaFlow YAML:', error)
-      showStatus('⚠️ MetaFlow 解析失败，使用默认配置', 'warning')
+      console.error('Failed to process MetaFlow JSON:', error)
+      showStatus('⚠️ MetaFlow 处理失败，使用默认配置', 'warning')
       return generateMetaflows()
     }
   }

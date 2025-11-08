@@ -134,7 +134,10 @@ class LearningService:
 
         metaflow_yaml = metaflow.to_yaml()
 
-        # 6. Save MetaFlow
+        # 6. Generate visualization JSON
+        metaflow_json = metaflow.to_visualization_json()
+
+        # 7. Save MetaFlow
         self.storage.save_learning_metaflow(user_id, session_id, metaflow_yaml)
 
         logger.info(f"Generated MetaFlow with {len(metaflow.nodes)} nodes for session {session_id}")
@@ -143,6 +146,7 @@ class LearningService:
             "success": True,
             "session_id": session_id,
             "metaflow_yaml": metaflow_yaml,
+            "metaflow_json": metaflow_json,
             "nodes_count": len(metaflow.nodes)
         }
 

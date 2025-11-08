@@ -19,6 +19,7 @@ from storage_service import storage_service
 from src.intent_builder.core.metaflow import MetaFlow
 from src.intent_builder.generators.workflow_generator import WorkflowGenerator
 from src.common.llm import AnthropicProvider
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,10 @@ class WorkflowService:
         title = session.get("title", "workflow")
         workflow_name = self._title_to_workflow_name(title)
 
-        # 6. Save workflow
+        # 6. Generate visualization JSON
+        workflow_json = self._workflow_yaml_to_visualization_json(workflow_yaml)
+
+        # 7. Save workflow
         result = self.storage.save_workflow(
             user_id=user_id,
             workflow_name=workflow_name,
@@ -86,8 +90,92 @@ class WorkflowService:
             "success": True,
             "workflow_name": workflow_name,
             "workflow_yaml": workflow_yaml,
+            "workflow_json": workflow_json,
             "overwritten": result["overwritten"]
         }
+
+    def _workflow_yaml_to_visualization_json(self, workflow_yaml: str) -> Dict:
+        """Convert workflow YAML to visualization JSON
+
+        Args:
+            workflow_yaml: Workflow YAML string
+
+        Returns:
+            Dict with nodes, edges, and metadata for visualization
+        """
+        try:
+            workflow_data = yaml.safe_load(workflow_yaml)
+
+            viz_nodes = []
+            viz_edges = []
+
+            # Add start node
+            viz_nodes.append({
+                'id': 'step-start',
+                'type': 'start',
+                'name': 'Start',
+                'description': workflow_data.get('description', ''),
+                'agent_type': 'start'
+            })
+
+            # Process steps
+            steps = workflow_data.get('steps', [])
+            prev_step_id = 'step-start'
+
+            for step in steps:
+                step_id = step.get('id', f"step-{len(viz_nodes)}")
+                agent_type = step.get('agent_type', step.get('type', 'text_agent'))
+
+                viz_nodes.append({
+                    'id': step_id,
+                    'type': agent_type,
+                    'name': step.get('name', 'Untitled Step'),
+                    'description': step.get('description', ''),
+                    'agent_type': agent_type
+                })
+
+                # Connect to previous step
+                viz_edges.append({
+                    'from': prev_step_id,
+                    'to': step_id
+                })
+
+                prev_step_id = step_id
+
+            # Add end node
+            viz_nodes.append({
+                'id': 'step-end',
+                'type': 'end',
+                'name': 'End',
+                'description': 'Workflow completed successfully',
+                'agent_type': 'end'
+            })
+
+            # Connect last step to end
+            viz_edges.append({
+                'from': prev_step_id,
+                'to': 'step-end'
+            })
+
+            return {
+                'name': workflow_data.get('name', 'Unnamed Workflow'),
+                'description': workflow_data.get('description', ''),
+                'steps': viz_nodes,
+                'connections': viz_edges
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to convert workflow YAML to visualization JSON: {e}")
+            # Return minimal structure
+            return {
+                'name': 'Workflow',
+                'description': 'Visualization generation failed',
+                'steps': [
+                    {'id': 'step-start', 'type': 'start', 'name': 'Start', 'agent_type': 'start'},
+                    {'id': 'step-end', 'type': 'end', 'name': 'End', 'agent_type': 'end'}
+                ],
+                'connections': [{'from': 'step-start', 'to': 'step-end'}]
+            }
 
     def _title_to_workflow_name(self, title: str) -> str:
         """Convert title to workflow name
