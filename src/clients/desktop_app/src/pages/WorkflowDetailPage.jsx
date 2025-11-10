@@ -10,7 +10,6 @@ import ReactFlow, {
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 import CustomNode from '../components/CustomNode'
-import { DEFAULT_CONFIG_KEY, getConfig } from '../config/index'
 
 const nodeTypes = {
   custom: CustomNode,
@@ -31,21 +30,14 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
     setError(null)
 
     try {
-      const response = await fetch(`http://localhost:8000/api/agents/${workflowId}/workflow`, {
+      const response = await fetch(`http://127.0.0.1:8765/api/workflows/${workflowId}/detail?user_id=default_user`, {
         method: 'GET',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${currentUser.token}`
+          'Content-Type': 'application/json'
         }
       })
 
       if (!response.ok) {
-        if (response.status === 401) {
-          // 登录过期，清除登录信息并跳转到登录页
-          await chrome.storage.local.clear()
-          onLogout()
-          return
-        }
         throw new Error(`API error: ${response.status}`)
       }
 
@@ -67,31 +59,22 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
 
     setIsRunning(true)
 
-    // 记录开始时间（本地时间格式以匹配数据库）
-    const now = new Date()
-    const startTime = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().replace('Z', '')
-
     try {
-      // Get current workflow configuration
-      const config = getConfig(DEFAULT_CONFIG_KEY)
-      const workflowName = config.workflow.metadata.name
+      showStatus('🚀 启动 Workflow 执行...', 'info')
 
-      // Run the configured workflow
-      const response = await fetch(`http://localhost:8000/api/agents/workflow/${workflowName}/execute`, {
-        method: 'GET',
+      // Execute workflow using daemon API
+      const response = await fetch(`http://127.0.0.1:8765/api/workflow/execute`, {
+        method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${currentUser.token}`
-        }
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          workflow_name: workflowId,
+          user_id: 'default_user'
+        })
       })
 
       if (!response.ok) {
-        if (response.status === 401) {
-          // 登录过期，清除登录信息并跳转到登录页
-          await chrome.storage.local.clear()
-          onLogout()
-          return
-        }
         throw new Error(`API error: ${response.status}`)
       }
 
@@ -104,14 +87,15 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
       let pollCount = 0
       const maxPolls = 60 // 最多轮询60次（5分钟）
 
+      showStatus(`🔄 执行中... (Task ID: ${taskId})`, 'info')
+
       while (!completed && pollCount < maxPolls) {
         await new Promise(resolve => setTimeout(resolve, 5000)) // 等待5秒
 
-        const statusResponse = await fetch(`http://localhost:8000/api/agents/workflow/task/${taskId}/status`, {
+        const statusResponse = await fetch(`http://127.0.0.1:8765/api/workflow/status/${taskId}`, {
           method: 'GET',
           headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${currentUser.token}`
+            'Content-Type': 'application/json'
           }
         })
 
@@ -119,25 +103,23 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
           const statusData = await statusResponse.json()
           console.log('Task status:', statusData.status, `(${statusData.progress}%)`)
 
+          showStatus(`🔄 执行中... ${statusData.progress}% (${statusData.current_step}/${statusData.total_steps})`, 'info')
+
           if (statusData.status === 'completed' || statusData.status === 'failed') {
             completed = true
 
-            // 记录结束时间（本地时间格式以匹配数据库）
-            const endNow = new Date()
-            const endTime = new Date(endNow.getTime() - endNow.getTimezoneOffset() * 60000).toISOString().replace('Z', '')
-
             if (statusData.status === 'completed') {
-              showStatus('✅ 执行成功', 'success')
-              // 导航到结果页面，传递时间范围
-              const config = getConfig(DEFAULT_CONFIG_KEY)
-              const workflowName = config.workflow.metadata.name
-              onNavigate('workflow-result', {
-                workflowName: workflowName,
-                startTime: startTime,
-                endTime: endTime
-              })
+              showStatus('✅ 执行成功！', 'success')
+              // Navigate to result page
+              setTimeout(() => {
+                onNavigate('workflow-result', {
+                  workflowName: workflowId,
+                  taskId: taskId,
+                  result: statusData.result
+                })
+              }, 1500)
             } else {
-              showStatus('❌ 执行失败', 'error')
+              showStatus(`❌ 执行失败: ${statusData.error || '未知错误'}`, 'error')
             }
           }
         }
@@ -146,7 +128,7 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
       }
 
       if (!completed) {
-        showStatus('⚠️ 执行超时', 'warning')
+        showStatus('⚠️ 执行超时，请稍后查看结果', 'warning')
       }
     } catch (err) {
       console.error('Run workflow error:', err)

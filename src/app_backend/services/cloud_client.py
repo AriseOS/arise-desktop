@@ -118,6 +118,39 @@ class CloudClient:
         logger.info(f"Workflow generated: {result.get('workflow_name')}")
         return result
 
+    async def list_workflows(
+        self,
+        user_id: str = "default_user"
+    ) -> List[Dict[str, Any]]:
+        """List all workflows for user from Cloud Backend
+
+        Args:
+            user_id: User ID (default: "default_user")
+
+        Returns:
+            List of workflow dicts with:
+            - agent_id: workflow ID
+            - name: workflow display name
+            - description: workflow description
+            - created_at: creation timestamp
+        """
+        logger.info(f"Fetching workflow list from Cloud for user: {user_id}")
+
+        try:
+            response = await self.client.get(
+                f"/api/users/{user_id}/workflows"
+            )
+            response.raise_for_status()
+            result = response.json()
+
+            workflows = result.get("workflows", [])
+            logger.info(f"Fetched {len(workflows)} workflows from Cloud")
+            return workflows
+
+        except Exception as e:
+            logger.warning(f"Failed to fetch workflows from Cloud: {e}")
+            return []
+
     async def report_execution(
         self,
         user_id: str,

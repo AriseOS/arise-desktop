@@ -1,8 +1,10 @@
 """Local file system storage management"""
 
 import json
+import yaml
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
+from datetime import datetime
 
 
 class StorageManager:
@@ -111,6 +113,71 @@ class StorageManager:
             return []
 
         return [d.name for d in workflows_path.iterdir() if d.is_dir()]
+
+    def get_local_workflows_info(self, user_id: str) -> Dict[str, Dict[str, Any]]:
+        """Get detailed information about local workflows
+
+        Returns:
+            Dict mapping workflow_id to workflow info:
+            {
+                'workflow_xxx': {
+                    'agent_id': 'workflow_xxx',
+                    'name': 'Workflow Name',
+                    'description': 'Description',
+                    'created_at': '2025-01-09T10:30:00',
+                    'is_downloaded': True,
+                    'source': 'local'
+                }
+            }
+        """
+        workflows_path = self._user_path(user_id) / "workflows"
+        if not workflows_path.exists():
+            return {}
+
+        local_workflows = {}
+
+        for workflow_dir in workflows_path.iterdir():
+            if not workflow_dir.is_dir():
+                continue
+
+            workflow_id = workflow_dir.name
+            workflow_file = workflow_dir / "workflow.yaml"
+
+            # Default values
+            name = workflow_id
+            description = ""
+            created_at = None
+
+            # Get file creation time
+            if workflow_file.exists():
+                try:
+                    created_at = datetime.fromtimestamp(
+                        workflow_file.stat().st_ctime
+                    ).isoformat()
+                except Exception:
+                    pass
+
+                # Parse YAML to get name and description
+                try:
+                    with open(workflow_file, 'r', encoding='utf-8') as f:
+                        data = yaml.safe_load(f)
+                        if isinstance(data, dict):
+                            name = data.get('name', workflow_id)
+                            description = data.get('description', '')
+                except Exception:
+                    # Use defaults if parsing fails
+                    pass
+
+            local_workflows[workflow_id] = {
+                'agent_id': workflow_id,
+                'name': name,
+                'description': description,
+                'created_at': created_at,
+                'is_downloaded': True,
+                'source': 'local'
+            }
+
+        return local_workflows
 
     # === Execution Results ===
 

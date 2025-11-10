@@ -134,8 +134,17 @@ class WorkflowStatusResponse(BaseModel):
     error: Optional[str] = None
 
 
+class WorkflowInfo(BaseModel):
+    agent_id: str
+    name: str
+    description: str
+    created_at: Optional[str] = None
+    is_downloaded: bool = False
+    source: str = "unknown"  # "cloud", "local", or "both"
+
+
 class ListWorkflowsResponse(BaseModel):
-    workflows: list[str]
+    workflows: list[WorkflowInfo]
 
 
 # ============================================================================
@@ -382,12 +391,126 @@ async def get_workflow_status(task_id: str):
 
 @app.get("/api/workflows", response_model=ListWorkflowsResponse)
 async def list_workflows(user_id: str = "default_user"):
-    """List all workflows for a user"""
+    """List all workflows for a user (Cloud + Local merged)
+
+    Strategy:
+    1. Fetch workflows from Cloud Backend (primary source)
+    2. Check which ones are downloaded locally
+    3. Add local-only workflows
+    4. Return merged list with download status
+    """
     try:
-        workflows = storage_manager.list_workflows(user_id)
-        return {"workflows": workflows}
+        workflows_dict = {}
+
+        # Step 1: Try to fetch from Cloud Backend
+        try:
+            cloud_workflows = await cloud_client.list_workflows(user_id)
+            for wf in cloud_workflows:
+                workflows_dict[wf['agent_id']] = {
+                    'agent_id': wf['agent_id'],
+                    'name': wf.get('name', wf['agent_id']),
+                    'description': wf.get('description', ''),
+                    'created_at': wf.get('created_at'),
+                    'is_downloaded': False,
+                    'source': 'cloud'
+                }
+            logger.info(f"Fetched {len(cloud_workflows)} workflows from Cloud")
+        except Exception as e:
+            logger.warning(f"Cloud unavailable, using local workflows only: {e}")
+
+        # Step 2: Get local workflows info
+        local_workflows = storage_manager.get_local_workflows_info(user_id)
+
+        # Step 3: Merge - mark cloud workflows as downloaded if they exist locally
+        for wf_id, local_info in local_workflows.items():
+            if wf_id in workflows_dict:
+                # Cloud workflow exists locally - mark as downloaded
+                workflows_dict[wf_id]['is_downloaded'] = True
+                workflows_dict[wf_id]['source'] = 'both'
+                # Use local metadata if cloud doesn't have it
+                if not workflows_dict[wf_id].get('name'):
+                    workflows_dict[wf_id]['name'] = local_info['name']
+                if not workflows_dict[wf_id].get('description'):
+                    workflows_dict[wf_id]['description'] = local_info['description']
+            else:
+                # Local-only workflow
+                workflows_dict[wf_id] = local_info
+
+        # Convert to list and sort by created_at (newest first)
+        workflows_list = list(workflows_dict.values())
+        workflows_list.sort(
+            key=lambda x: x.get('created_at') or '',
+            reverse=True
+        )
+
+        logger.info(f"Returning {len(workflows_list)} workflows total")
+        return {"workflows": workflows_list}
+
     except Exception as e:
         logger.error(f"Failed to list workflows: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/workflows/{workflow_id}/detail")
+async def get_workflow_detail(workflow_id: str, user_id: str = "default_user"):
+    """Get detailed workflow data for visualization
+
+    Returns workflow structure with steps and connections for ReactFlow
+    """
+    try:
+        # Check if workflow exists locally
+        if not storage_manager.workflow_exists(user_id, workflow_id):
+            raise HTTPException(status_code=404, detail=f"Workflow not found: {workflow_id}")
+
+        # Read workflow YAML
+        workflow_yaml = storage_manager.get_workflow(user_id, workflow_id)
+
+        # Parse YAML to extract steps and connections
+        import yaml
+        workflow_data = yaml.safe_load(workflow_yaml)
+
+        if not isinstance(workflow_data, dict):
+            raise HTTPException(status_code=500, detail="Invalid workflow format")
+
+        # Extract workflow metadata
+        name = workflow_data.get('name', workflow_id)
+        description = workflow_data.get('description', '')
+
+        # Extract steps
+        steps_list = []
+        steps_data = workflow_data.get('steps', [])
+
+        for idx, step in enumerate(steps_data):
+            step_id = step.get('id', f"step-{idx}")
+            steps_list.append({
+                'id': step_id,
+                'name': step.get('name', step_id),
+                'type': step.get('type', 'unknown'),
+                'description': step.get('description', ''),
+                'branch': step.get('branch'),
+                'agent_type': step.get('agent_type'),
+                'prompt': step.get('prompt'),
+                'tool': step.get('tool')
+            })
+
+        # Extract connections (if exists) or auto-generate
+        connections = workflow_data.get('connections', [])
+
+        response_data = {
+            'workflow_id': workflow_id,
+            'name': name,
+            'description': description,
+            'steps': steps_list,
+            'connections': connections
+        }
+
+        logger.info(f"Loaded workflow detail: {workflow_id}")
+        return response_data
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get workflow detail: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

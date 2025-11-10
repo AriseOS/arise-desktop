@@ -14,26 +14,19 @@ function MyWorkflowsPage({ currentUser, onNavigate, onLogout }) {
     setError(null)
 
     try {
-      const response = await fetch('http://localhost:8000/api/agents?default=true', {
+      const response = await fetch('http://127.0.0.1:8765/api/workflows?user_id=default_user', {
         method: 'GET',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${currentUser.token}`
+          'Content-Type': 'application/json'
         }
       })
 
       if (!response.ok) {
-        if (response.status === 401) {
-          // 登录过期，清除登录信息并跳转到登录页
-          await chrome.storage.local.clear()
-          onLogout()
-          return
-        }
         throw new Error(`API error: ${response.status}`)
       }
 
       const data = await response.json()
-      setWorkflows(data)
+      setWorkflows(data.workflows || [])
     } catch (err) {
       console.error('Load workflows error:', err)
       setError('加载工作流失败')
