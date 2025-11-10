@@ -1,96 +1,102 @@
-# Ami - AI That Learns by Watching You Work
+# AgentCrafter - AI-Powered Workflow Automation
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**We're building AI that replaces clicking and typing with natural collaboration.**
+**Building AI agents that learn from your actions and automate complex workflows.**
 
-Ami learns by observing how human experts actually work, continuously accumulating professional knowledge to autonomously complete complex tasks like a human would. This isn't "better automation tools"—**it's the next generation of human-computer interaction.**
+AgentCrafter allows you to record browser operations, describe tasks in natural language, and let AI automatically generate executable workflows. No programming required—just demonstrate once, and let AI handle the repetition.
 
-> **Computers that work for you, not the other way around.**
+> **From manual operations to automated workflows in minutes.**
 
-## 🌟 Core Vision
+## 🌟 Core Features
 
-Ami is the first **Evolvable Agent** that inherits human experts' tacit knowledge and continuously evolves through three technical engines:
+AgentCrafter provides three powerful ways to create and manage workflows:
 
-- **🧠 Behavioral Memory Engine**: Learns from real operations, not programmed rules
-- **🎯 Dynamic Planning Engine**: Proactively understands goals and plans workflows
-- **⚡ Generative Execution Engine**: Operates any software UI via dynamic code generation
+- **📹 Record Operations**: Capture browser actions in real-time and upload to cloud
+- **🤖 Generate Workflows**: Describe tasks in natural language, AI generates executable workflows
+- **📋 Manage & Execute**: View, execute, and monitor your workflows with detailed results
 
-**Key Metrics**:
-- ✅ Task success rate: >95% (on learned scenarios)
-- 💰 Execution cost: $0.02–$0.05 per task (95% cheaper than general AI agents)
-- 🚀 Zero learning curve: Just do it once, Ami learns automatically
+**Key Benefits**:
+- ✅ No coding required - describe what you want in plain English
+- 🚀 Fast iteration - from idea to working workflow in minutes
+- 💰 Cost-effective - AI-powered generation with local execution
+- 🔒 Privacy-focused - sensitive operations run locally on your machine
 
 ## 🏗️ System Architecture
 
-Ami v2.0 uses a **Local-First + Cloud-Enhanced** architecture with 4 core components:
+AgentCrafter uses a **Desktop-First + Cloud-Enhanced** architecture:
 
 ```
-┌────────────────────────────────────────┐
-│       User's Computer (Local)          │
-│                                        │
-│  ┌──────────────┐  ┌───────────────┐  │
-│  │ Desktop App  │  │   Chrome      │  │
-│  │  (Tauri)     │  │  Extension    │  │
-│  └──────┬───────┘  └───────┬───────┘  │
-│         │                  │          │
-│         └─────────┬────────┘          │
-│                   ↓                   │
-│    ┌─────────────────────────────┐   │
-│    │   Local Backend             │   │
-│    │   (Python + FastAPI)        │   │
-│    │                             │   │
-│    │   • Workflow Execution      │   │
-│    │   • Browser Automation      │   │
-│    │   • Local Storage (~/.ami)  │   │
-│    │   • Cloud API Proxy         │   │
-│    └────────────┬────────────────┘   │
-└─────────────────┼─────────────────────┘
-                  │ HTTPS
-                  ↓
-┌────────────────────────────────────────┐
-│     Cloud Backend (Server)             │
-│     (Python + FastAPI)                 │
-│                                        │
-│   • User Authentication                │
-│   • Intent Extraction (LLM)            │
-│   • MetaFlow Generation (LLM)          │
-│   • Workflow Generation (LLM)          │
-│   • Data Storage (File System + DB)    │
-└────────────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│           Desktop App (Tauri + React)           │
+│                                                 │
+│   • Recording Interface                         │
+│   • Workflow Generation UI                      │
+│   • Workflow Management                         │
+│   • Execution Monitoring                        │
+│                                                 │
+│         ↓ (manages lifecycle)                   │
+│                                                 │
+│    ┌──────────────────────────────────────┐    │
+│    │   App Backend Daemon                 │    │
+│    │   (Python FastAPI - Port 8765)       │    │
+│    │                                      │    │
+│    │   • Browser Recording (CDP)          │    │
+│    │   • Workflow Execution               │    │
+│    │   • Local Storage (~/.ami)           │    │
+│    │   • Cloud API Proxy                  │    │
+│    └──────────────┬───────────────────────┘    │
+└───────────────────┼──────────────────────────────┘
+                    │ HTTPS
+                    ↓
+┌─────────────────────────────────────────────────┐
+│         Cloud Backend (Server)                  │
+│         (Python FastAPI - Port 9000)            │
+│                                                 │
+│   • Recording Storage                           │
+│   • Intent Extraction (LLM)                     │
+│   • MetaFlow Generation (LLM)                   │
+│   • Workflow Generation (LLM)                   │
+│   • User Data Management                        │
+└─────────────────────────────────────────────────┘
 ```
 
 ### Key Design Principles
 
-- **Local-First Execution**: Workflows run on your computer with your browser session - fast, private, and cost-effective
-- **Cloud-Powered Intelligence**: AI analysis (Intent extraction, Workflow generation) happens in the cloud with powerful LLMs
-- **Clean Separation**: App Backend handles execution, Cloud Backend handles learning and storage
-- **User Privacy**: Sensitive operations stay local; only anonymized data used for improvement
+- **Desktop-First**: Single desktop app with embedded Python daemon - no browser extension needed
+- **Automatic Lifecycle**: Daemon starts with app, stops when app closes - zero manual management
+- **Local Execution**: Workflows run on your computer - fast, private, and secure
+- **Cloud Intelligence**: AI-powered workflow generation happens in the cloud
+- **Clean Separation**: Desktop handles UI/execution, Cloud handles AI/storage
 
-### Three Technical Engines
+### Three Core Workflows
 
-**1. Behavioral Memory Engine** - Learning from Real Operations
-- **Intent Block Abstraction**: Extracts standardized "intent units" from diverse operations
-- **Temporal Graph Construction**: Records operation sequences as graph structures
-- **Dual-Temporal Model**: Handles both software updates (hard rules) and habit evolution (soft rules)
+**1. Recording Operations** - Capture Real Browser Actions
+- Browser automation via Chrome DevTools Protocol (CDP)
+- Real-time operation tracking (clicks, inputs, navigation)
+- Upload recordings to cloud for AI analysis
+- Local storage of all recorded sessions
 
-**2. Dynamic Planning Engine** - Proactive Workflow Generation
-- **Online-Offline Hybrid Analysis**: Mines conditional branches, loops, and periodic patterns from massive temporal data
-- **Knowledge Memory Graph**: Understands logical relationships between tasks
-- **Proactive Intelligence**: Actively understands high-level goals and plans workflows instead of passively waiting for instructions
+**2. AI-Powered Generation** - From Description to Workflow
+- Natural language task description
+- LLM-based MetaFlow generation (intermediate representation)
+- Automatic Workflow YAML generation
+- Cloud storage with local download for execution
 
-**3. Generative Execution Engine** - Operating Any Software
-- **Vibe Coding**: Dynamically generates execution code leveraging LLM capabilities
-- **Computer Use Agent**: Directly operates software UI, escaping API ecosystem limitations
-- **Cost Optimization**: Only uses LLM when learning; execution is nearly free
+**3. Local Execution** - Run Workflows Privately
+- BaseAgent framework with workflow engine
+- Browser automation using Playwright
+- Real-time progress monitoring
+- Local result storage and management
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
-- Python 3.9+
-- Node.js 16+ (for frontend)
+- **Python 3.9+**
+- **Node.js 16+** (for desktop app frontend)
+- **Rust** (for Tauri desktop app)
 
 ### Installation
 
@@ -100,12 +106,18 @@ git clone https://github.com/your-org/agentcrafter.git
 cd agentcrafter
 ```
 
-2. **Set up environment variables**
+2. **Configure API Keys (Required)**
 ```bash
-# Required: LLM API keys
+# Set environment variables for LLM providers
 export OPENAI_API_KEY=your_openai_key
 export ANTHROPIC_API_KEY=your_anthropic_key
+
+# Or add to your shell profile (~/.bashrc, ~/.zshrc)
+echo 'export OPENAI_API_KEY=your_openai_key' >> ~/.bashrc
+echo 'export ANTHROPIC_API_KEY=your_anthropic_key' >> ~/.bashrc
 ```
+
+⚠️ **Important**: Make sure API keys are configured before starting services.
 
 3. **Install dependencies**
 ```bash
@@ -116,42 +128,46 @@ pip install -r requirements.txt
 playwright install chromium --with-deps
 ```
 
-4. **Start the services**
+### Start the System
 
-**Using convenience scripts (Recommended)**:
+**Step 1: Start Cloud Backend**
 ```bash
-# Start both backends
-./scripts/start_both_backends.sh
-
-# Or start individually
-./scripts/start_app_backend.sh   # Port 8000
-./scripts/start_cloud_backend.sh   # Port 9000
-```
-
-**Or manually**:
-```bash
-# App Backend (Required - runs on your computer)
-cd src/app_backend
-pip install -r requirements.txt
-python main.py
-# Accessible at: http://localhost:8000
-
-# Cloud Backend (Development - runs locally for testing)
-cd src/cloud_backend
-pip install -r requirements.txt
-python main.py
+./scripts/start_cloud_backend.sh
+# Cloud Backend will start on port 9000
 # Accessible at: http://localhost:9000
 ```
 
-### First Steps
+**Step 2: Start Desktop App**
+```bash
+./scripts/run_desktop_app.sh
+# Desktop app will:
+# - Automatically start App Backend daemon on port 8765
+# - Launch the Tauri desktop application
+# - Daemon will stop automatically when you close the app
+```
 
-1. Open your browser and install the Chrome Extension (dev mode)
-2. Click "Start Recording" and perform a task normally
-3. Click "Stop Recording" - Ami will generate a workflow
-4. Execute the workflow with one click - Ami handles the automation
+### First Workflow
+
+1. **Record Operations** 📹
+   - Click "录制操作" in desktop app
+   - Configure URL and description
+   - Start recording, perform actions in browser
+   - Stop and upload to cloud
+
+2. **Generate Workflow** 🤖
+   - Click "生成 Workflow"
+   - Describe your task in natural language
+   - AI generates MetaFlow and Workflow
+   - Workflow saved automatically
+
+3. **Execute Workflow** 📋
+   - Click "我的 Workflow"
+   - Select a workflow to view details
+   - Click "运行" to execute
+   - Monitor progress and view results
 
 **API Documentation**:
-- App Backend: http://localhost:8000/docs
+- App Backend: http://127.0.0.1:8765/health
 - Cloud Backend: http://localhost:9000/docs
 
 ## 💡 How It Works
@@ -191,15 +207,15 @@ You ask: "Compare coffee prices on Allegro and Amazon"
 
 ## 🔧 Core Components
 
-### 1️⃣ Chrome Extension (User Interface)
+### 1️⃣ Desktop App (User Interface)
 
-**Location**: `src/chrome_extension/`
+**Location**: `src/clients/desktop_app/`
 
-Records user operations in the browser:
-- Captures clicks, inputs, navigation
-- Real-time operation tracking
-- One-click workflow execution
-- Progress monitoring
+Built with Tauri (Rust + React) for cross-platform desktop experience:
+- Recording interface for capturing browser operations
+- Workflow generation UI with AI assistance
+- Workflow management and execution monitoring
+- Automatically manages App Backend daemon lifecycle
 
 ### 2️⃣ App Backend (Execution Engine)
 
@@ -300,13 +316,13 @@ pytest --cov=tools --cov-report=html
 - [x] App Backend + Cloud Backend split architecture
 - [x] BaseAgent framework with workflow engine
 - [x] Browser tool integration with session reuse
-- [x] Chrome Extension for recording
+- [x] Desktop App (Tauri) with automatic daemon management
 - [x] Intent Builder (Intent extraction, MetaFlow, Workflow generation)
 - [x] Storage unification (~/.ami/)
 
 ### 🔄 Phase 2: MVP Development (Current - Q1 2025)
-- [ ] Desktop App (Tauri) with workflow management UI
-- [ ] Complete recording → generation → execution flow
+- [x] Three independent workflow modules (Record, Generate, Manage)
+- [ ] Complete recording → generation → execution flow testing
 - [ ] Production deployment (Cloud Backend)
 - [ ] Beta testing with 50 users
 - [ ] Performance optimization (>95% success rate)
