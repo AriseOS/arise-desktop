@@ -11,22 +11,114 @@ import ReactFlow, {
 import 'reactflow/dist/style.css'
 import CustomNode from '../components/CustomNode'
 import { getWorkflow } from '../config/workflows'
-import { DEFAULT_CONFIG_KEY } from '../config/index'
 
 const nodeTypes = {
   custom: CustomNode,
 }
 
-function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recordingData }) {
+function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recordingData, params }) {
   const [workflowData, setWorkflowData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [isRunning, setIsRunning] = useState(false)
-  const [currentWorkflowKey, setCurrentWorkflowKey] = useState(DEFAULT_CONFIG_KEY)
+  const [workflowName, setWorkflowName] = useState(null)
+  const [workflowYaml, setWorkflowYaml] = useState(null)
 
   useEffect(() => {
-    // Always generate hardcoded workflow (not dependent on actual recording data)
-    generateWorkflowData()
+    // Generate workflow from API using session data
+    generateWorkflowFromAPI()
   }, [])
+
+  const generateWorkflowFromAPI = async () => {
+    setLoading(true)
+    showStatus('🔄 生成 Workflow 中...', 'info')
+
+    try {
+      // Check if we have session data from metaflow page
+      const sessionId = params?.sessionId
+      if (!sessionId) {
+        throw new Error('缺少 session_id，无法生成 workflow')
+      }
+
+      console.log('Generating workflow for session:', sessionId)
+
+      // Call workflow generation API
+      const response = await fetch('http://localhost:8000/api/workflows/generate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${currentUser.token}`
+        },
+        body: JSON.stringify({
+          session_id: sessionId
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error(`Workflow generation failed: ${response.status}`)
+      }
+
+      const result = await response.json()
+      console.log('Workflow generated:', result)
+
+      if (result.success) {
+        setWorkflowName(result.workflow_name)
+        setWorkflowYaml(result.workflow_yaml)
+
+        // Use visualization JSON from backend
+        if (result.workflow_json) {
+          console.log('Using workflow visualization JSON from backend:', result.workflow_json)
+          setWorkflowData(result.workflow_json)
+        } else {
+          // Fallback: create simple structure
+          console.warn('No workflow_json in response, using fallback')
+          const workflow = {
+            name: result.workflow_name,
+            description: 'Generated workflow from recording',
+            steps: [
+              {
+                id: 'step-start',
+                type: 'start',
+                name: 'Start',
+                description: 'Workflow start',
+                agent_type: 'start'
+              },
+              {
+                id: 'step-1',
+                type: 'tool_agent',
+                name: 'Generated Step',
+                description: 'Auto-generated from MetaFlow',
+                agent_type: 'tool_agent'
+              },
+              {
+                id: 'step-end',
+                type: 'end',
+                name: 'End',
+                description: 'Workflow completed',
+                agent_type: 'end'
+              }
+            ],
+            connections: [
+              { from: 'step-start', to: 'step-1' },
+              { from: 'step-1', to: 'step-end' }
+            ]
+          }
+          setWorkflowData(workflow)
+        }
+
+        showStatus(`✅ Workflow 已生成: ${result.workflow_name}`, 'success')
+      } else {
+        throw new Error(result.error || 'Workflow generation failed')
+      }
+    } catch (error) {
+      console.error('Workflow generation error:', error)
+      showStatus(`❌ 生成失败: ${error.message}`, 'error')
+      // Fallback to config file workflow
+      console.log('Falling back to config file workflow')
+      generateWorkflowData()
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const generateWorkflowData = () => {
     setLoading(true)
@@ -185,7 +277,8 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
       }
 
       try {
-        const response = await fetch(`http://localhost:8000/api/agents/workflow/task/${taskId}/status`, {
+        // Use new API endpoint for execution status
+        const response = await fetch(`http://localhost:8000/api/workflows/executions/${taskId}`, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
@@ -197,7 +290,8 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
           throw new Error(`Failed to get task status: ${response.status}`)
         }
 
-        const taskInfo = await response.json()
+        const result = await response.json()
+        const taskInfo = result.execution || result
         console.log('Task status:', taskInfo)
 
         if (taskInfo.status === 'completed') {
@@ -241,7 +335,10 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
   }
 
   const handleRunWorkflow = async () => {
-    if (isRunning) return
+    if (isRunning || !workflowName) {
+      showStatus('⚠️ 请先生成 workflow', 'warning')
+      return
+    }
 
     setIsRunning(true)
     showStatus('🚀 开始执行...', 'info')
@@ -250,13 +347,12 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
     const now = new Date()
     const startTime = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().replace('Z', '')
 
-    // Get current workflow name from config
-    const currentWorkflow = getWorkflow(currentWorkflowKey)
-    const workflowName = currentWorkflow.metadata.name
-
     try {
-      const response = await fetch(`http://localhost:8000/api/agents/workflow/${workflowName}/execute`, {
-        method: 'GET',
+      console.log('Executing workflow:', workflowName)
+
+      // Call new workflow execution API
+      const response = await fetch(`http://localhost:8000/api/workflows/${workflowName}/execute`, {
+        method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${currentUser.token}`
@@ -271,7 +367,7 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
       console.log('Workflow execution started:', result)
 
       if (result.success && result.task_id) {
-        // Start polling for task status, pass startTime and workflowName
+        // Start polling for task status
         pollTaskStatus(result.task_id, startTime, workflowName)
       } else {
         showStatus('❌ 启动失败', 'error')

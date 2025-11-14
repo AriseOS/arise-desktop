@@ -7,12 +7,25 @@ function MetaflowPage({ onNavigate, showStatus, recordingData, params }) {
   const [isEditing, setIsEditing] = useState(false)
   const [editingNode, setEditingNode] = useState(null)
   const [currentMetaflowKey, setCurrentMetaflowKey] = useState(DEFAULT_CONFIG_KEY)
+  const [metaflowYaml, setMetaflowYaml] = useState(null)
 
   useEffect(() => {
-    // Generate metaflows from actual metaflow.yaml data
-    const generatedMetaflows = generateMetaflows()
-    setMetaflows(generatedMetaflows)
-  }, [])
+    // Check if we have metaflow data from API (passed from RecordPage)
+    if (params?.metaflowData?.metaflow_json) {
+      console.log('Using MetaFlow JSON data from API:', params.metaflowData)
+      setMetaflowYaml(params.metaflowData.metaflow_yaml)
+
+      // Use the visualization JSON directly from backend
+      const generatedMetaflows = generateMetaflowsFromJson(params.metaflowData.metaflow_json)
+      setMetaflows(generatedMetaflows)
+      showStatus(`✅ 已加载生成的 MetaFlow (${params.metaflowData.nodes_count} 个节点)`, 'success')
+    } else {
+      // Fallback to config file metaflow
+      console.log('Using MetaFlow from config file')
+      const generatedMetaflows = generateMetaflows()
+      setMetaflows(generatedMetaflows)
+    }
+  }, [params])
 
   const inferNodeType = (node) => {
     if (node.type === 'loop') return 'loop';
@@ -28,6 +41,35 @@ function MetaflowPage({ onNavigate, showStatus, recordingData, params }) {
     if (hasNavigate || hasClick) return 'navigate';
 
     return 'process';
+  }
+
+  const generateMetaflowsFromJson = (metaflowJson) => {
+    try {
+      console.log('Using MetaFlow JSON from backend:', metaflowJson)
+
+      // Backend already provides the visualization structure
+      // We just need to map it to our frontend format
+      const metaflows = metaflowJson.nodes.map(node => ({
+        id: node.id,
+        type: node.type,
+        name: node.name,
+        description: node.description,
+        properties: node.properties || {}
+      }))
+
+      // Add edges information if needed
+      if (metaflowJson.edges) {
+        // Store edges for later use if needed
+        console.log('MetaFlow edges:', metaflowJson.edges)
+      }
+
+      console.log('Converted metaflows:', metaflows)
+      return metaflows
+    } catch (error) {
+      console.error('Failed to process MetaFlow JSON:', error)
+      showStatus('⚠️ MetaFlow 处理失败，使用默认配置', 'warning')
+      return generateMetaflows()
+    }
   }
 
   const generateMetaflows = () => {
@@ -334,7 +376,17 @@ function MetaflowPage({ onNavigate, showStatus, recordingData, params }) {
   }
 
   const handleNext = () => {
-    onNavigate('workflow-generation', { recordingData })
+    // Pass all relevant data to workflow generation page
+    const navigationData = {
+      recordingData,
+      metaflowYaml,
+      sessionId: params?.sessionId,
+      intentsData: params?.intentsData,
+      metaflowData: params?.metaflowData,
+      fromPage: 'metaflow'
+    }
+    console.log('Navigating to workflow-generation with data:', navigationData)
+    onNavigate('workflow-generation', navigationData)
   }
 
   return (
