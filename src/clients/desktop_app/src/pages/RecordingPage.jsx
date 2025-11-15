@@ -109,18 +109,20 @@ function RecordingPage({ onNavigate, showStatus }) {
     }
   };
 
-  // Quick generate workflow
+  // Generate MetaFlow from recording
   const handleQuickGenerate = async () => {
     if (!sessionId) {
-      showStatus("⚠️ 没有可生成workflow的录制", "error");
+      showStatus("⚠️ 没有可生成MetaFlow的录制", "error");
       return;
     }
 
     try {
       setQuickGenerating(true);
-      showStatus("⚡ 正在快速生成Workflow...", "info");
 
-      const response = await fetch(`${API_BASE}/api/workflows/quick-generate`, {
+      // Generate MetaFlow from recording
+      showStatus("⚡ 正在生成MetaFlow...", "info");
+
+      const metaflowResponse = await fetch(`${API_BASE}/api/metaflows/from-recording`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -130,22 +132,23 @@ function RecordingPage({ onNavigate, showStatus }) {
         })
       });
 
-      if (!response.ok) throw new Error("Quick generate failed");
+      if (!metaflowResponse.ok) {
+        throw new Error("MetaFlow generation failed");
+      }
 
-      const result = await response.json();
-      showStatus("⚡ Workflow生成成功！", "success");
+      const metaflowResult = await metaflowResponse.json();
+      showStatus("✅ MetaFlow生成成功！正在跳转预览...", "success");
 
-      // Navigate to workflow generation page with the generated workflow
+      // Navigate to MetaFlow preview page (user will review and generate workflow from there)
       setTimeout(() => {
-        onNavigate("workflow-generation", {
-          workflowName: result.workflow_name,
-          localPath: result.local_path,
-          quickGenerated: true
+        onNavigate("metaflow-preview", {
+          metaflowId: metaflowResult.metaflow_id,
+          metaflowYaml: metaflowResult.metaflow_yaml
         });
-      }, 1000);
+      }, 500);
     } catch (error) {
-      console.error("Quick generate error:", error);
-      showStatus(`❌ 快速生成失败: ${error.message}`, "error");
+      console.error("Generate MetaFlow error:", error);
+      showStatus(`❌ 生成失败: ${error.message}`, "error");
     } finally {
       setQuickGenerating(false);
     }

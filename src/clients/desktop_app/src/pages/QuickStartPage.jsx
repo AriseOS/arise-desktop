@@ -145,8 +145,10 @@ function QuickStartPage({ onNavigate, showStatus }) {
 
   const handleGenerateWorkflow = async (sessionId) => {
     try {
-      // Simulate progress
+      // Step 1: Generate MetaFlow from recording
       setGenerationProgress(0);
+      showStatus("⚡ Generating MetaFlow...", "info");
+
       const progressInterval = setInterval(() => {
         setGenerationProgress(prev => {
           if (prev >= 90) {
@@ -157,9 +159,7 @@ function QuickStartPage({ onNavigate, showStatus }) {
         });
       }, 500);
 
-      showStatus("⚡ Generating workflow...", "info");
-
-      const response = await fetch(`${API_BASE}/api/workflows/quick-generate`, {
+      const metaflowResponse = await fetch(`${API_BASE}/api/metaflows/from-recording`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -172,48 +172,55 @@ function QuickStartPage({ onNavigate, showStatus }) {
       clearInterval(progressInterval);
       setGenerationProgress(100);
 
-      if (!response.ok) {
-        throw new Error(`Generation failed: ${response.status}`);
+      if (!metaflowResponse.ok) {
+        throw new Error(`MetaFlow generation failed: ${metaflowResponse.status}`);
       }
 
-      const result = await response.json();
+      const metaflowResult = await metaflowResponse.json();
 
-      // Mock workflow data for preview
-      setGeneratedWorkflow({
-        name: result.workflow_name || taskDescription,
-        steps: [
-          "Extract product URLs from search results",
-          "Visit each product page",
-          "Extract: product name, price, sales count",
-          "Save data to local file"
-        ]
-      });
+      showStatus("✅ MetaFlow generated! Redirecting to preview...", "success");
 
-      showStatus("✅ Workflow generated successfully!", "success");
-      setStep('preview');
-      setAutoRunCountdown(3); // Reset countdown
+      // Navigate to MetaFlow preview page (user will review and generate workflow from there)
+      setTimeout(() => {
+        onNavigate('metaflow-preview', {
+          metaflowId: metaflowResult.metaflow_id,
+          metaflowYaml: metaflowResult.metaflow_yaml
+        });
+      }, 500);
 
     } catch (error) {
-      console.error("Generate workflow error:", error);
-      showStatus(`❌ Failed to generate workflow: ${error.message}`, "error");
+      console.error("Generate MetaFlow error:", error);
+      showStatus(`❌ Failed to generate MetaFlow: ${error.message}`, "error");
       setStep('input');
     }
   };
 
   const handleExecuteWorkflow = () => {
-    // Navigate to execution page (to be created)
-    showStatus("▶️ Starting workflow execution...", "info");
-    // For now, just navigate back or to a result page
-    setTimeout(() => {
-      onNavigate("main");
-    }, 1000);
+    // Navigate to workflow detail page
+    if (generatedWorkflow && generatedWorkflow.workflow_id) {
+      showStatus("📋 Opening workflow detail...", "info");
+      setTimeout(() => {
+        onNavigate("workflow-detail", {
+          workflowId: generatedWorkflow.workflow_id
+        });
+      }, 500);
+    } else {
+      showStatus("⚠️ Workflow ID not found", "error");
+    }
   };
 
   const handleSaveForLater = () => {
-    showStatus("💾 Workflow saved!", "success");
-    setTimeout(() => {
-      onNavigate("workflows");
-    }, 1000);
+    // Navigate to workflow detail page
+    if (generatedWorkflow && generatedWorkflow.workflow_id) {
+      showStatus("💾 Workflow saved! Opening detail page...", "success");
+      setTimeout(() => {
+        onNavigate("workflow-detail", {
+          workflowId: generatedWorkflow.workflow_id
+        });
+      }, 500);
+    } else {
+      showStatus("⚠️ Workflow ID not found", "error");
+    }
   };
 
   const handleCancelAutoRun = () => {

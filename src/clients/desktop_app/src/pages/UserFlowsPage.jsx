@@ -44,9 +44,11 @@ function UserFlowsPage({ onNavigate, showStatus }) {
   const handleQuickGenerate = async (recording) => {
     try {
       setSelectedRecording(recording.session_id);
-      showStatus("⚡ 正在从录制生成 Workflow...", "info");
 
-      const response = await fetch(`${API_BASE}/api/workflows/quick-generate`, {
+      // Generate MetaFlow from recording
+      showStatus("⚡ 正在生成 MetaFlow...", "info");
+
+      const metaflowResponse = await fetch(`${API_BASE}/api/metaflows/from-recording`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -56,24 +58,24 @@ function UserFlowsPage({ onNavigate, showStatus }) {
         })
       });
 
-      if (!response.ok) {
-        throw new Error(`生成失败: ${response.status}`);
+      if (!metaflowResponse.ok) {
+        throw new Error(`MetaFlow生成失败: ${metaflowResponse.status}`);
       }
 
-      const result = await response.json();
-      showStatus("⚡ Workflow 生成成功！", "success");
+      const metaflowResult = await metaflowResponse.json();
+      showStatus("✅ MetaFlow 生成成功！正在跳转预览...", "success");
 
-      // Navigate to workflow detail page
+      // Navigate to MetaFlow preview page (user will review and generate workflow from there)
       setTimeout(() => {
-        onNavigate("workflow-detail", {
-          workflowId: result.workflow_name,
-          generatedFrom: "recording"
+        onNavigate("metaflow-preview", {
+          metaflowId: metaflowResult.metaflow_id,
+          metaflowYaml: metaflowResult.metaflow_yaml
         });
-      }, 1000);
-      
+      }, 500);
+
     } catch (error) {
-      console.error("Quick generate error:", error);
-      showStatus(`❌ 生成 Workflow 失败: ${error.message}`, "error");
+      console.error("Generate MetaFlow error:", error);
+      showStatus(`❌ 生成 MetaFlow 失败: ${error.message}`, "error");
     } finally {
       setSelectedRecording(null);
     }

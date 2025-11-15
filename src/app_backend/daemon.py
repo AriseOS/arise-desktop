@@ -4,6 +4,8 @@ App Backend Daemon - HTTP API Version
 Provides REST API endpoints for desktop app communication
 """
 import sys
+import os
+import signal
 import asyncio
 import logging
 from pathlib import Path
@@ -988,13 +990,88 @@ async def delete_workflow(workflow_id: str, user_id: str = "default_user"):
 # ============================================================================
 # Main Entry Point
 # ============================================================================
+# Shutdown Endpoint (for graceful shutdown)
+# ============================================================================
+
+@app.post("/api/shutdown")
+async def shutdown_daemon():
+    """Graceful shutdown endpoint
+
+    This endpoint allows external processes (like Tauri app) to request
+    a graceful shutdown of the daemon.
+    """
+    logger.info("Received shutdown request via HTTP endpoint")
+
+    # Cleanup resources
+    await cleanup_resources()
+
+    # Schedule shutdown after response is sent
+    def delayed_shutdown():
+        import time
+        time.sleep(0.5)
+        logger.info("Shutting down daemon...")
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    import threading
+    threading.Thread(target=delayed_shutdown, daemon=True).start()
+
+    return {"status": "shutting down", "message": "Daemon will shutdown in 0.5 seconds"}
+
+
+async def cleanup_resources():
+    """Cleanup all resources before shutdown"""
+    global browser_manager, workflow_executor, cdp_recorder, cloud_client
+
+    logger.info("Cleaning up resources...")
+
+    try:
+        # Stop browser if running
+        if browser_manager and browser_manager.get_status().get("is_running"):
+            logger.info("Stopping browser...")
+            await browser_manager.stop_browser()
+
+        # Close cloud client connection
+        if cloud_client:
+            logger.info("Closing cloud client...")
+            await cloud_client.close()
+
+        logger.info("Resource cleanup completed")
+    except Exception as e:
+        logger.error(f"Error during cleanup: {e}")
+
+
+def signal_handler(sig, frame):
+    """Handle shutdown signals gracefully (SIGTERM, SIGINT)"""
+    logger.info(f"Received signal {sig}, initiating graceful shutdown...")
+
+    # Run async cleanup in sync context
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.create_task(cleanup_resources())
+        else:
+            loop.run_until_complete(cleanup_resources())
+    except Exception as e:
+        logger.error(f"Error during signal handler cleanup: {e}")
+
+    # Exit
+    logger.info("Exiting daemon process")
+    sys.exit(0)
+
+
+# ============================================================================
 
 def main():
     """Start HTTP server"""
     port = config.get("daemon.port", 8765)
     host = config.get("daemon.host", "127.0.0.1")
 
+    # Register signal handlers for graceful shutdown
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+
     logger.info(f"Starting App Backend daemon on {host}:{port}")
+    logger.info("Press Ctrl+C or send SIGTERM to gracefully shutdown")
 
     uvicorn.run(
         app,
