@@ -1,7 +1,7 @@
 #!/bin/bash
-# Quick start script for AgentCrafter Desktop App
+# Quick start script for Ami Desktop App
 
-echo "🚀 Starting AgentCrafter Desktop App..."
+echo "🚀 Starting Ami Desktop App..."
 echo ""
 
 # Check if we're in the right directory

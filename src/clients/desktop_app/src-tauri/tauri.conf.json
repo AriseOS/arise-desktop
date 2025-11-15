@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "AgentCrafter",
+  "productName": "Ami",
   "version": "0.1.0",
-  "identifier": "com.agentcrafter.desktop",
+  "identifier": "com.ami.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -14,11 +14,12 @@
       {
         "fullscreen": false,
         "resizable": true,
-        "title": "AgentCrafter",
-        "width": 1200,
-        "height": 800,
-        "minWidth": 800,
-        "minHeight": 600
+        "title": "Ami",
+        "width": 1400,
+        "height": 900,
+        "minWidth": 1000,
+        "minHeight": 700,
+        "center": true
       }
     ],
     "security": {

@@ -20,15 +20,37 @@ impl PythonDaemon {
 
         println!("Starting HTTP Python daemon from: {}", daemon_path.display());
 
-        // Start Python HTTP daemon process
-        let process = Command::new("python")
-            .arg(&daemon_path)
-            .current_dir(project_root) // Run from project root
-            .stdout(Stdio::inherit()) // Log stdout to console
-            .stderr(Stdio::inherit()) // Log stderr to console
-            .spawn()?;
+        // Try multiple Python commands (python3, python, py)
+        let python_commands = ["python3", "python", "py"];
+        let mut process = None;
+        let mut last_error = None;
 
-        println!("Python HTTP daemon started with PID: {}", process.id());
+        for cmd in &python_commands {
+            match Command::new(cmd)
+                .arg(&daemon_path)
+                .current_dir(&project_root) // Run from project root
+                .stdout(Stdio::inherit()) // Log stdout to console
+                .stderr(Stdio::inherit()) // Log stderr to console
+                .spawn()
+            {
+                Ok(p) => {
+                    println!("Python HTTP daemon started with command: {} (PID: {})", cmd, p.id());
+                    process = Some(p);
+                    break;
+                }
+                Err(e) => {
+                    println!("Failed to start with '{}': {}", cmd, e);
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        let process = process.ok_or_else(|| {
+            format!(
+                "Failed to start Python daemon. Tried commands: {:?}. Last error: {:?}",
+                python_commands, last_error
+            )
+        })?;
 
         // Wait for HTTP daemon to initialize
         std::thread::sleep(std::time::Duration::from_secs(3));

@@ -7,7 +7,6 @@ function MyWorkflowsPage({ currentUser, onNavigate, onLogout }) {
   const [workflows, setWorkflows] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [deleteConfirm, setDeleteConfirm] = useState(null) // { workflowId, workflowName }
 
   useEffect(() => {
     loadWorkflows()
@@ -109,36 +108,18 @@ function MyWorkflowsPage({ currentUser, onNavigate, onLogout }) {
     onNavigate('quick-start')
   }
 
-  const handleDeleteClick = (workflowId) => {
-    const workflow = workflows.find(w => w.agent_id === workflowId)
-    const workflowName = workflow?.name || `Workflow ${workflowId}`
-    setDeleteConfirm({ workflowId, workflowName })
-  }
-
-  const handleDeleteConfirm = async () => {
-    if (!deleteConfirm) return
-
-    const { workflowId } = deleteConfirm
-    setDeleteConfirm(null)
+  const handleDeleteWorkflow = async (workflowId) => {
+    if (!confirm('确定要删除这个工作流吗？')) {
+      return
+    }
 
     try {
-      const response = await fetch(`${API_BASE}/api/workflows/${workflowId}?user_id=${DEFAULT_USER}`, {
-        method: 'DELETE'
-      })
-
-      if (!response.ok) {
-        throw new Error(`Failed to delete workflow: ${response.status}`)
-      }
-
+      // Mock delete operation
+      await new Promise(resolve => setTimeout(resolve, 1000))
       setWorkflows(prev => prev.filter(w => w.agent_id !== workflowId))
     } catch (err) {
       console.error('Delete workflow error:', err)
-      setError(`Failed to delete workflow: ${err.message}`)
     }
-  }
-
-  const handleDeleteCancel = () => {
-    setDeleteConfirm(null)
   }
 
   const formatDate = (dateString) => {
@@ -312,9 +293,9 @@ function MyWorkflowsPage({ currentUser, onNavigate, onLogout }) {
                       <span>运行</span>
                     </button>
                     
-                    <button
+                    <button 
                       className="action-button danger"
-                      onClick={() => handleDeleteClick(workflow.agent_id)}
+                      onClick={() => handleDeleteWorkflow(workflow.agent_id)}
                     >
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <polyline points="3 6 5 6 21 6"/>
@@ -369,29 +350,52 @@ function MyWorkflowsPage({ currentUser, onNavigate, onLogout }) {
       <div className="footer">
         <p>Ami v1.0.0</p>
       </div>
+    </div>
+  )
+}
 
-      {/* Delete Confirmation Modal */}
-      {deleteConfirm && (
-        <div className="modal-overlay" onClick={handleDeleteCancel}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>Confirm Delete</h3>
-            </div>
-            <div className="modal-body">
-              <p>Are you sure you want to delete <strong>"{deleteConfirm.workflowName}"</strong>?</p>
-              <p className="warning-text">This action cannot be undone.</p>
-            </div>
-            <div className="modal-footer">
-              <button className="btn-cancel" onClick={handleDeleteCancel}>
-                Cancel
-              </button>
-              <button className="btn-confirm-delete" onClick={handleDeleteConfirm}>
-                Delete
-              </button>
-            </div>
+export default MyWorkflowsPage
+
+        {error && (
+          <div className="empty-state">
+            <div className="empty-state-icon">⚠️</div>
+            <div className="empty-state-title">错误</div>
+            <div className="empty-state-desc">{error}</div>
           </div>
-        </div>
-      )}
+        )}
+
+        {!loading && !error && workflows.length === 0 && (
+          <div className="empty-state">
+            <div className="empty-state-icon">📋</div>
+            <div className="empty-state-title">还没有 Workflow</div>
+            <div className="empty-state-desc">您可以通过录制或对话创建 Workflow</div>
+          </div>
+        )}
+
+        {!loading && !error && workflows.length > 0 && (
+          <div>
+            {workflows.map((workflow) => (
+              <div
+                key={workflow.agent_id}
+                className="workflow-item"
+                onClick={() => handleWorkflowClick(workflow.agent_id)}
+              >
+                <div className="workflow-item-info">
+                  <div className="workflow-item-name">{workflow.name}</div>
+                  {workflow.description && (
+                    <div className="workflow-item-desc">{workflow.description}</div>
+                  )}
+                </div>
+                <div className="workflow-item-arrow">›</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="footer">
+        <p>Ami v1.0.0</p>
+      </div>
     </div>
   )
 }

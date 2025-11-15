@@ -7,7 +7,7 @@ import sys
 import asyncio
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
@@ -44,7 +44,7 @@ cloud_client: Optional[CloudClient] = None
 
 # FastAPI app
 app = FastAPI(
-    title="AgentCrafter App Backend",
+    title="Ami App Backend",
     description="HTTP API for desktop app communication",
     version="1.0.0"
 )
@@ -104,13 +104,26 @@ class GenerateMetaflowResponse(BaseModel):
 
 
 class GenerateWorkflowRequest(BaseModel):
-    metaflow_id: str
+    """Unified workflow generation request
+
+    Supports multiple generation modes:
+    1. From recording: provide session_id + task_description
+    2. From text description: provide task_description only
+    3. From MetaFlow: provide metaflow_id
+    """
     user_id: str = "default_user"
+    task_description: Optional[str] = None
+
+    # Optional fields based on generation mode
+    session_id: Optional[str] = None              # For recording-based generation
+    metaflow_id: Optional[str] = None             # For MetaFlow-based generation
 
 
 class GenerateWorkflowResponse(BaseModel):
+    """Unified workflow generation response"""
     workflow_name: str
     local_path: str
+    status: str = "success"
 
 
 class ExecuteWorkflowRequest(BaseModel):
@@ -158,13 +171,9 @@ async def startup_event():
 
     logger.info("Initializing App Backend services...")
 
-    # Initialize browser manager with config service
-    browser_manager = BrowserManager(
-        headless=config.get("browser.headless", False),
-        config_service=config
-    )
-    await browser_manager.init_global_session()
-    logger.info("✓ Browser manager initialized")
+    # Initialize browser manager (but do NOT start browser yet - on-demand startup)
+    browser_manager = BrowserManager(config_service=config)
+    logger.info("✓ Browser manager initialized (browser not started - will start on demand)")
 
     # Initialize workflow executor
     workflow_executor = WorkflowExecutor(storage_manager, browser_manager)
@@ -209,25 +218,297 @@ async def health_check():
 
 
 # ============================================================================
+# Browser Control APIs
+# ============================================================================
+
+@app.post("/api/browser/start")
+async def start_browser(headless: bool = False):
+    """Start browser on demand
+
+    Args:
+        headless: Whether to run in headless mode (default: False)
+
+    Returns:
+        Browser status including PID and state
+    """
+    try:
+        if not browser_manager:
+            raise HTTPException(status_code=500, detail="Browser manager not initialized")
+
+        logger.info(f"API: Starting browser (headless={headless})")
+        result = await browser_manager.start_browser(headless=headless)
+
+        return result
+
+    except RuntimeError as e:
+        logger.error(f"Failed to start browser: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error starting browser: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/browser/stop")
+async def stop_browser():
+    """Stop browser gracefully
+
+    Returns:
+        Browser status
+    """
+    try:
+        if not browser_manager:
+            raise HTTPException(status_code=500, detail="Browser manager not initialized")
+
+        logger.info("API: Stopping browser")
+        result = await browser_manager.stop_browser()
+
+        return result
+
+    except RuntimeError as e:
+        logger.error(f"Failed to stop browser: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error stopping browser: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/browser/status")
+async def get_browser_status():
+    """Get current browser status
+
+    Returns:
+        Detailed browser status including state, PID, and health info
+    """
+    try:
+        if not browser_manager:
+            raise HTTPException(status_code=500, detail="Browser manager not initialized")
+
+        status = browser_manager.get_status()
+        return status
+
+    except Exception as e:
+        logger.error(f"Failed to get browser status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/browser/window/layout")
+async def get_window_layout():
+    """Get current window layout information
+
+    Returns:
+        Window layout details including screen size and window positions
+    """
+    try:
+        if not browser_manager:
+            raise HTTPException(status_code=500, detail="Browser manager not initialized")
+
+        layout_info = browser_manager.window_manager.get_layout_info()
+        return layout_info
+
+    except Exception as e:
+        logger.error(f"Failed to get window layout: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/browser/window/update")
+async def update_window_layout(app_width_percent: float):
+    """Update window layout with new app width percentage
+
+    Args:
+        app_width_percent: Percentage of screen width for app (0.0 to 1.0)
+
+    Returns:
+        Updated layout information
+    """
+    try:
+        if not browser_manager:
+            raise HTTPException(status_code=500, detail="Browser manager not initialized")
+
+        if not 0.0 <= app_width_percent <= 1.0:
+            raise HTTPException(
+                status_code=400,
+                detail="app_width_percent must be between 0.0 and 1.0"
+            )
+
+        logger.info(f"API: Updating window layout to {app_width_percent*100:.0f}% app width")
+
+        # Update layout preferences
+        layout = browser_manager.window_manager.update_layout(app_width_percent)
+
+        # If browser is running, apply the new layout
+        if browser_manager.state.value == "running" and browser_manager._browser_pid:
+            result = browser_manager.window_manager.arrange_windows(
+                browser_pid=browser_manager._browser_pid,
+                app_name="Ami"
+            )
+
+            return {
+                "layout": browser_manager.window_manager.get_layout_info(),
+                "applied": result.get("success", False)
+            }
+        else:
+            return {
+                "layout": browser_manager.window_manager.get_layout_info(),
+                "applied": False,
+                "message": "Layout saved but not applied (browser not running)"
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update window layout: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/browser/window/arrange")
+async def arrange_windows():
+    """Manually trigger window arrangement
+
+    Returns:
+        Arrangement result
+    """
+    try:
+        if not browser_manager:
+            raise HTTPException(status_code=500, detail="Browser manager not initialized")
+
+        if browser_manager.state.value != "running" or not browser_manager._browser_pid:
+            raise HTTPException(
+                status_code=400,
+                detail="Browser must be running to arrange windows"
+            )
+
+        logger.info("API: Arranging windows")
+
+        result = browser_manager.window_manager.arrange_windows(
+            browser_pid=browser_manager._browser_pid,
+            app_name="Ami"
+        )
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to arrange windows: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Dashboard API
+# ============================================================================
+
+@app.get("/api/dashboard")
+async def get_dashboard(user_id: str = "default_user"):
+    """Get dashboard statistics and recent workflows for user"""
+    try:
+        logger.info(f"Getting dashboard for user: {user_id}")
+
+        # Get all workflows
+        workflows_info = storage_manager.get_local_workflows_info(user_id)
+        total_workflows = len(workflows_info)
+
+        # Get all recordings
+        recordings = storage_manager.list_recordings(user_id)
+        total_recordings = len(recordings)
+
+        # Get recent workflows with execution info
+        recent_workflows = []
+        workflow_items = sorted(
+            workflows_info.values(),
+            key=lambda x: x.get('created_at') or '',
+            reverse=True
+        )[:2]  # Get 2 most recent
+
+        for workflow in workflow_items:
+            workflow_id = workflow['agent_id']
+
+            # Get last execution info
+            last_exec = storage_manager.get_workflow_last_execution(user_id, workflow_id)
+
+            if last_exec:
+                # Calculate relative time
+                from datetime import datetime
+                try:
+                    exec_time = datetime.fromisoformat(last_exec['timestamp'])
+                    now = datetime.now()
+                    delta = now - exec_time
+
+                    if delta.days > 0:
+                        last_run = f"{delta.days} day{'s' if delta.days > 1 else ''} ago"
+                    elif delta.seconds >= 3600:
+                        hours = delta.seconds // 3600
+                        last_run = f"{hours} hour{'s' if hours > 1 else ''} ago"
+                    elif delta.seconds >= 60:
+                        minutes = delta.seconds // 60
+                        last_run = f"{minutes} minute{'s' if minutes > 1 else ''} ago"
+                    else:
+                        last_run = "just now"
+
+                    status = last_exec['status']
+                except Exception:
+                    last_run = "unknown"
+                    status = "unknown"
+            else:
+                last_run = "never"
+                status = "not_run"
+
+            recent_workflows.append({
+                "id": workflow_id,
+                "name": workflow['name'],
+                "lastRun": last_run,
+                "status": status
+            })
+
+        dashboard_data = {
+            "has_workflows": total_workflows > 0,
+            "total_workflows": total_workflows,
+            "total_recordings": total_recordings,
+            "recent_workflows": recent_workflows
+        }
+
+        logger.info(f"Dashboard data: {total_workflows} workflows, {total_recordings} recordings")
+        return dashboard_data
+
+    except Exception as e:
+        logger.error(f"Failed to get dashboard: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
 # Recording APIs
 # ============================================================================
 
 @app.post("/api/recording/start", response_model=StartRecordingResponse)
 async def start_recording(request: StartRecordingRequest):
-    """Start CDP recording session"""
+    """Start CDP recording session
+
+    This will automatically start the browser if it's not running
+    """
     try:
         logger.info(f"Starting recording: url={request.url}, title={request.title}")
 
-        # Prepare metadata
+        # 1. Ensure browser is running
+        browser_status = browser_manager.get_status()
+        if not browser_status["is_running"]:
+            logger.info("Browser not running, starting browser for recording...")
+            await browser_manager.start_browser(headless=False)
+
+            # Wait for browser to be fully ready
+            await asyncio.sleep(2)
+            logger.info("Browser ready for recording")
+
+        # 2. Prepare metadata
         metadata = request.task_metadata or {}
         metadata.update({
             "title": request.title,
             "description": request.description
         })
 
+        # 3. Start recording
         result = await cdp_recorder.start_recording(request.url, metadata=metadata)
         logger.info(f"Recording started: session_id={result['session_id']}")
         return result
+
     except Exception as e:
         logger.error(f"Failed to start recording: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -235,14 +516,87 @@ async def start_recording(request: StartRecordingRequest):
 
 @app.post("/api/recording/stop", response_model=StopRecordingResponse)
 async def stop_recording():
-    """Stop recording and save"""
+    """Stop recording and save
+
+    This will automatically close the browser after recording stops
+    """
     try:
         logger.info("Stopping recording...")
+
+        # 1. Stop recording
         result = await cdp_recorder.stop_recording()
         logger.info(f"Recording stopped: {result['operations_count']} operations")
+
+        # 2. Close browser automatically
+        browser_status = browser_manager.get_status()
+        if browser_status["is_running"]:
+            logger.info("Closing browser after recording...")
+            await browser_manager.stop_browser()
+            logger.info("Browser closed")
+
         return result
+
     except Exception as e:
         logger.error(f"Failed to stop recording: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/recordings")
+async def list_recordings(user_id: str = "default_user"):
+    """List all recordings for a user"""
+    try:
+        logger.info(f"Listing recordings for user: {user_id}")
+        recordings = storage_manager.list_recordings(user_id)
+        logger.info(f"Found {len(recordings)} recordings")
+        return {
+            "recordings": recordings,
+            "count": len(recordings)
+        }
+    except Exception as e:
+        logger.error(f"Failed to list recordings: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/recordings/list")
+async def list_recordings_legacy(user_id: str = "default_user"):
+    """List all recordings for a user (legacy endpoint)"""
+    return await list_recordings(user_id)
+
+
+@app.get("/api/recordings/{session_id}")
+async def get_recording_detail(session_id: str, user_id: str = "default_user"):
+    """Get detailed recording information"""
+    try:
+        logger.info(f"Getting recording detail: session_id={session_id}")
+        detail = storage_manager.get_recording_detail(user_id, session_id)
+
+        if detail is None:
+            raise HTTPException(status_code=404, detail=f"Recording not found: {session_id}")
+
+        return detail
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get recording detail: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/recordings/{session_id}")
+async def delete_recording(session_id: str, user_id: str = "default_user"):
+    """Delete a recording"""
+    try:
+        logger.info(f"Deleting recording: session_id={session_id}")
+        success = storage_manager.delete_recording(user_id, session_id)
+
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Recording not found: {session_id}")
+
+        logger.info(f"Recording deleted: {session_id}")
+        return {"status": "success", "message": "Recording deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete recording: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -325,21 +679,113 @@ async def generate_metaflow(request: GenerateMetaflowRequest):
 
 @app.post("/api/workflows/generate", response_model=GenerateWorkflowResponse)
 async def generate_workflow(request: GenerateWorkflowRequest):
-    """Generate Workflow from MetaFlow"""
-    try:
-        logger.info(f"Generating Workflow from MetaFlow: {request.metaflow_id}")
+    """Unified Workflow Generation Endpoint
 
-        # Call Cloud Backend to generate Workflow
-        result = await cloud_client.generate_workflow(
-            request.metaflow_id, request.user_id
+    Supports multiple generation modes:
+    1. From recording: provide session_id + task_description
+    2. From text description: provide task_description only
+    3. From MetaFlow: provide metaflow_id
+
+    All modes call Cloud Backend for AI-powered workflow generation.
+    """
+    try:
+        logger.info(f"Generating workflow for user: {request.user_id}")
+
+        # Determine generation mode and execute appropriate flow
+        metaflow_id = None
+        workflow_name = None
+        workflow_yaml = None
+
+        # Mode 1: From MetaFlow (direct generation)
+        if request.metaflow_id:
+            logger.info(f"Mode: Generate from MetaFlow {request.metaflow_id}")
+            metaflow_id = request.metaflow_id
+
+        # Mode 2: From Recording
+        elif request.session_id:
+            logger.info(f"Mode: Generate from recording {request.session_id}")
+
+            # Load recording data
+            recording_data = storage_manager.get_recording(
+                request.user_id, request.session_id
+            )
+            operations = recording_data.get("operations", [])
+
+            if not operations:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"No operations found in recording: {request.session_id}"
+                )
+
+            # Upload recording to Cloud Backend
+            logger.info("Uploading recording to Cloud Backend...")
+            await cloud_client.upload_recording(
+                operations=operations,
+                task_description=request.task_description or "Auto-generated from recording",
+                user_id=request.user_id
+            )
+
+            # Generate MetaFlow from recording
+            logger.info("Generating MetaFlow from recording...")
+            metaflow_result = await cloud_client.generate_metaflow(
+                task_description=request.task_description or "Auto-generated from recording",
+                user_id=request.user_id
+            )
+            metaflow_id = metaflow_result["metaflow_id"]
+            metaflow_yaml = metaflow_result["metaflow_yaml"]
+
+            # Save MetaFlow locally
+            storage_manager.save_metaflow(
+                request.user_id,
+                metaflow_id,
+                metaflow_yaml,
+                request.task_description or "Auto-generated from recording"
+            )
+            logger.info(f"MetaFlow saved: {metaflow_id}")
+
+        # Mode 3: From Text Description
+        else:
+            logger.info("Mode: Generate from text description")
+
+            if not request.task_description:
+                raise HTTPException(
+                    status_code=400,
+                    detail="task_description is required when not providing session_id or metaflow_id"
+                )
+
+            # Generate MetaFlow from task description
+            logger.info(f"Generating MetaFlow from task: {request.task_description[:50]}...")
+            metaflow_result = await cloud_client.generate_metaflow(
+                task_description=request.task_description,
+                user_id=request.user_id
+            )
+            metaflow_id = metaflow_result["metaflow_id"]
+            metaflow_yaml = metaflow_result["metaflow_yaml"]
+
+            # Save MetaFlow locally
+            storage_manager.save_metaflow(
+                request.user_id,
+                metaflow_id,
+                metaflow_yaml,
+                request.task_description
+            )
+            logger.info(f"MetaFlow saved: {metaflow_id}")
+
+        # Common: Generate Workflow from MetaFlow (all modes converge here)
+        logger.info(f"Generating Workflow from MetaFlow: {metaflow_id}")
+        workflow_result = await cloud_client.generate_workflow(
+            metaflow_id=metaflow_id,
+            user_id=request.user_id
         )
 
-        workflow_name = result["workflow_name"]
-        workflow_yaml = result["workflow_yaml"]
+        workflow_name = workflow_result["workflow_name"]
+        workflow_yaml = workflow_result["workflow_yaml"]
 
-        # Save to local storage
+        # Save Workflow locally
         storage_manager.save_workflow(
-            request.user_id, workflow_name, workflow_yaml
+            request.user_id,
+            workflow_name,
+            workflow_yaml
         )
 
         local_path = str(
@@ -347,15 +793,20 @@ async def generate_workflow(request: GenerateWorkflowRequest):
             workflow_name / "workflow.yaml"
         )
 
-        logger.info(f"Workflow saved locally: {local_path}")
+        logger.info(f"✅ Workflow generated and saved: {workflow_name} at {local_path}")
 
         return {
             "workflow_name": workflow_name,
-            "local_path": local_path
+            "local_path": local_path,
+            "status": "success"
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to generate workflow: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -511,6 +962,25 @@ async def get_workflow_detail(workflow_id: str, user_id: str = "default_user"):
         raise
     except Exception as e:
         logger.error(f"Failed to get workflow detail: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/workflows/{workflow_id}")
+async def delete_workflow(workflow_id: str, user_id: str = "default_user"):
+    """Delete a workflow and all its execution history"""
+    try:
+        logger.info(f"Deleting workflow: workflow_id={workflow_id}")
+        success = storage_manager.delete_workflow(user_id, workflow_id)
+
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Workflow not found: {workflow_id}")
+
+        logger.info(f"Workflow deleted: {workflow_id}")
+        return {"status": "success", "message": "Workflow deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete workflow: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

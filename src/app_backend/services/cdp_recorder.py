@@ -1,11 +1,14 @@
 """CDP-based recording service"""
 
+import logging
 import uuid
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 
 from src.app_backend.services.storage_manager import StorageManager
 from src.app_backend.services.browser_manager import BrowserManager
+
+logger = logging.getLogger(__name__)
 
 
 class CDPRecorder:
@@ -31,6 +34,43 @@ class CDPRecorder:
         self.monitor = None
         self.recording_start_time = None
         self.task_metadata: Dict[str, Any] = {}
+        self._is_recording = False
+
+        # Subscribe to browser status changes
+        self.browser.subscribe_status_change(self._handle_browser_status_change)
+
+    def _handle_browser_status_change(self, new_state: str):
+        """Handle browser status change events
+
+        Args:
+            new_state: New browser state (e.g., "closed_by_user", "running", "error")
+        """
+        logger.info(f"Browser status changed to: {new_state}")
+
+        # If user closes browser during recording, stop recording
+        if new_state == "closed_by_user" and self._is_recording:
+            logger.warning("Browser was closed by user during recording. Stopping recording...")
+
+            # We need to run stop_recording asynchronously, but this callback is synchronous
+            # Schedule it to run in the event loop
+            import asyncio
+            try:
+                # Get the running event loop
+                loop = asyncio.get_event_loop()
+                # Schedule stop_recording as a task
+                loop.create_task(self._handle_user_close())
+            except Exception as e:
+                logger.error(f"Failed to schedule recording stop: {e}")
+
+    async def _handle_user_close(self):
+        """Handle user closing browser during recording"""
+        try:
+            if self._is_recording and self.current_session_id:
+                operations_count = len(self.operations)
+                await self.stop_recording()
+                logger.info(f"Recording stopped due to user closing browser. {operations_count} operations saved.")
+        except Exception as e:
+            logger.error(f"Error stopping recording after user close: {e}")
 
     async def start_recording(self, url: str, metadata: Dict[str, Any] = None) -> Dict[str, Any]:
         """Start CDP recording session
@@ -71,6 +111,9 @@ class CDPRecorder:
         # Setup monitoring (CDP Binding + script injection)
         # Pass the actual BrowserSession object, not BrowserSessionInfo
         await self.monitor.setup_monitoring(browser_session_info.session)
+
+        # Mark as recording
+        self._is_recording = True
 
         return {
             "session_id": self.current_session_id,
@@ -124,6 +167,7 @@ class CDPRecorder:
         self.monitor = None
         self.recording_start_time = None
         self.task_metadata = {}
+        self._is_recording = False
 
         # Note: Browser session remains open (persistent)
 

@@ -13,6 +13,7 @@ function RecordingPage({ onNavigate, showStatus }) {
   const [operationsCount, setOperationsCount] = useState(0);
 
   const [uploading, setUploading] = useState(false);
+  const [quickGenerating, setQuickGenerating] = useState(false);
 
   // Start recording
   const handleStartRecording = async () => {
@@ -105,6 +106,48 @@ function RecordingPage({ onNavigate, showStatus }) {
       showStatus(`❌ 上传失败: ${error.message}`, "error");
     } finally {
       setUploading(false);
+    }
+  };
+
+  // Quick generate workflow
+  const handleQuickGenerate = async () => {
+    if (!sessionId) {
+      showStatus("⚠️ 没有可生成workflow的录制", "error");
+      return;
+    }
+
+    try {
+      setQuickGenerating(true);
+      showStatus("⚡ 正在快速生成Workflow...", "info");
+
+      const response = await fetch(`${API_BASE}/api/workflows/quick-generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: sessionId,
+          task_description: recordDescription,
+          user_id: DEFAULT_USER
+        })
+      });
+
+      if (!response.ok) throw new Error("Quick generate failed");
+
+      const result = await response.json();
+      showStatus("⚡ Workflow生成成功！", "success");
+
+      // Navigate to workflow generation page with the generated workflow
+      setTimeout(() => {
+        onNavigate("workflow-generation", {
+          workflowName: result.workflow_name,
+          localPath: result.local_path,
+          quickGenerated: true
+        });
+      }, 1000);
+    } catch (error) {
+      console.error("Quick generate error:", error);
+      showStatus(`❌ 快速生成失败: ${error.message}`, "error");
+    } finally {
+      setQuickGenerating(false);
     }
   };
 
@@ -231,8 +274,16 @@ function RecordingPage({ onNavigate, showStatus }) {
               <div className="action-buttons">
                 <button
                   className="btn btn-primary"
+                  onClick={handleQuickGenerate}
+                  disabled={quickGenerating || uploading}
+                >
+                  {quickGenerating ? "生成中..." : "⚡ 快速生成 Workflow"}
+                </button>
+
+                <button
+                  className="btn btn-secondary"
                   onClick={handleUpload}
-                  disabled={uploading}
+                  disabled={uploading || quickGenerating}
                 >
                   {uploading ? "上传中..." : "📤 上传到云端"}
                 </button>
@@ -245,14 +296,15 @@ function RecordingPage({ onNavigate, showStatus }) {
                     setRecordTitle("");
                     setRecordDescription("");
                   }}
-                  disabled={uploading}
+                  disabled={uploading || quickGenerating}
                 >
                   🔄 重新录制
                 </button>
               </div>
 
               <p className="upload-hint">
-                点击上传后，将进入对话生成 MetaFlow 流程
+                ⚡ 快速生成：直接从录制操作生成可执行的Workflow<br/>
+                📤 上传到云端：进入对话生成 MetaFlow 流程
               </p>
             </div>
           )}
@@ -260,7 +312,7 @@ function RecordingPage({ onNavigate, showStatus }) {
       </div>
 
       <div className="footer">
-        <p>AgentCrafter v1.0.0</p>
+        <p>Ami v1.0.0</p>
       </div>
     </div>
   );

@@ -46,6 +46,183 @@ class StorageManager:
         with open(file_path, 'r', encoding='utf-8') as f:
             return json.load(f)
 
+    def list_recordings(self, user_id: str) -> List[Dict[str, Any]]:
+        """List all recordings for user with metadata
+
+        Returns:
+            List of recording info dicts with session_id, title, description, etc.
+        """
+        recordings_path = self._user_path(user_id) / "recordings"
+        if not recordings_path.exists():
+            return []
+
+        recordings = []
+        for session_dir in recordings_path.iterdir():
+            if not session_dir.is_dir():
+                continue
+
+            operations_file = session_dir / "operations.json"
+            if not operations_file.exists():
+                continue
+
+            try:
+                with open(operations_file, 'r', encoding='utf-8') as f:
+                    recording_data = json.load(f)
+
+                # Extract metadata
+                metadata = recording_data.get("metadata", {})
+                operations = recording_data.get("operations", [])
+
+                # Get file creation time
+                created_at = datetime.fromtimestamp(operations_file.stat().st_ctime).isoformat()
+
+                # Count actions (click, input, etc.) and fields (copy operations)
+                action_count = sum(1 for op in operations if op.get("type") in ["click", "input", "type", "navigate"])
+                field_count = sum(1 for op in operations if op.get("type") == "copy")
+
+                recordings.append({
+                    "session_id": session_dir.name,
+                    "title": metadata.get("title", "Untitled Recording"),
+                    "description": metadata.get("description", ""),
+                    "url": metadata.get("url", ""),
+                    "operations_count": len(operations),
+                    "action_count": action_count,
+                    "field_count": field_count,
+                    "status": "completed",
+                    "created_at": created_at,
+                    "file_path": str(operations_file)
+                })
+            except Exception as e:
+                # Skip corrupted recordings
+                continue
+
+        # Sort by created_at descending (newest first)
+        recordings.sort(key=lambda x: x["created_at"], reverse=True)
+        return recordings
+
+    def delete_recording(self, user_id: str, session_id: str) -> bool:
+        """Delete a recording
+
+        Args:
+            user_id: User ID
+            session_id: Recording session ID
+
+        Returns:
+            True if deleted successfully, False if not found
+        """
+        import shutil
+
+        recording_path = self._user_path(user_id) / "recordings" / session_id
+        if not recording_path.exists():
+            return False
+
+        shutil.rmtree(recording_path)
+        return True
+
+    def get_recording_detail(self, user_id: str, session_id: str) -> Optional[Dict[str, Any]]:
+        """Get detailed recording information including parsed operations
+
+        Returns:
+            Recording detail dict with operations timeline and extracted fields
+        """
+        try:
+            recording_data = self.get_recording(user_id, session_id)
+
+            metadata = recording_data.get("metadata", {})
+            operations = recording_data.get("operations", [])
+
+            # Parse operations to extract timeline and fields
+            timeline = []
+            fields = []
+            action_count = 0
+
+            for idx, op in enumerate(operations):
+                op_type = op.get("type", "unknown")
+                timestamp = op.get("timestamp", "")
+                url = op.get("url", "")
+                page_title = op.get("page_title", "")
+                element = op.get("element", {})
+                data = op.get("data", {})
+
+                # Build timeline item
+                timeline_item = {
+                    "step": idx + 1,
+                    "type": op_type,
+                    "timestamp": timestamp,
+                    "url": url,
+                    "page_title": page_title,
+                    "details": {}
+                }
+
+                # Extract details based on operation type
+                if op_type == "navigate":
+                    timeline_item["details"]["url"] = url
+                    timeline_item["details"]["page_title"] = page_title
+                    action_count += 1
+
+                elif op_type == "click":
+                    if element:
+                        timeline_item["details"]["xpath"] = element.get("xpath", "")
+                        timeline_item["details"]["element_text"] = element.get("textContent", "")
+                        timeline_item["details"]["tag"] = element.get("tagName", "")
+                    action_count += 1
+
+                elif op_type in ["input", "type"]:
+                    if element:
+                        timeline_item["details"]["xpath"] = element.get("xpath", "")
+                        timeline_item["details"]["tag"] = element.get("tagName", "")
+                    timeline_item["details"]["value"] = data.get("value", "")
+                    action_count += 1
+
+                elif op_type == "select":
+                    if element:
+                        timeline_item["details"]["xpath"] = element.get("xpath", "")
+                        timeline_item["details"]["element_text"] = element.get("textContent", "")
+                    if data:
+                        timeline_item["details"]["selected_text"] = data.get("selectedText", "")
+
+                elif op_type == "copy_action":
+                    if element:
+                        timeline_item["details"]["xpath"] = element.get("xpath", "")
+                        timeline_item["details"]["element_text"] = element.get("textContent", "")
+
+                    copied_text = data.get("copiedText", "")
+                    timeline_item["details"]["copied_text"] = copied_text
+
+                    # Add to fields list
+                    field_name = f"field_{len(fields) + 1}"
+                    fields.append({
+                        "name": field_name,
+                        "xpath": element.get("xpath", ""),
+                        "sample_value": copied_text
+                    })
+
+                elif op_type == "scroll":
+                    timeline_item["details"]["direction"] = data.get("direction", "")
+
+                elif op_type == "test":
+                    timeline_item["details"]["message"] = data.get("message", "")
+
+                timeline.append(timeline_item)
+
+            # Get file creation time
+            operations_file = self._user_path(user_id) / "recordings" / session_id / "operations.json"
+            created_at = datetime.fromtimestamp(operations_file.stat().st_ctime).isoformat()
+
+            return {
+                "session_id": session_id,
+                "name": metadata.get("title", "Untitled Recording"),
+                "url": metadata.get("url", ""),
+                "created_at": created_at,
+                "action_count": action_count,
+                "field_count": len(fields),
+                "status": "completed",
+                "timeline": timeline,
+                "fields": fields
+            }
+        except Exception as e:
+            return None
+
     # === MetaFlow Management ===
 
     def save_metaflow(
@@ -178,6 +355,58 @@ class StorageManager:
             }
 
         return local_workflows
+
+    def delete_workflow(self, user_id: str, workflow_name: str) -> bool:
+        """Delete a workflow and all its execution history
+
+        Args:
+            user_id: User ID
+            workflow_name: Workflow name/ID
+
+        Returns:
+            True if deleted successfully, False if not found
+        """
+        import shutil
+
+        workflow_path = self._user_path(user_id) / "workflows" / workflow_name
+        if not workflow_path.exists():
+            return False
+
+        shutil.rmtree(workflow_path)
+        return True
+
+    def get_workflow_last_execution(self, user_id: str, workflow_name: str) -> Optional[Dict[str, Any]]:
+        """Get the most recent execution result for a workflow
+
+        Returns:
+            Dict with execution info (timestamp, status, etc.) or None if no executions
+        """
+        exec_path = self._user_path(user_id) / "workflows" / workflow_name / "executions"
+        if not exec_path.exists():
+            return None
+
+        # Get most recent execution directory
+        exec_dirs = sorted(exec_path.iterdir(), reverse=True)
+        if not exec_dirs:
+            return None
+
+        for exec_dir in exec_dirs:
+            if exec_dir.is_dir():
+                result_file = exec_dir / "result.json"
+                if result_file.exists():
+                    try:
+                        with open(result_file, 'r', encoding='utf-8') as f:
+                            result = json.load(f)
+                            return {
+                                "execution_id": exec_dir.name,
+                                "timestamp": result.get("timestamp", ""),
+                                "status": result.get("status", "unknown"),
+                                "error": result.get("error")
+                            }
+                    except Exception:
+                        continue
+
+        return None
 
     # === Execution Results ===
 

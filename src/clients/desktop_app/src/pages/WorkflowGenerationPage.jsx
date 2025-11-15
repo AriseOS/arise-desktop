@@ -24,9 +24,173 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
   const [currentWorkflowKey, setCurrentWorkflowKey] = useState(DEFAULT_CONFIG_KEY)
 
   useEffect(() => {
-    // Always generate hardcoded workflow (not dependent on actual recording data)
-    generateWorkflowData()
-  }, [])
+    // Check if this is a quick-generated workflow
+    if (recordingData && recordingData.quickGenerated && recordingData.workflowName) {
+      // Load the quick-generated workflow
+      loadQuickGeneratedWorkflow(recordingData.workflowName);
+    } else {
+      // Default behavior: generate hardcoded workflow
+      generateWorkflowData();
+    }
+  }, [recordingData])
+
+  const loadQuickGeneratedWorkflow = async (workflowName) => {
+    setLoading(true);
+    try {
+      showStatus("📋 加载快速生成的Workflow...", "info");
+      
+      // Fetch workflow detail from backend
+      const response = await fetch(`http://127.0.0.1:8765/api/workflows/${workflowName}/detail?user_id=default_user`);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to load workflow: ${response.status}`);
+      }
+      
+      const workflowDetail = await response.json();
+      
+      // Transform to workflow visualization format
+      const steps = [
+        {
+          id: 'step-start',
+          type: 'start',
+          name: 'Start',
+          description: workflowDetail.description,
+          agent_type: 'start'
+        }
+      ];
+
+      // Convert workflow steps
+      workflowDetail.steps.forEach(step => {
+        if (step.type === 'branch_start') {
+          // Add branch start node
+          steps.push({
+            id: step.id,
+            type: 'branch_start',
+            name: step.name,
+            description: step.description,
+            agent_type: 'branch_start',
+            branches: step.branches
+          });
+        } else if (step.type === 'branch_end') {
+          // Add branch end node
+          steps.push({
+            id: step.id,
+            type: 'branch_end',
+            name: step.name,
+            description: step.description,
+            agent_type: 'branch_end'
+          });
+        } else if (step.agent_type === 'foreach') {
+          // Add foreach loop node
+          steps.push({
+            id: step.id,
+            type: 'foreach',
+            name: step.name,
+            description: step.description,
+            agent_type: step.agent_type,
+            branch: step.branch,
+            source: step.source,
+            item_var: step.item_var
+          });
+
+          // Add child steps
+          if (step.steps) {
+            step.steps.forEach(childStep => {
+              steps.push({
+                id: childStep.id,
+                type: childStep.agent_type,
+                name: childStep.name,
+                description: childStep.description,
+                agent_type: childStep.agent_type,
+                branch: step.branch,
+                parent: step.id
+              });
+            });
+          }
+        } else {
+          steps.push({
+            id: step.id,
+            type: step.agent_type || step.type,
+            name: step.name,
+            description: step.description,
+            agent_type: step.agent_type || step.type,
+            branch: step.branch
+          });
+        }
+      });
+
+      steps.push({
+        id: 'step-end',
+        type: 'end',
+        name: 'End',
+        description: 'Workflow completed successfully',
+        agent_type: 'end'
+      });
+
+      // Generate connections with parallel support
+      const connections = [];
+
+      for (let i = 0; i < steps.length - 1; i++) {
+        const currentStep = steps[i];
+        const nextStep = steps[i + 1];
+
+        // Handle branch_start connections
+        if (currentStep.type === 'branch_start') {
+          // Connect to first step of each branch
+          const branches = currentStep.branches || [];
+          branches.forEach(branchName => {
+            const firstBranchStep = steps.find(s => s.branch === branchName);
+            if (firstBranchStep) {
+              connections.push({
+                from: currentStep.id,
+                to: firstBranchStep.id
+              });
+            }
+          });
+          continue;
+        }
+
+        // Handle branch_end connections
+        if (nextStep.type === 'branch_end') {
+          // Only connect if current step is the last in its branch
+          const sameBranchSteps = steps.filter(s => s.branch === currentStep.branch);
+          const lastInBranch = sameBranchSteps[sameBranchSteps.length - 1];
+          if (currentStep.id === lastInBranch.id) {
+            connections.push({
+              from: currentStep.id,
+              to: nextStep.id
+            });
+          }
+          continue;
+        }
+
+        // Regular sequential connections (same branch or no branch)
+        if (!currentStep.branch || currentStep.branch === nextStep.branch) {
+          connections.push({
+            from: currentStep.id,
+            to: nextStep.id
+          });
+        }
+      }
+
+      const workflow = {
+        name: workflowDetail.name,
+        description: workflowDetail.description,
+        steps: steps,
+        connections: connections
+      };
+
+      setWorkflowData(workflow);
+      showStatus("✅ Workflow加载成功", "success");
+    } catch (error) {
+      console.error("Load quick generated workflow error:", error);
+      showStatus(`❌ 加载Workflow失败: ${error.message}`, "error");
+      // Fallback to default workflow
+      generateWorkflowData();
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const generateWorkflowData = () => {
     setLoading(true)
@@ -367,7 +531,7 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
       )}
 
       <div className="footer">
-        <p>AgentCrafter v1.0.0</p>
+        <p>Ami v1.0.0</p>
       </div>
     </div>
   )

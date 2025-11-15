@@ -1,17 +1,17 @@
-# AgentCrafter - AI-Powered Workflow Automation
+# Ami - AI-Powered Workflow Automation
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **Building AI agents that learn from your actions and automate complex workflows.**
 
-AgentCrafter allows you to record browser operations, describe tasks in natural language, and let AI automatically generate executable workflows. No programming required—just demonstrate once, and let AI handle the repetition.
+Ami allows you to record browser operations, describe tasks in natural language, and let AI automatically generate executable workflows. No programming required—just demonstrate once, and let AI handle the repetition.
 
 > **From manual operations to automated workflows in minutes.**
 
 ## 🌟 Core Features
 
-AgentCrafter provides three powerful ways to create and manage workflows:
+Ami provides three powerful ways to create and manage workflows:
 
 - **📹 Record Operations**: Capture browser actions in real-time and upload to cloud
 - **🤖 Generate Workflows**: Describe tasks in natural language, AI generates executable workflows
@@ -25,7 +25,7 @@ AgentCrafter provides three powerful ways to create and manage workflows:
 
 ## 🏗️ System Architecture
 
-AgentCrafter uses a **Desktop-First + Cloud-Enhanced** architecture:
+Ami uses a **Desktop-First + Cloud-Enhanced** architecture:
 
 ```
 ┌─────────────────────────────────────────────────┐
