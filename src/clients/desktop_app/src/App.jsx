@@ -16,6 +16,7 @@ import ExecutionResultPage from "./pages/ExecutionResultPage";
 import RecordingsLibraryPage from "./pages/RecordingsLibraryPage";
 import RecordingDetailPage from "./pages/RecordingDetailPage";
 import ConversationalGenerationPage from "./pages/ConversationalGenerationPage";
+import MetaflowPreviewPage from "./pages/MetaflowPreviewPage";
 
 function App() {
   // Navigation state
@@ -320,6 +321,16 @@ function App() {
           <ConversationalGenerationPage
             onNavigate={navigate}
             showStatus={showStatus}
+          />
+        );
+
+      case "metaflow-preview":
+        return (
+          <MetaflowPreviewPage
+            onNavigate={navigate}
+            showStatus={showStatus}
+            metaflowId={pageParams.metaflowId}
+            metaflowYaml={pageParams.metaflowYaml}
           />
         );
 

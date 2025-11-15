@@ -100,23 +100,25 @@ class GenerateMetaflowRequest(BaseModel):
 
 class GenerateMetaflowResponse(BaseModel):
     metaflow_id: str
+    metaflow_yaml: str  # Include YAML content for frontend preview
     local_path: str
 
 
-class GenerateWorkflowRequest(BaseModel):
-    """Unified workflow generation request
-
-    Supports multiple generation modes:
-    1. From recording: provide session_id + task_description
-    2. From text description: provide task_description only
-    3. From MetaFlow: provide metaflow_id
-    """
+class GenerateMetaflowFromRecordingRequest(BaseModel):
+    """Request model for generating MetaFlow from recording"""
+    session_id: str
+    task_description: str
     user_id: str = "default_user"
-    task_description: Optional[str] = None
 
-    # Optional fields based on generation mode
-    session_id: Optional[str] = None              # For recording-based generation
-    metaflow_id: Optional[str] = None             # For MetaFlow-based generation
+
+class GenerateWorkflowRequest(BaseModel):
+    """Request model for generating Workflow from MetaFlow
+
+    Workflow generation MUST be from MetaFlow.
+    User must review and confirm MetaFlow before generating Workflow.
+    """
+    metaflow_id: str
+    user_id: str = "default_user"
 
 
 class GenerateWorkflowResponse(BaseModel):
@@ -665,11 +667,88 @@ async def generate_metaflow(request: GenerateMetaflowRequest):
 
         return {
             "metaflow_id": metaflow_id,
+            "metaflow_yaml": metaflow_yaml,
             "local_path": local_path
         }
 
     except Exception as e:
         logger.error(f"Failed to generate MetaFlow: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/metaflows/from-recording", response_model=GenerateMetaflowResponse)
+async def generate_metaflow_from_recording(request: GenerateMetaflowFromRecordingRequest):
+    """Generate MetaFlow from recording
+
+    This endpoint:
+    1. Loads the recording data
+    2. Uploads recording to Cloud Backend
+    3. Calls Cloud Backend to generate MetaFlow from recording's intents only
+    4. Saves MetaFlow locally
+    5. Returns metaflow_yaml for frontend preview
+    """
+    try:
+        logger.info(f"Generating MetaFlow from recording: {request.session_id}")
+
+        # Load recording data
+        recording_data = storage_manager.get_recording(
+            request.user_id, request.session_id
+        )
+        operations = recording_data.get("operations", [])
+
+        if not operations:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No operations found in recording: {request.session_id}"
+            )
+
+        # Upload recording to Cloud Backend
+        logger.info("Uploading recording to Cloud Backend...")
+        recording_id = await cloud_client.upload_recording(
+            operations=operations,
+            task_description=request.task_description,
+            user_id=request.user_id
+        )
+        logger.info(f"Recording uploaded: {recording_id}")
+
+        # Generate MetaFlow from recording (using only that recording's intents)
+        logger.info("Generating MetaFlow from recording's intents only...")
+        metaflow_result = await cloud_client.generate_metaflow_from_recording(
+            recording_id=recording_id,
+            task_description=request.task_description,
+            user_id=request.user_id
+        )
+
+        metaflow_id = metaflow_result["metaflow_id"]
+        metaflow_yaml = metaflow_result["metaflow_yaml"]
+
+        # Save MetaFlow locally
+        storage_manager.save_metaflow(
+            request.user_id,
+            metaflow_id,
+            metaflow_yaml,
+            request.task_description
+        )
+
+        local_path = str(
+            storage_manager._user_path(request.user_id) / "metaflows" /
+            metaflow_id / "metaflow.yaml"
+        )
+
+        logger.info(f"MetaFlow saved locally: {local_path}")
+
+        return {
+            "metaflow_id": metaflow_id,
+            "metaflow_yaml": metaflow_yaml,
+            "local_path": local_path
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to generate MetaFlow from recording: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -679,102 +758,23 @@ async def generate_metaflow(request: GenerateMetaflowRequest):
 
 @app.post("/api/workflows/generate", response_model=GenerateWorkflowResponse)
 async def generate_workflow(request: GenerateWorkflowRequest):
-    """Unified Workflow Generation Endpoint
+    """Generate Workflow from MetaFlow
 
-    Supports multiple generation modes:
-    1. From recording: provide session_id + task_description
-    2. From text description: provide task_description only
-    3. From MetaFlow: provide metaflow_id
+    This endpoint only generates workflow from a confirmed MetaFlow.
+    User must review MetaFlow before calling this endpoint.
 
-    All modes call Cloud Backend for AI-powered workflow generation.
+    Workflow generation flow:
+    1. User generates MetaFlow (via /api/metaflows/generate or /api/metaflows/from-recording)
+    2. User reviews MetaFlow in UI
+    3. User confirms and calls this endpoint with metaflow_id
+    4. Workflow is generated from the confirmed MetaFlow
     """
     try:
-        logger.info(f"Generating workflow for user: {request.user_id}")
+        logger.info(f"Generating Workflow from MetaFlow: {request.metaflow_id}")
 
-        # Determine generation mode and execute appropriate flow
-        metaflow_id = None
-        workflow_name = None
-        workflow_yaml = None
-
-        # Mode 1: From MetaFlow (direct generation)
-        if request.metaflow_id:
-            logger.info(f"Mode: Generate from MetaFlow {request.metaflow_id}")
-            metaflow_id = request.metaflow_id
-
-        # Mode 2: From Recording
-        elif request.session_id:
-            logger.info(f"Mode: Generate from recording {request.session_id}")
-
-            # Load recording data
-            recording_data = storage_manager.get_recording(
-                request.user_id, request.session_id
-            )
-            operations = recording_data.get("operations", [])
-
-            if not operations:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"No operations found in recording: {request.session_id}"
-                )
-
-            # Upload recording to Cloud Backend
-            logger.info("Uploading recording to Cloud Backend...")
-            await cloud_client.upload_recording(
-                operations=operations,
-                task_description=request.task_description or "Auto-generated from recording",
-                user_id=request.user_id
-            )
-
-            # Generate MetaFlow from recording
-            logger.info("Generating MetaFlow from recording...")
-            metaflow_result = await cloud_client.generate_metaflow(
-                task_description=request.task_description or "Auto-generated from recording",
-                user_id=request.user_id
-            )
-            metaflow_id = metaflow_result["metaflow_id"]
-            metaflow_yaml = metaflow_result["metaflow_yaml"]
-
-            # Save MetaFlow locally
-            storage_manager.save_metaflow(
-                request.user_id,
-                metaflow_id,
-                metaflow_yaml,
-                request.task_description or "Auto-generated from recording"
-            )
-            logger.info(f"MetaFlow saved: {metaflow_id}")
-
-        # Mode 3: From Text Description
-        else:
-            logger.info("Mode: Generate from text description")
-
-            if not request.task_description:
-                raise HTTPException(
-                    status_code=400,
-                    detail="task_description is required when not providing session_id or metaflow_id"
-                )
-
-            # Generate MetaFlow from task description
-            logger.info(f"Generating MetaFlow from task: {request.task_description[:50]}...")
-            metaflow_result = await cloud_client.generate_metaflow(
-                task_description=request.task_description,
-                user_id=request.user_id
-            )
-            metaflow_id = metaflow_result["metaflow_id"]
-            metaflow_yaml = metaflow_result["metaflow_yaml"]
-
-            # Save MetaFlow locally
-            storage_manager.save_metaflow(
-                request.user_id,
-                metaflow_id,
-                metaflow_yaml,
-                request.task_description
-            )
-            logger.info(f"MetaFlow saved: {metaflow_id}")
-
-        # Common: Generate Workflow from MetaFlow (all modes converge here)
-        logger.info(f"Generating Workflow from MetaFlow: {metaflow_id}")
+        # Generate Workflow from MetaFlow via Cloud Backend
         workflow_result = await cloud_client.generate_workflow(
-            metaflow_id=metaflow_id,
+            metaflow_id=request.metaflow_id,
             user_id=request.user_id
         )
 
@@ -952,7 +952,8 @@ async def get_workflow_detail(workflow_id: str, user_id: str = "default_user"):
             'name': name,
             'description': description,
             'steps': steps_list,
-            'connections': connections
+            'connections': connections,
+            'workflow_yaml': workflow_yaml  # Add raw YAML for display
         }
 
         logger.info(f"Loaded workflow detail: {workflow_id}")

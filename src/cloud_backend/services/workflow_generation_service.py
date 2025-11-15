@@ -200,3 +200,67 @@ class WorkflowGenerationService:
 
         logger.info(f"✅ Workflow generation complete")
         return workflow_yaml
+
+    async def generate_metaflow_from_recording(
+        self,
+        operations: List[Dict],
+        task_description: str
+    ) -> str:
+        """
+        Generate MetaFlow directly from recording operations (without using global Intent Graph)
+
+        This method:
+        1. Extracts intents from the recording operations
+        2. Creates a temporary Intent Graph with only these intents
+        3. Generates MetaFlow from this temporary graph
+
+        Use case: User wants to generate workflow from a specific recording,
+        using only the context from that recording (not historical Intent Memory).
+
+        Args:
+            operations: List of operations from the recording
+            task_description: User's description of the task
+
+        Returns:
+            metaflow_yaml: MetaFlow YAML string
+        """
+        logger.info(f"🚀 Generating MetaFlow from recording ({len(operations)} operations)")
+        logger.info(f"   Task: {task_description}")
+
+        # 1. Extract intents from operations
+        logger.info("1️⃣  Extracting intents from recording...")
+        intents = await self.intent_extractor.extract_intents(
+            operations=operations,
+            task_description=task_description,
+            source_session_id="recording-based-generation"
+        )
+        logger.info(f"   ✅ Extracted {len(intents)} intents")
+
+        # 2. Create temporary Intent Graph with only these intents
+        logger.info("2️⃣  Creating temporary Intent Graph...")
+        storage = InMemoryIntentStorage()
+        graph = IntentMemoryGraph(storage=storage)
+
+        for intent in intents:
+            graph.add_intent(intent)
+
+        # Auto-connect intents based on sequential order
+        for i in range(len(intents) - 1):
+            graph.add_edge(intents[i].id, intents[i + 1].id)
+
+        logger.info(f"   ✅ Temporary graph created: {len(intents)} intents")
+
+        # 3. Generate MetaFlow from temporary graph
+        logger.info("3️⃣  Generating MetaFlow from recording-specific intents...")
+        metaflow = await self.metaflow_generator.generate(
+            graph=graph,
+            task_description=task_description,
+            user_query=task_description
+        )
+        logger.info(f"   ✅ MetaFlow generated: {len(metaflow.nodes)} nodes")
+
+        # 4. Serialize MetaFlow
+        metaflow_yaml = metaflow.to_yaml()
+
+        logger.info(f"✅ MetaFlow generation from recording complete")
+        return metaflow_yaml

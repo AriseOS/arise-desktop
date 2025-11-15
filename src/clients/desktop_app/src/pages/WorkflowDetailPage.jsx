@@ -20,6 +20,7 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [isRunning, setIsRunning] = useState(false)
+  const [activeTab, setActiveTab] = useState('visual') // 'visual' or 'yaml'
 
   useEffect(() => {
     loadWorkflowData()
@@ -188,7 +189,46 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
         )}
 
         {!loading && !error && workflowData && (
-          <WorkflowVisualization workflowData={workflowData} />
+          <>
+            {/* Tabs Header */}
+            <div className="workflow-tabs-header">
+              <button
+                className={`workflow-tab-button ${activeTab === 'visual' ? 'active' : ''}`}
+                onClick={() => setActiveTab('visual')}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="3" y="3" width="7" height="7"/>
+                  <rect x="14" y="3" width="7" height="7"/>
+                  <rect x="14" y="14" width="7" height="7"/>
+                  <rect x="3" y="14" width="7" height="7"/>
+                </svg>
+                <span>Visual</span>
+              </button>
+              <button
+                className={`workflow-tab-button ${activeTab === 'yaml' ? 'active' : ''}`}
+                onClick={() => setActiveTab('yaml')}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <polyline points="16 18 22 12 16 6"/>
+                  <polyline points="8 6 2 12 8 18"/>
+                </svg>
+                <span>YAML</span>
+              </button>
+            </div>
+
+            {/* Tabs Content */}
+            <div className="workflow-tabs-content">
+              {activeTab === 'visual' ? (
+                <WorkflowVisualization workflowData={workflowData} />
+              ) : (
+                <div className="workflow-yaml-container">
+                  <pre className="workflow-yaml-content">
+                    <code>{workflowData.workflow_yaml || 'No YAML data available'}</code>
+                  </pre>
+                </div>
+              )}
+            </div>
+          </>
         )}
       </div>
 
@@ -220,34 +260,32 @@ function WorkflowVisualization({ workflowData }) {
   }
 
   return (
-    <>
-      <div className="workflow-canvas">
-        <ReactFlowProvider>
-          <ReactFlow
-            nodes={nodes}
-            edges={edgesWithMarkers}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            fitView
-            nodeTypes={nodeTypes}
-            fitViewOptions={{ padding: 0.2, minZoom: 0.5, maxZoom: 1.5 }}
-            minZoom={0.3}
-            maxZoom={2}
-            defaultViewport={{ x: 0, y: 0, zoom: 0.8 }}
-          >
-            <Controls showInteractive={false} />
-            <MiniMap
-              nodeColor={nodeColor}
-              nodeStrokeWidth={3}
-              zoomable
-              pannable
-              style={{ width: 80, height: 60 }}
-            />
-            <Background variant="dots" gap={12} size={1} />
-          </ReactFlow>
-        </ReactFlowProvider>
-      </div>
-    </>
+    <div className="workflow-canvas">
+      <ReactFlowProvider>
+        <ReactFlow
+          nodes={nodes}
+          edges={edgesWithMarkers}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          fitView
+          nodeTypes={nodeTypes}
+          fitViewOptions={{ padding: 0.2, minZoom: 0.5, maxZoom: 1.5 }}
+          minZoom={0.3}
+          maxZoom={2}
+          defaultViewport={{ x: 0, y: 0, zoom: 0.8 }}
+        >
+          <Controls showInteractive={false} />
+          <MiniMap
+            nodeColor={nodeColor}
+            nodeStrokeWidth={3}
+            zoomable
+            pannable
+            style={{ width: 80, height: 60 }}
+          />
+          <Background variant="dots" gap={12} size={1} />
+        </ReactFlow>
+      </ReactFlowProvider>
+    </div>
   )
 }
 

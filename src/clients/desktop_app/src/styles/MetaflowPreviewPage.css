@@ -1,0 +1,373 @@
+.metaflow-preview-page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.metaflow-preview-page .page-header {
+  display: flex;
+  align-items: center;
+  padding: 20px 24px;
+  background: rgba(255, 255, 255, 0.95);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.metaflow-preview-page .back-button {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  border: none;
+  background: #f0f0f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.metaflow-preview-page .back-button:hover {
+  background: #e0e0e0;
+  transform: translateX(-2px);
+}
+
+.metaflow-preview-page .back-button svg {
+  width: 20px;
+  height: 20px;
+  color: #333;
+}
+
+.metaflow-preview-page .page-title {
+  flex: 1;
+  margin: 0 16px;
+  font-size: 20px;
+  font-weight: 600;
+  color: #333;
+}
+
+.metaflow-preview-page .header-spacer {
+  width: 40px;
+}
+
+/* Content Area */
+.metaflow-preview-page .preview-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* Instructions Section */
+.metaflow-preview-page .instructions-section {
+  background: white;
+  border-radius: 12px;
+  padding: 24px;
+  text-align: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.metaflow-preview-page .instruction-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.metaflow-preview-page .instructions-section h2 {
+  margin: 0 0 12px 0;
+  font-size: 24px;
+  font-weight: 600;
+  color: #333;
+}
+
+.metaflow-preview-page .instructions-section p {
+  margin: 0;
+  font-size: 15px;
+  color: #666;
+  line-height: 1.6;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+/* Tabs Section */
+.metaflow-preview-page .tabs-section {
+  background: white;
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.metaflow-preview-page .tabs-header {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  border-bottom: 2px solid #f0f0f0;
+}
+
+.metaflow-preview-page .tab-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border: none;
+  background: transparent;
+  color: #666;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+  transition: all 0.2s;
+  margin-bottom: -2px;
+}
+
+.metaflow-preview-page .tab-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.metaflow-preview-page .tab-button:hover {
+  color: #667eea;
+  background: rgba(102, 126, 234, 0.05);
+}
+
+.metaflow-preview-page .tab-button.active {
+  color: #667eea;
+  border-bottom-color: #667eea;
+}
+
+.metaflow-preview-page .tabs-content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Visual Tab */
+.metaflow-preview-page .visual-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  background: #f9fafb;
+  border-radius: 8px;
+}
+
+.metaflow-preview-page .metaflow-flow {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 20px 0;
+}
+
+.metaflow-preview-page .metaflow-node-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.metaflow-preview-page .metaflow-node {
+  width: 100%;
+  background: white;
+  border: 2px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  transition: all 0.2s;
+}
+
+.metaflow-preview-page .metaflow-node:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  transform: translateY(-2px);
+}
+
+.metaflow-preview-page .node-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  flex-shrink: 0;
+}
+
+.metaflow-preview-page .node-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.metaflow-preview-page .node-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f2937;
+  margin-bottom: 6px;
+}
+
+.metaflow-preview-page .node-description {
+  font-size: 14px;
+  color: #6b7280;
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+
+.metaflow-preview-page .node-meta {
+  font-size: 12px;
+  color: #9ca3af;
+  font-style: italic;
+}
+
+.metaflow-preview-page .node-connector {
+  margin: 4px 0;
+}
+
+.metaflow-preview-page .empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 300px;
+  color: #9ca3af;
+  font-size: 15px;
+}
+
+/* YAML Tab */
+.metaflow-preview-page .yaml-container {
+  flex: 1;
+  background: #1e1e1e;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.metaflow-preview-page .yaml-content {
+  height: 100%;
+  margin: 0;
+  padding: 20px;
+  overflow: auto;
+  font-family: 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #d4d4d4;
+  background: #1e1e1e;
+}
+
+.metaflow-preview-page .yaml-content code {
+  font-family: inherit;
+  color: inherit;
+}
+
+/* MetaFlow Info */
+.metaflow-preview-page .metaflow-info {
+  display: flex;
+  gap: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #f0f0f0;
+  margin-top: 16px;
+}
+
+.metaflow-preview-page .info-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #f0f0f0;
+  border-radius: 6px;
+  font-family: 'Monaco', 'Courier New', monospace;
+  font-size: 12px;
+}
+
+.metaflow-preview-page .badge-label {
+  color: #666;
+  font-weight: 600;
+}
+
+.metaflow-preview-page .badge-value {
+  color: #333;
+}
+
+/* Action Buttons Section */
+.metaflow-preview-page .action-buttons-section {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+}
+
+.metaflow-preview-page .btn-cancel,
+.metaflow-preview-page .btn-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 28px;
+  border-radius: 8px;
+  border: none;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.metaflow-preview-page .btn-cancel {
+  background: #f0f0f0;
+  color: #666;
+}
+
+.metaflow-preview-page .btn-cancel:hover:not(:disabled) {
+  background: #e0e0e0;
+  color: #333;
+}
+
+.metaflow-preview-page .btn-confirm {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.metaflow-preview-page .btn-confirm:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.metaflow-preview-page .btn-cancel:disabled,
+.metaflow-preview-page .btn-confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.metaflow-preview-page .btn-cancel svg,
+.metaflow-preview-page .btn-confirm svg {
+  width: 20px;
+  height: 20px;
+}
+
+.metaflow-preview-page .btn-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Help Text */
+.metaflow-preview-page .help-text {
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 8px;
+  padding: 16px;
+  text-align: center;
+}
+
+.metaflow-preview-page .help-text p {
+  margin: 0;
+  font-size: 14px;
+  color: #666;
+  line-height: 1.6;
+}
+
+.metaflow-preview-page .help-text strong {
+  color: #333;
+}

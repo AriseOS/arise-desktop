@@ -282,6 +282,7 @@ async def generate_metaflow(user_id: str, data: dict):
     Returns:
         {
             "metaflow_id": "metaflow_xxx",
+            "metaflow_yaml": "...",
             "status": "success"
         }
     """
@@ -332,6 +333,87 @@ async def generate_metaflow(user_id: str, data: dict):
         raise
     except Exception as e:
         logger.error(f"❌ MetaFlow generation failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"MetaFlow generation failed: {str(e)}")
+
+
+@app.post("/api/recordings/{recording_id}/generate_metaflow")
+async def generate_metaflow_from_recording(recording_id: str, data: dict):
+    """
+    Generate MetaFlow from a specific recording (using only that recording's intents)
+
+    This endpoint generates MetaFlow using ONLY the intents extracted from this recording,
+    NOT from the user's global Intent Memory Graph. This is useful when the user wants
+    to create a workflow based on a specific demonstration.
+
+    Body:
+        {
+            "user_id": "user123",
+            "task_description": "Search coffee on Google"
+        }
+
+    Returns:
+        {
+            "metaflow_id": "metaflow_xxx",
+            "metaflow_yaml": "...",
+            "status": "success"
+        }
+    """
+    user_id = data.get("user_id")
+    task_description = data.get("task_description")
+
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+    if not task_description:
+        raise HTTPException(400, "Missing task_description")
+
+    logger.info(f"🚀 Generating MetaFlow from recording {recording_id}")
+    logger.info(f"   User: {user_id}")
+    logger.info(f"   Task: {task_description}")
+
+    try:
+        # Load recording data
+        recording_data = storage_service.get_recording(user_id, recording_id)
+        if not recording_data:
+            raise HTTPException(404, f"Recording not found: {recording_id}")
+
+        operations = recording_data.get("operations", [])
+        if not operations:
+            raise HTTPException(400, f"Recording {recording_id} has no operations")
+
+        logger.info(f"   📹 Recording loaded: {len(operations)} operations")
+
+        # Generate MetaFlow from recording operations only
+        metaflow_yaml = await workflow_generation_service.generate_metaflow_from_recording(
+            operations=operations,
+            task_description=task_description
+        )
+
+        # Generate metaflow_id
+        metaflow_id = f"metaflow_{uuid.uuid4().hex[:12]}"
+
+        # Save MetaFlow to server filesystem
+        storage_service.save_metaflow(
+            user_id=user_id,
+            metaflow_id=metaflow_id,
+            metaflow_yaml=metaflow_yaml,
+            task_description=task_description
+        )
+
+        logger.info(f"✅ MetaFlow generated and saved: {metaflow_id}")
+
+        return {
+            "metaflow_id": metaflow_id,
+            "metaflow_yaml": metaflow_yaml,
+            "task_description": task_description,
+            "status": "success"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ MetaFlow generation from recording failed: {e}")
         import traceback
         traceback.print_exc()
         raise HTTPException(500, f"MetaFlow generation failed: {str(e)}")

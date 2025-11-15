@@ -88,6 +88,42 @@ class CloudClient:
         logger.info(f"MetaFlow generated: {result.get('metaflow_id')}")
         return result
 
+    async def generate_metaflow_from_recording(
+        self,
+        recording_id: str,
+        task_description: str,
+        user_id: str = "default_user"
+    ) -> Dict[str, Any]:
+        """Generate MetaFlow from a specific recording (using only that recording's intents)
+
+        Args:
+            recording_id: Recording ID
+            task_description: User's description of the task
+            user_id: User ID (default: "default_user")
+
+        Returns:
+            dict: {
+                "metaflow_id": str,
+                "metaflow_yaml": str,
+                "task_description": str,
+                "status": str
+            }
+        """
+        logger.info(f"Generating MetaFlow from recording: {recording_id}")
+
+        response = await self.client.post(
+            f"/api/recordings/{recording_id}/generate_metaflow",
+            json={
+                "user_id": user_id,
+                "task_description": task_description
+            }
+        )
+        response.raise_for_status()
+        result = response.json()
+
+        logger.info(f"MetaFlow generated from recording: {result.get('metaflow_id')}")
+        return result
+
     async def generate_workflow(
         self,
         metaflow_id: str,

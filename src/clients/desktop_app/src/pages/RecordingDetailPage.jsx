@@ -37,10 +37,10 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
   }, [sessionId]);
 
   const handleGenerateWorkflow = async () => {
-    showStatus('✨ Generating workflow from recording...', 'info');
+    showStatus('✨ Generating MetaFlow from recording...', 'info');
 
     try {
-      const response = await fetch(`${API_BASE}/api/workflows/generate`, {
+      const response = await fetch(`${API_BASE}/api/metaflows/from-recording`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -51,20 +51,23 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
       });
 
       if (!response.ok) {
-        throw new Error(`Failed to generate workflow: ${response.status}`);
+        throw new Error(`Failed to generate MetaFlow: ${response.status}`);
       }
 
       const data = await response.json();
 
-      showStatus('✅ Workflow generated successfully!', 'success');
+      showStatus('✅ MetaFlow generated! Please review.', 'success');
 
-      // Navigate to workflows page to see the generated workflow
+      // Navigate to MetaFlow preview page
       setTimeout(() => {
-        onNavigate('workflows');
+        onNavigate('metaflow-preview', {
+          metaflowId: data.metaflow_id,
+          metaflowYaml: data.metaflow_yaml
+        });
       }, 500);
     } catch (error) {
-      console.error('Error generating workflow:', error);
-      showStatus(`❌ Failed to generate workflow: ${error.message}`, 'error');
+      console.error('Error generating MetaFlow:', error);
+      showStatus(`❌ Failed to generate MetaFlow: ${error.message}`, 'error');
     }
   };
 

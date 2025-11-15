@@ -37,34 +37,56 @@ function ConversationalGenerationPage({ onNavigate, showStatus }) {
     }
 
     setIsGenerating(true);
-    showStatus('✨ Generating workflow from your description...', 'info');
 
     try {
-      const response = await fetch(`${API_BASE}/api/workflows/generate`, {
+      let response;
+      let apiEndpoint;
+      let requestBody;
+
+      // Choose API endpoint based on whether a recording is referenced
+      if (referencedRecording?.session_id) {
+        // Generate MetaFlow from recording
+        apiEndpoint = `${API_BASE}/api/metaflows/from-recording`;
+        requestBody = {
+          session_id: referencedRecording.session_id,
+          task_description: description,
+          user_id: "default_user"
+        };
+        showStatus('✨ Generating MetaFlow from recording...', 'info');
+      } else {
+        // Generate MetaFlow from text description
+        apiEndpoint = `${API_BASE}/api/metaflows/generate`;
+        requestBody = {
+          task_description: description,
+          user_id: "default_user"
+        };
+        showStatus('✨ Generating MetaFlow from your description...', 'info');
+      }
+
+      response = await fetch(apiEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          task_description: description,
-          session_id: referencedRecording?.session_id || null,
-          user_id: "default_user"
-        })
+        body: JSON.stringify(requestBody)
       });
 
       if (!response.ok) {
-        throw new Error(`Workflow generation failed: ${response.status}`);
+        throw new Error(`MetaFlow generation failed: ${response.status}`);
       }
 
       const data = await response.json();
 
-      showStatus('✅ Workflow generated successfully!', 'success');
+      showStatus('✅ MetaFlow generated! Please review.', 'success');
 
-      // Navigate to workflows page to see the generated workflow
+      // Navigate to MetaFlow preview page
       setTimeout(() => {
-        onNavigate('workflows');
+        onNavigate('metaflow-preview', {
+          metaflowId: data.metaflow_id,
+          metaflowYaml: data.metaflow_yaml
+        });
       }, 500);
     } catch (error) {
-      console.error('Error generating workflow:', error);
-      showStatus(`❌ Failed to generate workflow: ${error.message}`, 'error');
+      console.error('Error generating MetaFlow:', error);
+      showStatus(`❌ Failed to generate MetaFlow: ${error.message}`, 'error');
     } finally {
       setIsGenerating(false);
     }
