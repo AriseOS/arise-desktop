@@ -40,6 +40,42 @@ function App() {
     setPageParams(params);
   };
 
+  // Browser state
+  const [browserOpening, setBrowserOpening] = useState(false);
+
+  // Open browser handler
+  const handleOpenBrowser = async () => {
+    if (browserOpening) return;
+
+    setBrowserOpening(true);
+    showStatus("🌐 Opening browser...", "info");
+
+    try {
+      const response = await fetch(`${API_BASE}/api/browser/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ headless: false })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to start browser: ${response.status}`);
+      }
+
+      const result = await response.json();
+
+      if (result.status === "already_running") {
+        showStatus("✅ Browser is already running", "success");
+      } else {
+        showStatus("✅ Browser opened successfully!", "success");
+      }
+    } catch (error) {
+      console.error("Open browser error:", error);
+      showStatus(`❌ Failed to open browser: ${error.message}`, "error");
+    } finally {
+      setBrowserOpening(false);
+    }
+  };
+
   // Check if user has workflows
   const [hasWorkflows, setHasWorkflows] = useState(false);
   const [recentWorkflows, setRecentWorkflows] = useState([]);
@@ -91,10 +127,21 @@ function App() {
           Leave the rest to AI.
         </p>
 
-        <button className="hero-button" onClick={() => navigate("quick-start")}>
-          <span className="button-icon">🎬</span>
-          <span>Start Recording</span>
-        </button>
+        <div className="button-group">
+          <button className="hero-button primary" onClick={() => navigate("quick-start")}>
+            <span className="button-icon">🎬</span>
+            <span>Start Recording</span>
+          </button>
+
+          <button
+            className="hero-button secondary"
+            onClick={handleOpenBrowser}
+            disabled={browserOpening}
+          >
+            <span className="button-icon">🌐</span>
+            <span>{browserOpening ? "Opening..." : "Open Browser"}</span>
+          </button>
+        </div>
 
         <a className="card-link" onClick={() => navigate("workflows")}>
           See what others are using it for →
@@ -140,10 +187,21 @@ function App() {
             <h2 className="section-title">Create new automation workflow</h2>
             <p className="section-subtitle">Perform once → Copy data → AI completes automatically</p>
 
-            <button className="start-button" onClick={() => navigate("quick-start")}>
-              <span className="button-icon">🎬</span>
-              <span>Start Recording</span>
-            </button>
+            <div className="button-group">
+              <button className="start-button primary" onClick={() => navigate("quick-start")}>
+                <span className="button-icon">🎬</span>
+                <span>Start Recording</span>
+              </button>
+
+              <button
+                className="start-button secondary"
+                onClick={handleOpenBrowser}
+                disabled={browserOpening}
+              >
+                <span className="button-icon">🌐</span>
+                <span>{browserOpening ? "Opening..." : "Open Browser"}</span>
+              </button>
+            </div>
           </div>
         </div>
 

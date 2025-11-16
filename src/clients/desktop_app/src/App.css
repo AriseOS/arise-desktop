@@ -335,6 +335,15 @@ h3 {
   margin-bottom: 35px;
 }
 
+/* Button Group */
+.button-group {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-bottom: 25px;
+}
+
 .hero-button {
   display: inline-flex;
   align-items: center;
@@ -349,13 +358,38 @@ h3 {
   cursor: pointer;
   transition: all 0.3s ease;
   box-shadow: 0 4px 15px rgba(79, 70, 229, 0.4);
-  margin-bottom: 25px;
+  margin-bottom: 0;
 }
 
-.hero-button:hover {
+.hero-button.primary {
+  background: #4F46E5;
+  box-shadow: 0 4px 15px rgba(79, 70, 229, 0.4);
+}
+
+.hero-button.primary:hover {
   background: #4338CA;
   transform: translateY(-3px);
   box-shadow: 0 6px 25px rgba(79, 70, 229, 0.5);
+}
+
+.hero-button.secondary {
+  background: transparent;
+  border: 2px solid #4F46E5;
+  color: #4F46E5;
+  box-shadow: none;
+}
+
+.hero-button.secondary:hover {
+  background: rgba(79, 70, 229, 0.1);
+  border-color: #4338CA;
+  color: #4338CA;
+  transform: translateY(-3px);
+}
+
+.hero-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none !important;
 }
 
 .hero-button .button-icon {
@@ -511,11 +545,36 @@ h3 {
   font-weight: 600;
   cursor: pointer;
   transition: all 0.3s ease;
+  margin-bottom: 0;
 }
 
-.start-button:hover {
+.start-button.primary {
+  background: #4F46E5;
+}
+
+.start-button.primary:hover {
   background: #4338CA;
   transform: translateY(-2px);
+  box-shadow: 0 4px 20px rgba(79, 70, 229, 0.4);
+}
+
+.start-button.secondary {
+  background: transparent;
+  border: 2px solid #4F46E5;
+  color: #4F46E5;
+}
+
+.start-button.secondary:hover {
+  background: rgba(79, 70, 229, 0.1);
+  border-color: #4338CA;
+  color: #4338CA;
+  transform: translateY(-2px);
+}
+
+.start-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none !important;
 }
 
 .start-button .button-icon {

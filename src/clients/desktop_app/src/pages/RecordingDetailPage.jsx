@@ -6,6 +6,7 @@ const API_BASE = "http://127.0.0.1:8765";
 function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
   const [recording, setRecording] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('timeline'); // 'timeline' or 'yaml'
 
   // Fetch recording details from API
   useEffect(() => {
@@ -313,6 +314,25 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
         {/* Recording Info Section */}
         <div className="info-section">
           <h2 className="section-title">Recording Information</h2>
+
+          {/* Task Metadata */}
+          {recording.task_metadata && (
+            <div className="task-metadata-section">
+              {recording.task_metadata.title && (
+                <div className="metadata-item">
+                  <span className="metadata-label">📝 Task Title:</span>
+                  <span className="metadata-value">{recording.task_metadata.title}</span>
+                </div>
+              )}
+              {recording.task_metadata.description && (
+                <div className="metadata-item">
+                  <span className="metadata-label">📄 Task Description:</span>
+                  <span className="metadata-value">{recording.task_metadata.description}</span>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="info-grid">
             <div className="info-item">
               <span className="info-label">Created:</span>
@@ -333,48 +353,89 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
           </div>
         </div>
 
-        {/* Operations Timeline Section */}
-        <div className="timeline-section">
-          <h2 className="section-title">Operations Timeline</h2>
+        {/* Tab Section */}
+        <div className="tab-section">
+          {/* Tab Header */}
+          <div className="tab-header">
+            <button
+              className={`tab-button ${activeTab === 'timeline' ? 'active' : ''}`}
+              onClick={() => setActiveTab('timeline')}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="12" y1="20" x2="12" y2="10"/>
+                <line x1="18" y1="20" x2="18" y2="4"/>
+                <line x1="6" y1="20" x2="6" y2="16"/>
+              </svg>
+              <span>Timeline</span>
+            </button>
+            <button
+              className={`tab-button ${activeTab === 'yaml' ? 'active' : ''}`}
+              onClick={() => setActiveTab('yaml')}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="16 18 22 12 16 6"/>
+                <polyline points="8 6 2 12 8 18"/>
+              </svg>
+              <span>YAML</span>
+            </button>
+          </div>
 
-          {timeline.length === 0 ? (
-            <div className="empty-message">
-              <p>No operations recorded.</p>
-            </div>
-          ) : (
-            <div className="timeline-list">
-              {timeline.map((operation, index) => {
-                const isCopyAction = operation.type === 'copy_action';
+          {/* Tab Content */}
+          <div className="tab-content">
+            {activeTab === 'timeline' ? (
+              <div className="timeline-section">
+                <h2 className="section-title">Operations Timeline</h2>
 
-                return (
-                  <div
-                    key={index}
-                    className={`timeline-item ${isCopyAction ? 'copy-action' : ''}`}
-                  >
-                    <div className="timeline-marker">
-                      <span className="step-number">{operation.step || index + 1}</span>
-                    </div>
-
-                    <div className="timeline-content">
-                      <div className="action-header">
-                        <span className="action-timestamp">
-                          {operation.timestamp}
-                        </span>
-                        <span className="action-label">
-                          {getOperationTypeLabel(operation.type)}
-                        </span>
-                        {isCopyAction && <span className="copy-badge">⭐ Data Extract</span>}
-                      </div>
-
-                      <div className="action-details">
-                        {renderOperationDetails(operation)}
-                      </div>
-                    </div>
+                {timeline.length === 0 ? (
+                  <div className="empty-message">
+                    <p>No operations recorded.</p>
                   </div>
-                );
-              })}
-            </div>
-          )}
+                ) : (
+                  <div className="timeline-list">
+                    {timeline.map((operation, index) => {
+                      const isCopyAction = operation.type === 'copy_action';
+
+                      return (
+                        <div
+                          key={index}
+                          className={`timeline-item ${isCopyAction ? 'copy-action' : ''}`}
+                        >
+                          <div className="timeline-marker">
+                            <span className="step-number">{operation.step || index + 1}</span>
+                          </div>
+
+                          <div className="timeline-content">
+                            <div className="action-header">
+                              <span className="action-timestamp">
+                                {operation.timestamp}
+                              </span>
+                              <span className="action-label">
+                                {getOperationTypeLabel(operation.type)}
+                              </span>
+                              {isCopyAction && <span className="copy-badge">⭐ Data Extract</span>}
+                            </div>
+
+                            <div className="action-details">
+                              {renderOperationDetails(operation)}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="yaml-section">
+                <h2 className="section-title">Recording Data (JSON)</h2>
+                <div className="yaml-container">
+                  <pre className="yaml-content">
+                    <code>{JSON.stringify(recording, null, 2)}</code>
+                  </pre>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Extracted Fields Section */}

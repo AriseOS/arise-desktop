@@ -555,3 +555,125 @@
     justify-content: center;
   }
 }
+
+/* ===================================
+   TASK METADATA SECTION
+   =================================== */
+
+.task-metadata-section {
+  background: rgba(79, 70, 229, 0.1);
+  border: 1px solid rgba(79, 70, 229, 0.3);
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 25px;
+}
+
+.metadata-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 15px;
+}
+
+.metadata-item:last-child {
+  margin-bottom: 0;
+}
+
+.metadata-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #aaa;
+}
+
+.metadata-value {
+  font-size: 15px;
+  color: #fff;
+  line-height: 1.6;
+}
+
+/* ===================================
+   TAB SECTION
+   =================================== */
+
+.tab-section {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 30px;
+}
+
+.tab-header {
+  display: flex;
+  gap: 8px;
+  padding: 16px 20px 0 20px;
+  border-bottom: 2px solid #333;
+  background: #1a1a1a;
+}
+
+.tab-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border: none;
+  background: transparent;
+  color: #888;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+  transition: all 0.2s;
+  margin-bottom: -2px;
+}
+
+.tab-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.tab-button:hover {
+  color: #667eea;
+  background: rgba(102, 126, 234, 0.1);
+}
+
+.tab-button.active {
+  color: #667eea;
+  border-bottom-color: #667eea;
+}
+
+.tab-content {
+  padding: 30px;
+}
+
+/* ===================================
+   YAML SECTION
+   =================================== */
+
+.yaml-section {
+  width: 100%;
+}
+
+.yaml-container {
+  background: #1e1e1e;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-top: 20px;
+}
+
+.yaml-content {
+  margin: 0;
+  padding: 20px;
+  overflow: auto;
+  max-height: 600px;
+  font-family: 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #d4d4d4;
+  background: #1e1e1e;
+}
+
+.yaml-content code {
+  font-family: inherit;
+  color: inherit;
+}
