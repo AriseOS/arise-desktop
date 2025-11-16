@@ -131,65 +131,22 @@ class StorageManager:
             metadata = recording_data.get("metadata", {})
             operations = recording_data.get("operations", [])
 
-            # Parse operations to extract timeline and fields
-            timeline = []
+            # Parse operations to extract fields and count actions
             fields = []
             action_count = 0
 
-            for idx, op in enumerate(operations):
+            for op in operations:
                 op_type = op.get("type", "unknown")
-                timestamp = op.get("timestamp", "")
-                url = op.get("url", "")
-                page_title = op.get("page_title", "")
                 element = op.get("element", {})
                 data = op.get("data", {})
 
-                # Build timeline item
-                timeline_item = {
-                    "step": idx + 1,
-                    "type": op_type,
-                    "timestamp": timestamp,
-                    "url": url,
-                    "page_title": page_title,
-                    "details": {}
-                }
-
-                # Extract details based on operation type
-                if op_type == "navigate":
-                    timeline_item["details"]["url"] = url
-                    timeline_item["details"]["page_title"] = page_title
+                # Count actions
+                if op_type in ["navigate", "click", "input", "type"]:
                     action_count += 1
 
-                elif op_type == "click":
-                    if element:
-                        timeline_item["details"]["xpath"] = element.get("xpath", "")
-                        timeline_item["details"]["element_text"] = element.get("textContent", "")
-                        timeline_item["details"]["tag"] = element.get("tagName", "")
-                    action_count += 1
-
-                elif op_type in ["input", "type"]:
-                    if element:
-                        timeline_item["details"]["xpath"] = element.get("xpath", "")
-                        timeline_item["details"]["tag"] = element.get("tagName", "")
-                    timeline_item["details"]["value"] = data.get("value", "")
-                    action_count += 1
-
-                elif op_type == "select":
-                    if element:
-                        timeline_item["details"]["xpath"] = element.get("xpath", "")
-                        timeline_item["details"]["element_text"] = element.get("textContent", "")
-                    if data:
-                        timeline_item["details"]["selected_text"] = data.get("selectedText", "")
-
-                elif op_type == "copy_action":
-                    if element:
-                        timeline_item["details"]["xpath"] = element.get("xpath", "")
-                        timeline_item["details"]["element_text"] = element.get("textContent", "")
-
+                # Extract fields from copy_action operations
+                if op_type == "copy_action":
                     copied_text = data.get("copiedText", "")
-                    timeline_item["details"]["copied_text"] = copied_text
-
-                    # Add to fields list
                     field_name = f"field_{len(fields) + 1}"
                     fields.append({
                         "name": field_name,
@@ -197,17 +154,12 @@ class StorageManager:
                         "sample_value": copied_text
                     })
 
-                elif op_type == "scroll":
-                    timeline_item["details"]["direction"] = data.get("direction", "")
-
-                elif op_type == "test":
-                    timeline_item["details"]["message"] = data.get("message", "")
-
-                timeline.append(timeline_item)
-
             # Get file creation time
             operations_file = self._user_path(user_id) / "recordings" / session_id / "operations.json"
             created_at = datetime.fromtimestamp(operations_file.stat().st_ctime).isoformat()
+
+            # Extract task_metadata from recording data
+            task_metadata = recording_data.get("task_metadata", {})
 
             return {
                 "session_id": session_id,
@@ -217,8 +169,9 @@ class StorageManager:
                 "action_count": action_count,
                 "field_count": len(fields),
                 "status": "completed",
-                "timeline": timeline,
-                "fields": fields
+                "fields": fields,
+                "task_metadata": task_metadata,
+                "operations": operations
             }
         except Exception as e:
             return None

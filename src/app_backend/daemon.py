@@ -87,6 +87,7 @@ class StopRecordingResponse(BaseModel):
 class UploadRecordingRequest(BaseModel):
     session_id: str
     task_description: str
+    user_query: Optional[str] = None  # What user wants to do
     user_id: str = "default_user"
 
 
@@ -97,6 +98,7 @@ class UploadRecordingResponse(BaseModel):
 
 class GenerateMetaflowRequest(BaseModel):
     task_description: str
+    user_query: Optional[str] = None  # What user wants to do
     user_id: str = "default_user"
 
 
@@ -110,6 +112,7 @@ class GenerateMetaflowFromRecordingRequest(BaseModel):
     """Request model for generating MetaFlow from recording"""
     session_id: str
     task_description: str
+    user_query: Optional[str] = None  # What user wants to do
     user_id: str = "default_user"
 
 
@@ -620,9 +623,12 @@ async def upload_recording_to_cloud(request: UploadRecordingRequest):
         )
         operations = recording_data.get("operations", [])
 
-        # Upload recording to Cloud Backend (with task_description)
+        # Upload recording to Cloud Backend (with task_description and user_query)
         recording_id = await cloud_client.upload_recording(
-            operations, request.task_description, request.user_id
+            operations=operations,
+            task_description=request.task_description,
+            user_query=request.user_query,
+            user_id=request.user_id
         )
         logger.info(f"Recording uploaded: {recording_id}")
 
@@ -648,7 +654,9 @@ async def generate_metaflow(request: GenerateMetaflowRequest):
 
         # Call Cloud Backend to generate MetaFlow
         result = await cloud_client.generate_metaflow(
-            request.task_description, request.user_id
+            task_description=request.task_description,
+            user_query=request.user_query,
+            user_id=request.user_id
         )
 
         metaflow_id = result["metaflow_id"]
@@ -704,11 +712,25 @@ async def generate_metaflow_from_recording(request: GenerateMetaflowFromRecordin
                 detail=f"No operations found in recording: {request.session_id}"
             )
 
+        # Extract task_metadata from recording
+        task_metadata = recording_data.get("task_metadata", {})
+
+        # Use task_description and user_query from recording if not provided in request
+        task_description = request.task_description or task_metadata.get("task_description", "")
+        user_query = request.user_query or task_metadata.get("user_query")
+
+        logger.info(f"📝 Task Description: {task_description[:80]}...")
+        if user_query:
+            logger.info(f"🎯 User Query: {user_query[:80]}...")
+        else:
+            logger.info(f"⚠️  No user_query available")
+
         # Upload recording to Cloud Backend
         logger.info("Uploading recording to Cloud Backend...")
         recording_id = await cloud_client.upload_recording(
             operations=operations,
-            task_description=request.task_description,
+            task_description=task_description,
+            user_query=user_query,
             user_id=request.user_id
         )
         logger.info(f"Recording uploaded: {recording_id}")
@@ -717,7 +739,8 @@ async def generate_metaflow_from_recording(request: GenerateMetaflowFromRecordin
         logger.info("Generating MetaFlow from recording's intents only...")
         metaflow_result = await cloud_client.generate_metaflow_from_recording(
             recording_id=recording_id,
-            task_description=request.task_description,
+            task_description=task_description,
+            user_query=user_query,
             user_id=request.user_id
         )
 

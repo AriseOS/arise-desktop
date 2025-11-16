@@ -9,9 +9,11 @@ server:
   reload: false  # Set to true for development
 
 # Storage Configuration
+# IMPORTANT: Cloud Backend uses ~/ami-server (server-side data)
+# App Backend uses ~/.ami (local client data)
 storage:
   type: filesystem  # Options: filesystem, s3
-  base_path: ~/ami-server  # Base path for file storage
+  base_path: ~/ami-server  # Base path for server-side file storage
 
   # S3 Configuration (uncomment to use)
   # s3_bucket: ami-cloud-storage

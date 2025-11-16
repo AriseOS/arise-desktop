@@ -205,6 +205,7 @@ async def upload_recording(data: dict):
     """
     user_id = data.get("user_id")
     task_description = data.get("task_description", "")
+    user_query = data.get("user_query")
     operations = data.get("operations", [])
 
     if not user_id:
@@ -215,17 +216,20 @@ async def upload_recording(data: dict):
 
     recording_id = str(uuid.uuid4())
 
-    # Save recording to filesystem (with task_description)
+    # Save recording to filesystem (with task_description and user_query)
     file_path = storage_service.save_recording(
         user_id,
         recording_id,
         operations,
-        task_description=task_description
+        task_description=task_description,
+        user_query=user_query
     )
 
     logger.info(f"Recording uploaded: {recording_id} ({len(operations)} ops)")
     if task_description:
         logger.info(f"  Task: {task_description}")
+    if user_query:
+        logger.info(f"  User query: {user_query}")
 
     # Start background task to extract intents and add to user's graph
     asyncio.create_task(
@@ -287,12 +291,17 @@ async def generate_metaflow(user_id: str, data: dict):
         }
     """
     task_description = data.get("task_description")
+    user_query = data.get("user_query")
 
     if not task_description:
         raise HTTPException(400, "Missing task_description")
 
-    logger.info(f"🚀 Generating MetaFlow for user {user_id}")
-    logger.info(f"   Task: {task_description}")
+    logger.info(f"🚀 [API] Generating MetaFlow for user {user_id}")
+    logger.info(f"📝 Task Description: {task_description}")
+    if user_query:
+        logger.info(f"🎯 User Query: {user_query}")
+    else:
+        logger.info(f"⚠️  No user_query provided")
 
     try:
         # Get user's Intent Graph file path
@@ -303,10 +312,11 @@ async def generate_metaflow(user_id: str, data: dict):
         if not Path(graph_filepath).exists():
             raise HTTPException(404, f"User {user_id} has no Intent Graph yet. Please upload recordings first.")
 
-        # Generate MetaFlow from Intent Graph
+        # Generate MetaFlow from Intent Graph (use user_query if provided, otherwise fallback to task_description)
         metaflow_yaml = await workflow_generation_service.generate_metaflow_from_graph_file(
             graph_filepath=graph_filepath,
-            task_description=task_description
+            task_description=task_description,
+            user_query=user_query
         )
 
         # Generate metaflow_id
@@ -362,15 +372,15 @@ async def generate_metaflow_from_recording(recording_id: str, data: dict):
     """
     user_id = data.get("user_id")
     task_description = data.get("task_description")
+    user_query = data.get("user_query")
 
     if not user_id:
         raise HTTPException(400, "Missing user_id")
     if not task_description:
         raise HTTPException(400, "Missing task_description")
 
-    logger.info(f"🚀 Generating MetaFlow from recording {recording_id}")
-    logger.info(f"   User: {user_id}")
-    logger.info(f"   Task: {task_description}")
+    logger.info(f"🚀 [API] Generating MetaFlow from recording {recording_id}")
+    logger.info(f"👤 User: {user_id}")
 
     try:
         # Load recording data
@@ -382,12 +392,24 @@ async def generate_metaflow_from_recording(recording_id: str, data: dict):
         if not operations:
             raise HTTPException(400, f"Recording {recording_id} has no operations")
 
-        logger.info(f"   📹 Recording loaded: {len(operations)} operations")
+        # Try to get user_query from recording if not provided in request
+        if not user_query:
+            user_query = recording_data.get("user_query")
+            if user_query:
+                logger.info(f"📖 Using user_query from recording data")
 
-        # Generate MetaFlow from recording operations only
+        logger.info(f"📹 Recording loaded: {len(operations)} operations")
+        logger.info(f"📝 Task Description: {task_description}")
+        if user_query:
+            logger.info(f"🎯 User Query: {user_query}")
+        else:
+            logger.info(f"⚠️  No user_query available")
+
+        # Generate MetaFlow from recording operations only (use user_query if available)
         metaflow_yaml = await workflow_generation_service.generate_metaflow_from_recording(
             operations=operations,
-            task_description=task_description
+            task_description=task_description,
+            user_query=user_query
         )
 
         # Generate metaflow_id
@@ -446,8 +468,12 @@ async def generate_workflow_from_metaflow(metaflow_id: str, data: dict):
         raise HTTPException(404, f"MetaFlow not found: {metaflow_id}")
 
     metaflow_yaml = metaflow_data.get("metaflow_yaml")
+    task_description = metaflow_data.get("task_description", "")
 
-    logger.info(f"🚀 Generating Workflow from MetaFlow: {metaflow_id}")
+    logger.info(f"🚀 [API] Generating Workflow from MetaFlow: {metaflow_id}")
+    logger.info(f"👤 User: {user_id}")
+    if task_description:
+        logger.info(f"📝 Task Description: {task_description}")
 
     try:
         # Generate Workflow from MetaFlow

@@ -3,8 +3,11 @@ server:
   port: 8000
   debug: false
 
+# Storage Configuration
+# IMPORTANT: App Backend uses ~/.ami (local client data)
+# Cloud Backend uses ~/ami-server (server-side data)
 storage:
-  base_path: auto
+  base_path: auto  # Auto-detects to ~/.ami for local storage
 
 data:
   browser_data: ${storage.base_path}/browser_data

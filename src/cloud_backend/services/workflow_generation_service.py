@@ -141,7 +141,15 @@ class WorkflowGenerationService:
             metaflow_yaml: MetaFlow YAML string
         """
         logger.info(f"🚀 Generating MetaFlow from Intent Graph")
-        logger.info(f"   Task: {task_description}")
+        logger.info(f"=" * 80)
+        logger.info(f"📝 Task Description (what user did):")
+        logger.info(f"   {task_description}")
+        if user_query:
+            logger.info(f"🎯 User Query (what user wants to do):")
+            logger.info(f"   {user_query}")
+        else:
+            logger.info(f"⚠️  No user_query provided, using task_description as fallback")
+        logger.info(f"=" * 80)
 
         # 1. Load Intent Memory Graph from file
         from pathlib import Path
@@ -155,14 +163,16 @@ class WorkflowGenerationService:
         logger.info(f"   ✅ Graph loaded: {len(graph.get_all_intents())} intents")
 
         # 2. Generate MetaFlow (MetaFlowGenerator will filter relevant intents)
-        if not user_query:
-            user_query = task_description
+        # IMPORTANT: user_query is what user wants to do (for path selection and loop detection)
+        # If not provided, fallback to task_description
+        effective_user_query = user_query if user_query else task_description
 
-        logger.info("2️⃣  Generating MetaFlow...")
+        logger.info("2️⃣  Generating MetaFlow with LLM...")
+        logger.info(f"   → Input: {effective_user_query}")
         metaflow = await self.metaflow_generator.generate(
             graph=graph,
             task_description=task_description,
-            user_query=user_query
+            user_query=effective_user_query
         )
         logger.info(f"   ✅ MetaFlow generated: {len(metaflow.nodes)} nodes")
 
@@ -191,10 +201,14 @@ class WorkflowGenerationService:
         from src.intent_builder.core.metaflow import MetaFlow
         metaflow = MetaFlow.from_yaml(metaflow_yaml)
 
-        logger.info(f"   MetaFlow: {len(metaflow.nodes)} nodes")
+        logger.info(f"=" * 80)
+        logger.info(f"📋 MetaFlow Information:")
+        logger.info(f"   Task: {metaflow.task_description}")
+        logger.info(f"   Nodes: {len(metaflow.nodes)}")
+        logger.info(f"=" * 80)
 
         # 2. Generate Workflow
-        logger.info("4️⃣  Generating Workflow...")
+        logger.info("4️⃣  Generating Workflow with LLM...")
         workflow_yaml = await self.workflow_generator.generate(metaflow)
         logger.info(f"   ✅ Workflow generated ({len(workflow_yaml)} chars)")
 
@@ -204,7 +218,8 @@ class WorkflowGenerationService:
     async def generate_metaflow_from_recording(
         self,
         operations: List[Dict],
-        task_description: str
+        task_description: str,
+        user_query: Optional[str] = None
     ) -> str:
         """
         Generate MetaFlow directly from recording operations (without using global Intent Graph)
@@ -219,13 +234,22 @@ class WorkflowGenerationService:
 
         Args:
             operations: List of operations from the recording
-            task_description: User's description of the task
+            task_description: User's description of what they did
+            user_query: User's description of what they want to do (for MetaFlow generation)
 
         Returns:
             metaflow_yaml: MetaFlow YAML string
         """
         logger.info(f"🚀 Generating MetaFlow from recording ({len(operations)} operations)")
-        logger.info(f"   Task: {task_description}")
+        logger.info(f"=" * 80)
+        logger.info(f"📝 Task Description (what user did):")
+        logger.info(f"   {task_description}")
+        if user_query:
+            logger.info(f"🎯 User Query (what user wants to do):")
+            logger.info(f"   {user_query}")
+        else:
+            logger.info(f"⚠️  No user_query provided, using task_description as fallback")
+        logger.info(f"=" * 80)
 
         # 1. Extract intents from operations
         logger.info("1️⃣  Extracting intents from recording...")
@@ -251,11 +275,15 @@ class WorkflowGenerationService:
         logger.info(f"   ✅ Temporary graph created: {len(intents)} intents")
 
         # 3. Generate MetaFlow from temporary graph
-        logger.info("3️⃣  Generating MetaFlow from recording-specific intents...")
+        # IMPORTANT: Use user_query if provided (what user wants to do), otherwise fallback to task_description
+        effective_user_query = user_query if user_query else task_description
+
+        logger.info("3️⃣  Generating MetaFlow from recording-specific intents with LLM...")
+        logger.info(f"   → Input: {effective_user_query}")
         metaflow = await self.metaflow_generator.generate(
             graph=graph,
             task_description=task_description,
-            user_query=task_description
+            user_query=effective_user_query
         )
         logger.info(f"   ✅ MetaFlow generated: {len(metaflow.nodes)} nodes")
 

@@ -34,6 +34,7 @@ class CloudClient:
         self,
         operations: List[Dict[str, Any]],
         task_description: str,
+        user_query: Optional[str] = None,
         user_id: str = "default_user"
     ) -> str:
         """Upload recording data to Cloud Backend
@@ -41,6 +42,7 @@ class CloudClient:
         Args:
             operations: List of operation dictionaries
             task_description: User's description of what they did
+            user_query: User's description of what they want to do (for MetaFlow generation)
             user_id: User ID (default: "default_user")
 
         Returns:
@@ -51,6 +53,7 @@ class CloudClient:
             json={
                 "user_id": user_id,
                 "task_description": task_description,
+                "user_query": user_query,
                 "operations": operations
             }
         )
@@ -60,12 +63,14 @@ class CloudClient:
     async def generate_metaflow(
         self,
         task_description: str,
+        user_query: Optional[str] = None,
         user_id: str = "default_user"
     ) -> Dict[str, Any]:
         """Generate MetaFlow from user's Intent Memory Graph
 
         Args:
-            task_description: User's description of the task
+            task_description: User's description of what they did
+            user_query: User's description of what they want to do (for MetaFlow generation)
             user_id: User ID (default: "default_user")
 
         Returns:
@@ -77,10 +82,15 @@ class CloudClient:
             }
         """
         logger.info(f"Generating MetaFlow for task: {task_description}")
+        if user_query:
+            logger.info(f"User query: {user_query}")
 
         response = await self.client.post(
             f"/api/users/{user_id}/generate_metaflow",
-            json={"task_description": task_description}
+            json={
+                "task_description": task_description,
+                "user_query": user_query
+            }
         )
         response.raise_for_status()
         result = response.json()
@@ -92,13 +102,15 @@ class CloudClient:
         self,
         recording_id: str,
         task_description: str,
+        user_query: Optional[str] = None,
         user_id: str = "default_user"
     ) -> Dict[str, Any]:
         """Generate MetaFlow from a specific recording (using only that recording's intents)
 
         Args:
             recording_id: Recording ID
-            task_description: User's description of the task
+            task_description: User's description of what they did
+            user_query: User's description of what they want to do (for MetaFlow generation)
             user_id: User ID (default: "default_user")
 
         Returns:
@@ -110,12 +122,15 @@ class CloudClient:
             }
         """
         logger.info(f"Generating MetaFlow from recording: {recording_id}")
+        if user_query:
+            logger.info(f"User query: {user_query}")
 
         response = await self.client.post(
             f"/api/recordings/{recording_id}/generate_metaflow",
             json={
                 "user_id": user_id,
-                "task_description": task_description
+                "task_description": task_description,
+                "user_query": user_query
             }
         )
         response.raise_for_status()

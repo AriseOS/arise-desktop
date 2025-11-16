@@ -43,22 +43,26 @@ class StorageService:
     
     def __init__(self, base_path: Optional[str] = None):
         """
-        初始化存储服务
-        
+        Initialize Cloud Backend storage service
+
         Args:
-            base_path: 基础路径（可选）
-                开发：~/.ami
-                生产：/var/lib/ami/ (通过环境变量 STORAGE_PATH 配置)
+            base_path: Base path (optional)
+                Development: ~/ami-server (default)
+                Production: /var/lib/ami-server/ (via STORAGE_PATH env var)
+
+        Note:
+            Cloud Backend uses ~/ami-server (server-side data)
+            App Backend uses ~/.ami (local client data)
         """
         if base_path:
             self.base_path = Path(base_path).expanduser()
         else:
-            # 默认路径（开发环境）
-            default_path = os.getenv("STORAGE_PATH", "~/.ami")
+            # Default path for Cloud Backend (server-side storage)
+            default_path = os.getenv("STORAGE_PATH", "~/ami-server")
             self.base_path = Path(default_path).expanduser()
-        
+
         self.base_path.mkdir(parents=True, exist_ok=True)
-        logger.info(f"✅ Storage initialized: {self.base_path}")
+        logger.info(f"✅ Cloud Backend Storage initialized: {self.base_path}")
     
     def _user_path(self, user_id: str) -> Path:
         """获取用户目录"""
@@ -77,13 +81,15 @@ class StorageService:
         user_id: str,
         recording_id: str,
         operations: List[Dict],
-        task_description: Optional[str] = None
+        task_description: Optional[str] = None,
+        user_query: Optional[str] = None
     ) -> str:
         """
         Save recording data to server filesystem
 
         Args:
             task_description: User's description of what they did
+            user_query: User's description of what they want to do
 
         Returns:
             File path
@@ -103,12 +109,17 @@ class StorageService:
         if task_description:
             data["task_description"] = task_description
 
+        if user_query:
+            data["user_query"] = user_query
+
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
 
         logger.info(f"Recording saved: {recording_id} ({len(operations)} ops)")
         if task_description:
             logger.info(f"  Task: {task_description}")
+        if user_query:
+            logger.info(f"  User query: {user_query}")
         return str(file_path)
     
     def get_recording(self, user_id: str, recording_id: str) -> Optional[Dict]:

@@ -41,12 +41,17 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
     showStatus('✨ Generating MetaFlow from recording...', 'info');
 
     try {
+      // Extract task_description and user_query from recording metadata
+      const task_description = recording.task_metadata?.task_description || "Auto-generated workflow from recording";
+      const user_query = recording.task_metadata?.user_query;
+
       const response = await fetch(`${API_BASE}/api/metaflows/from-recording`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           session_id: sessionId,
-          task_description: "Auto-generated workflow from recording",
+          task_description: task_description,
+          user_query: user_query,  // Pass user_query to backend
           user_id: "default_user"
         })
       });
@@ -103,27 +108,28 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
   };
 
   const renderOperationDetails = (operation) => {
-    if (!operation || !operation.details) return null;
+    if (!operation) return null;
 
     const details = [];
-    const detailsObj = operation.details;
     const type = operation.type;
+    const element = operation.element || {};
+    const data = operation.data || {};
 
     // For navigate operations
     if (type === 'navigate') {
-      if (detailsObj.url) {
+      if (operation.url) {
         details.push(
           <div key="url" className="action-detail">
             <span className="detail-label">URL:</span>
-            <span className="detail-value url-link">{detailsObj.url}</span>
+            <span className="detail-value url-link">{operation.url}</span>
           </div>
         );
       }
-      if (detailsObj.page_title) {
+      if (operation.page_title) {
         details.push(
           <div key="page_title" className="action-detail">
             <span className="detail-label">Page Title:</span>
-            <span className="detail-value">"{detailsObj.page_title}"</span>
+            <span className="detail-value">"{operation.page_title}"</span>
           </div>
         );
       }
@@ -131,8 +137,8 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
 
     // For click operations
     if (type === 'click') {
-      if (detailsObj.element_text) {
-        const displayText = detailsObj.element_text.trim();
+      if (element.textContent) {
+        const displayText = element.textContent.trim();
         details.push(
           <div key="element_text" className="action-detail highlight-action">
             <span className="detail-label">👆 Clicked on:</span>
@@ -140,19 +146,19 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
           </div>
         );
       }
-      if (detailsObj.xpath) {
+      if (element.xpath) {
         details.push(
           <div key="xpath" className="action-detail">
             <span className="detail-label">XPath:</span>
-            <span className="detail-value code">{detailsObj.xpath}</span>
+            <span className="detail-value code">{element.xpath}</span>
           </div>
         );
       }
-      if (detailsObj.tag) {
+      if (element.tagName) {
         details.push(
           <div key="tag" className="action-detail">
             <span className="detail-label">Tag:</span>
-            <span className="detail-value code">{detailsObj.tag}</span>
+            <span className="detail-value code">{element.tagName}</span>
           </div>
         );
       }
@@ -160,19 +166,19 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
 
     // For input/type operations
     if (type === 'input' || type === 'type') {
-      if (detailsObj.value) {
+      if (data.value) {
         details.push(
           <div key="value" className="action-detail">
             <span className="detail-label">Input Value:</span>
-            <span className="detail-value">"{detailsObj.value}"</span>
+            <span className="detail-value">"{data.value}"</span>
           </div>
         );
       }
-      if (detailsObj.xpath) {
+      if (element.xpath) {
         details.push(
           <div key="xpath" className="action-detail">
             <span className="detail-label">XPath:</span>
-            <span className="detail-value code">{detailsObj.xpath}</span>
+            <span className="detail-value code">{element.xpath}</span>
           </div>
         );
       }
@@ -180,8 +186,8 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
 
     // For select operations
     if (type === 'select') {
-      if (detailsObj.selected_text) {
-        const selectedText = detailsObj.selected_text.trim();
+      if (data.selectedText) {
+        const selectedText = data.selectedText.trim();
         details.push(
           <div key="selected_text" className="action-detail highlight-action">
             <span className="detail-label">📋 Selected:</span>
@@ -189,8 +195,8 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
           </div>
         );
       }
-      if (detailsObj.element_text && detailsObj.element_text !== detailsObj.selected_text) {
-        const elementText = detailsObj.element_text.trim();
+      if (element.textContent && element.textContent !== data.selectedText) {
+        const elementText = element.textContent.trim();
         details.push(
           <div key="element_text" className="action-detail">
             <span className="detail-label">From Element:</span>
@@ -198,11 +204,11 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
           </div>
         );
       }
-      if (detailsObj.xpath) {
+      if (element.xpath) {
         details.push(
           <div key="xpath" className="action-detail">
             <span className="detail-label">XPath:</span>
-            <span className="detail-value code">{detailsObj.xpath}</span>
+            <span className="detail-value code">{element.xpath}</span>
           </div>
         );
       }
@@ -210,19 +216,19 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
 
     // For copy_action operations
     if (type === 'copy_action') {
-      if (detailsObj.copied_text) {
+      if (data.copiedText) {
         details.push(
           <div key="copied_text" className="action-detail field-mapping">
             <span className="detail-label">📋 Copied Text:</span>
-            <span className="detail-value field-value">"{detailsObj.copied_text}"</span>
+            <span className="detail-value field-value">"{data.copiedText}"</span>
           </div>
         );
       }
-      if (detailsObj.xpath) {
+      if (element.xpath) {
         details.push(
           <div key="xpath" className="action-detail">
             <span className="detail-label">XPath:</span>
-            <span className="detail-value code">{detailsObj.xpath}</span>
+            <span className="detail-value code">{element.xpath}</span>
           </div>
         );
       }
@@ -230,11 +236,11 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
 
     // For scroll operations
     if (type === 'scroll') {
-      if (detailsObj.direction) {
+      if (data.direction) {
         details.push(
           <div key="direction" className="action-detail">
             <span className="detail-label">Direction:</span>
-            <span className="detail-value">{detailsObj.direction}</span>
+            <span className="detail-value">{data.direction}</span>
           </div>
         );
       }
@@ -242,11 +248,11 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
 
     // For test operations
     if (type === 'test') {
-      if (detailsObj.message) {
+      if (data.message) {
         details.push(
           <div key="message" className="action-detail">
             <span className="detail-label">Message:</span>
-            <span className="detail-value">{detailsObj.message}</span>
+            <span className="detail-value">{data.message}</span>
           </div>
         );
       }
@@ -291,7 +297,7 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
     );
   }
 
-  const timeline = recording.timeline || [];
+  const operations = recording.operations || [];
   const fields = recording.fields || [];
 
   return (
@@ -316,17 +322,35 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
           <h2 className="section-title">Recording Information</h2>
 
           {/* Task Metadata */}
-          {recording.task_metadata && (
+          {recording.task_metadata && Object.keys(recording.task_metadata).length > 0 && (
             <div className="task-metadata-section">
+              {recording.task_metadata.task_description && (
+                <div className="metadata-item">
+                  <span className="metadata-label">📝 Task Description:</span>
+                  <span className="metadata-value">{recording.task_metadata.task_description}</span>
+                </div>
+              )}
+              {recording.task_metadata.user_query && (
+                <div className="metadata-item">
+                  <span className="metadata-label">🎯 User Query:</span>
+                  <span className="metadata-value">{recording.task_metadata.user_query}</span>
+                </div>
+              )}
+              {recording.task_metadata.session_id && (
+                <div className="metadata-item">
+                  <span className="metadata-label">🔖 Session ID:</span>
+                  <span className="metadata-value">{recording.task_metadata.session_id}</span>
+                </div>
+              )}
               {recording.task_metadata.title && (
                 <div className="metadata-item">
-                  <span className="metadata-label">📝 Task Title:</span>
+                  <span className="metadata-label">📋 Title:</span>
                   <span className="metadata-value">{recording.task_metadata.title}</span>
                 </div>
               )}
               {recording.task_metadata.description && (
                 <div className="metadata-item">
-                  <span className="metadata-label">📄 Task Description:</span>
+                  <span className="metadata-label">📄 Description:</span>
                   <span className="metadata-value">{recording.task_metadata.description}</span>
                 </div>
               )}
@@ -340,7 +364,7 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
             </div>
             <div className="info-item">
               <span className="info-label">Operations:</span>
-              <span className="info-value">{timeline.length}</span>
+              <span className="info-value">{operations.length}</span>
             </div>
             <div className="info-item">
               <span className="info-label">Extracted Fields:</span>
@@ -386,13 +410,13 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
               <div className="timeline-section">
                 <h2 className="section-title">Operations Timeline</h2>
 
-                {timeline.length === 0 ? (
+                {operations.length === 0 ? (
                   <div className="empty-message">
                     <p>No operations recorded.</p>
                   </div>
                 ) : (
                   <div className="timeline-list">
-                    {timeline.map((operation, index) => {
+                    {operations.map((operation, index) => {
                       const isCopyAction = operation.type === 'copy_action';
 
                       return (
@@ -401,7 +425,7 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
                           className={`timeline-item ${isCopyAction ? 'copy-action' : ''}`}
                         >
                           <div className="timeline-marker">
-                            <span className="step-number">{operation.step || index + 1}</span>
+                            <span className="step-number">{index + 1}</span>
                           </div>
 
                           <div className="timeline-content">
