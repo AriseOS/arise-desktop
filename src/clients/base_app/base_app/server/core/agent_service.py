@@ -10,7 +10,7 @@ from datetime import datetime
 import logging
 
 from ...base_agent.core import BaseAgent, AgentConfig, AgentStatus
-from .config_service import ConfigService
+from src.common.config_service import ConfigService
 from ..storage import SessionStorage, SQLiteSessionStorage, SessionModel, MessageModel
 
 logger = logging.getLogger(__name__)

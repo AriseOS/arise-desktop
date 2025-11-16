@@ -19,7 +19,7 @@ from typing import Optional, List, TYPE_CHECKING
 from dataclasses import dataclass
 
 if TYPE_CHECKING:
-    from src.base_app.base_app.server.core.config_service import ConfigService
+    from src.common.config_service import ConfigService
 
 logger = logging.getLogger(__name__)
 

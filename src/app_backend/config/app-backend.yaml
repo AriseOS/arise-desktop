@@ -11,7 +11,7 @@ storage:
 
 data:
   browser_data: ${storage.base_path}/browser_data
-  scripts: ${storage.base_path}/scripts
+  scripts: ${storage.base_path}
   databases:
     kv: ${storage.base_path}/databases/kv.db
 

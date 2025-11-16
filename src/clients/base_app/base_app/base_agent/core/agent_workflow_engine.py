@@ -115,6 +115,7 @@ class AgentWorkflowEngine:
         context = AgentContext(
             workflow_id=workflow_id,
             step_id="",
+            user_id=getattr(self.agent, 'user_id', 'default_user'),
             variables=input_data or {},
             agent_instance=self.agent,
             tools_registry=getattr(self.agent, 'tools_registry', None),

@@ -114,6 +114,9 @@ class ScraperAgent(BaseStepAgent):
             # Configure CDP logging to suppress non-fatal iframe errors
             self._configure_cdp_logging()
 
+            # Save context for later use (e.g., in _generate_script_key)
+            self._context = context
+
             # 从context获取浏览器会话（懒加载）
             session_info = await context.get_browser_session()
 
@@ -1404,18 +1407,47 @@ def execute_extraction(serialized_dom, dom_dict, max_items: int = 100):
 '''
 
     def _generate_script_key(self, data_requirements: Dict) -> str:
-        """Generate script storage key based on data requirements only
+        """Generate script storage path relative to data.root
 
-        Note: dom_scope is NOT included in key because:
-        - Script generation always uses partial DOM (to save tokens)
-        - Generated script is generic and can work with both partial/full DOM during execution
+        Path structure: users/{user_id}/workflows/{workflow_id}/{step_id}/{hash_based_key}
+        Full path will be: {data.root}/users/{user_id}/workflows/{workflow_id}/{step_id}/{script_key}
+
+        This allows:
+        - Organizing scripts by user and workflow
+        - Organizing by step within workflow
+        - Caching/reusing scripts with same requirements within a step
+
+        Args:
+            data_requirements: Dict containing user_description and output_format
+
+        Returns:
+            Relative path like: users/default_user/workflows/producthunt-daily-top10/extract-daily-link/scraper_script_a1b2c3d4
+            Which resolves to: ~/.ami/users/default_user/workflows/producthunt-daily-top10/extract-daily-link/scraper_script_a1b2c3d4/
         """
-        # 使用用户描述和字段名生成key (不包含dom_scope)
+        # Get context information
+        user_id = "default_user"
+        workflow_id = "default_workflow"
+        step_id = "default_step"
+
+        if hasattr(self, '_context') and self._context:
+            user_id = getattr(self._context, 'user_id', user_id)
+            workflow_id = getattr(self._context, 'workflow_id', workflow_id)
+            step_id = getattr(self._context, 'step_id', step_id)
+            logger.info(f"ScraperAgent context info - user_id: {user_id}, workflow_id: {workflow_id}, step_id: {step_id}")
+        else:
+            logger.warning("ScraperAgent: No context available, using default values for script path")
+
+        # Generate hash-based key using data requirements
         user_desc = data_requirements.get('user_description', '')
         fields = list(data_requirements.get('output_format', {}).keys())
         content = f"script_{user_desc}_{','.join(fields)}"
         hash_suffix = hashlib.md5(content.encode()).hexdigest()[:8]
-        return f"scraper_script_{hash_suffix}"
+        script_key = f"scraper_script_{hash_suffix}"
+
+        # Build relative path (will be prefixed with data.root by config_service)
+        script_path = f"users/{user_id}/workflows/{workflow_id}/{step_id}/{script_key}"
+        logger.info(f"Generated script path: {script_path}")
+        return script_path
     
     def _create_error_result(self, error_msg: str) -> Dict[str, Any]:
         return {

@@ -9,12 +9,10 @@ import os
 from pathlib import Path
 
 # 使用 ConfigService 统一管理配置
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "base_app"))
-from base_app.server.core.config_service import ConfigService
+from src.cloud_backend.core.config_service import get_config
 
-# 初始化配置服务
-_config_service = ConfigService()
+# 获取配置服务
+_config_service = get_config()
 
 # 从 baseapp.yaml 获取用户数据库配置
 def get_database_url() -> str:

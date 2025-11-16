@@ -124,8 +124,10 @@ class AgentOutput(BaseModel):
 class AgentContext(BaseModel):
     """Agent执行上下文"""
     # 工作流信息
-    workflow_id: str = Field(..., description="工作流ID")
+    workflow_id: str = Field(..., description="工作流ID (用于脚本组织)")
     step_id: str = Field(..., description="当前步骤ID")
+    user_id: str = Field(default="default_user", description="用户ID")
+    browser_session_id: str = Field(default="global", description="浏览器会话ID (用于会话共享)")
 
     # 数据上下文
     variables: Dict[str, Any] = Field(default_factory=dict, description="上下文变量")
@@ -169,18 +171,18 @@ class AgentContext(BaseModel):
             # 获取配置服务
             config_service = getattr(self.agent_instance, 'config_service', None)
 
-            # 创建或获取会话
+            # 创建或获取会话 (使用 browser_session_id 以便多个 workflow 共享同一会话)
             self._browser_session_info = await self._browser_session_manager.get_or_create_session(
-                session_id=self.workflow_id,
+                session_id=self.browser_session_id,
                 config_service=config_service,
                 headless=False,  # 可以从配置中读取
                 keep_alive=True
             )
 
             if self.logger:
-                self.logger.info(f"Workflow {self.workflow_id} 创建浏览器会话")
+                self.logger.info(f"Workflow {self.workflow_id} 使用浏览器会话 {self.browser_session_id}")
             else:
-                logger.info(f"Workflow {self.workflow_id} 创建浏览器会话")
+                logger.info(f"Workflow {self.workflow_id} 使用浏览器会话 {self.browser_session_id}")
 
         return self._browser_session_info
 
@@ -190,7 +192,7 @@ class AgentContext(BaseModel):
         释放会话引用，但不关闭浏览器（可能有其他workflow在使用）。
         """
         if self._browser_session_info and self._browser_session_manager:
-            self._browser_session_manager.release_session(self.workflow_id)
+            self._browser_session_manager.release_session(self.browser_session_id)
             if self.logger:
                 self.logger.info(f"Workflow {self.workflow_id} 释放浏览器会话引用")
             else:

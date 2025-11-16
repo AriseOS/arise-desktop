@@ -67,10 +67,12 @@ class BaseAgent:
         if user_id:
             # 明确为某个用户服务
             memory_user_id = user_id
+            self.user_id = user_id
             logger.info(f"BaseAgent 实例 {self.id[:8]} 已启动，服务用户: {user_id}")
         else:
             # 兼容模式：使用 agent.id（每个实例独立 memory）
             memory_user_id = f"agent_{self.id}"
+            self.user_id = memory_user_id
             logger.warning(
                 f"BaseAgent 未指定 user_id，使用实例独立 memory 命名空间: {memory_user_id[:20]}..."
                 "\n提示: 如需跨实例共享 memory（如脚本缓存），请在创建 BaseAgent 时传入 user_id 参数"

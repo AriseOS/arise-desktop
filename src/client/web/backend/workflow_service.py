@@ -286,11 +286,11 @@ class WorkflowService:
             # Import BaseAgent components
             from src.base_app.base_app.base_agent.core.base_agent import BaseAgent
             from src.base_app.base_app.base_agent.core.schemas import AgentConfig
-            from src.base_app.base_app.server.core.config_service import ConfigService
+            from src.app_backend.core.config_service import get_config
             import yaml
 
-            # Initialize config service
-            config_service = ConfigService()
+            # Get config service from app_backend
+            config_service = get_config()
 
             # Get LLM config
             llm_provider = config_service.get('agent.llm.provider', 'openai')

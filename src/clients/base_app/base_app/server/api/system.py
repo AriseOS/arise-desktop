@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query, Request
 
 from ..models.responses import SystemHealthResponse, SystemInfoResponse
 from ..core.agent_service import AgentService
-from ..core.config_service import ConfigService
+from src.common.config_service import ConfigService
 
 
 system_router = APIRouter()

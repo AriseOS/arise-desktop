@@ -97,8 +97,10 @@ class WorkflowExecutor:
             # Parse YAML
             workflow_dict = yaml.safe_load(workflow_yaml)
 
-            # Force set name to "global" to reuse browser session
-            workflow_dict['name'] = 'global'
+            # Use the actual workflow name for script organization
+            # Note: browser session will use 'global' (set in AgentContext.browser_session_id)
+            if 'name' not in workflow_dict:
+                workflow_dict['name'] = task.workflow_name
 
             # Get total steps
             task.total_steps = len(workflow_dict.get('steps', []))

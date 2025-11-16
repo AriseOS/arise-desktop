@@ -13,7 +13,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from .core.config_service import ConfigService
+from src.common.config_service import ConfigService
 from .core.agent_service import AgentService
 from .api.chat import chat_router
 from .api.agent import agent_router
@@ -24,37 +24,35 @@ from .api.system import system_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期管理"""
+    """应用生命周期管理
+
+    注意：BaseApp 现在作为库使用，配置应该由调用方（app_backend）提供
+    如果需要独立运行 BaseApp（仅用于测试），需要从 app_backend 的配置加载
+    """
     # 启动时初始化服务
     try:
-        # 初始化配置服务
-        config_service = ConfigService()
-        
-        # 验证配置
-        validation = config_service.validate()
-        if not validation["valid"]:
-            for error in validation["errors"]:
-                logging.error(f"Config validation error: {error}")
-            sys.exit(1)
-        
+        # 从 app_backend 加载配置
+        from src.app_backend.core.config_service import get_config
+        config_service = get_config()
+
         # 初始化Agent服务
         agent_service = AgentService(config_service)
-        
+
         # 异步初始化存储和Agent
         await agent_service.initialize()
-        
+
         # 设置应用状态
         app.state.config_service = config_service
         app.state.agent_service = agent_service
-        
+
         logging.info("BaseApp services initialized successfully")
-        
+
         yield
-        
+
     except Exception as e:
         logging.error(f"Failed to initialize BaseApp: {e}")
         sys.exit(1)
-    
+
     finally:
         # 关闭时清理资源
         if hasattr(app.state, 'agent_service') and app.state.agent_service:

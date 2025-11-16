@@ -367,44 +367,255 @@ When you see loop + extract + store:
 4. **foreach** step: Loop and collect data
    - Inside loop: scraper_agent + variable (append) + storage_agent
 
-## 2. Operations → Agent Type
+## 2. Core Workflow Logic - Step Relationships
+
+**CRITICAL**: Understand the execution flow and data dependencies between steps.
+
+### Basic Rule: Each step builds on previous steps
+
+When generating workflow steps, always ask:
+1. **Where is the browser currently?** (which page was accessed in previous step)
+2. **What data is available?** (what was extracted/generated in previous steps)
+3. **What does this step need?** (where to operate, what data to use)
+
+### Key Principle: Separation of Concerns
+
+**IMPORTANT**:
+- `browser_agent`: ONLY for navigation (no data extraction)
+- `scraper_agent`: ONLY for data extraction from **current page** (no navigation)
+
+**scraper_agent does NOT have navigation capability**:
+- It always extracts from the current page that browser is on
+- If you need to extract from a different page, use browser_agent to navigate first
+
+### Common Pattern: Navigate → Extract
+
+```
+Step 1: browser_agent - Navigate to page A
+Step 2: scraper_agent - Extract data from page A (current page)
+Step 3: browser_agent - Navigate to page B
+Step 4: scraper_agent - Extract data from page B (current page)
+```
+
+### Example: ProductHunt Daily → Weekly
+
+```yaml
+# Step 1: Navigate to homepage
+- id: "navigate-to-homepage"
+  agent_type: "browser_agent"
+  inputs:
+    target_url: "https://www.producthunt.com/"
+
+# Step 2: Extract daily link from homepage (current page)
+- id: "extract-daily-link"
+  agent_type: "scraper_agent"
+  inputs:
+    extraction_method: "script"
+    data_requirements:
+      xpath_hints:
+        daily_url: "//a[text()='Launch archive']"
+  outputs:
+    extracted_data: "daily_link"
+
+# Step 3: Navigate to daily page
+- id: "navigate-to-daily"
+  agent_type: "browser_agent"
+  inputs:
+    target_url: "{{daily_link.daily_url}}"
+
+# Step 4: Extract weekly link from daily page (current page)
+- id: "extract-weekly-link"
+  agent_type: "scraper_agent"
+  inputs:
+    extraction_method: "script"
+    data_requirements:
+      xpath_hints:
+        weekly_url: "//a[text()='Weekly']"
+  outputs:
+    extracted_data: "weekly_link"
+
+# Step 5: Navigate to weekly page
+- id: "navigate-to-weekly"
+  agent_type: "browser_agent"
+  inputs:
+    target_url: "{{weekly_link.weekly_url}}"
+```
+
+**Why this approach is better**:
+- ✅ Clear separation: browser navigates, scraper extracts
+- ✅ No confusion about which URL to use (scraper always uses current page)
+- ✅ Easier to understand and maintain
+
+---
+
+## 3. Click → Navigate Pattern Handling
+
+**When MetaFlow contains `click → navigate` operations, generate TWO steps:**
+
+This pattern appears when user clicks a link to navigate to another page. Since the link URL may contain dynamic parts (dates, IDs, etc.), we extract it first then navigate.
+
+### Pattern Recognition
+
+```yaml
+# MetaFlow shows:
+operations:
+  - type: click
+    url: "https://site.com/current-page"  # Browser is on this page
+    element:
+      xpath: "//a[@class='link']"
+      href: "https://site.com/target-page?date=2025-10-29"  # May be dynamic
+  - type: navigate
+    url: "https://site.com/target-page?date=2025-10-29"
+```
+
+### Generated Workflow Steps
+
+**Step 1: Extract the link (scraper_agent)**
+
+Extract the URL from the element that was clicked. The browser is already on the page from previous navigation.
+
+```yaml
+- id: "extract-{target}-link"
+  agent_type: "scraper_agent"
+  agent_instruction: "Extract the {target} link from the current page"
+  inputs:
+    extraction_method: "script"
+    data_requirements:
+      user_description: "Extract the {target} link"
+      output_format:
+        target_url: "{Target} page URL"
+      xpath_hints:
+        target_url: "{xpath}"  # From click operation's element.xpath
+  outputs:
+    extracted_data: "{target}_link"
+```
+
+**Step 2: Navigate (browser_agent)**
+
+Navigate to the extracted URL.
+
+```yaml
+- id: "navigate-to-{target}"
+  agent_type: "browser_agent"
+  agent_instruction: "Navigate to the {target} page"
+  inputs:
+    target_url: "{{{target}_link.target_url}}"  # Reference extracted URL
+```
+
+### Complete Example
+
+```yaml
+# MetaFlow input:
+# (Assume browser is already on daily page from previous step)
+node_3:
+  intent_description: "Navigate to the current week's leaderboard"
+  operations:
+    - type: click
+      url: "https://www.producthunt.com/leaderboard/daily/2025/10/29"  # Current page
+      element:
+        xpath: "//a[contains(text(), 'Weekly')]"
+        textContent: "Weekly"
+        href: "https://www.producthunt.com/leaderboard/weekly/2025/44"
+    - type: navigate
+      url: "https://www.producthunt.com/leaderboard/weekly/2025/44"
+
+# Generated workflow:
+# Step 1: Extract link from current page
+- id: "extract-weekly-link"
+  agent_type: "scraper_agent"
+  agent_instruction: "Extract the Weekly leaderboard link from the current page"
+  inputs:
+    extraction_method: "script"
+    data_requirements:
+      user_description: "Extract the Weekly leaderboard link"
+      output_format:
+        weekly_url: "Weekly leaderboard page URL"
+      xpath_hints:
+        weekly_url: "//a[contains(text(), 'Weekly')]"
+  outputs:
+    extracted_data: "weekly_link"
+  timeout: 30
+
+# Step 2: Navigate to extracted URL
+- id: "navigate-to-weekly"
+  agent_type: "browser_agent"
+  agent_instruction: "Navigate to the weekly leaderboard page"
+  inputs:
+    target_url: "{{weekly_link.weekly_url}}"
+  timeout: 30
+```
+
+**Why this approach:**
+- ✅ scraper_agent extracts from current page (no navigation needed)
+- ✅ Extracts the actual current link from the page (not hardcoded)
+- ✅ Works regardless of date/time changes in URL
+- ✅ Uses xpath from user's actual click operation
+- ✅ Clear separation of concerns
+
+## 3. Operations → Agent Type
 
 ### When to Use browser_agent vs scraper_agent
 
-**browser_agent**: For pure navigation without data extraction
-- Use when intent is ONLY to navigate to a page
-- Intent description contains: "navigate", "enter", "visit", "go to", or click operations for navigation
-- If MetaFlow mentions clicks (e.g., "click menu → click category link"), semanticize to direct URL navigation
-- NO extract operations in the intent
-- Example: "Navigate to coffee category page"
+**CRITICAL - Clear Separation of Concerns:**
 
-**scraper_agent**: For navigation + data extraction
-- Use when intent includes data extraction
-- Intent has extract operations
-- Can also navigate via `target_path` parameter
-- Example: "Extract product information from detail page"
+**browser_agent**: ONLY for navigation
+- Use when intent is to navigate to a page
+- Intent description contains: "navigate", "enter", "visit", "go to"
+- Has `navigate` operations in MetaFlow
+- NO data extraction capability
+- Example: "Navigate to coffee category page"
+```yaml
+- agent_type: "browser_agent"
+  inputs:
+    target_url: "https://site.com/category"
+```
+
+**scraper_agent**: ONLY for data extraction from current page
+- Use when intent is to extract/collect data
+- Intent has `extract` operations in MetaFlow
+- Extracts from the page browser is currently on
+- NO navigation capability (no `target_path` parameter)
+- Example: "Extract product information"
+```yaml
+# Browser must be on the target page already
+- agent_type: "scraper_agent"
+  inputs:
+    extraction_method: "script"
+    data_requirements:
+      output_format:
+        title: "Product title"
+```
+
+**CRITICAL - Navigation Must Come First:**
+If MetaFlow has both navigate and extract operations:
+1. Generate browser_agent step for navigation
+2. Then generate scraper_agent step for extraction
+
+```yaml
+# MetaFlow: navigate + extract
+operations:
+  - type: navigate
+    url: "https://site.com/page"
+  - type: extract
+    target: "data"
+
+# Workflow: TWO steps
+- id: "navigate-to-page"
+  agent_type: "browser_agent"
+  inputs:
+    target_url: "https://site.com/page"
+
+- id: "extract-data"
+  agent_type: "scraper_agent"
+  inputs:
+    extraction_method: "script"
+    # No target_path! Uses current page from browser_agent
+```
 
 **CRITICAL - Preserve Navigation Paths**:
-- **DO NOT** skip initial navigation steps (e.g., homepage → category page)
-- Each navigation intent should generate a **browser_agent** step
+- **DO NOT** skip navigation steps
+- Each navigation intent generates a browser_agent step
 - This prevents anti-bot detection and maintains proper session flow
-- Example:
-  ```yaml
-  # MetaFlow has 2 navigation intents:
-  # 1. "Navigate to homepage"
-  # 2. "Navigate to category page"
-
-  # Workflow should generate 2 browser_agent steps:
-  - id: navigate-homepage
-    agent_type: browser_agent
-    inputs:
-      target_url: "https://site.com/"
-
-  - id: navigate-category
-    agent_type: browser_agent
-    inputs:
-      target_url: "https://site.com/category"
-  ```
 
 ### Core Principles - How to Choose Agent Type
 
@@ -423,8 +634,8 @@ When you see loop + extract + store:
    - Example: "Get all product URLs from the list"
 
 **Agent Capabilities**:
-- **browser_agent**: Pure navigation and page interactions (navigate to URL, scroll)
-- **scraper_agent**: Navigation + data extraction (can navigate AND extract data)
+- **browser_agent**: Navigation and page interactions (navigate to URL, scroll)
+- **scraper_agent**: Data extraction from current page only
 
 **extract operations**
 → **scraper_agent** with:
@@ -638,14 +849,22 @@ steps:
       all_product_details: "all_product_details"
     timeout: 10
 
-  # Simple URL access → scraper_agent handles it directly!
+  # Navigate first, then extract
+  - id: "navigate-to-coffee"
+    name: "Navigate to coffee category"
+    agent_type: "browser_agent"
+    description: "Navigate to coffee category page"
+    agent_instruction: "Navigate to coffee category page"
+    inputs:
+      target_url: "https://example.com/coffee"
+    timeout: 30
+
   - id: "extract-product-urls"
     name: "Extract product URLs"
     agent_type: "scraper_agent"
-    description: "Navigate to coffee page and extract all product URLs"
-    agent_instruction: "Visit coffee category page and extract all product URLs"
+    description: "Extract all product URLs from current page"
+    agent_instruction: "Extract all product URLs from the coffee category page"
     inputs:
-      target_path: "https://example.com/coffee"  # scraper_agent navigates automatically
       extraction_method: "script"
       data_requirements:
         user_description: "Extract all product URLs"
@@ -680,14 +899,22 @@ steps:
     max_iterations: 10
     loop_timeout: 900
     steps:
+      - id: "navigate-to-product"
+        name: "Navigate to product page"
+        agent_type: "browser_agent"
+        description: "Navigate to product detail page"
+        agent_instruction: "Navigate to product detail page"
+        inputs:
+          target_url: "{{current_product.url}}"
+        timeout: 30
+
       - id: "scrape-product"
         name: "Scrape product information"
         agent_type: "scraper_agent"
-        description: "Extract product details"
-        agent_instruction: "Visit product page and extract title and price"
+        description: "Extract product details from current page"
+        agent_instruction: "Extract product title and price from the current page"
         inputs:
           extraction_method: "script"
-          target_path: "{{current_product.url}}"
           data_requirements:
             user_description: "Extract product title and price"
             output_format:

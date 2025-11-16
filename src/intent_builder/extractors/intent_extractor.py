@@ -362,6 +362,27 @@ Your job:
    - description: A concise semantic description in English (1 sentence, describe WHAT the user wants to do, not HOW)
    - operation_indices: The indices of operations that belong to this intent (array of integers)
 
+**CRITICAL - Generalize Time-Specific Descriptions:**
+
+When describing navigation intents, DO NOT include specific dates, times, or time periods from the demonstration.
+Instead, use generalized descriptions that will remain valid in the future.
+
+Examples:
+❌ BAD: "Navigate to the daily leaderboard page for October 29, 2025"
+✅ GOOD: "Navigate to the current day's leaderboard"
+
+❌ BAD: "Navigate to weekly leaderboard for week 44, 2025"
+✅ GOOD: "Navigate to the current week's leaderboard"
+
+❌ BAD: "Access the November 2025 reports"
+✅ GOOD: "Access the current month's reports"
+
+❌ BAD: "View products from 2025"
+✅ GOOD: "View current year's products"
+
+The operations will preserve the specific URLs/dates from the demonstration,
+but the intent description should express the GENERAL goal.
+
 IMPORTANT - Intent Granularity Guidelines:
 
 **Core Principle: Group operations that serve the SAME user goal**
