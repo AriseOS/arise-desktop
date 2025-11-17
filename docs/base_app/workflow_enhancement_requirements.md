@@ -55,7 +55,6 @@ steps:
     then:
       - id: "premium_service"
         agent_type: "text_agent"
-        agent_instruction: "提供高级服务"
         inputs:
           question: "{{premium_prompt}}"
           context_data:
@@ -65,7 +64,6 @@ steps:
     else:
       - id: "basic_service"
         agent_type: "text_agent"
-        agent_instruction: "提供基础服务"
         inputs:
           question: "{{basic_prompt}}"
           context_data:
@@ -94,7 +92,6 @@ steps:
         then:
           - id: "active_premium_service"
             agent_type: "text_agent"
-            agent_instruction: "提供活跃premium服务"
             inputs:
               question: "{{active_premium_prompt}}"
               context_data:
@@ -105,7 +102,6 @@ steps:
         else:
           - id: "expired_premium_service"
             agent_type: "text_agent"
-            agent_instruction: "处理过期premium用户"
             inputs:
               question: "{{expired_premium_prompt}}"
               context_data:
@@ -122,7 +118,6 @@ steps:
         then:
           - id: "trial_service"
             agent_type: "text_agent"
-            agent_instruction: "提供试用服务"
             inputs:
               question: "{{trial_service_prompt}}"
               context_data:
@@ -132,7 +127,6 @@ steps:
         else:
           - id: "basic_service"
             agent_type: "text_agent"
-            agent_instruction: "提供基础服务"
             inputs:
               question: "{{basic_service_prompt}}"
               context_data:
@@ -164,7 +158,6 @@ steps:
     steps:
       - id: "attempt_operation"
         agent_type: "tool_agent"
-        agent_instruction: "尝试执行API调用操作"
         inputs:
           task_description: "{{api_task_description}}"
           context_data:
@@ -175,7 +168,6 @@ steps:
           success: "success"
       - id: "update_counters"
         agent_type: "code_agent"
-        agent_instruction: "更新重试计数器"
         inputs:
           task_description: "{{counter_update_task}}"
           input_data:
@@ -201,7 +193,6 @@ steps:
     steps:
       - id: "process_task"
         agent_type: "text_agent"
-        agent_instruction: "处理任务并更新完成状态"
         inputs:
           question: "{{task_processing_prompt}}"
           context_data:
@@ -211,7 +202,6 @@ steps:
           answer: "task_result"
       - id: "check_completion"
         agent_type: "code_agent" 
-        agent_instruction: "检查任务完成状态"
         inputs:
           task_description: "{{completion_check_task}}"
           input_data:
@@ -236,7 +226,6 @@ steps:
 steps:
   - id: "user_analysis"
     agent_type: "text_agent"
-    agent_instruction: "分析用户状态，输出：premium, basic, 或 trial"
     inputs:
       question: "{{analysis_prompt}}"
       context_data:
@@ -254,7 +243,6 @@ steps:
     then:
       - id: "premium_service"
         agent_type: "text_agent"
-        agent_instruction: "提供高级服务"
         inputs:
           question: "{{premium_service_prompt}}"
           context_data:
@@ -272,7 +260,6 @@ steps:
         then:
           - id: "basic_service"
             agent_type: "text_agent"
-            agent_instruction: "提供基础服务"
             inputs:
               question: "{{basic_service_prompt}}"
               context_data:
@@ -282,7 +269,6 @@ steps:
         else:
           - id: "trial_service"
             agent_type: "text_agent"
-            agent_instruction: "提供试用服务"
             inputs:
               question: "{{trial_service_prompt}}"
               context_data:
@@ -296,7 +282,6 @@ steps:
 steps:
   - id: "confidence_check"
     agent_type: "tool_agent"
-    agent_instruction: "计算用户请求的置信度"
     inputs:
       task_description: "{{confidence_task_desc}}"
       context_data:
@@ -313,7 +298,6 @@ steps:
     then:
       - id: "high_confidence_service"
         agent_type: "text_agent"
-        agent_instruction: "提供高置信度premium服务"
         inputs:
           question: "{{high_confidence_prompt}}"
           context_data:
@@ -324,7 +308,6 @@ steps:
     else:
       - id: "standard_service"
         agent_type: "text_agent"
-        agent_instruction: "提供标准服务"
         inputs:
           question: "{{standard_service_prompt}}"
           context_data:
@@ -339,7 +322,6 @@ steps:
 steps:
   - id: "decision_agent"
     agent_type: "text_agent"
-    agent_instruction: "基于多个因素决策路由策略"
     inputs:
       question: "{{decision_prompt}}"
       context_data:
@@ -358,7 +340,6 @@ steps:
     then:
       - id: "route_a_handler"
         agent_type: "tool_agent"
-        agent_instruction: "执行路由A的处理逻辑"
         inputs:
           task_description: "{{route_a_task}}"
           context_data:
@@ -375,7 +356,6 @@ steps:
         then:
           - id: "route_b_handler"
             agent_type: "text_agent"
-            agent_instruction: "执行路由B的处理逻辑"
             inputs:
               question: "{{route_b_prompt}}"
               context_data:
@@ -385,7 +365,6 @@ steps:
         else:
           - id: "route_c_handler"
             agent_type: "code_agent"
-            agent_instruction: "执行路由C的代码生成逻辑"
             inputs:
               task_description: "{{route_c_task}}"
               input_data:

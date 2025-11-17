@@ -172,7 +172,6 @@ class BrowserAgentOutput:
   name: "Navigate to homepage"
   agent_type: browser_agent
   description: "Navigate to Allegro homepage"
-  agent_instruction: "Navigate to Allegro homepage"
   inputs:
     target_url: "https://allegro.pl/"
   outputs:
@@ -186,7 +185,6 @@ class BrowserAgentOutput:
   name: "Navigate and scroll to load content"
   agent_type: browser_agent
   description: "Navigate to category page and scroll to trigger lazy loading"
-  agent_instruction: "Navigate to category page and scroll down"
   inputs:
     target_url: "https://example.com/category"
     interaction_steps:

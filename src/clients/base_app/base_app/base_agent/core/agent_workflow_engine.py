@@ -302,7 +302,7 @@ class AgentWorkflowEngine:
             })
 
         return AgentInput(
-            instruction=step.agent_instruction,  # 原始指令
+            instruction="",                      # No longer used
             data=resolved_input,                 # 解析后的输入数据
             step_metadata=metadata
         )

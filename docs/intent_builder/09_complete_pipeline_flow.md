@@ -523,7 +523,6 @@ steps:
   - id: "init-vars"
     name: "初始化变量"
     agent_type: "variable"
-    agent_instruction: "Initialize collection variables"
     inputs:
       operation: "set"
       data:
@@ -537,7 +536,6 @@ steps:
   - id: "navigate-to-site"
     name: "导航到网站"
     agent_type: "tool_agent"
-    agent_instruction: "导航到 Allegro 电商网站首页"
     inputs:
       task_description: "Navigate to Allegro homepage"
       allowed_tools: ["browser_use"]
@@ -546,7 +544,6 @@ steps:
   - id: "enter-category"
     name: "进入分类"
     agent_type: "tool_agent"
-    agent_instruction: "通过菜单导航进入图书分类页面"
     inputs:
       task_description: "Enter book category"
       allowed_tools: ["browser_use"]
@@ -555,7 +552,6 @@ steps:
   - id: "extract-product-list"
     name: "提取商品列表"
     agent_type: "scraper_agent"
-    agent_instruction: "从分类页面提取所有商品的URL"
     inputs:
       extraction_method: "script"
       dom_scope: "full"
@@ -572,7 +568,6 @@ steps:
   - id: "save-urls"
     name: "保存URL列表"
     agent_type: "variable"
-    agent_instruction: "保存商品URL列表"
     inputs:
       operation: "set"
       data:
@@ -594,7 +589,6 @@ steps:
       - id: "scrape-product"
         name: "爬取商品详情"
         agent_type: "scraper_agent"
-        agent_instruction: "访问商品页面并提取详细信息"
         inputs:
           extraction_method: "llm"
           target_path: "{{current_product.url}}"
@@ -611,7 +605,6 @@ steps:
       - id: "append-product"
         name: "添加到列表"
         agent_type: "variable"
-        agent_instruction: "将商品信息添加到列表"
         inputs:
           operation: "append"
           source: "{{all_product_details}}"
@@ -623,7 +616,6 @@ steps:
       - id: "store-product"
         name: "存储到数据库"
         agent_type: "storage_agent"
-        agent_instruction: "持久化商品信息"
         inputs:
           operation: "store"
           collection: "books"
@@ -635,7 +627,6 @@ steps:
   - id: "prepare-output"
     name: "准备输出"
     agent_type: "variable"
-    agent_instruction: "组织最终结果"
     inputs:
       operation: "set"
       data:

@@ -35,7 +35,6 @@ outputs:
 ```yaml
 - id: "execute-task"
   agent_type: "tool_agent"
-  agent_instruction: "Use appropriate tool to accomplish the task"
   inputs:
     task_description: "Navigate to https://example.com and extract the main heading"
     allowed_tools: ["browser_use"]

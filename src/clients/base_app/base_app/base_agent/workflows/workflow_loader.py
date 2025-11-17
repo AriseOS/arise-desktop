@@ -93,7 +93,7 @@ class WorkflowValidator:
     
     REQUIRED_FIELDS = {
         'metadata': ['name'],
-        'steps': ['id', 'name', 'agent_type', 'agent_instruction']
+        'steps': ['id', 'name', 'agent_type']
     }
     
     AGENT_SPECIFIC_FIELDS = {
@@ -426,7 +426,6 @@ class WorkflowConfigLoader:
             name=step_config['name'],
             description=step_config.get('description', ''),
             agent_type=step_config['agent_type'],
-            agent_instruction=step_config.get('agent_instruction', ''),
             user_task=step_config.get('user_task')
         )
         

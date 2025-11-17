@@ -271,7 +271,7 @@ operations:
 2. 数据结构（从 operations 实际数据推断 output_format + sample_data）
 3. extraction_method（根据规则：优先 script，语义理解用 llm）
 4. 循环配置（index_var, loop_timeout）
-5. agent_instruction（从 intent_description 扩展）
+5. intent_description（从 intent_description 扩展）
 6. agent_type 选择（根据 operations 组合判断）
 
 **MetaFlow 必须提供**：

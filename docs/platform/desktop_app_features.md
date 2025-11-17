@@ -679,7 +679,6 @@ Intent Builder 生成的 scraper agent step 描述太少，导致脚本质量不
 
 **当前生成示例** (见 workflow.yaml):
 ```yaml
-agent_instruction: "Visit product detail page and extract name, price, and sales count"
 data_requirements:
   user_description: "Extract coffee product details..."
   output_format:

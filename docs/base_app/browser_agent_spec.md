@@ -20,7 +20,6 @@
   agent_type: "browser_agent"
   name: "Navigate to page"
   description: "Navigate to target page"
-  agent_instruction: "Navigate to homepage"
   inputs:
     target_url: "https://example.com"
   outputs:
@@ -75,7 +74,6 @@ interaction_steps:
 ```yaml
 - id: "scroll-to-load-more"
   agent_type: "browser_agent"
-  agent_instruction: "Scroll down to load more products"
   inputs:
     interaction_steps:
       - action_type: "scroll"
@@ -116,7 +114,6 @@ interaction_steps:
 - id: "navigate-home"
   agent_type: "browser_agent"
   description: "Navigate to Allegro homepage"
-  agent_instruction: "Navigate to Allegro homepage"
   inputs:
     target_url: "https://allegro.pl/"
   outputs:
@@ -164,7 +161,6 @@ steps:
 - id: "navigate-and-load"
   agent_type: "browser_agent"
   description: "Navigate and scroll to load more content"
-  agent_instruction: "Navigate to product listing and scroll down"
   inputs:
     target_url: "https://example.com/products"
     interaction_steps:
@@ -187,7 +183,6 @@ steps:
   # Step 1: Navigate to page
   - id: "navigate-to-weekly"
     agent_type: "browser_agent"
-    agent_instruction: "Navigate to weekly leaderboard page"
     inputs:
       target_url: "{{weekly_link.weekly_url}}"
     timeout: 30
@@ -195,7 +190,6 @@ steps:
   # Step 2: Scroll to load more content (on current page)
   - id: "scroll-to-load-all"
     agent_type: "browser_agent"
-    agent_instruction: "Scroll down to load all weekly products"
     inputs:
       interaction_steps:
         - action_type: "scroll"
@@ -341,7 +335,6 @@ steps:
     name: "Navigate to homepage"
     agent_type: "browser_agent"
     description: "Navigate to Allegro homepage"
-    agent_instruction: "Navigate to Allegro homepage"
     inputs:
       target_url: "https://allegro.pl/"
     outputs:
@@ -353,7 +346,6 @@ steps:
     name: "Navigate to category"
     agent_type: "browser_agent"
     description: "Navigate to coffee category page"
-    agent_instruction: "Navigate to coffee category"
     inputs:
       target_url: "https://allegro.pl/kategoria/produkty-spozywcze-kawa-74030"
     outputs:
@@ -365,7 +357,6 @@ steps:
     name: "Extract product URLs"
     agent_type: "scraper_agent"
     description: "Extract all product URLs from category page"
-    agent_instruction: "Extract product URLs from current page"
     inputs:
       use_current_page: true  # Use page from step 2
       extraction_method: "script"

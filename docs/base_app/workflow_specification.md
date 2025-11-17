@@ -97,7 +97,6 @@ config:
   agent_type: "scraper_agent"      # Required: Agent type
   description: "What this step does"  # Optional: Step description
 
-  agent_instruction: |             # Required: Agent-specific instruction
     Natural language instruction for the agent
 
   inputs:                          # Optional: Step inputs
@@ -149,7 +148,6 @@ config:
 - id: "conditional-step"
   agent_type: "tool_agent"
   condition: "{{task_type}} == 'browser'"  # Only execute if condition is true
-  agent_instruction: "Execute browser task"
 ```
 
 **If-Else Branch**:
@@ -160,11 +158,9 @@ config:
   then_steps:
     - id: "handle-task"
       agent_type: "tool_agent"
-      agent_instruction: "Handle the task"
   else_steps:
     - id: "no-task"
       agent_type: "text_agent"
-      agent_instruction: "No task to handle"
 ```
 
 ### Loop Control
@@ -185,7 +181,6 @@ config:
       inputs:
         target_path: "{{current_item.url}}"  # Access item fields
         index: "{{item_index}}"              # Access current index
-      agent_instruction: "Scrape item details"
 ```
 
 **While Loop** (condition-based):
@@ -198,7 +193,6 @@ config:
   then_steps:
     - id: "chat-turn"
       agent_type: "interactive_agent"
-      agent_instruction: "Continue conversation"
 ```
 
 ## Agent-Specific Specifications
@@ -243,7 +237,6 @@ steps:
   - id: "scrape-urls"
     name: "Scrape Product URLs"
     agent_type: "scraper_agent"
-    agent_instruction: "Extract all product URLs from the category page"
 
     inputs:
       target_path: "{{category_url}}"
@@ -265,7 +258,6 @@ steps:
   - id: "init-results"
     name: "Initialize Results"
     agent_type: "variable"
-    agent_instruction: "Initialize empty results array"
 
     inputs:
       operation: "set"
@@ -289,7 +281,6 @@ steps:
       - id: "scrape-detail"
         name: "Scrape Product Info"
         agent_type: "scraper_agent"
-        agent_instruction: "Extract product details from detail page"
 
         inputs:
           target_path: "{{product.url}}"
@@ -312,7 +303,6 @@ steps:
       - id: "append-result"
         name: "Append Result"
         agent_type: "variable"
-        agent_instruction: "Append product to results"
 
         inputs:
           operation: "append"
@@ -326,7 +316,6 @@ steps:
       - id: "store-product"
         name: "Store Product"
         agent_type: "storage_agent"
-        agent_instruction: "Store product to database"
 
         inputs:
           operation: "store"
@@ -340,7 +329,6 @@ steps:
   - id: "prepare-output"
     name: "Prepare Output"
     agent_type: "variable"
-    agent_instruction: "Prepare final workflow output"
 
     inputs:
       operation: "set"

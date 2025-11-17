@@ -285,7 +285,6 @@ class WorkflowBuilder:
         step = AgentWorkflowStep(
             name=name,
             agent_type=agent_name,
-            agent_instruction=instruction,
             response_style=response_style,
             max_length=max_length,
             condition=condition
@@ -324,7 +323,6 @@ class WorkflowBuilder:
         step = AgentWorkflowStep(
             name=name,
             agent_type=agent_name,
-            agent_instruction=instruction,
             allowed_tools=tools,
             confidence_threshold=confidence_threshold,
             condition=condition
@@ -364,7 +362,6 @@ class WorkflowBuilder:
         step = AgentWorkflowStep(
             name=name,
             agent_type=agent_name,
-            agent_instruction=instruction,
             allowed_libraries=libraries or [],
             condition=condition
         )
@@ -401,7 +398,6 @@ class WorkflowBuilder:
         step = AgentWorkflowStep(
             name=name,
             agent_type=agent_name,
-            agent_instruction=instruction,
             inputs=inputs or {},
             condition=condition
         )

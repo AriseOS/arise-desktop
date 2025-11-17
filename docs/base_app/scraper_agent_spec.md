@@ -70,14 +70,12 @@ outputs:
 # Step 1: Navigate to the page
 - id: "navigate-to-products"
   agent_type: "browser_agent"
-  agent_instruction: "Navigate to products page"
   inputs:
     target_url: "https://example.com/products"
 
 # Step 2: Extract data from current page
 - id: "scrape-urls"
   agent_type: "scraper_agent"
-  agent_instruction: "Extract all product URLs from current page"
   inputs:
     extraction_method: "script"
     data_requirements:
@@ -95,14 +93,12 @@ outputs:
 # Step 1: Navigate to the product page
 - id: "navigate-to-product"
   agent_type: "browser_agent"
-  agent_instruction: "Navigate to product detail page"
   inputs:
     target_url: "{{product.url}}"
 
 # Step 2: Extract details from current page
 - id: "scrape-detail"
   agent_type: "scraper_agent"
-  agent_instruction: "Extract product details from current page"
   inputs:
     extraction_method: "script"
     data_requirements:

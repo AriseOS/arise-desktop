@@ -230,7 +230,6 @@ class AgentWorkflowStep(BaseModel):
     
     # Agent配置
     agent_type: str = Field(..., description="Agent类型: text_agent | tool_agent | code_agent | if | while | foreach")
-    agent_instruction: str = Field(default="", description="Agent执行指令，描述Agent要做什么")
     user_task: Optional[str] = Field(default=None, description="用户具体任务内容")
     
     # 输入配置

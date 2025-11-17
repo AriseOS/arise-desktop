@@ -466,7 +466,7 @@ nodes:
 | MetaFlow | Workflow |
 |----------|----------|
 | 节点 | Step |
-| intent_description | agent_instruction |
+| intent_description | intent_description |
 | operations | inputs (转换后) |
 | outputs | outputs |
 | loop.source | foreach.source |
@@ -481,7 +481,7 @@ nodes:
 1. **显式优于隐式**：重要的数据流用 outputs/inputs 显式声明
 2. **人类可读**：使用自然语言描述和语义化命名
 3. **完整性**：包含 LLM 生成 workflow 所需的所有信息
-4. **简洁性**：不包含 workflow 实现细节（agent_type, agent_instruction 等）
+4. **简洁性**：不包含 workflow 实现细节（agent_type, intent_description 等）
 5. **可扩展**：格式设计考虑未来扩展（条件、嵌套循环等）
 
 ---

@@ -50,7 +50,6 @@ outputs:
 ```yaml
 - id: "store-product"
   agent_type: "storage_agent"
-  agent_instruction: "Store product to database"
   inputs:
     operation: "store"
     collection: "products"           # Becomes "products_<user_id>"
@@ -64,7 +63,6 @@ outputs:
 ```yaml
 - id: "query-products"
   agent_type: "storage_agent"
-  agent_instruction: "Query products from database"
   inputs:
     operation: "query"
     collection: "products"
@@ -79,7 +77,6 @@ outputs:
 ```yaml
 - id: "export-data"
   agent_type: "storage_agent"
-  agent_instruction: "Export products to CSV"
   inputs:
     operation: "export"
     collection: "products"

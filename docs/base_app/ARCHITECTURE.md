@@ -48,7 +48,6 @@ AgentWorkflowEngine (base_agent/core/agent_workflow_engine.py:24)
 steps:
   - id: "intent-analysis"
     agent_type: "text_agent"
-    agent_instruction: "分析用户意图..."
     outputs:
       intent_type: "intent_type"
   

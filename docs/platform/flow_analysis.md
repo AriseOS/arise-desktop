@@ -357,7 +357,6 @@ steps:
   - id: step_1
     name: Open Product Page
     agent_type: browser_agent
-    agent_instruction: "Navigate to the product listing page"
     config:
       action: navigate
       url: https://example.com/products
@@ -365,7 +364,6 @@ steps:
   - id: step_2
     name: Search Products
     agent_type: tool_agent
-    agent_instruction: |
       1. Find the search input field (XPath: //input[@id='search'])
       2. Enter the search keyword
       3. Click the submit button
@@ -381,7 +379,6 @@ steps:
   - id: step_3
     name: Extract Results
     agent_type: code_agent
-    agent_instruction: "Extract product information from the page"
     config:
       code: |
         products = []
@@ -496,7 +493,6 @@ workflow = load_workflow(workflow_name)
 **1. BrowserAgent** - Browser automation
 ```yaml
 agent_type: browser_agent
-agent_instruction: "Navigate to website"
 config:
   action: navigate
   url: https://example.com
@@ -505,7 +501,6 @@ config:
 **2. ToolAgent** - Use integrated tools (browser, code execution)
 ```yaml
 agent_type: tool_agent
-agent_instruction: "Click and fill form"
 config:
   tool: browser
   actions:
@@ -516,7 +511,6 @@ config:
 **3. CodeAgent** - Execute Python code
 ```yaml
 agent_type: code_agent
-agent_instruction: "Process data"
 config:
   code: |
     result = input_data.split(',')
@@ -526,7 +520,6 @@ config:
 **4. TextAgent** - LLM-based natural language processing
 ```yaml
 agent_type: text_agent
-agent_instruction: "Summarize the extracted text"
 config:
   text: "Analyze and summarize: {{extracted_content}}"
 ```
@@ -1093,7 +1086,6 @@ steps:
   - id: navigate_amazon
     name: Navigate to Amazon
     agent_type: browser_agent
-    agent_instruction: Navigate to Amazon homepage
     config:
       action: navigate
       url: https://www.amazon.com
@@ -1101,7 +1093,6 @@ steps:
   - id: search_products
     name: Search for Products
     agent_type: tool_agent
-    agent_instruction: |
       1. Find the search input field
       2. Enter the keyword {{search_keyword}}
       3. Click the search button
@@ -1121,7 +1112,6 @@ steps:
   - id: extract_results
     name: Extract Product Information
     agent_type: code_agent
-    agent_instruction: Extract product name, price, and rating from search results
     config:
       code: |
         import json

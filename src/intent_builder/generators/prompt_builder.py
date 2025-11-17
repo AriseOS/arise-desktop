@@ -224,8 +224,7 @@ steps:
     name: <step_name>
     agent_type: <agent_type>
     description: <description>
-    agent_instruction: <instruction>
-    inputs: {...}
+    inputs: {...}  # Agent execution parameters
     outputs: {...}
     timeout: 300
 ```
@@ -238,7 +237,6 @@ steps:
 ```yaml
 - id: "step-id"
   agent_type: "variable"
-  agent_instruction: "Initialize/set/append variables"
   inputs:
     operation: "set"          # set | append | increment | decrement
     data:                     # For set operation
@@ -263,7 +261,6 @@ steps:
 ```yaml
 - id: "step-id"
   agent_type: "storage_agent"
-  agent_instruction: "Store/query/export data"
   inputs:
     operation: "store"              # "store" | "query" | "export"
     collection: "collection_name"   # Table name (auto-suffixed with user_id)
@@ -301,7 +298,6 @@ steps:
 
     - id: "save-to-global"
       agent_type: "variable"
-      agent_instruction: "Save to global variable"
       inputs:
         operation: "append"
         source: "{{all_products}}"  # Global variable
@@ -320,7 +316,7 @@ steps:
 - Use `{{variable_name}}` to reference variables
 - Access object fields: `{{object.field}}`
 - Access array elements: `{{array[0]}}`
-- Available in: inputs, agent_instruction, condition fields"""
+- Available in: inputs, condition fields"""
 
         # Replace agent spec placeholders with loaded specs
         spec = spec.replace("{browser_agent_spec}", self.browser_agent_spec)
@@ -396,6 +392,44 @@ Step 2: scraper_agent - Extract data from page A (current page)
 Step 3: browser_agent - Navigate to page B
 Step 4: scraper_agent - Extract data from page B (current page)
 ```
+
+### CRITICAL Pattern: Scroll Operations
+
+**When MetaFlow contains a scroll operation**:
+
+```yaml
+# MetaFlow scroll operation:
+- type: scroll
+  direction: "down"
+  distance: 1000
+```
+
+**MUST generate browser_agent with interaction_steps**:
+
+```yaml
+# CORRECT ✅
+- id: "scroll-to-load"
+  agent_type: "browser_agent"
+  inputs:
+    interaction_steps:
+      - action_type: "scroll"
+        parameters:
+          down: true
+          num_pages: 5
+  timeout: 60
+
+# WRONG ❌ - Only target_url, no interaction_steps!
+- id: "scroll-to-load"
+  agent_type: "browser_agent"
+  inputs:
+    target_url: "{{some_url}}"  # ← This ONLY navigates, doesn't scroll!
+  timeout: 60
+```
+
+**Key Rules**:
+1. Scroll operations REQUIRE `interaction_steps` with `action_type: scroll`
+2. If browser is already on the page, do NOT provide `target_url` (would reload page)
+3. Calculate `num_pages` based on scroll distance: `num_pages = distance / 500` (approx)
 
 ### Example: ProductHunt Daily → Weekly
 
@@ -477,7 +511,6 @@ Extract the URL from the element that was clicked. The browser is already on the
 ```yaml
 - id: "extract-{target}-link"
   agent_type: "scraper_agent"
-  agent_instruction: "Extract the {target} link from the current page"
   inputs:
     extraction_method: "script"
     data_requirements:
@@ -497,7 +530,6 @@ Navigate to the extracted URL.
 ```yaml
 - id: "navigate-to-{target}"
   agent_type: "browser_agent"
-  agent_instruction: "Navigate to the {target} page"
   inputs:
     target_url: "{{{target}_link.target_url}}"  # Reference extracted URL
 ```
@@ -523,7 +555,6 @@ node_3:
 # Step 1: Extract link from current page
 - id: "extract-weekly-link"
   agent_type: "scraper_agent"
-  agent_instruction: "Extract the Weekly leaderboard link from the current page"
   inputs:
     extraction_method: "script"
     data_requirements:
@@ -539,7 +570,6 @@ node_3:
 # Step 2: Navigate to extracted URL
 - id: "navigate-to-weekly"
   agent_type: "browser_agent"
-  agent_instruction: "Navigate to the weekly leaderboard page"
   inputs:
     target_url: "{{weekly_link.weekly_url}}"
   timeout: 30
@@ -628,7 +658,11 @@ operations:
 2. **If the intent goal is to SCROLL for loading more content** → Use **browser_agent**
    - Example: "Scroll down to load more products"
    - Note: Scroll for browsing/viewing is usually filtered out in intent extraction phase
-   - **CRITICAL**: Use `interaction_steps` to specify scroll operations, NOT `agent_instruction`
+   - **CRITICAL**:
+     - **MUST use `interaction_steps`** to specify scroll parameters
+     - **DO NOT provide `target_url`** if already on the page (would reload and lose state)
+     - **WRONG**: `inputs: {target_url: "{{url}}"}`  ← NO interaction_steps!
+     - **CORRECT**: `inputs: {interaction_steps: [{action_type: scroll, parameters: {down: true, num_pages: 5}}]}`
 
 3. **If the intent goal is to EXTRACT/COLLECT data** → Use **scraper_agent**
    - Example: "Extract product information"
@@ -636,9 +670,10 @@ operations:
 
 **Agent Capabilities**:
 - **browser_agent**: Navigation and page interactions (navigate to URL, scroll)
-  - Can navigate with `target_url`
-  - Can scroll on current page with `interaction_steps` (without `target_url`)
-  - Can navigate AND scroll (both `target_url` and `interaction_steps`)
+  - **Navigate only**: `inputs: {target_url: "https://..."}`
+  - **Scroll only**: `inputs: {interaction_steps: [{action_type: scroll, ...}]}`  ← No target_url!
+  - **Navigate + Scroll**: `inputs: {target_url: "https://...", interaction_steps: [...]}`
+  - **COMMON MISTAKE**: Providing ONLY `target_url` when intent is to scroll → This just navigates, doesn't scroll!
 - **scraper_agent**: Data extraction from current page only
 
 **extract operations**
@@ -842,7 +877,6 @@ steps:
     name: "Initialize variables"
     agent_type: "variable"
     description: "Initialize data collection variables"
-    agent_instruction: "Initialize product collection variables"
     inputs:
       operation: "set"
       data:
@@ -858,7 +892,6 @@ steps:
     name: "Navigate to coffee category"
     agent_type: "browser_agent"
     description: "Navigate to coffee category page"
-    agent_instruction: "Navigate to coffee category page"
     inputs:
       target_url: "https://example.com/coffee"
     timeout: 30
@@ -868,7 +901,6 @@ steps:
     name: "Load all products"
     agent_type: "browser_agent"
     description: "Scroll down to trigger infinite scroll and load all products"
-    agent_instruction: "Scroll down to load all products"
     inputs:
       interaction_steps:
         - action_type: "scroll"
@@ -881,7 +913,6 @@ steps:
     name: "Extract product URLs"
     agent_type: "scraper_agent"
     description: "Extract all product URLs from current page"
-    agent_instruction: "Extract all product URLs from the coffee category page"
     inputs:
       extraction_method: "script"
       data_requirements:
@@ -898,7 +929,6 @@ steps:
     name: "Save product URLs"
     agent_type: "variable"
     description: "Save extracted URLs to variable"
-    agent_instruction: "Save product URLs"
     inputs:
       operation: "set"
       data:
@@ -921,7 +951,6 @@ steps:
         name: "Navigate to product page"
         agent_type: "browser_agent"
         description: "Navigate to product detail page"
-        agent_instruction: "Navigate to product detail page"
         inputs:
           target_url: "{{current_product.url}}"
         timeout: 30
@@ -930,7 +959,6 @@ steps:
         name: "Scrape product information"
         agent_type: "scraper_agent"
         description: "Extract product details from current page"
-        agent_instruction: "Extract product title and price from the current page"
         inputs:
           extraction_method: "script"
           data_requirements:
@@ -952,7 +980,6 @@ steps:
         name: "Add product to list"
         agent_type: "variable"
         description: "Append product info to collection"
-        agent_instruction: "Add product to list"
         inputs:
           operation: "append"
           source: "{{all_product_details}}"
@@ -965,7 +992,6 @@ steps:
         name: "Store product to database"
         agent_type: "storage_agent"
         description: "Persist product information"
-        agent_instruction: "Store product to database"
         inputs:
           operation: "store"
           collection: "products"
@@ -978,7 +1004,6 @@ steps:
     name: "Prepare final output"
     agent_type: "variable"
     description: "Organize collection results"
-    agent_instruction: "Prepare final output"
     inputs:
       operation: "set"
       data:
