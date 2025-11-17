@@ -46,6 +46,28 @@ class StorageManager:
         with open(file_path, 'r', encoding='utf-8') as f:
             return json.load(f)
 
+    def update_recording_metadata(self, user_id: str, session_id: str, task_description: str, user_query: str):
+        """Update recording metadata with task_description and user_query
+
+        Args:
+            user_id: User ID
+            session_id: Session ID
+            task_description: Task description (what user did)
+            user_query: User query (what user wants to achieve)
+        """
+        # Read existing recording
+        recording_data = self.get_recording(user_id, session_id)
+
+        # Update task_metadata
+        if "task_metadata" not in recording_data:
+            recording_data["task_metadata"] = {}
+
+        recording_data["task_metadata"]["task_description"] = task_description
+        recording_data["task_metadata"]["user_query"] = user_query
+
+        # Save back
+        self.save_recording(user_id, session_id, recording_data)
+
     def list_recordings(self, user_id: str) -> List[Dict[str, Any]]:
         """List all recordings for user with metadata
 

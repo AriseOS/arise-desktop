@@ -72,6 +72,15 @@ class WorkflowExecutor:
         if not task:
             return None
 
+        # Ensure result is JSON-serializable
+        result_data = None
+        if task.result is not None:
+            if isinstance(task.result, dict):
+                result_data = task.result
+            else:
+                # Convert non-dict results to dict
+                result_data = {"value": str(task.result)}
+
         return {
             "task_id": task.task_id,
             "status": task.status,
@@ -79,7 +88,7 @@ class WorkflowExecutor:
             "current_step": task.current_step,
             "total_steps": task.total_steps,
             "message": task.message,
-            "result": task.result,
+            "result": result_data,
             "error": task.error
         }
 
@@ -109,11 +118,33 @@ class WorkflowExecutor:
             from src.clients.base_app.base_app.base_agent.core.base_agent import BaseAgent
             from src.clients.base_app.base_app.base_agent.core.schemas import Workflow
             from src.app_backend.core.config_service import get_config
+            import os
 
             # Get config service for BaseAgent
             config_service = get_config()
 
-            agent = BaseAgent(user_id=user_id, config_service=config_service)
+            # Get LLM provider configuration
+            llm_provider = config_service.get('llm.provider', 'anthropic')
+            llm_model = config_service.get('llm.model', 'claude-3-5-sonnet-20241022')
+
+            # Get API key from environment
+            if llm_provider == 'anthropic':
+                api_key = os.environ.get('ANTHROPIC_API_KEY')
+            else:
+                api_key = os.environ.get('OPENAI_API_KEY')
+
+            # Build provider config
+            provider_config = {
+                'type': llm_provider,
+                'model_name': llm_model,
+                'api_key': api_key
+            }
+
+            agent = BaseAgent(
+                user_id=user_id,
+                config_service=config_service,
+                provider_config=provider_config
+            )
 
             # Convert to Workflow object
             workflow = Workflow(**workflow_dict)

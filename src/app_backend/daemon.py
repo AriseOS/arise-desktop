@@ -116,6 +116,27 @@ class GenerateMetaflowFromRecordingRequest(BaseModel):
     user_id: str = "default_user"
 
 
+class AnalyzeRecordingRequest(BaseModel):
+    """Request model for analyzing recording"""
+    session_id: str
+    user_id: str = "default_user"
+
+
+class AnalyzeRecordingResponse(BaseModel):
+    """Response model for recording analysis"""
+    task_description: str
+    user_query: str
+    detected_patterns: Dict[str, Any]
+
+
+class UpdateRecordingMetadataRequest(BaseModel):
+    """Request model for updating recording metadata"""
+    session_id: str
+    task_description: str
+    user_query: str
+    user_id: str = "default_user"
+
+
 class GenerateWorkflowRequest(BaseModel):
     """Request model for generating Workflow from MetaFlow
 
@@ -545,6 +566,67 @@ async def stop_recording():
 
     except Exception as e:
         logger.error(f"Failed to stop recording: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/recording/analyze", response_model=AnalyzeRecordingResponse)
+async def analyze_recording(request: AnalyzeRecordingRequest):
+    """Analyze recording and generate suggested task_description and user_query using AI"""
+    try:
+        logger.info(f"Analyzing recording: session_id={request.session_id}")
+
+        # 1. Load recording
+        recording_data = storage_manager.get_recording(request.user_id, request.session_id)
+        if not recording_data:
+            raise HTTPException(status_code=404, detail="Recording not found")
+
+        operations = recording_data.get("operations", [])
+        logger.info(f"Loaded {len(operations)} operations from recording")
+
+        # 2. Call Cloud Backend to analyze
+        logger.info("Calling Cloud Backend to analyze recording...")
+        analysis_result = await cloud_client.analyze_recording_operations(
+            operations=operations,
+            user_id=request.user_id
+        )
+
+        logger.info(f"Analysis complete:")
+        logger.info(f"  Task Description: {analysis_result['task_description'][:100]}...")
+        logger.info(f"  User Query: {analysis_result['user_query'][:100]}...")
+        logger.info(f"  Patterns: {analysis_result['patterns']}")
+
+        return AnalyzeRecordingResponse(
+            task_description=analysis_result["task_description"],
+            user_query=analysis_result["user_query"],
+            detected_patterns=analysis_result["patterns"]
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to analyze recording: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/recording/update-metadata")
+async def update_recording_metadata(request: UpdateRecordingMetadataRequest):
+    """Update recording metadata with task_description and user_query after user confirmation"""
+    try:
+        logger.info(f"Updating metadata for recording: session_id={request.session_id}")
+        logger.info(f"  Task Description: {request.task_description[:100]}...")
+        logger.info(f"  User Query: {request.user_query[:100]}...")
+
+        # Update metadata in storage
+        storage_manager.update_recording_metadata(
+            user_id=request.user_id,
+            session_id=request.session_id,
+            task_description=request.task_description,
+            user_query=request.user_query
+        )
+
+        logger.info("Metadata updated successfully")
+        return {"success": True, "message": "Metadata updated"}
+
+    except Exception as e:
+        logger.error(f"Failed to update metadata: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1007,6 +1089,336 @@ async def delete_workflow(workflow_id: str, user_id: str = "default_user"):
         raise
     except Exception as e:
         logger.error(f"Failed to delete workflow: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Data Management APIs (Collections Only)
+# ============================================================================
+
+@app.get("/api/data/collections")
+async def list_collections(user_id: str = "default_user"):
+    """List all data collections with metadata
+
+    Returns collections from storage.db with:
+    - Collection name
+    - Record count
+    - Size estimate
+    - Field names
+    """
+    try:
+        logger.info(f"Listing collections for user: {user_id}")
+
+        import aiosqlite
+        from datetime import datetime
+
+        collections = []
+        storage_db_path = Path(config.get("data.databases.storage"))
+
+        if not storage_db_path.exists():
+            logger.info("Storage database does not exist yet")
+            return {"collections": collections}
+
+        async with aiosqlite.connect(str(storage_db_path)) as db:
+            # Get all tables for this user
+            cursor = await db.execute("""
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name LIKE ?
+                ORDER BY name
+            """, (f"%_{user_id}",))
+            tables = await cursor.fetchall()
+
+            for (table_name,) in tables:
+                # Parse collection name from table name (format: {collection}_{user_id})
+                # Remove the "_{user_id}" suffix to get the collection name
+                suffix = f"_{user_id}"
+                if table_name.endswith(suffix):
+                    collection_name = table_name[:-len(suffix)]
+                else:
+                    collection_name = table_name
+
+                # Get row count
+                cursor = await db.execute(f"SELECT COUNT(*) FROM {table_name}")
+                row_count = (await cursor.fetchone())[0]
+
+                # Get column info
+                cursor = await db.execute(f"PRAGMA table_info({table_name})")
+                columns = await cursor.fetchall()
+                # Filter out internal columns
+                field_names = [col[1] for col in columns if col[1] not in ['id', 'created_at', 'updated_at']]
+
+                # Get table size estimate (number of pages * page size)
+                cursor = await db.execute(f"SELECT COUNT(*) FROM dbstat WHERE name=?", (table_name,))
+                page_count = (await cursor.fetchone())[0]
+                size_bytes = page_count * 4096  # SQLite default page size
+
+                collections.append({
+                    "collection_name": collection_name,
+                    "table_name": table_name,
+                    "records_count": row_count,
+                    "size_bytes": size_bytes,
+                    "fields": field_names
+                })
+
+        logger.info(f"Found {len(collections)} collections")
+        return {"collections": collections}
+
+    except Exception as e:
+        logger.error(f"Failed to list collections: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/data/collections/{collection_name}")
+async def get_collection_detail(collection_name: str, user_id: str = "default_user", limit: int = 10):
+    """Get collection detail with data preview
+
+    Args:
+        collection_name: Name of the collection
+        user_id: User ID (default: default_user)
+        limit: Number of records to preview (default: 10)
+
+    Returns:
+        Collection metadata and preview data
+    """
+    try:
+        logger.info(f"Getting collection detail: {collection_name} (limit: {limit})")
+
+        import aiosqlite
+
+        storage_db_path = Path(config.get("data.databases.storage"))
+
+        if not storage_db_path.exists():
+            raise HTTPException(status_code=404, detail="Storage database not found")
+
+        table_name = f"{collection_name}_{user_id}"
+
+        async with aiosqlite.connect(str(storage_db_path)) as db:
+            # Check if table exists
+            cursor = await db.execute("""
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name = ?
+            """, (table_name,))
+
+            if not await cursor.fetchone():
+                raise HTTPException(status_code=404, detail=f"Collection not found: {collection_name}")
+
+            # Get total count
+            cursor = await db.execute(f"SELECT COUNT(*) FROM {table_name}")
+            total_count = (await cursor.fetchone())[0]
+
+            # Get column info
+            cursor = await db.execute(f"PRAGMA table_info({table_name})")
+            columns = await cursor.fetchall()
+            all_fields = [col[1] for col in columns]
+            data_fields = [col[1] for col in columns if col[1] not in ['id', 'created_at', 'updated_at']]
+
+            # Get table size
+            cursor = await db.execute(f"SELECT COUNT(*) FROM dbstat WHERE name=?", (table_name,))
+            page_count = (await cursor.fetchone())[0]
+            size_bytes = page_count * 4096
+
+            # Get preview data
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                f"SELECT * FROM {table_name} ORDER BY created_at DESC LIMIT ?",
+                (limit,)
+            )
+            rows = await cursor.fetchall()
+
+            # Convert to list of dicts
+            preview_data = [dict(row) for row in rows]
+
+            logger.info(f"Collection detail loaded: {total_count} records, previewing {len(preview_data)}")
+
+            return {
+                "collection_name": collection_name,
+                "table_name": table_name,
+                "total_records": total_count,
+                "size_bytes": size_bytes,
+                "fields": data_fields,
+                "all_fields": all_fields,
+                "preview_data": preview_data,
+                "preview_count": len(preview_data)
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get collection detail: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/data/collections/{collection_name}")
+async def delete_collection(collection_name: str, user_id: str = "default_user"):
+    """Delete a collection and its related caches
+
+    Args:
+        collection_name: Name of the collection to delete
+        user_id: User ID (default: default_user)
+
+    Returns:
+        Success message
+    """
+    try:
+        logger.info(f"Deleting collection: {collection_name}")
+
+        import aiosqlite
+
+        storage_db_path = Path(config.get("data.databases.storage"))
+        kv_db_path = Path(config.get("data.databases.kv"))
+
+        if not storage_db_path.exists():
+            raise HTTPException(status_code=404, detail="Storage database not found")
+
+        table_name = f"{collection_name}_{user_id}"
+
+        # Step 1: Drop the table from storage.db
+        async with aiosqlite.connect(str(storage_db_path)) as db:
+            # Check if table exists
+            cursor = await db.execute("""
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name = ?
+            """, (table_name,))
+
+            if not await cursor.fetchone():
+                raise HTTPException(status_code=404, detail=f"Collection not found: {collection_name}")
+
+            # Drop the table
+            await db.execute(f"DROP TABLE {table_name}")
+            await db.commit()
+
+            logger.info(f"✓ Dropped table: {table_name}")
+
+        # Step 2: Delete related caches from kv.db
+        # Cache key patterns for StorageAgent (updated format with user_id):
+        # - storage_insert_{collection}_{user_id}
+        # - storage_query_{collection}_{user_id}_{config_hash}
+        # - storage_export_{collection}_{user_id}_{config_hash}
+        cache_deleted_count = 0
+
+        if kv_db_path.exists():
+            async with aiosqlite.connect(str(kv_db_path)) as db:
+                # Delete all cache entries related to this collection
+                # Use exact prefix matching: storage_{operation}_{collection}_{user_id}
+                patterns = [
+                    f"storage_insert_{collection_name}_{user_id}",     # Exact match
+                    f"storage_query_{collection_name}_{user_id}%",     # With hash suffix
+                    f"storage_export_{collection_name}_{user_id}%",    # With hash suffix
+                ]
+
+                for pattern in patterns:
+                    cursor = await db.execute(
+                        "DELETE FROM kv_storage WHERE key LIKE ?",
+                        (pattern,)
+                    )
+                    deleted = cursor.rowcount
+                    if deleted > 0:
+                        cache_deleted_count += deleted
+                        logger.info(f"✓ Deleted {deleted} cache entries matching: {pattern}")
+
+                await db.commit()
+
+        logger.info(f"✅ Collection deleted: {collection_name} (table + {cache_deleted_count} cache entries)")
+
+        return {
+            "status": "success",
+            "message": f"Collection '{collection_name}' deleted successfully",
+            "cache_cleared": cache_deleted_count
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete collection: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/data/collections/{collection_name}/export")
+async def export_collection(collection_name: str, user_id: str = "default_user", limit: Optional[int] = None):
+    """Export collection data as CSV
+
+    Args:
+        collection_name: Name of the collection
+        user_id: User ID (default: default_user)
+        limit: Optional limit on number of rows to export
+
+    Returns:
+        CSV file as downloadable attachment
+    """
+    try:
+        logger.info(f"Exporting collection: {collection_name} (limit: {limit})")
+
+        import aiosqlite
+        import csv
+        import io
+        from fastapi.responses import StreamingResponse
+
+        storage_db_path = Path(config.get("data.databases.storage"))
+
+        if not storage_db_path.exists():
+            raise HTTPException(status_code=404, detail="Storage database not found")
+
+        table_name = f"{collection_name}_{user_id}"
+
+        async with aiosqlite.connect(str(storage_db_path)) as db:
+            # Check if table exists
+            cursor = await db.execute("""
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name = ?
+            """, (table_name,))
+
+            if not await cursor.fetchone():
+                raise HTTPException(status_code=404, detail=f"Collection not found: {collection_name}")
+
+            # Query data
+            db.row_factory = aiosqlite.Row
+            if limit:
+                cursor = await db.execute(
+                    f"SELECT * FROM {table_name} ORDER BY created_at DESC LIMIT ?",
+                    (limit,)
+                )
+            else:
+                cursor = await db.execute(f"SELECT * FROM {table_name} ORDER BY created_at DESC")
+
+            rows = await cursor.fetchall()
+
+            if not rows:
+                raise HTTPException(status_code=404, detail="No data to export")
+
+            # Create CSV in memory
+            output = io.StringIO()
+            fieldnames = rows[0].keys()
+            writer = csv.DictWriter(output, fieldnames=fieldnames)
+
+            writer.writeheader()
+            for row in rows:
+                writer.writerow(dict(row))
+
+            # Return as downloadable file
+            output.seek(0)
+
+            logger.info(f"Exported {len(rows)} records from {collection_name}")
+
+            return StreamingResponse(
+                iter([output.getvalue()]),
+                media_type="text/csv",
+                headers={
+                    "Content-Disposition": f"attachment; filename={collection_name}_{user_id}.csv"
+                }
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to export collection: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 

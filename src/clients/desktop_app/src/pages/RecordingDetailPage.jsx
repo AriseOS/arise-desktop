@@ -342,18 +342,6 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
                   <span className="metadata-value">{recording.task_metadata.session_id}</span>
                 </div>
               )}
-              {recording.task_metadata.title && (
-                <div className="metadata-item">
-                  <span className="metadata-label">📋 Title:</span>
-                  <span className="metadata-value">{recording.task_metadata.title}</span>
-                </div>
-              )}
-              {recording.task_metadata.description && (
-                <div className="metadata-item">
-                  <span className="metadata-label">📄 Description:</span>
-                  <span className="metadata-value">{recording.task_metadata.description}</span>
-                </div>
-              )}
             </div>
           )}
 

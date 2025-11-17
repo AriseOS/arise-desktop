@@ -5,16 +5,12 @@ const API_BASE = "http://127.0.0.1:8765";
 const DEFAULT_USER = "default_user";
 
 function QuickStartPage({ onNavigate, showStatus }) {
-  const [step, setStep] = useState('tutorial'); // 'tutorial', 'input', 'recording', 'generating', 'preview'
+  const [step, setStep] = useState('tutorial'); // 'tutorial', 'input', 'recording', 'analyzing'
   const [tutorialPage, setTutorialPage] = useState(0);
-  const [taskDescription, setTaskDescription] = useState('');
   const [startUrl, setStartUrl] = useState('https://www.google.com');
   const [currentSessionId, setCurrentSessionId] = useState(null);
   const [operationsCount, setOperationsCount] = useState(0);
-  const [generatedWorkflow, setGeneratedWorkflow] = useState(null);
-  const [adjustmentText, setAdjustmentText] = useState('');
-  const [generationProgress, setGenerationProgress] = useState(0);
-  const [autoRunCountdown, setAutoRunCountdown] = useState(3);
+  const [analysisProgress, setAnalysisProgress] = useState(0);
 
   // Check if user has seen tutorial before
   useEffect(() => {
@@ -23,19 +19,6 @@ function QuickStartPage({ onNavigate, showStatus }) {
       setStep('input');
     }
   }, []);
-
-  // Auto-run countdown in preview step
-  useEffect(() => {
-    if (step === 'preview' && autoRunCountdown > 0) {
-      const timer = setTimeout(() => {
-        setAutoRunCountdown(prev => prev - 1);
-      }, 1000);
-      return () => clearTimeout(timer);
-    } else if (step === 'preview' && autoRunCountdown === 0) {
-      // Auto execute (mock for now)
-      handleExecuteWorkflow();
-    }
-  }, [step, autoRunCountdown]);
 
   const tutorialSteps = [
     {
@@ -78,8 +61,8 @@ function QuickStartPage({ onNavigate, showStatus }) {
   };
 
   const handleStartRecording = async () => {
-    if (!taskDescription.trim() || !startUrl.trim()) {
-      showStatus("❌ Please fill in task description and start URL", "error");
+    if (!startUrl.trim()) {
+      showStatus("❌ Please enter a start URL", "error");
       return;
     }
 
@@ -91,8 +74,8 @@ function QuickStartPage({ onNavigate, showStatus }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           url: startUrl,
-          title: taskDescription.substring(0, 50),
-          description: taskDescription,
+          title: "Quick Start Recording",
+          description: "Recording from Quick Start",
           task_metadata: {
             quick_start: true,
             user_id: DEFAULT_USER
@@ -132,9 +115,9 @@ function QuickStartPage({ onNavigate, showStatus }) {
       setOperationsCount(result.operations_count);
       showStatus(`✅ Recording completed! Captured ${result.operations_count} operations`, "success");
 
-      // Auto generate workflow
-      setStep('generating');
-      await handleGenerateWorkflow(result.session_id);
+      // Analyze recording with AI
+      setStep('analyzing');
+      await handleAnalyzeRecording(result.session_id);
 
     } catch (error) {
       console.error("Stop recording error:", error);
@@ -143,110 +126,58 @@ function QuickStartPage({ onNavigate, showStatus }) {
     }
   };
 
-  const handleGenerateWorkflow = async (sessionId) => {
+  const handleAnalyzeRecording = async (sessionId) => {
     try {
-      // Step 1: Generate MetaFlow from recording
-      setGenerationProgress(0);
-      showStatus("⚡ Generating MetaFlow...", "info");
+      setAnalysisProgress(0);
+      showStatus("🤖 AI is analyzing your operations...", "info");
 
       const progressInterval = setInterval(() => {
-        setGenerationProgress(prev => {
+        setAnalysisProgress(prev => {
           if (prev >= 90) {
             clearInterval(progressInterval);
             return 90;
           }
-          return prev + 10;
+          return prev + 15;
         });
-      }, 500);
+      }, 300);
 
-      const metaflowResponse = await fetch(`${API_BASE}/api/metaflows/from-recording`, {
+      const analyzeResponse = await fetch(`${API_BASE}/api/recording/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           session_id: sessionId,
-          task_description: taskDescription,
           user_id: DEFAULT_USER
         })
       });
 
       clearInterval(progressInterval);
-      setGenerationProgress(100);
+      setAnalysisProgress(100);
 
-      if (!metaflowResponse.ok) {
-        throw new Error(`MetaFlow generation failed: ${metaflowResponse.status}`);
+      if (!analyzeResponse.ok) {
+        throw new Error(`Analysis failed: ${analyzeResponse.status}`);
       }
 
-      const metaflowResult = await metaflowResponse.json();
+      const analysisResult = await analyzeResponse.json();
 
-      showStatus("✅ MetaFlow generated! Redirecting to preview...", "success");
+      showStatus("✅ Analysis complete! Redirecting...", "success");
 
-      // Navigate to MetaFlow preview page (user will review and generate workflow from there)
+      // Navigate to analysis review page
       setTimeout(() => {
-        onNavigate('metaflow-preview', {
-          metaflowId: metaflowResult.metaflow_id,
-          metaflowYaml: metaflowResult.metaflow_yaml
+        onNavigate('recording-analysis', {
+          sessionId: sessionId,
+          taskDescription: analysisResult.task_description,
+          userQuery: analysisResult.user_query,
+          detectedPatterns: analysisResult.detected_patterns
         });
       }, 500);
 
     } catch (error) {
-      console.error("Generate MetaFlow error:", error);
-      showStatus(`❌ Failed to generate MetaFlow: ${error.message}`, "error");
+      console.error("Analysis error:", error);
+      showStatus(`❌ Failed to analyze recording: ${error.message}`, "error");
       setStep('input');
     }
   };
 
-  const handleExecuteWorkflow = () => {
-    // Navigate to workflow detail page
-    if (generatedWorkflow && generatedWorkflow.workflow_id) {
-      showStatus("📋 Opening workflow detail...", "info");
-      setTimeout(() => {
-        onNavigate("workflow-detail", {
-          workflowId: generatedWorkflow.workflow_id
-        });
-      }, 500);
-    } else {
-      showStatus("⚠️ Workflow ID not found", "error");
-    }
-  };
-
-  const handleSaveForLater = () => {
-    // Navigate to workflow detail page
-    if (generatedWorkflow && generatedWorkflow.workflow_id) {
-      showStatus("💾 Workflow saved! Opening detail page...", "success");
-      setTimeout(() => {
-        onNavigate("workflow-detail", {
-          workflowId: generatedWorkflow.workflow_id
-        });
-      }, 500);
-    } else {
-      showStatus("⚠️ Workflow ID not found", "error");
-    }
-  };
-
-  const handleCancelAutoRun = () => {
-    setAutoRunCountdown(-1); // Stop countdown
-  };
-
-  const handleAdjustWorkflow = async () => {
-    if (!adjustmentText.trim()) return;
-
-    showStatus("🤖 Adjusting workflow with AI...", "info");
-
-    // Mock adjustment (in production, call LLM API)
-    setTimeout(() => {
-      showStatus("✅ Workflow adjusted!", "success");
-      setAdjustmentText('');
-
-      // Update workflow steps (mock)
-      setGeneratedWorkflow(prev => ({
-        ...prev,
-        steps: [
-          ...prev.steps,
-          `Added: ${adjustmentText}`
-        ]
-      }));
-    }, 1500);
-  };
 
   // Render Tutorial
   const renderTutorial = () => {
@@ -311,34 +242,24 @@ function QuickStartPage({ onNavigate, showStatus }) {
 
       <div className="input-card">
         <div className="card-header">
-          <h2>Describe what you want to do</h2>
-          <p>Tell us your task, we'll help you record and generate workflow</p>
+          <h2>Start Recording</h2>
+          <p>Just enter a URL and start - AI will understand what you do!</p>
         </div>
 
         <div className="form-group">
-          <label>Task Description *</label>
-          <textarea
-            value={taskDescription}
-            onChange={(e) => setTaskDescription(e.target.value)}
-            placeholder="Describe your task in detail, e.g., Open Google, search for coffee, view search results"
-            rows={4}
-          />
-        </div>
-
-        <div className="form-group">
-          <label>Start URL *</label>
+          <label>🌐 Start URL *</label>
           <input
             type="url"
             value={startUrl}
             onChange={(e) => setStartUrl(e.target.value)}
-            placeholder="https://www.google.com"
+            placeholder="https://www.producthunt.com"
           />
         </div>
 
         <button
           className="start-recording-btn"
           onClick={handleStartRecording}
-          disabled={!taskDescription.trim() || !startUrl.trim()}
+          disabled={!startUrl.trim()}
         >
           <span className="btn-icon">🎬</span>
           <span>Start Recording</span>
@@ -348,9 +269,9 @@ function QuickStartPage({ onNavigate, showStatus }) {
       <div className="tips-section">
         <h3>💡 Tips</h3>
         <ul>
-          <li>Clearly describe your task for better workflow generation</li>
-          <li>Ensure each step is executed correctly during recording</li>
-          <li>You can view and edit detailed steps after generation</li>
+          <li>Perform your task naturally - AI will analyze it automatically</li>
+          <li>Copy important data with Ctrl+C to mark what you want to extract</li>
+          <li>AI will suggest task description and goal after recording</li>
         </ul>
       </div>
     </div>
@@ -387,110 +308,47 @@ function QuickStartPage({ onNavigate, showStatus }) {
     </div>
   );
 
-  // Render Generating Step
-  const renderGenerating = () => (
+  // Render Analyzing Step
+  const renderAnalyzing = () => (
     <div className="generating-container">
       <div className="generating-content">
         <div className="generating-animation">
           <div className="spinner-large"></div>
-          <h2>⚙️ AI is analyzing...</h2>
+          <h2>🤖 AI is analyzing...</h2>
         </div>
 
-        <p className="generating-status">Understanding your workflow</p>
+        <p className="generating-status">Understanding your operations</p>
 
         <div className="progress-bar">
           <div
             className="progress-fill"
-            style={{ width: `${generationProgress}%` }}
+            style={{ width: `${analysisProgress}%` }}
           />
         </div>
-        <p className="progress-text">{generationProgress}%</p>
+        <p className="progress-text">{analysisProgress}%</p>
 
         <div className="generation-steps">
-          <div className={`step-item ${generationProgress > 20 ? 'completed' : 'active'}`}>
-            <span className="step-icon">✅</span>
-            <span>Uploaded recording data</span>
+          <div className={`step-item ${analysisProgress > 30 ? 'completed' : 'active'}`}>
+            <span className="step-icon">{analysisProgress > 30 ? '✅' : '⏳'}</span>
+            <span>Analyzing operation sequence</span>
           </div>
-          <div className={`step-item ${generationProgress > 60 ? 'completed' : generationProgress > 20 ? 'active' : ''}`}>
-            <span className="step-icon">{generationProgress > 60 ? '✅' : '⏳'}</span>
-            <span>Analyzed intent</span>
+          <div className={`step-item ${analysisProgress > 60 ? 'completed' : analysisProgress > 30 ? 'active' : ''}`}>
+            <span className="step-icon">{analysisProgress > 60 ? '✅' : '⏳'}</span>
+            <span>Detecting patterns</span>
           </div>
-          <div className={`step-item ${generationProgress > 90 ? 'completed' : generationProgress > 60 ? 'active' : ''}`}>
-            <span className="step-icon">{generationProgress > 90 ? '✅' : '⏳'}</span>
-            <span>Generating workflow...</span>
+          <div className={`step-item ${analysisProgress > 90 ? 'completed' : analysisProgress > 60 ? 'active' : ''}`}>
+            <span className="step-icon">{analysisProgress > 90 ? '✅' : '⏳'}</span>
+            <span>Generating description</span>
           </div>
         </div>
 
-        {generationProgress < 100 && (
-          <p className="estimated-time">Estimated time remaining: {Math.max(1, Math.floor((100 - generationProgress) / 10))}s</p>
+        {analysisProgress < 100 && (
+          <p className="estimated-time">Estimated time remaining: ~{Math.max(1, Math.ceil((100 - analysisProgress) / 20))}s</p>
         )}
       </div>
     </div>
   );
 
-  // Render Preview Step
-  const renderPreview = () => (
-    <div className="preview-container">
-      <div className="page-header">
-        <button className="back-button" onClick={() => onNavigate("main")}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M19 12H5M12 19l-7-7 7-7"/>
-          </svg>
-        </button>
-        <div className="page-title">✨ Workflow Generated!</div>
-      </div>
-
-      <div className="preview-card">
-        <h2 className="workflow-title">📋 {generatedWorkflow?.name || "Workflow"}</h2>
-
-        <div className="workflow-description">
-          <h3>This workflow will:</h3>
-          <ol className="workflow-steps-list">
-            {generatedWorkflow?.steps.map((step, idx) => (
-              <li key={idx}>{step}</li>
-            ))}
-          </ol>
-        </div>
-
-        <div className="adjustment-section">
-          <h3>💬 Need adjustments?</h3>
-          <div className="adjustment-input-group">
-            <input
-              type="text"
-              value={adjustmentText}
-              onChange={(e) => setAdjustmentText(e.target.value)}
-              placeholder='E.g., "Add stock field" or "Only scrape first 10 products"'
-            />
-            <button
-              className="btn-adjust"
-              onClick={handleAdjustWorkflow}
-              disabled={!adjustmentText.trim()}
-            >
-              Send
-            </button>
-          </div>
-        </div>
-
-        <div className="action-buttons">
-          <button className="btn-run-now" onClick={handleExecuteWorkflow}>
-            ▶️ Run Now
-          </button>
-          <button className="btn-save-later" onClick={handleSaveForLater}>
-            Save for Later
-          </button>
-        </div>
-
-        {autoRunCountdown > 0 && (
-          <div className="auto-run-notice">
-            <p>Auto-running in {autoRunCountdown}s...</p>
-            <button className="btn-cancel-auto" onClick={handleCancelAutoRun}>
-              Cancel
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
 
   // Main render
   return (
@@ -498,8 +356,7 @@ function QuickStartPage({ onNavigate, showStatus }) {
       {step === 'tutorial' && renderTutorial()}
       {step === 'input' && renderInput()}
       {step === 'recording' && renderRecording()}
-      {step === 'generating' && renderGenerating()}
-      {step === 'preview' && renderPreview()}
+      {step === 'analyzing' && renderAnalyzing()}
 
       <div className="footer">
         <p>Ami v1.0.0</p>

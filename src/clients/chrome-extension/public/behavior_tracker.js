@@ -178,7 +178,95 @@
             }
         }
     };
-    
+
+    // DataLoadDetector - Detects data loading events
+    class DataLoadDetector {
+        constructor() {
+            this.lastBodyHeight = document.body.scrollHeight;
+            this.heightChangeThreshold = 100; // 100px minimum height change
+
+            this.setupMutationObserver();
+        }
+
+        setupMutationObserver() {
+            const observer = new MutationObserver((mutations) => {
+                let addedElements = [];
+
+                mutations.forEach(mutation => {
+                    if (mutation.type === 'childList') {
+                        mutation.addedNodes.forEach(node => {
+                            if (node.nodeType === Node.ELEMENT_NODE) {
+                                addedElements.push(node);
+                            }
+                        });
+                    }
+                });
+
+                if (addedElements.length > 0) {
+                    this.handleDOMChange(addedElements);
+                }
+            });
+
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true
+            });
+
+            console.log('📡 MutationObserver initialized for data load detection');
+        }
+
+        handleDOMChange(addedElements) {
+            const currentHeight = document.body.scrollHeight;
+            const heightChange = currentHeight - this.lastBodyHeight;
+
+            // Condition: DOM change AND height increase
+            if (addedElements.length > 0 && heightChange > this.heightChangeThreshold) {
+                this.recordDataLoad(addedElements, heightChange, currentHeight);
+                this.lastBodyHeight = currentHeight;
+            }
+        }
+
+        recordDataLoad(addedElements, heightChange, currentHeight) {
+            // Analyze added elements
+            const dataElements = addedElements.filter(el => this.isDataElement(el));
+
+            // Sample elements (max 3)
+            const sampleElements = addedElements.slice(0, 3).map(el => ({
+                tagName: el.tagName,
+                className: el.className || '',
+                xpath: getElementXPath(el)
+            }));
+
+            // Report dataload operation
+            collector.report('dataload', null, {
+                added_elements_count: addedElements.length,
+                data_elements_count: dataElements.length,
+                height_before: this.lastBodyHeight,
+                height_after: currentHeight,
+                height_change: heightChange,
+                sample_elements: sampleElements
+            });
+        }
+
+        isDataElement(element) {
+            const tag = element.tagName.toLowerCase();
+            const classes = (element.className || '').toLowerCase();
+
+            // Typical data container tags
+            if (['article', 'li', 'tr'].includes(tag)) {
+                return true;
+            }
+
+            // Typical data container class patterns
+            const dataPatterns = ['item', 'card', 'post', 'product', 'entry', 'tile'];
+            if (dataPatterns.some(pattern => classes.includes(pattern))) {
+                return true;
+            }
+
+            return false;
+        }
+    }
+
     // Smart text selection detection based on drag operations
     let dragInfo = {
         isDown: false,
@@ -380,7 +468,14 @@
             }
         }, 100); // 100ms throttle
     });
-    
-    
-    
+
+    // Initialize DataLoadDetector
+    let detector;
+    try {
+        detector = new DataLoadDetector();
+        console.log("🔍 DataLoadDetector initialized");
+    } catch (e) {
+        console.warn("Failed to initialize DataLoadDetector:", e);
+    }
+
 })();

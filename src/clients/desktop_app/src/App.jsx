@@ -5,6 +5,7 @@ import "./extension.css";
 // Import pages
 import RecordingPage from "./pages/RecordingPage";
 import QuickStartPage from "./pages/QuickStartPage";
+import RecordingAnalysisPage from "./pages/RecordingAnalysisPage";
 import UserFlowsPage from "./pages/UserFlowsPage";
 import GenerationPage from "./pages/GenerationPage";
 import MyWorkflowsPage from "./pages/MyWorkflowsPage";
@@ -17,6 +18,8 @@ import RecordingsLibraryPage from "./pages/RecordingsLibraryPage";
 import RecordingDetailPage from "./pages/RecordingDetailPage";
 import ConversationalGenerationPage from "./pages/ConversationalGenerationPage";
 import MetaflowPreviewPage from "./pages/MetaflowPreviewPage";
+import DataManagementPage from "./pages/DataManagementPage";
+import CollectionDetailPage from "./pages/CollectionDetailPage";
 
 function App() {
   // Navigation state
@@ -382,6 +385,15 @@ function App() {
           />
         );
 
+      case "recording-analysis":
+        return (
+          <RecordingAnalysisPage
+            onNavigate={navigate}
+            showStatus={showStatus}
+            pageData={pageParams}
+          />
+        );
+
       case "metaflow-preview":
         return (
           <MetaflowPreviewPage
@@ -389,6 +401,23 @@ function App() {
             showStatus={showStatus}
             metaflowId={pageParams.metaflowId}
             metaflowYaml={pageParams.metaflowYaml}
+          />
+        );
+
+      case "data-management":
+        return (
+          <DataManagementPage
+            onNavigate={navigate}
+            showStatus={showStatus}
+          />
+        );
+
+      case "collection-detail":
+        return (
+          <CollectionDetailPage
+            onNavigate={navigate}
+            showStatus={showStatus}
+            collectionName={pageParams.collectionName}
           />
         );
 
@@ -409,6 +438,7 @@ function App() {
       { id: "quick-start", icon: "🎬", label: "Record" },
       { id: "workflows", icon: "📋", label: "Workflows" },
       { id: "recordings-library", icon: "📹", label: "Recordings" },
+      { id: "data-management", icon: "💾", label: "Data" },
       { id: "conversational-generation", icon: "💬", label: "AI Chat" }
     ];
 

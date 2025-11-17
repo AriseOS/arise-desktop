@@ -628,6 +628,7 @@ operations:
 2. **If the intent goal is to SCROLL for loading more content** → Use **browser_agent**
    - Example: "Scroll down to load more products"
    - Note: Scroll for browsing/viewing is usually filtered out in intent extraction phase
+   - **CRITICAL**: Use `interaction_steps` to specify scroll operations, NOT `agent_instruction`
 
 3. **If the intent goal is to EXTRACT/COLLECT data** → Use **scraper_agent**
    - Example: "Extract product information"
@@ -635,6 +636,9 @@ operations:
 
 **Agent Capabilities**:
 - **browser_agent**: Navigation and page interactions (navigate to URL, scroll)
+  - Can navigate with `target_url`
+  - Can scroll on current page with `interaction_steps` (without `target_url`)
+  - Can navigate AND scroll (both `target_url` and `interaction_steps`)
 - **scraper_agent**: Data extraction from current page only
 
 **extract operations**
@@ -858,6 +862,20 @@ steps:
     inputs:
       target_url: "https://example.com/coffee"
     timeout: 30
+
+  # Scroll to load more products (if page has infinite scroll)
+  - id: "scroll-to-load-all"
+    name: "Load all products"
+    agent_type: "browser_agent"
+    description: "Scroll down to trigger infinite scroll and load all products"
+    agent_instruction: "Scroll down to load all products"
+    inputs:
+      interaction_steps:
+        - action_type: "scroll"
+          parameters:
+            down: true
+            num_pages: 3
+    timeout: 45
 
   - id: "extract-product-urls"
     name: "Extract product URLs"

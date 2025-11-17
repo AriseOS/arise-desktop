@@ -412,6 +412,8 @@ class SimpleUserBehaviorMonitor:
                 self._print_newtab_details(data)
             elif data['type'] == 'closetab':
                 self._print_closetab_details(data)
+            elif data['type'] == 'dataload':
+                self._print_dataload_details(data)
             
             print("-" * 60)
             
@@ -503,13 +505,11 @@ class SimpleUserBehaviorMonitor:
     def _print_scroll_details(self, data):
         """Print scroll behavior details"""
         user_data = data.get('data', {})
-        direction = user_data.get('scrollDirection', 'Unknown')
-        delta = user_data.get('scrollDelta', 0)
-        percentage = user_data.get('scrollPercentage', 0)
-        
+        direction = user_data.get('direction', 'Unknown')
+        distance = user_data.get('distance', 0)
+
         print(f"  📜 Direction: {direction}")
-        print(f"  📏 Distance: {delta}px")
-        print(f"  📊 Progress: {percentage}%")
+        print(f"  📏 Distance: {distance}px")
     
     def _print_selection_details(self, data):
         """Print select behavior details"""
@@ -572,7 +572,32 @@ class SimpleUserBehaviorMonitor:
             print(f"     Copied: {copied_text[:100]}...")
         print(f"     Length: {text_length} characters")
         print(f"     Method: {copy_method}")
-    
+
+    def _print_dataload_details(self, data):
+        """Print data load event details"""
+        user_data = data.get('data', {})
+
+        added_count = user_data.get('added_elements_count', 0)
+        data_count = user_data.get('data_elements_count', 0)
+        height_change = user_data.get('height_change', 0)
+        height_before = user_data.get('height_before', 0)
+        height_after = user_data.get('height_after', 0)
+
+        print(f"  📊 Data Load Detected")
+        print(f"     New Elements: {added_count} total, {data_count} data elements")
+        print(f"     Height Change: +{height_change}px")
+        print(f"     Height: {height_before}px → {height_after}px")
+
+        # Print sample elements
+        sample_elements = user_data.get('sample_elements', [])
+        if sample_elements:
+            print(f"     Sample Elements:")
+            for i, elem in enumerate(sample_elements[:3], 1):
+                tag = elem.get('tagName', 'UNKNOWN')
+                cls = elem.get('className', '')
+                cls_display = f' class="{cls}"' if cls else ''
+                print(f"       {i}. <{tag}>{cls_display}")
+
     def _get_monitoring_script(self) -> str:
         """Get JavaScript monitoring script from file"""
         script_path = Path(__file__).parent / 'behavior_tracker.js'

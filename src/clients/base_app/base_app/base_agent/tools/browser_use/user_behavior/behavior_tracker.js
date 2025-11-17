@@ -178,7 +178,111 @@
             }
         }
     };
-    
+
+    // DataLoadDetector - Detects data loading events
+    class DataLoadDetector {
+        constructor() {
+            this.lastBodyHeight = document.body.scrollHeight;
+            this.heightChangeThreshold = 50; // 50px minimum height change (lowered from 100px)
+
+            console.log('🔍 DataLoadDetector: Initial height =', this.lastBodyHeight, 'px');
+            this.setupMutationObserver();
+        }
+
+        setupMutationObserver() {
+            const observer = new MutationObserver((mutations) => {
+                let addedElements = [];
+
+                mutations.forEach(mutation => {
+                    if (mutation.type === 'childList') {
+                        mutation.addedNodes.forEach(node => {
+                            if (node.nodeType === Node.ELEMENT_NODE) {
+                                addedElements.push(node);
+                            }
+                        });
+                    }
+                });
+
+                if (addedElements.length > 0) {
+                    this.handleDOMChange(addedElements);
+                }
+            });
+
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true
+            });
+
+            console.log('📡 MutationObserver initialized for data load detection');
+        }
+
+        handleDOMChange(addedElements) {
+            const currentHeight = document.body.scrollHeight;
+            const heightChange = currentHeight - this.lastBodyHeight;
+
+            console.log('🔍 DOM Changed:', {
+                addedCount: addedElements.length,
+                heightBefore: this.lastBodyHeight,
+                heightAfter: currentHeight,
+                heightChange: heightChange,
+                threshold: this.heightChangeThreshold
+            });
+
+            // Condition: DOM change AND height increase
+            if (addedElements.length > 0 && heightChange > this.heightChangeThreshold) {
+                console.log('✅ Dataload triggered!');
+                this.recordDataLoad(addedElements, heightChange, currentHeight);
+                this.lastBodyHeight = currentHeight;
+            } else {
+                console.log('❌ Dataload NOT triggered:', {
+                    reason: heightChange <= this.heightChangeThreshold ?
+                        `Height change (${heightChange}px) <= threshold (${this.heightChangeThreshold}px)` :
+                        'No elements added'
+                });
+            }
+        }
+
+        recordDataLoad(addedElements, heightChange, currentHeight) {
+            // Analyze added elements
+            const dataElements = addedElements.filter(el => this.isDataElement(el));
+
+            // Sample elements (max 3)
+            const sampleElements = addedElements.slice(0, 3).map(el => ({
+                tagName: el.tagName,
+                className: el.className || '',
+                xpath: getElementXPath(el)
+            }));
+
+            // Report dataload operation
+            collector.report('dataload', null, {
+                added_elements_count: addedElements.length,
+                data_elements_count: dataElements.length,
+                height_before: this.lastBodyHeight,
+                height_after: currentHeight,
+                height_change: heightChange,
+                sample_elements: sampleElements
+            });
+        }
+
+        isDataElement(element) {
+            const tag = element.tagName.toLowerCase();
+            const classes = (element.className || '').toLowerCase();
+
+            // Typical data container tags
+            if (['article', 'li', 'tr'].includes(tag)) {
+                return true;
+            }
+
+            // Typical data container class patterns
+            const dataPatterns = ['item', 'card', 'post', 'product', 'entry', 'tile'];
+            if (dataPatterns.some(pattern => classes.includes(pattern))) {
+                return true;
+            }
+
+            return false;
+        }
+    }
+
     // Smart text selection detection based on drag operations
     let dragInfo = {
         isDown: false,
@@ -380,7 +484,31 @@
             }
         }, 100); // 100ms throttle
     });
-    
-    
-    
+
+    // Initialize DataLoadDetector after DOM is ready
+    let detector;
+
+    function initializeDataLoadDetector() {
+        if (!document.body) {
+            console.warn("⏳ DataLoadDetector: document.body not ready, waiting...");
+            setTimeout(initializeDataLoadDetector, 100);
+            return;
+        }
+
+        try {
+            detector = new DataLoadDetector();
+            console.log("🔍 DataLoadDetector initialized");
+        } catch (e) {
+            console.warn("Failed to initialize DataLoadDetector:", e);
+        }
+    }
+
+    // Wait for DOM to be ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initializeDataLoadDetector);
+    } else {
+        // DOM is already loaded
+        initializeDataLoadDetector();
+    }
+
 })();

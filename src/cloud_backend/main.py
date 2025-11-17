@@ -273,6 +273,58 @@ async def add_intents_to_user_graph_background(
         import traceback
         traceback.print_exc()
 
+
+@app.post("/api/analyze_recording")
+async def analyze_recording(data: dict):
+    """
+    Analyze recording operations using AI and generate suggested descriptions
+
+    Body:
+        {
+            "operations": [...],
+            "user_id": "user123"
+        }
+
+    Returns:
+        {
+            "task_description": "What user did",
+            "user_query": "What user wants to achieve",
+            "patterns": {
+                "loop_detected": true/false,
+                "loop_count": N,
+                "extracted_fields": ["field1", "field2"],
+                "navigation_depth": N
+            }
+        }
+    """
+    operations = data.get("operations", [])
+    user_id = data.get("user_id", "default_user")
+
+    if not operations:
+        raise HTTPException(400, "Missing operations")
+
+    logger.info(f"Analyzing recording with {len(operations)} operations for user {user_id}")
+
+    try:
+        # Import and initialize analysis service
+        from services.recording_analysis_service import RecordingAnalysisService
+        analysis_service = RecordingAnalysisService()
+
+        # Analyze operations
+        result = await analysis_service.analyze_operations(
+            operations=operations,
+            user_id=user_id
+        )
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Failed to analyze recording: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Analysis failed: {str(e)}")
+
+
 @app.post("/api/users/{user_id}/generate_metaflow")
 async def generate_metaflow(user_id: str, data: dict):
     """

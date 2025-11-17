@@ -290,6 +290,17 @@ class IntentExtractor:
             if op.get("type") == "select" and data.get("selectedText"):
                 simplified["selected_text"] = data.get("selectedText")
 
+            # Add scroll information
+            if op.get("type") == "scroll":
+                simplified["direction"] = data.get("direction")
+                simplified["distance"] = data.get("distance")
+
+            # Add dataload information
+            if op.get("type") == "dataload":
+                simplified["new_elements"] = data.get("added_elements_count", 0)
+                simplified["data_elements"] = data.get("data_elements_count", 0)
+                simplified["height_change"] = data.get("height_change", 0)
+
             simplified_ops.append(simplified)
 
         # Build context from previous intents
@@ -335,17 +346,40 @@ CRITICAL - Operation Classification Rules:
    - Should be grouped as INTERACTION intent (if genuinely needed for the task)
    - Example: "Click login → enter credentials → click submit" → Intent: "Log into user account"
 
-**Scroll Operations**:
-1. **Scroll for Browsing** (just viewing content):
-   - Purpose: User manually scrolling to view page content
-   - These are usually MEANINGLESS and should be FILTERED OUT
-   - Do NOT create separate scroll intents for these
+**Scroll Operations and Data Loading**:
 
-2. **Scroll for Loading More Content** (lazy loading, infinite scroll):
-   - Purpose: Trigger loading of additional content (e.g., more products)
+IMPORTANT: The system records two types of events:
+- `scroll`: User scrolling the page
+- `dataload`: Automatic detection when new content is loaded (DOM changes + page height increase)
+
+Understanding Scroll Intent:
+1. **Scroll for Browsing** (just viewing content):
+   - User scrolls but NO `dataload` event follows
+   - No interaction (click/select) follows the scroll
+   - These are MEANINGLESS and should be FILTERED OUT
+   - Do NOT create separate scroll intents for these
+   - Example: User scrolls up and down reading an article
+
+2. **Scroll to Trigger Data Loading** (lazy loading, infinite scroll):
+   - User scrolls AND a `dataload` event follows shortly after
+   - This indicates new content was loaded on the page
    - These are MEANINGFUL and should be kept
-   - Should be part of the extraction/navigation intent
-   - Example: "Scroll down to load more products → extract all products" → Intent: "Extract all product listings with pagination"
+   - Should be part of the extraction intent
+   - Example: "scroll → dataload → scroll → dataload → extract" → Intent: "Extract all product listings with infinite scroll"
+
+3. **Scroll to Reach Element**:
+   - User scrolls AND then clicks/selects something
+   - No `dataload` event, but has interaction
+   - These are MEANINGFUL (scroll is to make element visible)
+   - Should be part of the interaction intent
+   - Example: "scroll → click button" → Intent: "Click submit button" (scroll is just a means to reach it)
+
+How to Handle `dataload` Events:
+- `dataload` events themselves are NOT user intents
+- They are automatic system events indicating new content loaded
+- Use them as CONTEXT to understand if scrolls were meaningful
+- Do NOT include `dataload` operation indices in your intent extraction
+- Only include `scroll` and actual user operations (click, select, etc.)
 
 **Key Principle**:
 - Focus on the USER'S SEMANTIC GOAL, not the mechanical operations

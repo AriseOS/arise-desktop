@@ -38,15 +38,27 @@ Rules:
 1. Table name: {table_name}
 2. Always include: id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL
 3. Infer optimal SQLite types from data (INTEGER, REAL, TEXT)
-4. Return ONLY the CREATE TABLE SQL, no explanations
-5. Use IF NOT EXISTS clause
+4. **IMPORTANT**: Use the EXACT field names from the data dictionary keys - DO NOT expand or flatten nested structures
+5. **IMPORTANT**: If a field value is a list or dict (nested structure), create it as TEXT type to store JSON
+6. Return ONLY the CREATE TABLE SQL, no explanations
+7. Use IF NOT EXISTS clause
 
-Example output:
+Example 1 (simple flat data):
+Input data: {{"name": "Product A", "price": 10.99, "rating": 5}}
 CREATE TABLE IF NOT EXISTS products_alice (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     price REAL NOT NULL,
     rating INTEGER,
+    created_at TEXT NOT NULL
+)
+
+Example 2 (nested data - DO NOT FLATTEN):
+Input data: {{"product": [{{"name": "X", "price": 10}}], "team": [{{"name": "Y"}}]}}
+CREATE TABLE IF NOT EXISTS products_alice (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    product TEXT NOT NULL,
+    team TEXT NOT NULL,
     created_at TEXT NOT NULL
 )"""
 
@@ -252,8 +264,8 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
         # Log table and data info for debugging
         self.logger.info(f"Storing to table: {table_name}, data fields: {list(data.keys())}")
 
-        # Generate cache key (no user_id needed, MemoryManager handles isolation)
-        cache_key = f"storage_insert_{collection}"
+        # Generate cache key with user_id for easy deletion
+        cache_key = f"storage_insert_{collection}_{user_id}"
 
         # Try to load cached script
         cached = await context.memory_manager.get_data(cache_key)
@@ -261,9 +273,31 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
         if not cached:
             self.logger.info(f"First time storing to {table_name}, generating SQL scripts...")
 
+            # Check if table already exists
+            check_table_sql = f"SELECT name FROM sqlite_master WHERE type='table' AND name='{table_name}'"
+            async with aiosqlite.connect(self.db_path) as db:
+                async with db.execute(check_table_sql) as cursor:
+                    existing_table = await cursor.fetchone()
+                    if existing_table:
+                        self.logger.warning(f"Table {table_name} already exists but no cache found!")
+                        # Get existing table schema
+                        async with db.execute(f"PRAGMA table_info({table_name})") as cursor:
+                            columns = await cursor.fetchall()
+                            # Filter out system columns: id, created_at
+                            existing_fields = [col[1] for col in columns if col[1] not in ('id', 'created_at')]
+                            self.logger.warning(f"Existing table schema: {existing_fields}")
+                            self.logger.warning(f"New data fields: {list(data.keys())}")
+
+            # Use data.keys() directly as field order (no flattening)
+            field_order = list(data.keys())
+            self.logger.info(f"Field order: {field_order}")
+
             # Generate SQL scripts using LLM
             create_sql = await self._generate_create_table_sql(table_name, data)
-            insert_sql = await self._generate_insert_sql(table_name, list(data.keys()))
+            insert_sql = await self._generate_insert_sql(table_name, field_order, create_sql)
+
+            self.logger.info(f"Generated CREATE TABLE SQL: {create_sql}")
+            self.logger.info(f"Generated INSERT SQL: {insert_sql}")
 
             # Create table
             await self._execute_sql(create_sql)
@@ -273,13 +307,36 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
                 "table_name": table_name,
                 "create_table_sql": create_sql,
                 "insert_sql": insert_sql,
-                "field_order": list(data.keys())
+                "field_order": field_order
             })
 
             cached = await context.memory_manager.get_data(cache_key)
             self.logger.info(f"Cached INSERT script for {table_name}, schema fields: {cached['field_order']}")
         else:
             self.logger.info(f"Using cached schema for {table_name}, schema fields: {cached['field_order']}")
+
+            # Verify table actually exists
+            check_table_sql = f"SELECT name FROM sqlite_master WHERE type='table' AND name='{table_name}'"
+            async with aiosqlite.connect(self.db_path) as db:
+                async with db.execute(check_table_sql) as cursor:
+                    existing_table = await cursor.fetchone()
+                    if not existing_table:
+                        self.logger.error(f"Cache exists but table {table_name} does not exist!")
+                        self.logger.error(f"Cache key: {cache_key}")
+                        self.logger.error(f"Cached schema: {cached['field_order']}")
+                        raise Exception(f"Table {table_name} does not exist but cache was found. Cache may be stale.")
+                    else:
+                        # Verify schema matches
+                        async with db.execute(f"PRAGMA table_info({table_name})") as cursor:
+                            columns = await cursor.fetchall()
+                            # Filter out system columns: id, created_at
+                            existing_fields = [col[1] for col in columns if col[1] not in ('id', 'created_at')]
+                            self.logger.info(f"Actual table schema: {existing_fields}")
+                            if existing_fields != cached['field_order']:
+                                self.logger.error(f"Schema mismatch detected!")
+                                self.logger.error(f"Cached schema: {cached['field_order']}")
+                                self.logger.error(f"Actual schema: {existing_fields}")
+                                raise Exception(f"Table schema mismatch. Cached: {cached['field_order']}, Actual: {existing_fields}")
 
         # Validate data fields
         self._validate_fields(data, cached["field_order"])
@@ -320,7 +377,7 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
             "limit": limit
         }
         config_hash = self._hash_config(query_config)
-        cache_key = f"storage_query_{collection}_{config_hash}"
+        cache_key = f"storage_query_{collection}_{user_id}_{config_hash}"
 
         # Try to load cached script
         cached = await context.memory_manager.get_data(cache_key)
@@ -376,7 +433,7 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
             "format": format_type
         }
         config_hash = self._hash_config(export_config)
-        cache_key = f"storage_export_{collection}_{config_hash}"
+        cache_key = f"storage_export_{collection}_{user_id}_{config_hash}"
 
         # Try to load cached script
         cached = await context.memory_manager.get_data(cache_key)
@@ -459,16 +516,45 @@ Remember:
     async def _generate_insert_sql(
         self,
         table_name: str,
-        fields: List[str]
+        fields: List[str],
+        create_table_sql: str = None
     ) -> str:
-        """Generate INSERT SQL using LLM"""
-        # Build prompt
-        system_prompt = self.SYSTEM_PROMPT_INSERT.format(
-            table_name=table_name,
-            fields=", ".join(fields)
-        )
+        """Generate INSERT SQL using LLM
 
-        user_prompt = f"""Generate INSERT statement for table: {table_name}
+        Args:
+            table_name: Table name
+            fields: Field names from data
+            create_table_sql: CREATE TABLE SQL for reference (to ensure consistency)
+        """
+        # If CREATE TABLE SQL is provided, extract actual column names from it
+        # This ensures INSERT SQL matches CREATE TABLE SQL exactly
+        if create_table_sql:
+            system_prompt = f"""You are a SQL expert. Generate INSERT statement that matches the CREATE TABLE schema.
+
+Rules:
+1. Table name: {table_name}
+2. Extract column names from CREATE TABLE below (exclude id and created_at)
+3. Add created_at as the last field
+4. Return ONLY the INSERT SQL with placeholders (?), no explanations
+
+CREATE TABLE SQL:
+{create_table_sql}
+
+Example output:
+INSERT INTO products_alice (name, price, rating, created_at) VALUES (?, ?, ?, ?)"""
+
+            user_prompt = f"""Generate INSERT statement for table: {table_name}
+
+Use the column names from the CREATE TABLE above (exclude id, include created_at at the end).
+Return INSERT SQL with placeholders (?)."""
+        else:
+            # Fallback: use fields directly
+            system_prompt = self.SYSTEM_PROMPT_INSERT.format(
+                table_name=table_name,
+                fields=", ".join(fields)
+            )
+
+            user_prompt = f"""Generate INSERT statement for table: {table_name}
 
 Fields to insert: {", ".join(fields)}
 System fields: created_at
@@ -600,12 +686,24 @@ SELECT * FROM table WHERE price < ? AND rating > ? LIMIT ?
 
     async def _execute_sql(self, sql: str, params: Optional[Tuple] = None):
         """Execute SQL statement"""
+        self.logger.info(f"Executing SQL: {sql}")
+        if params:
+            self.logger.info(f"SQL params: {params}")
+
         async with aiosqlite.connect(self.db_path) as db:
-            if params:
-                await db.execute(sql, params)
-            else:
-                await db.execute(sql)
-            await db.commit()
+            try:
+                if params:
+                    await db.execute(sql, params)
+                else:
+                    await db.execute(sql)
+                await db.commit()
+                self.logger.info("SQL execution successful")
+            except Exception as e:
+                self.logger.error(f"SQL execution failed: {e}")
+                self.logger.error(f"Failed SQL: {sql}")
+                if params:
+                    self.logger.error(f"Failed params: {params}")
+                raise
 
     async def _query_sql(self, sql: str, params: Optional[List] = None) -> List[Dict]:
         """Execute SELECT query"""

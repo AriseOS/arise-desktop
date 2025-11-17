@@ -32,17 +32,14 @@
 
 ## Input Parameters
 
-### Required
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `target_url` | string | Target URL to navigate to |
+**Note**: At least one of `target_url` or `interaction_steps` must be provided.
 
 ### Optional
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `interaction_steps` | array | `[]` | Interaction steps to execute after navigation (currently only supports scroll) |
+| `target_url` | string | - | Target URL to navigate to (if omitted, operations will be performed on current page) |
+| `interaction_steps` | array | `[]` | Interaction steps to execute (currently only supports scroll). If `target_url` is provided, steps execute after navigation; otherwise, steps execute on current page. |
 | `timeout` | integer | 30 | Timeout in seconds |
 
 ---
@@ -61,7 +58,7 @@ interaction_steps:
       num_pages: 2.0       # Number of pages to scroll (e.g., 2.0 = 2 pages)
 ```
 
-**Example**:
+**Example 1: Navigate and Scroll**
 ```yaml
 - id: "navigate-and-scroll"
   agent_type: "browser_agent"
@@ -72,6 +69,19 @@ interaction_steps:
         parameters:
           down: true
           num_pages: 2.0
+```
+
+**Example 2: Scroll Only (on current page)**
+```yaml
+- id: "scroll-to-load-more"
+  agent_type: "browser_agent"
+  agent_instruction: "Scroll down to load more products"
+  inputs:
+    interaction_steps:
+      - action_type: "scroll"
+        parameters:
+          down: true
+          num_pages: 5
 ```
 
 ---
@@ -165,6 +175,34 @@ steps:
   outputs:
     result: "nav_result"
   timeout: 45
+```
+
+### Scenario 4: Scroll Only on Current Page
+
+**Intent**: "After navigation, scroll to load all products via infinite scroll"
+
+**Workflow**:
+```yaml
+steps:
+  # Step 1: Navigate to page
+  - id: "navigate-to-weekly"
+    agent_type: "browser_agent"
+    agent_instruction: "Navigate to weekly leaderboard page"
+    inputs:
+      target_url: "{{weekly_link.weekly_url}}"
+    timeout: 30
+
+  # Step 2: Scroll to load more content (on current page)
+  - id: "scroll-to-load-all"
+    agent_type: "browser_agent"
+    agent_instruction: "Scroll down to load all weekly products"
+    inputs:
+      interaction_steps:
+        - action_type: "scroll"
+          parameters:
+            down: true
+            num_pages: 5
+    timeout: 60
 ```
 
 ---

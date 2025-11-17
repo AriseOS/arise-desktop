@@ -116,12 +116,12 @@ class BrowserAgent(BaseStepAgent):
     async def validate_input(self, input_data: Any) -> bool:
         """Validate input data
 
-        Required fields:
-        - target_url: str
-
         Optional fields:
-        - interaction_steps: List[Dict]
+        - target_url: str (if provided, will navigate to this URL first)
+        - interaction_steps: List[Dict] (operations to perform, e.g., scroll)
         - timeout: int
+
+        Note: At least one of target_url or interaction_steps must be provided.
 
         Args:
             input_data: Input data (AgentInput or dict)
@@ -140,9 +140,9 @@ class BrowserAgent(BaseStepAgent):
             logger.error("Validation failed: input_data must be AgentInput or dict")
             return False
 
-        # Check required field
-        if 'target_url' not in actual_data:
-            logger.error("Validation failed: missing 'target_url'")
+        # At least one of target_url or interaction_steps must be present
+        if 'target_url' not in actual_data and 'interaction_steps' not in actual_data:
+            logger.error("Validation failed: must provide either 'target_url' or 'interaction_steps'")
             return False
 
         # Validate interaction_steps if present
@@ -193,7 +193,7 @@ class BrowserAgent(BaseStepAgent):
             actual_data = input_data
 
         # Extract parameters
-        target_url = actual_data['target_url']
+        target_url = actual_data.get('target_url')
         interaction_steps = actual_data.get('interaction_steps', [])
         timeout = actual_data.get('timeout', 30)
 
@@ -201,8 +201,14 @@ class BrowserAgent(BaseStepAgent):
                    f"interaction_steps={len(interaction_steps)}")
 
         try:
-            # Navigate to target URL and execute interactions
-            result = await self._navigate_to_pages(target_url, interaction_steps)
+            # Navigate to target URL and/or execute interactions
+            if target_url:
+                result = await self._navigate_to_pages(target_url, interaction_steps)
+            elif interaction_steps:
+                # Only execute interactions on current page (no navigation)
+                result = await self._execute_interactions_only(interaction_steps)
+            else:
+                raise ValueError("Must provide either target_url or interaction_steps")
 
             # Check navigation result
             if result.success is False:
@@ -213,14 +219,17 @@ class BrowserAgent(BaseStepAgent):
 
             # Get current URL from browser session
             try:
-                current_url = self.browser_session.context.pages[0].url if self.browser_session else target_url
+                current_url = self.browser_session.context.pages[0].url if self.browser_session else (target_url or "")
             except:
-                current_url = target_url
+                current_url = target_url or ""
 
             # Success response
-            message = f"Successfully navigated to {target_url}"
-            if interaction_steps:
-                message += f" and executed {len(interaction_steps)} interaction step(s)"
+            if target_url:
+                message = f"Successfully navigated to {target_url}"
+                if interaction_steps:
+                    message += f" and executed {len(interaction_steps)} interaction step(s)"
+            else:
+                message = f"Successfully executed {len(interaction_steps)} interaction step(s) on current page"
 
             logger.info(f"✅ {message}")
 
@@ -256,6 +265,46 @@ class BrowserAgent(BaseStepAgent):
                 )
             else:
                 return error_response
+
+    async def _execute_interactions_only(self, interaction_steps: List[Dict]) -> ActionResult:
+        """Execute interaction steps on current page without navigation
+
+        Args:
+            interaction_steps: Interaction steps to execute
+
+        Returns:
+            ActionResult with execution result
+        """
+        try:
+            if not interaction_steps:
+                return ActionResult(extracted_content="No interactions to execute")
+
+            logger.info(f"🎯 Executing {len(interaction_steps)} interaction steps on current page...")
+
+            for idx, step in enumerate(interaction_steps):
+                action_type = step.get('action_type', 'unknown')
+                logger.info(f"   Step {idx + 1}/{len(interaction_steps)}: {action_type}")
+
+                interaction_result = await self._execute_interaction_step(step)
+
+                # Check if interaction failed
+                if interaction_result.success is False:
+                    logger.error(f"❌ Interaction step {idx + 1} failed: {interaction_result.error}")
+                    return interaction_result
+
+                # Small delay between interactions
+                await asyncio.sleep(0.5)
+
+            logger.info(f"✅ All interaction steps completed successfully")
+
+            # Wait for content stability after interactions
+            await asyncio.sleep(3)
+
+            return ActionResult(extracted_content=f"Executed {len(interaction_steps)} interaction steps")
+
+        except Exception as e:
+            logger.error(f"❌ Interaction execution failed: {e}")
+            return ActionResult(success=False, error=str(e))
 
     async def _navigate_to_pages(self,
                                 path: Union[str, List[str]],

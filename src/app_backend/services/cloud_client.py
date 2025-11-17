@@ -226,6 +226,46 @@ class CloudClient:
             # Fire-and-forget, don't fail if reporting fails
             logger.warning(f"Failed to report execution: {e}")
 
+    async def analyze_recording_operations(
+        self,
+        operations: List[Dict[str, Any]],
+        user_id: str = "default_user"
+    ) -> Dict[str, Any]:
+        """Analyze recording operations using AI
+
+        Args:
+            operations: List of operation dictionaries
+            user_id: User ID
+
+        Returns:
+            dict with:
+                - task_description: What user did
+                - user_query: What user wants to achieve
+                - patterns: Detected patterns (loop, extraction, etc.)
+        """
+        try:
+            logger.info(f"Analyzing {len(operations)} operations...")
+
+            response = await self.client.post(
+                "/api/analyze_recording",
+                json={
+                    "operations": operations,
+                    "user_id": user_id
+                }
+            )
+            response.raise_for_status()
+            result = response.json()
+
+            logger.info("Analysis successful")
+            return result
+
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Analysis failed: {e.response.status_code} {e.response.text}")
+            raise
+        except Exception as e:
+            logger.error(f"Analysis error: {e}")
+            raise
+
     async def close(self):
         """Close HTTP client"""
         await self.client.aclose()

@@ -273,7 +273,7 @@ class ScraperAgent(BaseStepAgent):
         if target_path:
             logger.info(f"📄 Starting scrape with target_path: {target_path}")
         else:
-            logger.info(f"📄 Starting scrape on current page (no target_path)")
+            logger.info(f"📄 Starting scrape on current page")
         logger.debug(f"   config: {config}")
 
         try:
@@ -505,6 +505,10 @@ class ScraperAgent(BaseStepAgent):
 
         if not self.browser_session:
             raise RuntimeError("Browser session is None")
+
+        # Wait 3 seconds for page to fully load before getting DOM
+        logger.info("Waiting 3 seconds for page to fully load...")
+        await asyncio.sleep(3)
 
         # Wait for page stability
         event = self.browser_session.event_bus.dispatch(
@@ -1303,6 +1307,11 @@ def extract_data_from_page(serialized_dom, dom_dict) -> List[Dict[str, Any]]:
 - **Text may be split** across child nodes - combine when needed
 - **Avoid hardcoding** - no magic numbers, specific text values, or assumptions from sample
 - **Preserve DOM order** - DO NOT sort results. DOM order is meaningful (rankings, chronological, relevance)
+- **URL fields MUST be complete URLs** - If field name contains "url" or "link" and you extract from `href` attribute:
+  - Check if it's a relative path (starts with `/` but no `http://` or `https://`)
+  - If relative, prepend the base URL to make it absolute
+  - The base URL can be inferred from xpath_hints or user_description context
+  - Example: `/leaderboard/daily` from producthunt.com → `https://www.producthunt.com/leaderboard/daily`
 
 ## Testing
 

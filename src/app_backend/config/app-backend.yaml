@@ -14,10 +14,19 @@ data:
   scripts: ${storage.base_path}
   databases:
     kv: ${storage.base_path}/databases/kv.db
+    storage: ${storage.base_path}/databases/storage.db
 
 browser:
   headless: false
   timeout: 30
+
+# LLM Provider Configuration
+llm:
+  provider: anthropic  # openai or anthropic
+  model: claude-sonnet-4-5-20250929 # Model name
+  # API keys are read from environment variables:
+  # - ANTHROPIC_API_KEY for anthropic
+  # - OPENAI_API_KEY for openai
 
 cloud:
   api_url: http://127.0.0.1:9000

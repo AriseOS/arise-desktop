@@ -3,7 +3,12 @@
 **Agent Type**: `scraper_agent`
 
 ## Purpose
-Web scraping with browser automation. Extracts structured data from web pages.
+Data extraction from web pages. **scraper_agent ONLY extracts data from the current page** that the browser is on.
+
+**IMPORTANT - Navigation Separation**:
+- scraper_agent does NOT navigate to pages
+- Use `browser_agent` to navigate first, then `scraper_agent` to extract
+- scraper_agent always operates on the current page from the shared browser session
 
 ## Input Parameters
 
@@ -18,20 +23,20 @@ inputs:
       - field_name: "example value"
 ```
 
-**Note**: `target_path` is optional. If omitted, scraper_agent will use the current page (useful after browser_agent navigation).
-
 ### Optional
 ```yaml
 inputs:
-  target_path: "https://example.com"  # Target URL (if omitted, use current page)
   extraction_method: "llm"            # "llm" | "script" (default: "llm")
   dom_scope: "partial"                # "partial" | "full" (default: "partial")
   session_id: "session-id"            # Browser session to reuse
-  use_shared_session: true            # Use shared session from workflow
+  use_shared_session: true            # Use shared session from workflow (default: true)
   options:
     max_items: 20                     # Max items to extract
     timeout: 30                       # Timeout in seconds
 ```
+
+**Removed Parameters**:
+- `target_path`: REMOVED. scraper_agent no longer navigates. Use browser_agent instead.
 
 ## Output
 
@@ -62,11 +67,18 @@ outputs:
 
 ### Extract URLs (List)
 ```yaml
+# Step 1: Navigate to the page
+- id: "navigate-to-products"
+  agent_type: "browser_agent"
+  agent_instruction: "Navigate to products page"
+  inputs:
+    target_url: "https://example.com/products"
+
+# Step 2: Extract data from current page
 - id: "scrape-urls"
   agent_type: "scraper_agent"
-  agent_instruction: "Extract all product URLs"
+  agent_instruction: "Extract all product URLs from current page"
   inputs:
-    target_path: "https://example.com/products"
     extraction_method: "script"
     data_requirements:
       user_description: "Extract product URLs"
@@ -80,11 +92,18 @@ outputs:
 
 ### Extract Details (Single Item)
 ```yaml
+# Step 1: Navigate to the product page
+- id: "navigate-to-product"
+  agent_type: "browser_agent"
+  agent_instruction: "Navigate to product detail page"
+  inputs:
+    target_url: "{{product.url}}"
+
+# Step 2: Extract details from current page
 - id: "scrape-detail"
   agent_type: "scraper_agent"
-  agent_instruction: "Extract product details"
+  agent_instruction: "Extract product details from current page"
   inputs:
-    target_path: "{{product.url}}"
     extraction_method: "script"
     data_requirements:
       user_description: "Extract product information"
