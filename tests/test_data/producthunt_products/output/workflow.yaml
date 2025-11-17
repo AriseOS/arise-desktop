@@ -49,8 +49,12 @@ steps:
     description: "Navigate to Product Hunt weekly leaderboard and extract all product URLs"
     agent_instruction: "Visit Product Hunt weekly leaderboard page and extract all product URLs from the list"
     inputs:
-      target_path: "https://www.producthunt.com/leaderboard/weekly/2025/44"
+      target_path: "https://www.producthunt.com/leaderboard/weekly/2025/46"
       interaction_steps:
+        - action_type: "scroll"
+          parameters:
+            down: true
+            num_pages: 2.0
         - action_type: "scroll"
           parameters:
             down: true
@@ -197,11 +201,31 @@ steps:
           extracted_data: "team_members"
         timeout: 60
 
+      - id: "generate-chinese-summary"
+        name: "Generate Chinese summary"
+        agent_type: "text_agent"
+        description: "Generate Chinese summary for product and founders"
+        agent_instruction: |
+          Generate a brief Chinese summary (1-2 sentences, plain text only, no line breaks, no special formatting) that describes what the product does and who created it.
+
+          Product: {{product_info.0.product_name}}
+          Company: {{product_info.0.company_name}}
+          Description: {{product_info.0.description_of_product}}
+          Team: {{team_members}}
+
+          Return only plain Chinese text without markdown, without line breaks, without special formatting. Keep it concise.
+        inputs:
+          product_info: "{{product_info}}"
+          team_members: "{{team_members}}"
+        outputs:
+          chinese_summary: "chinese_summary"
+        timeout: 30
+
       - id: "merge-product-data"
         name: "Merge product data with team info"
         agent_type: "variable"
-        description: "Combine product information with team members"
-        agent_instruction: "Merge product details with team member information"
+        description: "Combine product information with team members and Chinese summary"
+        agent_instruction: "Merge product details with team member information and Chinese summary"
         inputs:
           operation: "set"
           data:
@@ -217,6 +241,7 @@ steps:
               reviews_count: "{{product_info.0.reviews_count}}"
               followers_count: "{{product_info.0.followers_count}}"
               team_members: "{{team_members}}"
+              chinese_summary: "{{chinese_summary}}"
         outputs:
           complete_product: "complete_product"
         timeout: 10
@@ -256,7 +281,7 @@ steps:
       operation: "set"
       data:
         product_details: "{{all_product_details}}"
-        final_response: "Successfully collected {{product_index}} products from Product Hunt weekly leaderboard with team information"
+        final_response: "Successfully collected products from Product Hunt weekly leaderboard with team information and Chinese summaries"
     outputs:
       product_details: "product_details"
       final_response: "final_response"
