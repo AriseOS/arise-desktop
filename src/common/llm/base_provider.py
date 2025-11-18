@@ -3,7 +3,18 @@ Base LLM Provider abstract class
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, Dict, Any
+import json
+import logging
+import re
+
+try:
+    from json_repair import repair_json
+    HAS_JSON_REPAIR = True
+except ImportError:
+    HAS_JSON_REPAIR = False
+
+logger = logging.getLogger(__name__)
 
 
 class BaseProvider(ABC):
@@ -52,7 +63,146 @@ class BaseProvider(ABC):
     def get_model_name(self) -> Optional[str]:
         """Get the current model name"""
         return self.model_name
-    
+
     def set_model_name(self, model_name: str) -> None:
         """Set the model name"""
         self.model_name = model_name
+
+    async def generate_json_response(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        json_schema: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate a JSON response using the LLM with automatic repair
+
+        This method implements a 3-step strategy:
+        1. Strong JSON constraints in prompts
+        2. Automatic JSON repair using json-repair library
+        3. Graceful fallback to raw text
+
+        Args:
+            system_prompt: System instruction for the LLM
+            user_prompt: User's input prompt (should include JSON format requirements)
+            json_schema: Optional JSON schema for validation (not yet implemented)
+
+        Returns:
+            Parsed JSON dict or {"answer": raw_response} on failure
+        """
+        # Add strong JSON constraints to system prompt
+        enhanced_system_prompt = f"""{system_prompt}
+
+IMPORTANT JSON FORMAT REQUIREMENTS:
+- You MUST return ONLY valid JSON
+- Use English double quotes " NOT Chinese quotes " "
+- Avoid line breaks in string values, use spaces instead
+- Escape quotes in string values as \\"
+- Do NOT include comments or extra text outside JSON
+- Return pure JSON object only"""
+
+        # Get raw response from LLM
+        raw_response = await self.generate_response(enhanced_system_prompt, user_prompt)
+
+        # Log raw response for debugging
+        logger.info("=" * 80)
+        logger.info("🔍 LLM Raw Response:")
+        logger.info(raw_response)
+        logger.info("=" * 80)
+
+        # Parse JSON with automatic repair
+        result = self._parse_json_with_repair(raw_response)
+
+        # Log parsed result for comparison
+        logger.info("=" * 80)
+        logger.info("📦 Parsed JSON Result:")
+        logger.info(json.dumps(result, ensure_ascii=False, indent=2))
+        logger.info("=" * 80)
+
+        return result
+
+    def _parse_json_with_repair(self, raw_response: str) -> Dict[str, Any]:
+        """
+        Parse JSON from LLM output with automatic repair
+
+        Strategy:
+        1. Extract JSON from markdown code blocks if present
+        2. Try direct JSON parsing
+        3. Try json-repair library if available
+        4. Fallback to raw text wrapped in {"answer": ...}
+
+        Args:
+            raw_response: Raw text response from LLM
+
+        Returns:
+            Parsed JSON dict
+        """
+        logger.debug(f"Parsing JSON from LLM response (first 200 chars): {raw_response[:200]}")
+
+        try:
+            # Step 1: Extract JSON content from markdown code blocks
+            json_content = self._extract_json_from_markdown(raw_response)
+
+            # Step 2: Try direct parsing
+            try:
+                parsed_data = json.loads(json_content)
+                if isinstance(parsed_data, dict):
+                    logger.info("✅ JSON parsed successfully")
+                    return parsed_data
+                else:
+                    return {"answer": parsed_data}
+            except json.JSONDecodeError as e:
+                logger.warning(f"JSON parsing failed: {str(e)}")
+
+                # Step 3: Try json-repair library
+                if HAS_JSON_REPAIR:
+                    try:
+                        logger.info("🔧 Attempting JSON repair with json-repair library...")
+                        repaired = repair_json(json_content)
+                        parsed_data = json.loads(repaired)
+                        if isinstance(parsed_data, dict):
+                            logger.info("✅ JSON repaired successfully")
+                            return parsed_data
+                        else:
+                            return {"answer": parsed_data}
+                    except Exception as repair_error:
+                        logger.warning(f"json-repair failed: {str(repair_error)}")
+                else:
+                    logger.warning("json-repair library not installed, skipping repair")
+
+                # Step 4: Fallback to raw text
+                logger.warning("⚠️ All JSON parsing attempts failed, returning raw text")
+                return {"answer": raw_response.strip()}
+
+        except Exception as e:
+            logger.error(f"Unexpected error during JSON parsing: {str(e)}")
+            return {"answer": raw_response.strip()}
+
+    def _extract_json_from_markdown(self, text: str) -> str:
+        """
+        Extract JSON content from markdown code blocks
+
+        Args:
+            text: Raw text that may contain ```json...``` blocks
+
+        Returns:
+            Extracted JSON content or original text
+        """
+        text = text.strip()
+
+        # Check for ```json code block
+        if text.startswith('```json'):
+            start = text.find('```json') + 7
+            end = text.rfind('```')
+            if end > start:
+                return text[start:end].strip()
+
+        # Check for generic ``` code block
+        elif text.startswith('```'):
+            start = text.find('```') + 3
+            end = text.rfind('```')
+            if end > start:
+                return text[start:end].strip()
+
+        # No code blocks, return as is
+        return text

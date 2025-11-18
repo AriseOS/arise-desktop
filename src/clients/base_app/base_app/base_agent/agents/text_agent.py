@@ -103,88 +103,51 @@ class TextAgent(BaseStepAgent):
         return "\n\n".join(prompt_parts)
     
     def _format_json_value(self, value) -> str:
-        """格式化JSON值"""
+        """Format JSON value for display"""
         return json.dumps(value, ensure_ascii=False, indent=2)
-    
-    def _parse_json_response(self, raw_response: str) -> Dict[str, Any]:
-        """解析Agent返回的JSON格式输出，提取实际值"""
-        try:
-            # 移除markdown代码块标记
-            if raw_response.startswith('```json'):
-                # 提取```json和```之间的内容
-                start = raw_response.find('```json') + 7
-                end = raw_response.rfind('```')
-                if end > start:
-                    json_content = raw_response[start:end].strip()
-                else:
-                    json_content = raw_response
-            elif raw_response.startswith('```'):
-                # 处理没有json标识的代码块
-                start = raw_response.find('```') + 3
-                end = raw_response.rfind('```')
-                if end > start:
-                    json_content = raw_response[start:end].strip()
-                else:
-                    json_content = raw_response
-            else:
-                json_content = raw_response.strip()
-            
-            # 尝试解析JSON
-            parsed_data = json.loads(json_content)
-            
-            # 如果解析成功且是字典，返回解析后的数据
-            if isinstance(parsed_data, dict):
-                return parsed_data
-            else:
-                # 如果不是字典，包装在answer字段中
-                return {"answer": parsed_data}
-                
-        except (json.JSONDecodeError, Exception) as e:
-            self.logger.warning(f"解析Agent JSON输出失败: {str(e)}, 原始输出: {raw_response}")
-            # 如果解析失败，返回原始输出包装在answer字段中
-            return {"answer": raw_response}
-    
+
     async def execute(self, input_data: Any, context: AgentContext) -> AgentOutput:
-        """执行文本生成"""
+        """Execute text generation with automatic JSON parsing"""
         try:
-            # 确保输入是AgentInput类型
+            # Ensure input is AgentInput type
             if isinstance(input_data, dict):
                 agent_input = AgentInput(**input_data)
             else:
                 agent_input = input_data
-            
-            # 获取期望的输出格式
+
+            # Get expected output format
             expected_outputs = agent_input.step_metadata.get('expected_outputs', {})
-            
-            # 构建完整的prompt
+
+            # Build complete prompt
             complete_prompt = self._build_complete_prompt(
                 instruction=agent_input.instruction,
                 input_data=agent_input.data,
                 expected_outputs=expected_outputs
             )
-            
-            # Provider生成回答
-            response = await self.provider.generate_response(
-                system_prompt="你是一个专业的AI助手，严格按照要求返回JSON格式的结果。",
+
+            # Use Provider's JSON generation capability
+            # This automatically handles:
+            # 1. Strong JSON constraints in prompts
+            # 2. JSON repair with json-repair library
+            # 3. Graceful fallback to raw text
+            parsed_data = await self.provider.generate_json_response(
+                system_prompt="You are a professional AI assistant. Return results in strict JSON format.",
                 user_prompt=complete_prompt
             )
-            
-            # 解析JSON响应
-            parsed_data = self._parse_json_response(response)
-            
+
             return AgentOutput(
                 success=True,
                 data=parsed_data,
-                message="文本生成完成"
+                message="Text generation completed"
             )
-            
+
         except Exception as e:
             if context.logger:
-                context.logger.error(f"文本生成失败: {str(e)}")
-            
+                context.logger.error(f"Text generation failed: {str(e)}")
+
             return AgentOutput(
                 success=False,
                 data={},
-                message=f"文本生成失败: {str(e)}"
+                message=f"Text generation failed: {str(e)}"
             )
     

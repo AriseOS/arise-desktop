@@ -182,22 +182,45 @@ class MetaFlowGenerator:
 
 ## Output Requirements
 
-Output MetaFlow YAML structure WITHOUT operations field.
+**CRITICAL**: Every MetaFlowNode MUST have an "operations" field (required by schema).
 
-IMPORTANT:
-- DO NOT include "operations" field in the output - it will be filled automatically
-- Only include: id, intent_id, intent_name, intent_description, inputs, outputs
-- For implicit nodes, you can include operations with placeholders (as shown in examples)
+### For Regular Nodes (from Intent Graph):
+- Include the "operations" field (will be automatically filled with actual Intent operations later)
+- You can use placeholder operations if needed:
+  ```yaml
+  operations:
+    - type: placeholder
+  ```
 
-Format:
+### For Implicit/Inferred Nodes:
+- MUST include "operations" field with appropriate operation type
+- For implicit navigation nodes:
+  ```yaml
+  operations:
+    - type: navigate
+      url: "<PLACEHOLDER>"
+  ```
+- For implicit extract nodes:
+  ```yaml
+  operations:
+    - type: extract
+      target: "<field_name>"
+      element:
+        xpath: "<PLACEHOLDER>"
+        tagName: "A"
+      value: []
+  ```
+
+### Format Requirements:
 - Output the YAML in a markdown code block using ```yaml
 - Do not add any explanations outside the code block
 - Ensure YAML format is correct and parsable
+- **Every node MUST have "operations" field** (this is non-negotiable)
 
-Notes:
+### Notes:
 - **Path Filtering**: Only include Intents related to user query, ignore irrelevant branches in the graph
 - If loop is needed, detect keywords in user query ("all", "every", etc.)
-- If loop needs list data but not provided in Intent, insert implicit ExtractList node
+- If loop needs list data but not provided in Intent, insert implicit ExtractList node with operations field
 """
 
     def _get_metaflow_spec(self) -> str:
