@@ -536,8 +536,8 @@ class ScraperAgent(BaseStepAgent):
                 enhanced_dom, include_non_visible=False
             )
 
-        # Convert to DOM structures
-        dom_dict = extract_dom_dict(target_dom)
+        # Convert to DOM structures - reuse the same extractor instance to preserve include_non_visible setting
+        dom_dict = extractor.extract_dom_dict(target_dom)
         include_xpath = (self.extraction_method == 'script')
         llm_view = extract_llm_view(dom_dict, include_xpath=include_xpath)
 
