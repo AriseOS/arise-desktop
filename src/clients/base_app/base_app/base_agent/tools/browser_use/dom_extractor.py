@@ -415,9 +415,11 @@ class DOMExtractor:
             for child in node.children:
                 if child.original_node.node_type == NodeType.TEXT_NODE:
                     # Check if text content is meaningful (not just whitespace)
-                    is_visible = (getattr(child.original_node, 'snapshot_node', None) and 
-                                 getattr(child.original_node, 'is_visible', False))
-                    if (is_visible and 
+                    original_is_visible = (getattr(child.original_node, 'snapshot_node', None) and
+                                          getattr(child.original_node, 'is_visible', False))
+                    # Respect include_non_visible parameter - if True, include all text regardless of visibility
+                    is_visible = True if getattr(self, '_include_non_visible', False) else original_is_visible
+                    if (is_visible and
                         getattr(child.original_node, 'node_value', None) and
                         child.original_node.node_value.strip()):
                         text_content = child.original_node.node_value.strip()
