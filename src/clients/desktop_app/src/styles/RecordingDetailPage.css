@@ -677,3 +677,78 @@
   font-family: inherit;
   color: inherit;
 }
+
+/* ===================================
+   EDIT QUERY STYLES
+   =================================== */
+
+.metadata-value-container {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.btn-edit-icon {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 4px;
+  border-radius: 4px;
+  transition: background 0.2s;
+  opacity: 0.7;
+}
+
+.btn-edit-icon:hover {
+  background: rgba(255, 255, 255, 0.1);
+  opacity: 1;
+}
+
+.edit-query-container {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.edit-query-input {
+  flex: 1;
+  background: #1a1a1a;
+  border: 1px solid #4F46E5;
+  color: white;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  outline: none;
+}
+
+.edit-query-input:focus {
+  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.3);
+}
+
+.edit-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.btn-save-mini,
+.btn-cancel-mini {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 6px;
+  border-radius: 4px;
+  transition: background 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-save-mini:hover {
+  background: rgba(16, 185, 129, 0.2);
+}
+
+.btn-cancel-mini:hover {
+  background: rgba(239, 68, 68, 0.2);
+}

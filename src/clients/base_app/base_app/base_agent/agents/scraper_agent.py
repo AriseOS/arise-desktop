@@ -1253,40 +1253,36 @@ Create `extraction_script.py` that extracts data according to requirements.
 2. **Explore the DOM** using Grep/Read to find target elements
 3. **Write extraction script** that returns `List[Dict[str, Any]]`
 
+## Dual Anchor Strategy (CRITICAL)
+You MUST use a "Dual Anchor" strategy for robust extraction:
+
+1.  **Anchor 1: XPath Hints (Ground Truth Verification)**
+    *   Use the provided `xpath_hints` in `requirement.json` to locate the *exact* sample element in the DOM.
+    *   Verify that this element matches the data type you need.
+    *   Use this to understand the *structure* of the data (e.g., "Oh, the price is in a span with class 'price'").
+
+2.  **Anchor 2: Semantic Description (Navigation Logic)**
+    *   Use the `user_description` to identify the *parent container* or *section header* that semantically bounds the data.
+    *   **DO NOT** rely solely on absolute XPaths (e.g., `div[2]/div[4]`) to find the container, as these break easily.
+    *   **INSTEAD**, write code that:
+        a.  Finds the Semantic Anchor first (e.g., `find_element_by_text('Reputation Skyrockets')`).
+        b.  Navigates to the parent container relative to that anchor.
+        c.  Extracts items *within* that container using the structure learned from Anchor 1.
+
 ## Critical DOM Understanding
-
-DOM structure:
-```json
-{{
-    "tag": "div",
-    "text": "...",      // Only THIS node's direct text (NOT children!)
-    "class": "...",
-    "children": [...]   // Nested child nodes
-}}
-```
-
-**Key insight:** Modern websites split text across siblings:
-```json
-// Common pattern - number and label separated:
-{{
-    "tag": "div",
-    "children": [
-        {{"tag": "span", "text": "930"}},
-        {{"tag": "span", "text": "backers"}}
-    ]
-}}
-```
-
-**Your script must handle this** - combine text from parent/children when needed, not just read single `text` fields.
+1.  **Text Nodes**: Text is often split across multiple child nodes (e.g., `<span>$</span><span>99</span>`). You MUST use a helper to join all text within an element.
+    *   *Bad*: `element.text` (might miss children)
+    *   *Good*: `"".join(element.itertext())` or similar logic.
+2.  **Fragmented DOM**: Modern frameworks (React/Vue) often create deep, nested `div` structures. Do not rely on exact depth (e.g., `div/div/div`). Use relative searches (descendants) or class-based lookups where possible, *scoped* to your Semantic Anchor.
 
 ## Requirements
-
-Function signature:
-```python
-def extract_data_from_page(serialized_dom, dom_dict) -> List[Dict[str, Any]]:
-    # Your implementation
-    pass
-```
+1.  **Read `requirement.json`**: Understand what fields to extract and the `user_description`.
+2.  **Explore `dom_data.json`**: Analyze the DOM structure to find the best selectors that match the Dual Anchor strategy.
+3.  **Write `extraction_script.py`**:
+    *   Must be a standalone Python script.
+    *   Must implement `extract_data_from_page(serialized_dom, dom_dict) -> List[Dict]`.
+    *   Must handle missing fields gracefully (return `None` or empty string).
+    *   **MUST** implement the "Find Header -> Find Container -> Extract" logic if a semantic anchor is described.
 
 **Make it generic:**
 - Work on similar pages with different content

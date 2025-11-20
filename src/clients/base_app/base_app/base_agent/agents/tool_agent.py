@@ -282,7 +282,7 @@ class ToolAgent(BaseStepAgent):
         
         # 默认返回第一个可用工具
         return {
-            "tool_name": available_tools[0] if available_tools else "browser_use",
+            "tool_name": available_tools[0] if available_tools else "autonomous_browser",
             "confidence": 0.3,
             "reasoning": f"自动选择默认工具，原因：LLM响应解析失败"
         }

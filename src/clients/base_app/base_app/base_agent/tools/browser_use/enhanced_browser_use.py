@@ -1,5 +1,5 @@
 from typing import Optional, Any, Dict
-from .browser_use import BrowserTool
+from .autonomous_browser import AutonomousBrowserTool
 from .user_behavior.monitor import SimpleUserBehaviorMonitor
 
 class SimpleBrowserUseTool:
@@ -7,7 +7,7 @@ class SimpleBrowserUseTool:
     
     def __init__(self, enable_behavior_monitoring: bool = True, **browser_use_kwargs):
         # Initialize original Browser-Use tool
-        self.browser_tool = BrowserTool(**browser_use_kwargs)
+        self.browser_tool = AutonomousBrowserTool(**browser_use_kwargs)
         
         # Initialize user behavior monitoring
         self.behavior_monitoring_enabled = enable_behavior_monitoring

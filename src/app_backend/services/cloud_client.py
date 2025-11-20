@@ -266,6 +266,120 @@ class CloudClient:
             logger.error(f"Analysis error: {e}")
             raise
 
+    # ===== Intent Builder Agent APIs (SSE Streaming) =====
+
+    async def start_intent_builder_session(
+        self,
+        user_id: str,
+        user_query: str,
+        task_description: Optional[str] = None,
+        current_metaflow_yaml: Optional[str] = None,
+        current_workflow_yaml: Optional[str] = None,
+        phase: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Start a new Intent Builder Agent session
+
+        Args:
+            user_id: User ID
+            user_query: User's query/request
+            task_description: Optional additional context
+            current_metaflow_yaml: Current MetaFlow content for context
+            current_workflow_yaml: Current Workflow content for context
+            phase: 'metaflow' or 'workflow'
+
+        Returns:
+            dict: {"session_id": "..."}
+        """
+        logger.info(f"Starting Intent Builder session for user: {user_id}")
+
+        response = await self.client.post(
+            "/api/intent-builder/start",
+            json={
+                "user_id": user_id,
+                "user_query": user_query,
+                "task_description": task_description,
+                "current_metaflow_yaml": current_metaflow_yaml,
+                "current_workflow_yaml": current_workflow_yaml,
+                "phase": phase
+            }
+        )
+        response.raise_for_status()
+        result = response.json()
+
+        logger.info(f"Intent Builder session started: {result['session_id']}")
+        return result
+
+    async def stream_intent_builder_start(self, session_id: str):
+        """Stream the initial response from Intent Builder Agent
+
+        Yields:
+            SSE event strings (e.g., "data: {...}\n\n")
+        """
+        logger.info(f"Streaming Intent Builder start: {session_id}")
+
+        async with self.client.stream(
+            "GET",
+            f"/api/intent-builder/{session_id}/stream"
+        ) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if line:
+                    yield line + "\n"
+
+    async def stream_intent_builder_chat(self, session_id: str, message: str):
+        """Stream chat response from Intent Builder Agent
+
+        Args:
+            session_id: Session ID
+            message: User message
+
+        Yields:
+            SSE event strings
+        """
+        logger.info(f"Streaming Intent Builder chat: {session_id}")
+
+        async with self.client.stream(
+            "POST",
+            f"/api/intent-builder/{session_id}/chat",
+            json={"message": message}
+        ) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if line:
+                    yield line + "\n"
+
+    async def get_intent_builder_state(self, session_id: str) -> Dict[str, Any]:
+        """Get current state of Intent Builder session
+
+        Args:
+            session_id: Session ID
+
+        Returns:
+            State dictionary
+        """
+        response = await self.client.get(
+            f"/api/intent-builder/{session_id}/state"
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def close_intent_builder_session(self, session_id: str) -> Dict[str, Any]:
+        """Close and cleanup Intent Builder session
+
+        Args:
+            session_id: Session ID
+
+        Returns:
+            {"success": True}
+        """
+        logger.info(f"Closing Intent Builder session: {session_id}")
+
+        response = await self.client.delete(
+            f"/api/intent-builder/{session_id}"
+        )
+        response.raise_for_status()
+        return response.json()
+
     async def close(self):
         """Close HTTP client"""
         await self.client.aclose()

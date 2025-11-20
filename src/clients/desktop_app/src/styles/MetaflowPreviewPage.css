@@ -371,3 +371,198 @@
 .metaflow-preview-page .help-text strong {
   color: #333;
 }
+
+/* Modification Section - Lovable-style */
+.metaflow-preview-page .modification-section {
+  background: white;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.metaflow-preview-page .modification-header {
+  margin-bottom: 16px;
+}
+
+.metaflow-preview-page .modification-header h3 {
+  margin: 0 0 4px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+}
+
+.metaflow-preview-page .modification-header p {
+  margin: 0;
+  font-size: 13px;
+  color: #666;
+}
+
+/* Modification Log */
+.metaflow-preview-page .modification-log {
+  max-height: 200px;
+  overflow-y: auto;
+  margin-bottom: 12px;
+  padding: 12px;
+  background: #f9fafb;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.metaflow-preview-page .log-message {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.metaflow-preview-page .log-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  background: #e8e8e8;
+  flex-shrink: 0;
+}
+
+.metaflow-preview-page .log-message.user .log-avatar {
+  background: #667eea;
+  color: white;
+}
+
+.metaflow-preview-page .log-content {
+  margin: 0;
+  padding: 8px 12px;
+  background: white;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  flex: 1;
+  font-family: inherit;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.metaflow-preview-page .log-message.user .log-content {
+  background: #667eea;
+  color: white;
+}
+
+.metaflow-preview-page .log-message.error .log-content {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+/* Tool Indicator */
+.metaflow-preview-page .tool-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: linear-gradient(135deg, #f3e7ff 0%, #e7f0ff 100%);
+  border-radius: 8px;
+  border: 1px solid #d4c5ff;
+  margin-left: 38px;
+}
+
+.metaflow-preview-page .tool-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #d4c5ff;
+  border-top-color: #667eea;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.metaflow-preview-page .tool-name {
+  font-weight: 600;
+  color: #667eea;
+  font-size: 12px;
+}
+
+.metaflow-preview-page .tool-desc {
+  color: #666;
+  font-size: 12px;
+}
+
+/* Modification Input */
+.metaflow-preview-page .modification-input {
+  display: flex;
+  gap: 10px;
+}
+
+.metaflow-preview-page .modification-input textarea {
+  flex: 1;
+  padding: 10px 14px;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  resize: none;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.4;
+  transition: border-color 0.2s;
+}
+
+.metaflow-preview-page .modification-input textarea:focus {
+  outline: none;
+  border-color: #667eea;
+}
+
+.metaflow-preview-page .modification-input textarea:disabled {
+  background: #f5f5f5;
+  cursor: not-allowed;
+}
+
+.metaflow-preview-page .modify-button {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: #667eea;
+  color: white;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  flex-shrink: 0;
+  align-self: flex-end;
+}
+
+.metaflow-preview-page .modify-button:hover:not(:disabled) {
+  background: #5a6fd6;
+  transform: scale(1.05);
+}
+
+.metaflow-preview-page .modify-button:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.metaflow-preview-page .modify-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Scrollbar for modification log */
+.metaflow-preview-page .modification-log::-webkit-scrollbar {
+  width: 4px;
+}
+
+.metaflow-preview-page .modification-log::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.metaflow-preview-page .modification-log::-webkit-scrollbar-thumb {
+  background: #d0d0d0;
+  border-radius: 2px;
+}
+
+.metaflow-preview-page .modification-log::-webkit-scrollbar-thumb:hover {
+  background: #b0b0b0;
+}

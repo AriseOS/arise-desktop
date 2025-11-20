@@ -270,6 +270,20 @@ steps:
     rows_stored: "count_var"
 ```
 
+### 5. text_agent - Text Generation & Processing
+**Purpose**: Process text, summarize data, translate content, or generate new text using LLM.
+
+```yaml
+- id: "step-id"
+  agent_type: "text_agent"
+  inputs:
+    instruction: "Summarize the following text"  # Task instruction
+    data:                                        # Input data
+      content: "{{variable_name}}"
+  outputs:
+    result: "summary_var"                       # Output variable
+```
+
 ### 6. foreach - List Iteration
 **Purpose**: Loop over a list and execute steps for each item
 
@@ -582,45 +596,100 @@ node_3:
 - ✅ Uses xpath from user's actual click operation
 - ✅ Clear separation of concerns
 
-## 3. Operations → Agent Type
+## Agent Type Selection - Core Principles
 
-### When to Use browser_agent vs scraper_agent
+### Understanding Agent Capabilities
 
-**CRITICAL - Clear Separation of Concerns:**
+Each agent has specific capabilities. Choose based on **what the task fundamentally requires**, not based on keywords in the description.
 
-**browser_agent**: ONLY for navigation
-- Use when intent is to navigate to a page
-- Intent description contains: "navigate", "enter", "visit", "go to"
-- Has `navigate` operations in MetaFlow
-- NO data extraction capability
-- Example: "Navigate to coffee category page"
+**browser_agent** - Browser Control
+- **Capability**: Control the browser to navigate to URLs and interact with pages (scroll, wait)
+- **Cannot**: Extract or process data
+- **Use when**: The task requires moving to a different page or triggering page interactions
+- **Inputs**: `target_url` for navigation, `interaction_steps` for interactions like scroll
+
+**scraper_agent** - Data Extraction
+- **Capability**: Extract structured data from the current page using scripts or LLM
+- **Cannot**: Navigate to other pages or perform interactions
+- **Use when**: The task requires getting data from the page the browser is currently on
+- **Inputs**: `data_requirements` with extraction specifications
+
+**text_agent** - Semantic Text Processing
+- **Capability**: Process text using LLM for tasks requiring language understanding
+- **Cannot**: Access web pages or interact with browser
+- **Use when**: The task requires transforming data in ways that need semantic understanding
+  - The transformation cannot be done by simple code (not just reformatting or filtering)
+  - Examples: translating between languages, summarizing content, analyzing patterns/sentiment, generating insights
+- **Inputs**: `instruction` describing the processing task, `data` containing the content to process
+
+**autonomous_browser_agent** - Exploratory Web Tasks
+- **Capability**: Autonomously navigate and interact with web pages to achieve a goal
+- **Cannot**: Work with pre-defined paths; it explores and decides actions itself
+- **Use when**: The task has a clear goal but no recorded steps to achieve it
+  - The MetaFlow node is marked with `(Inferred)` in intent_description
+  - The operations don't provide enough information to construct deterministic steps
+- **Inputs**: `task` describing the goal, `max_actions` limiting exploration steps
+
+**storage_agent** - Data Persistence
+- **Capability**: Store data to database or export to files
+- **Cannot**: Process or transform data
+- **Use when**: The task requires saving extracted data
+
+**variable** - Variable Management
+- **Capability**: Set, append, or manipulate workflow variables
+- **Cannot**: Process data semantically or access external resources
+- **Use when**: The task requires simple data operations (initialize lists, append items, set values)
+
+### Decision Framework
+
+When mapping a MetaFlow node to workflow steps, analyze:
+
+1. **What operations does the node contain?**
+   - `navigate` → needs browser_agent for navigation
+   - `extract` → needs scraper_agent for extraction
+   - `scroll` → needs browser_agent with interaction_steps
+   - `store` → needs storage_agent
+   - `text_process` → needs text_agent
+
+2. **Does the node require multiple capabilities?**
+   - If yes, generate multiple steps in sequence
+   - Example: navigate + extract → browser_agent step, then scraper_agent step
+
+3. **Is the node marked as `(Inferred)` in intent_description?**
+   - If it describes an autonomous exploration task → autonomous_browser_agent
+   - If it describes text processing → text_agent
+
+4. **What is the semantic goal of the intent?**
+   - Moving to a location → browser_agent
+   - Getting data from current location → scraper_agent
+   - Transforming data semantically → text_agent
+   - Storing data → storage_agent
+
+### Important Rules
+
+**Separation of Concerns**:
+- browser_agent handles navigation, scraper_agent handles extraction
+- Never skip navigation steps - they maintain session state
+- scraper_agent always works on the current page
+
+**Scroll Operations**:
+- Use browser_agent with `interaction_steps`, NOT just `target_url`
+- If already on the page, do NOT provide `target_url` (would reload)
 ```yaml
-- agent_type: "browser_agent"
-  inputs:
-    target_url: "https://site.com/category"
+# CORRECT - scroll on current page
+inputs:
+  interaction_steps:
+    - action_type: "scroll"
+      parameters:
+        down: true
+        num_pages: 5
+
+# WRONG - this just navigates, doesn't scroll
+inputs:
+  target_url: "{{url}}"
 ```
 
-**scraper_agent**: ONLY for data extraction from current page
-- Use when intent is to extract/collect data
-- Intent has `extract` operations in MetaFlow
-- Extracts from the page browser is currently on
-- NO navigation capability (no `target_path` parameter)
-- Example: "Extract product information"
-```yaml
-# Browser must be on the target page already
-- agent_type: "scraper_agent"
-  inputs:
-    extraction_method: "script"
-    data_requirements:
-      output_format:
-        title: "Product title"
-```
-
-**CRITICAL - Navigation Must Come First:**
-If MetaFlow has both navigate and extract operations:
-1. Generate browser_agent step for navigation
-2. Then generate scraper_agent step for extraction
-
+**Navigation + Extraction Pattern**:
 ```yaml
 # MetaFlow: navigate + extract
 operations:
@@ -629,7 +698,7 @@ operations:
   - type: extract
     target: "data"
 
-# Workflow: TWO steps
+# Workflow: TWO separate steps
 - id: "navigate-to-page"
   agent_type: "browser_agent"
   inputs:
@@ -639,48 +708,14 @@ operations:
   agent_type: "scraper_agent"
   inputs:
     extraction_method: "script"
-    # No target_path! Uses current page from browser_agent
+    data_requirements: ...
 ```
-
-**CRITICAL - Preserve Navigation Paths**:
-- **DO NOT** skip navigation steps
-- Each navigation intent generates a browser_agent step
-- This prevents anti-bot detection and maintains proper session flow
-
-### Core Principles - How to Choose Agent Type
-
-**Choose agent based on the Intent's semantic goal**:
-
-1. **If the intent goal is to NAVIGATE to a page** → Use **browser_agent**
-   - Example: "Navigate to coffee category page"
-   - Example: "Go to homepage"
-
-2. **If the intent goal is to SCROLL for loading more content** → Use **browser_agent**
-   - Example: "Scroll down to load more products"
-   - Note: Scroll for browsing/viewing is usually filtered out in intent extraction phase
-   - **CRITICAL**:
-     - **MUST use `interaction_steps`** to specify scroll parameters
-     - **DO NOT provide `target_url`** if already on the page (would reload and lose state)
-     - **WRONG**: `inputs: {target_url: "{{url}}"}`  ← NO interaction_steps!
-     - **CORRECT**: `inputs: {interaction_steps: [{action_type: scroll, parameters: {down: true, num_pages: 5}}]}`
-
-3. **If the intent goal is to EXTRACT/COLLECT data** → Use **scraper_agent**
-   - Example: "Extract product information"
-   - Example: "Get all product URLs from the list"
-
-**Agent Capabilities**:
-- **browser_agent**: Navigation and page interactions (navigate to URL, scroll)
-  - **Navigate only**: `inputs: {target_url: "https://..."}`
-  - **Scroll only**: `inputs: {interaction_steps: [{action_type: scroll, ...}]}`  ← No target_url!
-  - **Navigate + Scroll**: `inputs: {target_url: "https://...", interaction_steps: [...]}`
-  - **COMMON MISTAKE**: Providing ONLY `target_url` when intent is to scroll → This just navigates, doesn't scroll!
-- **scraper_agent**: Data extraction from current page only
 
 **extract operations**
 → **scraper_agent** with:
 - extraction_method: "script" (DEFAULT - prefer script unless explicitly need LLM)
 - data_requirements:
-  - user_description: from intent_description + include website name from context (URL domain or intent prefix)
+  user_description: from intent_description + include website name + CRITICAL: include SEMANTIC ANCHORS (e.g., "from container with header 'Top 10'", "from the 'Results' section"). Do not just say "Extract X", say "Extract X from [Semantic Container]"
   - output_format: combine ALL extract targets from same page into ONE output_format
   - sample_data: use extract.value as examples (format depends on extraction type - see below)
   - xpath_hints: Extract xpath from operation.element.xpath and map to field names
@@ -1008,7 +1043,7 @@ steps:
       operation: "set"
       data:
         product_details: "{{all_product_details}}"
-        final_response: "Successfully collected {{product_index}} products"
+        final_response: "Successfully collected products"
     outputs:
       product_details: "product_details"
       final_response: "final_response"

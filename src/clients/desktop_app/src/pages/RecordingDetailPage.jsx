@@ -7,6 +7,47 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
   const [recording, setRecording] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('timeline'); // 'timeline' or 'yaml'
+  const [isEditingQuery, setIsEditingQuery] = useState(false);
+  const [editedQuery, setEditedQuery] = useState('');
+
+  const handleSaveQuery = async () => {
+    if (!editedQuery.trim()) {
+      showStatus('⚠️ Query cannot be empty', 'warning');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/api/recording/update-metadata`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionId,
+          task_description: recording.task_metadata?.task_description || "",
+          user_query: editedQuery,
+          user_id: "default_user"
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to update query');
+      }
+
+      // Update local state
+      setRecording(prev => ({
+        ...prev,
+        task_metadata: {
+          ...prev.task_metadata,
+          user_query: editedQuery
+        }
+      }));
+
+      setIsEditingQuery(false);
+      showStatus('✅ User query updated!', 'success');
+    } catch (error) {
+      console.error('Error updating query:', error);
+      showStatus(`❌ Failed to update query: ${error.message}`, 'error');
+    }
+  };
 
   // Fetch recording details from API
   useEffect(() => {
@@ -306,7 +347,7 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
       <div className="page-header">
         <button className="back-button" onClick={() => onNavigate('recordings-library')}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M19 12H5M12 19l-7-7 7-7"/>
+            <path d="M19 12H5M12 19l-7-7 7-7" />
           </svg>
         </button>
         <h1 className="page-title">
@@ -330,12 +371,40 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
                   <span className="metadata-value">{recording.task_metadata.task_description}</span>
                 </div>
               )}
-              {recording.task_metadata.user_query && (
-                <div className="metadata-item">
-                  <span className="metadata-label">🎯 User Query:</span>
-                  <span className="metadata-value">{recording.task_metadata.user_query}</span>
-                </div>
-              )}
+              <div className="metadata-item">
+                <span className="metadata-label">🎯 User Query:</span>
+                {isEditingQuery ? (
+                  <div className="edit-query-container">
+                    <input
+                      type="text"
+                      className="edit-query-input"
+                      value={editedQuery}
+                      onChange={(e) => setEditedQuery(e.target.value)}
+                      autoFocus
+                    />
+                    <div className="edit-actions">
+                      <button className="btn-save-mini" onClick={handleSaveQuery}>✅</button>
+                      <button className="btn-cancel-mini" onClick={() => setIsEditingQuery(false)}>❌</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="metadata-value-container">
+                    <span className="metadata-value">
+                      {recording.task_metadata.user_query || "No query provided"}
+                    </span>
+                    <button
+                      className="btn-edit-icon"
+                      onClick={() => {
+                        setEditedQuery(recording.task_metadata.user_query || "");
+                        setIsEditingQuery(true);
+                      }}
+                      title="Edit User Query"
+                    >
+                      ✏️
+                    </button>
+                  </div>
+                )}
+              </div>
               {recording.task_metadata.session_id && (
                 <div className="metadata-item">
                   <span className="metadata-label">🔖 Session ID:</span>
@@ -374,9 +443,9 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
               onClick={() => setActiveTab('timeline')}
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <line x1="12" y1="20" x2="12" y2="10"/>
-                <line x1="18" y1="20" x2="18" y2="4"/>
-                <line x1="6" y1="20" x2="6" y2="16"/>
+                <line x1="12" y1="20" x2="12" y2="10" />
+                <line x1="18" y1="20" x2="18" y2="4" />
+                <line x1="6" y1="20" x2="6" y2="16" />
               </svg>
               <span>Timeline</span>
             </button>
@@ -385,8 +454,8 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
               onClick={() => setActiveTab('yaml')}
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polyline points="16 18 22 12 16 6"/>
-                <polyline points="8 6 2 12 8 18"/>
+                <polyline points="16 18 22 12 16 6" />
+                <polyline points="8 6 2 12 8 18" />
               </svg>
               <span>YAML</span>
             </button>
@@ -481,7 +550,7 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
         <div className="action-section">
           <button className="btn-generate-workflow" onClick={handleGenerateWorkflow}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
             </svg>
             Generate Workflow
           </button>

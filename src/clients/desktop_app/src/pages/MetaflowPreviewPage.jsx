@@ -1,14 +1,23 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import '../styles/MetaflowPreviewPage.css';
 import yaml from 'js-yaml';
 
 const API_BASE = "http://127.0.0.1:8765";
+const DEFAULT_USER = "default_user";
 
 function MetaflowPreviewPage({ onNavigate, showStatus, metaflowId, metaflowYaml }) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [yamlContent, setYamlContent] = useState('');
   const [metaflowData, setMetaflowData] = useState(null);
   const [activeTab, setActiveTab] = useState('visual'); // 'visual' or 'yaml'
+
+  // Chat/Modification state
+  const [chatInput, setChatInput] = useState('');
+  const [isModifying, setIsModifying] = useState(false);
+  const [sessionId, setSessionId] = useState(null);
+  const [modificationLog, setModificationLog] = useState([]);
+  const [currentToolUse, setCurrentToolUse] = useState(null);
+  const logEndRef = useRef(null);
 
   useEffect(() => {
     if (metaflowYaml) {
@@ -66,7 +75,133 @@ function MetaflowPreviewPage({ onNavigate, showStatus, metaflowId, metaflowYaml 
   };
 
   const handleCancel = () => {
+    // Cleanup session if exists
+    if (sessionId) {
+      fetch(`${API_BASE}/api/intent-builder/${sessionId}`, {
+        method: 'DELETE'
+      }).catch(console.error);
+    }
     onNavigate('main');
+  };
+
+  // Auto-scroll modification log
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [modificationLog, currentToolUse]);
+
+  // Handle modification request
+  const handleModify = async () => {
+    if (!chatInput.trim() || isModifying) return;
+
+    const userMessage = chatInput.trim();
+    setChatInput('');
+    setIsModifying(true);
+    setModificationLog(prev => [...prev, { type: 'user', content: userMessage }]);
+
+    try {
+      // Create session if not exists
+      let sid = sessionId;
+      if (!sid) {
+        const response = await fetch(`${API_BASE}/api/intent-builder/start`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_id: DEFAULT_USER,
+            user_query: `Modify the following MetaFlow based on this request: ${userMessage}`,
+            task_description: `Current MetaFlow ID: ${metaflowId}`,
+            // Pass current MetaFlow content so Agent has context
+            current_metaflow_yaml: yamlContent,
+            phase: 'metaflow'  // Tell Agent we're in MetaFlow phase
+          })
+        });
+
+        if (!response.ok) throw new Error(`Failed to start session: ${response.statusText}`);
+
+        const result = await response.json();
+        sid = result.session_id;
+        setSessionId(sid);
+      }
+
+      // Stream the modification response
+      const response = await fetch(`${API_BASE}/api/intent-builder/${sid}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: userMessage })
+      });
+
+      if (!response.ok) throw new Error(`Request failed: ${response.statusText}`);
+
+      // Read SSE stream
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let accumulatedText = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const event = JSON.parse(line.slice(6));
+
+              switch (event.type) {
+                case 'text':
+                  accumulatedText += event.content;
+                  break;
+                case 'tool_use':
+                  setCurrentToolUse({ name: event.tool_name, input: event.tool_input });
+                  break;
+                case 'tool_result':
+                  setCurrentToolUse(null);
+                  break;
+                case 'complete':
+                  setCurrentToolUse(null);
+                  if (accumulatedText) {
+                    setModificationLog(prev => [...prev, { type: 'assistant', content: accumulatedText }]);
+                  }
+                  // Reload updated MetaFlow YAML from the response
+                  if (event.result?.updated_yaml) {
+                    setYamlContent(event.result.updated_yaml);
+                    try {
+                      const parsed = yaml.load(event.result.updated_yaml);
+                      setMetaflowData(parsed);
+                    } catch (e) {
+                      console.error('Failed to parse updated YAML:', e);
+                    }
+                  }
+                  showStatus('✅ Modification complete!', 'success');
+                  break;
+                case 'error':
+                  showStatus(`❌ Error: ${event.content}`, 'error');
+                  break;
+              }
+            } catch (e) {
+              console.error('Failed to parse event:', e);
+            }
+          }
+        }
+      }
+
+    } catch (error) {
+      console.error('Modification error:', error);
+      showStatus(`❌ Modification failed: ${error.message}`, 'error');
+      setModificationLog(prev => [...prev, { type: 'error', content: error.message }]);
+    } finally {
+      setIsModifying(false);
+    }
+  };
+
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleModify();
+    }
   };
 
   // Helper functions for visualization (similar to Chrome Extension)
@@ -291,6 +426,66 @@ function MetaflowPreviewPage({ onNavigate, showStatus, metaflowId, metaflowYaml 
               </>
             )}
           </button>
+        </div>
+
+        {/* Modification Section */}
+        <div className="modification-section">
+          <div className="modification-header">
+            <h3>🤖 Need changes?</h3>
+            <p>Describe what you'd like to modify in natural language</p>
+          </div>
+
+          {/* Modification Log */}
+          {modificationLog.length > 0 && (
+            <div className="modification-log">
+              {modificationLog.map((msg, index) => (
+                <div key={index} className={`log-message ${msg.type}`}>
+                  <span className="log-avatar">
+                    {msg.type === 'user' ? '👤' : msg.type === 'error' ? '❌' : '🤖'}
+                  </span>
+                  <pre className="log-content">{msg.content}</pre>
+                </div>
+              ))}
+              {currentToolUse && (
+                <div className="tool-indicator">
+                  <div className="tool-spinner"></div>
+                  <span className="tool-name">{currentToolUse.name}</span>
+                  <span className="tool-desc">
+                    {currentToolUse.name === 'Edit' && `Editing ${currentToolUse.input?.file_path || 'file'}...`}
+                    {currentToolUse.name === 'Read' && `Reading ${currentToolUse.input?.file_path || 'file'}...`}
+                    {currentToolUse.name === 'Write' && `Writing to ${currentToolUse.input?.file_path || 'file'}...`}
+                    {!['Edit', 'Read', 'Write'].includes(currentToolUse.name) && `Using ${currentToolUse.name}...`}
+                  </span>
+                </div>
+              )}
+              <div ref={logEndRef} />
+            </div>
+          )}
+
+          {/* Modification Input */}
+          <div className="modification-input">
+            <textarea
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyPress={handleKeyPress}
+              placeholder="e.g., Add a scroll step before data extraction, or change the output format..."
+              disabled={isModifying || isGenerating}
+              rows={2}
+            />
+            <button
+              onClick={handleModify}
+              disabled={!chatInput.trim() || isModifying || isGenerating}
+              className="modify-button"
+            >
+              {isModifying ? (
+                <div className="btn-spinner"></div>
+              ) : (
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+                </svg>
+              )}
+            </button>
+          </div>
         </div>
 
         {/* Help Text */}

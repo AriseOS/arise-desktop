@@ -15,6 +15,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from fastapi.responses import StreamingResponse
 
 # Add project root to sys.path
 project_root = Path(__file__).parent.parent.parent
@@ -1357,7 +1358,6 @@ async def export_collection(collection_name: str, user_id: str = "default_user",
         import aiosqlite
         import csv
         import io
-        from fastapi.responses import StreamingResponse
 
         storage_db_path = Path(config.get("data.databases.storage"))
 
@@ -1419,6 +1419,139 @@ async def export_collection(collection_name: str, user_id: str = "default_user",
         logger.error(f"Failed to export collection: {e}")
         import traceback
         traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Intent Builder Agent APIs (SSE Streaming Proxy)
+# ============================================================================
+
+class StartIntentBuilderRequest(BaseModel):
+    """Request model for starting Intent Builder session"""
+    user_id: str = "default_user"
+    user_query: str
+    task_description: Optional[str] = None
+    session_id: Optional[str] = None  # For resuming from recording
+    current_metaflow_yaml: Optional[str] = None  # Current MetaFlow content for context
+    current_workflow_yaml: Optional[str] = None  # Current Workflow content for context
+    phase: Optional[str] = None  # 'metaflow' or 'workflow'
+
+
+class IntentBuilderChatRequest(BaseModel):
+    """Request model for Intent Builder chat"""
+    message: str
+
+
+@app.post("/api/intent-builder/start")
+async def start_intent_builder_session(request: StartIntentBuilderRequest):
+    """
+    Start a new Intent Builder Agent session via Cloud Backend
+
+    Returns:
+        {"session_id": "..."}
+    """
+    try:
+        logger.info(f"Starting Intent Builder session for user: {request.user_id}")
+
+        # Forward to Cloud Backend
+        result = await cloud_client.start_intent_builder_session(
+            user_id=request.user_id,
+            user_query=request.user_query,
+            task_description=request.task_description,
+            current_metaflow_yaml=request.current_metaflow_yaml,
+            current_workflow_yaml=request.current_workflow_yaml,
+            phase=request.phase
+        )
+
+        logger.info(f"Intent Builder session started: {result['session_id']}")
+        return result
+
+    except Exception as e:
+        logger.error(f"Failed to start Intent Builder session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/intent-builder/{session_id}/stream")
+async def stream_intent_builder_start(session_id: str):
+    """
+    Stream the initial response from Intent Builder Agent (SSE proxy)
+
+    Returns SSE stream forwarded from Cloud Backend
+    """
+    try:
+        logger.info(f"Streaming Intent Builder start: {session_id}")
+
+        async def event_generator():
+            async for event in cloud_client.stream_intent_builder_start(session_id):
+                yield event
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to stream Intent Builder: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/intent-builder/{session_id}/chat")
+async def stream_intent_builder_chat(session_id: str, request: IntentBuilderChatRequest):
+    """
+    Send a message and stream the response (SSE proxy)
+
+    Returns SSE stream forwarded from Cloud Backend
+    """
+    try:
+        logger.info(f"Streaming Intent Builder chat: {session_id}")
+
+        async def event_generator():
+            async for event in cloud_client.stream_intent_builder_chat(
+                session_id, request.message
+            ):
+                yield event
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to stream Intent Builder chat: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/intent-builder/{session_id}/state")
+async def get_intent_builder_state(session_id: str):
+    """
+    Get current state of Intent Builder session
+    """
+    try:
+        return await cloud_client.get_intent_builder_state(session_id)
+    except Exception as e:
+        logger.error(f"Failed to get Intent Builder state: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/intent-builder/{session_id}")
+async def close_intent_builder_session(session_id: str):
+    """
+    Close and cleanup Intent Builder session
+    """
+    try:
+        return await cloud_client.close_intent_builder_session(session_id)
+    except Exception as e:
+        logger.error(f"Failed to close Intent Builder session: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

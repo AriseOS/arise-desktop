@@ -121,9 +121,9 @@ class AgentRouter:
                 return ", ".join(tools)
             else:
                 # 返回默认工具列表
-                return "browser_use, android_use, llm_extract"
+                return "autonomous_browser, android_use, llm_extract"
         except:
-            return "browser_use, android_use, llm_extract"
+            return "autonomous_browser, android_use, llm_extract"
     
     async def route_with_confidence(
         self, 

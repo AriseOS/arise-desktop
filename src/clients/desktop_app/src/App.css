@@ -12,9 +12,8 @@
 /* Page Base Styles */
 .page {
   width: 100%;
-  min-height: 100vh;
+  min-height: 100%;
   padding: 20px;
-  overflow-y: auto;
   box-sizing: border-box;
 }
 
@@ -71,6 +70,7 @@ h3 {
   from {
     opacity: 0;
   }
+
   to {
     opacity: 1;
   }
@@ -195,10 +195,12 @@ h3 {
 }
 
 @keyframes blink {
+
   0%,
   50% {
     opacity: 1;
   }
+
   51%,
   100% {
     opacity: 0.3;
@@ -290,9 +292,12 @@ h3 {
 }
 
 @keyframes float {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: translateY(0px);
   }
+
   50% {
     transform: translateY(-10px);
   }
@@ -896,6 +901,7 @@ h3 {
     transform: translateX(400px);
     opacity: 0;
   }
+
   to {
     transform: translateX(0);
     opacity: 1;
@@ -1591,10 +1597,13 @@ h3 {
 }
 
 @keyframes pulse {
-  0%, 100% {
+
+  0%,
+  100% {
     opacity: 1;
     transform: scale(1);
   }
+
   50% {
     opacity: 0.5;
     transform: scale(1.1);
@@ -1680,14 +1689,12 @@ h3 {
 .app {
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  overflow: hidden;
+  min-height: 100vh;
 }
 
 .app-content {
   flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
+  padding-bottom: 80px;
 }
 
 /* Bottom Navigation Bar */
@@ -1700,6 +1707,11 @@ h3 {
   padding: 8px 0;
   height: 70px;
   flex-shrink: 0;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  z-index: 1000;
 }
 
 .nav-item {
@@ -1815,6 +1827,7 @@ h3 {
   from {
     opacity: 0;
   }
+
   to {
     opacity: 1;
   }
@@ -1835,6 +1848,7 @@ h3 {
     transform: translateY(20px);
     opacity: 0;
   }
+
   to {
     transform: translateY(0);
     opacity: 1;

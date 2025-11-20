@@ -301,18 +301,145 @@ Each Intent generates one MetaFlowNode:
 Intent(
   id="intent_a3f5b2c1",
   description="Navigate to Allegro homepage",
-  operations=[...]
-)
-
-# MetaFlowNode
-- id: node_1
-  intent_id: intent_a3f5b2c1
-  intent_name: "NavigateToAllegro"  # Extracted from description
-  intent_description: "Navigate to Allegro homepage"
   operations: [...]  # Full copy
 ```
 
-## 2. Loop Detection and Generation
+## 2. Inferred Node Generation (Gap Analysis)
+
+### Core Principle
+
+The recorded operations represent what the user demonstrated (the "how").
+The user_query represents what the user wants to achieve (the "what").
+
+**Your task**: Analyze if there's a gap between what was demonstrated and what is expected.
+
+Gap = Expected Result (from user_query) - Demonstrated Capability (from operations)
+
+If a gap exists, you must generate inferred nodes to bridge it.
+
+### Analysis Process
+
+1. **Identify what the recorded operations produce**:
+   - What is the final output? (e.g., raw product data in English)
+   - What form is the data in?
+
+2. **Identify what the user_query expects**:
+   - What does the user want as the end result? (e.g., translated product data)
+   - Is there any transformation implied?
+
+3. **Identify any sub-goals without recorded steps**:
+   - Does the user_query mention a task that has no corresponding operations?
+   - Would this task require exploratory actions?
+
+4. **Generate inferred nodes for each gap**:
+   - Mark them with `(Inferred)` in intent_description
+   - Use appropriate operation types
+
+### Types of Gaps and Inferred Nodes
+
+**A. Data Transformation Gap**
+
+The user_query implies that extracted data needs semantic-level processing that requires language understanding.
+
+Signs of this gap:
+- The recorded operations extract data, but the query expects transformed data
+- The transformation requires understanding meaning (not just reformatting)
+
+Generate a text processing node:
+```yaml
+- id: node_inferred_process
+  intent_id: inferred_text_process
+  intent_name: "ProcessData"
+  intent_description: "Process extracted data as specified (Inferred)"
+  operations:
+    - type: text_process
+      params:
+        source: "{{extracted_data}}"
+  outputs:
+    processed_data: "processed_data"
+```
+
+**B. Unrecorded Sub-goal Gap**
+
+The user_query describes a sub-goal that has no corresponding recorded operations.
+
+Signs of this gap:
+- A task is mentioned but there are no operations showing how to do it
+- The task would require exploring/searching on web pages
+- Cannot be done with fixed URLs or xpaths from the recording
+
+Generate an autonomous task node:
+```yaml
+- id: node_inferred_autonomous
+  intent_id: inferred_autonomous
+  intent_name: "CompleteTask"
+  intent_description: "Achieve the unrecorded goal (Inferred)"
+  operations:
+    - type: autonomous_task
+      params:
+        goal: "description of what to achieve"
+  outputs:
+    result: "task_result"
+```
+
+### Examples
+
+**Example 1: Translation Gap**
+```
+Recorded: navigate → extract product data
+Query: "Collect products and translate to Chinese"
+
+Analysis:
+- Output of operations: English product data
+- Expected result: Chinese product data
+- Gap: Translation needed (semantic transformation)
+- Action: Add text processing node after extraction
+```
+
+**Example 2: Analysis Gap**
+```
+Recorded: navigate → loop → extract prices
+Query: "Get prices and analyze the distribution"
+
+Analysis:
+- Output of operations: List of prices
+- Expected result: Analysis of price patterns
+- Gap: Analysis needed (requires understanding data patterns)
+- Action: Add text processing node for analysis
+```
+
+**Example 3: Unrecorded Task**
+```
+Recorded: navigate to company page → extract info
+Query: "Get company info and find CEO's LinkedIn"
+
+Analysis:
+- Recorded operations only cover company info
+- "Find CEO LinkedIn" has no recorded steps
+- Gap: Exploration task needed
+- Action: Add autonomous task node
+```
+
+**Example 4: No Gap**
+```
+Recorded: navigate → extract → store
+Query: "Collect products and save"
+
+Analysis:
+- Output: Data saved
+- Expected: Data saved
+- Gap: None
+- Action: No inferred nodes needed
+```
+
+### Important Notes
+
+- Only add inferred nodes when there is a genuine gap
+- If the recorded operations already achieve the goal, do not add extra nodes
+- Always mark inferred nodes with `(Inferred)` suffix in intent_description
+- The `(Inferred)` marker tells WorkflowGenerator to use appropriate agent types
+
+## 3. Loop Detection and Generation
 
 **Detection Keywords**: "all", "every", "each", "所有", "全部", "每个", "遍历"
 
@@ -360,34 +487,6 @@ nodes:
         ...
 ```
 
-## 3. Implicit Node Generation Rules
-
-**Trigger Condition**:
-- Loop requirement detected
-- No list extraction node in Intent list
-
-**Generated Content**:
-```yaml
-- id: node_implicit
-  intent_id: implicit_extract_list
-  intent_name: "ExtractProductList"
-  intent_description: "Extract product list (inferred node)"
-  operations:
-    - type: extract
-      target: "product_urls"  # Inferred from semantics
-      element:
-        xpath: "<PLACEHOLDER>"  # Use placeholder
-        tagName: "A"
-      value: []  # List type
-  outputs:
-    product_urls: "product_urls"
-```
-
-**Note**:
-- `xpath` uses placeholder `<PLACEHOLDER>`
-- Filled by subsequent WorkflowGenerator
-- `target` and `outputs` inferred from context
-
 ## 4. Data Flow Connection Rules
 
 **outputs Inference**:
@@ -416,7 +515,7 @@ Extract key verbs and nouns from `intent_description`, generate PascalCase name:
 ## 6. Node Order
 
 Arrange by Intent order, but:
-- Implicit nodes inserted before loop nodes
+- Inferred nodes inserted at appropriate positions (after data extraction for processing, at the end for autonomous tasks)
 - Loop nodes contain child nodes (children)
 """
 
@@ -464,9 +563,9 @@ Arrange by Intent order, but:
             if 'intent_id' in node:
                 intent_id = node['intent_id']
 
-                # Skip implicit nodes (they have placeholders)
-                if intent_id.startswith('implicit_'):
-                    logger.debug(f"Skipping implicit node: {node.get('id', 'unknown')}")
+                # Skip inferred/implicit nodes (they have placeholders, not from graph)
+                if intent_id.startswith('implicit_') or intent_id.startswith('inferred_'):
+                    logger.debug(f"Skipping inferred/implicit node: {node.get('id', 'unknown')}")
                     continue
 
                 # Find corresponding Intent
@@ -490,9 +589,9 @@ Arrange by Intent order, but:
                     if 'intent_id' in child:
                         child_intent_id = child['intent_id']
 
-                        # Skip implicit nodes
-                        if child_intent_id.startswith('implicit_'):
-                            logger.debug(f"Skipping implicit child node: {child.get('id', 'unknown')}")
+                        # Skip inferred/implicit nodes
+                        if child_intent_id.startswith('implicit_') or child_intent_id.startswith('inferred_'):
+                            logger.debug(f"Skipping inferred/implicit child node: {child.get('id', 'unknown')}")
                             continue
 
                         intent = graph.get_intent(child_intent_id)

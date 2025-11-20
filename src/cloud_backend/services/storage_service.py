@@ -73,7 +73,13 @@ class StorageService:
     def get_user_intent_graph_path(self, user_id: str) -> str:
         """Get path to user's Intent Memory Graph file"""
         return str(self._user_path(user_id) / "intent_graph.json")
-    
+
+    def get_user_intent_builder_path(self, user_id: str, session_id: str) -> Path:
+        """Get working directory for Intent Builder Agent session"""
+        path = self._user_path(user_id) / "intent_builder" / session_id
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
     # ===== Recording 管理 =====
     
     def save_recording(

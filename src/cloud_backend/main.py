@@ -19,9 +19,11 @@ import logging
 import sys
 import uuid
 import asyncio
+import json
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 # 添加项目根目录到 Python 路径
 # 当前文件: src/cloud-backend/main.py
@@ -614,7 +616,7 @@ async def download_workflow(workflow_name: str, user_id: str):
 async def report_execution(data: dict):
     """
     上报执行统计
-    
+
     Body:
         {
             "workflow_name": "...",
@@ -625,10 +627,257 @@ async def report_execution(data: dict):
     """
     workflow_name = data.get("workflow_name")
     status = data.get("status")
-    
+
     # TODO: 保存到数据库
-    
+
     logger.info(f"Execution reported: {workflow_name} - {status}")
+    return {"success": True}
+
+
+# ===== Intent Builder Agent API (SSE Streaming) =====
+
+# Store active agent sessions
+_agent_sessions: dict = {}
+
+
+@app.post("/api/intent-builder/start")
+async def start_intent_builder_session(data: dict):
+    """
+    Start a new Intent Builder Agent session
+
+    Body:
+        {
+            "user_id": "user123",
+            "user_query": "Create a workflow to scrape products",
+            "task_description": "Optional additional context",
+            "user_operations_path": "Optional path to operations JSON",
+            "intent_graph_path": "Optional path to intent graph",
+            "current_metaflow_yaml": "Optional current MetaFlow content",
+            "current_workflow_yaml": "Optional current Workflow content",
+            "phase": "metaflow or workflow"
+        }
+
+    Returns:
+        {"session_id": "..."}
+    """
+    user_id = data.get("user_id", "default_user")
+    user_query = data.get("user_query")
+    task_description = data.get("task_description")
+    user_operations_path = data.get("user_operations_path")
+    intent_graph_path = data.get("intent_graph_path")
+    current_metaflow_yaml = data.get("current_metaflow_yaml")
+    current_workflow_yaml = data.get("current_workflow_yaml")
+    phase = data.get("phase", "metaflow")
+
+    if not user_query:
+        raise HTTPException(400, "Missing user_query")
+
+    # Create session ID
+    session_id = f"ib_{uuid.uuid4().hex[:12]}"
+
+    # Get working directory for this session
+    working_dir = storage_service.get_user_intent_builder_path(user_id, session_id)
+
+    # Write current MetaFlow/Workflow to working directory so Agent can read them
+    if current_metaflow_yaml:
+        metaflow_path = working_dir / "metaflow.yaml"
+        with open(metaflow_path, 'w', encoding='utf-8') as f:
+            f.write(current_metaflow_yaml)
+        logger.info(f"Wrote current MetaFlow to {metaflow_path}")
+
+    if current_workflow_yaml:
+        workflow_path = working_dir / "workflow.yaml"
+        with open(workflow_path, 'w', encoding='utf-8') as f:
+            f.write(current_workflow_yaml)
+        logger.info(f"Wrote current Workflow to {workflow_path}")
+
+    # Build enhanced query with context
+    enhanced_query = user_query
+    if current_metaflow_yaml and phase == "metaflow":
+        enhanced_query = f"""You are modifying an existing MetaFlow.
+
+The current MetaFlow is saved at: {working_dir}/metaflow.yaml
+
+User's modification request: {user_query}
+
+Please:
+1. Read the current metaflow.yaml
+2. Understand its structure
+3. Make the requested modifications
+4. Write the updated metaflow.yaml
+5. Explain what you changed"""
+
+    elif current_workflow_yaml and phase == "workflow":
+        enhanced_query = f"""You are modifying an existing Workflow.
+
+The current Workflow is saved at: {working_dir}/workflow.yaml
+
+User's modification request: {user_query}
+
+Please:
+1. Read the current workflow.yaml
+2. Understand its structure
+3. Make the requested modifications
+4. Write the updated workflow.yaml
+5. Explain what you changed"""
+
+    # Create agent instance
+    from src.intent_builder.agent import IntentBuilderAgent
+
+    agent = IntentBuilderAgent(
+        working_dir=str(working_dir),
+        user_operations_path=user_operations_path,
+        intent_graph_path=intent_graph_path
+    )
+
+    # Set agent phase
+    agent.phase = phase
+
+    # Store session
+    _agent_sessions[session_id] = {
+        "agent": agent,
+        "user_id": user_id,
+        "user_query": enhanced_query,
+        "task_description": task_description,
+        "phase": phase,
+        "created_at": asyncio.get_event_loop().time()
+    }
+
+    logger.info(f"Intent Builder session started: {session_id} for user {user_id}, phase: {phase}")
+
+    return {"session_id": session_id}
+
+
+@app.get("/api/intent-builder/{session_id}/stream")
+async def stream_intent_builder_start(session_id: str):
+    """
+    Stream the initial response from Intent Builder Agent (SSE)
+
+    This endpoint starts the agent and streams events as SSE.
+
+    Returns:
+        SSE stream with events:
+        - {"type": "text", "content": "..."}
+        - {"type": "tool_use", "tool_name": "Read", "tool_input": {...}}
+        - {"type": "tool_result", "content": "..."}
+        - {"type": "complete", "result": {...}}
+        - {"type": "error", "content": "..."}
+    """
+    if session_id not in _agent_sessions:
+        raise HTTPException(404, f"Session not found: {session_id}")
+
+    session = _agent_sessions[session_id]
+    agent = session["agent"]
+    user_query = session["user_query"]
+    task_description = session.get("task_description")
+
+    async def event_generator():
+        try:
+            async for event in agent.start_stream(user_query, task_description):
+                # Format as SSE
+                event_data = json.dumps(event.to_dict(), ensure_ascii=False)
+                yield f"data: {event_data}\n\n"
+        except Exception as e:
+            logger.error(f"Error in stream: {e}")
+            error_event = {"type": "error", "content": str(e)}
+            yield f"data: {json.dumps(error_event)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # Disable nginx buffering
+        }
+    )
+
+
+@app.post("/api/intent-builder/{session_id}/chat")
+async def stream_intent_builder_chat(session_id: str, data: dict):
+    """
+    Send a message and stream the response (SSE)
+
+    Body:
+        {"message": "Add a scroll step before extraction"}
+
+    Returns:
+        SSE stream with events
+    """
+    if session_id not in _agent_sessions:
+        raise HTTPException(404, f"Session not found: {session_id}")
+
+    message = data.get("message")
+    if not message:
+        raise HTTPException(400, "Missing message")
+
+    session = _agent_sessions[session_id]
+    agent = session["agent"]
+
+    async def event_generator():
+        try:
+            async for event in agent.chat_stream(message):
+                event_data = json.dumps(event.to_dict(), ensure_ascii=False)
+                yield f"data: {event_data}\n\n"
+        except Exception as e:
+            logger.error(f"Error in chat stream: {e}")
+            error_event = {"type": "error", "content": str(e)}
+            yield f"data: {json.dumps(error_event)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+@app.get("/api/intent-builder/{session_id}/state")
+async def get_intent_builder_state(session_id: str):
+    """
+    Get current state of Intent Builder session
+
+    Returns:
+        {
+            "phase": "metaflow" or "workflow",
+            "metaflow_confirmed": bool,
+            "workflow_confirmed": bool,
+            "metaflow_path": "...",
+            "workflow_path": "...",
+            "message_count": int
+        }
+    """
+    if session_id not in _agent_sessions:
+        raise HTTPException(404, f"Session not found: {session_id}")
+
+    session = _agent_sessions[session_id]
+    agent = session["agent"]
+
+    return agent.get_state()
+
+
+@app.delete("/api/intent-builder/{session_id}")
+async def close_intent_builder_session(session_id: str):
+    """
+    Close and cleanup Intent Builder session
+    """
+    if session_id not in _agent_sessions:
+        raise HTTPException(404, f"Session not found: {session_id}")
+
+    session = _agent_sessions[session_id]
+    agent = session["agent"]
+
+    # Disconnect agent
+    await agent.disconnect()
+
+    # Remove from sessions
+    del _agent_sessions[session_id]
+
+    logger.info(f"Intent Builder session closed: {session_id}")
+
     return {"success": True}
 
 if __name__ == "__main__":

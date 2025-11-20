@@ -131,6 +131,8 @@ class WorkflowYAMLValidator:
             "scraper_agent",
             "storage_agent",
             "code_agent",
+            "text_agent",
+            "autonomous_browser_agent",
             "foreach"
         ]
         agent_type = step.get("agent_type")

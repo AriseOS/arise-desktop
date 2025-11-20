@@ -107,8 +107,9 @@ function CollectionDetailPage({ onNavigate, showStatus, collectionName }) {
     if (value === null || value === undefined) {
       return <span className="null-value">null</span>;
     }
-    if (typeof value === 'string' && value.length > 100) {
-      return <span className="truncated-value" title={value}>{value.substring(0, 100)}...</span>;
+    if (typeof value === 'string') {
+      // Add title attribute for all string values to show full text on hover
+      return <span title={value}>{value}</span>;
     }
     return value;
   };
@@ -190,39 +191,41 @@ function CollectionDetailPage({ onNavigate, showStatus, collectionName }) {
       <div className="page-content">
         {/* Data Preview */}
         <div className="data-section">
-          <div className="section-header">
-            <h2>Data Preview</h2>
-            <p className="section-subtitle">
-              Showing {collection.preview_count} of {collection.total_records} records (most recent)
-            </p>
-          </div>
-
-          {collection.preview_data.length === 0 ? (
-            <div className="empty-data">
-              <p>No data to preview</p>
+          <div className="data-preview-content">
+            <div className="section-header">
+              <h2>Data Preview</h2>
+              <p className="section-subtitle">
+                Showing {collection.preview_count} of {collection.total_records} records (most recent)
+              </p>
             </div>
-          ) : (
-            <div className="data-table-wrapper">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    {collection.all_fields.map((field) => (
-                      <th key={field}>{field}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {collection.preview_data.map((row, idx) => (
-                    <tr key={idx}>
+
+            {collection.preview_data.length === 0 ? (
+              <div className="empty-data">
+                <p>No data to preview</p>
+              </div>
+            ) : (
+              <div className="data-table-wrapper">
+                <table className="data-table">
+                  <thead>
+                    <tr>
                       {collection.all_fields.map((field) => (
-                        <td key={field}>{renderValue(row[field])}</td>
+                        <th key={field}>{field}</th>
                       ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+                  </thead>
+                  <tbody>
+                    {collection.preview_data.map((row, idx) => (
+                      <tr key={idx}>
+                        {collection.all_fields.map((field) => (
+                          <td key={field}>{renderValue(row[field])}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
