@@ -43,8 +43,11 @@ class AnthropicProvider(BaseProvider):
         if not self.model_name:
             self.model_name = "claude-sonnet-4-5-20250929"
         
-        # Initialize client
-        self._client = Anthropic(api_key=self.api_key)
+        # Initialize client with timeout
+        self._client = Anthropic(
+            api_key=self.api_key,
+            timeout=120.0  # 2 minute timeout for API calls
+        )
         logger.info(f"Initialized Anthropic client with model {self.model_name}")
     
     async def generate_response(

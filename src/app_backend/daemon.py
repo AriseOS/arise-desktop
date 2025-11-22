@@ -150,6 +150,7 @@ class GenerateWorkflowRequest(BaseModel):
 
 class GenerateWorkflowResponse(BaseModel):
     """Unified workflow generation response"""
+    workflow_id: Optional[str] = None
     workflow_name: str
     local_path: str
     status: str = "success"
@@ -663,6 +664,16 @@ async def get_recording_detail(session_id: str, user_id: str = "default_user"):
         if detail is None:
             raise HTTPException(status_code=404, detail=f"Recording not found: {session_id}")
 
+        # Try to get metaflow_id from Cloud Backend
+        # The recording_id in Cloud Backend is the same as session_id
+        try:
+            cloud_recording = await cloud_client.get_recording(session_id, user_id)
+            if cloud_recording and cloud_recording.get("metaflow_id"):
+                detail["metaflow_id"] = cloud_recording["metaflow_id"]
+                logger.info(f"Found metaflow_id from Cloud: {detail['metaflow_id']}")
+        except Exception as e:
+            logger.warning(f"Could not fetch metaflow_id from Cloud: {e}")
+
         return detail
     except HTTPException:
         raise
@@ -808,13 +819,14 @@ async def generate_metaflow_from_recording(request: GenerateMetaflowFromRecordin
         else:
             logger.info(f"⚠️  No user_query available")
 
-        # Upload recording to Cloud Backend
+        # Upload recording to Cloud Backend (use session_id as recording_id to keep IDs in sync)
         logger.info("Uploading recording to Cloud Backend...")
         recording_id = await cloud_client.upload_recording(
             operations=operations,
             task_description=task_description,
             user_query=user_query,
-            user_id=request.user_id
+            user_id=request.user_id,
+            recording_id=request.session_id  # Use session_id to keep Cloud and Local IDs in sync
         )
         logger.info(f"Recording uploaded: {recording_id}")
 
@@ -860,9 +872,95 @@ async def generate_metaflow_from_recording(request: GenerateMetaflowFromRecordin
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/metaflows")
+async def list_metaflows(user_id: str = "default_user"):
+    """List all MetaFlows for user (proxy to Cloud Backend)"""
+    try:
+        metaflows = await cloud_client.list_metaflows(user_id)
+        return metaflows
+    except Exception as e:
+        logger.error(f"Failed to list metaflows: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/metaflows/{metaflow_id}")
+async def get_metaflow(metaflow_id: str, user_id: str = "default_user"):
+    """Get MetaFlow detail (proxy to Cloud Backend)"""
+    try:
+        metaflow = await cloud_client.get_metaflow(metaflow_id, user_id)
+        return metaflow
+    except Exception as e:
+        logger.error(f"Failed to get metaflow: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/metaflows/{metaflow_id}")
+async def update_metaflow(metaflow_id: str, data: dict):
+    """Update MetaFlow YAML (proxy to Cloud Backend)"""
+    try:
+        user_id = data.get("user_id", "default_user")
+        metaflow_yaml = data.get("metaflow_yaml")
+
+        result = await cloud_client.update_metaflow(metaflow_id, metaflow_yaml, user_id)
+        return result
+    except Exception as e:
+        logger.error(f"Failed to update metaflow: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============================================================================
 # Workflow APIs
 # ============================================================================
+
+@app.post("/api/workflows/from-metaflow")
+async def generate_workflow_from_metaflow_api(data: dict):
+    """Generate Workflow from MetaFlow (alternative endpoint used by frontend)"""
+    try:
+        metaflow_id = data.get("metaflow_id")
+        user_id = data.get("user_id", "default_user")
+
+        if not metaflow_id:
+            raise HTTPException(status_code=400, detail="Missing metaflow_id")
+
+        logger.info(f"Generating Workflow from MetaFlow: {metaflow_id}")
+
+        # Generate Workflow from MetaFlow via Cloud Backend
+        workflow_result = await cloud_client.generate_workflow(
+            metaflow_id=metaflow_id,
+            user_id=user_id
+        )
+
+        workflow_id = workflow_result.get("workflow_id")
+        workflow_name = workflow_result["workflow_name"]
+        workflow_yaml = workflow_result["workflow_yaml"]
+
+        logger.info(f"Cloud returned: workflow_id={workflow_id}, workflow_name={workflow_name}")
+
+        # Save Workflow locally using workflow_id as directory name
+        save_id = workflow_id or workflow_name
+        storage_manager.save_workflow(
+            user_id,
+            save_id,
+            workflow_yaml
+        )
+
+        logger.info(f"Workflow saved locally with id: {save_id}")
+
+        return {
+            "workflow_id": workflow_id,
+            "workflow_name": workflow_name,
+            "workflow_yaml": workflow_yaml,
+            "status": "success"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to generate workflow: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/api/workflows/generate", response_model=GenerateWorkflowResponse)
 async def generate_workflow(request: GenerateWorkflowRequest):
@@ -886,25 +984,32 @@ async def generate_workflow(request: GenerateWorkflowRequest):
             user_id=request.user_id
         )
 
+        # Debug: log the full response from Cloud Backend
+        logger.info(f"Cloud Backend response keys: {workflow_result.keys()}")
+        logger.info(f"Cloud Backend workflow_id: {workflow_result.get('workflow_id')}")
+        logger.info(f"Cloud Backend workflow_name: {workflow_result.get('workflow_name')}")
+
+        workflow_id = workflow_result.get("workflow_id")
         workflow_name = workflow_result["workflow_name"]
         workflow_yaml = workflow_result["workflow_yaml"]
 
         # Save Workflow locally
         storage_manager.save_workflow(
             request.user_id,
-            workflow_name,
+            workflow_id or workflow_name,
             workflow_yaml
         )
 
         local_path = str(
             storage_manager._user_path(request.user_id) / "workflows" /
-            workflow_name / "workflow.yaml"
+            (workflow_id or workflow_name) / "workflow.yaml"
         )
 
-        logger.info(f"✅ Workflow generated and saved: {workflow_name} at {local_path}")
+        logger.info(f"✅ Workflow generated and saved: {workflow_id} ({workflow_name}) at {local_path}")
 
         return {
             "workflow_name": workflow_name,
+            "workflow_id": workflow_id,
             "local_path": local_path,
             "status": "success"
         }

@@ -293,6 +293,11 @@ steps:
 - They CANNOT be accessed in steps after the foreach step
 - If you need data from the loop, use variable agent to append to a global list
 
+**IMPORTANT - Do NOT set max_iterations**:
+- By default, foreach iterates over ALL items in the source list
+- Do NOT add `max_iterations` field unless the user explicitly requests a limit
+- The system will iterate through every item in the list automatically
+
 ```yaml
 - id: "step-id"
   agent_type: "foreach"
@@ -300,8 +305,7 @@ steps:
   source: "{{list_variable}}"       # List to iterate
   item_var: "current_item"          # Loop-local variable for current item
   index_var: "item_index"           # Loop-local variable for current index
-  max_iterations: 50
-  loop_timeout: 600
+  loop_timeout: 600                 # Timeout in seconds
   steps:
     - id: "substep"
       agent_type: "scraper_agent"
@@ -366,7 +370,8 @@ agent_type: foreach
 source: "{{all_product_urls}}"
 item_var: "current_product"
 index_var: "product_index"
-max_iterations: 50
+loop_timeout: 600
+# Do NOT add max_iterations - iterate all items by default
 ```
 
 ### Data Collection Pattern
@@ -498,11 +503,49 @@ Step 4: scraper_agent - Extract data from page B (current page)
 
 ## 3. Click → Navigate Pattern Handling
 
-**When MetaFlow contains `click → navigate` operations, generate TWO steps:**
+**When MetaFlow contains `click → navigate` operations, choose ONE of these approaches:**
 
-This pattern appears when user clicks a link to navigate to another page. Since the link URL may contain dynamic parts (dates, IDs, etc.), we extract it first then navigate.
+### Approach A: Direct Navigation (Preferred when URL is stable)
 
-### Pattern Recognition
+**Use direct navigation when the href URL is:**
+- A fixed, stable URL path (e.g., `/products`, `/about`, `/category/electronics`)
+- Not containing dynamic date/time components (e.g., `2025/10/29`, `week=44`)
+- Not containing session-specific parameters (e.g., `sessionid=`, `token=`)
+- Not containing user-specific IDs that change per visit
+
+**Pattern Recognition for Direct Navigation:**
+
+```yaml
+# MetaFlow shows:
+operations:
+  - type: click
+    element:
+      href: "https://site.com/products"  # Stable, fixed URL
+  - type: navigate
+    url: "https://site.com/products"
+
+# Generated workflow: Single step
+- id: "navigate-to-products"
+  agent_type: "browser_agent"
+  inputs:
+    target_url: "https://site.com/products"  # Use href directly
+  timeout: 30
+```
+
+**Examples of stable URLs that should use direct navigation:**
+- `https://www.producthunt.com/leaderboard` (fixed path)
+- `https://site.com/categories/electronics` (fixed category)
+- `https://example.com/about` (static page)
+- `https://app.com/settings/profile` (fixed settings path)
+
+### Approach B: Extract then Navigate (When URL may be dynamic)
+
+**Use extraction when the href URL contains:**
+- Date components (e.g., `/2025/10/29`, `/weekly/2025/44`)
+- Query parameters that may change (e.g., `?date=today`, `?ref=header`)
+- IDs that represent current state (e.g., `/post/12345` where ID changes)
+
+**Pattern Recognition for Extraction:**
 
 ```yaml
 # MetaFlow shows:
@@ -511,16 +554,14 @@ operations:
     url: "https://site.com/current-page"  # Browser is on this page
     element:
       xpath: "//a[@class='link']"
-      href: "https://site.com/target-page?date=2025-10-29"  # May be dynamic
+      href: "https://site.com/target-page?date=2025-10-29"  # Contains dynamic date
   - type: navigate
     url: "https://site.com/target-page?date=2025-10-29"
 ```
 
-### Generated Workflow Steps
+**Generated Workflow Steps:**
 
 **Step 1: Extract the link (scraper_agent)**
-
-Extract the URL from the element that was clicked. The browser is already on the page from previous navigation.
 
 ```yaml
 - id: "extract-{target}-link"
@@ -539,8 +580,6 @@ Extract the URL from the element that was clicked. The browser is already on the
 
 **Step 2: Navigate (browser_agent)**
 
-Navigate to the extracted URL.
-
 ```yaml
 - id: "navigate-to-{target}"
   agent_type: "browser_agent"
@@ -548,25 +587,48 @@ Navigate to the extracted URL.
     target_url: "{{{target}_link.target_url}}"  # Reference extracted URL
 ```
 
-### Complete Example
+### Complete Examples
+
+**Example 1: Direct Navigation (stable URL)**
 
 ```yaml
 # MetaFlow input:
-# (Assume browser is already on daily page from previous step)
+node_2:
+  intent_description: "Navigate to the launch archive page"
+  operations:
+    - type: click
+      element:
+        xpath: "//a[contains(text(), 'Launch archive')]"
+        textContent: "Launch archive"
+        href: "https://www.producthunt.com/leaderboard"
+    - type: navigate
+      url: "https://www.producthunt.com/leaderboard"
+
+# Generated workflow: Single step (stable URL)
+- id: "navigate-to-leaderboard"
+  agent_type: "browser_agent"
+  inputs:
+    target_url: "https://www.producthunt.com/leaderboard"
+  timeout: 30
+```
+
+**Example 2: Extract then Navigate (dynamic URL)**
+
+```yaml
+# MetaFlow input:
 node_3:
   intent_description: "Navigate to the current week's leaderboard"
   operations:
     - type: click
-      url: "https://www.producthunt.com/leaderboard/daily/2025/10/29"  # Current page
+      url: "https://www.producthunt.com/leaderboard/daily/2025/10/29"
       element:
         xpath: "//a[contains(text(), 'Weekly')]"
         textContent: "Weekly"
-        href: "https://www.producthunt.com/leaderboard/weekly/2025/44"
+        href: "https://www.producthunt.com/leaderboard/weekly/2025/44"  # Contains week number
     - type: navigate
       url: "https://www.producthunt.com/leaderboard/weekly/2025/44"
 
-# Generated workflow:
-# Step 1: Extract link from current page
+# Generated workflow: Two steps (URL contains dynamic week number)
 - id: "extract-weekly-link"
   agent_type: "scraper_agent"
   inputs:
@@ -581,7 +643,6 @@ node_3:
     extracted_data: "weekly_link"
   timeout: 30
 
-# Step 2: Navigate to extracted URL
 - id: "navigate-to-weekly"
   agent_type: "browser_agent"
   inputs:
@@ -589,12 +650,10 @@ node_3:
   timeout: 30
 ```
 
-**Why this approach:**
-- ✅ scraper_agent extracts from current page (no navigation needed)
-- ✅ Extracts the actual current link from the page (not hardcoded)
-- ✅ Works regardless of date/time changes in URL
-- ✅ Uses xpath from user's actual click operation
-- ✅ Clear separation of concerns
+**Decision Guidelines:**
+- ✅ Use **direct navigation** for stable URLs → simpler, faster, more reliable
+- ✅ Use **extraction** for dynamic URLs → adapts to current page state
+- ⚠️ When in doubt, prefer extraction (safer but slower)
 
 ## Agent Type Selection - Core Principles
 
@@ -715,10 +774,17 @@ operations:
 → **scraper_agent** with:
 - extraction_method: "script" (DEFAULT - prefer script unless explicitly need LLM)
 - data_requirements:
+
+  **CRITICAL - Field Coverage Rule**:
+  - You MUST include ALL extract operations from MetaFlow in output_format
+  - The operations represent what the user actually selected/demonstrated - do NOT skip any
+  - Even if user_query only mentions some fields, you MUST extract ALL fields from operations
+  - Missing fields will cause data loss and incomplete results
+
   user_description: from intent_description + include website name + CRITICAL: include SEMANTIC ANCHORS (e.g., "from container with header 'Top 10'", "from the 'Results' section"). Do not just say "Extract X", say "Extract X from [Semantic Container]"
-  - output_format: combine ALL extract targets from same page into ONE output_format
+  - output_format: combine ALL extract targets from same page into ONE output_format (MUST include every extract operation)
   - sample_data: use extract.value as examples (format depends on extraction type - see below)
-  - xpath_hints: Extract xpath from operation.element.xpath and map to field names
+  - xpath_hints: Extract xpath from operation.element.xpath and map to field names (MUST include xpath for every field)
     ```yaml
     # Extract xpath from MetaFlow operations:
     xpath_hints:
@@ -744,7 +810,7 @@ operations:
   ```
 
 **Important - Multiple Extracts**:
-If multiple extract operations target the same page, combine them into ONE scraper_agent with multiple fields in output_format.
+If multiple extract operations target the same page, combine them into ONE scraper_agent with multiple fields in output_format. **You MUST include ALL extract operations - count the extracts in MetaFlow and ensure the same count appears in output_format.**
 
 ```yaml
 # MetaFlow: Multiple extracts
@@ -979,7 +1045,6 @@ steps:
     source: "{{all_product_urls}}"
     item_var: "current_product"
     index_var: "product_index"
-    max_iterations: 10
     loop_timeout: 900
     steps:
       - id: "navigate-to-product"

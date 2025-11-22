@@ -209,14 +209,14 @@ async def upload_recording(data: dict):
     task_description = data.get("task_description", "")
     user_query = data.get("user_query")
     operations = data.get("operations", [])
+    # Allow client to provide recording_id (e.g., App Backend's session_id)
+    recording_id = data.get("recording_id") or str(uuid.uuid4())
 
     if not user_id:
         raise HTTPException(400, "Missing user_id")
 
     if not operations:
         raise HTTPException(400, "Missing operations")
-
-    recording_id = str(uuid.uuid4())
 
     # Save recording to filesystem (with task_description and user_query)
     file_path = storage_service.save_recording(
@@ -381,7 +381,7 @@ async def generate_metaflow(user_id: str, data: dict):
             user_id=user_id,
             metaflow_id=metaflow_id,
             metaflow_yaml=metaflow_yaml,
-            task_description=task_description
+            user_query=user_query or task_description
         )
 
         logger.info(f"✅ MetaFlow generated and saved: {metaflow_id}")
@@ -389,7 +389,7 @@ async def generate_metaflow(user_id: str, data: dict):
         return {
             "metaflow_id": metaflow_id,
             "metaflow_yaml": metaflow_yaml,
-            "task_description": task_description,
+            "user_query": user_query or task_description,
             "status": "success"
         }
 
@@ -474,15 +474,19 @@ async def generate_metaflow_from_recording(recording_id: str, data: dict):
             user_id=user_id,
             metaflow_id=metaflow_id,
             metaflow_yaml=metaflow_yaml,
-            task_description=task_description
+            user_query=user_query or task_description
         )
 
+        # Establish Recording → MetaFlow relationship
+        storage_service.update_recording_metaflow(user_id, recording_id, metaflow_id)
+
         logger.info(f"✅ MetaFlow generated and saved: {metaflow_id}")
+        logger.info(f"✅ Recording {recording_id} linked to MetaFlow {metaflow_id}")
 
         return {
             "metaflow_id": metaflow_id,
             "metaflow_yaml": metaflow_yaml,
-            "task_description": task_description,
+            "user_query": user_query or task_description,
             "status": "success"
         }
 
@@ -522,12 +526,12 @@ async def generate_workflow_from_metaflow(metaflow_id: str, data: dict):
         raise HTTPException(404, f"MetaFlow not found: {metaflow_id}")
 
     metaflow_yaml = metaflow_data.get("metaflow_yaml")
-    task_description = metaflow_data.get("task_description", "")
+    user_query = metaflow_data.get("user_query", "")
 
     logger.info(f"🚀 [API] Generating Workflow from MetaFlow: {metaflow_id}")
     logger.info(f"👤 User: {user_id}")
-    if task_description:
-        logger.info(f"📝 Task Description: {task_description}")
+    if user_query:
+        logger.info(f"🎯 User Query: {user_query}")
 
     try:
         # Generate Workflow from MetaFlow
@@ -540,17 +544,25 @@ async def generate_workflow_from_metaflow(metaflow_id: str, data: dict):
         workflow_dict = yaml.safe_load(workflow_yaml)
         workflow_name = workflow_dict.get("name", f"workflow_{uuid.uuid4().hex[:12]}")
 
+        # Generate workflow_id
+        workflow_id = f"workflow_{uuid.uuid4().hex[:12]}"
+
         # Save Workflow to server filesystem
         storage_service.save_workflow(
             user_id=user_id,
-            workflow_name=workflow_name,
+            workflow_id=workflow_id,
             workflow_yaml=workflow_yaml,
-            metaflow_yaml=metaflow_yaml
+            workflow_name=workflow_name
         )
 
-        logger.info(f"✅ Workflow generated and saved: {workflow_name}")
+        # Establish MetaFlow → Workflow relationship
+        storage_service.update_metaflow_workflow(user_id, metaflow_id, workflow_id)
+
+        logger.info(f"✅ Workflow generated and saved: {workflow_id} ({workflow_name})")
+        logger.info(f"✅ MetaFlow {metaflow_id} linked to Workflow {workflow_id}")
 
         return {
+            "workflow_id": workflow_id,
             "workflow_name": workflow_name,
             "workflow_yaml": workflow_yaml,
             "status": "success"
@@ -563,52 +575,236 @@ async def generate_workflow_from_metaflow(metaflow_id: str, data: dict):
         raise HTTPException(500, f"Workflow generation failed: {str(e)}")
 
 
+# ===== Recordings API (List/Detail) =====
+
+@app.get("/api/recordings")
+async def list_recordings(user_id: str):
+    """
+    List all recordings for user with metadata
+
+    Query:
+        user_id: User ID
+
+    Returns:
+        [{"recording_id": "...", "task_description": "...", "created_at": "...", "metaflow_id": "..."}, ...]
+    """
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+
+    recordings = storage_service.list_recordings(user_id)
+    return recordings
+
+
+@app.get("/api/recordings/{recording_id}")
+async def get_recording(recording_id: str, user_id: str):
+    """
+    Get recording detail
+
+    Query:
+        user_id: User ID
+
+    Returns:
+        {
+            "recording_id": "...",
+            "task_description": "...",
+            "user_query": "...",
+            "created_at": "...",
+            "operations_count": N,
+            "operations": [...],
+            "metaflow_id": "..."
+        }
+    """
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+
+    recording = storage_service.get_recording(user_id, recording_id)
+    if not recording:
+        raise HTTPException(404, f"Recording not found: {recording_id}")
+
+    return recording
+
+
+# ===== MetaFlows API =====
+
+@app.get("/api/metaflows")
+async def list_metaflows(user_id: str):
+    """
+    List all MetaFlows for user
+
+    Query:
+        user_id: User ID
+
+    Returns:
+        [{"metaflow_id": "...", "user_query": "...", "workflow_id": "...", "created_at": "..."}, ...]
+    """
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+
+    metaflows = storage_service.list_metaflows(user_id)
+    return metaflows
+
+
+@app.get("/api/metaflows/{metaflow_id}")
+async def get_metaflow(metaflow_id: str, user_id: str):
+    """
+    Get MetaFlow detail
+
+    Query:
+        user_id: User ID
+
+    Returns:
+        {
+            "metaflow_id": "...",
+            "metaflow_yaml": "...",
+            "user_query": "...",
+            "workflow_id": "...",
+            "created_at": "...",
+            "updated_at": "..."
+        }
+    """
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+
+    metaflow = storage_service.get_metaflow(user_id, metaflow_id)
+    if not metaflow:
+        raise HTTPException(404, f"MetaFlow not found: {metaflow_id}")
+
+    return metaflow
+
+
+@app.put("/api/metaflows/{metaflow_id}")
+async def update_metaflow(metaflow_id: str, data: dict):
+    """
+    Update MetaFlow YAML content
+
+    Body:
+        {
+            "user_id": "user123",
+            "metaflow_yaml": "..."
+        }
+
+    Returns:
+        {"success": true}
+    """
+    user_id = data.get("user_id")
+    metaflow_yaml = data.get("metaflow_yaml")
+
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+    if not metaflow_yaml:
+        raise HTTPException(400, "Missing metaflow_yaml")
+
+    # Check if MetaFlow exists
+    existing = storage_service.get_metaflow(user_id, metaflow_id)
+    if not existing:
+        raise HTTPException(404, f"MetaFlow not found: {metaflow_id}")
+
+    storage_service.update_metaflow_yaml(user_id, metaflow_id, metaflow_yaml)
+    logger.info(f"MetaFlow updated via API: {metaflow_id}")
+
+    return {"success": True}
+
+
 # ===== Workflows API =====
 
 @app.get("/api/workflows")
 async def list_workflows(user_id: str):
     """
-    列出用户的所有 Workflow
-    
+    List all Workflows for user
+
     Query:
-        user_id: 用户 ID
-    
+        user_id: User ID
+
     Returns:
-        [{"name": "...", "created_at": "...", ...}, ...]
+        [{"workflow_id": "...", "workflow_name": "...", "created_at": "...", "updated_at": "..."}, ...]
     """
     if not user_id:
         raise HTTPException(400, "Missing user_id")
-    
-    # 从文件系统读取
-    workflow_names = storage_service.list_workflows(user_id)
-    
-    # TODO: 从数据库读取元数据
-    # workflows = db.query(Workflow).filter(Workflow.user_id == user_id).all()
-    
-    return [{"name": name} for name in workflow_names]
 
-@app.get("/api/workflows/{workflow_name}/download")
-async def download_workflow(workflow_name: str, user_id: str):
+    workflows = storage_service.list_workflows(user_id)
+    return workflows
+
+
+@app.get("/api/workflows/{workflow_id}")
+async def get_workflow(workflow_id: str, user_id: str):
     """
-    下载 Workflow YAML
-    
+    Get Workflow detail
+
     Query:
-        user_id: 用户 ID
-    
+        user_id: User ID
+
+    Returns:
+        {
+            "workflow_id": "...",
+            "workflow_name": "...",
+            "workflow_yaml": "...",
+            "created_at": "...",
+            "updated_at": "..."
+        }
+    """
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+
+    workflow = storage_service.get_workflow(user_id, workflow_id)
+    if not workflow:
+        raise HTTPException(404, f"Workflow not found: {workflow_id}")
+
+    return workflow
+
+
+@app.put("/api/workflows/{workflow_id}")
+async def update_workflow(workflow_id: str, data: dict):
+    """
+    Update Workflow YAML content
+
+    Body:
+        {
+            "user_id": "user123",
+            "workflow_yaml": "..."
+        }
+
+    Returns:
+        {"success": true}
+    """
+    user_id = data.get("user_id")
+    workflow_yaml = data.get("workflow_yaml")
+
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+    if not workflow_yaml:
+        raise HTTPException(400, "Missing workflow_yaml")
+
+    # Check if Workflow exists
+    existing = storage_service.get_workflow(user_id, workflow_id)
+    if not existing:
+        raise HTTPException(404, f"Workflow not found: {workflow_id}")
+
+    storage_service.update_workflow_yaml(user_id, workflow_id, workflow_yaml)
+    logger.info(f"Workflow updated via API: {workflow_id}")
+
+    return {"success": True}
+
+
+@app.get("/api/workflows/{workflow_id}/download")
+async def download_workflow(workflow_id: str, user_id: str):
+    """
+    Download Workflow YAML
+
+    Query:
+        user_id: User ID
+
     Returns:
         {"yaml": "..."}
     """
     if not user_id:
         raise HTTPException(400, "Missing user_id")
-    
-    # 从服务器文件系统读取
-    workflow_yaml = storage_service.get_workflow(user_id, workflow_name)
-    
-    if not workflow_yaml:
-        raise HTTPException(404, f"Workflow not found: {workflow_name}")
-    
-    logger.info(f"Workflow downloaded: {workflow_name}")
-    return {"yaml": workflow_yaml}
+
+    workflow = storage_service.get_workflow(user_id, workflow_id)
+    if not workflow:
+        raise HTTPException(404, f"Workflow not found: {workflow_id}")
+
+    logger.info(f"Workflow downloaded: {workflow_id}")
+    return {"yaml": workflow.get("workflow_yaml", "")}
 
 # ===== Executions API =====
 

@@ -593,13 +593,13 @@ class AgentWorkflowEngine:
             # 统一变量解析：获取解析后的字典
             resolved_dict = self._resolve_step_variables(step, context)
 
-            max_iterations = step.max_iterations or 10
+            max_iterations = step.max_iterations  # None means no limit
             loop_timeout = step.loop_timeout or 300
             iterations_executed = 0
             sub_step_results = []
             exit_reason = "condition_false"
-            
-            while iterations_executed < max_iterations:
+
+            while max_iterations is None or iterations_executed < max_iterations:
                 # 检查超时
                 if time.time() - step_start_time > loop_timeout:
                     exit_reason = "timeout"
@@ -638,9 +638,9 @@ class AgentWorkflowEngine:
                 if not iteration_success:
                     break
             
-            if iterations_executed >= max_iterations:
+            if max_iterations is not None and iterations_executed >= max_iterations:
                 exit_reason = "max_iterations_reached"
-            
+
             return StepResult(
                 step_id=step.id,
                 success=True,
@@ -681,7 +681,7 @@ class AgentWorkflowEngine:
             else:
                 source_list = source_var
 
-            max_iterations = step.max_iterations or 100
+            max_iterations = step.max_iterations  # None means no limit
             loop_timeout = step.loop_timeout or 600
 
             if not source_list:
@@ -703,7 +703,7 @@ class AgentWorkflowEngine:
             # 遍历列表
             for index, item in enumerate(source_list):
                 # 检查迭代次数限制
-                if iterations_executed >= max_iterations:
+                if max_iterations is not None and iterations_executed >= max_iterations:
                     exit_reason = "max_iterations_reached"
                     logger.warning(f"达到最大迭代次数 {max_iterations}，停止遍历")
                     break

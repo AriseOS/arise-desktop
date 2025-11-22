@@ -62,9 +62,12 @@ function MetaflowPreviewPage({ onNavigate, showStatus, metaflowId, metaflowYaml 
       showStatus('✅ Workflow generated successfully!', 'success');
 
       // Navigate to workflow detail page directly
-      const workflowName = data.workflow_name;
+      // Use workflow_id for navigation (this is the storage ID)
+      console.log('Workflow response:', data);
+      console.log('Using workflow_id:', data.workflow_id, 'workflow_name:', data.workflow_name);
+      const workflowId = data.workflow_id || data.workflow_name;
       setTimeout(() => {
-        onNavigate('workflow-detail', { workflowId: workflowName });
+        onNavigate('workflow-detail', { workflowId: workflowId });
       }, 500);
     } catch (error) {
       console.error('Error generating workflow:', error);

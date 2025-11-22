@@ -30,12 +30,36 @@ class CloudClient:
             timeout=None  # No timeout
         )
 
+    async def get_recording(
+        self,
+        recording_id: str,
+        user_id: str = "default_user"
+    ) -> Dict[str, Any]:
+        """Get recording detail from Cloud Backend
+
+        Args:
+            recording_id: Recording ID
+            user_id: User ID (default: "default_user")
+
+        Returns:
+            Recording dict with metaflow_id if linked
+        """
+        logger.info(f"Fetching recording {recording_id} from Cloud")
+
+        response = await self.client.get(
+            f"/api/recordings/{recording_id}",
+            params={"user_id": user_id}
+        )
+        response.raise_for_status()
+        return response.json()
+
     async def upload_recording(
         self,
         operations: List[Dict[str, Any]],
         task_description: str,
         user_query: Optional[str] = None,
-        user_id: str = "default_user"
+        user_id: str = "default_user",
+        recording_id: Optional[str] = None
     ) -> str:
         """Upload recording data to Cloud Backend
 
@@ -44,6 +68,7 @@ class CloudClient:
             task_description: User's description of what they did
             user_query: User's description of what they want to do (for MetaFlow generation)
             user_id: User ID (default: "default_user")
+            recording_id: Optional recording ID (use App Backend's session_id to keep IDs in sync)
 
         Returns:
             recording_id: Cloud Backend recording ID
@@ -54,7 +79,8 @@ class CloudClient:
                 "user_id": user_id,
                 "task_description": task_description,
                 "user_query": user_query,
-                "operations": operations
+                "operations": operations,
+                "recording_id": recording_id
             }
         )
         response.raise_for_status()
@@ -168,6 +194,82 @@ class CloudClient:
 
         logger.info(f"Workflow generated: {result.get('workflow_name')}")
         return result
+
+    async def list_metaflows(
+        self,
+        user_id: str = "default_user"
+    ) -> List[Dict[str, Any]]:
+        """List all MetaFlows for user from Cloud Backend
+
+        Args:
+            user_id: User ID (default: "default_user")
+
+        Returns:
+            List of MetaFlow dicts
+        """
+        logger.info(f"Fetching MetaFlow list from Cloud for user: {user_id}")
+
+        try:
+            response = await self.client.get(
+                "/api/metaflows",
+                params={"user_id": user_id}
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.warning(f"Failed to fetch metaflows from Cloud: {e}")
+            return []
+
+    async def get_metaflow(
+        self,
+        metaflow_id: str,
+        user_id: str = "default_user"
+    ) -> Dict[str, Any]:
+        """Get MetaFlow detail from Cloud Backend
+
+        Args:
+            metaflow_id: MetaFlow ID
+            user_id: User ID (default: "default_user")
+
+        Returns:
+            MetaFlow dict with metaflow_yaml, user_query, etc.
+        """
+        logger.info(f"Fetching MetaFlow {metaflow_id} from Cloud")
+
+        response = await self.client.get(
+            f"/api/metaflows/{metaflow_id}",
+            params={"user_id": user_id}
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def update_metaflow(
+        self,
+        metaflow_id: str,
+        metaflow_yaml: str,
+        user_id: str = "default_user"
+    ) -> Dict[str, Any]:
+        """Update MetaFlow YAML content
+
+        Args:
+            metaflow_id: MetaFlow ID
+            metaflow_yaml: New YAML content
+            user_id: User ID (default: "default_user")
+
+        Returns:
+            {"success": True}
+        """
+        logger.info(f"Updating MetaFlow {metaflow_id}")
+
+        response = await self.client.put(
+            f"/api/metaflows/{metaflow_id}",
+            json={
+                "user_id": user_id,
+                "metaflow_yaml": metaflow_yaml
+            }
+        )
+        response.raise_for_status()
+        return response.json()
 
     async def list_workflows(
         self,

@@ -261,7 +261,7 @@ class AgentWorkflowStep(BaseModel):
     then: Optional[List['AgentWorkflowStep']] = Field(default=None, description="if条件为真时执行的步骤")
     else_: Optional[List['AgentWorkflowStep']] = Field(default=None, alias="else", description="if条件为假时执行的步骤")
     steps: Optional[List['AgentWorkflowStep']] = Field(default=None, description="while/foreach循环体步骤")
-    max_iterations: Optional[int] = Field(default=10, description="while/foreach最大循环次数")
+    max_iterations: Optional[int] = Field(default=None, description="while/foreach最大循环次数，None表示无限制")
     loop_timeout: Optional[int] = Field(default=300, description="while/foreach循环超时时间")
 
     # foreach 特有配置

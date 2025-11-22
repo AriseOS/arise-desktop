@@ -752,3 +752,50 @@
 .btn-cancel-mini:hover {
   background: rgba(239, 68, 68, 0.2);
 }
+
+/* ===================================
+   LINKED ENTITY SECTION
+   =================================== */
+
+.linked-entity-section {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid #333;
+}
+
+.linked-entity-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.linked-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #888;
+}
+
+.linked-value-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(79, 70, 229, 0.1);
+  border: 1px solid rgba(79, 70, 229, 0.3);
+  border-radius: 6px;
+  color: #818cf8;
+  font-size: 13px;
+  font-family: monospace;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.linked-value-button:hover {
+  background: rgba(79, 70, 229, 0.2);
+  border-color: rgba(79, 70, 229, 0.5);
+}
+
+.linked-value-button svg {
+  width: 14px;
+  height: 14px;
+}

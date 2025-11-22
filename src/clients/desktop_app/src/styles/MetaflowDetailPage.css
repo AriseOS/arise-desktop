@@ -1,0 +1,452 @@
+.metaflow-detail-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #0a0a0f;
+  color: #e5e7eb;
+}
+
+/* Header */
+.metaflow-detail-page .page-header {
+  display: flex;
+  align-items: center;
+  padding: 16px 20px;
+  background: rgba(20, 20, 30, 0.9);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.metaflow-detail-page .back-button {
+  background: none;
+  border: none;
+  padding: 8px;
+  cursor: pointer;
+  color: #9ca3af;
+  transition: color 0.2s;
+}
+
+.metaflow-detail-page .back-button:hover {
+  color: #fff;
+}
+
+.metaflow-detail-page .back-button svg {
+  width: 24px;
+  height: 24px;
+}
+
+.metaflow-detail-page .page-title {
+  flex: 1;
+  margin: 0 16px;
+  font-size: 18px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.metaflow-detail-page .header-spacer {
+  width: 40px;
+}
+
+/* Loading & Error States */
+.metaflow-detail-page .loading-container,
+.metaflow-detail-page .error-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  text-align: center;
+}
+
+.metaflow-detail-page .spinner-large {
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(99, 102, 241, 0.3);
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.metaflow-detail-page .error-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.metaflow-detail-page .btn-back {
+  margin-top: 16px;
+  padding: 10px 20px;
+  background: #6366f1;
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.metaflow-detail-page .btn-back:hover {
+  background: #4f46e5;
+}
+
+/* Content */
+.metaflow-detail-page .detail-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+/* Info Section */
+.metaflow-detail-page .info-section {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.metaflow-detail-page .section-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 16px;
+  color: #f3f4f6;
+}
+
+.metaflow-detail-page .metadata-section {
+  margin-bottom: 16px;
+}
+
+.metaflow-detail-page .metadata-item {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 12px;
+}
+
+.metaflow-detail-page .metadata-label {
+  font-size: 12px;
+  color: #9ca3af;
+  margin-bottom: 4px;
+}
+
+.metaflow-detail-page .metadata-value {
+  font-size: 14px;
+  color: #e5e7eb;
+}
+
+.metaflow-detail-page .metadata-value.code {
+  font-family: monospace;
+  font-size: 12px;
+  color: #a5b4fc;
+}
+
+.metaflow-detail-page .info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.metaflow-detail-page .info-item {
+  display: flex;
+  flex-direction: column;
+}
+
+.metaflow-detail-page .info-label {
+  font-size: 12px;
+  color: #6b7280;
+  margin-bottom: 4px;
+}
+
+.metaflow-detail-page .info-value {
+  font-size: 14px;
+  color: #e5e7eb;
+}
+
+.metaflow-detail-page .info-value.link {
+  color: #818cf8;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.metaflow-detail-page .info-value.link:hover {
+  color: #a5b4fc;
+}
+
+.metaflow-detail-page .info-value.code {
+  font-family: monospace;
+  font-size: 11px;
+  color: #a5b4fc;
+}
+
+/* Tab Section */
+.metaflow-detail-page .tab-section {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+
+.metaflow-detail-page .tab-header {
+  display: flex;
+  background: rgba(0, 0, 0, 0.3);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.metaflow-detail-page .tab-button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: none;
+  border: none;
+  color: #6b7280;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.metaflow-detail-page .tab-button:hover {
+  color: #9ca3af;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.metaflow-detail-page .tab-button.active {
+  color: #818cf8;
+  background: rgba(129, 140, 248, 0.1);
+  border-bottom: 2px solid #818cf8;
+}
+
+.metaflow-detail-page .tab-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.metaflow-detail-page .tab-content {
+  padding: 20px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+/* Preview Section */
+.metaflow-detail-page .preview-section {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.metaflow-detail-page .task-overview {
+  padding: 16px;
+  background: rgba(99, 102, 241, 0.1);
+  border-radius: 8px;
+  border-left: 3px solid #6366f1;
+}
+
+.metaflow-detail-page .task-overview h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: #a5b4fc;
+}
+
+.metaflow-detail-page .task-description {
+  margin: 0 0 12px;
+  font-size: 14px;
+  color: #e5e7eb;
+  line-height: 1.5;
+}
+
+.metaflow-detail-page .task-context {
+  margin: 0;
+  font-size: 13px;
+  color: #9ca3af;
+  line-height: 1.5;
+}
+
+/* Steps Section */
+.metaflow-detail-page .steps-section h3 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  color: #f3f4f6;
+}
+
+.metaflow-detail-page .steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.metaflow-detail-page .step-item {
+  display: flex;
+  gap: 12px;
+}
+
+.metaflow-detail-page .step-marker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.metaflow-detail-page .step-number {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(99, 102, 241, 0.2);
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 600;
+  color: #a5b4fc;
+}
+
+.metaflow-detail-page .step-content {
+  flex: 1;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.metaflow-detail-page .step-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.metaflow-detail-page .step-action {
+  font-size: 13px;
+  font-weight: 600;
+  color: #818cf8;
+  text-transform: uppercase;
+}
+
+.metaflow-detail-page .step-id {
+  font-size: 11px;
+  color: #6b7280;
+  font-family: monospace;
+}
+
+.metaflow-detail-page .step-description {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #d1d5db;
+}
+
+.metaflow-detail-page .step-params {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.metaflow-detail-page .param-item {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.metaflow-detail-page .param-key {
+  color: #9ca3af;
+}
+
+.metaflow-detail-page .param-value {
+  color: #e5e7eb;
+  word-break: break-all;
+}
+
+/* YAML Section */
+.metaflow-detail-page .yaml-section {
+  height: 100%;
+}
+
+.metaflow-detail-page .yaml-container {
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.metaflow-detail-page .yaml-content {
+  margin: 0;
+  padding: 16px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #e5e7eb;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* Action Section */
+.metaflow-detail-page .action-section {
+  text-align: center;
+  padding: 20px 0;
+}
+
+.metaflow-detail-page .action-buttons {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.metaflow-detail-page .btn-primary,
+.metaflow-detail-page .btn-secondary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.metaflow-detail-page .btn-primary {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  border: none;
+  color: #fff;
+}
+
+.metaflow-detail-page .btn-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+}
+
+.metaflow-detail-page .btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.metaflow-detail-page .btn-secondary {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #e5e7eb;
+}
+
+.metaflow-detail-page .btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.metaflow-detail-page .btn-primary svg,
+.metaflow-detail-page .btn-secondary svg {
+  width: 18px;
+  height: 18px;
+}
+
+.metaflow-detail-page .action-hint {
+  margin: 0;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+/* Empty Section */
+.metaflow-detail-page .empty-section {
+  text-align: center;
+  padding: 40px;
+  color: #6b7280;
+}

@@ -432,6 +432,26 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
               <span className="info-value code">{sessionId}</span>
             </div>
           </div>
+
+          {/* Linked MetaFlow */}
+          {recording.metaflow_id && (
+            <div className="linked-entity-section">
+              <div className="linked-entity-item">
+                <span className="linked-label">Linked MetaFlow:</span>
+                <button
+                  className="linked-value-button"
+                  onClick={() => onNavigate('metaflow-detail', { metaflowId: recording.metaflow_id })}
+                >
+                  {recording.metaflow_id}
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                    <polyline points="15 3 21 3 21 9" />
+                    <line x1="10" y1="14" x2="21" y2="3" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Tab Section */}
