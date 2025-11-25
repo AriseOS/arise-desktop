@@ -109,12 +109,15 @@ class WorkflowService:
             viz_nodes = []
             viz_edges = []
 
+            # Extract metadata
+            metadata = workflow_data.get('metadata', {})
+
             # Add start node
             viz_nodes.append({
                 'id': 'step-start',
                 'type': 'start',
                 'name': 'Start',
-                'description': workflow_data.get('description', ''),
+                'description': metadata.get('description', ''),
                 'agent_type': 'start'
             })
 
@@ -158,8 +161,8 @@ class WorkflowService:
             })
 
             return {
-                'name': workflow_data.get('name', 'Unnamed Workflow'),
-                'description': workflow_data.get('description', ''),
+                'name': metadata.get('name', 'Unnamed Workflow'),
+                'description': metadata.get('description', ''),
                 'steps': viz_nodes,
                 'connections': viz_edges
             }

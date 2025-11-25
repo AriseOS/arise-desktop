@@ -1136,9 +1136,10 @@ async def get_workflow_detail(workflow_id: str, user_id: str = "default_user"):
         if not isinstance(workflow_data, dict):
             raise HTTPException(status_code=500, detail="Invalid workflow format")
 
-        # Extract workflow metadata
-        name = workflow_data.get('name', workflow_id)
-        description = workflow_data.get('description', '')
+        # Extract workflow metadata from metadata section
+        metadata = workflow_data.get('metadata', {})
+        name = metadata.get('name', workflow_id)
+        description = metadata.get('description', '')
 
         # Extract steps
         steps_list = []
