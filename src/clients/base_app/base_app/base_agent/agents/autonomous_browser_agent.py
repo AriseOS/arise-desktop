@@ -1,22 +1,23 @@
 """
 Autonomous Browser Agent - 自主浏览器 Agent
 """
+import logging
 from typing import Any, Dict
 
 from .base_agent import BaseStepAgent, AgentMetadata
-from .tool_agent import ToolAgent
 from ..core.schemas import AgentContext, AgentInput, AgentOutput
-from ..tools.browser_use.autonomous_browser import AutonomousBrowserTool
+
+logger = logging.getLogger(__name__)
 
 
 class AutonomousBrowserAgent(BaseStepAgent):
     """
     自主浏览器 Agent
-    
+
     这是一个专门用于自主浏览器操作的 Agent，它实际上是对 ToolAgent + AutonomousBrowserTool 的封装。
     在 Workflow 中使用 autonomous_browser_agent 类型时，会调用此 Agent。
     """
-    
+
     def __init__(self):
         metadata = AgentMetadata(
             name="autonomous_browser_agent",
@@ -26,30 +27,49 @@ class AutonomousBrowserAgent(BaseStepAgent):
         )
         super().__init__(metadata)
         self.tool = None
+        self.browser_session = None
+        self.llm = None
+        self.llm_model = None
         
     async def initialize(self, context: AgentContext) -> bool:
         """初始化 Agent"""
         try:
-            # 创建 AutonomousBrowserTool 实例
-            # 注意：这里我们需要从 context 获取配置，或者使用默认配置
-            # 暂时使用默认配置，后续可以从 context.agent_config 获取
-            self.tool = AutonomousBrowserTool()
-            
-            # 初始化工具 (主要是 LLM)
-            # 如果 context 中有 provider，尝试复用配置
+            from browser_use.llm import ChatAnthropic
+
+            # Get shared browser session from context
+            session_info = await context.get_browser_session()
+            self.browser_session = session_info.session
+            logger.info(f"AutonomousBrowserAgent using shared browser session")
+
+            # Get LLM config from context.agent_instance.provider
+            llm_api_key = None
+            self.llm_model = "claude-sonnet-4-5-20250929"
+
             if context.agent_instance and hasattr(context.agent_instance, 'provider'):
-                # TODO: 传递 LLM 配置给 Tool
-                pass
-                
-            # 调用工具的内部初始化
-            # AutonomousBrowserTool._initialize() 是内部方法，但在 BaseTool 中通常不需要显式调用，
-            # 除非有特定的初始化逻辑。BrowserTool 在 execute 时会检查 LLM 是否初始化。
-            
+                provider = context.agent_instance.provider
+                if hasattr(provider, 'api_key') and provider.api_key:
+                    llm_api_key = provider.api_key
+                    logger.info(f"AutonomousBrowserAgent got API key from provider")
+                if hasattr(provider, 'model_name') and provider.model_name:
+                    self.llm_model = provider.model_name
+                    logger.info(f"AutonomousBrowserAgent using model: {self.llm_model}")
+            else:
+                logger.warning("AutonomousBrowserAgent: No provider in context, will use env var ANTHROPIC_API_KEY")
+
+            # Initialize LLM
+            if llm_api_key:
+                self.llm = ChatAnthropic(model=self.llm_model, api_key=llm_api_key)
+            else:
+                self.llm = ChatAnthropic(model=self.llm_model)
+
+            logger.info(f"AutonomousBrowserAgent initialized with model: {self.llm_model}")
+
             self.is_initialized = True
             return True
         except Exception as e:
-            if context.logger:
-                context.logger.error(f"AutonomousBrowserAgent 初始化失败: {str(e)}")
+            import traceback
+            logger.error(f"AutonomousBrowserAgent initialization failed: {str(e)}")
+            logger.error(traceback.format_exc())
             return False
             
     async def validate_input(self, input_data: Any) -> bool:
@@ -61,51 +81,72 @@ class AutonomousBrowserAgent(BaseStepAgent):
     async def execute(self, input_data: Any, context: AgentContext) -> AgentOutput:
         """执行任务"""
         try:
+            from browser_use import Agent
+
             # 解析输入
             task = ""
             max_actions = 20
-            
+
             if isinstance(input_data, AgentInput):
-                task = input_data.instruction
+                # Get task from data field (resolved_input from workflow)
                 if input_data.data:
+                    task = input_data.data.get("task") or input_data.data.get("instruction", "")
                     max_actions = input_data.data.get("max_actions", 20)
+                # Fallback to instruction field
+                if not task:
+                    task = input_data.instruction
             elif isinstance(input_data, dict):
                 task = input_data.get("task") or input_data.get("instruction", "")
                 max_actions = input_data.get("max_actions", 20)
-                
+
+            logger.info(f"AutonomousBrowserAgent executing task: {task[:100] if task else 'EMPTY'}...")
+
             if not task:
+                logger.error("Missing task description")
                 return AgentOutput(
                     success=False,
-                    message="缺少任务描述 (task 或 instruction)",
+                    message="Missing task description (task or instruction)",
                     data={}
                 )
-                
-            # 调用工具
-            # 构造参数
-            params = {
-                "task": task,
-                "max_actions": max_actions
-            }
-            
-            # 执行
-            result = await self.tool.execute("execute", params)
-            
-            return AgentOutput(
-                success=result.success,
-                data=result.data,
-                message=result.message
+
+            logger.info(f"AutonomousBrowserAgent calling browser-use Agent with max_actions={max_actions}")
+
+            # Create browser-use Agent with shared browser session
+            agent = Agent(
+                task=task,
+                llm=self.llm,
+                browser_session=self.browser_session,
+                max_actions=max_actions,
+                use_vision=True
             )
-            
+
+            # Execute task
+            logger.info("Starting browser-use Agent execution...")
+            result = await agent.run()
+            logger.info(f"browser-use Agent execution completed, result length: {len(str(result))}")
+
+            return AgentOutput(
+                success=True,
+                data={
+                    "result": str(result),
+                    "task": task,
+                    "max_actions": max_actions
+                },
+                message=f"Task completed: {task[:100]}"
+            )
+
         except Exception as e:
-            if context.logger:
-                context.logger.error(f"AutonomousBrowserAgent 执行失败: {str(e)}")
+            import traceback
+            error_msg = f"AutonomousBrowserAgent execution failed: {str(e)}"
+            logger.error(error_msg)
+            logger.error(traceback.format_exc())
             return AgentOutput(
                 success=False,
-                message=f"执行失败: {str(e)}",
+                message=error_msg,
                 data={}
             )
             
     async def cleanup(self, context: AgentContext):
         """清理资源"""
-        if self.tool:
-            await self.tool._cleanup()
+        # Browser session is shared and managed by context, no need to cleanup here
+        pass

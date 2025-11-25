@@ -1,15 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react'
-import ReactFlow, {
-  Background,
-  Controls,
-  MiniMap,
-  useNodesState,
-  useEdgesState,
-  MarkerType,
-  ReactFlowProvider,
-} from 'reactflow'
+import React, { useState, useEffect, useRef } from 'react'
 import 'reactflow/dist/style.css'
 import CustomNode from '../components/CustomNode'
+import yaml from 'js-yaml'
+
+const API_BASE = "http://127.0.0.1:8765"
+const DEFAULT_USER = "default_user"
 
 const nodeTypes = {
   custom: CustomNode,
@@ -20,18 +15,31 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [isRunning, setIsRunning] = useState(false)
-  const [activeTab, setActiveTab] = useState('visual') // 'visual' or 'yaml'
+  const [activeTab, setActiveTab] = useState('visual') // 'visual', 'yaml', or 'chat'
+
+  // Chat/Modification state
+  const [chatInput, setChatInput] = useState('')
+  const [isModifying, setIsModifying] = useState(false)
+  const [sessionId, setSessionId] = useState(null)
+  const [modificationLog, setModificationLog] = useState([])
+  const [currentToolUse, setCurrentToolUse] = useState(null)
+  const logEndRef = useRef(null)
 
   useEffect(() => {
     loadWorkflowData()
   }, [workflowId])
+
+  // Auto-scroll modification log
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [modificationLog, currentToolUse])
 
   const loadWorkflowData = async () => {
     setLoading(true)
     setError(null)
 
     try {
-      const response = await fetch(`http://127.0.0.1:8765/api/workflows/${workflowId}/detail?user_id=default_user`, {
+      const response = await fetch(`${API_BASE}/api/workflows/${workflowId}/detail?user_id=${DEFAULT_USER}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json'
@@ -44,8 +52,6 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
 
       const data = await response.json()
       console.log('Workflow data received:', data)
-      console.log('Steps:', data.steps)
-      console.log('Connections:', data.connections)
       setWorkflowData(data)
     } catch (err) {
       console.error('Load workflow error:', err)
@@ -63,15 +69,14 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
     try {
       showStatus('🚀 启动 Workflow 执行...', 'info')
 
-      // Execute workflow using daemon API
-      const response = await fetch(`http://127.0.0.1:8765/api/workflow/execute`, {
+      const response = await fetch(`${API_BASE}/api/workflow/execute`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           workflow_name: workflowId,
-          user_id: 'default_user'
+          user_id: DEFAULT_USER
         })
       })
 
@@ -80,20 +85,19 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
       }
 
       const result = await response.json()
-      console.log('Workflow execution started:', result)
-
-      // Poll task status until completion
       const taskId = result.task_id
-      let completed = false
-      let pollCount = 0
-      const maxPolls = 60 // 最多轮询60次（5分钟）
 
       showStatus(`🔄 执行中... (Task ID: ${taskId})`, 'info')
 
-      while (!completed && pollCount < maxPolls) {
-        await new Promise(resolve => setTimeout(resolve, 5000)) // 等待5秒
+      // Poll task status
+      let completed = false
+      let pollCount = 0
+      const maxPolls = 60
 
-        const statusResponse = await fetch(`http://127.0.0.1:8765/api/workflow/status/${taskId}`, {
+      while (!completed && pollCount < maxPolls) {
+        await new Promise(resolve => setTimeout(resolve, 5000))
+
+        const statusResponse = await fetch(`${API_BASE}/api/workflow/status/${taskId}`, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json'
@@ -102,7 +106,6 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
 
         if (statusResponse.ok) {
           const statusData = await statusResponse.json()
-          console.log('Task status:', statusData.status, `(${statusData.progress}%)`)
 
           showStatus(`🔄 执行中... ${statusData.progress}% (${statusData.current_step}/${statusData.total_steps})`, 'info')
 
@@ -111,7 +114,6 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
 
             if (statusData.status === 'completed') {
               showStatus('✅ 执行成功！', 'success')
-              // Navigate to result page
               setTimeout(() => {
                 onNavigate('workflow-result', {
                   workflowName: workflowId,
@@ -139,6 +141,122 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
     }
   }
 
+  // Handle modification request
+  const handleModify = async () => {
+    if (!chatInput.trim() || isModifying) return
+
+    const userMessage = chatInput.trim()
+    setChatInput('')
+    setIsModifying(true)
+    setModificationLog(prev => [...prev, { type: 'user', content: userMessage }])
+
+    try {
+      // Create session if not exists
+      let sid = sessionId
+      if (!sid) {
+        const response = await fetch(`${API_BASE}/api/intent-builder/start`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_id: DEFAULT_USER,
+            user_query: `Modify the following Workflow based on this request: ${userMessage}`,
+            task_description: `Current Workflow ID: ${workflowId}`,
+            current_workflow_yaml: workflowData.workflow_yaml,
+            phase: 'workflow'
+          })
+        })
+
+        if (!response.ok) throw new Error(`Failed to start session: ${response.statusText}`)
+
+        const result = await response.json()
+        sid = result.session_id
+        setSessionId(sid)
+      }
+
+      // Stream the modification response
+      const response = await fetch(`${API_BASE}/api/intent-builder/${sid}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: userMessage })
+      })
+
+      if (!response.ok) throw new Error(`Request failed: ${response.statusText}`)
+
+      // Read SSE stream
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let accumulatedText = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const event = JSON.parse(line.slice(6))
+
+              switch (event.type) {
+                case 'text':
+                  accumulatedText += event.content
+                  break
+                case 'tool_use':
+                  setCurrentToolUse({ name: event.tool_name, input: event.tool_input })
+                  break
+                case 'tool_result':
+                  setCurrentToolUse(null)
+                  break
+                case 'complete':
+                  setCurrentToolUse(null)
+                  if (accumulatedText) {
+                    setModificationLog(prev => [...prev, { type: 'assistant', content: accumulatedText }])
+                  }
+                  // Reload updated Workflow YAML
+                  if (event.result?.updated_yaml) {
+                    const updatedData = { ...workflowData, workflow_yaml: event.result.updated_yaml }
+                    try {
+                      const parsed = yaml.load(event.result.updated_yaml)
+                      updatedData.steps = parsed.steps || []
+                      updatedData.connections = parsed.connections || []
+                    } catch (e) {
+                      console.error('Failed to parse updated YAML:', e)
+                    }
+                    setWorkflowData(updatedData)
+                  }
+                  showStatus('✅ Modification complete!', 'success')
+                  break
+                case 'error':
+                  showStatus(`❌ Error: ${event.content}`, 'error')
+                  break
+              }
+            } catch (e) {
+              console.error('Failed to parse event:', e)
+            }
+          }
+        }
+      }
+
+    } catch (error) {
+      console.error('Modification error:', error)
+      showStatus(`❌ Modification failed: ${error.message}`, 'error')
+      setModificationLog(prev => [...prev, { type: 'error', content: error.message }])
+    } finally {
+      setIsModifying(false)
+    }
+  }
+
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      handleModify()
+    }
+  }
+
   return (
     <div className="page workflow-detail-page">
       <div className="page-header">
@@ -147,7 +265,7 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
           onClick={() => onNavigate('my-workflows')}
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="#667eea" strokeWidth="2">
-            <path d="M19 12H5M12 19l-7-7 7-7"/>
+            <path d="M19 12H5M12 19l-7-7 7-7" />
           </svg>
         </button>
         <div className="page-title">Workflow 详情</div>
@@ -197,10 +315,10 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
                 onClick={() => setActiveTab('visual')}
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <rect x="3" y="3" width="7" height="7"/>
-                  <rect x="14" y="3" width="7" height="7"/>
-                  <rect x="14" y="14" width="7" height="7"/>
-                  <rect x="3" y="14" width="7" height="7"/>
+                  <rect x="3" y="3" width="7" height="7" />
+                  <rect x="14" y="3" width="7" height="7" />
+                  <rect x="14" y="14" width="7" height="7" />
+                  <rect x="3" y="14" width="7" height="7" />
                 </svg>
                 <span>Visual</span>
               </button>
@@ -209,22 +327,90 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
                 onClick={() => setActiveTab('yaml')}
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <polyline points="16 18 22 12 16 6"/>
-                  <polyline points="8 6 2 12 8 18"/>
+                  <polyline points="16 18 22 12 16 6" />
+                  <polyline points="8 6 2 12 8 18" />
                 </svg>
                 <span>YAML</span>
+              </button>
+              <button
+                className={`workflow-tab-button ${activeTab === 'chat' ? 'active' : ''}`}
+                onClick={() => setActiveTab('chat')}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+                <span>AI 修改</span>
               </button>
             </div>
 
             {/* Tabs Content */}
             <div className="workflow-tabs-content">
               {activeTab === 'visual' ? (
-                <WorkflowVisualization workflowData={workflowData} />
-              ) : (
+                <FlowVisualization data={workflowData} type="workflow" />
+              ) : activeTab === 'yaml' ? (
                 <div className="workflow-yaml-container">
                   <pre className="workflow-yaml-content">
                     <code>{workflowData.workflow_yaml || 'No YAML data available'}</code>
                   </pre>
+                </div>
+              ) : (
+                <div className="workflow-chat-container">
+                  <div className="chat-instructions">
+                    <h3>🤖 AI 助手</h3>
+                    <p>使用自然语言描述你想要的修改，AI 会帮你调整 workflow 配置</p>
+                  </div>
+
+                  {/* Modification Log */}
+                  {modificationLog.length > 0 && (
+                    <div className="modification-log">
+                      {modificationLog.map((msg, index) => (
+                        <div key={index} className={`log-message ${msg.type}`}>
+                          <span className="log-avatar">
+                            {msg.type === 'user' ? '👤' : msg.type === 'error' ? '❌' : '🤖'}
+                          </span>
+                          <pre className="log-content">{msg.content}</pre>
+                        </div>
+                      ))}
+                      {currentToolUse && (
+                        <div className="tool-indicator">
+                          <div className="tool-spinner"></div>
+                          <span className="tool-name">{currentToolUse.name}</span>
+                          <span className="tool-desc">
+                            {currentToolUse.name === 'Edit' && `Editing ${currentToolUse.input?.file_path || 'file'}...`}
+                            {currentToolUse.name === 'Read' && `Reading ${currentToolUse.input?.file_path || 'file'}...`}
+                            {currentToolUse.name === 'Write' && `Writing to ${currentToolUse.input?.file_path || 'file'}...`}
+                            {!['Edit', 'Read', 'Write'].includes(currentToolUse.name) && `Using ${currentToolUse.name}...`}
+                          </span>
+                        </div>
+                      )}
+                      <div ref={logEndRef} />
+                    </div>
+                  )}
+
+                  {/* Modification Input */}
+                  <div className="modification-input">
+                    <textarea
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      onKeyPress={handleKeyPress}
+                      placeholder="例如：在 scraper 步骤前添加 2 秒延迟，或者修改超时时间为 30 秒..."
+                      disabled={isModifying}
+                      rows={3}
+                    />
+                    <button
+                      onClick={handleModify}
+                      disabled={!chatInput.trim() || isModifying}
+                      className="modify-button"
+                    >
+                      {isModifying ? (
+                        <div className="btn-spinner"></div>
+                      ) : (
+                        <svg viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -239,237 +425,9 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
   )
 }
 
-function WorkflowVisualization({ workflowData }) {
-  const { nodes: initialNodes, edges: initialEdges } = transformWorkflowData(workflowData)
-
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
-
-  const edgesWithMarkers = edges.map(edge => ({
-    ...edge,
-    markerEnd: { type: MarkerType.ArrowClosed }
-  }))
-
-  if (!workflowData || !workflowData.steps || workflowData.steps.length === 0) {
-    return (
-      <div className="empty-state">
-        <div className="empty-state-icon">📋</div>
-        <div className="empty-state-title">无流程数据</div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="workflow-canvas">
-      <ReactFlowProvider>
-        <ReactFlow
-          nodes={nodes}
-          edges={edgesWithMarkers}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          fitView
-          nodeTypes={nodeTypes}
-          fitViewOptions={{ padding: 0.2, minZoom: 0.5, maxZoom: 1.5 }}
-          minZoom={0.3}
-          maxZoom={2}
-          defaultViewport={{ x: 0, y: 0, zoom: 0.8 }}
-        >
-          <Controls showInteractive={false} />
-          <MiniMap
-            nodeColor={nodeColor}
-            nodeStrokeWidth={3}
-            zoomable
-            pannable
-            style={{ width: 80, height: 60 }}
-          />
-          <Background variant="dots" gap={12} size={1} />
-        </ReactFlow>
-      </ReactFlowProvider>
-    </div>
-  )
-}
-
-const nodeColor = (node) => {
-  switch (node.data?.type) {
-    case 'start':
-      return '#52c41a'
-    case 'end':
-      return '#ff4d4f'
-    default:
-      return '#3b82f6'
-  }
-}
-
-const transformWorkflowData = (workflowData) => {
-  console.log('transformWorkflowData called with:', workflowData)
-
-  if (!workflowData || !workflowData.steps) {
-    console.warn('No workflow data or steps found')
-    return { nodes: [], edges: [] }
-  }
-
-  const nodes = []
-  const edges = []
-
-  // Layout configuration
-  const nodeWidth = 140
-  const nodeHeight = 60
-  const verticalGap = 80
-  const horizontalGap = 200
-  const amazonYOffset = 15  // Amazon branch slightly lower
-
-  let currentY = 0
-  let branchStartIndex = -1
-  let branchEndIndex = -1
-  let branchStartY = 0
-
-  // Find branch start and end indices
-  workflowData.steps.forEach((step, index) => {
-    if (step.type === 'branch_start') {
-      branchStartIndex = index
-    } else if (step.type === 'branch_end') {
-      branchEndIndex = index
-    }
-  })
-
-  // Group branch steps by branch and calculate positions
-  const branchStepIndices = { allegro: [], amazon: [] }
-  if (branchStartIndex !== -1 && branchEndIndex !== -1) {
-    workflowData.steps.forEach((step, index) => {
-      if (index > branchStartIndex && index < branchEndIndex) {
-        if (step.branch === 'allegro') {
-          branchStepIndices.allegro.push(index)
-        } else if (step.branch === 'amazon') {
-          branchStepIndices.amazon.push(index)
-        }
-      }
-    })
-  }
-
-  // Process steps
-  workflowData.steps.forEach((step, index) => {
-    let className = ''
-    let position = { x: 50, y: currentY }
-
-    if (step.type === 'start') {
-      className = 'start-node'
-      currentY += verticalGap
-    } else if (step.type === 'end') {
-      className = 'end-node'
-      currentY += verticalGap
-    } else if (step.type === 'branch_start') {
-      className = 'branch-node'
-      branchStartY = currentY + verticalGap  // Record Y after branch_start
-      currentY += verticalGap
-    } else if (step.type === 'branch_end') {
-      className = 'branch-node'
-      // Calculate Y after branch section based on max branch length
-      const maxBranchLength = Math.max(branchStepIndices.allegro.length, branchStepIndices.amazon.length)
-      const branchEndY = branchStartY + (maxBranchLength * verticalGap)
-      position = { x: 50, y: branchEndY }
-      currentY = branchEndY + verticalGap
-    } else if (branchStartIndex !== -1 && branchEndIndex !== -1 &&
-               index > branchStartIndex && index < branchEndIndex) {
-      // This step is inside branch section
-      if (step.branch === 'allegro') {
-        // Left branch (Allegro) - calculate Y based on position in allegro array
-        const allegroIndex = branchStepIndices.allegro.indexOf(index)
-        const yPos = branchStartY + (allegroIndex * verticalGap)
-        position = { x: -80, y: yPos }
-      } else if (step.branch === 'amazon') {
-        // Right branch (Amazon) - calculate Y based on position in amazon array, with slight offset
-        const amazonIndex = branchStepIndices.amazon.indexOf(index)
-        const yPos = branchStartY + (amazonIndex * verticalGap) + amazonYOffset
-        position = { x: 180, y: yPos }
-      }
-      // Don't increment currentY for branch steps
-    } else {
-      // Regular steps outside parallel section
-      currentY += verticalGap
-    }
-
-    nodes.push({
-      id: step.id || `step-${index}`,
-      type: 'custom',
-      data: {
-        label: step.name || step.type || `Step ${index + 1}`,
-        description: step.description || '',
-        type: step.type || '',
-        branch: step.branch,
-        ...step
-      },
-      position: position,
-      className: className,
-    })
-  })
-
-  // Create edges
-  if (workflowData.connections) {
-    workflowData.connections.forEach((connection, index) => {
-      edges.push({
-        id: `e-${index}`,
-        source: connection.from,
-        target: connection.to,
-        type: 'smoothstep',
-      })
-    })
-  } else {
-    // Auto-generate edges
-    const stepsList = workflowData.steps
-
-    for (let i = 0; i < stepsList.length - 1; i++) {
-      const currentStep = stepsList[i]
-      const nextStep = stepsList[i + 1]
-
-      // Handle parallel_start connections
-      if (currentStep.type === 'parallel_start') {
-        // Connect to first step of each branch
-        const branches = currentStep.branches || []
-        branches.forEach(branchName => {
-          const firstBranchStep = stepsList.find(s => s.branch === branchName)
-          if (firstBranchStep) {
-            edges.push({
-              id: `e-${currentStep.id}-${firstBranchStep.id}`,
-              source: currentStep.id,
-              target: firstBranchStep.id,
-              type: 'smoothstep',
-            })
-          }
-        })
-        continue
-      }
-
-      // Handle parallel_end connections
-      if (nextStep.type === 'parallel_end') {
-        // Only connect if current step is the last in its branch
-        const samebranchSteps = stepsList.filter(s => s.branch === currentStep.branch)
-        const lastInBranch = samebranchSteps[samebranchSteps.length - 1]
-        if (currentStep.id === lastInBranch.id) {
-          edges.push({
-            id: `e-${currentStep.id}-${nextStep.id}`,
-            source: currentStep.id,
-            target: nextStep.id,
-            type: 'smoothstep',
-          })
-        }
-        continue
-      }
-
-      // Regular sequential connections
-      if (!currentStep.branch || currentStep.branch === nextStep.branch) {
-        edges.push({
-          id: `e-${currentStep.id}-${nextStep.id}`,
-          source: currentStep.id,
-          target: nextStep.id,
-          type: 'smoothstep',
-        })
-      }
-    }
-  }
-
-  console.log('Generated nodes:', nodes)
-  console.log('Generated edges:', edges)
-  return { nodes, edges }
-}
+// Workflow Visualization Component
+// Replaced by shared FlowVisualization component
+import FlowVisualization from '../components/FlowVisualization'
 
 export default WorkflowDetailPage
+

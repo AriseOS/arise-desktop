@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field
 
 from browser_use import Agent
-from browser_use.llm import ChatOpenAI
+from browser_use.llm import ChatAnthropic
 from ..base_tool import BaseTool, ToolMetadata, ToolResult, ToolStatus, ToolConfig
 
 try:
@@ -31,7 +31,7 @@ class BrowserConfig(ToolConfig):
     proxy: Optional[str] = Field(default=None, description="代理设置")
 
     # LLM 配置
-    llm_model: str = Field(default="gpt-4o", description="LLM 模型")
+    llm_model: str = Field(default="claude-sonnet-4-5-20250929", description="LLM 模型")
     llm_api_key: Optional[str] = Field(default=None, description="LLM API Key")
     llm_base_url: Optional[str] = Field(default=None, description="LLM Base URL")
 
@@ -133,22 +133,21 @@ class AutonomousBrowserTool(BaseTool):
     async def _initialize(self) -> bool:
         """初始化浏览器工具"""
         try:
-            # 初始化 LLM
+            # 初始化 LLM - 使用 Anthropic
             if self.browser_config.llm_api_key:
-                self.llm = ChatOpenAI(
+                self.llm = ChatAnthropic(
                     model=self.browser_config.llm_model,
                     api_key=self.browser_config.llm_api_key,
-                    base_url=self.browser_config.llm_base_url
                 )
             else:
-                # 使用环境变量中的API Key
-                self.llm = ChatOpenAI(model=self.browser_config.llm_model)
-            
-            logger.info(f"Browser工具初始化成功，使用模型: {self.browser_config.llm_model}")
+                # 使用环境变量中的 ANTHROPIC_API_KEY
+                self.llm = ChatAnthropic(model=self.browser_config.llm_model)
+
+            logger.info(f"Browser tool initialized successfully, using model: {self.browser_config.llm_model}")
             return True
-            
+
         except Exception as e:
-            logger.error(f"Browser工具初始化失败: {e}")
+            logger.error(f"Browser tool initialization failed: {e}")
             return False
     
     async def _cleanup(self) -> bool:
@@ -176,34 +175,42 @@ class AutonomousBrowserTool(BaseTool):
     
     async def execute(self, action: str, params: Dict[str, Any], **kwargs) -> ToolResult:
         """执行浏览器操作"""
+        logger.info(f"AutonomousBrowserTool.execute called with action={action}")
+
         if not await self.validate_params(action, params):
+            logger.error(f"Parameter validation failed for action: {action}")
             return ToolResult(
                 success=False,
-                message=f"参数验证失败: {action}",
+                message=f"Parameter validation failed: {action}",
                 status=ToolStatus.ERROR
             )
-        
+
         try:
             self.status = ToolStatus.RUNNING
-            
+            logger.info(f"AutonomousBrowserTool starting execution...")
+
             if action == "execute":
                 result = await self._execute_browser_task(params)
             else:
+                logger.error(f"Unsupported action: {action}")
                 return ToolResult(
                     success=False,
-                    message=f"不支持的操作: {action}",
+                    message=f"Unsupported action: {action}",
                     status=ToolStatus.ERROR
                 )
-            
+
             self.status = ToolStatus.SUCCESS if result.success else ToolStatus.ERROR
+            logger.info(f"AutonomousBrowserTool execution completed: success={result.success}")
             return result
-            
+
         except Exception as e:
-            logger.error(f"执行浏览器操作失败: {action}, 错误: {e}")
+            import traceback
+            logger.error(f"AutonomousBrowserTool execution failed: {action}, error: {e}")
+            logger.error(traceback.format_exc())
             self.status = ToolStatus.ERROR
             return ToolResult(
                 success=False,
-                message=f"执行失败: {str(e)}",
+                message=f"Execution failed: {str(e)}",
                 status=ToolStatus.ERROR
             )
     
@@ -214,23 +221,34 @@ class AutonomousBrowserTool(BaseTool):
         use_vision = params.get("use_vision", True)
         context = params.get("context", {})
 
+        logger.info(f"AutonomousBrowserTool._execute_browser_task started")
+        logger.info(f"  Task: {task[:200]}...")
+        logger.info(f"  max_actions={max_actions}, use_vision={use_vision}")
+
         try:
             # 确保LLM已初始化
             if self.llm is None:
+                logger.info("LLM not initialized, initializing now...")
                 await self._initialize()
                 if self.llm is None:
-                    raise RuntimeError("LLM初始化失败")
+                    logger.error("LLM initialization failed")
+                    raise RuntimeError("LLM initialization failed")
+                logger.info("LLM initialized successfully")
 
             # 创建新的 browser-use Agent 实例，参数直接对齐
+            logger.info("Creating browser-use Agent instance...")
             self.current_agent = Agent(
                 task=task,
                 llm=self.llm,
                 max_actions=max_actions,
                 use_vision=use_vision
             )
+            logger.info("browser-use Agent instance created")
 
             # 执行任务
+            logger.info("Starting browser-use Agent execution...")
             result = await self.current_agent.run()
+            logger.info(f"browser-use Agent execution completed, result length: {len(str(result))}")
 
             return ToolResult(
                 success=True,
@@ -241,16 +259,18 @@ class AutonomousBrowserTool(BaseTool):
                     "use_vision": use_vision,
                     "context": context
                 },
-                message=f"任务执行完成: {task}",
+                message=f"Task completed: {task[:100]}",
                 status=ToolStatus.SUCCESS
             )
 
         except Exception as e:
             import traceback
-            traceback.print_exc()
+            error_msg = f"Task execution failed: {str(e)}"
+            logger.error(error_msg)
+            logger.error(traceback.format_exc())
             return ToolResult(
                 success=False,
-                message=f"任务执行失败: {str(e)}",
+                message=error_msg,
                 status=ToolStatus.ERROR
             )
     

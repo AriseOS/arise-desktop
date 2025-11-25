@@ -7,7 +7,7 @@ import asyncio
 import logging
 from typing import Optional
 
-from anthropic import Anthropic
+from anthropic import Anthropic, APIStatusError, APIConnectionError
 
 from .base_provider import BaseProvider
 
@@ -85,6 +85,13 @@ class AnthropicProvider(BaseProvider):
             logger.info(f"Anthropic API call successful, model: {self.model_name}")
             return response.content[0].text
             
+        except APIStatusError as e:
+            logger.error(f"Anthropic API Status Error: {e.status_code}")
+            logger.error(f"Response body: {e.body}")
+            raise
+        except APIConnectionError as e:
+            logger.error(f"Anthropic API Connection Error: {e}")
+            raise
         except Exception as e:
             logger.error(f"Error calling Anthropic API: {e}")
             raise

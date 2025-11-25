@@ -127,7 +127,7 @@ function App() {
       <div className="home-main-card">
         <h2 className="card-title">3 minutes to automate your workflow</h2>
         <p className="card-description">
-          Just perform the task once, copy the data you need.<br/>
+          Just perform the task once, copy the data you need.<br />
           Leave the rest to AI.
         </p>
 
@@ -154,9 +154,9 @@ function App() {
 
       <button className="help-button" title="Help">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <circle cx="12" cy="12" r="10"/>
-          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
-          <line x1="12" y1="17" x2="12.01" y2="17"/>
+          <circle cx="12" cy="12" r="10" />
+          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+          <line x1="12" y1="17" x2="12.01" y2="17" />
         </svg>
       </button>
 
@@ -176,8 +176,8 @@ function App() {
         <div className="header-right">
           <button className="icon-button" title="Settings">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="3"/>
-              <path d="M12 1v6m0 6v6"/>
+              <circle cx="12" cy="12" r="3" />
+              <path d="M12 1v6m0 6v6" />
             </svg>
           </button>
         </div>
@@ -235,7 +235,7 @@ function App() {
                 <div className="workflow-action-buttons">
                   <button className="action-btn primary" onClick={() => navigate("workflow-detail", { workflowId: workflow.id })}>
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <polygon points="5 3 19 12 5 21 5 3"/>
+                      <polygon points="5 3 19 12 5 21 5 3" />
                     </svg>
                     <span>Run</span>
                   </button>
@@ -304,7 +304,7 @@ function App() {
           <MyWorkflowsPage
             currentUser={{ token: null }}
             onNavigate={navigate}
-            onLogout={() => {}}
+            onLogout={() => { }}
           />
         );
 
@@ -315,7 +315,7 @@ function App() {
             workflowId={pageParams.workflowId}
             onNavigate={navigate}
             showStatus={showStatus}
-            onLogout={() => {}}
+            onLogout={() => { }}
           />
         );
 

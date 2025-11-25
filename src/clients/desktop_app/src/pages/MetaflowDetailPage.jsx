@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import '../styles/MetaflowDetailPage.css';
+import FlowVisualization from '../components/FlowVisualization';
+import yaml from 'js-yaml';
 
 const API_BASE = "http://127.0.0.1:8765";
 
@@ -241,6 +243,18 @@ function MetaflowDetailPage({ onNavigate, showStatus, metaflowId }) {
               <span>Preview</span>
             </button>
             <button
+              className={`tab-button ${activeTab === 'visual' ? 'active' : ''}`}
+              onClick={() => setActiveTab('visual')}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="3" y="3" width="7" height="7" />
+                <rect x="14" y="3" width="7" height="7" />
+                <rect x="14" y="14" width="7" height="7" />
+                <rect x="3" y="14" width="7" height="7" />
+              </svg>
+              <span>Visual</span>
+            </button>
+            <button
               className={`tab-button ${activeTab === 'yaml' ? 'active' : ''}`}
               onClick={() => setActiveTab('yaml')}
             >
@@ -301,6 +315,20 @@ function MetaflowDetailPage({ onNavigate, showStatus, metaflowId }) {
                     </div>
                   </div>
                 )}
+              </div>
+            ) : activeTab === 'visual' ? (
+              <div className="visual-section" style={{ height: '600px', background: '#fff', borderRadius: '8px', overflow: 'hidden' }}>
+                <FlowVisualization
+                  data={(() => {
+                    try {
+                      return yaml.load(metaflow.metaflow_yaml);
+                    } catch (e) {
+                      console.error("Failed to parse YAML for visual", e);
+                      return null;
+                    }
+                  })()}
+                  type="metaflow"
+                />
               </div>
             ) : activeTab === 'yaml' ? (
               <div className="yaml-section">

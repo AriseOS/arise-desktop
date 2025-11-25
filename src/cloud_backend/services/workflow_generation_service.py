@@ -81,12 +81,18 @@ class WorkflowGenerationService:
 
         # Intent Extraction (with user's task_description if provided)
         logger.info("1️⃣  Extracting intents...")
-        new_intents = await self.intent_extractor.extract_intents(
-            operations=operations,
-            task_description=task_description or "",  # Empty string if not provided
-            source_session_id="cloud-backend"
-        )
-        logger.info(f"   ✅ Extracted {len(new_intents)} new intents")
+        try:
+            new_intents = await self.intent_extractor.extract_intents(
+                operations=operations,
+                task_description=task_description or "",  # Empty string if not provided
+                source_session_id="cloud-backend"
+            )
+            logger.info(f"   ✅ Extracted {len(new_intents)} new intents")
+        except Exception as e:
+            logger.error(f"❌ Failed to extract intents: {e}", exc_info=True)
+            # If intent extraction fails, we can't really proceed with adding to graph
+            # But we should not crash the whole background process if possible
+            return 0
 
         # 3. Load existing Intent Graph or create new one
         from pathlib import Path

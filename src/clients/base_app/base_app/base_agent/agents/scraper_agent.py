@@ -662,10 +662,20 @@ class ScraperAgent(BaseStepAgent):
                 logger.info(f"   Generated using: full DOM (captures all page content)")
                 logger.info(f"   Execution will use: {self.dom_scope} DOM")
 
-            # Execute script with user-specified DOM scope (target_dom is already scoped)
-            logger.info(f"Executing script with {self.dom_scope} DOM scope")
+            # Script mode always uses full DOM for execution
+            # Get full DOM if not already using full scope
+            if self.dom_scope != 'full':
+                logger.info(f"Script mode: switching from {self.dom_scope} to full DOM for execution")
+                original_scope = self.dom_scope
+                self.dom_scope = 'full'
+                execution_dom, execution_dict, _ = await self._get_current_page_dom()
+                self.dom_scope = original_scope
+            else:
+                execution_dom = target_dom
+                execution_dict = dom_dict
+
             result = await self._execute_generated_script_direct(
-                generated_script, target_dom, dom_dict, max_items
+                generated_script, execution_dom, execution_dict, max_items
             )
 
             # Check if result has missing fields (None values or empty strings)

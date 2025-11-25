@@ -20,6 +20,7 @@ from ..agents.browser_agent import BrowserAgent
 from ..agents.variable_agent import VariableAgent
 from ..agents.scraper_agent import ScraperAgent
 from ..agents.storage_agent import StorageAgent
+from ..agents.autonomous_browser_agent import AutonomousBrowserAgent
 from ..workflows.workflow_loader import ConditionEvaluator
 
 logger = logging.getLogger(__name__)
@@ -97,6 +98,12 @@ class AgentWorkflowEngine:
         self.agent_registry.register_agent_factory(
             "browser_agent",
             lambda config: BrowserAgent()
+        )
+
+        # 注册 Autonomous Browser Agent 工厂
+        self.agent_registry.register_agent_factory(
+            "autonomous_browser_agent",
+            lambda config: AutonomousBrowserAgent()
         )
 
         logger.info(f"已注册内置Agent工厂: {self.agent_registry.list_agent_names()}")
