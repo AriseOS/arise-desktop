@@ -7,7 +7,6 @@ const DEFAULT_USER = "default_user";
 function QuickStartPage({ onNavigate, showStatus }) {
   const [step, setStep] = useState('tutorial'); // 'tutorial', 'input', 'recording', 'analyzing'
   const [tutorialPage, setTutorialPage] = useState(0);
-  const [startUrl, setStartUrl] = useState('https://www.google.com');
   const [currentSessionId, setCurrentSessionId] = useState(null);
   const [operationsCount, setOperationsCount] = useState(0);
   const [analysisProgress, setAnalysisProgress] = useState(0);
@@ -61,19 +60,15 @@ function QuickStartPage({ onNavigate, showStatus }) {
   };
 
   const handleStartRecording = async () => {
-    if (!startUrl.trim()) {
-      showStatus("❌ Please enter a start URL", "error");
-      return;
-    }
-
     try {
       showStatus("📹 Starting recording...", "info");
 
+      // Use about:blank as default URL - user can navigate anywhere in browser
       const response = await fetch(`${API_BASE}/api/recording/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          url: startUrl,
+          url: "about:blank",
           title: "Quick Start Recording",
           description: "Recording from Quick Start",
           task_metadata: {
@@ -90,7 +85,7 @@ function QuickStartPage({ onNavigate, showStatus }) {
       const result = await response.json();
       setCurrentSessionId(result.session_id);
       setStep('recording');
-      showStatus("✅ Recording started! Please operate in the browser", "success");
+      showStatus("✅ Recording started! Navigate to any website in the browser", "success");
 
     } catch (error) {
       console.error("Start recording error:", error);
@@ -243,32 +238,22 @@ function QuickStartPage({ onNavigate, showStatus }) {
       <div className="input-card">
         <div className="card-header">
           <h2>Start Recording</h2>
-          <p>Just enter a URL and start - AI will understand what you do!</p>
-        </div>
-
-        <div className="form-group">
-          <label>🌐 Start URL *</label>
-          <input
-            type="url"
-            value={startUrl}
-            onChange={(e) => setStartUrl(e.target.value)}
-            placeholder="https://www.producthunt.com"
-          />
+          <p>Click to open browser and navigate to any website you want!</p>
         </div>
 
         <button
           className="start-recording-btn"
           onClick={handleStartRecording}
-          disabled={!startUrl.trim()}
         >
           <span className="btn-icon">🎬</span>
-          <span>Start Recording</span>
+          <span>Open Browser & Start Recording</span>
         </button>
       </div>
 
       <div className="tips-section">
         <h3>💡 Tips</h3>
         <ul>
+          <li>Browser will open - navigate to any website in the address bar</li>
           <li>Perform your task naturally - AI will analyze it automatically</li>
           <li>Copy important data with Ctrl+C to mark what you want to extract</li>
           <li>AI will suggest task description and goal after recording</li>

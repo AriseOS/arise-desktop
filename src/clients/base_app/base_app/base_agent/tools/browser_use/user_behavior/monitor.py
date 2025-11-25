@@ -102,16 +102,25 @@ class SimpleUserBehaviorMonitor:
             
             print(f"🔄 Main frame navigation detected: {url}")
             logger.info(f"Main frame navigated: {url} (frame: {frame_id})")
-            
-            # 存储导航事件到操作列表 (只有主frame导航)
+
+            # Store navigation event to operation list (only main frame navigation)
             nav_data = {
                 'type': 'navigate',
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 'url': url,
-                'page_title': 'Navigated Page',  # 页面标题可能还未加载
-                'element': {}
+                'page_title': 'Navigated Page',  # Page title may not be loaded yet
+                'element': {},
+                'data': {
+                    'frame_id': frame_id,
+                    'navigation_type': 'main_frame',
+                    'is_user_initiated': True  # User typed URL or clicked link
+                }
             }
             self.operation_list.append(nav_data)
+
+            # Debug: Verify event was added
+            print(f"📝 Navigation event added to operation_list (total: {len(self.operation_list)} operations)")
+            logger.info(f"Navigation event stored. Total operations: {len(self.operation_list)}")
             
             # For now, just log navigation without trying to rebuild
         
@@ -146,9 +155,10 @@ class SimpleUserBehaviorMonitor:
                     }
                 }
                 self.operation_list.append(tab_data)
-                
-                # 为新Tab设置监控
-                await self._setup_monitoring_for_tab(target_id)
+
+                # Setup monitoring for new tab in background (non-blocking)
+                # This prevents blocking the event handler and health check
+                asyncio.create_task(self._setup_monitoring_for_tab(target_id))
         
         async def handle_target_destroyed(event, session_id=None):
             target_id = event.get('targetId')
@@ -188,60 +198,74 @@ class SimpleUserBehaviorMonitor:
         print("🔗 Tab event listeners registered for multi-tab monitoring")
     
     async def _setup_monitoring_for_tab(self, target_id):
-        """为指定Tab设置用户行为监控"""
+        """Setup user behavior monitoring for specified tab (runs in background)"""
         if target_id in self._monitored_tabs:
-            print(f"⚠️  Tab {target_id[-4:]} already monitored, skipping")
+            logger.debug(f"Tab {target_id[-4:]} already monitored, skipping")
             return
-            
+
+        # Record monitoring status immediately to prevent duplicate setup
+        self._monitored_tabs.add(target_id)
+
         try:
-            print(f"🛠️  Setting up monitoring for new tab: {target_id[-4:]}")
-            
-            # 获取新Tab的CDP会话
+            logger.info(f"[Background] Setting up monitoring for new tab: {target_id[-4:]}")
+
+            # Wait for SessionManager to add the CDP session to pool
+            # Browser-use's auto-attach mechanism will trigger Target.attachedToTarget
+            # which adds the session to the pool within ~100-500ms
+            await asyncio.sleep(0.5)
+
+            # Get CDP session for new tab (will wait up to 2s in get_or_create_cdp_session)
+            logger.debug(f"[Background] Getting CDP session for tab {target_id[-4:]}...")
             new_cdp_session = await self.browser_session.get_or_create_cdp_session(
-                target_id=target_id, focus=False
+                target_id=target_id,
+                focus=False
             )
-            
-            # 等待Tab准备好
-            import asyncio
-            await asyncio.sleep(1.0)  # 等待Tab初始化
-            
-            # 1. 启用必要的域
-            print(f"🔧 Enabling domains for tab {target_id[-4:]}...")
+            logger.debug(f"[Background] Got CDP session for tab {target_id[-4:]}")
+
+            # 1. Enable necessary domains
+            logger.debug(f"[Background] Enabling Page and Runtime domains for tab {target_id[-4:]}...")
             await new_cdp_session.cdp_client.send.Page.enable(
                 session_id=new_cdp_session.session_id
             )
             await new_cdp_session.cdp_client.send.Runtime.enable(
                 session_id=new_cdp_session.session_id
             )
-            
-            # 2. 注入监控脚本到新Tab
-            print(f"📜 Injecting script for tab {target_id[-4:]}...")
-            script = self._get_monitoring_script()
-            await new_cdp_session.cdp_client.send.Page.addScriptToEvaluateOnNewDocument(
-                params={'source': script, 'runImmediately': True},
-                session_id=new_cdp_session.session_id
-            )
-            
-            # 3. 设置Runtime绑定
-            print(f"🔗 Setting up binding for tab {target_id[-4:]}...")
+
+            # 2. Setup Runtime binding BEFORE injecting script
+            logger.debug(f"[Background] Setting up Runtime binding for tab {target_id[-4:]}...")
             await new_cdp_session.cdp_client.send.Runtime.addBinding(
                 params={'name': 'reportUserBehavior'},
                 session_id=new_cdp_session.session_id
             )
-            
-            # 4. 注册绑定事件处理器
+
+            # 3. Register binding event handler
             await self._setup_binding_handler(new_cdp_session)
-            
-            # 5. 记录监控状态
-            self._monitored_tabs.add(target_id)
+
+            # 4. Inject monitoring script
+            logger.debug(f"[Background] Injecting monitoring script for tab {target_id[-4:]}...")
+            script = self._get_monitoring_script()
+
+            # Add script for future navigations AND execute immediately
+            await new_cdp_session.cdp_client.send.Page.addScriptToEvaluateOnNewDocument(
+                params={'source': script, 'runImmediately': True},
+                session_id=new_cdp_session.session_id
+            )
+            logger.debug(f"[Background] Script injected with runImmediately=True")
+
+            # 5. Store session reference
             self._tab_sessions[target_id] = new_cdp_session
-            
+
             print(f"✅ Monitoring successfully set up for tab {target_id[-4:]}")
-            logger.info(f"Monitoring set up for new tab: {target_id}")
-            
+            logger.info(f"[Background] Monitoring set up for new tab: {target_id}")
+
+        except ValueError as e:
+            # Target detached or doesn't exist - expected for short-lived tabs
+            logger.debug(f"[Background] Tab {target_id[-4:]} detached before setup: {e}")
+            self._monitored_tabs.discard(target_id)
+
         except Exception as e:
-            logger.error(f"Failed to set up monitoring for new tab {target_id}: {e}")
-            print(f"❌ Failed to set up monitoring for tab {target_id[-4:]}: {e}")
+            logger.error(f"[Background] Failed to set up monitoring for tab {target_id}: {e}")
+            self._monitored_tabs.discard(target_id)
     
     async def _reinject_monitoring_script(self, cdp_session):
         """Re-inject monitoring script directly into the current page"""
