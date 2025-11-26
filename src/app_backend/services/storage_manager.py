@@ -322,11 +322,18 @@ class StorageManager:
                     # Use defaults if parsing fails
                     pass
 
+            # Get last execution time
+            last_run = None
+            last_exec = self.get_workflow_last_execution(user_id, workflow_id)
+            if last_exec:
+                last_run = last_exec.get('timestamp')
+
             local_workflows[workflow_id] = {
                 'agent_id': workflow_id,
                 'name': name,
                 'description': description,
                 'created_at': created_at,
+                'last_run': last_run,
                 'is_downloaded': True,
                 'source': 'local'
             }
@@ -376,7 +383,7 @@ class StorageManager:
                             result = json.load(f)
                             return {
                                 "execution_id": exec_dir.name,
-                                "timestamp": result.get("timestamp", ""),
+                                "timestamp": result.get("completed_at") or result.get("timestamp", ""),
                                 "status": result.get("status", "unknown"),
                                 "error": result.get("error")
                             }

@@ -182,6 +182,7 @@ class WorkflowInfo(BaseModel):
     name: str
     description: str
     created_at: Optional[str] = None
+    last_run: Optional[str] = None
     is_downloaded: bool = False
     source: str = "unknown"  # "cloud", "local", or "both"
 
@@ -1075,6 +1076,7 @@ async def list_workflows(user_id: str = "default_user"):
                     'name': wf.get('name', wf['agent_id']),
                     'description': wf.get('description', ''),
                     'created_at': wf.get('created_at'),
+                    'last_run': None,
                     'is_downloaded': False,
                     'source': 'cloud'
                 }
@@ -1096,6 +1098,8 @@ async def list_workflows(user_id: str = "default_user"):
                     workflows_dict[wf_id]['name'] = local_info['name']
                 if not workflows_dict[wf_id].get('description'):
                     workflows_dict[wf_id]['description'] = local_info['description']
+                # Add last_run from local execution history
+                workflows_dict[wf_id]['last_run'] = local_info.get('last_run')
             else:
                 # Local-only workflow
                 workflows_dict[wf_id] = local_info
