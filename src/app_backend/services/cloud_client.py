@@ -271,6 +271,29 @@ class CloudClient:
         response.raise_for_status()
         return response.json()
 
+    async def get_workflow(
+        self,
+        workflow_id: str,
+        user_id: str = "default_user"
+    ) -> Dict[str, Any]:
+        """Get Workflow detail from Cloud Backend
+
+        Args:
+            workflow_id: Workflow ID
+            user_id: User ID (default: "default_user")
+
+        Returns:
+            Workflow dict with source_metaflow_id, source_recording_id, etc.
+        """
+        logger.info(f"Fetching Workflow {workflow_id} from Cloud")
+
+        response = await self.client.get(
+            f"/api/workflows/{workflow_id}",
+            params={"user_id": user_id}
+        )
+        response.raise_for_status()
+        return response.json()
+
     async def list_workflows(
         self,
         user_id: str = "default_user"

@@ -376,12 +376,14 @@ async def generate_metaflow(user_id: str, data: dict):
         # Generate metaflow_id
         metaflow_id = f"metaflow_{uuid.uuid4().hex[:12]}"
 
-        # Save MetaFlow to server filesystem
+        # Save MetaFlow to server filesystem (from Intent Graph, no specific recording)
         storage_service.save_metaflow(
             user_id=user_id,
             metaflow_id=metaflow_id,
             metaflow_yaml=metaflow_yaml,
-            user_query=user_query or task_description
+            user_query=user_query or task_description,
+            recording_id=None,  # 从Intent Graph生成，没有特定的recording
+            source_type="from_intent_graph"
         )
 
         logger.info(f"✅ MetaFlow generated and saved: {metaflow_id}")
@@ -469,12 +471,14 @@ async def generate_metaflow_from_recording(recording_id: str, data: dict):
         # Generate metaflow_id
         metaflow_id = f"metaflow_{uuid.uuid4().hex[:12]}"
 
-        # Save MetaFlow to server filesystem
+        # Save MetaFlow to server filesystem with source recording info
         storage_service.save_metaflow(
             user_id=user_id,
             metaflow_id=metaflow_id,
             metaflow_yaml=metaflow_yaml,
-            user_query=user_query or task_description
+            user_query=user_query or task_description,
+            recording_id=recording_id,
+            source_type="from_recording"
         )
 
         # Establish Recording → MetaFlow relationship
@@ -487,6 +491,8 @@ async def generate_metaflow_from_recording(recording_id: str, data: dict):
             "metaflow_id": metaflow_id,
             "metaflow_yaml": metaflow_yaml,
             "user_query": user_query or task_description,
+            "source_recording_id": recording_id,  # 返回来源recording信息
+            "source_type": "from_recording",
             "status": "success"
         }
 
@@ -544,15 +550,22 @@ async def generate_workflow_from_metaflow(metaflow_id: str, data: dict):
         workflow_dict = yaml.safe_load(workflow_yaml)
         workflow_name = workflow_dict.get("name", f"workflow_{uuid.uuid4().hex[:12]}")
 
+        # Get source recording ID from metaflow metadata for reverse traceability
+        source_recording_id = metaflow_data.get("source_recording_id")
+        if source_recording_id:
+            logger.info(f"📋 Source recording for traceability: {source_recording_id}")
+
         # Generate workflow_id
         workflow_id = f"workflow_{uuid.uuid4().hex[:12]}"
 
-        # Save Workflow to server filesystem
+        # Save Workflow to server filesystem with source metaflow info
         storage_service.save_workflow(
             user_id=user_id,
             workflow_id=workflow_id,
             workflow_yaml=workflow_yaml,
-            workflow_name=workflow_name
+            workflow_name=workflow_name,
+            metaflow_id=metaflow_id,
+            source_recording_id=source_recording_id
         )
 
         # Establish MetaFlow → Workflow relationship
@@ -565,6 +578,8 @@ async def generate_workflow_from_metaflow(metaflow_id: str, data: dict):
             "workflow_id": workflow_id,
             "workflow_name": workflow_name,
             "workflow_yaml": workflow_yaml,
+            "source_metaflow_id": metaflow_id,  # 返回来源metaflow信息
+            "source_recording_id": source_recording_id,  # 返回原始recording信息
             "status": "success"
         }
 

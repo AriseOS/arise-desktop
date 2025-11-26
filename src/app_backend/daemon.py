@@ -1170,6 +1170,23 @@ async def get_workflow_detail(workflow_id: str, user_id: str = "default_user"):
             'workflow_yaml': workflow_yaml  # Add raw YAML for display
         }
 
+        # 获取追溯信息（反向追溯功能）
+        try:
+            logger.info(f"Fetching traceability info from Cloud Backend for workflow: {workflow_id}")
+            cloud_workflow = await cloud_client.get_workflow(workflow_id, user_id)
+            if cloud_workflow:
+                response_data['source_metaflow_id'] = cloud_workflow.get("source_metaflow_id")
+                response_data['source_recording_id'] = cloud_workflow.get("source_recording_id")
+                logger.info(f"Traceability info retrieved: metaflow={response_data.get('source_metaflow_id')}, recording={response_data.get('source_recording_id')}")
+            else:
+                logger.warning(f"No workflow data found in Cloud Backend for: {workflow_id}")
+                response_data['source_metaflow_id'] = None
+                response_data['source_recording_id'] = None
+        except Exception as e:
+            logger.warning(f"Could not fetch traceability info from Cloud Backend: {e}")
+            response_data['source_metaflow_id'] = None
+            response_data['source_recording_id'] = None
+
         logger.info(f"Loaded workflow detail: {workflow_id}")
         return response_data
 

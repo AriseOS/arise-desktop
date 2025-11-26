@@ -202,7 +202,9 @@ class StorageService:
         user_id: str,
         metaflow_id: str,
         metaflow_yaml: str,
-        user_query: str
+        user_query: str,
+        recording_id: str = None,
+        source_type: str = "from_recording"
     ) -> str:
         """
         Save MetaFlow to server filesystem
@@ -212,6 +214,8 @@ class StorageService:
             metaflow_id: MetaFlow ID
             metaflow_yaml: MetaFlow YAML content
             user_query: User's query/request
+            recording_id: Source recording ID (for reverse traceability)
+            source_type: How this metaflow was generated (from_recording, from_intent_graph)
 
         Returns:
             metaflow.yaml file path
@@ -224,11 +228,13 @@ class StorageService:
         with open(yaml_file, 'w', encoding='utf-8') as f:
             f.write(metaflow_yaml)
 
-        # Save metadata.json
+        # Save metadata.json with source information for reverse traceability
         metadata = {
             "metaflow_id": metaflow_id,
             "user_query": user_query,
             "workflow_id": None,
+            "source_recording_id": recording_id,  # 反向追溯：记录来源recording
+            "source_type": source_type,           # 反向追溯：记录生成方式
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat()
         }
@@ -237,6 +243,8 @@ class StorageService:
             json.dump(metadata, f, indent=2, ensure_ascii=False)
 
         logger.info(f"MetaFlow saved: {metaflow_id}")
+        if recording_id:
+            logger.info(f"  Source recording: {recording_id}")
         return str(yaml_file)
 
     def get_metaflow(self, user_id: str, metaflow_id: str) -> Optional[Dict]:
@@ -263,6 +271,8 @@ class StorageService:
             "metaflow_yaml": metaflow_yaml,
             "user_query": metadata.get("user_query"),
             "workflow_id": metadata.get("workflow_id"),
+            "source_recording_id": metadata.get("source_recording_id"),  # 反向追溯信息
+            "source_type": metadata.get("source_type"),                  # 反向追溯信息
             "created_at": metadata.get("created_at"),
             "updated_at": metadata.get("updated_at")
         }
@@ -323,6 +333,8 @@ class StorageService:
                         "metaflow_id": metaflow_id,
                         "user_query": metaflow.get("user_query"),
                         "workflow_id": metaflow.get("workflow_id"),
+                        "source_recording_id": metaflow.get("source_recording_id"),  # 反向追溯信息
+                        "source_type": metaflow.get("source_type"),                  # 反向追溯信息
                         "created_at": metaflow.get("created_at"),
                         "updated_at": metaflow.get("updated_at")
                     })
@@ -336,7 +348,9 @@ class StorageService:
         user_id: str,
         workflow_id: str,
         workflow_yaml: str,
-        workflow_name: str
+        workflow_name: str,
+        metaflow_id: str = None,
+        source_recording_id: str = None
     ) -> str:
         """
         Save Workflow to server filesystem
@@ -346,6 +360,8 @@ class StorageService:
             workflow_id: Workflow ID
             workflow_yaml: Workflow YAML content
             workflow_name: Display name for the workflow
+            metaflow_id: Source metaflow ID (for reverse traceability)
+            source_recording_id: Original recording ID (optional, for convenience)
 
         Returns:
             workflow.yaml file path
@@ -358,10 +374,12 @@ class StorageService:
         with open(yaml_file, 'w', encoding='utf-8') as f:
             f.write(workflow_yaml)
 
-        # Save metadata.json
+        # Save metadata.json with source information for reverse traceability
         metadata = {
             "workflow_id": workflow_id,
             "workflow_name": workflow_name,
+            "source_metaflow_id": metaflow_id,    # 反向追溯：记录来源metaflow
+            "source_recording_id": source_recording_id,  # 反向追溯：记录原始recording（可选）
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat()
         }
@@ -370,6 +388,8 @@ class StorageService:
             json.dump(metadata, f, indent=2, ensure_ascii=False)
 
         logger.info(f"Workflow saved: {workflow_id} ({workflow_name})")
+        if metaflow_id:
+            logger.info(f"  Source metaflow: {metaflow_id}")
         return str(yaml_file)
 
     def get_workflow(self, user_id: str, workflow_id: str) -> Optional[Dict]:
@@ -395,6 +415,8 @@ class StorageService:
             "workflow_id": workflow_id,
             "workflow_name": metadata.get("workflow_name", workflow_id),
             "workflow_yaml": workflow_yaml,
+            "source_metaflow_id": metadata.get("source_metaflow_id"),      # 反向追溯信息
+            "source_recording_id": metadata.get("source_recording_id"),    # 反向追溯信息
             "created_at": metadata.get("created_at"),
             "updated_at": metadata.get("updated_at")
         }

@@ -308,6 +308,61 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
 
         {!loading && !error && workflowData && (
           <>
+            {/* Workflow Traceability Info */}
+            {(workflowData.source_metaflow_id || workflowData.source_recording_id) && (
+              <div className="workflow-traceability-card">
+                <div className="traceability-header">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M12 2L2 7L12 12L22 7L12 2Z" />
+                    <path d="M2 17L12 22L22 17" />
+                    <path d="M2 12L12 17L22 12" />
+                  </svg>
+                  <h3>来源信息</h3>
+                </div>
+                <div className="traceability-content">
+                  {workflowData.source_metaflow_id && (
+                    <div className="trace-item">
+                      <span className="trace-label">MetaFlow:</span>
+                      <code className="trace-value">{workflowData.source_metaflow_id}</code>
+                      <button
+                        className="trace-link-button"
+                        onClick={() => onNavigate('metaflow-detail', { metaflowId: workflowData.source_metaflow_id })}
+                        title="查看MetaFlow详情"
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                          <polyline points="15 3 21 3 21 9" />
+                          <line x1="10" y1="14" x2="21" y2="3" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+                  {workflowData.source_recording_id && (
+                    <div className="trace-item">
+                      <span className="trace-label">Recording:</span>
+                      <code className="trace-value">{workflowData.source_recording_id}</code>
+                      <button
+                        className="trace-link-button"
+                        onClick={() => onNavigate('recording-detail', { sessionId: workflowData.source_recording_id })}
+                        title="查看Recording详情"
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                          <polyline points="15 3 21 3 21 9" />
+                          <line x1="10" y1="14" x2="21" y2="3" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+                  {!workflowData.source_metaflow_id && !workflowData.source_recording_id && (
+                    <div className="trace-item no-trace">
+                      <span>暂无来源信息</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Tabs Header */}
             <div className="workflow-tabs-header">
               <button
