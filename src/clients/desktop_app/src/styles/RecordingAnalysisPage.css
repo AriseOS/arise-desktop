@@ -70,6 +70,18 @@
   font-size: 14px;
 }
 
+.recording-name-section {
+  margin-bottom: 30px;
+}
+
+.recording-name {
+  font-size: 28px;
+  font-weight: 700;
+  color: #2d3748;
+  margin: 0;
+  line-height: 1.4;
+}
+
 .patterns-section {
   margin-bottom: 30px;
   padding: 20px;

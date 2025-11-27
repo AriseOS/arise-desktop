@@ -125,6 +125,7 @@ class AnalyzeRecordingRequest(BaseModel):
 
 class AnalyzeRecordingResponse(BaseModel):
     """Response model for recording analysis"""
+    name: str
     task_description: str
     user_query: str
     detected_patterns: Dict[str, Any]
@@ -135,6 +136,7 @@ class UpdateRecordingMetadataRequest(BaseModel):
     session_id: str
     task_description: str
     user_query: str
+    name: Optional[str] = None
     user_id: str = "default_user"
 
 
@@ -594,11 +596,13 @@ async def analyze_recording(request: AnalyzeRecordingRequest):
         )
 
         logger.info(f"Analysis complete:")
+        logger.info(f"  Name: {analysis_result.get('name', 'NOT_GENERATED')}")
         logger.info(f"  Task Description: {analysis_result['task_description'][:100]}...")
         logger.info(f"  User Query: {analysis_result['user_query'][:100]}...")
         logger.info(f"  Patterns: {analysis_result['patterns']}")
 
         return AnalyzeRecordingResponse(
+            name=analysis_result.get("name", "Unnamed Task"),
             task_description=analysis_result["task_description"],
             user_query=analysis_result["user_query"],
             detected_patterns=analysis_result["patterns"]
@@ -614,6 +618,8 @@ async def update_recording_metadata(request: UpdateRecordingMetadataRequest):
     """Update recording metadata with task_description and user_query after user confirmation"""
     try:
         logger.info(f"Updating metadata for recording: session_id={request.session_id}")
+        if request.name:
+            logger.info(f"  Name: {request.name}")
         logger.info(f"  Task Description: {request.task_description[:100]}...")
         logger.info(f"  User Query: {request.user_query[:100]}...")
 
@@ -622,7 +628,8 @@ async def update_recording_metadata(request: UpdateRecordingMetadataRequest):
             user_id=request.user_id,
             session_id=request.session_id,
             task_description=request.task_description,
-            user_query=request.user_query
+            user_query=request.user_query,
+            name=request.name
         )
 
         logger.info("Metadata updated successfully")
@@ -665,15 +672,21 @@ async def get_recording_detail(session_id: str, user_id: str = "default_user"):
         if detail is None:
             raise HTTPException(status_code=404, detail=f"Recording not found: {session_id}")
 
-        # Try to get metaflow_id from Cloud Backend
+        # Try to get metaflow_id and task_description from Cloud Backend
         # The recording_id in Cloud Backend is the same as session_id
         try:
             cloud_recording = await cloud_client.get_recording(session_id, user_id)
-            if cloud_recording and cloud_recording.get("metaflow_id"):
-                detail["metaflow_id"] = cloud_recording["metaflow_id"]
-                logger.info(f"Found metaflow_id from Cloud: {detail['metaflow_id']}")
+            if cloud_recording:
+                if cloud_recording.get("metaflow_id"):
+                    detail["metaflow_id"] = cloud_recording["metaflow_id"]
+                    logger.info(f"Found metaflow_id from Cloud: {detail['metaflow_id']}")
+
+                # Use task_description from Cloud as recording name if available
+                if cloud_recording.get("task_description"):
+                    detail["name"] = cloud_recording["task_description"]
+                    logger.info(f"Using task_description as name: {detail['name'][:50]}...")
         except Exception as e:
-            logger.warning(f"Could not fetch metaflow_id from Cloud: {e}")
+            logger.warning(f"Could not fetch data from Cloud: {e}")
 
         return detail
     except HTTPException:

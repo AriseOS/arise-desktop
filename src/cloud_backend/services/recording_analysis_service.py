@@ -60,6 +60,7 @@ class RecordingAnalysisService:
 
             result = json.loads(cleaned_response)
             logger.info("Analysis successful:")
+            logger.info(f"  Name: {result.get('name', 'NOT_IN_RESULT')}")
             logger.info(f"  Task Description: {result.get('task_description', '')[:100]}...")
             logger.info(f"  User Query: {result.get('user_query', '')[:100]}...")
             logger.info(f"  Patterns: {result.get('patterns', {})}")
@@ -72,6 +73,7 @@ class RecordingAnalysisService:
 
             # Fallback: extract manually
             return {
+                "name": "Web操作",
                 "task_description": "User performed web operations",
                 "user_query": "Extract data from website",
                 "patterns": {
@@ -159,6 +161,7 @@ class RecordingAnalysisService:
 **Good Analysis:**
 ```json
 {{
+  "name": "浏览ProductHunt周榜",
   "task_description": "1. Opened ProductHunt website\n2. Navigated to the weekly leaderboard page\n3. Browsed the product list\n4. Clicked on a product (v0 by Vercel) to view details\n5. Selected the product name, rating, and description\n6. Switched to the Team tab\n7. Selected team member information",
   "user_query": "Extract detailed information (name, rating, description, team members) from all products on ProductHunt's weekly leaderboard",
   "patterns": {{
@@ -172,29 +175,35 @@ class RecordingAnalysisService:
 
 **Key Points:**
 
-1. **task_description** - Describe user's steps in natural language, focusing on INTENT:
+1. **name** - A short, concise title (max 10 characters in Chinese, 20 in English):
+   - ❌ Bad: "User performed operations on ProductHunt website"
+   - ✅ Good: "浏览ProductHunt周榜" or "Browse PH Weekly"
+   - Should capture the essence of what user did
+   - Be specific but brief (e.g., "查看知乎热榜", "搜索GitHub", "复制产品信息")
+
+2. **task_description** - Describe user's steps in natural language, focusing on INTENT:
    - ❌ Bad: "Clicked xpath //*[@id='root']/div[1]/button"
    - ✅ Good: "Clicked on the product to view its details"
    - Focus on WHAT the user was trying to do, not HOW (no technical details)
    - Number the steps (1., 2., 3., ...)
    - Use simple, clear language
 
-2. **user_query** - Infer and GENERALIZE the user's goal:
+3. **user_query** - Infer and GENERALIZE the user's goal:
    - ❌ Bad: "Get information about v0 by Vercel"
    - ✅ Good: "Extract detailed information from all products on ProductHunt's weekly leaderboard"
    - If user extracted data from ONE item → they likely want it from MULTIPLE/ALL items
    - Use keywords like: "all products", "top 10", "each item", "every product"
    - Think: what is the REAL task they want to automate?
 
-3. **patterns.loop_detected**:
+4. **patterns.loop_detected**:
    - true: if user visited a list page (leaderboard, search results, category page) AND extracted data
    - false: if user just navigated or did one-off actions
 
-4. **patterns.loop_count**:
+5. **patterns.loop_count**:
    - If loop detected: suggest 10 (reasonable default for "top items")
    - Otherwise: null
 
-5. **patterns.extracted_fields**:
+6. **patterns.extracted_fields**:
    - Semantic names based on what user selected/copied
    - Examples: "product_name", "price", "rating", "title", "author"
 
@@ -206,6 +215,7 @@ Analyze the operations and return JSON:
 
 ```json
 {{
+  "name": "Short title (max 10 Chinese chars or 20 English chars)",
   "task_description": "Step-by-step description of user's actions in natural language",
   "user_query": "Generalized goal - what does the user want to achieve/automate",
   "patterns": {{
@@ -219,6 +229,7 @@ Analyze the operations and return JSON:
 
 **Important:**
 - Return ONLY valid JSON, no markdown code blocks, no extra text
+- name: short, concise title (e.g., "浏览知乎热榜", "Search GitHub")
 - task_description: natural language, numbered steps, focus on user intent
 - user_query: generalize to multiple items if user extracted data from a list
 

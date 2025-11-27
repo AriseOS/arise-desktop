@@ -218,7 +218,7 @@ async def upload_recording(data: dict):
     if not operations:
         raise HTTPException(400, "Missing operations")
 
-    # Save recording to filesystem (with task_description and user_query)
+    # Save recording to filesystem first (with provided task_description and user_query)
     file_path = storage_service.save_recording(
         user_id,
         recording_id,
@@ -233,6 +233,19 @@ async def upload_recording(data: dict):
     if user_query:
         logger.info(f"  User query: {user_query}")
 
+    # Start background task to auto-generate task_description and user_query if not provided
+    if not task_description or not user_query:
+        logger.info(f"Starting background AI analysis for recording {recording_id}")
+        asyncio.create_task(
+            analyze_and_update_recording_background(
+                user_id=user_id,
+                recording_id=recording_id,
+                operations=operations,
+                has_task_description=bool(task_description),
+                has_user_query=bool(user_query)
+            )
+        )
+
     # Start background task to extract intents and add to user's graph
     asyncio.create_task(
         add_intents_to_user_graph_background(
@@ -244,6 +257,53 @@ async def upload_recording(data: dict):
     )
 
     return {"recording_id": recording_id}
+
+
+async def analyze_and_update_recording_background(
+    user_id: str,
+    recording_id: str,
+    operations: list,
+    has_task_description: bool,
+    has_user_query: bool
+):
+    """Background task: Analyze recording and update with AI-generated descriptions"""
+    try:
+        logger.info(f"🤖 Background: Analyzing recording {recording_id}")
+
+        from services.recording_analysis_service import RecordingAnalysisService
+        analysis_service = RecordingAnalysisService()
+
+        # Call AI to analyze operations
+        analysis_result = await analysis_service.analyze_operations(
+            operations=operations,
+            user_id=user_id
+        )
+
+        task_description = None
+        user_query = None
+
+        if not has_task_description:
+            task_description = analysis_result.get("task_description", "")
+            logger.info(f"✨ Generated task_description: {task_description[:100]}...")
+
+        if not has_user_query:
+            user_query = analysis_result.get("user_query", "")
+            logger.info(f"✨ Generated user_query: {user_query[:100]}...")
+
+        # Update recording with AI-generated descriptions
+        storage_service.update_recording(
+            user_id=user_id,
+            recording_id=recording_id,
+            task_description=task_description,
+            user_query=user_query
+        )
+
+        logger.info(f"✅ Background: Recording {recording_id} analysis complete")
+
+    except Exception as e:
+        logger.error(f"❌ Background: Failed to analyze recording {recording_id}: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 async def add_intents_to_user_graph_background(

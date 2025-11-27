@@ -98,7 +98,9 @@ function RecordingsLibraryPage({ onNavigate, showStatus }) {
 
   const handleDeleteClick = (sessionId) => {
     const recording = recordings.find(r => r.session_id === sessionId);
-    const recordingName = recording?.title || recording?.name || `Recording ${sessionId.substring(0, 8)}...`;
+    const recordingName = (recording?.title && recording.title !== "Untitled Recording")
+      ? recording.title
+      : `Recording ${sessionId}`;
 
     setDeleteConfirm({ sessionId, recordingName });
   };
@@ -255,7 +257,9 @@ function RecordingsLibraryPage({ onNavigate, showStatus }) {
                 <div className="recording-icon">📹</div>
                 <div className="recording-info">
                   <h3 className="recording-title">
-                    {recording.name || `Recording ${recording.session_id}`}
+                    {(recording.title && recording.title !== "Untitled Recording")
+                      ? recording.title
+                      : `Recording ${recording.session_id}`}
                   </h3>
                   <div className="recording-meta">
                     <span className="meta-item">

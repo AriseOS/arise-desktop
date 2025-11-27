@@ -126,7 +126,46 @@ class StorageService:
         if user_query:
             logger.info(f"  User query: {user_query}")
         return str(file_path)
-    
+
+    def update_recording(
+        self,
+        user_id: str,
+        recording_id: str,
+        task_description: Optional[str] = None,
+        user_query: Optional[str] = None
+    ):
+        """Update recording with task_description and/or user_query
+
+        Args:
+            user_id: User ID
+            recording_id: Recording ID
+            task_description: Task description to update (optional)
+            user_query: User query to update (optional)
+        """
+        recording_path = self._user_path(user_id) / "recordings" / recording_id
+        file_path = recording_path / "operations.json"
+
+        if not file_path.exists():
+            logger.warning(f"Recording not found: {recording_id}")
+            return
+
+        # Read existing data
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        # Update fields
+        if task_description is not None:
+            data["task_description"] = task_description
+            logger.info(f"Updated task_description for {recording_id}")
+
+        if user_query is not None:
+            data["user_query"] = user_query
+            logger.info(f"Updated user_query for {recording_id}")
+
+        # Save back
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+
     def get_recording(self, user_id: str, recording_id: str) -> Optional[Dict]:
         """读取录制数据"""
         recording_path = self._user_path(user_id) / "recordings" / recording_id

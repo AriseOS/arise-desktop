@@ -12,6 +12,7 @@ function RecordingAnalysisPage({ pageData, onNavigate, showStatus }) {
 
   const detectedPatterns = pageData?.detectedPatterns || {};
   const sessionId = pageData?.sessionId;
+  const recordingName = pageData?.name || 'Unnamed Task';
 
   const handleConfirmAndGenerate = async () => {
     if (!taskDescription.trim() || !userQuery.trim()) {
@@ -176,6 +177,11 @@ function RecordingAnalysisPage({ pageData, onNavigate, showStatus }) {
         <div className="ai-badge">
           <span className="ai-icon">🤖</span>
           <span className="ai-text">AI Generated Summary</span>
+        </div>
+
+        {/* Recording Name */}
+        <div className="recording-name-section">
+          <h2 className="recording-name">{recordingName}</h2>
         </div>
 
         {/* Detected Patterns */}

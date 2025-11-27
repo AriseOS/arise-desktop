@@ -154,12 +154,35 @@ function QuickStartPage({ onNavigate, showStatus }) {
 
       const analysisResult = await analyzeResponse.json();
 
-      showStatus("✅ Analysis complete! Redirecting...", "success");
+      showStatus(`✅ Analysis complete!`, "success");
+
+      // Save metadata immediately after analysis
+      try {
+        const updateResponse = await fetch(`${API_BASE}/api/recording/update-metadata`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: sessionId,
+            name: analysisResult.name,
+            task_description: analysisResult.task_description,
+            user_query: analysisResult.user_query,
+            user_id: DEFAULT_USER
+          })
+        });
+
+        if (!updateResponse.ok) {
+          throw new Error(`Failed to save metadata: ${updateResponse.status}`);
+        }
+      } catch (error) {
+        console.error("Failed to save metadata:", error);
+        // Continue anyway - metadata save is not critical
+      }
 
       // Navigate to analysis review page
       setTimeout(() => {
         onNavigate('recording-analysis', {
           sessionId: sessionId,
+          name: analysisResult.name,
           taskDescription: analysisResult.task_description,
           userQuery: analysisResult.user_query,
           detectedPatterns: analysisResult.detected_patterns
