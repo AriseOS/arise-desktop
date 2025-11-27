@@ -73,7 +73,7 @@ class RecordingAnalysisService:
 
             # Fallback: extract manually
             return {
-                "name": "Web操作",
+                "name": "网页数据收集",
                 "task_description": "User performed web operations",
                 "user_query": "Extract data from website",
                 "patterns": {
@@ -161,7 +161,7 @@ class RecordingAnalysisService:
 **Good Analysis:**
 ```json
 {{
-  "name": "浏览ProductHunt周榜",
+  "name": "收集PH周榜产品",
   "task_description": "1. Opened ProductHunt website\n2. Navigated to the weekly leaderboard page\n3. Browsed the product list\n4. Clicked on a product (v0 by Vercel) to view details\n5. Selected the product name, rating, and description\n6. Switched to the Team tab\n7. Selected team member information",
   "user_query": "Extract detailed information (name, rating, description, team members) from all products on ProductHunt's weekly leaderboard",
   "patterns": {{
@@ -175,11 +175,19 @@ class RecordingAnalysisService:
 
 **Key Points:**
 
-1. **name** - A short, concise title (max 10 characters in Chinese, 20 in English):
-   - ❌ Bad: "User performed operations on ProductHunt website"
-   - ✅ Good: "浏览ProductHunt周榜" or "Browse PH Weekly"
-   - Should capture the essence of what user did
-   - Be specific but brief (e.g., "查看知乎热榜", "搜索GitHub", "复制产品信息")
+1. **name** - Reflect the COMPLETE operation path, not just the starting point or final goal (max 15 characters in Chinese, 30 in English):
+   - ❌ Bad: "浏览ProductHunt周榜" (only shows browsing, missing the key action of opening product details)
+   - ❌ Bad: "打开v0产品页" (only shows the final step, missing where it came from)
+   - ✅ Good: "收集PH周榜产品" (shows: from weekly list → open products → collect data)
+   - ✅ Good: "从知乎热榜提取文章" (shows: from hot list → extract articles)
+   - ✅ Good: "搜索GitHub并复制代码" (shows: search → copy)
+
+   **Naming Pattern: [Action] + [Source/Context] + [Object]**
+   - Action verbs: 收集(collect), 提取(extract), 复制(copy), 搜索(search), 下载(download)
+   - Source/Context: 周榜(weekly list), 搜索结果(search results), 列表页(list page)
+   - Object: 产品(products), 文章(articles), 代码(code), 信息(info)
+
+   **Important**: The name must reflect WHERE the user started and WHAT they did, not just one endpoint
 
 2. **task_description** - Describe user's steps in natural language, focusing on INTENT:
    - ❌ Bad: "Clicked xpath //*[@id='root']/div[1]/button"
@@ -227,9 +235,29 @@ Analyze the operations and return JSON:
 }}
 ```
 
+**More Examples for Name Generation:**
+
+Scenario 1: User opens LinkedIn, searches for "AI Engineer", clicks on a job posting, copies job description
+- ❌ Bad: "浏览LinkedIn" (too vague, only shows starting point)
+- ❌ Bad: "复制职位描述" (missing context about where the job came from)
+- ✅ Good: "搜索LinkedIn职位" or "收集LinkedIn招聘信息"
+
+Scenario 2: User navigates to Amazon, searches "laptop", clicks on product #3, reads reviews, copies review text
+- ❌ Bad: "查看亚马逊" (doesn't show what they did)
+- ❌ Bad: "复制评论" (missing product and search context)
+- ✅ Good: "搜索亚马逊商品评论" or "收集商品评论"
+
+Scenario 3: User opens Twitter, clicks on trending topic "AI news", scrolls through tweets, copies 5 tweet contents
+- ❌ Bad: "打开推特" (just the starting point)
+- ❌ Bad: "复制推文内容" (missing trending topic context)
+- ✅ Good: "收集热门话题推文" or "提取趋势推文"
+
 **Important:**
 - Return ONLY valid JSON, no markdown code blocks, no extra text
-- name: short, concise title (e.g., "浏览知乎热榜", "Search GitHub")
+- name: Must show the COMPLETE operation flow: [Action] + [Source/Context] + [Object]
+  - Include WHERE data comes from (周榜, 搜索结果, 热门, 列表)
+  - Include WHAT action is performed (收集, 提取, 搜索, 复制)
+  - NOT just "浏览" or "打开" unless that's the only action
 - task_description: natural language, numbered steps, focus on user intent
 - user_query: generalize to multiple items if user extracted data from a list
 
