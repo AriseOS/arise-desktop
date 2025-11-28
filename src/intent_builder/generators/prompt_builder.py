@@ -503,11 +503,20 @@ Step 4: scraper_agent - Extract data from page B (current page)
 
 ## 3. Click → Navigate Pattern Handling
 
+**CRITICAL: Treat click + navigate as ONE user intent**
+
+When MetaFlow contains sequential `click → navigate` operations, they represent ONE action: clicking a link to navigate.
+
+**How to make the decision:**
+- Look at the `navigate.url` to determine if the target URL is stable or dynamic
+- The `click.element.href` may or may not be present - that's OK
+- `navigate.url` is the authoritative source for the actual destination URL
+
 **When MetaFlow contains `click → navigate` operations, choose ONE of these approaches:**
 
 ### Approach A: Direct Navigation (Preferred when URL is stable)
 
-**Use direct navigation when the href URL is:**
+**Use direct navigation when navigate.url is:**
 - A fixed, stable URL path (e.g., `/products`, `/about`, `/category/electronics`)
 - Not containing dynamic date/time components (e.g., `2025/10/29`, `week=44`)
 - Not containing session-specific parameters (e.g., `sessionid=`, `token=`)
@@ -520,15 +529,16 @@ Step 4: scraper_agent - Extract data from page B (current page)
 operations:
   - type: click
     element:
-      href: "https://site.com/products"  # Stable, fixed URL
+      xpath: "//a[text()='Products']"
+      # href may or may not exist - doesn't matter
   - type: navigate
-    url: "https://site.com/products"
+    url: "https://site.com/products"  # ← Check this URL (stable, no dynamic parts)
 
 # Generated workflow: Single step
 - id: "navigate-to-products"
   agent_type: "browser_agent"
   inputs:
-    target_url: "https://site.com/products"  # Use href directly
+    target_url: "https://site.com/products"  # Use navigate.url directly
   timeout: 30
 ```
 
@@ -538,10 +548,10 @@ operations:
 - `https://example.com/about` (static page)
 - `https://app.com/settings/profile` (fixed settings path)
 
-### Approach B: Extract then Navigate (When URL may be dynamic)
+### Approach B: Extract then Navigate (When URL is dynamic)
 
-**Use extraction when the href URL contains:**
-- Date components (e.g., `/2025/10/29`, `/weekly/2025/44`)
+**Use extraction when navigate.url contains:**
+- Date components (e.g., `/2025/10/29`, `/weekly/2025/44`, `/daily/2025/11/27`)
 - Query parameters that may change (e.g., `?date=today`, `?ref=header`)
 - IDs that represent current state (e.g., `/post/12345` where ID changes)
 
@@ -553,10 +563,10 @@ operations:
   - type: click
     url: "https://site.com/current-page"  # Browser is on this page
     element:
-      xpath: "//a[@class='link']"
-      href: "https://site.com/target-page?date=2025-10-29"  # Contains dynamic date
+      xpath: "//a[text()='Weekly']"
+      # href may or may not exist - doesn't matter
   - type: navigate
-    url: "https://site.com/target-page?date=2025-10-29"
+    url: "https://site.com/leaderboard/weekly/2025/48"  # ← Check this URL (contains dynamic week number!)
 ```
 
 **Generated Workflow Steps:**
@@ -593,42 +603,81 @@ operations:
 
 ```yaml
 # MetaFlow input:
-node_2:
-  intent_description: "Navigate to the launch archive page"
+node_1:
+  intent_description: "Navigate to the products page"
   operations:
     - type: click
       element:
-        xpath: "//a[contains(text(), 'Launch archive')]"
-        textContent: "Launch archive"
-        href: "https://www.producthunt.com/leaderboard"
+        xpath: "//a[text()='Products']"
+        textContent: "Products"
+        # Note: href may or may not exist - doesn't matter
     - type: navigate
-      url: "https://www.producthunt.com/leaderboard"
+      url: "https://site.com/products"  # ← Decision point: stable URL, no dates/IDs
 
-# Generated workflow: Single step (stable URL)
-- id: "navigate-to-leaderboard"
+# Decision: navigate.url is stable → Use direct navigation
+# Generated workflow: Single step
+- id: "navigate-to-products"
   agent_type: "browser_agent"
   inputs:
-    target_url: "https://www.producthunt.com/leaderboard"
+    target_url: "https://site.com/products"  # Use navigate.url directly
   timeout: 30
 ```
 
-**Example 2: Extract then Navigate (dynamic URL)**
+**Example 2: Extract then Navigate (dynamic URL with date)**
+
+```yaml
+# MetaFlow input:
+node_2:
+  intent_description: "Navigate to the daily leaderboard"
+  operations:
+    - type: click
+      element:
+        xpath: "//a[text()='Launch archive']"
+        textContent: "Launch archive"
+        # Note: href field is missing - that's OK!
+    - type: navigate
+      url: "https://www.producthunt.com/leaderboard/daily/2025/11/27"  # ← Decision point: contains date!
+
+# Decision: navigate.url contains date (2025/11/27) → MUST extract
+# Generated workflow: Two steps
+- id: "extract-daily-link"
+  agent_type: "scraper_agent"
+  inputs:
+    extraction_method: "script"
+    data_requirements:
+      user_description: "Extract the daily leaderboard link"
+      output_format:
+        daily_url: "Daily leaderboard URL"
+      xpath_hints:
+        daily_url: "//a[text()='Launch archive']"  # From click.element.xpath
+  outputs:
+    extracted_data: "daily_link"
+  timeout: 30
+
+- id: "navigate-to-daily"
+  agent_type: "browser_agent"
+  inputs:
+    target_url: "{{daily_link.daily_url}}"  # Use extracted URL (will get current date)
+  timeout: 30
+```
+
+**Example 3: Extract then Navigate (dynamic URL with week number)**
 
 ```yaml
 # MetaFlow input:
 node_3:
-  intent_description: "Navigate to the current week's leaderboard"
+  intent_description: "Navigate to the weekly leaderboard"
   operations:
     - type: click
-      url: "https://www.producthunt.com/leaderboard/daily/2025/10/29"
       element:
-        xpath: "//a[contains(text(), 'Weekly')]"
+        xpath: "//a[text()='Weekly']"
         textContent: "Weekly"
-        href: "https://www.producthunt.com/leaderboard/weekly/2025/44"  # Contains week number
+        href: "https://www.producthunt.com/leaderboard/weekly/2025/48"  # href exists
     - type: navigate
-      url: "https://www.producthunt.com/leaderboard/weekly/2025/44"
+      url: "https://www.producthunt.com/leaderboard/weekly/2025/48"  # ← Decision point: contains week number!
 
-# Generated workflow: Two steps (URL contains dynamic week number)
+# Decision: navigate.url contains week number (2025/48) → MUST extract
+# Generated workflow: Two steps
 - id: "extract-weekly-link"
   agent_type: "scraper_agent"
   inputs:
@@ -638,7 +687,7 @@ node_3:
       output_format:
         weekly_url: "Weekly leaderboard page URL"
       xpath_hints:
-        weekly_url: "//a[contains(text(), 'Weekly')]"
+        weekly_url: "//a[text()='Weekly']"
   outputs:
     extracted_data: "weekly_link"
   timeout: 30
@@ -646,13 +695,16 @@ node_3:
 - id: "navigate-to-weekly"
   agent_type: "browser_agent"
   inputs:
-    target_url: "{{weekly_link.weekly_url}}"
+    target_url: "{{weekly_link.weekly_url}}"  # Use extracted URL (will get current week)
   timeout: 30
 ```
 
 **Decision Guidelines:**
+- **Always check `navigate.url`** to determine if URL is stable or dynamic
+- `click.element.href` is optional - may or may not exist
 - ✅ Use **direct navigation** for stable URLs → simpler, faster, more reliable
-- ✅ Use **extraction** for dynamic URLs → adapts to current page state
+- ✅ Use **extraction** for dynamic URLs (with dates/IDs) → adapts to current page state
+- ❌ **NEVER remove or modify parts of navigate.url** (e.g., removing `/daily/2025/11/27`)
 - ⚠️ When in doubt, prefer extraction (safer but slower)
 
 ## Agent Type Selection - Core Principles
