@@ -351,7 +351,7 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
           </svg>
         </button>
         <h1 className="page-title">
-          📹 {recording.name || recording.title || `Recording ${sessionId}`}
+          📹 {recording.task_metadata?.name || `Recording ${sessionId}`}
         </h1>
         <div className="header-spacer"></div>
       </div>
@@ -440,7 +440,7 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
                 <span className="linked-label">Linked MetaFlow:</span>
                 <button
                   className="linked-value-button"
-                  onClick={() => onNavigate('metaflow-detail', { metaflowId: recording.metaflow_id })}
+                  onClick={() => onNavigate('metaflow-preview', { metaflowId: recording.metaflow_id })}
                 >
                   {recording.metaflow_id}
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

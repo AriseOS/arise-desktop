@@ -75,7 +75,7 @@ class StorageManager:
         """List all recordings for user with metadata
 
         Returns:
-            List of recording info dicts with session_id, title, description, etc.
+            List of recording info dicts with session_id, task_metadata, etc.
         """
         recordings_path = self._user_path(user_id) / "recordings"
         if not recordings_path.exists():
@@ -95,31 +95,20 @@ class StorageManager:
                     recording_data = json.load(f)
 
                 # Extract metadata
-                metadata = recording_data.get("metadata", {})
                 task_metadata = recording_data.get("task_metadata", {})
                 operations = recording_data.get("operations", [])
 
                 # Get file creation time
                 created_at = datetime.fromtimestamp(operations_file.stat().st_ctime).isoformat()
 
-                # Count actions (click, input, etc.) and fields (copy operations)
+                # Count actions (click, input, etc.)
                 action_count = sum(1 for op in operations if op.get("type") in ["click", "input", "type", "navigate"])
-                field_count = sum(1 for op in operations if op.get("type") == "copy")
-
-                # Use AI-generated name if available, fallback to task_description or metadata title
-                title = task_metadata.get("name") or task_metadata.get("task_description") or metadata.get("title", "Untitled Recording")
 
                 recordings.append({
                     "session_id": session_dir.name,
-                    "title": title,
-                    "description": metadata.get("description", ""),
-                    "url": metadata.get("url", ""),
-                    "operations_count": len(operations),
-                    "action_count": action_count,
-                    "field_count": field_count,
-                    "status": "completed",
+                    "task_metadata": task_metadata,
                     "created_at": created_at,
-                    "file_path": str(operations_file)
+                    "action_count": action_count
                 })
             except Exception as e:
                 # Skip corrupted recordings
@@ -152,7 +141,7 @@ class StorageManager:
         """Get detailed recording information including parsed operations
 
         Returns:
-            Recording detail dict with operations timeline and extracted fields
+            Recording detail dict with operations timeline and task_metadata
         """
         try:
             recording_data = self.get_recording(user_id, session_id)
@@ -160,28 +149,12 @@ class StorageManager:
             metadata = recording_data.get("metadata", {})
             operations = recording_data.get("operations", [])
 
-            # Parse operations to extract fields and count actions
-            fields = []
+            # Count actions
             action_count = 0
-
             for op in operations:
                 op_type = op.get("type", "unknown")
-                element = op.get("element", {})
-                data = op.get("data", {})
-
-                # Count actions
                 if op_type in ["navigate", "click", "input", "type"]:
                     action_count += 1
-
-                # Extract fields from copy_action operations
-                if op_type == "copy_action":
-                    copied_text = data.get("copiedText", "")
-                    field_name = f"field_{len(fields) + 1}"
-                    fields.append({
-                        "name": field_name,
-                        "xpath": element.get("xpath", ""),
-                        "sample_value": copied_text
-                    })
 
             # Get file creation time
             operations_file = self._user_path(user_id) / "recordings" / session_id / "operations.json"
@@ -190,18 +163,10 @@ class StorageManager:
             # Extract task_metadata from recording data
             task_metadata = recording_data.get("task_metadata", {})
 
-            # Use AI-generated name if available, fallback to task_description or metadata title
-            name = task_metadata.get("name") or task_metadata.get("task_description") or metadata.get("title", "Untitled Recording")
-
             return {
                 "session_id": session_id,
-                "name": name,
-                "url": metadata.get("url", ""),
                 "created_at": created_at,
                 "action_count": action_count,
-                "field_count": len(fields),
-                "status": "completed",
-                "fields": fields,
                 "task_metadata": task_metadata,
                 "operations": operations
             }

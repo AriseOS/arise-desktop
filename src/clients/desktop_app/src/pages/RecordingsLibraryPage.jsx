@@ -45,13 +45,10 @@ function RecordingsLibraryPage({ onNavigate, showStatus }) {
 
     const query = searchQuery.toLowerCase();
     const filtered = recordings.filter(recording => {
-      const urlMatch = recording.url?.toLowerCase().includes(query);
-      const fieldsMatch = recording.fields?.some(field =>
-        field.toLowerCase().includes(query)
-      );
+      const nameMatch = recording.task_metadata?.name?.toLowerCase().includes(query);
       const sessionMatch = recording.session_id?.toLowerCase().includes(query);
 
-      return urlMatch || fieldsMatch || sessionMatch;
+      return nameMatch || sessionMatch;
     });
 
     setFilteredRecordings(filtered);
@@ -98,9 +95,7 @@ function RecordingsLibraryPage({ onNavigate, showStatus }) {
 
   const handleDeleteClick = (sessionId) => {
     const recording = recordings.find(r => r.session_id === sessionId);
-    const recordingName = (recording?.title && recording.title !== "Untitled Recording")
-      ? recording.title
-      : `Recording ${sessionId}`;
+    const recordingName = recording?.task_metadata?.name || `Recording ${sessionId}`;
 
     setDeleteConfirm({ sessionId, recordingName });
   };
@@ -155,16 +150,6 @@ function RecordingsLibraryPage({ onNavigate, showStatus }) {
     if (diffDays < 7) return `${diffDays} days ago`;
 
     return date.toLocaleDateString();
-  };
-
-  const getFieldsPreview = (fields) => {
-    if (!fields || fields.length === 0) return 'No fields';
-
-    const preview = fields.slice(0, 3).join(', ');
-    if (fields.length > 3) {
-      return `${preview}...`;
-    }
-    return preview;
   };
 
   if (loading) {
@@ -257,9 +242,7 @@ function RecordingsLibraryPage({ onNavigate, showStatus }) {
                 <div className="recording-icon">📹</div>
                 <div className="recording-info">
                   <h3 className="recording-title">
-                    {(recording.title && recording.title !== "Untitled Recording")
-                      ? recording.title
-                      : `Recording ${recording.session_id}`}
+                    {recording.task_metadata?.name || `Recording ${recording.session_id}`}
                   </h3>
                   <div className="recording-meta">
                     <span className="meta-item">
@@ -275,32 +258,7 @@ function RecordingsLibraryPage({ onNavigate, showStatus }) {
                       </svg>
                       {recording.action_count || 0} operations
                     </span>
-                    <span className="meta-item">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <rect x="3" y="3" width="7" height="7"/>
-                        <rect x="14" y="3" width="7" height="7"/>
-                        <rect x="14" y="14" width="7" height="7"/>
-                        <rect x="3" y="14" width="7" height="7"/>
-                      </svg>
-                      {recording.field_count || 0} fields
-                    </span>
                   </div>
-                  {recording.fields && recording.fields.length > 0 && (
-                    <div className="recording-fields">
-                      <span className="fields-label">Fields:</span>
-                      <span className="fields-value">{getFieldsPreview(recording.fields)}</span>
-                    </div>
-                  )}
-                  {recording.url && (
-                    <div className="recording-url">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <circle cx="12" cy="12" r="10"/>
-                        <line x1="2" y1="12" x2="22" y2="12"/>
-                        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-                      </svg>
-                      <span className="url-text">{recording.url}</span>
-                    </div>
-                  )}
                 </div>
               </div>
 

@@ -18,7 +18,6 @@ import RecordingsLibraryPage from "./pages/RecordingsLibraryPage";
 import RecordingDetailPage from "./pages/RecordingDetailPage";
 import ConversationalGenerationPage from "./pages/ConversationalGenerationPage";
 import MetaflowPreviewPage from "./pages/MetaflowPreviewPage";
-import MetaflowDetailPage from "./pages/MetaflowDetailPage";
 import DataManagementPage from "./pages/DataManagementPage";
 import CollectionDetailPage from "./pages/CollectionDetailPage";
 
@@ -402,15 +401,6 @@ function App() {
             showStatus={showStatus}
             metaflowId={pageParams.metaflowId}
             metaflowYaml={pageParams.metaflowYaml}
-          />
-        );
-
-      case "metaflow-detail":
-        return (
-          <MetaflowDetailPage
-            onNavigate={navigate}
-            showStatus={showStatus}
-            metaflowId={pageParams.metaflowId}
           />
         );
 

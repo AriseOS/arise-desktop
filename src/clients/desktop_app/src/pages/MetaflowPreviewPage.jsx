@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import '../styles/MetaflowPreviewPage.css';
 import yaml from 'js-yaml';
+import FlowVisualization from '../components/FlowVisualization';
 
 const API_BASE = "http://127.0.0.1:8765";
 const DEFAULT_USER = "default_user";
@@ -20,19 +21,49 @@ function MetaflowPreviewPage({ onNavigate, showStatus, metaflowId, metaflowYaml 
   const logEndRef = useRef(null);
 
   useEffect(() => {
-    if (metaflowYaml) {
-      setYamlContent(metaflowYaml);
+    const fetchMetaflowData = async () => {
+      // If metaflowYaml is provided, use it directly
+      if (metaflowYaml) {
+        setYamlContent(metaflowYaml);
 
-      // Parse YAML to get structured data for visualization
-      try {
-        const parsed = yaml.load(metaflowYaml);
-        setMetaflowData(parsed);
-      } catch (error) {
-        console.error('Failed to parse MetaFlow YAML:', error);
-        showStatus('⚠️ Failed to parse MetaFlow structure', 'warning');
+        // Parse YAML to get structured data for visualization
+        try {
+          const parsed = yaml.load(metaflowYaml);
+          setMetaflowData(parsed);
+        } catch (error) {
+          console.error('Failed to parse MetaFlow YAML:', error);
+          showStatus('⚠️ Failed to parse MetaFlow structure', 'warning');
+        }
       }
-    }
-  }, [metaflowYaml]);
+      // If only metaflowId is provided, fetch the metaflow data
+      else if (metaflowId && !metaflowYaml) {
+        try {
+          const response = await fetch(`${API_BASE}/api/metaflows/${metaflowId}?user_id=${DEFAULT_USER}`);
+
+          if (!response.ok) {
+            throw new Error(`Failed to fetch MetaFlow: ${response.status}`);
+          }
+
+          const data = await response.json();
+          setYamlContent(data.metaflow_yaml);
+
+          // Parse YAML to get structured data for visualization
+          try {
+            const parsed = yaml.load(data.metaflow_yaml);
+            setMetaflowData(parsed);
+          } catch (error) {
+            console.error('Failed to parse MetaFlow YAML:', error);
+            showStatus('⚠️ Failed to parse MetaFlow structure', 'warning');
+          }
+        } catch (error) {
+          console.error('Error fetching MetaFlow:', error);
+          showStatus(`Failed to load MetaFlow: ${error.message}`, 'error');
+        }
+      }
+    };
+
+    fetchMetaflowData();
+  }, [metaflowYaml, metaflowId]);
 
   const handleConfirmAndGenerate = async () => {
     if (!metaflowId) {
@@ -207,99 +238,8 @@ function MetaflowPreviewPage({ onNavigate, showStatus, metaflowId, metaflowYaml 
     }
   };
 
-  // Helper functions for visualization (similar to Chrome Extension)
-  const getNodeIcon = (type) => {
-    switch (type) {
-      case 'start':
-        return '🚀';
-      case 'navigate':
-        return '🌐';
-      case 'click':
-      case 'interact':
-        return '👆';
-      case 'extract':
-      case 'copy_action':
-        return '📊';
-      case 'type':
-      case 'input':
-        return '⌨️';
-      case 'loop':
-        return '🔄';
-      case 'branch':
-        return '🔀';
-      case 'end':
-        return '✅';
-      default:
-        return '📌';
-    }
-  };
-
-  const getNodeColor = (type) => {
-    switch (type) {
-      case 'start':
-        return '#10b981';
-      case 'navigate':
-        return '#8b5cf6';
-      case 'click':
-      case 'interact':
-        return '#f59e0b';
-      case 'extract':
-      case 'copy_action':
-        return '#3b82f6';
-      case 'type':
-      case 'input':
-        return '#06b6d4';
-      case 'loop':
-        return '#ec4899';
-      case 'branch':
-        return '#f59e0b';
-      case 'end':
-        return '#10b981';
-      default:
-        return '#6b7280';
-    }
-  };
-
-  const renderNode = (node, index) => {
-    const nodeType = node.type || 'process';
-    const nodeName = node.name || node.intent_name || `Step ${index + 1}`;
-    const nodeDescription = node.description || node.intent_description || '';
-
-    return (
-      <div key={index} className="metaflow-node-wrapper">
-        <div
-          className="metaflow-node"
-          style={{ borderColor: getNodeColor(nodeType) }}
-        >
-          <div className="node-icon" style={{ backgroundColor: getNodeColor(nodeType) }}>
-            {getNodeIcon(nodeType)}
-          </div>
-          <div className="node-content">
-            <div className="node-name">{nodeName}</div>
-            {nodeDescription && (
-              <div className="node-description">{nodeDescription}</div>
-            )}
-            {node.operations && node.operations.length > 0 && (
-              <div className="node-meta">
-                {node.operations.length} operation{node.operations.length !== 1 ? 's' : ''}
-              </div>
-            )}
-          </div>
-        </div>
-        {index < (metaflowData?.nodes?.length || 0) - 1 && (
-          <div className="node-connector">
-            <svg width="24" height="40" viewBox="0 0 24 40">
-              <line x1="12" y1="0" x2="12" y2="32" stroke="#d1d5db" strokeWidth="2"/>
-              <polygon points="12,40 8,32 16,32" fill="#d1d5db"/>
-            </svg>
-          </div>
-        )}
-      </div>
-    );
-  };
-
   const renderVisualTab = () => {
-    if (!metaflowData || !metaflowData.nodes) {
+    if (!metaflowData) {
       return (
         <div className="empty-state">
           <p>No MetaFlow structure available</p>
@@ -308,10 +248,11 @@ function MetaflowPreviewPage({ onNavigate, showStatus, metaflowId, metaflowYaml 
     }
 
     return (
-      <div className="visual-container">
-        <div className="metaflow-flow">
-          {metaflowData.nodes.map((node, index) => renderNode(node, index))}
-        </div>
+      <div className="visual-section" style={{ height: '600px', background: '#fff', borderRadius: '8px', overflow: 'hidden' }}>
+        <FlowVisualization
+          data={metaflowData}
+          type="metaflow"
+        />
       </div>
     );
   };

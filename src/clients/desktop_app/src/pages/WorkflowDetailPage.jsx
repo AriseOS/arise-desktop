@@ -326,7 +326,7 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
                       <code className="trace-value">{workflowData.source_metaflow_id}</code>
                       <button
                         className="trace-link-button"
-                        onClick={() => onNavigate('metaflow-detail', { metaflowId: workflowData.source_metaflow_id })}
+                        onClick={() => onNavigate('metaflow-preview', { metaflowId: workflowData.source_metaflow_id })}
                         title="查看MetaFlow详情"
                       >
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
