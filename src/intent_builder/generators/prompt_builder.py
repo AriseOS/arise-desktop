@@ -28,9 +28,9 @@ class PromptBuilder:
         """Load agent specifications from external files"""
         # Find specs directory relative to this file
         # prompt_builder.py is at: intent_builder/generators/prompt_builder.py
-        # specs are at: docs/baseagent/scraper_agent_spec.md
+        # specs are at: docs/base_app/scraper_agent_spec.md
         project_root = Path(__file__).parent.parent.parent.parent
-        specs_dir = project_root / "docs" / "baseagent"
+        specs_dir = project_root / "docs" / "base_app"
 
         # Load scraper_agent spec
         scraper_spec_file = specs_dir / "scraper_agent_spec.md"
