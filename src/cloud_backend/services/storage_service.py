@@ -329,7 +329,8 @@ class StorageService:
                         "metaflow_id": recording.get("metaflow_id")
                     })
 
-        return sorted(result, key=lambda x: x.get("created_at", ""), reverse=True)
+        # Sort by created_at, handling None values
+        return sorted(result, key=lambda x: x.get("created_at") or "", reverse=True)
 
     # ===== MetaFlow 管理 =====
 
@@ -502,7 +503,8 @@ class StorageService:
                         "updated_at": metaflow.get("updated_at")
                     })
 
-        return sorted(result, key=lambda x: x.get("created_at", ""), reverse=True)
+        # Sort by created_at, handling None values
+        return sorted(result, key=lambda x: x.get("created_at") or "", reverse=True)
 
     def metaflow_exists(self, user_id: str, metaflow_id: str) -> bool:
         """Check if MetaFlow exists"""
@@ -645,7 +647,8 @@ class StorageService:
                         "updated_at": workflow.get("updated_at")
                     })
 
-        return sorted(result, key=lambda x: x.get("created_at", ""), reverse=True)
+        # Sort by created_at, handling None values
+        return sorted(result, key=lambda x: x.get("created_at") or "", reverse=True)
 
     def workflow_exists(self, user_id: str, workflow_id: str) -> bool:
         """Check if Workflow exists"""

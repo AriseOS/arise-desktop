@@ -934,10 +934,16 @@ async def list_workflows_restful(user_id: str):
         # Transform to App Backend expected format
         formatted_workflows = []
         for wf in workflows:
+            workflow_id = wf.get("workflow_id")
+            workflow_name = wf.get("workflow_name")
+
+            # Use workflow_id as fallback if workflow_name is None or empty
+            display_name = workflow_name if workflow_name else workflow_id
+
             formatted_workflows.append({
-                "agent_id": wf.get("workflow_id"),  # App Backend uses agent_id
-                "name": wf.get("workflow_name"),
-                "description": wf.get("workflow_name", ""),  # Use name as description if not set
+                "agent_id": workflow_id,  # App Backend uses agent_id
+                "name": display_name,
+                "description": display_name,  # Use name as description
                 "created_at": wf.get("created_at")
             })
 
@@ -1029,6 +1035,30 @@ async def download_workflow(workflow_id: str, user_id: str):
 
     logger.info(f"Workflow downloaded: {workflow_id}")
     return {"yaml": workflow.get("workflow_yaml", "")}
+
+
+@app.delete("/api/workflows/{workflow_id}")
+async def delete_workflow(workflow_id: str, user_id: str):
+    """
+    Delete a Workflow from Cloud Backend
+
+    Query:
+        user_id: User ID
+
+    Returns:
+        {"success": true, "message": "Workflow deleted"}
+    """
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+
+    # Delete workflow from storage
+    success = storage_service.delete_workflow(user_id, workflow_id)
+
+    if not success:
+        raise HTTPException(404, f"Workflow not found: {workflow_id}")
+
+    logger.info(f"Workflow deleted from Cloud: {workflow_id}")
+    return {"success": True, "message": "Workflow deleted"}
 
 # ===== Executions API =====
 

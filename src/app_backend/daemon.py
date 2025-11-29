@@ -1086,9 +1086,13 @@ async def list_workflows(user_id: str = "default_user"):
         try:
             cloud_workflows = await cloud_client.list_workflows(user_id)
             for wf in cloud_workflows:
-                workflows_dict[wf['agent_id']] = {
-                    'agent_id': wf['agent_id'],
-                    'name': wf.get('name', wf['agent_id']),
+                agent_id = wf['agent_id']
+                # Cloud Backend should always return valid name, but use agent_id as ultimate fallback
+                name = wf.get('name') or agent_id
+
+                workflows_dict[agent_id] = {
+                    'agent_id': agent_id,
+                    'name': name,
                     'description': wf.get('description', ''),
                     'created_at': wf.get('created_at'),
                     'last_run': None,
@@ -1108,11 +1112,18 @@ async def list_workflows(user_id: str = "default_user"):
                 # Cloud workflow exists locally - mark as downloaded
                 workflows_dict[wf_id]['is_downloaded'] = True
                 workflows_dict[wf_id]['source'] = 'both'
-                # Use local metadata if cloud doesn't have it
-                if not workflows_dict[wf_id].get('name'):
-                    workflows_dict[wf_id]['name'] = local_info['name']
-                if not workflows_dict[wf_id].get('description'):
-                    workflows_dict[wf_id]['description'] = local_info['description']
+
+                # Prefer local metadata (more complete and up-to-date)
+                # Only use cloud metadata if local doesn't have it
+                local_name = local_info.get('name')
+                if local_name and local_name != wf_id:
+                    # Local has a valid name (not just the ID)
+                    workflows_dict[wf_id]['name'] = local_name
+
+                local_desc = local_info.get('description')
+                if local_desc:
+                    workflows_dict[wf_id]['description'] = local_desc
+
                 # Add last_run from local execution history
                 workflows_dict[wf_id]['last_run'] = local_info.get('last_run')
             else:
@@ -1218,16 +1229,46 @@ async def get_workflow_detail(workflow_id: str, user_id: str = "default_user"):
 
 @app.delete("/api/workflows/{workflow_id}")
 async def delete_workflow(workflow_id: str, user_id: str = "default_user"):
-    """Delete a workflow and all its execution history"""
+    """Delete a workflow from both Cloud and local storage
+
+    Sync Strategy:
+    1. Delete from Cloud Backend first (if exists)
+    2. Delete from local storage
+    3. Cloud is primary source, local is cache
+    """
     try:
         logger.info(f"Deleting workflow: workflow_id={workflow_id}")
-        success = storage_manager.delete_workflow(user_id, workflow_id)
 
-        if not success:
+        # Step 1: Try to delete from Cloud Backend first
+        cloud_deleted = False
+        try:
+            cloud_deleted = await cloud_client.delete_workflow(workflow_id, user_id)
+            if cloud_deleted:
+                logger.info(f"✓ Workflow deleted from Cloud: {workflow_id}")
+            else:
+                logger.warning(f"⚠ Workflow not found in Cloud or delete failed: {workflow_id}")
+        except Exception as e:
+            logger.warning(f"⚠ Cloud deletion failed (Cloud may be unavailable): {e}")
+
+        # Step 2: Delete from local storage
+        local_deleted = storage_manager.delete_workflow(user_id, workflow_id)
+
+        if local_deleted:
+            logger.info(f"✓ Workflow deleted from local storage: {workflow_id}")
+        else:
+            logger.warning(f"⚠ Workflow not found in local storage: {workflow_id}")
+
+        # Step 3: Determine success
+        if not cloud_deleted and not local_deleted:
             raise HTTPException(status_code=404, detail=f"Workflow not found: {workflow_id}")
 
-        logger.info(f"Workflow deleted: {workflow_id}")
-        return {"status": "success", "message": "Workflow deleted"}
+        logger.info(f"✅ Workflow deletion complete: {workflow_id} (Cloud: {cloud_deleted}, Local: {local_deleted})")
+        return {
+            "status": "success",
+            "message": "Workflow deleted",
+            "deleted_from_cloud": cloud_deleted,
+            "deleted_from_local": local_deleted
+        }
     except HTTPException:
         raise
     except Exception as e:

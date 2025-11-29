@@ -327,6 +327,35 @@ class CloudClient:
             logger.warning(f"Failed to fetch workflows from Cloud: {e}")
             return []
 
+    async def delete_workflow(
+        self,
+        workflow_id: str,
+        user_id: str = "default_user"
+    ) -> bool:
+        """Delete workflow from Cloud Backend
+
+        Args:
+            workflow_id: Workflow ID to delete
+            user_id: User ID (default: "default_user")
+
+        Returns:
+            True if deleted successfully, False otherwise
+        """
+        logger.info(f"Deleting workflow from Cloud: {workflow_id}")
+
+        try:
+            response = await self.client.delete(
+                f"/api/workflows/{workflow_id}",
+                params={"user_id": user_id}
+            )
+            response.raise_for_status()
+            logger.info(f"Workflow deleted from Cloud: {workflow_id}")
+            return True
+
+        except Exception as e:
+            logger.warning(f"Failed to delete workflow from Cloud: {e}")
+            return False
+
     async def report_execution(
         self,
         user_id: str,

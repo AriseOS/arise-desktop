@@ -167,8 +167,7 @@ Please convert the following MetaFlow to BaseAgent Workflow YAML:
          xpath_hints:
            url: "//*[@id='list']/div[1]/a/span"  # ← Copied from loop child's click xpath
          output_format:
-           - name: "url"
-             description: "Product URL from the list"
+           url: "Product URL from the list"
    ```
 
    **Why this works**:
@@ -852,8 +851,7 @@ If the node is marked `(Inferred)` AND has placeholder/autonomous operations:
     extraction_method: "script"  # Use script (not llm) - see xpath hints section for PLACEHOLDER handling
     data_requirements:
       output_format:
-        - name: "url"
-          description: "Product URL"
+        url: "Product URL"
       xpath_hints:
         url: "..."  # Will be filled from loop child's click xpath (see section 5 of xpath hints)
 ```
