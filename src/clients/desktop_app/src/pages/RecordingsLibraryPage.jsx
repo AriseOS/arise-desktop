@@ -9,6 +9,7 @@ function RecordingsLibraryPage({ onNavigate, showStatus }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [deleteConfirm, setDeleteConfirm] = useState(null); // { sessionId, recordingName }
+  const [metaflowIds, setMetaflowIds] = useState({}); // { sessionId: metaflowId }
 
   // Fetch recordings from API
   useEffect(() => {
@@ -23,6 +24,25 @@ function RecordingsLibraryPage({ onNavigate, showStatus }) {
         const data = await response.json();
         setRecordings(data.recordings || []);
         setFilteredRecordings(data.recordings || []);
+
+        // Asynchronously fetch metaflow_id for each recording
+        (data.recordings || []).forEach(async (recording) => {
+          try {
+            const detailResponse = await fetch(`${API_BASE}/api/recordings/${recording.session_id}?user_id=default_user`);
+            if (detailResponse.ok) {
+              const detail = await detailResponse.json();
+              if (detail.metaflow_id) {
+                setMetaflowIds(prev => ({
+                  ...prev,
+                  [recording.session_id]: detail.metaflow_id
+                }));
+              }
+            }
+          } catch (err) {
+            // Silently ignore errors for individual recordings
+            console.debug(`Could not fetch metaflow_id for ${recording.session_id}`);
+          }
+        });
       } catch (error) {
         console.error('Error fetching recordings:', error);
         showStatus(`❌ Failed to load recordings: ${error.message}`, 'error');
@@ -58,6 +78,10 @@ function RecordingsLibraryPage({ onNavigate, showStatus }) {
     onNavigate('recording-detail', { sessionId });
   };
 
+  const handleViewMetaflow = (metaflowId) => {
+    onNavigate('metaflow-preview', { metaflowId });
+  };
+
   const handleGenerateWorkflow = async (sessionId) => {
     showStatus('✨ Generating MetaFlow from recording...', 'info');
 
@@ -77,6 +101,12 @@ function RecordingsLibraryPage({ onNavigate, showStatus }) {
       }
 
       const data = await response.json();
+
+      // Update metaflowIds state so the button appears immediately
+      setMetaflowIds(prev => ({
+        ...prev,
+        [sessionId]: data.metaflow_id
+      }));
 
       showStatus('✅ MetaFlow generated! Please review.', 'success');
 
@@ -122,6 +152,11 @@ function RecordingsLibraryPage({ onNavigate, showStatus }) {
       // Remove from local state
       setRecordings(prev => prev.filter(r => r.session_id !== sessionId));
       setFilteredRecordings(prev => prev.filter(r => r.session_id !== sessionId));
+      setMetaflowIds(prev => {
+        const updated = { ...prev };
+        delete updated[sessionId];
+        return updated;
+      });
 
       showStatus('✅ Recording deleted successfully', 'success');
     } catch (error) {
@@ -273,15 +308,30 @@ function RecordingsLibraryPage({ onNavigate, showStatus }) {
                   </svg>
                   View Details
                 </button>
-                <button
-                  className="btn-action secondary"
-                  onClick={() => handleGenerateWorkflow(recording.session_id)}
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-                  </svg>
-                  Generate Workflow
-                </button>
+                {metaflowIds[recording.session_id] ? (
+                  <button
+                    className="btn-action info"
+                    onClick={() => handleViewMetaflow(metaflowIds[recording.session_id])}
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                      <polyline points="14 2 14 8 20 8"/>
+                      <line x1="12" y1="18" x2="12" y2="12"/>
+                      <line x1="9" y1="15" x2="15" y2="15"/>
+                    </svg>
+                    View MetaFlow
+                  </button>
+                ) : (
+                  <button
+                    className="btn-action secondary"
+                    onClick={() => handleGenerateWorkflow(recording.session_id)}
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+                    </svg>
+                    Generate Workflow
+                  </button>
+                )}
                 <button
                   className="btn-delete"
                   onClick={(e) => {

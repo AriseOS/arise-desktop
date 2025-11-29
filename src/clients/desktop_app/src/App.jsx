@@ -312,6 +312,7 @@ function App() {
           <WorkflowDetailPage
             currentUser={{ token: null }}
             workflowId={pageParams.workflowId}
+            autoRun={pageParams.autoRun}
             onNavigate={navigate}
             showStatus={showStatus}
             onLogout={() => { }}

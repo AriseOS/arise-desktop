@@ -313,6 +313,16 @@
   background: rgba(16, 185, 129, 0.1);
 }
 
+.btn-action.info {
+  background: #3B82F6;
+  color: white;
+}
+
+.btn-action.info:hover {
+  background: #2563EB;
+  transform: translateY(-2px);
+}
+
 .btn-delete {
   display: flex;
   align-items: center;
