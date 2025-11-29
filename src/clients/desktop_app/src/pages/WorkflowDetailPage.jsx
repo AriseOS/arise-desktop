@@ -161,6 +161,7 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
             user_id: DEFAULT_USER,
             user_query: `Modify the following Workflow based on this request: ${userMessage}`,
             task_description: `Current Workflow ID: ${workflowId}`,
+            workflow_id: workflowId,  // Pass Workflow ID so Agent can save modifications
             current_workflow_yaml: workflowData.workflow_yaml,
             phase: 'workflow'
           })

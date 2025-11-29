@@ -62,6 +62,12 @@ workflow_generation:
   max_retries: 3
   retry_delay_seconds: 5
 
+# Session Management Configuration
+# Intent Builder session cleanup settings
+session:
+  timeout_minutes: 30  # Session inactivity timeout (30 minutes)
+  cleanup_interval_minutes: 5  # Background cleanup task runs every 5 minutes
+
 # Authentication Configuration
 auth:
   secret_key_env: JWT_SECRET_KEY  # Set this environment variable

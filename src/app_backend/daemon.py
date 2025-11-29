@@ -1572,6 +1572,8 @@ class StartIntentBuilderRequest(BaseModel):
     user_query: str
     task_description: Optional[str] = None
     session_id: Optional[str] = None  # For resuming from recording
+    metaflow_id: Optional[str] = None  # MetaFlow ID being modified
+    workflow_id: Optional[str] = None  # Workflow ID being modified
     current_metaflow_yaml: Optional[str] = None  # Current MetaFlow content for context
     current_workflow_yaml: Optional[str] = None  # Current Workflow content for context
     phase: Optional[str] = None  # 'metaflow' or 'workflow'
@@ -1598,6 +1600,8 @@ async def start_intent_builder_session(request: StartIntentBuilderRequest):
             user_id=request.user_id,
             user_query=request.user_query,
             task_description=request.task_description,
+            metaflow_id=request.metaflow_id,
+            workflow_id=request.workflow_id,
             current_metaflow_yaml=request.current_metaflow_yaml,
             current_workflow_yaml=request.current_workflow_yaml,
             phase=request.phase

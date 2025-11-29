@@ -225,7 +225,8 @@ class WorkflowGenerationService:
         self,
         operations: List[Dict],
         task_description: str,
-        user_query: Optional[str] = None
+        user_query: Optional[str] = None,
+        existing_metaflow_yaml: Optional[str] = None
     ) -> str:
         """
         Generate MetaFlow directly from recording operations (without using global Intent Graph)
@@ -242,6 +243,7 @@ class WorkflowGenerationService:
             operations: List of operations from the recording
             task_description: User's description of what they did
             user_query: User's description of what they want to do (for MetaFlow generation)
+            existing_metaflow_yaml: Existing MetaFlow YAML (for in-place modification, not used for now)
 
         Returns:
             metaflow_yaml: MetaFlow YAML string

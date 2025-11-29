@@ -41,6 +41,50 @@ config_service = CloudConfigService()
 storage_service = None
 workflow_generation_service = None
 
+# Background task management
+cleanup_task = None
+cleanup_task_running = False
+
+def start_session_cleanup_task(timeout_minutes: int, interval_minutes: int):
+    """Start background task to cleanup expired Intent Builder sessions"""
+    global cleanup_task, cleanup_task_running
+
+    async def cleanup_loop():
+        global cleanup_task_running
+        cleanup_task_running = True
+        logger.info(f"🧹 Session cleanup task started (timeout={timeout_minutes}min, interval={interval_minutes}min)")
+
+        while cleanup_task_running:
+            try:
+                # Wait for interval
+                await asyncio.sleep(interval_minutes * 60)
+
+                # Run cleanup
+                logger.debug(f"🧹 Running session cleanup...")
+                cleaned_count = storage_service.cleanup_expired_sessions(timeout_minutes)
+
+                if cleaned_count > 0:
+                    logger.info(f"🧹 Cleaned {cleaned_count} expired sessions")
+
+            except asyncio.CancelledError:
+                logger.info("🧹 Session cleanup task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"❌ Session cleanup error: {e}")
+                # Continue running despite errors
+
+    # Start the background task
+    cleanup_task = asyncio.create_task(cleanup_loop())
+
+def stop_session_cleanup_task():
+    """Stop the background cleanup task"""
+    global cleanup_task, cleanup_task_running
+
+    cleanup_task_running = False
+    if cleanup_task:
+        cleanup_task.cancel()
+        logger.info("🧹 Session cleanup task stopped")
+
 # Create FastAPI application
 app = FastAPI(
     title="Ami Cloud Backend",
@@ -97,7 +141,13 @@ async def startup_event():
         )
         print(f"✅ Logging: {log_level}")
 
-        # 5. TODO: Initialize database connection
+        # 5. Start session cleanup background task
+        session_timeout_minutes = config_service.get("session.timeout_minutes", 30)
+        cleanup_interval_minutes = config_service.get("session.cleanup_interval_minutes", 5)
+        start_session_cleanup_task(session_timeout_minutes, cleanup_interval_minutes)
+        print(f"✅ Session Cleanup: timeout={session_timeout_minutes}min, interval={cleanup_interval_minutes}min")
+
+        # 6. TODO: Initialize database connection
         # db_type = config_service.get("database.type", "sqlite")
         # if db_type == "postgresql":
         #     from database.connection import init_db
@@ -117,6 +167,9 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """关闭时清理资源"""
+    # Stop session cleanup task
+    stop_session_cleanup_task()
+
     # TODO: 关闭数据库连接
     print("✅ Cloud Backend shutdown complete")
 
@@ -473,6 +526,10 @@ async def generate_metaflow_from_recording(recording_id: str, data: dict):
     NOT from the user's global Intent Memory Graph. This is useful when the user wants
     to create a workflow based on a specific demonstration.
 
+    Overwrite Mode (1 Recording → 1 MetaFlow):
+    - If recording already has a MetaFlow, it will be DELETED and replaced with a new one
+    - This implements the requirement: "1 Recording → 1 MetaFlow (Overwrite on Regeneration)"
+
     Body:
         {
             "user_id": "user123",
@@ -483,7 +540,8 @@ async def generate_metaflow_from_recording(recording_id: str, data: dict):
         {
             "metaflow_id": "metaflow_xxx",
             "metaflow_yaml": "...",
-            "status": "success"
+            "status": "success",
+            "old_metaflow_id": "metaflow_old" (if overwrite happened)
         }
     """
     user_id = data.get("user_id")
@@ -508,6 +566,16 @@ async def generate_metaflow_from_recording(recording_id: str, data: dict):
         if not operations:
             raise HTTPException(400, f"Recording {recording_id} has no operations")
 
+        # Check if recording already has a MetaFlow (for overwrite mode)
+        old_metaflow_id = recording_data.get("metaflow_id")
+        if old_metaflow_id:
+            logger.info(f"⚠️  Recording already has MetaFlow: {old_metaflow_id}")
+            logger.info(f"🗑️  Deleting old MetaFlow (overwrite mode)...")
+            storage_service.delete_metaflow(user_id, old_metaflow_id)
+            logger.info(f"✅ Old MetaFlow deleted: {old_metaflow_id}")
+        else:
+            logger.info(f"✨ First time generating MetaFlow for this recording")
+
         # Try to get user_query from recording if not provided in request
         if not user_query:
             user_query = recording_data.get("user_query")
@@ -528,7 +596,7 @@ async def generate_metaflow_from_recording(recording_id: str, data: dict):
             user_query=user_query
         )
 
-        # Generate metaflow_id
+        # Generate new metaflow_id
         metaflow_id = f"metaflow_{uuid.uuid4().hex[:12]}"
 
         # Save MetaFlow to server filesystem with source recording info
@@ -541,20 +609,28 @@ async def generate_metaflow_from_recording(recording_id: str, data: dict):
             source_type="from_recording"
         )
 
-        # Establish Recording → MetaFlow relationship
+        # Establish Recording → MetaFlow relationship (update to new metaflow_id)
         storage_service.update_recording_metaflow(user_id, recording_id, metaflow_id)
 
         logger.info(f"✅ MetaFlow generated and saved: {metaflow_id}")
         logger.info(f"✅ Recording {recording_id} linked to MetaFlow {metaflow_id}")
 
-        return {
+        result = {
             "metaflow_id": metaflow_id,
             "metaflow_yaml": metaflow_yaml,
             "user_query": user_query or task_description,
-            "source_recording_id": recording_id,  # 返回来源recording信息
+            "source_recording_id": recording_id,
             "source_type": "from_recording",
             "status": "success"
         }
+
+        # Include old_metaflow_id if overwrite happened
+        if old_metaflow_id:
+            result["old_metaflow_id"] = old_metaflow_id
+            result["message"] = "Old MetaFlow deleted, new one generated (overwrite mode)"
+            logger.info(f"📋 Overwrite completed: {old_metaflow_id} → {metaflow_id}")
+
+        return result
 
     except HTTPException:
         raise
@@ -570,9 +646,13 @@ async def generate_workflow_from_metaflow(metaflow_id: str, data: dict):
     """
     Generate Workflow YAML from MetaFlow
 
+    Note: MetaFlow modifications are now saved in real-time by Intent Builder Agent,
+    so this endpoint only needs to generate Workflow from the current MetaFlow.
+
     Body:
         {
-            "user_id": "user123"
+            "user_id": "user123",
+            "session_id": "ib_xxx123"  // Optional: Agent session ID for cleanup
         }
 
     Returns:
@@ -582,11 +662,27 @@ async def generate_workflow_from_metaflow(metaflow_id: str, data: dict):
         }
     """
     user_id = data.get("user_id")
+    session_id = data.get("session_id")  # Optional: Agent session ID for cleanup
 
     if not user_id:
         raise HTTPException(400, "Missing user_id")
 
-    # Load MetaFlow data
+    # Clean up Agent session directory if provided
+    if session_id:
+        logger.info(f"🗑️  Cleaning up Agent session: {session_id}")
+        working_dir = storage_service.get_user_intent_builder_path(user_id, session_id)
+
+        if working_dir.exists():
+            import shutil
+            try:
+                shutil.rmtree(working_dir)
+                logger.info(f"✅ Agent session directory cleaned up: {session_id}")
+            except Exception as e:
+                logger.warning(f"Failed to cleanup session directory: {e}")
+        else:
+            logger.info(f"⚠️  Session directory does not exist: {working_dir}")
+
+    # Load MetaFlow data (now updated if Agent modified it)
     metaflow_data = storage_service.get_metaflow(user_id, metaflow_id)
     if not metaflow_data:
         raise HTTPException(404, f"MetaFlow not found: {metaflow_id}")
@@ -599,11 +695,17 @@ async def generate_workflow_from_metaflow(metaflow_id: str, data: dict):
     if user_query:
         logger.info(f"🎯 User Query: {user_query}")
 
+    # Log the MetaFlow that will be used for Workflow generation
+    logger.info(f"📏 MetaFlow length for Workflow generation: {len(metaflow_yaml)} characters")
+    logger.info(f"📄 MetaFlow FULL CONTENT for Workflow generation:\n{metaflow_yaml}")
+
     try:
         # Generate Workflow from MetaFlow
+        logger.info(f"⚙️  Calling workflow_generation_service.generate_workflow_from_metaflow()...")
         workflow_yaml = await workflow_generation_service.generate_workflow_from_metaflow(
             metaflow_yaml=metaflow_yaml
         )
+        logger.info(f"✅ Workflow generation completed, length: {len(workflow_yaml)} characters")
 
         # Extract workflow_name from YAML
         import yaml
@@ -800,6 +902,53 @@ async def list_workflows(user_id: str):
     return workflows
 
 
+@app.get("/api/users/{user_id}/workflows")
+async def list_workflows_restful(user_id: str):
+    """
+    List all Workflows for user (RESTful style)
+
+    This is an alias for GET /api/workflows?user_id={user_id}
+    Used by App Backend for consistency with other RESTful endpoints.
+
+    Path:
+        user_id: User ID
+
+    Returns:
+        {
+            "workflows": [
+                {
+                    "agent_id": "workflow_xxx",  // workflow_id
+                    "name": "workflow_name",
+                    "description": "Workflow description",
+                    "created_at": "timestamp"
+                },
+                ...
+            ]
+        }
+    """
+    try:
+        logger.info(f"Listing workflows for user: {user_id}")
+        workflows = storage_service.list_workflows(user_id)
+        logger.info(f"Found {len(workflows)} workflows")
+
+        # Transform to App Backend expected format
+        formatted_workflows = []
+        for wf in workflows:
+            formatted_workflows.append({
+                "agent_id": wf.get("workflow_id"),  # App Backend uses agent_id
+                "name": wf.get("workflow_name"),
+                "description": wf.get("workflow_name", ""),  # Use name as description if not set
+                "created_at": wf.get("created_at")
+            })
+
+        return {"workflows": formatted_workflows}
+    except Exception as e:
+        logger.error(f"Failed to list workflows: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Failed to list workflows: {str(e)}")
+
+
 @app.get("/api/workflows/{workflow_id}")
 async def get_workflow(workflow_id: str, user_id: str):
     """
@@ -923,6 +1072,8 @@ async def start_intent_builder_session(data: dict):
             "task_description": "Optional additional context",
             "user_operations_path": "Optional path to operations JSON",
             "intent_graph_path": "Optional path to intent graph",
+            "metaflow_id": "Optional MetaFlow ID being modified",
+            "workflow_id": "Optional Workflow ID being modified",
             "current_metaflow_yaml": "Optional current MetaFlow content",
             "current_workflow_yaml": "Optional current Workflow content",
             "phase": "metaflow or workflow"
@@ -936,6 +1087,8 @@ async def start_intent_builder_session(data: dict):
     task_description = data.get("task_description")
     user_operations_path = data.get("user_operations_path")
     intent_graph_path = data.get("intent_graph_path")
+    metaflow_id = data.get("metaflow_id")  # For modification mode
+    workflow_id = data.get("workflow_id")  # For modification mode
     current_metaflow_yaml = data.get("current_metaflow_yaml")
     current_workflow_yaml = data.get("current_workflow_yaml")
     phase = data.get("phase", "metaflow")
@@ -948,6 +1101,22 @@ async def start_intent_builder_session(data: dict):
 
     # Get working directory for this session
     working_dir = storage_service.get_user_intent_builder_path(user_id, session_id)
+
+    # Save session metadata (metaflow_id, workflow_id, etc.) for Agent to use
+    session_metadata = {
+        "user_id": user_id,
+        "session_id": session_id,
+        "phase": phase
+    }
+    if metaflow_id:
+        session_metadata["metaflow_id"] = metaflow_id
+    if workflow_id:
+        session_metadata["workflow_id"] = workflow_id
+
+    metadata_path = working_dir / "session_metadata.json"
+    with open(metadata_path, 'w', encoding='utf-8') as f:
+        json.dump(session_metadata, f, indent=2)
+    logger.info(f"Saved session metadata to {metadata_path}")
 
     # Write current MetaFlow/Workflow to working directory so Agent can read them
     if current_metaflow_yaml:
@@ -1128,6 +1297,40 @@ async def get_intent_builder_state(session_id: str):
     agent = session["agent"]
 
     return agent.get_state()
+
+
+@app.get("/api/intent-builder/sessions/{session_id}/status")
+async def get_session_status(session_id: str, user_id: str):
+    """
+    Get session status from filesystem (age, expiry time, etc.)
+
+    Query params:
+        user_id: User ID
+
+    Returns:
+        {
+            "session_id": "...",
+            "user_id": "...",
+            "working_dir": "...",
+            "last_active_at": "2025-11-28T10:25:00Z",
+            "age_minutes": 15.5,
+            "minutes_until_expiry": 14.5,
+            "status": "active" | "expired"
+        }
+    """
+    if not user_id:
+        raise HTTPException(400, "Missing user_id query parameter")
+
+    # Get session timeout from config
+    session_timeout = config_service.get("session.timeout_minutes", 30)
+
+    # Get session info from storage service
+    session_info = storage_service.get_session_info(user_id, session_id, session_timeout)
+
+    if not session_info:
+        raise HTTPException(404, f"Session not found: {session_id}")
+
+    return session_info
 
 
 @app.delete("/api/intent-builder/{session_id}")

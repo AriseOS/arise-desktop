@@ -84,7 +84,35 @@ Documentation is available at: `{agent_guide_path}`
 
 5. **Handle feedback**
    - If user confirms → proceed to Phase 2
-   - If user requests changes → modify (Edit or Write) and present again
+   - If user requests changes:
+     - Modify MetaFlow (Edit or Write)
+     - **IMPORTANT: Save immediately to Cloud Backend**:
+       1. Read session_metadata.json to get metaflow_id
+       2. Use Python script to save (avoids shell escaping issues):
+          ```bash
+          python3 << 'SAVE_SCRIPT'
+import json
+import requests
+
+# Read session metadata
+with open('session_metadata.json', 'r') as f:
+    metadata = json.load(f)
+metaflow_id = metadata['metaflow_id']
+user_id = metadata['user_id']
+
+# Read updated MetaFlow
+with open('metaflow.yaml', 'r') as f:
+    metaflow_yaml = f.read()
+
+# Save to Cloud Backend
+response = requests.put(
+    'http://localhost:9000/api/metaflows/' + metaflow_id,
+    json={{'user_id': user_id, 'metaflow_yaml': metaflow_yaml}}
+)
+print("Saved to Cloud Backend: " + str(response.status_code))
+SAVE_SCRIPT
+          ```
+     - Present updated MetaFlow to user
 
 ### Phase 2: Workflow Generation
 

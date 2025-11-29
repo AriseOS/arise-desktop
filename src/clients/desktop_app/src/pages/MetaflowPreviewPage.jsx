@@ -143,6 +143,7 @@ function MetaflowPreviewPage({ onNavigate, showStatus, metaflowId, metaflowYaml 
             user_id: DEFAULT_USER,
             user_query: `Modify the following MetaFlow based on this request: ${userMessage}`,
             task_description: `Current MetaFlow ID: ${metaflowId}`,
+            metaflow_id: metaflowId,  // Pass MetaFlow ID so Agent can save modifications
             // Pass current MetaFlow content so Agent has context
             current_metaflow_yaml: yamlContent,
             phase: 'metaflow'  // Tell Agent we're in MetaFlow phase

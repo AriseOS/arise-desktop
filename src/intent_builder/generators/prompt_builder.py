@@ -126,6 +126,57 @@ Please convert the following MetaFlow to BaseAgent Workflow YAML:
 
 4. **Combine multiple extracts from same page**: If multiple extract operations target the same page, combine their xpaths into one scraper_agent step's xpath_hints
 
+5. **CRITICAL - XPath hints for implicit/inferred extract nodes with PLACEHOLDER**:
+
+   When you encounter an extract node with `xpath: <PLACEHOLDER>` that appears BEFORE a loop:
+   - This node was inferred to extract a list for the loop to iterate over
+   - Look at the **first child node inside the loop** that has a click/navigate operation
+   - Use that child node's click xpath as the xpath_hint for the list extraction
+   - The click xpath points to ONE item; for list extraction, use the same xpath to get ALL items
+
+   **Example Pattern**:
+   ```yaml
+   # MetaFlow structure:
+   - id: node_3
+     intent_description: "Extract all product URLs (Inferred)"
+     operations:
+       - type: extract
+         element:
+           xpath: <PLACEHOLDER>  # ← Need to fill this
+           tagName: A
+         target: product_urls
+
+   - id: node_4
+     type: loop
+     source: "{{product_urls}}"
+     children:
+       - id: node_4_1
+         intent_description: "Navigate to product detail"
+         operations:
+           - type: click
+             element:
+               xpath: "//*[@id='list']/div[1]/a/span"  # ← Use this xpath!
+               tagName: SPAN
+
+   # Workflow generation:
+   - id: "extract-product-urls"
+     agent_type: "scraper_agent"
+     inputs:
+       extraction_method: "script"  # Use script since we have xpath_hint from loop child
+       data_requirements:
+         xpath_hints:
+           url: "//*[@id='list']/div[1]/a/span"  # ← Copied from loop child's click xpath
+         output_format:
+           - name: "url"
+             description: "Product URL from the list"
+   ```
+
+   **Why this works**:
+   - The loop child's click xpath shows which element the user clicked (one item)
+   - For list extraction, we use the same xpath pattern to extract all similar items
+   - This provides a concrete xpath hint even when the implicit node had PLACEHOLDER
+   - Since we have xpath_hint, use `extraction_method: "script"` (faster and more reliable)
+
 **Example**:
 ```yaml
 # MetaFlow has 3 extract operations on product page:
@@ -736,9 +787,11 @@ Each agent has specific capabilities. Choose based on **what the task fundamenta
 **autonomous_browser_agent** - Exploratory Web Tasks
 - **Capability**: Autonomously navigate and interact with web pages to achieve a goal
 - **Cannot**: Work with pre-defined paths; it explores and decides actions itself
-- **Use when**: The task has a clear goal but no recorded steps to achieve it
-  - The MetaFlow node is marked with `(Inferred)` in intent_description
-  - The operations don't provide enough information to construct deterministic steps
+- **Use when**: The task requires exploration WITHOUT any concrete recorded operations
+  - The MetaFlow node has `autonomous_task` operation type
+  - OR the node is marked `(Inferred)` AND has NO standard operations (navigate/extract/scroll/etc.)
+  - Examples: "Find CEO's LinkedIn profile" (no recorded steps), "Search for related products" (exploratory)
+- **DO NOT use when**: The node has `extract`, `navigate`, `scroll`, or other concrete operations (even if marked as Inferred)
 - **Inputs**: `task` describing the goal, `max_actions` limiting exploration steps
 
 **storage_agent** - Data Persistence
@@ -753,28 +806,57 @@ Each agent has specific capabilities. Choose based on **what the task fundamenta
 
 ### Decision Framework
 
-When mapping a MetaFlow node to workflow steps, analyze:
+When mapping a MetaFlow node to workflow steps, **follow this strict priority order**:
 
-1. **What operations does the node contain?**
-   - `navigate` → needs browser_agent for navigation
-   - `extract` → needs scraper_agent for extraction
-   - `scroll` → needs browser_agent with interaction_steps
-   - `store` → needs storage_agent
-   - `text_process` → needs text_agent
+**Step 1: Check if the node has concrete operations** (highest priority)
 
-2. **Does the node require multiple capabilities?**
-   - If yes, generate multiple steps in sequence
-   - Example: navigate + extract → browser_agent step, then scraper_agent step
+If the node contains any of these operation types, use the corresponding agent **regardless of `(Inferred)` marker**:
+- `navigate` operation → **browser_agent** for navigation
+- `extract` operation → **scraper_agent** for extraction (use LLM mode if xpath is PLACEHOLDER)
+- `scroll` operation → **browser_agent** with interaction_steps
+- `store` operation → **storage_agent**
+- `text_process` operation → **text_agent**
 
-3. **Is the node marked as `(Inferred)` in intent_description?**
-   - If it describes an autonomous exploration task → autonomous_browser_agent
-   - If it describes text processing → text_agent
+For nodes with multiple operation types (e.g., navigate + extract):
+- Generate multiple steps in sequence
+- Example: browser_agent for navigate, then scraper_agent for extract
 
-4. **What is the semantic goal of the intent?**
-   - Moving to a location → browser_agent
-   - Getting data from current location → scraper_agent
-   - Transforming data semantically → text_agent
-   - Storing data → storage_agent
+**Step 2: Only if the node has NO concrete operations, check `(Inferred)` marker**
+
+If the node is marked `(Inferred)` AND has placeholder/autonomous operations:
+- `autonomous_task` operation → **autonomous_browser_agent**
+- Text processing without concrete steps → **text_agent**
+
+**Key Rule**: Operations type **always wins** over `(Inferred)` marker. The `(Inferred)` marker only indicates the node was inferred, not that it should use autonomous_browser_agent.
+
+**Example - Inferred Extract Node**:
+```yaml
+# MetaFlow node (marked as Inferred with extract operation):
+- id: node_3
+  intent_id: implicit_extract_product_list
+  intent_name: ExtractProductList
+  intent_description: "Extract all product URLs from weekly leaderboard (Inferred)"
+  operations:
+    - type: extract
+      element:
+        xpath: <PLACEHOLDER>
+        tagName: A
+      target: product_urls
+      value: []
+
+# Workflow step: Use scraper_agent (NOT autonomous_browser_agent)
+# Because the node HAS extract operation
+- id: "extract-product-urls"
+  agent_type: "scraper_agent"  # ✓ Correct - has extract operation
+  inputs:
+    extraction_method: "script"  # Use script (not llm) - see xpath hints section for PLACEHOLDER handling
+    data_requirements:
+      output_format:
+        - name: "url"
+          description: "Product URL"
+      xpath_hints:
+        url: "..."  # Will be filled from loop child's click xpath (see section 5 of xpath hints)
+```
 
 ### Important Rules
 
@@ -912,6 +994,7 @@ One intent can generate multiple workflow steps:
 
 Use "script" method when (DEFAULT):
 - MetaFlow operations contain xpath/selectors (MUST use script!)
+- Workflow has xpath_hints (even if MetaFlow xpath was PLACEHOLDER)
 - Extracting list data (URLs, items, etc.)
 - Extracting detail page fields (title, price, rating, etc.)
 - Any structured data extraction with known fields
@@ -920,8 +1003,12 @@ Only use "llm" method when:
 - User explicitly requests semantic understanding
 - Extremely complex/unstructured data that cannot be scripted
 - When there's no consistent DOM pattern to follow
+- **AND** no xpath_hints are available
 
-**Rule**: If MetaFlow extract operation has `element.xpath`, MUST use `extraction_method: "script"`
+**Decision Rules**:
+1. If MetaFlow extract operation has real `element.xpath` (not PLACEHOLDER) → MUST use `extraction_method: "script"`
+2. If you generated xpath_hints from any source (same node, loop child, etc.) → MUST use `extraction_method: "script"`
+3. Only if no xpath data exists at all → consider "llm" (rare case)
 
 ## 5. Variable Naming
 

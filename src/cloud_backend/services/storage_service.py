@@ -79,6 +79,103 @@ class StorageService:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    def get_session_info(self, user_id: str, session_id: str, timeout_minutes: int = 30) -> Optional[Dict]:
+        """
+        Get session information including age and expiry time
+
+        Args:
+            user_id: User ID
+            session_id: Session ID
+            timeout_minutes: Session timeout in minutes
+
+        Returns:
+            Dict with session info, or None if session doesn't exist
+        """
+        import time
+
+        session_path = self._user_path(user_id) / "intent_builder" / session_id
+        if not session_path.exists():
+            return None
+
+        try:
+            last_modified = session_path.stat().st_mtime
+            current_time = time.time()
+            age_seconds = current_time - last_modified
+            age_minutes = age_seconds / 60
+            timeout_seconds = timeout_minutes * 60
+
+            # Calculate expiry
+            minutes_until_expiry = timeout_minutes - age_minutes
+            is_expired = age_seconds > timeout_seconds
+
+            return {
+                "session_id": session_id,
+                "user_id": user_id,
+                "working_dir": str(session_path),
+                "last_active_at": datetime.fromtimestamp(last_modified, timezone.utc).isoformat(),
+                "age_minutes": round(age_minutes, 2),
+                "minutes_until_expiry": round(max(0, minutes_until_expiry), 2),
+                "status": "expired" if is_expired else "active"
+            }
+        except Exception as e:
+            logger.error(f"Failed to get session info: {e}")
+            return None
+
+    def cleanup_expired_sessions(self, timeout_minutes: int = 30) -> int:
+        """
+        Clean up expired Intent Builder sessions across all users
+
+        Args:
+            timeout_minutes: Session timeout in minutes (default: 30)
+
+        Returns:
+            Number of sessions cleaned up
+        """
+        import shutil
+        import time
+
+        cleaned_count = 0
+        current_time = time.time()
+        timeout_seconds = timeout_minutes * 60
+
+        users_dir = self.base_path / "users"
+        if not users_dir.exists():
+            return 0
+
+        # Scan all users
+        for user_dir in users_dir.iterdir():
+            if not user_dir.is_dir():
+                continue
+
+            intent_builder_dir = user_dir / "intent_builder"
+            if not intent_builder_dir.exists():
+                continue
+
+            # Scan all sessions for this user
+            for session_dir in intent_builder_dir.iterdir():
+                if not session_dir.is_dir():
+                    continue
+
+                try:
+                    # Check directory last modified time
+                    last_modified = session_dir.stat().st_mtime
+                    age_seconds = current_time - last_modified
+
+                    if age_seconds > timeout_seconds:
+                        # Session expired, delete it
+                        shutil.rmtree(session_dir)
+                        cleaned_count += 1
+                        logger.info(f"🗑️  Cleaned expired session: {session_dir.name} (age: {age_seconds/60:.1f} min)")
+                except Exception as e:
+                    logger.error(f"Failed to cleanup session {session_dir}: {e}")
+
+        if cleaned_count > 0:
+            logger.info(f"✅ Session cleanup complete: {cleaned_count} sessions removed")
+        else:
+            logger.debug(f"✅ Session cleanup complete: no expired sessions")
+
+        return cleaned_count
+
     # ===== Recording 管理 =====
     
     def save_recording(
@@ -321,8 +418,35 @@ class StorageService:
         metaflow_path = self._user_path(user_id) / "metaflows" / metaflow_id
         yaml_file = metaflow_path / "metaflow.yaml"
 
+        logger.info(f"📝 Updating MetaFlow: {metaflow_id}")
+        logger.info(f"📍 Target file: {yaml_file}")
+        logger.info(f"📏 New content length: {len(metaflow_yaml)} characters")
+
+        # Read old content for comparison
+        if yaml_file.exists():
+            with open(yaml_file, 'r', encoding='utf-8') as f:
+                old_yaml = f.read()
+            logger.info(f"📏 Old content length: {len(old_yaml)} characters")
+            if old_yaml == metaflow_yaml:
+                logger.warning(f"⚠️  New content is IDENTICAL to old content!")
+            else:
+                logger.info(f"✓ Content has changed")
+        else:
+            logger.info(f"ℹ️  File does not exist yet, creating new file")
+
+        # Write new content
         with open(yaml_file, 'w', encoding='utf-8') as f:
             f.write(metaflow_yaml)
+        logger.info(f"✓ File written successfully")
+
+        # Verify write
+        with open(yaml_file, 'r', encoding='utf-8') as f:
+            verified_content = f.read()
+        if verified_content == metaflow_yaml:
+            logger.info(f"✓ File write verified: content matches")
+        else:
+            logger.error(f"❌ File write verification FAILED: content mismatch!")
+            logger.error(f"   Expected length: {len(metaflow_yaml)}, Got: {len(verified_content)}")
 
         # Update timestamp in metadata
         metadata_file = metaflow_path / "metadata.json"
@@ -333,7 +457,7 @@ class StorageService:
             with open(metadata_file, 'w') as f:
                 json.dump(metadata, f, indent=2)
 
-        logger.info(f"MetaFlow updated: {metaflow_id}")
+        logger.info(f"✅ MetaFlow updated successfully: {metaflow_id}")
 
     def update_metaflow_workflow(self, user_id: str, metaflow_id: str, workflow_id: str):
         """Update MetaFlow with associated workflow_id"""
@@ -379,6 +503,28 @@ class StorageService:
                     })
 
         return sorted(result, key=lambda x: x.get("created_at", ""), reverse=True)
+
+    def metaflow_exists(self, user_id: str, metaflow_id: str) -> bool:
+        """Check if MetaFlow exists"""
+        metaflow_path = self._user_path(user_id) / "metaflows" / metaflow_id
+        return (metaflow_path / "metaflow.yaml").exists()
+
+    def delete_metaflow(self, user_id: str, metaflow_id: str) -> bool:
+        """Delete MetaFlow directory completely
+
+        Returns:
+            True if deleted, False if not found
+        """
+        import shutil
+        metaflow_path = self._user_path(user_id) / "metaflows" / metaflow_id
+
+        if not metaflow_path.exists():
+            logger.warning(f"MetaFlow not found for deletion: {metaflow_id}")
+            return False
+
+        shutil.rmtree(metaflow_path)
+        logger.info(f"MetaFlow deleted: {metaflow_id}")
+        return True
 
     # ===== Workflow 管理 =====
     
@@ -500,3 +646,25 @@ class StorageService:
                     })
 
         return sorted(result, key=lambda x: x.get("created_at", ""), reverse=True)
+
+    def workflow_exists(self, user_id: str, workflow_id: str) -> bool:
+        """Check if Workflow exists"""
+        workflow_path = self._user_path(user_id) / "workflows" / workflow_id
+        return (workflow_path / "workflow.yaml").exists()
+
+    def delete_workflow(self, user_id: str, workflow_id: str) -> bool:
+        """Delete Workflow directory completely
+
+        Returns:
+            True if deleted, False if not found
+        """
+        import shutil
+        workflow_path = self._user_path(user_id) / "workflows" / workflow_id
+
+        if not workflow_path.exists():
+            logger.warning(f"Workflow not found for deletion: {workflow_id}")
+            return False
+
+        shutil.rmtree(workflow_path)
+        logger.info(f"Workflow deleted: {workflow_id}")
+        return True

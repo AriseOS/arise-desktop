@@ -398,6 +398,8 @@ class CloudClient:
         user_id: str,
         user_query: str,
         task_description: Optional[str] = None,
+        metaflow_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
         current_metaflow_yaml: Optional[str] = None,
         current_workflow_yaml: Optional[str] = None,
         phase: Optional[str] = None
@@ -408,6 +410,8 @@ class CloudClient:
             user_id: User ID
             user_query: User's query/request
             task_description: Optional additional context
+            metaflow_id: Optional MetaFlow ID being modified
+            workflow_id: Optional Workflow ID being modified
             current_metaflow_yaml: Current MetaFlow content for context
             current_workflow_yaml: Current Workflow content for context
             phase: 'metaflow' or 'workflow'
@@ -423,6 +427,8 @@ class CloudClient:
                 "user_id": user_id,
                 "user_query": user_query,
                 "task_description": task_description,
+                "metaflow_id": metaflow_id,
+                "workflow_id": workflow_id,
                 "current_metaflow_yaml": current_metaflow_yaml,
                 "current_workflow_yaml": current_workflow_yaml,
                 "phase": phase
