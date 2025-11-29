@@ -10,7 +10,7 @@ const nodeTypes = {
   custom: CustomNode,
 }
 
-function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, onLogout }) {
+function WorkflowDetailPage({ currentUser, workflowId, autoRun, onNavigate, showStatus, onLogout }) {
   const [workflowData, setWorkflowData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -28,6 +28,13 @@ function WorkflowDetailPage({ currentUser, workflowId, onNavigate, showStatus, o
   useEffect(() => {
     loadWorkflowData()
   }, [workflowId])
+
+  // Auto-run workflow if autoRun is true
+  useEffect(() => {
+    if (autoRun && workflowData && !loading && !isRunning) {
+      handleRunWorkflow()
+    }
+  }, [autoRun, workflowData, loading])
 
   // Auto-scroll modification log
   useEffect(() => {

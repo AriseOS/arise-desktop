@@ -109,6 +109,11 @@ function MyWorkflowsPage({ currentUser, onNavigate, onLogout }) {
     onNavigate('quick-start')
   }
 
+  const handleRunWorkflow = (workflowId) => {
+    // Navigate to workflow detail page and trigger execution
+    onNavigate('workflow-detail', { workflowId, autoRun: true })
+  }
+
   const handleDeleteClick = (workflowId) => {
     const workflow = workflows.find(w => w.agent_id === workflowId)
     const workflowName = workflow?.name || `Workflow ${workflowId}`
@@ -305,7 +310,10 @@ function MyWorkflowsPage({ currentUser, onNavigate, onLogout }) {
                       <span>查看详情</span>
                     </button>
                     
-                    <button className="action-button secondary">
+                    <button
+                      className="action-button secondary"
+                      onClick={() => handleRunWorkflow(workflow.agent_id)}
+                    >
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <polygon points="5 3 19 12 5 21 5 3"/>
                       </svg>
