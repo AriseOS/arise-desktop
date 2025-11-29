@@ -209,6 +209,24 @@ function MetaflowPreviewPage({ onNavigate, showStatus, metaflowId, metaflowYaml 
                     } catch (e) {
                       console.error('Failed to parse updated YAML:', e);
                     }
+
+                    // Sync to local cache (Cloud already saved by Agent)
+                    fetch(`${API_BASE}/api/metaflows/${metaflowId}`, {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        user_id: DEFAULT_USER,
+                        metaflow_yaml: event.result.updated_yaml
+                      })
+                    }).then(response => {
+                      if (response.ok) {
+                        console.log('✓ MetaFlow synced to local cache');
+                      } else {
+                        console.warn('⚠ Failed to sync metaflow to local cache');
+                      }
+                    }).catch(err => {
+                      console.error('Failed to sync metaflow:', err);
+                    });
                   }
                   showStatus('✅ Modification complete!', 'success');
                   break;

@@ -912,13 +912,55 @@ async def get_metaflow(metaflow_id: str, user_id: str = "default_user"):
 
 @app.put("/api/metaflows/{metaflow_id}")
 async def update_metaflow(metaflow_id: str, data: dict):
-    """Update MetaFlow YAML (proxy to Cloud Backend)"""
+    """Update MetaFlow YAML and sync to both Cloud and local storage
+
+    Sync Strategy:
+    1. Update Cloud Backend first (primary source)
+    2. Update local storage (cache)
+    3. Return success if at least one succeeds
+    """
     try:
         user_id = data.get("user_id", "default_user")
         metaflow_yaml = data.get("metaflow_yaml")
 
-        result = await cloud_client.update_metaflow(metaflow_id, metaflow_yaml, user_id)
-        return result
+        if not metaflow_yaml:
+            raise HTTPException(status_code=400, detail="Missing metaflow_yaml")
+
+        logger.info(f"Updating metaflow: metaflow_id={metaflow_id}")
+
+        # Step 1: Update Cloud Backend first (primary source)
+        cloud_updated = False
+        try:
+            result = await cloud_client.update_metaflow(metaflow_id, metaflow_yaml, user_id)
+            cloud_updated = True
+            logger.info(f"✓ MetaFlow updated in Cloud: {metaflow_id}")
+        except Exception as e:
+            logger.warning(f"⚠ Failed to update metaflow in Cloud: {e}")
+
+        # Step 2: Update local storage (cache)
+        local_updated = False
+        try:
+            if storage_manager.metaflow_exists(user_id, metaflow_id):
+                storage_manager.save_metaflow(user_id, metaflow_id, metaflow_yaml)
+                local_updated = True
+                logger.info(f"✓ MetaFlow updated in local storage: {metaflow_id}")
+            else:
+                logger.warning(f"⚠ MetaFlow not found in local storage: {metaflow_id}")
+        except Exception as e:
+            logger.warning(f"⚠ Failed to update metaflow in local storage: {e}")
+
+        # Step 3: Return success if at least one succeeded
+        if not cloud_updated and not local_updated:
+            raise HTTPException(status_code=500, detail="Failed to update metaflow in both Cloud and local storage")
+
+        logger.info(f"✅ MetaFlow update complete: {metaflow_id} (Cloud: {cloud_updated}, Local: {local_updated})")
+        return {
+            "success": True,
+            "updated_in_cloud": cloud_updated,
+            "updated_in_local": local_updated
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to update metaflow: {e}")
         raise HTTPException(status_code=500, detail=str(e))

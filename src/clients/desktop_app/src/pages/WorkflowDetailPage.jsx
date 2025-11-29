@@ -235,6 +235,24 @@ function WorkflowDetailPage({ currentUser, workflowId, autoRun, onNavigate, show
                       console.error('Failed to parse updated YAML:', e)
                     }
                     setWorkflowData(updatedData)
+
+                    // Sync to local cache (Cloud already saved by Agent)
+                    fetch(`${API_BASE}/api/workflows/${params.workflowId}`, {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        user_id: DEFAULT_USER,
+                        workflow_yaml: event.result.updated_yaml
+                      })
+                    }).then(response => {
+                      if (response.ok) {
+                        console.log('✓ Workflow synced to local cache')
+                      } else {
+                        console.warn('⚠ Failed to sync workflow to local cache')
+                      }
+                    }).catch(err => {
+                      console.error('Failed to sync workflow:', err)
+                    })
                   }
                   showStatus('✅ Modification complete!', 'success')
                   break

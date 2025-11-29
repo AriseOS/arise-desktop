@@ -203,6 +203,11 @@ class StorageManager:
         with open(file_path, 'r', encoding='utf-8') as f:
             return f.read()
 
+    def metaflow_exists(self, user_id: str, metaflow_id: str) -> bool:
+        """Check if metaflow exists locally"""
+        file_path = self._user_path(user_id) / "metaflows" / metaflow_id / "metaflow.yaml"
+        return file_path.exists()
+
     def list_metaflows(self, user_id: str) -> List[str]:
         """List all MetaFlow IDs for user"""
         metaflows_path = self._user_path(user_id) / "metaflows"
