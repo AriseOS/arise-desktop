@@ -732,11 +732,13 @@ async def upload_recording_to_cloud(request: UploadRecordingRequest):
         operations = recording_data.get("operations", [])
 
         # Upload recording to Cloud Backend (with task_description and user_query)
+        # Use session_id as recording_id to keep IDs in sync between local and cloud
         recording_id = await cloud_client.upload_recording(
             operations=operations,
             task_description=request.task_description,
             user_query=request.user_query,
-            user_id=request.user_id
+            user_id=request.user_id,
+            recording_id=request.session_id
         )
         logger.info(f"Recording uploaded: {recording_id}")
 
