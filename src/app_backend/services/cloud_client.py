@@ -271,6 +271,34 @@ class CloudClient:
         response.raise_for_status()
         return response.json()
 
+    async def update_workflow(
+        self,
+        workflow_id: str,
+        workflow_yaml: str,
+        user_id: str = "default_user"
+    ) -> Dict[str, Any]:
+        """Update Workflow YAML content
+
+        Args:
+            workflow_id: Workflow ID
+            workflow_yaml: New YAML content
+            user_id: User ID (default: "default_user")
+
+        Returns:
+            {"success": True}
+        """
+        logger.info(f"Updating Workflow {workflow_id}")
+
+        response = await self.client.put(
+            f"/api/workflows/{workflow_id}",
+            json={
+                "user_id": user_id,
+                "workflow_yaml": workflow_yaml
+            }
+        )
+        response.raise_for_status()
+        return response.json()
+
     async def get_workflow(
         self,
         workflow_id: str,

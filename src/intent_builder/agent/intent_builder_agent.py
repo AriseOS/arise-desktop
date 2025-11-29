@@ -112,6 +112,13 @@ class IntentBuilderAgent:
         # Output paths
         self.metaflow_path = self.working_dir / "metaflow.yaml"
         self.workflow_path = self.working_dir / "workflow.yaml"
+        self.session_metadata_path = self.working_dir / "session_metadata.json"
+
+        # Load session metadata (user_id, metaflow_id, workflow_id)
+        self.user_id = None
+        self.metaflow_id = None
+        self.workflow_id = None
+        self._load_session_metadata()
 
         # State
         self.phase = "metaflow"  # "metaflow" or "workflow"
@@ -132,6 +139,66 @@ class IntentBuilderAgent:
         self._connected = False
 
         logger.info(f"IntentBuilderAgent initialized with working_dir: {working_dir}, model: {self.model}")
+
+    def _load_session_metadata(self):
+        """Load session metadata (user_id, metaflow_id, workflow_id) from session_metadata.json"""
+        if not self.session_metadata_path.exists():
+            logger.warning(f"Session metadata not found: {self.session_metadata_path}")
+            return
+
+        try:
+            import json
+            with open(self.session_metadata_path, 'r', encoding='utf-8') as f:
+                metadata = json.load(f)
+
+            self.user_id = metadata.get('user_id')
+            self.metaflow_id = metadata.get('metaflow_id')
+            self.workflow_id = metadata.get('workflow_id')
+
+            logger.info(f"Loaded session metadata: user_id={self.user_id}, metaflow_id={self.metaflow_id}, workflow_id={self.workflow_id}")
+        except Exception as e:
+            logger.error(f"Failed to load session metadata: {e}")
+
+    def _save_to_cloud_backend(self, phase: str, yaml_content: str) -> bool:
+        """
+        Save updated MetaFlow/Workflow to Cloud Backend
+
+        Args:
+            phase: "metaflow" or "workflow"
+            yaml_content: Updated YAML content
+
+        Returns:
+            True if saved successfully, False otherwise
+        """
+        try:
+            import requests
+
+            if phase == "metaflow" and self.metaflow_id and self.user_id:
+                url = f"http://localhost:9000/api/metaflows/{self.metaflow_id}"
+                data = {"user_id": self.user_id, "metaflow_yaml": yaml_content}
+                logger.info(f"Saving MetaFlow to Cloud Backend: {self.metaflow_id}")
+
+            elif phase == "workflow" and self.workflow_id and self.user_id:
+                url = f"http://localhost:9000/api/workflows/{self.workflow_id}"
+                data = {"user_id": self.user_id, "workflow_yaml": yaml_content}
+                logger.info(f"Saving Workflow to Cloud Backend: {self.workflow_id}")
+
+            else:
+                logger.warning(f"Cannot save to Cloud: missing ID or user_id (phase={phase}, metaflow_id={self.metaflow_id}, workflow_id={self.workflow_id}, user_id={self.user_id})")
+                return False
+
+            response = requests.put(url, json=data, timeout=10)
+
+            if response.status_code == 200:
+                logger.info(f"✅ Successfully saved {phase} to Cloud Backend")
+                return True
+            else:
+                logger.error(f"❌ Failed to save {phase} to Cloud Backend: {response.status_code} {response.text}")
+                return False
+
+        except Exception as e:
+            logger.error(f"❌ Error saving {phase} to Cloud Backend: {e}")
+            return False
 
     async def start(self, user_query: str, task_description: str = None) -> str:
         """
@@ -469,6 +536,14 @@ Present the MetaFlow to me for review before proceeding to Workflow generation.
                                     updated_yaml = f.read()
                             except Exception as e:
                                 logger.warning(f"Failed to read updated workflow: {e}")
+
+                        # Auto-save to Cloud Backend when complete
+                        if updated_yaml:
+                            save_success = self._save_to_cloud_backend(self.phase, updated_yaml)
+                            if save_success:
+                                logger.info(f"✅ Auto-saved {self.phase} to Cloud Backend on complete event")
+                            else:
+                                logger.warning(f"⚠️ Auto-save to Cloud Backend failed for {self.phase}")
 
                         # Yield complete event with state and updated content
                         yield StreamEvent(

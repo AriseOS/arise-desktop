@@ -232,11 +232,13 @@ function IntentBuilderPage({ onNavigate, showStatus, params = {} }) {
           accumulatedText = '';
         }
 
+        // Note: Changes are automatically saved by the Agent on complete event
+
         if (eventSourceRef.current) {
           eventSourceRef.current.close();
         }
         setIsStreaming(false);
-        showStatus('✅ Response complete', 'success');
+        showStatus('✅ Response complete (auto-saved to cloud)', 'success');
         break;
 
       case 'error':

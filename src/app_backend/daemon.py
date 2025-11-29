@@ -1227,6 +1227,62 @@ async def get_workflow_detail(workflow_id: str, user_id: str = "default_user"):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.put("/api/workflows/{workflow_id}")
+async def update_workflow(workflow_id: str, data: dict):
+    """Update Workflow YAML and sync to both Cloud and local storage
+
+    Sync Strategy:
+    1. Update Cloud Backend first (primary source)
+    2. Update local storage (cache)
+    3. Return success if at least one succeeds
+    """
+    try:
+        user_id = data.get("user_id", "default_user")
+        workflow_yaml = data.get("workflow_yaml")
+
+        if not workflow_yaml:
+            raise HTTPException(status_code=400, detail="Missing workflow_yaml")
+
+        logger.info(f"Updating workflow: workflow_id={workflow_id}")
+
+        # Step 1: Update Cloud Backend first (primary source)
+        cloud_updated = False
+        try:
+            result = await cloud_client.update_workflow(workflow_id, workflow_yaml, user_id)
+            cloud_updated = True
+            logger.info(f"✓ Workflow updated in Cloud: {workflow_id}")
+        except Exception as e:
+            logger.warning(f"⚠ Failed to update workflow in Cloud: {e}")
+
+        # Step 2: Update local storage (cache)
+        local_updated = False
+        try:
+            if storage_manager.workflow_exists(user_id, workflow_id):
+                storage_manager.save_workflow(user_id, workflow_id, workflow_yaml)
+                local_updated = True
+                logger.info(f"✓ Workflow updated in local storage: {workflow_id}")
+            else:
+                logger.warning(f"⚠ Workflow not found in local storage: {workflow_id}")
+        except Exception as e:
+            logger.warning(f"⚠ Failed to update workflow in local storage: {e}")
+
+        # Step 3: Return success if at least one succeeded
+        if not cloud_updated and not local_updated:
+            raise HTTPException(status_code=500, detail="Failed to update workflow in both Cloud and local storage")
+
+        logger.info(f"✅ Workflow update complete: {workflow_id} (Cloud: {cloud_updated}, Local: {local_updated})")
+        return {
+            "success": True,
+            "updated_in_cloud": cloud_updated,
+            "updated_in_local": local_updated
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update workflow: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.delete("/api/workflows/{workflow_id}")
 async def delete_workflow(workflow_id: str, user_id: str = "default_user"):
     """Delete a workflow from both Cloud and local storage
