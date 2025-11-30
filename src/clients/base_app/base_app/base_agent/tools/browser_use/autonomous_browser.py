@@ -133,17 +133,30 @@ class AutonomousBrowserTool(BaseTool):
     async def _initialize(self) -> bool:
         """初始化浏览器工具"""
         try:
-            # 初始化 LLM - 使用 Anthropic
+            import os
+            from .no_cache_anthropic import NoCacheChatAnthropic
+
+            # Check if using custom Anthropic proxy (which may have stricter cache_control limits)
+            base_url = os.environ.get("ANTHROPIC_BASE_URL")
+            use_no_cache = base_url and "tun.agenticos.net" in base_url
+
+            if use_no_cache:
+                logger.info(f"Detected custom Anthropic proxy: {base_url}")
+                logger.info("Using NoCacheChatAnthropic to avoid cache_control limit issues")
+
+            # Initialize LLM - use NoCacheChatAnthropic for custom proxy to avoid cache_control errors
+            LLMClass = NoCacheChatAnthropic if use_no_cache else ChatAnthropic
+
             if self.browser_config.llm_api_key:
-                self.llm = ChatAnthropic(
+                self.llm = LLMClass(
                     model=self.browser_config.llm_model,
                     api_key=self.browser_config.llm_api_key,
                 )
             else:
                 # 使用环境变量中的 ANTHROPIC_API_KEY
-                self.llm = ChatAnthropic(model=self.browser_config.llm_model)
+                self.llm = LLMClass(model=self.browser_config.llm_model)
 
-            logger.info(f"Browser tool initialized successfully, using model: {self.browser_config.llm_model}")
+            logger.info(f"Browser tool initialized successfully, using model: {self.browser_config.llm_model}, LLM class: {LLMClass.__name__}")
             return True
 
         except Exception as e:

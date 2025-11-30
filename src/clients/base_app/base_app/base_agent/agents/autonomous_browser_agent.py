@@ -34,7 +34,9 @@ class AutonomousBrowserAgent(BaseStepAgent):
     async def initialize(self, context: AgentContext) -> bool:
         """初始化 Agent"""
         try:
+            import os
             from browser_use.llm import ChatAnthropic
+            from ..tools.browser_use.no_cache_anthropic import NoCacheChatAnthropic
 
             # Get shared browser session from context
             session_info = await context.get_browser_session()
@@ -56,13 +58,23 @@ class AutonomousBrowserAgent(BaseStepAgent):
             else:
                 logger.warning("AutonomousBrowserAgent: No provider in context, will use env var ANTHROPIC_API_KEY")
 
-            # Initialize LLM
-            if llm_api_key:
-                self.llm = ChatAnthropic(model=self.llm_model, api_key=llm_api_key)
-            else:
-                self.llm = ChatAnthropic(model=self.llm_model)
+            # Check if using custom Anthropic proxy (which may have stricter cache_control limits)
+            base_url = os.environ.get("ANTHROPIC_BASE_URL")
+            use_no_cache = base_url and "tun.agenticos.net" in base_url
 
-            logger.info(f"AutonomousBrowserAgent initialized with model: {self.llm_model}")
+            if use_no_cache:
+                logger.info(f"Detected custom Anthropic proxy: {base_url}")
+                logger.info("Using NoCacheChatAnthropic to avoid cache_control limit issues")
+
+            # Initialize LLM - use NoCacheChatAnthropic for custom proxy to avoid cache_control errors
+            LLMClass = NoCacheChatAnthropic if use_no_cache else ChatAnthropic
+
+            if llm_api_key:
+                self.llm = LLMClass(model=self.llm_model, api_key=llm_api_key)
+            else:
+                self.llm = LLMClass(model=self.llm_model)
+
+            logger.info(f"AutonomousBrowserAgent initialized with model: {self.llm_model}, LLM class: {LLMClass.__name__}")
 
             self.is_initialized = True
             return True
