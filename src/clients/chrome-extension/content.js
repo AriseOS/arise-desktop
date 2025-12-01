@@ -1,7 +1,7 @@
-// Content script for AgentCrafter Chrome Extension
+// Content script for Ami Chrome Extension
 // This script runs in the context of web pages
 
-console.log('AgentCrafter extension content script loaded');
+console.log('Ami extension content script loaded');
 
 // Listen for messages from popup or background script
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -141,7 +141,7 @@ function fillInput(selector, value) {
 // Add floating action button for quick access
 function addFloatingButton() {
   const fab = document.createElement('div');
-  fab.id = 'agentcrafter-fab';
+  fab.id = 'ami-fab';
   fab.innerHTML = '🤖';
   fab.style.cssText = `
     position: fixed;

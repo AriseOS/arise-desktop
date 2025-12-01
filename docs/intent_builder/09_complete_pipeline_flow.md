@@ -493,7 +493,7 @@ print("✅ 已保存到 generated_workflow.yaml")
 
 **生成的 Workflow** (`generated_workflow.yaml`):
 ```yaml
-apiVersion: "agentcrafter.io/v1"
+apiVersion: "ami.io/v1"
 kind: "Workflow"
 
 metadata:

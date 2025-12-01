@@ -55,7 +55,7 @@ class AutonomousBrowserTool(BaseTool):
             name="autonomous_browser",
             description="基于AI的自主浏览器工具，支持自然语言驱动的网页操作和探索",
             version="1.0.0",
-            author="AgentCrafter",
+            author="Ami",
             tags=["browser", "automation", "web", "ai", "autonomous"],
             category="automation"
         )

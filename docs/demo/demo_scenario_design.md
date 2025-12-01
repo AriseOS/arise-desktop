@@ -1,4 +1,4 @@
-# AgentCrafter Demo 场景设计
+# Ami Demo 场景设计
 
 **版本**: 1.0
 **日期**: 2025-10-14

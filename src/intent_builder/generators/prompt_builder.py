@@ -216,7 +216,7 @@ operations:
 
 Example format:
 ```yaml
-apiVersion: "agentcrafter.io/v1"
+apiVersion: "ami.io/v1"
 kind: "Workflow"
 ...
 ```
@@ -243,7 +243,7 @@ Your responsibilities:
 ## Basic Structure
 
 ```yaml
-apiVersion: "agentcrafter.io/v1"
+apiVersion: "ami.io/v1"
 kind: "Workflow"
 
 metadata:
@@ -1081,7 +1081,7 @@ nodes:
 ## Output Workflow
 
 ```yaml
-apiVersion: "agentcrafter.io/v1"
+apiVersion: "ami.io/v1"
 kind: "Workflow"
 
 metadata:

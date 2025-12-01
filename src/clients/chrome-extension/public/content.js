@@ -1,7 +1,7 @@
-// Content script for AgentCrafter Chrome Extension
+// Content script for Ami Chrome Extension
 // This script runs in the context of web pages
 
-console.log('AgentCrafter extension content script loaded');
+console.log('Ami extension content script loaded');
 
 // Listen for postMessage from behavior_tracker.js
 window.addEventListener('message', (event) => {
@@ -9,7 +9,7 @@ window.addEventListener('message', (event) => {
   if (event.source !== window) return;
 
   // Check if this is a message from behavior tracker
-  if (event.data && event.data.source === 'agentcrafter-tracker') {
+  if (event.data && event.data.source === 'ami-tracker') {
     console.log('Received operation from tracker:', event.data.operation);
 
     // Forward the operation to popup
@@ -161,7 +161,7 @@ function fillInput(selector, value) {
 // Add floating action button for quick access
 function addFloatingButton() {
   const fab = document.createElement('div');
-  fab.id = 'agentcrafter-fab';
+  fab.id = 'ami-fab';
   fab.innerHTML = '🤖';
   fab.style.cssText = `
     position: fixed;

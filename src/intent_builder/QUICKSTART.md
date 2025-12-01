@@ -132,7 +132,7 @@ PYTHONPATH=. python intent_builder/generate_workflow.py ...
 确保 base_app 目录存在且结构正确：
 
 ```
-agentcrafter/
+ami/
 ├── base_app/
 │   └── base_app/
 │       └── base_agent/
@@ -176,7 +176,7 @@ pip install "pydantic>=2.0"
 ================================================================================
 Generated Workflow:
 ================================================================================
-apiVersion: "agentcrafter.io/v1"
+apiVersion: "ami.io/v1"
 kind: "Workflow"
 metadata:
   name: "coffee-collection-workflow"

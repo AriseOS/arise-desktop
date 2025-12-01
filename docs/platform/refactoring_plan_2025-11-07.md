@@ -1213,7 +1213,7 @@ echo "# 暂停开发 - v3.0 优先 Desktop App" > src/clients/chrome-extension/P
 rm -rf src/app_backend/  # 如果存在 v1.0/v2.0 的错误位置代码
 
 # 删除旧数据库文件（如果需要）
-# rm src/client/web/backend/agentcrafter_users.db
+# rm src/client/web/backend/ami_users.db
 ```
 
 #### Step 6.3: 更新文档
@@ -1300,10 +1300,10 @@ class BaseAgent:
 ```
 baseapp.yaml (BaseAgent)
   ├── data.root: ~/.local/share/baseapp
-  └── data.databases.users: ~/agentcrafter/storage/...
+  └── data.databases.users: ~/ami/storage/...
 
 backend.yaml (Web Backend)
-  ├── database.path: dbfiles/agentcrafter.db
+  ├── database.path: dbfiles/ami.db
   └── ...
 ```
 

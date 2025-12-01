@@ -1,12 +1,12 @@
 # 两层商品爬取工作流 - 列表页和详情页
-apiVersion: "agentcrafter.io/v1"
+apiVersion: "ami.io/v1"
 kind: "Workflow"
 
 metadata:
   name: "paginated-scraper-workflow"
   description: "爬取商品列表页获取URL，然后访问每个商品详情页获取详细信息"
   version: "4.0.0"
-  author: "AgentCrafter"
+  author: "Ami"
   tags: ["scraper", "detail-scraping", "browser-automation"]
 
 # 工作流输入定义

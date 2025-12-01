@@ -1,4 +1,4 @@
-# AgentCrafter Chrome Extension - Build Guide
+# Ami Chrome Extension - Build Guide
 
 ## Overview
 

@@ -1,4 +1,4 @@
-# AgentCrafter Desktop App
+# Ami Desktop App
 
 Desktop application for recording user operations and executing workflows.
 
@@ -81,7 +81,7 @@ cd src/desktop_app
 npm run tauri dev
 ```
 
-**Note:** Make sure you run this from the project root directory `/Users/shenyouren/workspace/arise-project/agentcloud/agentcrafter/`, otherwise Python daemon won't find `src/app_backend/daemon.py`.
+**Note:** Make sure you run this from the project root directory `/Users/shenyouren/workspace/arise-project/ami/ami/`, otherwise Python daemon won't find `src/app_backend/daemon.py`.
 
 ### Build for Production
 

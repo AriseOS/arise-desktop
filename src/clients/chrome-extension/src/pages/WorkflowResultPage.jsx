@@ -594,7 +594,7 @@ function WorkflowResultPage({ currentUser, onNavigate, showStatus, params }) {
       </div>
 
       <div className="footer">
-        <p>AgentCrafter v1.0.0</p>
+        <p>Ami v1.0.0</p>
       </div>
     </div>
   )

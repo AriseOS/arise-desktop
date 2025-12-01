@@ -336,7 +336,7 @@ Background Service Worker
   ↓ (3) HTTP POST
 App Backend API (/api/recording/operation)
   ↓ (4) 追加到文件
-~/agentcrafter/storage/users/{user_id}/learning/{session_id}/operations.json
+~/ami/storage/users/{user_id}/learning/{session_id}/operations.json
 
 
 ┌─────────────────────────────────────────────────────────────────┐
@@ -383,7 +383,7 @@ If not exists:
 Cloud API (/api/workflows/{name}/download)
   ↓ (19) 返回 workflow.yaml
   ↓ (20) 保存到本地
-~/agentcrafter/storage/users/{user_id}/workflows/{name}/workflow.yaml
+~/ami/storage/users/{user_id}/workflows/{name}/workflow.yaml
   ↓ (21) 加载 workflow
 BaseAgent.run_workflow(workflow)
   ↓ (22) 设置 workflow.name = "global"
@@ -393,7 +393,7 @@ BaseAgent executes each step
   ↓ (24) 操作浏览器
 Playwright controls Chrome
   ↓ (25) 保存执行结果
-~/agentcrafter/storage/users/{user_id}/workflows/{name}/executions/{execution_id}/result.json
+~/ami/storage/users/{user_id}/workflows/{name}/executions/{execution_id}/result.json
   ↓ (26) 上传统计数据到云端（异步）
 Cloud API (/api/executions/report)
 ```
@@ -1100,7 +1100,7 @@ async def generate_workflow(
 ### 4.1 本地存储（文件系统）
 
 ```
-~/agentcrafter/storage/users/{user_id}/
+~/ami/storage/users/{user_id}/
 ├── learning/                    # 临时数据（录制阶段）
 │   └── {session_id}/
 │       ├── operations.json      # 录制的操作序列
@@ -1432,7 +1432,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
-        logging.FileHandler('~/agentcrafter/logs/backend.log'),
+        logging.FileHandler('~/ami/logs/backend.log'),
         logging.StreamHandler()
     ]
 )

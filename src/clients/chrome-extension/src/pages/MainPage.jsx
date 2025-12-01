@@ -68,7 +68,7 @@ function MainPage({ currentUser, onNavigate, onLogout, showStatus }) {
       <div className="app-header">
         <div className="app-icon">🤖</div>
         <div className="app-info">
-          <div className="app-name">AgentCrafter</div>
+          <div className="app-name">Ami</div>
           <div className="app-description">Workflow Automation Extension</div>
         </div>
       </div>
@@ -99,7 +99,7 @@ function MainPage({ currentUser, onNavigate, onLogout, showStatus }) {
       ))}
 
       <div className="footer">
-        <p>AgentCrafter v1.0.0</p>
+        <p>Ami v1.0.0</p>
       </div>
     </div>
   )

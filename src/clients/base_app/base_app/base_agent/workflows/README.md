@@ -1,6 +1,6 @@
 # Workflows 目录
 
-AgentCrafter工作流配置文件存储目录。
+Ami工作流配置文件存储目录。
 
 ## 目录结构
 
@@ -24,7 +24,7 @@ base_agent/workflows/
 ### 配置文件结构
 
 ```yaml
-apiVersion: "agentcrafter.io/v1"
+apiVersion: "ami.io/v1"
 kind: "Workflow"
 
 metadata:

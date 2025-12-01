@@ -16,8 +16,8 @@ function AboutPage({ onNavigate }) {
       </div>
 
       <div className="about-content">
-        <h3>🤖 AgentCrafter</h3>
-        <p>AgentCrafter 致力于通过智能工作流自动化技术，解放您的双手，让重复性劳动成为过去。我们的愿景是打造您的专属数字员工，让 AI 真正为您工作。</p>
+        <h3>🤖 Ami</h3>
+        <p>Ami 致力于通过智能工作流自动化技术，解放您的双手，让重复性劳动成为过去。我们的愿景是打造您的专属数字员工，让 AI 真正为您工作。</p>
 
         <h3>✨ 我们能做什么</h3>
         <ul>
@@ -31,13 +31,13 @@ function AboutPage({ onNavigate }) {
         <p>如果您在使用过程中遇到任何问题，或有任何建议和想法，欢迎随时向我们反馈。您的每一条意见都将帮助我们做得更好。</p>
 
         <p style={{ textAlign: 'center', color: '#8e8e93', marginTop: '24px' }}>
-          AgentCrafter v1.0.0<br/>
+          Ami v1.0.0<br/>
           让 AI 成为您的得力助手
         </p>
       </div>
 
       <div className="footer">
-        <p>AgentCrafter v1.0.0</p>
+        <p>Ami v1.0.0</p>
       </div>
     </div>
   )

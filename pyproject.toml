@@ -3,11 +3,11 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agentcrafter"
+name = "ami"
 version = "0.1.0"
-description = "Natural Language Driven Agent Building Platform"
+description = "Natural Language Driven Agent Platform"
 authors = [
-    {name = "AgentCrafter Team", email = "team@agentcrafter.com"}
+    {name = "Ami Team", email = "team@ami.com"}
 ]
 readme = "README.md"
 license = {text = "MIT"}
@@ -61,11 +61,11 @@ monitoring = [
 ]
 
 [project.scripts]
-agentcrafter = "agentcrafter.cli:main"
+ami = "ami.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["agentcrafter*", "core*", "tools*", "api*"]
+include = ["ami*", "core*", "tools*", "api*"]
 
 [tool.black]
 line-length = 88

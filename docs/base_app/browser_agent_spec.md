@@ -322,7 +322,7 @@ steps:
 **Task**: Navigate from homepage to category page, then extract products
 
 ```yaml
-apiVersion: "agentcrafter.io/v1"
+apiVersion: "ami.io/v1"
 kind: "Workflow"
 
 metadata:

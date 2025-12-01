@@ -172,7 +172,7 @@
             } else {
                 // Chrome Extension environment: Use window.postMessage
                 window.postMessage({
-                    source: 'agentcrafter-tracker',
+                    source: 'ami-tracker',
                     operation: data
                 }, '*');
             }

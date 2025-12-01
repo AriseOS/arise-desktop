@@ -1,11 +1,11 @@
-# AgentCrafter Chrome Extension - Usage Guide
+# Ami Chrome Extension - Usage Guide
 
 ## Quick Start
 
 ### 1. Build the Extension
 
 ```bash
-cd /Users/liuyihua/Code/AgentCrafter/client/web/chrome-extension
+cd /Users/liuyihua/Code/Ami/client/web/chrome-extension
 npm install
 npm run build
 ```
@@ -16,11 +16,11 @@ npm run build
 2. Navigate to `chrome://extensions/`
 3. Enable **Developer mode** (toggle in top right)
 4. Click **Load unpacked**
-5. Select the `dist` folder: `/Users/liuyihua/Code/AgentCrafter/client/web/chrome-extension/dist`
+5. Select the `dist` folder: `/Users/liuyihua/Code/Ami/client/web/chrome-extension/dist`
 
 ### 3. Start Using
 
-1. Click the AgentCrafter extension icon in your Chrome toolbar
+1. Click the Ami extension icon in your Chrome toolbar
 2. Login with your credentials
 3. Navigate to "我的" (My Workflows) to see your workflows
 4. Click on any workflow to view its visualization using ReactFlow
@@ -40,7 +40,7 @@ npm run build
 - **Main Page**: Access recording, chat, my workflows, account, and about
 - **My Workflows**: List all your workflows (or see sample workflow if none exist)
 - **Workflow Detail**: Full ReactFlow visualization with step-by-step flow
-- **About**: Information about AgentCrafter platform
+- **About**: Information about Ami platform
 
 ### Sample Workflow
 
@@ -111,4 +111,4 @@ dist/
 
 ## Support
 
-For issues or questions, please refer to the main AgentCrafter documentation.
+For issues or questions, please refer to the main Ami documentation.

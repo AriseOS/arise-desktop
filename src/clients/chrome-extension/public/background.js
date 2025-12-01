@@ -1,6 +1,6 @@
-// Background service worker for AgentCrafter Chrome Extension
+// Background service worker for Ami Chrome Extension
 
-console.log('AgentCrafter extension background script loaded');
+console.log('Ami extension background script loaded');
 
 // In-memory storage for captured operations (persists while background script runs)
 let capturedOperations = [];

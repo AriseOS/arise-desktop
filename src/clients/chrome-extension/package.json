@@ -1,7 +1,7 @@
 {
-  "name": "agentcrafter-extension",
+  "name": "ami-extension",
   "version": "1.0.0",
-  "description": "AgentCrafter Chrome Extension",
+  "description": "Ami Chrome Extension",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

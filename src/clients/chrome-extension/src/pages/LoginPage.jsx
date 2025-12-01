@@ -58,7 +58,7 @@ function LoginPage({ onLogin }) {
       )}
 
       <div className="header">
-        <h1>🤖 AgentCrafter</h1>
+        <h1>🤖 Ami</h1>
         <p>Workflow Automation Extension</p>
       </div>
 
@@ -92,7 +92,7 @@ function LoginPage({ onLogin }) {
       </div>
 
       <div className="footer">
-        <p>AgentCrafter v1.0.0</p>
+        <p>Ami v1.0.0</p>
       </div>
     </div>
   )

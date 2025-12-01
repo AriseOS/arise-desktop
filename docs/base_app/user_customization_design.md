@@ -2,7 +2,7 @@
 
 ## 设计概述
 
-基于现有的 BaseAgent 架构，在 `/Users/shenyouren/workspace/arise-project/agentcloud/agentcrafter/base_app/base_app/base_agent/core/base_agent.py` 中添加用户友好的接口，允许用户：
+基于现有的 BaseAgent 架构，在 `/Users/shenyouren/workspace/arise-project/ami/ami/base_app/base_app/base_agent/core/base_agent.py` 中添加用户友好的接口，允许用户：
 
 1. 通过简单的 Python API 创建自定义 Workflow
 2. 注册自定义的 TextAgent、ToolAgent、CodeAgent

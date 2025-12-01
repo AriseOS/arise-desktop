@@ -78,7 +78,7 @@ In Console, run:
 After making changes:
 1. Run `npm run build`
 2. Go to `chrome://extensions/`
-3. Click reload icon on AgentCrafter extension
+3. Click reload icon on Ami extension
 4. Close and reopen the popup
 
 ## Troubleshooting Steps

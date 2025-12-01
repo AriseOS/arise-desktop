@@ -1,12 +1,12 @@
 # Foreach Loop Test Workflow
-apiVersion: "agentcrafter.io/v1"
+apiVersion: "ami.io/v1"
 kind: "Workflow"
 
 metadata:
   name: "foreach-test-workflow"
   description: "Test workflow to verify foreach loop functionality"
   version: "1.0.0"
-  author: "AgentCrafter"
+  author: "Ami"
   tags: ["test", "foreach", "control-flow"]
 
 # Workflow inputs

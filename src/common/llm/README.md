@@ -1,6 +1,6 @@
 # Common LLM Service
 
-Shared LLM provider implementations for all AgentCrafter modules.
+Shared LLM provider implementations for all Ami modules.
 
 ## Usage
 

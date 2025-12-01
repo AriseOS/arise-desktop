@@ -17,7 +17,7 @@ import yaml
 
 # 添加项目根目录到 Python 路径
 # 当前文件: src/cloud-backend/services/workflow_generation_service.py
-# 需要到达: agentcrafter/ (项目根目录)
+# 需要到达: ami/ (项目根目录)
 project_root = Path(__file__).parent.parent.parent.parent  # 向上4层
 sys.path.insert(0, str(project_root))
 

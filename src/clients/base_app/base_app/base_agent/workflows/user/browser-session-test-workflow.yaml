@@ -1,12 +1,12 @@
 # Browser Session Sharing Test Workflow
-apiVersion: "agentcrafter.io/v1"
+apiVersion: "ami.io/v1"
 kind: "Workflow"
 
 metadata:
   name: "browser-session-test-workflow"
   description: "Test workflow for browser session sharing between multiple scraper agents"
   version: "1.0.0"
-  author: "AgentCrafter"
+  author: "Ami"
   tags: ["test", "scraper", "browser-session"]
 
 # Workflow inputs

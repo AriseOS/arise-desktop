@@ -85,7 +85,7 @@ Phase 1: 录制（完全本地）
 │ 2. Extension 捕获操作事件                   │
 │ 3. 发送到本地 Backend (localhost:8000)     │
 │ 4. Backend 保存到本地文件                   │
-│    ~/agentcrafter/storage/users/{user_id}/  │
+│    ~/ami/storage/users/{user_id}/  │
 │      learning/{session_id}/                │
 │        └── operations.json                 │
 │                                            │
@@ -151,7 +151,7 @@ Phase 4: 下载 & 执行（本地）
 - ✅ 用户可下载到本地执行
 - 📍 存储位置：
   - 云端：`users/{user_id}/workflows/{workflow_name}/`
-  - 本地：`~/agentcrafter/storage/users/{user_id}/workflows/`
+  - 本地：`~/ami/storage/users/{user_id}/workflows/`
 
 **录制数据**：
 - ✅ **必须上传云端**（构建 Intent Graph 的唯一来源）

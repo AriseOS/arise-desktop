@@ -1,11 +1,11 @@
-# AgentCrafter Chrome 插件
+# Ami Chrome 插件
 
-AgentCrafter 工作流自动化平台的 Chrome 浏览器插件。
+Ami 工作流自动化平台的 Chrome 浏览器插件。
 
 ## 功能特性
 
 - 📸 **页面捕获**: 捕获当前页面数据，包括 HTML、文本、链接、图片和表单
-- ▶️ **工作流执行**: 直接从浏览器运行 AgentCrafter 工作流
+- ▶️ **工作流执行**: 直接从浏览器运行 Ami 工作流
 - 🤖 **悬浮操作按钮**: 在任何页面快速访问插件功能
 - 🔍 **元素交互**: 高亮、点击和填充网页元素
 - 💾 **数据存储**: 本地存储捕获的数据和用户偏好设置
@@ -16,7 +16,7 @@ AgentCrafter 工作流自动化平台的 Chrome 浏览器插件。
 
 1. **克隆仓库**（如果还没有）：
    ```bash
-   cd /Users/liuyihua/Code/AgentCrafter
+   cd /Users/liuyihua/Code/Ami
    ```
 
 2. **创建插件图标**（必需）：
@@ -31,11 +31,11 @@ AgentCrafter 工作流自动化平台的 Chrome 浏览器插件。
    - 打开 Chrome 浏览器，访问 `chrome://extensions/`
    - 开启右上角的**开发者模式**
    - 点击**加载已解压的扩展程序**
-   - 选择文件夹：`/Users/liuyihua/Code/AgentCrafter/client/web/chrome-extension`
+   - 选择文件夹：`/Users/liuyihua/Code/Ami/client/web/chrome-extension`
 
 4. **固定插件**（可选）：
    - 点击 Chrome 工具栏的拼图图标
-   - 找到"AgentCrafter Extension"
+   - 找到"Ami Extension"
    - 点击图钉图标将其固定显示
 
 ## 使用方法
@@ -58,12 +58,12 @@ AgentCrafter 工作流自动化平台的 Chrome 浏览器插件。
 
 #### 运行工作流
 - 点击 **"▶️ Run Workflow"** 按钮
-- 通过 AgentCrafter 后端执行配置的工作流
+- 通过 Ami 后端执行配置的工作流
 - 显示状态消息（运行中、成功、错误）
 
 #### 打开控制台
 - 点击 **"🏠 Open Dashboard"** 按钮
-- 在 `http://localhost:3000` 打开 AgentCrafter Web 界面
+- 在 `http://localhost:3000` 打开 Ami Web 界面
 
 ### 3. 悬浮操作按钮
 
@@ -136,7 +136,7 @@ chrome-extension/
 
 修改代码后：
 1. 访问 `chrome://extensions/`
-2. 点击 AgentCrafter Extension 卡片上的重新加载图标
+2. 点击 Ami Extension 卡片上的重新加载图标
 
 ### 调试插件
 
@@ -167,7 +167,7 @@ chrome-extension/
 - 验证 manifest.json 中的权限
 - 重新加载插件
 
-## 与 AgentCrafter 集成
+## 与 Ami 集成
 
 插件集成以下组件：
 - **后端 API** (`http://localhost:8000`): 执行工作流，管理 Agent
@@ -186,8 +186,8 @@ chrome-extension/
 
 ## 许可证
 
-与 AgentCrafter 项目相同
+与 Ami 项目相同
 
 ## 支持
 
-如有问题和疑问，请参考 AgentCrafter 主仓库。
+如有问题和疑问，请参考 Ami 主仓库。

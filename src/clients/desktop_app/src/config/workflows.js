@@ -2,7 +2,7 @@
 
 export const WORKFLOWS = {
   'allegro-coffee-collection': {
-    apiVersion: "agentcrafter.io/v1",
+    apiVersion: "ami.io/v1",
     kind: "Workflow",
     metadata: {
       name: "allegro-coffee-collection-workflow",
@@ -73,7 +73,7 @@ export const WORKFLOWS = {
     ]
   },
   'cross-market-product-selection': {
-    apiVersion: "agentcrafter.io/v1",
+    apiVersion: "ami.io/v1",
     kind: "Workflow",
     metadata: {
       name: "coffee-market-analysis-workflow",
@@ -411,7 +411,7 @@ export const WORKFLOWS = {
     ]
   },
   'amazon-coffee-collection': {
-    apiVersion: "agentcrafter.io/v1",
+    apiVersion: "ami.io/v1",
     kind: "Workflow",
     metadata: {
       name: "amazon-coffee-collection-workflow",
@@ -601,7 +601,7 @@ export const WORKFLOWS = {
     ]
   },
   'producthunt-weekly-leaderboard': {
-    apiVersion: "agentcrafter.io/v1",
+    apiVersion: "ami.io/v1",
     kind: "Workflow",
     metadata: {
       name: "producthunt-weekly-leaderboard-scraper",

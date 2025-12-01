@@ -109,8 +109,8 @@ class WorkflowValidator:
         errors = []
         
         # 验证 API 版本和类型
-        if config.get('apiVersion') != 'agentcrafter.io/v1':
-            errors.append("apiVersion 必须是 'agentcrafter.io/v1'")
+        if config.get('apiVersion') != 'ami.io/v1':
+            errors.append("apiVersion 必须是 'ami.io/v1'")
         
         if config.get('kind') != 'Workflow':
             errors.append("kind 必须是 'Workflow'")
@@ -413,7 +413,7 @@ class WorkflowConfigLoader:
             enable_parallel=config.get('config', {}).get('enable_parallel', False),
             enable_cache=config.get('config', {}).get('enable_cache', True),
             tags=metadata.get('tags', []),
-            author=metadata.get('author', 'AgentCrafter')
+            author=metadata.get('author', 'Ami')
         )
         
         return workflow

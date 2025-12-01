@@ -598,7 +598,7 @@ except Exception as e:
 ```yaml
 data:
   storage:
-    users: "~/agentcrafter/storage/users"
+    users: "~/ami/storage/users"
 ```
 
 代码中读取：

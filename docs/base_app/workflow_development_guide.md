@@ -95,7 +95,7 @@ class Workflow(BaseModel):
     
     # 元数据
     tags: List[str] = Field(default_factory=list, description="标签")
-    author: str = Field(default="AgentCrafter", description="作者")
+    author: str = Field(default="Ami", description="作者")
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
 ```

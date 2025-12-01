@@ -1,5 +1,5 @@
 """
-AgentCrafter Source Code
+Ami Source Code
 
 Directory structure:
 - common/: Shared utilities and services (LLM providers, etc.)

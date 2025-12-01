@@ -5,7 +5,7 @@ BaseAgent Workflow is the executable format that defines a sequence of agent ste
 ## Basic Structure
 
 ```yaml
-apiVersion: "agentcrafter.io/v1"
+apiVersion: "ami.io/v1"
 kind: "Workflow"
 
 metadata:
@@ -47,7 +47,7 @@ steps:
 
 | Field | Description | Required |
 |-------|-------------|----------|
-| `apiVersion` | API version, must be `"agentcrafter.io/v1"` | Yes |
+| `apiVersion` | API version, must be `"ami.io/v1"` | Yes |
 | `kind` | Must be `"Workflow"` | Yes |
 | `metadata` | Workflow metadata | Yes |
 | `steps` | List of workflow steps | Yes |

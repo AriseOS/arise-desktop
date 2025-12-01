@@ -1,12 +1,12 @@
 # 用户问答工作流 - 基于Provider的3步式架构
-apiVersion: "agentcrafter.io/v1"
+apiVersion: "ami.io/v1"
 kind: "Workflow"
 
 metadata:
   name: "user-qa-workflow"
   description: "智能用户问答工作流，支持意图识别和条件分支执行"
   version: "1.0.0"
-  author: "AgentCrafter"
+  author: "Ami"
   tags: ["user-qa", "intent-analysis", "conditional"]
 
 # 工作流输入定义

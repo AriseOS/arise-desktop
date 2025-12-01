@@ -235,7 +235,7 @@ return WorkflowResult(
 
 ```yaml
 # workflows/builtin/user-qa-workflow.yaml
-apiVersion: "agentcrafter.io/v1"
+apiVersion: "ami.io/v1"
 kind: "Workflow"
 
 metadata:

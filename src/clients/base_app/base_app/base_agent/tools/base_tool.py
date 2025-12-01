@@ -26,7 +26,7 @@ class ToolMetadata(BaseModel):
     name: str = Field(..., description="工具名称")
     description: str = Field(..., description="工具描述")
     version: str = Field(default="1.0.0", description="工具版本")
-    author: str = Field(default="AgentCrafter", description="工具作者")
+    author: str = Field(default="Ami", description="工具作者")
     tags: List[str] = Field(default_factory=list, description="工具标签")
     category: str = Field(default="general", description="工具分类")
 

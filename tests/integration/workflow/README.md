@@ -1,6 +1,6 @@
 # Workflow Integration Tests
 
-This directory contains tools and scripts for testing AgentCrafter workflows.
+This directory contains tools and scripts for testing Ami workflows.
 
 ## run_workflow.py
 

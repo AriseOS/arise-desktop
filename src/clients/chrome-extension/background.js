@@ -1,6 +1,6 @@
-// Background service worker for AgentCrafter Chrome Extension
+// Background service worker for Ami Chrome Extension
 
-console.log('AgentCrafter extension background script loaded');
+console.log('Ami extension background script loaded');
 
 // Extension installation
 chrome.runtime.onInstalled.addListener((details) => {

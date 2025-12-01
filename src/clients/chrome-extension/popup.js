@@ -1,4 +1,4 @@
-// Popup script for AgentCrafter Chrome Extension
+// Popup script for Ami Chrome Extension
 
 // Page elements
 let loginPage, mainPage, aboutPage, myPage, loginForm;

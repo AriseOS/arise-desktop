@@ -211,7 +211,7 @@
 **数据存储**：
 - 实时发送到本地 Backend
 - Backend 追加到 `operations.json`
-- 本地文件路径：`~/agentcrafter/storage/users/{user_id}/learning/{session_id}/operations.json`
+- 本地文件路径：`~/ami/storage/users/{user_id}/learning/{session_id}/operations.json`
 
 **FR-2.3 录制状态显示**
 
@@ -295,7 +295,7 @@ Extension 实时显示：
 **系统行为**：
 1. Backend 调用云端 API：`GET /api/workflows/{name}/download`
 2. 下载 workflow.yaml
-3. 保存到本地：`~/agentcrafter/storage/users/{user_id}/workflows/{workflow_name}/workflow.yaml`
+3. 保存到本地：`~/ami/storage/users/{user_id}/workflows/{workflow_name}/workflow.yaml`
 4. 保存 metadata.json（包含创建时间、描述等）
 
 **后置条件**：

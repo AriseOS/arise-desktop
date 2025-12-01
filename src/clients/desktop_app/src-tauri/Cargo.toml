@@ -1,8 +1,8 @@
 [package]
-name = "agentcrafter-desktop"
+name = "ami-desktop"
 version = "0.1.0"
-description = "AgentCrafter Desktop Application"
-authors = ["AgentCrafter Team"]
+description = "Ami Desktop Application"
+authors = ["Ami Team"]
 license = ""
 repository = ""
 edition = "2021"

@@ -1,6 +1,6 @@
 // Recorder content script - captures user operations and sends to backend
 (function() {
-    console.log('🎬 AgentCrafter Recorder initialized on:', window.location.href);
+    console.log('🎬 Ami Recorder initialized on:', window.location.href);
 
     let recordingSessionId = null;
     let userToken = null;
@@ -81,7 +81,7 @@
 
     function injectTrackingScript() {
         const script = document.createElement('script');
-        script.id = 'agentcrafter-tracker';
+        script.id = 'ami-tracker';
         const scriptUrl = chrome.runtime.getURL('behavior_tracker.js');
 
         console.log('🔧 Attempting to inject behavior tracker from:', scriptUrl);
@@ -104,7 +104,7 @@
     }
 
     function removeTrackingScript() {
-        const script = document.getElementById('agentcrafter-tracker');
+        const script = document.getElementById('ami-tracker');
         if (script) {
             script.remove();
             console.log('🗑️ Tracking script removed');
@@ -122,7 +122,7 @@
         }
 
         // Only accept messages from our tracker
-        if (!event.data || event.data.source !== 'agentcrafter-tracker') {
+        if (!event.data || event.data.source !== 'ami-tracker') {
             console.log('⏭️ Ignoring: not from tracker, source:', event.data?.source);
             return;
         }

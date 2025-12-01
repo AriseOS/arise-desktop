@@ -36,14 +36,14 @@ class ConfigService:
         self._load_config()
 
     def _find_project_root(self) -> Path:
-        """Find project root directory (agentcrafter/)"""
+        """Find project root directory (ami/)"""
         # Method 1: Via environment variable
         if project_root_env := os.getenv("PROJECT_ROOT"):
             return Path(project_root_env).resolve()
 
         # Method 2: Calculate from current file location
         # Current file: src/common/config_service.py
-        # Project root: ../../ (up 2 levels to agentcrafter/)
+        # Project root: ../../ (up 2 levels to ami/)
         return Path(__file__).parent.parent.parent.resolve()
 
     def _find_config_file(self, config_path: Optional[str] = None) -> str:

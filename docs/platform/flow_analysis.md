@@ -1,8 +1,8 @@
-# AgentCrafter System Flow Analysis: Complete Closed-Loop Interface
+# Ami System Flow Analysis: Complete Closed-Loop Interface
 
 ## Executive Summary
 
-AgentCrafter implements a closed-loop system for recording user actions, converting them to workflows, and executing them. The system consists of four integrated components:
+Ami implements a closed-loop system for recording user actions, converting them to workflows, and executing them. The system consists of four integrated components:
 
 1. **Browser Extension** - Records user behavior via Chrome extension
 2. **Recording Service** - Captures and stores operations on the backend
@@ -132,7 +132,7 @@ behavior_tracker.js detects event
   │  └─ Timestamp
   ↓
 Sends via window.postMessage()
-  {source: 'agentcrafter-tracker', operation: {...}}
+  {source: 'ami-tracker', operation: {...}}
   ↓
 recorder.js receives via addEventListener('message')
   ↓
@@ -338,7 +338,7 @@ convergence:
 - **Format**: BaseAgent-compatible YAML
 - **Structure**:
 ```yaml
-apiVersion: agentcrafter.io/v1
+apiVersion: ami.io/v1
 kind: Workflow
 metadata:
   name: product-collection-workflow
@@ -469,7 +469,7 @@ workflow = load_workflow(workflow_name)
 # OR from: tests/test_data/{name}/workflow.yaml
 
 # Validates:
-# - API version: agentcrafter.io/v1
+# - API version: ami.io/v1
 # - Kind: Workflow
 # - Required metadata fields
 # - Step definitions
@@ -1065,7 +1065,7 @@ Response 200:
 ### 8.2 Sample Workflow YAML Generated
 
 ```yaml
-apiVersion: agentcrafter.io/v1
+apiVersion: ami.io/v1
 kind: Workflow
 metadata:
   name: amazon-laptop-collection
@@ -1144,7 +1144,7 @@ final_response:
 
 ## CONCLUSION
 
-The AgentCrafter system provides a complete closed-loop interface for:
+The Ami system provides a complete closed-loop interface for:
 1. Recording user behavior via Chrome extension
 2. Extracting semantic intents from operations
 3. Generating executable workflows
