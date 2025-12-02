@@ -9,10 +9,14 @@ Workflow Generation Service - 集成 Intent Builder
 5. 保存所有中间产物
 """
 
+import json
 import logging
+import re
 import sys
+import uuid
 from pathlib import Path
 from typing import Dict, List, Optional
+from urllib.parse import urlparse
 import yaml
 
 # 添加项目根目录到 Python 路径
@@ -369,3 +373,136 @@ class WorkflowGenerationService:
 
         logger.info(f"✅ MetaFlow generation from recording complete")
         return metaflow_yaml
+
+    async def generate_workflow_from_operations(
+        self,
+        operations: List[Dict],
+        task_description: Optional[str] = None,
+        user_query: Optional[str] = None,
+        user_api_key: Optional[str] = None
+    ) -> Dict[str, str]:
+        """High-level helper used by tests: operations → MetaFlow → Workflow.
+
+        Args:
+            operations: Recorded browser operations
+            task_description: Optional user provided description
+            user_query: Optional goal description for MetaFlow generation
+            user_api_key: Ami API key (for API Proxy routing)
+
+        Returns:
+            Dict containing workflow/metaflow YAML、intent graph JSON、workflow name
+        """
+
+        if not operations:
+            raise ValueError("Operations list cannot be empty")
+
+        effective_task_description = (task_description or "").strip()
+        if not effective_task_description:
+            effective_task_description = self._infer_task_description(operations)
+
+        # Generate MetaFlow & Workflow via existing pipeline
+        metaflow_yaml = await self.generate_metaflow_from_recording(
+            operations=operations,
+            task_description=effective_task_description,
+            user_query=user_query,
+            user_api_key=user_api_key
+        )
+
+        workflow_yaml = await self.generate_workflow_from_metaflow(
+            metaflow_yaml=metaflow_yaml,
+            user_api_key=user_api_key
+        )
+
+        workflow_name = self._generate_workflow_name(
+            effective_task_description,
+            operations
+        )
+
+        intent_graph_json = self._build_intent_graph_json(
+            operations,
+            effective_task_description
+        )
+
+        return {
+            "success": True,
+            "workflow_yaml": workflow_yaml,
+            "metaflow_yaml": metaflow_yaml,
+            "intent_graph_json": intent_graph_json,
+            "workflow_name": workflow_name,
+            "task_description": effective_task_description
+        }
+
+    def _infer_task_description(self, operations: List[Dict]) -> str:
+        """Infer a lightweight task description from operations when user input is absent."""
+
+        host = self._extract_host_from_operations(operations)
+        if host:
+            return f"Auto workflow for {host}"
+
+        first_type = operations[0].get("type") if operations else "task"
+        return f"Auto workflow for {first_type or 'task'}"
+
+    def _extract_host_from_operations(self, operations: List[Dict]) -> Optional[str]:
+        """Return the first domain found inside the operations list."""
+
+        for op in operations:
+            url = op.get("url")
+            if not url and isinstance(op.get("data"), dict):
+                url = op["data"].get("url")
+            if not url:
+                continue
+            parsed = urlparse(url)
+            host = parsed.netloc or parsed.path
+            if host:
+                return host.lower()
+        return None
+
+    def _generate_workflow_name(self, task_description: str, operations: List[Dict]) -> str:
+        """Generate a safe, human friendly workflow name (<=100 chars)."""
+
+        base = (task_description or "").strip()
+        if not base:
+            base = self._extract_host_from_operations(operations) or "workflow"
+
+        slug = re.sub(r"[^\w\-\u4e00-\u9fff]+", "-", base.lower())
+        slug = re.sub(r"-+", "-", slug).strip("-")
+
+        if not slug:
+            slug = self._extract_host_from_operations(operations) or f"workflow-{uuid.uuid4().hex[:8]}"
+
+        if len(slug) > 100:
+            slug = slug[:100].rstrip("-")
+
+        return slug or f"workflow-{uuid.uuid4().hex[:6]}"
+
+    def _build_intent_graph_json(self, operations: List[Dict], task_description: str) -> str:
+        """Create a lightweight graph JSON for downstream visualization/tests."""
+
+        nodes = []
+        edges = []
+
+        for idx, op in enumerate(operations):
+            node_id = f"op_{idx}"
+            element = op.get("element") or {}
+            nodes.append({
+                "id": node_id,
+                "type": op.get("type"),
+                "url": op.get("url") or (op.get("data") or {}).get("url"),
+                "text": element.get("text") or element.get("textContent"),
+                "timestamp": op.get("timestamp")
+            })
+
+            if idx > 0:
+                edges.append({
+                    "source": f"op_{idx - 1}",
+                    "target": node_id
+                })
+
+        graph_payload = {
+            "task_description": task_description,
+            "operation_count": len(operations),
+            "nodes": nodes,
+            "edges": edges
+        }
+
+        return json.dumps(graph_payload, ensure_ascii=False)

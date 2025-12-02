@@ -191,9 +191,9 @@ export ANTHROPIC_API_KEY=your_anthropic_key
 - `src/base_app/base_agent/workflows/builtin/user-qa-workflow.yaml` - Default workflow definition
 
 **Web Platform Configuration:**
-- `src/client/web/config/backend.yaml` - Web backend configuration (database, server, security)
-- `src/client/web/config/backend.yaml.example` - Configuration template
-- `src/client/web/backend/config.py` - Configuration loader and management
+- `src/cloud_backend/config/cloud-backend.yaml` - Cloud backend configuration (database, server, security)
+- `src/cloud_backend/config/README.md` - Configuration templates and environment guidance
+- `src/cloud_backend/core/config_service.py` - Configuration loader and management
 
 **Database:**
 - Default location: `dbfiles/ami.db` (configurable in backend.yaml)

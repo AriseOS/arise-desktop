@@ -88,7 +88,7 @@
 ### 2.1 代码结构混乱
 
 ```
-src/client/web/backend/
+legacy client/web/backend/
 ├── main.py (1253 行！)
 │   ├── Agent 管理 API（已废弃）
 │   ├── 聊天功能（已废弃）
@@ -802,21 +802,21 @@ cloud-backend/
 
 #### Step 2.2: 迁移现有代码
 
-**从 `src/client/web/backend/` 迁移到 `cloud-backend/`**：
+**（已完成）Legacy client/web/backend → `src/cloud_backend/`**：
 
 ```bash
 # 迁移文件映射
-src/client/web/backend/auth.py 
-  → cloud-backend/api/auth.py
+legacy client/web/backend/auth.py 
+  → `src/cloud_backend/api/auth.py`
 
-src/client/web/backend/learning_service.py 
-  → cloud-backend/services/learning_service.py
+legacy client/web/backend/learning_service.py 
+  → `src/cloud_backend/services/learning_service.py`
 
-src/client/web/backend/database.py 
-  → cloud-backend/models/*.py (拆分)
+legacy client/web/backend/database.py 
+  → `src/cloud_backend/database/models.py`
 
-src/intent_builder/ 
-  → cloud-backend/services/ (整合)
+`src/intent_builder/` 
+  → `src/cloud_backend/services/` (整合)
 ```
 
 **清理 database.py**：
@@ -892,7 +892,7 @@ class Workflow(Base):
 ```python
 # cloud-backend/services/learning_service.py
 
-# 复制 src/client/web/backend/learning_service.py
+# 复制 legacy client/web/backend/learning_service.py
 # 并调整导入路径
 
 from src.intent_builder.intent_extractor import IntentExtractor
@@ -1213,7 +1213,7 @@ echo "# 暂停开发 - v3.0 优先 Desktop App" > src/clients/chrome-extension/P
 rm -rf src/app_backend/  # 如果存在 v1.0/v2.0 的错误位置代码
 
 # 删除旧数据库文件（如果需要）
-# rm src/client/web/backend/ami_users.db
+# rm legacy client/web/backend/ami_users.db
 ```
 
 #### Step 6.3: 更新文档

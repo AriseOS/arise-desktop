@@ -779,228 +779,105 @@ export function Workflows() {
 
 ---
 
-### 3.3 本地 Backend (Python)
+### 3.3 后端服务 (FastAPI)
+
+Intent Builder、录制上报和 Workflow 相关 API 现已统一在 `src/cloud_backend/` 中运行，负责与桌面端、Chrome 扩展和 App Backend 交互。
 
 #### 3.3.1 目录结构
 
 ```
-src/client/web/backend/
-├── main.py (FastAPI 应用入口)
-├── config.py (配置管理)
-├── auth.py (JWT 认证)
-├── recording_api.py (录制相关 API)
-├── workflow_api.py (Workflow 相关 API)
-├── storage_service.py (本地文件管理)
-├── workflow_service.py (执行管理)
-└── cloud_client.py (调用云端 API)
+src/cloud_backend/
+├── main.py                   # FastAPI 应用入口，注册所有路由
+├── api/
+│   └── auth.py               # 登录 / Token 颁发
+├── services/
+│   ├── learning_service.py   # Intent/MetaFlow 处理
+│   ├── workflow_generation_service.py
+│   └── storage_service.py    # 本地/对象存储管理
+├── config/
+│   ├── cloud-backend.yaml    # 配置文件
+│   └── README.md             # 配置说明
+├── core/
+│   └── config_service.py     # 配置加载器
+├── database/
+│   ├── connection.py         # SQLAlchemy 会话
+│   └── models.py             # ORM 模型 (RecordingSessionDB 等)
+└── requirements.txt
 ```
 
 #### 3.3.2 主应用
 
-```python
-# main.py
+`src/cloud_backend/main.py` 直接创建 FastAPI 应用并在启动时初始化核心服务：
 
+```python
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from src.base_app.base_app.base_agent.tools.browser_session_manager import BrowserSessionManager
-import asyncio
+from core.config_service import CloudConfigService
+from services.storage_service import StorageService
+from services.workflow_generation_service import WorkflowGenerationService
 
-app = FastAPI(title="Ami App Backend")
+config_service = CloudConfigService()
+cors_origins = config_service.get("cors.allow_origins", ["http://localhost:3000"])
 
-# CORS 配置（允许 Extension 和 Desktop App 访问）
+app = FastAPI(title="Ami Cloud Backend")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["chrome-extension://*", "http://localhost:*"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 全局浏览器会话管理器
-browser_manager = None
+storage_service: StorageService | None = None
+workflow_generation_service: WorkflowGenerationService | None = None
 
 @app.on_event("startup")
 async def startup_event():
-    """启动时初始化全局浏览器会话"""
-    global browser_manager
-    browser_manager = BrowserSessionManager()
-    
-    # 创建全局会话
-    await browser_manager.get_or_create_session(
-        workflow_name="global",
-        headless=False
+    """Attach file storage + workflow services"""
+    global storage_service, workflow_generation_service
+    storage_service = StorageService(
+        base_path=config_service.get("storage.base_path", "~/ami-server")
     )
-    print("✅ Global browser session initialized")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """关闭时清理资源"""
-    global browser_manager
-    if browser_manager:
-        await browser_manager.cleanup_all()
-    print("✅ Resources cleaned up")
-
-# 包含各个路由
-from recording_api import router as recording_router
-from workflow_api import router as workflow_router
-
-app.include_router(recording_router, prefix="/api/recording")
-app.include_router(workflow_router, prefix="/api/workflows")
-
-@app.get("/health")
-async def health_check():
-    return {
-        "status": "ok",
-        "browser_sessions": len(browser_manager.sessions) if browser_manager else 0
-    }
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    workflow_generation_service = WorkflowGenerationService(
+        llm_provider_name=config_service.get("llm.provider", "anthropic")
+    )
 ```
 
-#### 3.3.3 录制 API
+主应用文件也在同一处定义录制、MetaFlow、Workflow 与 Intent Builder 路由，供桌面端与 Chrome 扩展统一调用。
+#### 3.3.3 录制 & Workflow API
+
+`src/cloud_backend/main.py` 同时暴露了录制、MetaFlow 及 Workflow 相关的 REST 接口，核心示例如下：
 
 ```python
-# recording_api.py
+@app.post("/api/recordings/upload")
+async def upload_recording(data: dict):
+    user_id = data.get("user_id")
+    operations = data.get("operations", [])
+    recording_id = data.get("recording_id") or str(uuid.uuid4())
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
-from typing import List
-from storage_service import StorageService
-from cloud_client import CloudClient
-from auth import get_current_user
-import uuid
-from datetime import datetime, timezone
+    if not user_id or not operations:
+        raise HTTPException(400, "Missing payload")
 
-router = APIRouter()
-storage = StorageService()
-cloud = CloudClient()
-
-class StartRecordingResponse(BaseModel):
-    session_id: str
-
-class Operation(BaseModel):
-    type: str  # click, input, navigate, etc.
-    selector: str
-    value: str = None
-    url: str
-    timestamp: int
-
-class RecordOperationRequest(BaseModel):
-    session_id: str
-    operation: Operation
-
-class StopRecordingResponse(BaseModel):
-    workflow_name: str
-
-@router.post("/start", response_model=StartRecordingResponse)
-async def start_recording(user_id: int = Depends(get_current_user)):
-    """开始录制"""
-    session_id = str(uuid.uuid4())
-    
-    # 创建录制会话
-    storage.create_recording_session(user_id, session_id)
-    
-    return {"session_id": session_id}
-
-@router.post("/operation")
-async def record_operation(
-    request: RecordOperationRequest,
-    user_id: int = Depends(get_current_user)
-):
-    """记录单个操作"""
-    # 追加操作到文件
-    storage.append_operation(
+    file_path = storage_service.save_recording(
         user_id,
-        request.session_id,
-        request.operation.dict()
+        recording_id,
+        operations,
+        task_description=data.get("task_description", ""),
+        user_query=data.get("user_query")
     )
-    
-    return {"status": "ok"}
-
-@router.post("/stop", response_model=StopRecordingResponse)
-async def stop_recording(
-    session_id: str,
-    user_id: int = Depends(get_current_user)
-):
-    """停止录制并生成 Workflow"""
-    # 1. 读取 operations.json
-    operations = storage.get_operations(user_id, session_id)
-    
-    # 2. 上传到云端
-    recording_id = await cloud.upload_recording(user_id, operations)
-    
-    # 3. 触发云端生成（同步等待）
-    workflow_name = await cloud.generate_workflow(recording_id)
-    
-    # 4. 下载 workflow.yaml 到本地
-    workflow_yaml = await cloud.download_workflow(user_id, workflow_name)
-    storage.save_workflow(user_id, workflow_name, workflow_yaml)
-    
-    return {"workflow_name": workflow_name}
+    logger.info(f"Recording saved: {file_path}")
+    return {"recording_id": recording_id, "success": True}
 ```
 
-#### 3.3.4 Workflow 执行 API
+关键端点：
+- `POST /api/recordings/upload` —— 接收桌面端 / 扩展上报的操作序列，并写入服务器文件系统。
+- `POST /api/recordings/{recording_id}/generate_metaflow` —— 触发 `LearningService`，从 operations 生成 MetaFlow。
+- `POST /api/metaflows/{metaflow_id}/generate_workflow` —— 调用 `WorkflowGenerationService` 产出 YAML Workflow。
+- `GET /api/recordings | /api/metaflows | /api/workflows` —— 列举和查询已存档的 artefacts。
+- `POST /api/executions/report` —— 汇报 Workflow 执行统计。
+- `/api/intent-builder/*` —— 提供 session 管理、流式输出和对话接口，支撑 Intent Builder IDE。
 
-```python
-# workflow_api.py
-
-from fastapi import APIRouter, Depends, BackgroundTasks
-from pydantic import BaseModel
-from workflow_service import WorkflowService
-from auth import get_current_user
-import asyncio
-
-router = APIRouter()
-workflow_service = WorkflowService()
-
-class ExecuteResponse(BaseModel):
-    task_id: str
-    status: str
-
-class TaskStatus(BaseModel):
-    task_id: str
-    status: str  # running, completed, failed
-    progress: int  # 0-100
-    result: dict = None
-    error: str = None
-
-@router.post("/{workflow_name}/execute", response_model=ExecuteResponse)
-async def execute_workflow(
-    workflow_name: str,
-    background_tasks: BackgroundTasks,
-    user_id: int = Depends(get_current_user)
-):
-    """执行 Workflow"""
-    task_id = await workflow_service.execute_workflow_async(
-        user_id,
-        workflow_name
-    )
-    
-    return {"task_id": task_id, "status": "running"}
-
-@router.get("/tasks/{task_id}", response_model=TaskStatus)
-async def get_task_status(
-    task_id: str,
-    user_id: int = Depends(get_current_user)
-):
-    """查询执行状态"""
-    status = workflow_service.get_task_status(task_id)
-    
-    if not status:
-        raise HTTPException(status_code=404, detail="Task not found")
-    
-    return status
-
-@router.get("/", response_model=List[dict])
-async def list_workflows(user_id: int = Depends(get_current_user)):
-    """列出所有 Workflows"""
-    workflows = storage.list_workflows(user_id)
-    return workflows
-```
-
----
+这些 API 取代了过去 legacy client/web/backend 下的拆分模块，现由单一 FastAPI 应用集中维护。
 
 ### 3.4 云端 Backend
 

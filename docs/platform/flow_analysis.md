@@ -16,7 +16,7 @@ Ami implements a closed-loop system for recording user actions, converting them 
 ### 1.1 Recording Entry Points
 
 #### Extension UI (Frontend)
-- **File**: `/src/client/web/chrome-extension/src/pages/RecordPage.jsx`
+- **File**: `/src/clients/chrome-extension/src/pages/RecordPage.jsx`
 - **Functionality**: React component that provides recording UI
 - **Key Actions**:
   - User enters workflow title and description
@@ -45,7 +45,7 @@ RecordingService.create_session()
 #### Three-Layer Recording Stack
 
 **Layer 1: behavior_tracker.js (Injected Script)**
-- **Location**: `/src/client/web/chrome-extension/public/behavior_tracker.js`
+- **Location**: `/src/clients/chrome-extension/public/behavior_tracker.js`
 - **Execution Context**: Page-level (web_accessible_resources)
 - **Capabilities**: Direct DOM access, full event tracking
 - **Operation Types Captured**:
@@ -82,7 +82,7 @@ RecordingService.create_session()
 ```
 
 **Layer 2: recorder.js (Content Script)**
-- **Location**: `/src/client/web/chrome-extension/public/recorder.js`
+- **Location**: `/src/clients/chrome-extension/public/recorder.js`
 - **Execution Context**: Content script (can access extension APIs)
 - **Responsibility**:
   1. Injects behavior_tracker.js into page
@@ -91,7 +91,7 @@ RecordingService.create_session()
   4. Manages recording state across page navigations
 
 **Layer 3: background.js (Service Worker)**
-- **Location**: `/src/client/web/chrome-extension/public/background.js`
+- **Location**: `/src/clients/chrome-extension/public/background.js`
 - **Responsibility**:
   1. Stores captured operations in memory: `capturedOperations[]`
   2. Receives messages from RecordPage popup
@@ -169,7 +169,7 @@ RecordPage.jsx
 
 **In-Memory Storage** (during recording):
 ```python
-# File: src/client/web/backend/recording_service.py
+# File: src/app_backend/models/recording.py
 class RecordingSession:
     session_id: str          # rec_{uuid}
     title: str
@@ -182,7 +182,7 @@ class RecordingSession:
 
 **Database Storage** (after stop):
 ```python
-# File: src/client/web/backend/database.py
+# File: src/cloud_backend/database/models.py
 class RecordingSessionDB(Base):
     id: int
     session_id: str
@@ -599,7 +599,7 @@ WorkflowResult(
 
 #### Files Structure
 ```
-/src/client/web/chrome-extension/
+/src/clients/chrome-extension/
 ├── public/
 │   ├── manifest.json                 # Extension manifest (MV3)
 │   ├── background.js                 # Service worker
@@ -743,7 +743,7 @@ Backend Workflow Execution
 
 #### Gap 3: Incomplete Workflow Composition/Analysis
 **Issue**: WorkflowAnalysisPage exists but lacks integration
-**Location**: `/src/client/web/chrome-extension/src/pages/WorkflowAnalysisPage.jsx`
+**Location**: `/src/clients/chrome-extension/src/pages/WorkflowAnalysisPage.jsx`
 **Missing**: Ability to compose workflows, test intents, refine operations
 
 **Proposed Solution**:
@@ -957,10 +957,10 @@ Response 200:
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| **Recording** | `/src/client/web/backend/recording_service.py` | RecordingService, RecordingSession classes |
-| | `/src/client/web/chrome-extension/public/behavior_tracker.js` | DOM operation capture |
-| | `/src/client/web/chrome-extension/public/recorder.js` | Recording controller |
-| | `/src/client/web/chrome-extension/src/pages/RecordPage.jsx` | Recording UI |
+| **Recording** | `/src/app_backend/models/recording.py` | RecordingSession dataclass |
+| | `/src/clients/chrome-extension/public/behavior_tracker.js` | DOM operation capture |
+| | `/src/clients/chrome-extension/public/recorder.js` | Recording controller |
+| | `/src/clients/chrome-extension/src/pages/RecordPage.jsx` | Recording UI |
 | **Intent Extraction** | `/src/intent_builder/extractors/intent_extractor.py` | IntentExtractor class |
 | | `/src/intent_builder/core/intent.py` | Intent data model |
 | | `/src/intent_builder/core/intent_memory_graph.py` | Graph structure |
@@ -971,9 +971,9 @@ Response 200:
 | **BaseAgent** | `/src/base_app/base_app/base_agent/core/base_agent.py` | Core BaseAgent class |
 | | `/src/base_app/base_app/base_agent/core/agent_workflow_engine.py` | Workflow execution engine |
 | | `/src/base_app/base_app/base_agent/agents/` | Agent type implementations |
-| **Backend APIs** | `/src/client/web/backend/main.py` | FastAPI endpoints |
-| **Extension** | `/src/client/web/chrome-extension/public/manifest.json` | Extension manifest |
-| | `/src/client/web/chrome-extension/public/background.js` | Service worker |
+| **Backend APIs** | `/src/cloud_backend/main.py` | FastAPI endpoints |
+| **Extension** | `/src/clients/chrome-extension/public/manifest.json` | Extension manifest |
+| | `/src/clients/chrome-extension/public/background.js` | Service worker |
 
 ---
 
