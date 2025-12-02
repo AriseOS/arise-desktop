@@ -4,9 +4,9 @@ Workflow quota management model
 from datetime import datetime
 
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String
-from sqlalchemy.dialects.postgresql import UUID
 
 from ..database.connection import Base
+from .types import UUID
 
 
 class WorkflowQuota(Base):

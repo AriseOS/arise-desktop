@@ -6,9 +6,9 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from sqlalchemy import Boolean, Column, DateTime, String
-from sqlalchemy.dialects.postgresql import UUID
 
 from ..database.connection import Base
+from .types import UUID
 
 
 class User(Base):

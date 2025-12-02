@@ -6,10 +6,10 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, Date, Index
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
 from ..database.connection import Base
+from .types import UUID
 
 
 class DailyUsageStats(Base):
