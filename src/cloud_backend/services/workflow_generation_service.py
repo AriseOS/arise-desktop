@@ -31,35 +31,80 @@ from src.common.llm import AnthropicProvider, OpenAIProvider
 logger = logging.getLogger(__name__)
 
 class WorkflowGenerationService:
-    """Workflow 生成服务（整合 Intent Builder）"""
-    
-    def __init__(self, llm_provider_name: str = "anthropic"):
+    """Workflow 生成服务（整合 Intent Builder）
+
+    Supports API Proxy mode:
+    - When user_api_key is provided, routes all LLM calls through API Proxy
+    - API Proxy URL is read from Cloud Backend config
+    """
+
+    def __init__(self, llm_provider_name: str = "anthropic", config_service=None):
         """
         初始化服务
-        
+
         Args:
             llm_provider_name: LLM 提供商 ("anthropic" 或 "openai")
+            config_service: CloudConfigService instance for reading config
         """
-        # 初始化 LLM Provider
+        self.llm_provider_name = llm_provider_name
+        self.config_service = config_service
+
+        # Store config for API Proxy
+        if config_service:
+            self.use_proxy = config_service.get("llm.use_proxy", False)
+            self.proxy_base_url = config_service.get("llm.proxy_base_url", "http://localhost:8080")
+        else:
+            self.use_proxy = False
+            self.proxy_base_url = "http://localhost:8080"
+
+        # Create default LLM provider (will be overridden per-request if user_api_key provided)
         if llm_provider_name == "anthropic":
-            self.llm = AnthropicProvider()
+            self.default_llm = AnthropicProvider()
         elif llm_provider_name == "openai":
-            self.llm = OpenAIProvider()
+            self.default_llm = OpenAIProvider()
         else:
             raise ValueError(f"Unsupported LLM provider: {llm_provider_name}")
-        
-        # 初始化三个核心组件
-        self.intent_extractor = IntentExtractor(llm_provider=self.llm)
-        self.metaflow_generator = MetaFlowGenerator(llm_provider=self.llm)
-        self.workflow_generator = WorkflowGenerator(llm_provider=self.llm)
-        
-        logger.info(f"✅ Workflow Generation Service initialized with {llm_provider_name}")
+
+        logger.info(f"✅ Workflow Generation Service initialized")
+        logger.info(f"   Provider: {llm_provider_name}")
+        logger.info(f"   API Proxy: {'enabled' if self.use_proxy else 'disabled'}")
+        if self.use_proxy:
+            logger.info(f"   Proxy URL: {self.proxy_base_url}")
+
+    def _create_llm_provider(self, user_api_key: Optional[str] = None):
+        """
+        Create LLM provider instance
+
+        Args:
+            user_api_key: User's Ami API key (for API Proxy)
+
+        Returns:
+            LLM provider instance configured for API Proxy or direct API
+        """
+        # If use_proxy is enabled and user_api_key provided, route through API Proxy
+        if self.use_proxy and user_api_key:
+            logger.info(f"Creating LLM provider for API Proxy (user_api_key: {user_api_key[:10]}...)")
+            if self.llm_provider_name == "anthropic":
+                return AnthropicProvider(
+                    api_key=user_api_key,
+                    base_url=self.proxy_base_url
+                )
+            elif self.llm_provider_name == "openai":
+                return OpenAIProvider(
+                    api_key=user_api_key,
+                    base_url=self.proxy_base_url
+                )
+
+        # Otherwise, use default provider (with system API key)
+        logger.info(f"Using default LLM provider (direct API)")
+        return self.default_llm
     
     async def add_intents_to_graph(
         self,
         operations: List[Dict],
         graph_filepath: str,
-        task_description: Optional[str] = None
+        task_description: Optional[str] = None,
+        user_api_key: Optional[str] = None
     ) -> int:
         """
         Extract intents from operations and add to existing Intent Memory Graph
@@ -68,6 +113,7 @@ class WorkflowGenerationService:
             operations: User operation list
             graph_filepath: Path to existing intent_graph.json file
             task_description: User's description of what they did (optional, can be empty)
+            user_api_key: User's Ami API key (for API Proxy)
 
         Returns:
             Number of new intents added
@@ -79,10 +125,14 @@ class WorkflowGenerationService:
         else:
             logger.info(f"📝 No task description provided")
 
+        # Create LLM provider with user_api_key if provided
+        llm = self._create_llm_provider(user_api_key)
+        intent_extractor = IntentExtractor(llm_provider=llm)
+
         # Intent Extraction (with user's task_description if provided)
         logger.info("1️⃣  Extracting intents...")
         try:
-            new_intents = await self.intent_extractor.extract_intents(
+            new_intents = await intent_extractor.extract_intents(
                 operations=operations,
                 task_description=task_description or "",  # Empty string if not provided
                 source_session_id="cloud-backend"
@@ -131,7 +181,8 @@ class WorkflowGenerationService:
         self,
         graph_filepath: str,
         task_description: str,
-        user_query: Optional[str] = None
+        user_query: Optional[str] = None,
+        user_api_key: Optional[str] = None
     ) -> str:
         """
         Generate MetaFlow from Intent Graph file (Step 2: Intent Graph + task_description → MetaFlow)
@@ -142,6 +193,7 @@ class WorkflowGenerationService:
             graph_filepath: Path to intent_graph.json file
             task_description: User's task description
             user_query: Optional user query (defaults to task_description)
+            user_api_key: User's Ami API key (for API Proxy)
 
         Returns:
             metaflow_yaml: MetaFlow YAML string
@@ -168,21 +220,25 @@ class WorkflowGenerationService:
         graph = IntentMemoryGraph(storage=storage)
         logger.info(f"   ✅ Graph loaded: {len(graph.get_all_intents())} intents")
 
-        # 2. Generate MetaFlow (MetaFlowGenerator will filter relevant intents)
+        # 2. Create LLM provider with user_api_key if provided
+        llm = self._create_llm_provider(user_api_key)
+        metaflow_generator = MetaFlowGenerator(llm_provider=llm)
+
+        # 3. Generate MetaFlow (MetaFlowGenerator will filter relevant intents)
         # IMPORTANT: user_query is what user wants to do (for path selection and loop detection)
         # If not provided, fallback to task_description
         effective_user_query = user_query if user_query else task_description
 
         logger.info("2️⃣  Generating MetaFlow with LLM...")
         logger.info(f"   → Input: {effective_user_query}")
-        metaflow = await self.metaflow_generator.generate(
+        metaflow = await metaflow_generator.generate(
             graph=graph,
             task_description=task_description,
             user_query=effective_user_query
         )
         logger.info(f"   ✅ MetaFlow generated: {len(metaflow.nodes)} nodes")
 
-        # 3. Serialize MetaFlow
+        # 4. Serialize MetaFlow
         metaflow_yaml = metaflow.to_yaml()
 
         logger.info(f"✅ MetaFlow generation complete")
@@ -190,13 +246,15 @@ class WorkflowGenerationService:
 
     async def generate_workflow_from_metaflow(
         self,
-        metaflow_yaml: str
+        metaflow_yaml: str,
+        user_api_key: Optional[str] = None
     ) -> str:
         """
         Generate Workflow YAML from MetaFlow (Step 3: MetaFlow → Workflow)
 
         Args:
             metaflow_yaml: MetaFlow YAML string
+            user_api_key: User's Ami API key (for API Proxy)
 
         Returns:
             workflow_yaml: Workflow YAML string
@@ -213,9 +271,13 @@ class WorkflowGenerationService:
         logger.info(f"   Nodes: {len(metaflow.nodes)}")
         logger.info(f"=" * 80)
 
-        # 2. Generate Workflow
+        # 2. Create LLM provider with user_api_key if provided
+        llm = self._create_llm_provider(user_api_key)
+        workflow_generator = WorkflowGenerator(llm_provider=llm)
+
+        # 3. Generate Workflow
         logger.info("4️⃣  Generating Workflow with LLM...")
-        workflow_yaml = await self.workflow_generator.generate(metaflow)
+        workflow_yaml = await workflow_generator.generate(metaflow)
         logger.info(f"   ✅ Workflow generated ({len(workflow_yaml)} chars)")
 
         logger.info(f"✅ Workflow generation complete")
@@ -226,7 +288,8 @@ class WorkflowGenerationService:
         operations: List[Dict],
         task_description: str,
         user_query: Optional[str] = None,
-        existing_metaflow_yaml: Optional[str] = None
+        existing_metaflow_yaml: Optional[str] = None,
+        user_api_key: Optional[str] = None
     ) -> str:
         """
         Generate MetaFlow directly from recording operations (without using global Intent Graph)
@@ -244,6 +307,7 @@ class WorkflowGenerationService:
             task_description: User's description of what they did
             user_query: User's description of what they want to do (for MetaFlow generation)
             existing_metaflow_yaml: Existing MetaFlow YAML (for in-place modification, not used for now)
+            user_api_key: User's Ami API key (for API Proxy)
 
         Returns:
             metaflow_yaml: MetaFlow YAML string
@@ -259,9 +323,14 @@ class WorkflowGenerationService:
             logger.info(f"⚠️  No user_query provided, using task_description as fallback")
         logger.info(f"=" * 80)
 
+        # Create LLM provider with user_api_key if provided
+        llm = self._create_llm_provider(user_api_key)
+        intent_extractor = IntentExtractor(llm_provider=llm)
+        metaflow_generator = MetaFlowGenerator(llm_provider=llm)
+
         # 1. Extract intents from operations
         logger.info("1️⃣  Extracting intents from recording...")
-        intents = await self.intent_extractor.extract_intents(
+        intents = await intent_extractor.extract_intents(
             operations=operations,
             task_description=task_description,
             source_session_id="recording-based-generation"
@@ -288,7 +357,7 @@ class WorkflowGenerationService:
 
         logger.info("3️⃣  Generating MetaFlow from recording-specific intents with LLM...")
         logger.info(f"   → Input: {effective_user_query}")
-        metaflow = await self.metaflow_generator.generate(
+        metaflow = await metaflow_generator.generate(
             graph=graph,
             task_description=task_description,
             user_query=effective_user_query

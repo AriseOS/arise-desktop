@@ -1,8 +1,8 @@
-# AgentCrafter 开发指南
+# Ami 开发指南
 
 ## 概述
 
-本指南为开发者提供详细的AgentCrafter开发说明，包括架构理解、组件开发、最佳实践等。
+本指南为开发者提供详细的Ami开发说明，包括架构理解、组件开发、最佳实践等。
 
 ## 核心架构理解
 
@@ -59,7 +59,7 @@ tool_knowledge = knowledge_base.get_tool_knowledge("browser_use")
 
 # 生成Agent代码
 prompt = f"""
-基于AgentCrafter框架生成Agent:
+基于Ami框架生成Agent:
 框架能力: {capabilities}
 工具信息: {tool_knowledge}
 用户需求: {user_requirements}
@@ -213,7 +213,7 @@ async def test_agent_workflow():
 
 - 目标：90%+代码覆盖率
 - 工具：pytest-cov
-- 运行：`pytest --cov=agentcrafter --cov-report=html`
+- 运行：`pytest --cov=ami --cov-report=html`
 
 ## 部署指南
 
@@ -243,7 +243,7 @@ docker-compose build
 docker-compose up -d
 
 # 查看日志
-docker-compose logs -f agentcrafter
+docker-compose logs -f ami
 ```
 
 ## 最佳实践

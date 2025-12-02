@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 
 const API_BASE = "http://127.0.0.1:8765";
-const DEFAULT_USER = "default_user";
 
-function RecordingPage({ onNavigate, showStatus }) {
+function RecordingPage({ session, onNavigate, showStatus }) {
+  const userId = session?.username || 'default_user';
   const [recordUrl, setRecordUrl] = useState("https://www.google.com");
   const [recordTitle, setRecordTitle] = useState("");
   const [recordDescription, setRecordDescription] = useState("");
@@ -88,7 +88,7 @@ function RecordingPage({ onNavigate, showStatus }) {
         body: JSON.stringify({
           session_id: sessionId,
           task_description: recordDescription,
-          user_id: DEFAULT_USER
+          user_id: userId
         })
       });
 
@@ -128,7 +128,7 @@ function RecordingPage({ onNavigate, showStatus }) {
         body: JSON.stringify({
           session_id: sessionId,
           task_description: recordDescription,
-          user_id: DEFAULT_USER
+          user_id: userId
         })
       });
 

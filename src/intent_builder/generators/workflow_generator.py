@@ -24,7 +24,18 @@ class GenerationError(Exception):
 
 
 class WorkflowGenerator:
-    """Generate BaseAgent Workflow from MetaFlow"""
+    """Generate BaseAgent Workflow from MetaFlow
+
+    Usage with API Proxy:
+        >>> from src.common.llm import AnthropicProvider
+        >>> # Create provider with user's Ami API key and proxy URL
+        >>> llm_provider = AnthropicProvider(
+        ...     api_key="ami_user123",
+        ...     base_url="http://localhost:8080"
+        ... )
+        >>> generator = WorkflowGenerator(llm_provider=llm_provider)
+        >>> workflow_yaml = await generator.generate(metaflow)
+    """
 
     def __init__(
         self,
@@ -37,7 +48,9 @@ class WorkflowGenerator:
         Initialize WorkflowGenerator
 
         Args:
-            llm_provider: LLM provider for generating workflow (defaults to AnthropicProvider)
+            llm_provider: LLM provider for generating workflow
+                         If not provided, defaults to AnthropicProvider() which will use env vars
+                         For API Proxy, pass AnthropicProvider(api_key=user_api_key, base_url=proxy_url)
             prompt_builder: Prompt builder for constructing prompts
             validator: YAML validator for validating generated workflow
             max_retries: Maximum number of retries on failure

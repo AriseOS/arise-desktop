@@ -5,7 +5,8 @@ import yaml from 'js-yaml';
 
 const API_BASE = "http://127.0.0.1:8765";
 
-function MetaflowDetailPage({ onNavigate, showStatus, metaflowId }) {
+function MetaflowDetailPage({ session, onNavigate, showStatus, metaflowId }) {
+  const userId = session?.username || 'userId';
   const [metaflow, setMetaflow] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('preview'); // 'preview' or 'yaml'
@@ -21,7 +22,7 @@ function MetaflowDetailPage({ onNavigate, showStatus, metaflowId }) {
       }
 
       try {
-        const response = await fetch(`${API_BASE}/api/metaflows/${metaflowId}?user_id=default_user`);
+        const response = await fetch(`${API_BASE}/api/metaflows/${metaflowId}?user_id=userId`);
 
         if (!response.ok) {
           throw new Error(`Failed to fetch MetaFlow: ${response.status}`);
@@ -52,7 +53,7 @@ function MetaflowDetailPage({ onNavigate, showStatus, metaflowId }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           metaflow_id: metaflowId,
-          user_id: "default_user"
+          user_id: "userId"
         })
       });
 

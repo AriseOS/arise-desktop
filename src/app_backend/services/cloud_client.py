@@ -11,24 +11,50 @@ class CloudClient:
 
     Note: All Cloud Backend APIs are sync (no timeout limit)
     MetaFlow and Workflow generation may take 30-60s
+
+    Phase 4: Forwards X-Ami-API-Key header to Cloud Backend for API Proxy integration
     """
 
-    def __init__(self, api_url: str, token: Optional[str] = None):
+    def __init__(self, api_url: str, token: Optional[str] = None, user_api_key: Optional[str] = None):
         """Initialize Cloud API client
 
         Args:
             api_url: Cloud Backend URL (e.g., https://api.ami.com)
             token: User JWT token (optional for MVP)
+            user_api_key: User's Ami API key for API Proxy (ami_xxxxx format)
         """
         self.api_url = api_url.rstrip('/')
         self.token = token
+        self.user_api_key = user_api_key
+
+        # Build headers
+        headers = {}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        if user_api_key:
+            headers["X-Ami-API-Key"] = user_api_key
+            logger.info(f"CloudClient initialized with API key: {user_api_key[:10]}...")
 
         # No timeout limit (as per requirements)
         self.client = httpx.AsyncClient(
             base_url=self.api_url,
-            headers={"Authorization": f"Bearer {token}"} if token else {},
+            headers=headers,
             timeout=None  # No timeout
         )
+
+    def set_user_api_key(self, api_key: Optional[str]):
+        """Update user API key for subsequent requests
+
+        Args:
+            api_key: User's Ami API key (ami_xxxxx format)
+        """
+        self.user_api_key = api_key
+        if api_key:
+            self.client.headers["X-Ami-API-Key"] = api_key
+            logger.info(f"API key updated: {api_key[:10]}...")
+        elif "X-Ami-API-Key" in self.client.headers:
+            del self.client.headers["X-Ami-API-Key"]
+            logger.info("API key cleared")
 
     async def get_recording(
         self,
@@ -567,6 +593,103 @@ class CloudClient:
         )
         response.raise_for_status()
         return response.json()
+
+    async def report_workflow_execution_to_proxy(
+        self,
+        api_proxy_url: str,
+        workflow_id: str,
+        status: str,
+        execution_time_ms: int,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Report workflow execution to API Proxy for quota tracking
+
+        Args:
+            api_proxy_url: API Proxy base URL (e.g., http://localhost:8080)
+            workflow_id: Workflow ID
+            status: 'success' or 'failed'
+            execution_time_ms: Execution time in milliseconds
+            metadata: Optional execution metadata
+
+        Returns:
+            dict with quota_status:
+                {
+                    "success": true,
+                    "quota_status": {
+                        "current_usage": 45,
+                        "monthly_limit": 100,
+                        "remaining": 55,
+                        "percentage_used": 45,
+                        "warnings": []
+                    }
+                }
+        """
+        if not self.user_api_key:
+            logger.warning("No user API key set, cannot report to API Proxy")
+            return {"success": False, "error": "No API key"}
+
+        try:
+            logger.info(f"Reporting workflow execution to API Proxy: {workflow_id} ({status})")
+
+            # Create separate client for API Proxy
+            async with httpx.AsyncClient(
+                base_url=api_proxy_url.rstrip('/'),
+                headers={"x-api-key": self.user_api_key},
+                timeout=10.0  # Short timeout for reporting
+            ) as proxy_client:
+                response = await proxy_client.post(
+                    "/api/stats/workflow-execution",
+                    json={
+                        "workflow_id": workflow_id,
+                        "status": status,
+                        "execution_time_ms": execution_time_ms,
+                        "metadata": metadata or {}
+                    }
+                )
+                response.raise_for_status()
+                result = response.json()
+
+                logger.info(f"Workflow execution reported: {result.get('quota_status', {})}")
+                return result
+
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Failed to report to API Proxy: {e.response.status_code} {e.response.text}")
+            return {"success": False, "error": str(e)}
+        except Exception as e:
+            logger.error(f"Error reporting to API Proxy: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def get_quota_status_from_proxy(self, api_proxy_url: str) -> Optional[Dict[str, Any]]:
+        """Get user's quota status from API Proxy
+
+        Args:
+            api_proxy_url: API Proxy base URL
+
+        Returns:
+            dict with quota information or None if failed
+        """
+        if not self.user_api_key:
+            logger.warning("No user API key set, cannot get quota status")
+            return None
+
+        try:
+            logger.info("Fetching quota status from API Proxy")
+
+            async with httpx.AsyncClient(
+                base_url=api_proxy_url.rstrip('/'),
+                headers={"x-api-key": self.user_api_key},
+                timeout=5.0
+            ) as proxy_client:
+                response = await proxy_client.get("/api/stats/quota")
+                response.raise_for_status()
+                result = response.json()
+
+                logger.info(f"Quota status retrieved: {result.get('quota', {})}")
+                return result
+
+        except Exception as e:
+            logger.error(f"Failed to get quota status: {e}")
+            return None
 
     async def close(self):
         """Close HTTP client"""

@@ -102,8 +102,8 @@ Ami uses a **Desktop-First + Cloud-Enhanced** architecture:
 
 1. **Clone the repository**
 ```bash
-git clone https://github.com/your-org/agentcrafter.git
-cd agentcrafter
+git clone https://github.com/your-org/ami.git
+cd ami
 ```
 
 2. **Configure API Keys (Required)**
@@ -355,7 +355,7 @@ We welcome contributions! Please see our development guidelines:
 ## 💬 Community & Support
 
 - **Documentation**: [docs/README.md](./docs/README.md)
-- **Issues**: [GitHub Issues](https://github.com/your-org/agentcrafter/issues)
+- **Issues**: [GitHub Issues](https://github.com/your-org/ami/issues)
 - **Email**: shenyouren@gmail.com
 
 ## 📄 License

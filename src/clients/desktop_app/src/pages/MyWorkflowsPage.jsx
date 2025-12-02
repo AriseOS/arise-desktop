@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react'
 
 const API_BASE = "http://127.0.0.1:8765";
-const DEFAULT_USER = "default_user";
 
-function MyWorkflowsPage({ currentUser, onNavigate, onLogout }) {
+function MyWorkflowsPage({ session, onNavigate, onLogout }) {
+  // Get user_id from session
+  const userId = session?.username || 'default_user';
   const [workflows, setWorkflows] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -18,7 +19,7 @@ function MyWorkflowsPage({ currentUser, onNavigate, onLogout }) {
     setError(null)
 
     try {
-      const response = await fetch(`${API_BASE}/api/workflows?user_id=${DEFAULT_USER}`, {
+      const response = await fetch(`${API_BASE}/api/workflows?user_id=${userId}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json'
@@ -127,7 +128,7 @@ function MyWorkflowsPage({ currentUser, onNavigate, onLogout }) {
     setDeleteConfirm(null)
 
     try {
-      const response = await fetch(`${API_BASE}/api/workflows/${workflowId}?user_id=${DEFAULT_USER}`, {
+      const response = await fetch(`${API_BASE}/api/workflows/${workflowId}?user_id=${userId}`, {
         method: 'DELETE'
       })
 

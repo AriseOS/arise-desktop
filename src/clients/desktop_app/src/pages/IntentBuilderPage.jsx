@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
 const API_BASE = "http://127.0.0.1:8765";
-const DEFAULT_USER = "default_user";
 
 /**
  * Intent Builder Page - Lovable-style real-time AI assistant UI
@@ -12,7 +11,8 @@ const DEFAULT_USER = "default_user";
  * - Tool calls (Read, Write, Edit)
  * - Generated content
  */
-function IntentBuilderPage({ onNavigate, showStatus, params = {} }) {
+function IntentBuilderPage({ session, onNavigate, showStatus, params = {} }) {
+  const userId = session?.username || 'default_user';
   // Session state
   const [sessionId, setSessionId] = useState(null);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -66,7 +66,7 @@ function IntentBuilderPage({ onNavigate, showStatus, params = {} }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          user_id: DEFAULT_USER,
+          user_id: userId,
           user_query: userQuery,
           task_description: params.taskDescription || null
         })

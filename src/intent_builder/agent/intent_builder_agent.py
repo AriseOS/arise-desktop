@@ -60,7 +60,8 @@ class IntentBuilderAgent:
         intent_graph_path: str = None,
         config_service: Optional["ConfigService"] = None,
         api_key: Optional[str] = None,
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        user_api_key: Optional[str] = None
     ):
         """
         Initialize Intent Builder Agent.
@@ -70,16 +71,21 @@ class IntentBuilderAgent:
             user_operations_path: Path to user operations JSON
             intent_graph_path: Path to intent graph JSON
             config_service: ConfigService instance to read configuration
-            api_key: Anthropic API key (overrides config/env if provided)
+            api_key: Anthropic API key (overrides config/env if provided) - DEPRECATED, use user_api_key
             model: Claude model to use (overrides config if provided)
+            user_api_key: User's Ami API key for API Proxy (preferred method)
         """
         self.working_dir = Path(working_dir)
         self.user_operations_path = user_operations_path
         self.intent_graph_path = intent_graph_path
         self.config_service = config_service
 
-        # API key priority: parameter > config > environment variable
-        if api_key:
+        # API key priority: user_api_key > api_key parameter > config > environment variable
+        # user_api_key: Ami API key for API Proxy (ami_xxxxx format)
+        # api_key: Legacy Anthropic API key (fallback when API Proxy is disabled)
+        if user_api_key:
+            self.api_key = user_api_key
+        elif api_key:
             self.api_key = api_key
         elif config_service:
             self.api_key = (
@@ -92,10 +98,11 @@ class IntentBuilderAgent:
 
         if not self.api_key:
             raise ValueError(
-                "Anthropic API key not provided. Please either:\n"
-                "1. Pass api_key parameter, or\n"
-                "2. Set claude_agent.api_key in config, or\n"
-                "3. Set ANTHROPIC_API_KEY environment variable"
+                "API key not provided. Please either:\n"
+                "1. Pass user_api_key parameter (Ami API key for API Proxy), or\n"
+                "2. Pass api_key parameter (Anthropic API key), or\n"
+                "3. Set claude_agent.api_key in config, or\n"
+                "4. Set ANTHROPIC_API_KEY environment variable"
             )
 
         # Model configuration
@@ -585,7 +592,8 @@ async def run_agent(
     task_description: str = None,
     config_service: Optional["ConfigService"] = None,
     api_key: Optional[str] = None,
-    model: Optional[str] = None
+    model: Optional[str] = None,
+    user_api_key: Optional[str] = None
 ):
     """
     Run the Intent Builder Agent interactively.
@@ -597,8 +605,9 @@ async def run_agent(
         intent_graph_path: Path to intent graph
         task_description: Optional task description
         config_service: ConfigService instance to read configuration
-        api_key: Anthropic API key (overrides config/env if provided)
+        api_key: Anthropic API key (overrides config/env if provided) - DEPRECATED
         model: Claude model to use (overrides config if provided)
+        user_api_key: User's Ami API key for API Proxy (preferred method)
 
     This function runs an interactive loop:
     1. Start agent with initial query
@@ -613,7 +622,8 @@ async def run_agent(
         intent_graph_path=intent_graph_path,
         config_service=config_service,
         api_key=api_key,
-        model=model
+        model=model,
+        user_api_key=user_api_key
     ) as agent:
         # Start conversation
         print("\n" + "="*60)

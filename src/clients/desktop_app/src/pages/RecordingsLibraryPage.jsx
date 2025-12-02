@@ -3,7 +3,8 @@ import '../styles/RecordingsLibraryPage.css';
 
 const API_BASE = "http://127.0.0.1:8765";
 
-function RecordingsLibraryPage({ onNavigate, showStatus }) {
+function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
+  const userId = session?.username || 'userId';
   const [recordings, setRecordings] = useState([]);
   const [filteredRecordings, setFilteredRecordings] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -28,7 +29,7 @@ function RecordingsLibraryPage({ onNavigate, showStatus }) {
         // Asynchronously fetch metaflow_id for each recording
         (data.recordings || []).forEach(async (recording) => {
           try {
-            const detailResponse = await fetch(`${API_BASE}/api/recordings/${recording.session_id}?user_id=default_user`);
+            const detailResponse = await fetch(`${API_BASE}/api/recordings/${recording.session_id}?user_id=userId`);
             if (detailResponse.ok) {
               const detail = await detailResponse.json();
               if (detail.metaflow_id) {
@@ -92,7 +93,7 @@ function RecordingsLibraryPage({ onNavigate, showStatus }) {
         body: JSON.stringify({
           session_id: sessionId,
           task_description: "Auto-generated workflow from recording",
-          user_id: "default_user"
+          user_id: "userId"
         })
       });
 
@@ -139,7 +140,7 @@ function RecordingsLibraryPage({ onNavigate, showStatus }) {
     try {
       showStatus('🗑️ Deleting recording...', 'info');
 
-      const url = `${API_BASE}/api/recordings/${sessionId}?user_id=default_user`;
+      const url = `${API_BASE}/api/recordings/${sessionId}?user_id=userId`;
       const response = await fetch(url, {
         method: 'DELETE'
       });

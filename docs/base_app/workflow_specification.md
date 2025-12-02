@@ -12,7 +12,7 @@ BaseAgent Workflow is a YAML-based declarative workflow definition system for or
 ### Basic Format
 
 ```yaml
-apiVersion: "agentcrafter.io/v1"
+apiVersion: "ami.io/v1"
 kind: "Workflow"
 
 metadata:
@@ -205,7 +205,7 @@ For detailed agent-specific input/output formats and configurations, see:
 ## Complete Workflow Example
 
 ```yaml
-apiVersion: "agentcrafter.io/v1"
+apiVersion: "ami.io/v1"
 kind: "Workflow"
 
 metadata:

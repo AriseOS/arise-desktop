@@ -13,6 +13,7 @@ struct AppState {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_store::Builder::default().build())
         .setup(|app| {
             // Initialize HTTP daemon on startup
             println!("Initializing Python HTTP daemon...");

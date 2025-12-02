@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import '../styles/DataManagementPage.css';
 
 const API_BASE = "http://127.0.0.1:8765";
-const DEFAULT_USER = "default_user";
 
-function DataManagementPage({ onNavigate, showStatus }) {
+function DataManagementPage({ session, onNavigate, showStatus }) {
+  const userId = session?.username || 'default_user';
   const [collections, setCollections] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -15,7 +15,7 @@ function DataManagementPage({ onNavigate, showStatus }) {
   const loadCollections = async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/api/data/collections?user_id=${DEFAULT_USER}`);
+      const response = await fetch(`${API_BASE}/api/data/collections?user_id=${userId}`);
 
       if (!response.ok) {
         throw new Error(`Failed to fetch collections: ${response.status}`);

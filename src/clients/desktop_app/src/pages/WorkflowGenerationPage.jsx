@@ -17,7 +17,8 @@ const nodeTypes = {
   custom: CustomNode,
 }
 
-function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recordingData }) {
+function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData }) {
+  const userId = session?.username || 'userId';
   const [workflowData, setWorkflowData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [isRunning, setIsRunning] = useState(false)
@@ -40,7 +41,7 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
       showStatus("📋 加载快速生成的Workflow...", "info");
       
       // Fetch workflow detail from backend
-      const response = await fetch(`http://127.0.0.1:8765/api/workflows/${workflowName}/detail?user_id=default_user`);
+      const response = await fetch(`http://127.0.0.1:8765/api/workflows/${workflowName}/detail?user_id=userId`);
       
       if (!response.ok) {
         throw new Error(`Failed to load workflow: ${response.status}`);
@@ -353,7 +354,7 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${currentUser.token}`
+            'Authorization': `Bearer ${session?.apiKey}`
           }
         })
 
@@ -423,7 +424,7 @@ function WorkflowGenerationPage({ currentUser, onNavigate, showStatus, recording
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${currentUser.token}`
+          'Authorization': `Bearer ${session?.apiKey}`
         }
       })
 

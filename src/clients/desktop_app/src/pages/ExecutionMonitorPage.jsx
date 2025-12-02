@@ -4,6 +4,7 @@ import '../styles/ExecutionMonitorPage.css';
 const API_BASE = "http://127.0.0.1:8765";
 
 function ExecutionMonitorPage({
+  session,
   onNavigate,
   showStatus,
   workflowId,
@@ -11,6 +12,7 @@ function ExecutionMonitorPage({
   initialStatus = 'running',
   initialSteps = []
 }) {
+  const userId = session?.username || 'default_user';
   const [status, setStatus] = useState(initialStatus); // 'running', 'paused', 'completed', 'failed'
   const [progress, setProgress] = useState(0);
   const [currentStep, setCurrentStep] = useState(0);

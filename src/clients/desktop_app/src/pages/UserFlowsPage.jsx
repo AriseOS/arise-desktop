@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 
 const API_BASE = "http://127.0.0.1:8765";
-const DEFAULT_USER = "default_user";
 
-function UserFlowsPage({ onNavigate, showStatus }) {
+function UserFlowsPage({ session, onNavigate, showStatus }) {
+  const userId = session?.username || 'default_user';
   const [recordings, setRecordings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedRecording, setSelectedRecording] = useState(null);
@@ -18,7 +18,7 @@ function UserFlowsPage({ onNavigate, showStatus }) {
       setLoading(true);
       showStatus("📋 加载录制流程列表...", "info");
       
-      const response = await fetch(`${API_BASE}/api/recordings/list?user_id=${DEFAULT_USER}`);
+      const response = await fetch(`${API_BASE}/api/recordings/list?user_id=${userId}`);
       
       if (!response.ok) {
         throw new Error(`Failed to load recordings: ${response.status}`);
@@ -54,7 +54,7 @@ function UserFlowsPage({ onNavigate, showStatus }) {
         body: JSON.stringify({
           session_id: recording.session_id,
           task_description: recording.description,
-          user_id: DEFAULT_USER
+          user_id: userId
         })
       });
 
@@ -95,7 +95,7 @@ function UserFlowsPage({ onNavigate, showStatus }) {
     try {
       showStatus("🗑️ Deleting recording...", "info");
 
-      const response = await fetch(`${API_BASE}/api/recordings/${sessionId}?user_id=${DEFAULT_USER}`, {
+      const response = await fetch(`${API_BASE}/api/recordings/${sessionId}?user_id=${userId}`, {
         method: 'DELETE'
       });
 

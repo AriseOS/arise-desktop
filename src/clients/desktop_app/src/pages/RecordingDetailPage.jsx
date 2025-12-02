@@ -3,7 +3,8 @@ import '../styles/RecordingDetailPage.css';
 
 const API_BASE = "http://127.0.0.1:8765";
 
-function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
+function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
+  const userId = session?.username || 'userId';
   const [recording, setRecording] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('timeline'); // 'timeline' or 'yaml'
@@ -24,7 +25,7 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
           session_id: sessionId,
           task_description: recording.task_metadata?.task_description || "",
           user_query: editedQuery,
-          user_id: "default_user"
+          user_id: "userId"
         })
       });
 
@@ -93,7 +94,7 @@ function RecordingDetailPage({ onNavigate, showStatus, sessionId }) {
           session_id: sessionId,
           task_description: task_description,
           user_query: user_query,  // Pass user_query to backend
-          user_id: "default_user"
+          user_id: "userId"
         })
       });
 

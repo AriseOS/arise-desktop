@@ -1,0 +1,74 @@
+# API Proxy Configuration
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  debug: true
+  workers: 1
+
+database:
+  # PostgreSQL connection
+  host: "localhost"
+  port: 5432
+  database: "ami_proxy"
+  user: "ami_user"
+  password: "${DB_PASSWORD}"  # From environment variable
+  pool_size: 10
+  max_overflow: 20
+
+security:
+  # JWT secret for session tokens
+  jwt_secret: "${JWT_SECRET}"
+  jwt_algorithm: "HS256"
+  jwt_expire_minutes: 10080  # 7 days
+
+  # API Key encryption
+  encryption_key: "${ENCRYPTION_KEY}"  # Fernet key
+
+  # Password hashing
+  bcrypt_rounds: 12
+
+llm:
+  # Default provider
+  default_provider: "anthropic"  # Options: anthropic, openai
+
+  # Anthropic Configuration
+  anthropic:
+    api_key: "${ANTHROPIC_API_KEY}"
+    base_url: "https://api.anthropic.com"
+    # Can be customized to point to a different endpoint
+    # base_url: "http://your-custom-anthropic-proxy.com"
+
+  # OpenAI Configuration (for future support)
+  openai:
+    api_key: "${OPENAI_API_KEY}"
+    base_url: "https://api.openai.com"
+    # Can be customized to point to a different endpoint
+    # base_url: "http://your-custom-openai-proxy.com"
+
+  # Request timeout
+  timeout_seconds: 300
+
+quota:
+  # Trial period settings
+  trial_duration_days: 30
+  trial_workflow_limit: 100
+
+  # Overage settings
+  overage_percentage: 20  # Allow 20% over limit
+
+  # Warning thresholds
+  warning_thresholds:
+    - 80  # Warn at 80%
+    - 100  # Warn at 100%
+    - 120  # Warn at 120%
+
+logging:
+  level: "INFO"
+  format: "json"
+
+admin:
+  # Admin user credentials (for initial setup)
+  username: "admin"
+  email: "admin@ami.com"
+  password: "${ADMIN_PASSWORD}"

@@ -19,15 +19,22 @@ class AnthropicProvider(BaseProvider):
     Anthropic provider implementation using official SDK
     """
     
-    def __init__(self, api_key: Optional[str] = None, model_name: Optional[str] = None):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model_name: Optional[str] = None,
+        base_url: Optional[str] = None
+    ):
         """
         Initialize Anthropic provider
-        
+
         Args:
             api_key: Anthropic API key (will use ANTHROPIC_API_KEY env var if not provided)
             model_name: Model name (defaults to claude-sonnet-4-5-20250929)
+            base_url: Custom base URL for API proxy (defaults to official Anthropic API)
         """
         super().__init__(api_key, model_name)
+        self.base_url = base_url
         self.temperature = 0.7
         self.max_tokens = 8192  # Increased from 2048 to handle large MetaFlow generation
     
@@ -44,10 +51,17 @@ class AnthropicProvider(BaseProvider):
             self.model_name = "claude-sonnet-4-5-20250929"
         
         # Initialize client with timeout
-        self._client = Anthropic(
-            api_key=self.api_key,
-            timeout=120.0  # 2 minute timeout for API calls
-        )
+        client_kwargs = {
+            "api_key": self.api_key,
+            "timeout": 120.0,  # 2 minute timeout for API calls
+        }
+
+        # Add custom base_url if provided (for API proxy)
+        if self.base_url:
+            client_kwargs["base_url"] = self.base_url
+            logger.info(f"Using custom base URL: {self.base_url}")
+
+        self._client = Anthropic(**client_kwargs)
         logger.info(f"Initialized Anthropic client with model {self.model_name}")
     
     async def generate_response(

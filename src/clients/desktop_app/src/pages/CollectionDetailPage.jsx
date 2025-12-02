@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import '../styles/CollectionDetailPage.css';
 
 const API_BASE = "http://127.0.0.1:8765";
-const DEFAULT_USER = "default_user";
 
-function CollectionDetailPage({ onNavigate, showStatus, collectionName }) {
+function CollectionDetailPage({ session, onNavigate, showStatus, collectionName }) {
+  const userId = session?.username || 'default_user';
   const [collection, setCollection] = useState(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
@@ -21,7 +21,7 @@ function CollectionDetailPage({ onNavigate, showStatus, collectionName }) {
     setLoading(true);
     try {
       const response = await fetch(
-        `${API_BASE}/api/data/collections/${collectionName}?user_id=${DEFAULT_USER}&limit=20`
+        `${API_BASE}/api/data/collections/${collectionName}?user_id=${userId}&limit=20`
       );
 
       if (!response.ok) {
@@ -45,7 +45,7 @@ function CollectionDetailPage({ onNavigate, showStatus, collectionName }) {
 
     try {
       const response = await fetch(
-        `${API_BASE}/api/data/collections/${collectionName}/export?user_id=${DEFAULT_USER}`
+        `${API_BASE}/api/data/collections/${collectionName}/export?user_id=${userId}`
       );
 
       if (!response.ok) {
@@ -56,7 +56,7 @@ function CollectionDetailPage({ onNavigate, showStatus, collectionName }) {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${collectionName}_${DEFAULT_USER}.csv`;
+      a.download = `${collectionName}_${userId}.csv`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -77,7 +77,7 @@ function CollectionDetailPage({ onNavigate, showStatus, collectionName }) {
 
     try {
       const response = await fetch(
-        `${API_BASE}/api/data/collections/${collectionName}?user_id=${DEFAULT_USER}`,
+        `${API_BASE}/api/data/collections/${collectionName}?user_id=${userId}`,
         { method: 'DELETE' }
       );
 

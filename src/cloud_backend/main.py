@@ -21,9 +21,10 @@ import uuid
 import asyncio
 import json
 from pathlib import Path
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from typing import Optional
 
 # 添加项目根目录到 Python 路径
 # 当前文件: src/cloud-backend/main.py
@@ -130,7 +131,10 @@ async def startup_event():
 
         # 3. Initialize Workflow Generation Service
         llm_provider = config_service.get("llm.default_provider", "anthropic")
-        workflow_generation_service = WorkflowGenerationService(llm_provider_name=llm_provider)
+        workflow_generation_service = WorkflowGenerationService(
+            llm_provider_name=llm_provider,
+            config_service=config_service
+        )
         print(f"✅ Workflow Generation ({llm_provider})")
 
         # 4. Setup logging
@@ -441,9 +445,16 @@ async def analyze_recording(data: dict):
 
 
 @app.post("/api/users/{user_id}/generate_metaflow")
-async def generate_metaflow(user_id: str, data: dict):
+async def generate_metaflow(
+    user_id: str,
+    data: dict,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
     """
     Generate MetaFlow from user's Intent Memory Graph
+
+    Headers:
+        X-Ami-API-Key: User's Ami API key (optional, for API Proxy)
 
     Body:
         {
@@ -470,6 +481,9 @@ async def generate_metaflow(user_id: str, data: dict):
     else:
         logger.info(f"⚠️  No user_query provided")
 
+    if x_ami_api_key:
+        logger.info(f"🔑 Using API Proxy with user key: {x_ami_api_key[:10]}...")
+
     try:
         # Get user's Intent Graph file path
         graph_filepath = storage_service.get_user_intent_graph_path(user_id)
@@ -483,7 +497,8 @@ async def generate_metaflow(user_id: str, data: dict):
         metaflow_yaml = await workflow_generation_service.generate_metaflow_from_graph_file(
             graph_filepath=graph_filepath,
             task_description=task_description,
-            user_query=user_query
+            user_query=user_query,
+            user_api_key=x_ami_api_key
         )
 
         # Generate metaflow_id
@@ -518,7 +533,11 @@ async def generate_metaflow(user_id: str, data: dict):
 
 
 @app.post("/api/recordings/{recording_id}/generate_metaflow")
-async def generate_metaflow_from_recording(recording_id: str, data: dict):
+async def generate_metaflow_from_recording(
+    recording_id: str,
+    data: dict,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
     """
     Generate MetaFlow from a specific recording (using only that recording's intents)
 
@@ -529,6 +548,9 @@ async def generate_metaflow_from_recording(recording_id: str, data: dict):
     Overwrite Mode (1 Recording → 1 MetaFlow):
     - If recording already has a MetaFlow, it will be DELETED and replaced with a new one
     - This implements the requirement: "1 Recording → 1 MetaFlow (Overwrite on Regeneration)"
+
+    Headers:
+        X-Ami-API-Key: User's Ami API key (optional, for API Proxy)
 
     Body:
         {
@@ -555,6 +577,9 @@ async def generate_metaflow_from_recording(recording_id: str, data: dict):
 
     logger.info(f"🚀 [API] Generating MetaFlow from recording {recording_id}")
     logger.info(f"👤 User: {user_id}")
+
+    if x_ami_api_key:
+        logger.info(f"🔑 Using API Proxy with user key: {x_ami_api_key[:10]}...")
 
     try:
         # Load recording data
@@ -593,7 +618,8 @@ async def generate_metaflow_from_recording(recording_id: str, data: dict):
         metaflow_yaml = await workflow_generation_service.generate_metaflow_from_recording(
             operations=operations,
             task_description=task_description,
-            user_query=user_query
+            user_query=user_query,
+            user_api_key=x_ami_api_key
         )
 
         # Generate new metaflow_id
@@ -642,12 +668,19 @@ async def generate_metaflow_from_recording(recording_id: str, data: dict):
 
 
 @app.post("/api/metaflows/{metaflow_id}/generate_workflow")
-async def generate_workflow_from_metaflow(metaflow_id: str, data: dict):
+async def generate_workflow_from_metaflow(
+    metaflow_id: str,
+    data: dict,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
     """
     Generate Workflow YAML from MetaFlow
 
     Note: MetaFlow modifications are now saved in real-time by Intent Builder Agent,
     so this endpoint only needs to generate Workflow from the current MetaFlow.
+
+    Headers:
+        X-Ami-API-Key: User's Ami API key (optional, for API Proxy)
 
     Body:
         {
@@ -666,6 +699,9 @@ async def generate_workflow_from_metaflow(metaflow_id: str, data: dict):
 
     if not user_id:
         raise HTTPException(400, "Missing user_id")
+
+    if x_ami_api_key:
+        logger.info(f"🔑 Using API Proxy with user key: {x_ami_api_key[:10]}...")
 
     # Clean up Agent session directory if provided
     if session_id:
@@ -703,7 +739,8 @@ async def generate_workflow_from_metaflow(metaflow_id: str, data: dict):
         # Generate Workflow from MetaFlow
         logger.info(f"⚙️  Calling workflow_generation_service.generate_workflow_from_metaflow()...")
         workflow_yaml = await workflow_generation_service.generate_workflow_from_metaflow(
-            metaflow_yaml=metaflow_yaml
+            metaflow_yaml=metaflow_yaml,
+            user_api_key=x_ami_api_key
         )
         logger.info(f"✅ Workflow generation completed, length: {len(workflow_yaml)} characters")
 

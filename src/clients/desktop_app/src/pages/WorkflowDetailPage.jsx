@@ -4,13 +4,14 @@ import CustomNode from '../components/CustomNode'
 import yaml from 'js-yaml'
 
 const API_BASE = "http://127.0.0.1:8765"
-const DEFAULT_USER = "default_user"
 
 const nodeTypes = {
   custom: CustomNode,
 }
 
-function WorkflowDetailPage({ currentUser, workflowId, autoRun, onNavigate, showStatus, onLogout }) {
+function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStatus, onLogout }) {
+  // Get user_id from session
+  const userId = session?.username || 'default_user';
   const [workflowData, setWorkflowData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -46,7 +47,7 @@ function WorkflowDetailPage({ currentUser, workflowId, autoRun, onNavigate, show
     setError(null)
 
     try {
-      const response = await fetch(`${API_BASE}/api/workflows/${workflowId}/detail?user_id=${DEFAULT_USER}`, {
+      const response = await fetch(`${API_BASE}/api/workflows/${workflowId}/detail?user_id=${userId}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json'
@@ -83,7 +84,7 @@ function WorkflowDetailPage({ currentUser, workflowId, autoRun, onNavigate, show
         },
         body: JSON.stringify({
           workflow_name: workflowId,
-          user_id: DEFAULT_USER
+          user_id: userId
         })
       })
 
@@ -165,7 +166,7 @@ function WorkflowDetailPage({ currentUser, workflowId, autoRun, onNavigate, show
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            user_id: DEFAULT_USER,
+            user_id: userId,
             user_query: `Modify the following Workflow based on this request: ${userMessage}`,
             task_description: `Current Workflow ID: ${workflowId}`,
             workflow_id: workflowId,  // Pass Workflow ID so Agent can save modifications
@@ -236,22 +237,35 @@ function WorkflowDetailPage({ currentUser, workflowId, autoRun, onNavigate, show
                     }
                     setWorkflowData(updatedData)
 
-                    // Sync to local cache (Cloud already saved by Agent)
-                    fetch(`${API_BASE}/api/workflows/${params.workflowId}`, {
+                    // Sync to both Cloud and Local storage
+                    fetch(`${API_BASE}/api/workflows/${workflowId}`, {
                       method: 'PUT',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({
-                        user_id: DEFAULT_USER,
+                        user_id: userId,
                         workflow_yaml: event.result.updated_yaml
                       })
                     }).then(response => {
                       if (response.ok) {
-                        console.log('✓ Workflow synced to local cache')
+                        return response.json()
                       } else {
-                        console.warn('⚠ Failed to sync workflow to local cache')
+                        throw new Error('Failed to save workflow')
+                      }
+                    }).then(result => {
+                      console.log('✓ Workflow saved:', result)
+                      if (result.updated_in_cloud) {
+                        console.log('  ✓ Cloud Backend updated')
+                      } else {
+                        console.warn('  ⚠ Cloud Backend update failed')
+                      }
+                      if (result.updated_in_local) {
+                        console.log('  ✓ Local cache updated')
+                      } else {
+                        console.warn('  ⚠ Local cache update failed')
                       }
                     }).catch(err => {
-                      console.error('Failed to sync workflow:', err)
+                      console.error('❌ Failed to save workflow:', err)
+                      showStatus('⚠️ Workflow modified but save failed. Changes may be lost on reload.', 'warning')
                     })
                   }
                   showStatus('✅ Modification complete!', 'success')

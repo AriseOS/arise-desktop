@@ -4,9 +4,9 @@ import yaml from 'js-yaml';
 import FlowVisualization from '../components/FlowVisualization';
 
 const API_BASE = "http://127.0.0.1:8765";
-const DEFAULT_USER = "default_user";
 
-function MetaflowPreviewPage({ onNavigate, showStatus, metaflowId, metaflowYaml }) {
+function MetaflowPreviewPage({ session, onNavigate, showStatus, metaflowId, metaflowYaml }) {
+  const userId = session?.username || 'default_user';
   const [isGenerating, setIsGenerating] = useState(false);
   const [yamlContent, setYamlContent] = useState('');
   const [metaflowData, setMetaflowData] = useState(null);
@@ -38,7 +38,7 @@ function MetaflowPreviewPage({ onNavigate, showStatus, metaflowId, metaflowYaml 
       // If only metaflowId is provided, fetch the metaflow data
       else if (metaflowId && !metaflowYaml) {
         try {
-          const response = await fetch(`${API_BASE}/api/metaflows/${metaflowId}?user_id=${DEFAULT_USER}`);
+          const response = await fetch(`${API_BASE}/api/metaflows/${metaflowId}?user_id=${userId}`);
 
           if (!response.ok) {
             throw new Error(`Failed to fetch MetaFlow: ${response.status}`);
@@ -140,7 +140,7 @@ function MetaflowPreviewPage({ onNavigate, showStatus, metaflowId, metaflowYaml 
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            user_id: DEFAULT_USER,
+            user_id: userId,
             user_query: `Modify the following MetaFlow based on this request: ${userMessage}`,
             task_description: `Current MetaFlow ID: ${metaflowId}`,
             metaflow_id: metaflowId,  // Pass MetaFlow ID so Agent can save modifications
@@ -215,7 +215,7 @@ function MetaflowPreviewPage({ onNavigate, showStatus, metaflowId, metaflowYaml 
                       method: 'PUT',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({
-                        user_id: DEFAULT_USER,
+                        user_id: userId,
                         metaflow_yaml: event.result.updated_yaml
                       })
                     }).then(response => {

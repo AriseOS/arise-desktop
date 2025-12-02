@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 
 const API_BASE = "http://127.0.0.1:8765";
-const DEFAULT_USER = "default_user";
 
-function GenerationPage({ onNavigate, showStatus, params = {} }) {
+function GenerationPage({ session, onNavigate, showStatus, params = {} }) {
+  const userId = session?.username || 'default_user';
   // Step 1: MetaFlow generation
   const [chatInput, setChatInput] = useState("");
   const [metaflowId, setMetaflowId] = useState("");
@@ -31,7 +31,7 @@ function GenerationPage({ onNavigate, showStatus, params = {} }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           task_description: chatInput,
-          user_id: DEFAULT_USER
+          user_id: userId
         })
       });
 
@@ -78,7 +78,7 @@ function GenerationPage({ onNavigate, showStatus, params = {} }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           metaflow_id: metaflowId,
-          user_id: DEFAULT_USER
+          user_id: userId
         })
       });
 

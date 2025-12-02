@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-AgentCrafter is a natural language-driven Agent building platform consisting of three main layers:
+Ami is a natural language-driven Agent building platform consisting of three main layers:
 1. **BaseAgent Framework** - Standardized foundation for all agents
 2. **Agent Builder System** - AI-assisted agent generation using tools like Claude Code
 3. **Web Platform** - Multi-user management interface and runtime environment
@@ -12,7 +12,7 @@ AgentCrafter is a natural language-driven Agent building platform consisting of 
 ## Project Structure
 
 ```
-agentcrafter/
+ami/
 ├── src/                    # All source code
 │   ├── common/             # Shared services and utilities
 │   │   └── llm/           # LLM providers (Anthropic, OpenAI)
@@ -196,7 +196,7 @@ export ANTHROPIC_API_KEY=your_anthropic_key
 - `src/client/web/backend/config.py` - Configuration loader and management
 
 **Database:**
-- Default location: `dbfiles/agentcrafter.db` (configurable in backend.yaml)
+- Default location: `dbfiles/ami.db` (configurable in backend.yaml)
 
 **Configuration Priority (Web Platform):**
 1. Environment variables (e.g., `BACKEND_SERVER_PORT`)

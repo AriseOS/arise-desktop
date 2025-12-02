@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ami Admin Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #f5f7fa;
+            color: #2d3748;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            background: white;
+            padding: 20px 30px;
+            margin-bottom: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            font-weight: 700;
+            color: #667eea;
+        }
+
+        .auth-section {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .auth-input {
+            padding: 10px 15px;
+            border: 2px solid #e2e8f0;
+            border-radius: 6px;
+            font-size: 14px;
+            width: 250px;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+        }
+
+        .stat-label {
+            font-size: 14px;
+            color: #718096;
+            font-weight: 600;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+
+        .stat-value {
+            font-size: 32px;
+            font-weight: 700;
+            color: #2d3748;
+        }
+
+        .section {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+            margin-bottom: 30px;
+        }
+
+        .section-title {
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 20px;
+            color: #2d3748;
+        }
+
+        .user-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .user-table th {
+            background: #f7fafc;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+            color: #4a5568;
+            font-size: 13px;
+            text-transform: uppercase;
+            border-bottom: 2px solid #e2e8f0;
+        }
+
+        .user-table td {
+            padding: 15px 12px;
+            border-bottom: 1px solid #e2e8f0;
+            font-size: 14px;
+        }
+
+        .user-table tr:hover {
+            background: #f7fafc;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .badge-success {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+
+        .badge-warning {
+            background: #fef5e7;
+            color: #dd6b20;
+        }
+
+        .badge-danger {
+            background: #fff5f5;
+            color: #e53e3e;
+        }
+
+        .quota-bar {
+            width: 100%;
+            height: 8px;
+            background: #e2e8f0;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .quota-fill {
+            height: 100%;
+            transition: width 0.3s;
+        }
+
+        .quota-normal {
+            background: #48bb78;
+        }
+
+        .quota-warning {
+            background: #ed8936;
+        }
+
+        .quota-danger {
+            background: #f56565;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .login-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .login-box {
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            max-width: 400px;
+            width: 100%;
+        }
+
+        .login-box h2 {
+            margin-bottom: 20px;
+            color: #667eea;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #4a5568;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e2e8f0;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        .error-message {
+            color: #e53e3e;
+            font-size: 13px;
+            margin-top: 10px;
+        }
+
+        .chart {
+            width: 100%;
+            height: 300px;
+            margin-top: 20px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #718096;
+        }
+    </style>
+</head>
+<body>
+    <!-- Login Overlay -->
+    <div id="loginOverlay" class="login-overlay">
+        <div class="login-box">
+            <h2>Admin Login</h2>
+            <div class="form-group">
+                <label for="adminKeyInput">Admin API Key</label>
+                <input type="password" id="adminKeyInput" placeholder="Enter admin API key">
+            </div>
+            <button class="btn btn-primary" style="width: 100%;" onclick="login()">Login</button>
+            <div id="loginError" class="error-message hidden"></div>
+        </div>
+    </div>
+
+    <!-- Main Dashboard -->
+    <div id="dashboard" class="hidden">
+        <div class="container">
+            <div class="header">
+                <h1>🎯 Ami Admin Dashboard</h1>
+                <div class="auth-section">
+                    <span id="loggedInAs"></span>
+                    <button class="btn btn-primary" onclick="logout()">Logout</button>
+                </div>
+            </div>
+
+            <!-- Stats Grid -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Total Users</div>
+                    <div class="stat-value" id="totalUsers">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Active Users</div>
+                    <div class="stat-value" id="activeUsers">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Total Workflows</div>
+                    <div class="stat-value" id="totalWorkflows">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Total API Calls</div>
+                    <div class="stat-value" id="totalCalls">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Total Tokens</div>
+                    <div class="stat-value" id="totalTokens">-</div>
+                </div>
+            </div>
+
+            <!-- Users Section -->
+            <div class="section">
+                <h2 class="section-title">Users</h2>
+                <div id="usersTable" class="loading">Loading users...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+        let adminKey = null;
+
+        // Check for saved admin key
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedKey = localStorage.getItem('ami_admin_key');
+            if (savedKey) {
+                adminKey = savedKey;
+                verifyAndShowDashboard();
+            }
+        });
+
+        async function login() {
+            const key = document.getElementById('adminKeyInput').value;
+            if (!key) {
+                showLoginError('Please enter admin API key');
+                return;
+            }
+
+            adminKey = key;
+            const verified = await verifyAdminKey();
+            if (verified) {
+                localStorage.setItem('ami_admin_key', key);
+                showDashboard();
+            } else {
+                showLoginError('Invalid admin API key');
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('ami_admin_key');
+            adminKey = null;
+            showLoginOverlay();
+        }
+
+        function showLoginError(message) {
+            const errorDiv = document.getElementById('loginError');
+            errorDiv.textContent = message;
+            errorDiv.classList.remove('hidden');
+        }
+
+        function showLoginOverlay() {
+            document.getElementById('loginOverlay').classList.remove('hidden');
+            document.getElementById('dashboard').classList.add('hidden');
+        }
+
+        function showDashboard() {
+            document.getElementById('loginOverlay').classList.add('hidden');
+            document.getElementById('dashboard').classList.remove('hidden');
+            loadDashboardData();
+        }
+
+        async function verifyAdminKey() {
+            try {
+                const response = await fetch(`${API_BASE}/api/admin/stats/overview?admin_key=${adminKey}`);
+                return response.ok;
+            } catch (error) {
+                return false;
+            }
+        }
+
+        async function verifyAndShowDashboard() {
+            const verified = await verifyAdminKey();
+            if (verified) {
+                showDashboard();
+            } else {
+                logout();
+            }
+        }
+
+        async function loadDashboardData() {
+            await Promise.all([
+                loadStats(),
+                loadUsers()
+            ]);
+        }
+
+        async function loadStats() {
+            try {
+                const response = await fetch(`${API_BASE}/api/admin/stats/overview?admin_key=${adminKey}`);
+                const data = await response.json();
+
+                document.getElementById('totalUsers').textContent = data.total_users;
+                document.getElementById('activeUsers').textContent = data.active_users;
+                document.getElementById('totalWorkflows').textContent = data.total_workflow_executions;
+                document.getElementById('totalCalls').textContent = data.total_api_calls;
+                document.getElementById('totalTokens').textContent = formatNumber(data.total_tokens);
+            } catch (error) {
+                console.error('Failed to load stats:', error);
+            }
+        }
+
+        async function loadUsers() {
+            try {
+                const response = await fetch(`${API_BASE}/api/admin/users?admin_key=${adminKey}&limit=100`);
+                const users = await response.json();
+
+                const tableHTML = `
+                    <table class="user-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Username</th>
+                                <th>Email</th>
+                                <th>API Key</th>
+                                <th>Status</th>
+                                <th>Quota</th>
+                                <th>Tokens</th>
+                                <th>Created</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${users.map(user => `
+                                <tr>
+                                    <td>${user.user_id}</td>
+                                    <td><strong>${user.username}</strong></td>
+                                    <td>${user.email}</td>
+                                    <td><code>${user.api_key_masked}</code></td>
+                                    <td>
+                                        <span class="badge ${user.is_active ? 'badge-success' : 'badge-danger'}">
+                                            ${user.is_active ? 'Active' : 'Inactive'}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <div style="min-width: 150px;">
+                                            ${user.workflow_quota_used} / ${user.workflow_quota_limit}
+                                            <div class="quota-bar">
+                                                <div class="quota-fill ${getQuotaClass(user.workflow_quota_used, user.workflow_quota_limit)}"
+                                                     style="width: ${getQuotaPercentage(user.workflow_quota_used, user.workflow_quota_limit)}%">
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td>${formatNumber(user.total_tokens)}</td>
+                                    <td>${formatDate(user.created_at)}</td>
+                                    <td>
+                                        <button class="btn btn-primary" style="font-size: 12px; padding: 6px 12px; margin-right: 5px;"
+                                                onclick="viewUserDetail('${user.user_id}')">
+                                            View
+                                        </button>
+                                        <button class="btn" style="font-size: 12px; padding: 6px 12px; background: #e53e3e; color: white;"
+                                                onclick="deleteUser('${user.user_id}', '${user.username}')">
+                                            Delete
+                                        </button>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+
+                document.getElementById('usersTable').innerHTML = tableHTML;
+            } catch (error) {
+                console.error('Failed to load users:', error);
+                document.getElementById('usersTable').innerHTML = '<p style="color: #e53e3e;">Failed to load users</p>';
+            }
+        }
+
+        function getQuotaPercentage(used, limit) {
+            if (limit === 0) return 0;
+            return Math.min((used / limit) * 100, 100);
+        }
+
+        function getQuotaClass(used, limit) {
+            const percentage = (used / limit) * 100;
+            if (percentage >= 100) return 'quota-danger';
+            if (percentage >= 80) return 'quota-warning';
+            return 'quota-normal';
+        }
+
+        function formatNumber(num) {
+            if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+            if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+            return num.toString();
+        }
+
+        function formatDate(dateString) {
+            const date = new Date(dateString);
+            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        }
+
+        async function viewUserDetail(userId) {
+            try {
+                const response = await fetch(`${API_BASE}/api/admin/users/${userId}?admin_key=${adminKey}`);
+                const user = await response.json();
+
+                alert(`User Details:\n\n` +
+                      `ID: ${user.user_id}\n` +
+                      `Username: ${user.username}\n` +
+                      `Email: ${user.email}\n` +
+                      `API Key: ${user.api_key_masked}\n` +
+                      `Status: ${user.is_active ? 'Active' : 'Inactive'}\n` +
+                      `Quota: ${user.workflow_quota_used} / ${user.workflow_quota_limit}\n` +
+                      `Input Tokens: ${user.total_input_tokens.toLocaleString()}\n` +
+                      `Output Tokens: ${user.total_output_tokens.toLocaleString()}\n` +
+                      `Total Tokens: ${user.total_tokens.toLocaleString()}\n` +
+                      `API Calls: ${user.total_api_calls}\n` +
+                      `Created: ${formatDate(user.created_at)}`
+                );
+            } catch (error) {
+                alert('Failed to load user details');
+            }
+        }
+
+        async function deleteUser(userId, username) {
+            if (!confirm(`Are you sure you want to delete user "${username}"?\n\nThis will permanently delete:\n- User account\n- All usage statistics\n- All API call records\n- Workflow quotas\n\nThis action cannot be undone!`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/api/admin/users/${userId}?admin_key=${adminKey}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    alert(data.message);
+                    loadDashboardData();
+                } else {
+                    const error = await response.json();
+                    alert(`Failed to delete user: ${error.detail || 'Unknown error'}`);
+                }
+            } catch (error) {
+                console.error('Failed to delete user:', error);
+                alert('Failed to delete user. Please try again.');
+            }
+        }
+
+        // Refresh data every 30 seconds
+        setInterval(() => {
+            if (!document.getElementById('dashboard').classList.contains('hidden')) {
+                loadDashboardData();
+            }
+        }, 30000);
+    </script>
+</body>
+</html>

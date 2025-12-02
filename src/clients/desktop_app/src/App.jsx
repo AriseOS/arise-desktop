@@ -2,7 +2,14 @@ import { useState, useEffect } from "react";
 import "./App.css";
 import "./extension.css";
 
+// Import utilities
+import { auth } from "./utils/auth";
+import { api } from "./utils/api";
+
 // Import pages
+import LoginPage from "./pages/LoginPage";
+import RegisterPage from "./pages/RegisterPage";
+import SettingsPage from "./pages/SettingsPage";
 import RecordingPage from "./pages/RecordingPage";
 import QuickStartPage from "./pages/QuickStartPage";
 import RecordingAnalysisPage from "./pages/RecordingAnalysisPage";
@@ -22,6 +29,11 @@ import DataManagementPage from "./pages/DataManagementPage";
 import CollectionDetailPage from "./pages/CollectionDetailPage";
 
 function App() {
+  // Auth state
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [session, setSession] = useState(null);
+  const [authChecking, setAuthChecking] = useState(true);
+
   // Navigation state
   const [currentPage, setCurrentPage] = useState("main");
   const [pageParams, setPageParams] = useState({});
@@ -43,6 +55,39 @@ function App() {
     setPageParams(params);
   };
 
+  // Check login status on mount
+  useEffect(() => {
+    checkLoginStatus();
+  }, []);
+
+  const checkLoginStatus = async () => {
+    try {
+      const loggedIn = await auth.isLoggedIn();
+      setIsLoggedIn(loggedIn);
+
+      if (loggedIn) {
+        const sessionData = await auth.getSession();
+        setSession(sessionData);
+        console.log('[App] User is logged in:', sessionData?.username);
+      } else {
+        console.log('[App] User is not logged in');
+      }
+    } catch (error) {
+      console.error('[App] Failed to check login status:', error);
+      setIsLoggedIn(false);
+    } finally {
+      setAuthChecking(false);
+    }
+  };
+
+  const handleLoginSuccess = async () => {
+    await checkLoginStatus();
+  };
+
+  const handleRegisterSuccess = async () => {
+    await checkLoginStatus();
+  };
+
   // Browser state
   const [browserOpening, setBrowserOpening] = useState(false);
 
@@ -54,17 +99,7 @@ function App() {
     showStatus("🌐 Opening browser...", "info");
 
     try {
-      const response = await fetch(`${API_BASE}/api/browser/start`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ headless: false })
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to start browser: ${response.status}`);
-      }
-
-      const result = await response.json();
+      const result = await api.startBrowser(false);
 
       if (result.status === "already_running") {
         showStatus("✅ Browser is already running", "success");
@@ -83,18 +118,10 @@ function App() {
   const [hasWorkflows, setHasWorkflows] = useState(false);
   const [recentWorkflows, setRecentWorkflows] = useState([]);
 
-  const API_BASE = "http://127.0.0.1:8765";
-
   // Load dashboard data
   const fetchDashboard = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/dashboard`);
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch dashboard: ${response.status}`);
-      }
-
-      const data = await response.json();
+      const data = await api.getDashboard();
 
       // Determine if user is returning user based on workflow count
       setHasWorkflows(data.has_workflows || data.total_workflows > 0);
@@ -159,8 +186,19 @@ function App() {
         </svg>
       </button>
 
+      <button
+        className="settings-button"
+        title="Settings"
+        onClick={() => navigate("settings")}
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M12 1v6m0 6v6M6 12H1m6 0h6m6 0h4" />
+        </svg>
+      </button>
+
       <div className="footer">
-        <p>Ami v1.0.0</p>
+        <p>Ami v1.0.0 • {session?.username && `Logged in as ${session.username}`}</p>
       </div>
     </div>
   );
@@ -173,10 +211,14 @@ function App() {
           <div className="app-name">Ami</div>
         </div>
         <div className="header-right">
-          <button className="icon-button" title="Settings">
+          <button
+            className="icon-button"
+            title="Settings"
+            onClick={() => navigate("settings")}
+          >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="12" cy="12" r="3" />
-              <path d="M12 1v6m0 6v6" />
+              <path d="M12 1v6m0 6v6M6 12H1m6 0h6m6 0h4" />
             </svg>
           </button>
         </div>
@@ -249,7 +291,7 @@ function App() {
       </div>
 
       <div className="footer">
-        <p>Ami v1.0.0</p>
+        <p>Ami v1.0.0 • {session?.username && `Logged in as ${session.username}`}</p>
       </div>
     </div>
   );
@@ -261,13 +303,62 @@ function App() {
 
   // Render current page
   const renderPage = () => {
+    // Show loading while checking auth
+    if (authChecking) {
+      return (
+        <div className="page auth-loading-page">
+          <div className="auth-loading">
+            <div className="loading-spinner"></div>
+            <p>Loading...</p>
+          </div>
+        </div>
+      );
+    }
+
+    // Show login/register pages if not logged in
+    if (!isLoggedIn) {
+      if (currentPage === 'register') {
+        return (
+          <RegisterPage
+            navigate={navigate}
+            showStatus={showStatus}
+            onRegisterSuccess={handleRegisterSuccess}
+          />
+        );
+      }
+      // Default to login page for all routes when not logged in
+      return (
+        <LoginPage
+          navigate={navigate}
+          showStatus={showStatus}
+          onLoginSuccess={handleLoginSuccess}
+        />
+      );
+    }
+
+    // User is logged in, show app pages
     switch (currentPage) {
+      case "login":
+      case "register":
+        // Redirect to main if trying to access login/register while logged in
+        navigate("main");
+        return renderMainPage();
+
+      case "settings":
+        return (
+          <SettingsPage
+            navigate={navigate}
+            showStatus={showStatus}
+          />
+        );
+
       case "main":
         return renderMainPage();
 
       case "recording":
         return (
           <RecordingPage
+            session={session}
             onNavigate={navigate}
             showStatus={showStatus}
           />
@@ -276,6 +367,7 @@ function App() {
       case "quick-start":
         return (
           <QuickStartPage
+            session={session}
             onNavigate={navigate}
             showStatus={showStatus}
           />
@@ -284,6 +376,7 @@ function App() {
       case "user-flows":
         return (
           <UserFlowsPage
+            session={session}
             onNavigate={navigate}
             showStatus={showStatus}
           />
@@ -292,6 +385,7 @@ function App() {
       case "generation":
         return (
           <GenerationPage
+            session={session}
             onNavigate={navigate}
             showStatus={showStatus}
             params={pageParams}
@@ -301,7 +395,7 @@ function App() {
       case "workflows":
         return (
           <MyWorkflowsPage
-            currentUser={{ token: null }}
+            session={session}
             onNavigate={navigate}
             onLogout={() => { }}
           />
@@ -310,7 +404,7 @@ function App() {
       case "workflow-detail":
         return (
           <WorkflowDetailPage
-            currentUser={{ token: null }}
+            session={session}
             workflowId={pageParams.workflowId}
             autoRun={pageParams.autoRun}
             onNavigate={navigate}
@@ -322,7 +416,7 @@ function App() {
       case "workflow-result":
         return (
           <WorkflowResultPage
-            currentUser={{ token: null }}
+            session={session}
             onNavigate={navigate}
             showStatus={showStatus}
             recordingData={pageParams.recordingData}
@@ -332,7 +426,7 @@ function App() {
       case "workflow-generation":
         return (
           <WorkflowGenerationPage
-            currentUser={{ token: null }}
+            session={session}
             onNavigate={navigate}
             showStatus={showStatus}
             recordingData={pageParams}
@@ -342,6 +436,7 @@ function App() {
       case "execution-monitor":
         return (
           <ExecutionMonitorPage
+            session={session}
             onNavigate={navigate}
             showStatus={showStatus}
             workflowId={pageParams.workflowId}
@@ -354,6 +449,7 @@ function App() {
       case "execution-result":
         return (
           <ExecutionResultPage
+            session={session}
             onNavigate={navigate}
             showStatus={showStatus}
             workflowId={pageParams.workflowId}
@@ -364,6 +460,7 @@ function App() {
       case "recordings-library":
         return (
           <RecordingsLibraryPage
+            session={session}
             onNavigate={navigate}
             showStatus={showStatus}
           />
@@ -372,6 +469,7 @@ function App() {
       case "recording-detail":
         return (
           <RecordingDetailPage
+            session={session}
             onNavigate={navigate}
             showStatus={showStatus}
             sessionId={pageParams.sessionId}
@@ -381,6 +479,7 @@ function App() {
       case "conversational-generation":
         return (
           <ConversationalGenerationPage
+            session={session}
             onNavigate={navigate}
             showStatus={showStatus}
           />
@@ -389,6 +488,7 @@ function App() {
       case "recording-analysis":
         return (
           <RecordingAnalysisPage
+            session={session}
             onNavigate={navigate}
             showStatus={showStatus}
             pageData={pageParams}
@@ -398,6 +498,7 @@ function App() {
       case "metaflow-preview":
         return (
           <MetaflowPreviewPage
+            session={session}
             onNavigate={navigate}
             showStatus={showStatus}
             metaflowId={pageParams.metaflowId}
@@ -408,6 +509,7 @@ function App() {
       case "data-management":
         return (
           <DataManagementPage
+            session={session}
             onNavigate={navigate}
             showStatus={showStatus}
           />
@@ -416,6 +518,7 @@ function App() {
       case "collection-detail":
         return (
           <CollectionDetailPage
+            session={session}
             onNavigate={navigate}
             showStatus={showStatus}
             collectionName={pageParams.collectionName}

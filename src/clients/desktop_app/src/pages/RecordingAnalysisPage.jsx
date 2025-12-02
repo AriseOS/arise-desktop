@@ -2,9 +2,9 @@ import React, { useState } from 'react';
 import '../styles/RecordingAnalysisPage.css';
 
 const API_BASE = "http://127.0.0.1:8765";
-const DEFAULT_USER = "default_user";
 
-function RecordingAnalysisPage({ pageData, onNavigate, showStatus }) {
+function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
+  const userId = session?.username || 'default_user';
   const [taskDescription, setTaskDescription] = useState(pageData?.taskDescription || '');
   const [userQuery, setUserQuery] = useState(pageData?.userQuery || '');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -33,7 +33,7 @@ function RecordingAnalysisPage({ pageData, onNavigate, showStatus }) {
           session_id: sessionId,
           task_description: taskDescription,
           user_query: userQuery,
-          user_id: DEFAULT_USER
+          user_id: userId
         })
       });
 
@@ -63,7 +63,7 @@ function RecordingAnalysisPage({ pageData, onNavigate, showStatus }) {
           session_id: sessionId,
           task_description: taskDescription,
           user_query: userQuery,
-          user_id: DEFAULT_USER
+          user_id: userId
         })
       });
 

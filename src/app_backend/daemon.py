@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
@@ -216,11 +216,13 @@ async def startup_event():
     cdp_recorder = CDPRecorder(storage_manager, browser_manager)
     logger.info("✓ CDP recorder initialized")
 
-    # Initialize cloud client
+    # Initialize cloud client (without user_api_key initially)
     cloud_client = CloudClient(
         api_url=config.get("cloud.api_url", "https://api.ami.com")
     )
     logger.info("✓ Cloud client initialized")
+    logger.info(f"  Cloud Backend URL: {config.get('cloud.api_url', 'https://api.ami.com')}")
+    logger.info(f"  API Proxy URL: {config.get('api_proxy.url', 'http://localhost:8080')}")
 
     logger.info("App Backend daemon ready!")
 
@@ -235,6 +237,21 @@ async def shutdown_event():
         logger.info("✓ Browser cleaned up")
 
     logger.info("Shutdown complete")
+
+
+# ============================================================================
+# Helper Functions
+# ============================================================================
+
+def update_cloud_client_api_key(api_key: Optional[str]):
+    """Update Cloud Client's user API key for subsequent requests
+
+    Args:
+        api_key: User's Ami API key from X-Ami-API-Key header
+    """
+    if cloud_client and api_key:
+        cloud_client.set_user_api_key(api_key)
+        logger.debug(f"Updated cloud client API key: {api_key[:10]}...")
 
 
 # ============================================================================
@@ -720,10 +737,20 @@ async def delete_recording(session_id: str, user_id: str = "default_user"):
 # ============================================================================
 
 @app.post("/api/recordings/upload", response_model=UploadRecordingResponse)
-async def upload_recording_to_cloud(request: UploadRecordingRequest):
-    """Upload recording to Cloud Backend for intent extraction"""
+async def upload_recording_to_cloud(
+    request: UploadRecordingRequest,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """Upload recording to Cloud Backend for intent extraction
+
+    Headers:
+        X-Ami-API-Key: User's Ami API key (optional, for API Proxy)
+    """
     try:
         logger.info(f"Uploading recording from session: {request.session_id}")
+
+        # Update cloud client with user's API key if provided
+        update_cloud_client_api_key(x_ami_api_key)
 
         # Load operations from local storage
         recording_data = storage_manager.get_recording(
@@ -757,10 +784,20 @@ async def upload_recording_to_cloud(request: UploadRecordingRequest):
 # ============================================================================
 
 @app.post("/api/metaflows/generate", response_model=GenerateMetaflowResponse)
-async def generate_metaflow(request: GenerateMetaflowRequest):
-    """Generate MetaFlow from user's Intent Memory Graph"""
+async def generate_metaflow(
+    request: GenerateMetaflowRequest,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """Generate MetaFlow from user's Intent Memory Graph
+
+    Headers:
+        X-Ami-API-Key: User's Ami API key (optional, for API Proxy)
+    """
     try:
         logger.info(f"Generating MetaFlow for task: {request.task_description}")
+
+        # Update cloud client with user's API key if provided
+        update_cloud_client_api_key(x_ami_api_key)
 
         # Call Cloud Backend to generate MetaFlow
         result = await cloud_client.generate_metaflow(
@@ -1021,7 +1058,10 @@ async def generate_workflow_from_metaflow_api(data: dict):
 
 
 @app.post("/api/workflows/generate", response_model=GenerateWorkflowResponse)
-async def generate_workflow(request: GenerateWorkflowRequest):
+async def generate_workflow(
+    request: GenerateWorkflowRequest,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
     """Generate Workflow from MetaFlow
 
     This endpoint only generates workflow from a confirmed MetaFlow.
@@ -1032,9 +1072,15 @@ async def generate_workflow(request: GenerateWorkflowRequest):
     2. User reviews MetaFlow in UI
     3. User confirms and calls this endpoint with metaflow_id
     4. Workflow is generated from the confirmed MetaFlow
+
+    Headers:
+        X-Ami-API-Key: User's Ami API key (optional, for API Proxy)
     """
     try:
         logger.info(f"Generating Workflow from MetaFlow: {request.metaflow_id}")
+
+        # Update cloud client with user's API key if provided
+        update_cloud_client_api_key(x_ami_api_key)
 
         # Generate Workflow from MetaFlow via Cloud Backend
         workflow_result = await cloud_client.generate_workflow(

@@ -23,6 +23,15 @@ class MetaFlowGenerator:
     uses LLM to select relevant path and generate MetaFlow YAML.
 
     Example:
+        >>> from src.common.llm import AnthropicProvider
+        >>> # With API Proxy (recommended)
+        >>> llm_provider = AnthropicProvider(
+        ...     api_key="ami_user123",
+        ...     base_url="http://localhost:8080"
+        ... )
+        >>> # Or without API Proxy (direct Anthropic)
+        >>> llm_provider = AnthropicProvider(api_key="sk-ant-...")
+        >>>
         >>> generator = MetaFlowGenerator(llm_provider)
         >>> metaflow = await generator.generate(
         ...     graph=intent_graph,
@@ -36,6 +45,7 @@ class MetaFlowGenerator:
 
         Args:
             llm_provider: LLM service provider (Anthropic, OpenAI, etc.)
+                         Should be initialized with appropriate api_key and base_url
         """
         self.llm = llm_provider
 

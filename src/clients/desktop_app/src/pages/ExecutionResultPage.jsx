@@ -4,11 +4,13 @@ import '../styles/ExecutionResultPage.css';
 const API_BASE = "http://127.0.0.1:8765";
 
 function ExecutionResultPage({
+  session,
   onNavigate,
   showStatus,
   workflowId,
   executionId
 }) {
+  const userId = session?.username || 'default_user';
   const [workflowName, setWorkflowName] = useState('');
   const [isEditingName, setIsEditingName] = useState(false);
   const [executionStats, setExecutionStats] = useState(null);

@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import '../styles/QuickStartPage.css';
 
 const API_BASE = "http://127.0.0.1:8765";
-const DEFAULT_USER = "default_user";
 
-function QuickStartPage({ onNavigate, showStatus }) {
+function QuickStartPage({ session, onNavigate, showStatus }) {
+  const userId = session?.username || 'default_user';
   const [step, setStep] = useState('tutorial'); // 'tutorial', 'input', 'recording', 'analyzing'
   const [tutorialPage, setTutorialPage] = useState(0);
   const [currentSessionId, setCurrentSessionId] = useState(null);
@@ -73,7 +73,7 @@ function QuickStartPage({ onNavigate, showStatus }) {
           description: "Recording from Quick Start",
           task_metadata: {
             quick_start: true,
-            user_id: DEFAULT_USER
+            user_id: userId
           }
         })
       });
@@ -141,7 +141,7 @@ function QuickStartPage({ onNavigate, showStatus }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           session_id: sessionId,
-          user_id: DEFAULT_USER
+          user_id: userId
         })
       });
 
@@ -166,7 +166,7 @@ function QuickStartPage({ onNavigate, showStatus }) {
             name: analysisResult.name,
             task_description: analysisResult.task_description,
             user_query: analysisResult.user_query,
-            user_id: DEFAULT_USER
+            user_id: userId
           })
         });
 
