@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import Icon from '../components/Icons';
 import '../styles/ExecutionResultPage.css';
 
 const API_BASE = "http://127.0.0.1:8765";
@@ -21,7 +22,7 @@ function ExecutionResultPage({
   useEffect(() => {
     const fetchResults = async () => {
       if (!executionId) {
-        showStatus('❌ No execution ID provided', 'error');
+        showStatus('No execution ID provided', 'error');
         setLoading(false);
         return;
       }
@@ -38,7 +39,7 @@ function ExecutionResultPage({
         setWorkflowName(data.workflow_name || 'Workflow');
       } catch (error) {
         console.error('Error fetching results:', error);
-        showStatus(`❌ Failed to load results: ${error.message}`, 'error');
+        showStatus(`Failed to load results: ${error.message}`, 'error');
       } finally {
         setLoading(false);
       }
@@ -48,15 +49,15 @@ function ExecutionResultPage({
   }, [executionId]);
 
   const handleDownload = (format) => {
-    showStatus(`📥 Downloading data as ${format.toUpperCase()}...`, 'info');
+    showStatus(`Downloading data as ${format.toUpperCase()}...`, 'info');
     // Mock download
     setTimeout(() => {
-      showStatus(`✅ Downloaded successfully as ${format.toUpperCase()}!`, 'success');
+      showStatus(`Downloaded successfully as ${format.toUpperCase()}!`, 'success');
     }, 1000);
   };
 
   const handleRunAgain = () => {
-    showStatus('▶️ Starting workflow execution...', 'info');
+    showStatus('Starting workflow execution...', 'info');
     setTimeout(() => {
       onNavigate('execution-monitor', { workflowId });
     }, 500);
@@ -64,13 +65,13 @@ function ExecutionResultPage({
 
   const handleSaveWorkflow = () => {
     if (!workflowName.trim()) {
-      showStatus('❌ Please enter a workflow name', 'error');
+      showStatus('Please enter a workflow name', 'error');
       return;
     }
 
-    showStatus('💾 Saving workflow...', 'info');
+    showStatus('Saving workflow...', 'info');
     setTimeout(() => {
-      showStatus(`✅ Workflow "${workflowName}" saved successfully!`, 'success');
+      showStatus(`Workflow "${workflowName}" saved successfully!`, 'success');
       setTimeout(() => {
         onNavigate('workflows');
       }, 1500);
@@ -101,7 +102,7 @@ function ExecutionResultPage({
     return (
       <div className="execution-result-page">
         <div className="error-container">
-          <div className="error-icon">❌</div>
+          <div className="error-icon"><Icon icon="alertCircle" size={64} /></div>
           <h2>Failed to load results</h2>
           <button className="btn-back" onClick={() => onNavigate('main')}>
             Back to Home
@@ -116,7 +117,7 @@ function ExecutionResultPage({
       {/* Success Header */}
       <div className="result-header">
         <div className="success-celebration">
-          <div className="success-icon">🎉</div>
+          <div className="success-icon"><Icon icon="checkCircle" size={48} /></div>
           <h1 className="success-title">Execution Successful!</h1>
           <p className="success-subtitle">
             Scraped {executionStats.totalRecords || 0} records in {executionStats.duration || 'N/A'}
@@ -130,7 +131,7 @@ function ExecutionResultPage({
         <div className="data-preview-section">
           <div className="section-header">
             <div className="header-left">
-              <h2>📊 Data Preview</h2>
+              <h2><Icon icon="barChart" size={20} /> Data Preview</h2>
               <span className="data-count">
                 {scrapedData.length > 0
                   ? `Showing first ${Math.min(10, scrapedData.length)} of ${executionStats.totalRecords || scrapedData.length} records`
@@ -139,11 +140,7 @@ function ExecutionResultPage({
             </div>
             <div className="header-right">
               <button className="btn-download" onClick={() => handleDownload('excel')}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                  <polyline points="7 10 12 15 17 10"/>
-                  <line x1="12" y1="15" x2="12" y2="3"/>
-                </svg>
+                <Icon icon="download" />
                 Download Excel
               </button>
               <button className="btn-download secondary" onClick={() => handleDownload('csv')}>
@@ -192,7 +189,7 @@ function ExecutionResultPage({
         {/* Save Workflow Section */}
         <div className="save-workflow-section">
           <div className="save-card">
-            <div className="save-icon">💾</div>
+            <div className="save-icon"><Icon icon="save" size={24} /></div>
             <h3>Want to use this workflow again?</h3>
             <p>Save it for easy access and reuse</p>
 
@@ -209,11 +206,7 @@ function ExecutionResultPage({
             </div>
 
             <button className="btn-save-workflow" onClick={handleSaveWorkflow}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-                <polyline points="17 21 17 13 7 13 7 21"/>
-                <polyline points="7 3 7 8 15 8"/>
-              </svg>
+              <Icon icon="save" />
               Save Workflow
             </button>
           </div>
@@ -224,19 +217,19 @@ function ExecutionResultPage({
           <h3>What's next?</h3>
           <div className="action-cards">
             <div className="action-card" onClick={handleRunAgain}>
-              <div className="action-icon">▶️</div>
+              <div className="action-icon"><Icon icon="play" size={24} /></div>
               <h4>Run Again</h4>
               <p>Execute this workflow again with the same settings</p>
             </div>
 
             <div className="action-card" onClick={handleCreateNew}>
-              <div className="action-icon">🆕</div>
+              <div className="action-icon"><Icon icon="plusCircle" size={24} /></div>
               <h4>Create New Workflow</h4>
               <p>Record a new workflow for a different task</p>
             </div>
 
             <div className="action-card" onClick={() => onNavigate('main')}>
-              <div className="action-icon">🏠</div>
+              <div className="action-icon"><Icon icon="home" size={24} /></div>
               <h4>Back to Home</h4>
               <p>Return to the main dashboard</p>
             </div>
@@ -247,7 +240,7 @@ function ExecutionResultPage({
         {localStorage.getItem('firstSuccessfulRun') !== 'true' && (
           <div className="first-time-celebration">
             <div className="celebration-content">
-              <h3>🎉 Congratulations on your first automation!</h3>
+              <h3><Icon icon="star" size={24} /> Congratulations on your first automation!</h3>
               <p>You've just saved approximately <strong>30 minutes</strong> of manual work.</p>
               <button
                 className="btn-got-it"
@@ -268,7 +261,7 @@ function ExecutionResultPage({
         <div className="info-item">
           <span className="info-label">Status:</span>
           <span className="info-value success">
-            {executionStats.status === 'success' ? '✅ Success' : '❌ Failed'}
+            {executionStats.status === 'success' ? <><Icon icon="checkCircle" size={14} /> Success</> : <><Icon icon="x" size={14} /> Failed</>}
           </span>
         </div>
         <div className="info-item">

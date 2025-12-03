@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { DEFAULT_CONFIG_KEY } from '../config/index'
+import Icon from '../components/Icons'
+import '../styles/RecordPage.css'
 
 function RecordPage({ onNavigate, showStatus, currentUser }) {
   const [title, setTitle] = useState('')
@@ -77,12 +79,12 @@ function RecordPage({ onNavigate, showStatus, currentUser }) {
 
   const handleStartRecord = async () => {
     if (!title.trim()) {
-      showStatus('⚠️ 请输入标题', 'error')
+      showStatus('请输入标题', 'error')
       return
     }
 
     try {
-      showStatus('🎬 开始录制...', 'info')
+      showStatus('开始录制...', 'info')
 
       const response = await fetch('http://localhost:8000/api/recording/start', {
         method: 'POST',
@@ -129,7 +131,7 @@ function RecordPage({ onNavigate, showStatus, currentUser }) {
           }
         }
 
-        showStatus('✅ 录制已开始，请在浏览器中操作', 'success')
+        showStatus('录制已开始，请在浏览器中操作', 'success')
 
         // Save recording state
         await saveRecordingState({
@@ -143,32 +145,38 @@ function RecordPage({ onNavigate, showStatus, currentUser }) {
       }
     } catch (error) {
       console.error('Start recording error:', error)
-      showStatus('❌ 启动录制失败', 'error')
+      showStatus('启动录制失败', 'error')
       setIsRecording(false)
     }
   }
 
   const getOperationTypeLabel = (type) => {
     const typeLabels = {
-      'click': '🖱️ 点击',
-      'input': '⌨️ 输入',
-      'navigate': '🌐 导航',
-      'scroll': '📜 滚动',
-      'select': '📋 选择',
-      'submit': '✅ 提交',
-      'hover': '👆 悬停'
+      'click': { text: '点击', icon: 'mousePointer' },
+      'input': { text: '输入', icon: 'keyboard' },
+      'navigate': { text: '导航', icon: 'globe' },
+      'scroll': { text: '滚动', icon: 'arrowDown' },
+      'select': { text: '选择', icon: 'list' },
+      'submit': { text: '提交', icon: 'checkCircle' },
+      'hover': { text: '悬停', icon: 'mousePointer' }
     }
-    return typeLabels[type] || `📌 ${type}`
+    const label = typeLabels[type] || { text: type, icon: 'mapPin' }
+    return (
+      <>
+        <Icon icon={label.icon} size={14} />
+        <span>{label.text}</span>
+      </>
+    )
   }
 
   const handleStopRecord = async () => {
     if (!sessionId) {
-      showStatus('⚠️ 无录制会话', 'error')
+      showStatus('无录制会话', 'error')
       return
     }
 
     try {
-      showStatus('⏹️ 正在停止录制...', 'info')
+      showStatus('正在停止录制...', 'info')
 
       const response = await fetch('http://localhost:8000/api/recording/stop', {
         method: 'POST',
@@ -224,7 +232,7 @@ function RecordPage({ onNavigate, showStatus, currentUser }) {
           }
         })
 
-        showStatus(`✅ 录制完成，捕获 ${result.operation_count} 个操作`, 'success')
+        showStatus(`录制完成，捕获 ${result.operation_count} 个操作`, 'success')
 
         // Stop recording UI state
         setIsRecording(false)
@@ -249,7 +257,7 @@ function RecordPage({ onNavigate, showStatus, currentUser }) {
       }
     } catch (error) {
       console.error('Stop recording error:', error)
-      showStatus('❌ 停止录制失败', 'error')
+      showStatus('停止录制失败', 'error')
     }
   }
 
@@ -261,11 +269,9 @@ function RecordPage({ onNavigate, showStatus, currentUser }) {
           onClick={() => onNavigate('main')}
           disabled={isRecording}
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="#667eea" strokeWidth="2">
-            <path d="M19 12H5M12 19l-7-7 7-7"/>
-          </svg>
+          <Icon icon="arrowLeft" />
         </button>
-        <div className="page-title">录制 Workflow</div>
+        <div className="page-title"><Icon icon="video" size={28} /> 录制 Workflow</div>
       </div>
 
       <div className="record-content">
@@ -312,7 +318,7 @@ function RecordPage({ onNavigate, showStatus, currentUser }) {
               <div className="operations-list">
                 {capturedOperations.length === 0 ? (
                   <div className="empty-operations">
-                    <div className="empty-icon">📋</div>
+                    <div className="empty-icon"><Icon icon="clipboard" size={48} /></div>
                     <div className="empty-text">等待捕获操作...</div>
                   </div>
                 ) : (
@@ -345,23 +351,17 @@ function RecordPage({ onNavigate, showStatus, currentUser }) {
           >
             {isGenerating ? (
               <>
-                <svg className="spinning" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <circle cx="12" cy="12" r="10" strokeDasharray="60" strokeDashoffset="30" strokeLinecap="round"></circle>
-                </svg>
+                <div className="btn-spinner"></div>
                 <span>生成中...</span>
               </>
             ) : isRecording ? (
               <>
-                <svg viewBox="0 0 24 24" fill="currentColor">
-                  <rect x="6" y="6" width="12" height="12"></rect>
-                </svg>
+                <Icon icon="square" size={20} />
                 <span>停止录制</span>
               </>
             ) : (
               <>
-                <svg viewBox="0 0 24 24" fill="currentColor">
-                  <circle cx="12" cy="12" r="8"></circle>
-                </svg>
+                <Icon icon="circle" size={20} fill="currentColor" />
                 <span>开始录制</span>
               </>
             )}

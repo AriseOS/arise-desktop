@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import Icon from '../components/Icons';
 import '../styles/MetaflowPreviewPage.css';
 import yaml from 'js-yaml';
 import FlowVisualization from '../components/FlowVisualization';
@@ -291,11 +292,9 @@ function MetaflowPreviewPage({ session, onNavigate, showStatus, metaflowId, meta
       {/* Header */}
       <div className="page-header">
         <button className="back-button" onClick={handleCancel}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M19 12H5M12 19l-7-7 7-7"/>
-          </svg>
+          <Icon icon="arrowLeft" />
         </button>
-        <h1 className="page-title">📋 Review MetaFlow</h1>
+        <h1 className="page-title"><Icon icon="fileText" /> Review MetaFlow</h1>
         <div className="header-spacer"></div>
       </div>
 
@@ -303,7 +302,7 @@ function MetaflowPreviewPage({ session, onNavigate, showStatus, metaflowId, meta
       <div className="preview-content">
         {/* Instructions */}
         <div className="instructions-section">
-          <div className="instruction-icon">👀</div>
+          <div className="instruction-icon"><Icon icon="eye" size={24} /></div>
           <h2>Review Generated MetaFlow</h2>
           <p>
             The AI has analyzed your task and created a MetaFlow (intermediate workflow structure).
@@ -318,22 +317,14 @@ function MetaflowPreviewPage({ session, onNavigate, showStatus, metaflowId, meta
               className={`tab-button ${activeTab === 'visual' ? 'active' : ''}`}
               onClick={() => setActiveTab('visual')}
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <rect x="3" y="3" width="7" height="7"/>
-                <rect x="14" y="3" width="7" height="7"/>
-                <rect x="14" y="14" width="7" height="7"/>
-                <rect x="3" y="14" width="7" height="7"/>
-              </svg>
+              <Icon icon="layout" />
               <span>Visual</span>
             </button>
             <button
               className={`tab-button ${activeTab === 'yaml' ? 'active' : ''}`}
               onClick={() => setActiveTab('yaml')}
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polyline points="16 18 22 12 16 6"/>
-                <polyline points="8 6 2 12 8 18"/>
-              </svg>
+              <Icon icon="code" />
               <span>YAML</span>
             </button>
           </div>
@@ -363,10 +354,7 @@ function MetaflowPreviewPage({ session, onNavigate, showStatus, metaflowId, meta
             onClick={handleCancel}
             disabled={isGenerating}
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="18" y1="6" x2="6" y2="18"/>
-              <line x1="6" y1="6" x2="18" y2="18"/>
-            </svg>
+            <Icon icon="x" />
             <span>Cancel</span>
           </button>
 
@@ -382,9 +370,7 @@ function MetaflowPreviewPage({ session, onNavigate, showStatus, metaflowId, meta
               </>
             ) : (
               <>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <polyline points="20 6 9 17 4 12"/>
-                </svg>
+                <Icon icon="check" />
                 <span>Confirm & Generate Workflow</span>
               </>
             )}
@@ -394,7 +380,7 @@ function MetaflowPreviewPage({ session, onNavigate, showStatus, metaflowId, meta
         {/* Modification Section */}
         <div className="modification-section">
           <div className="modification-header">
-            <h3>🤖 Need changes?</h3>
+            <h3><Icon icon="cpu" size={20} /> Need changes?</h3>
             <p>Describe what you'd like to modify in natural language</p>
           </div>
 
@@ -404,7 +390,7 @@ function MetaflowPreviewPage({ session, onNavigate, showStatus, metaflowId, meta
               {modificationLog.map((msg, index) => (
                 <div key={index} className={`log-message ${msg.type}`}>
                   <span className="log-avatar">
-                    {msg.type === 'user' ? '👤' : msg.type === 'error' ? '❌' : '🤖'}
+                    {msg.type === 'user' ? <Icon icon="user" size={16} /> : msg.type === 'error' ? <Icon icon="alertCircle" size={16} /> : <Icon icon="cpu" size={16} />}
                   </span>
                   <pre className="log-content">{msg.content}</pre>
                 </div>
@@ -443,9 +429,7 @@ function MetaflowPreviewPage({ session, onNavigate, showStatus, metaflowId, meta
               {isModifying ? (
                 <div className="btn-spinner"></div>
               ) : (
-                <svg viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
-                </svg>
+                <Icon icon="send" size={18} />
               )}
             </button>
           </div>
@@ -454,7 +438,7 @@ function MetaflowPreviewPage({ session, onNavigate, showStatus, metaflowId, meta
         {/* Help Text */}
         <div className="help-text">
           <p>
-            💡 <strong>What is a MetaFlow?</strong> It's a high-level description of the workflow steps
+            <Icon icon="info" size={14} /> <strong>What is a MetaFlow?</strong> It's a high-level description of the workflow steps
             before they are converted into executable code. Review it to ensure the AI understood your task correctly.
           </p>
         </div>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import Icon from '../components/Icons';
 import '../styles/RecordingDetailPage.css';
 
 const API_BASE = "http://127.0.0.1:8765";
@@ -13,7 +14,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
 
   const handleSaveQuery = async () => {
     if (!editedQuery.trim()) {
-      showStatus('⚠️ Query cannot be empty', 'warning');
+      showStatus('Query cannot be empty', 'warning');
       return;
     }
 
@@ -43,10 +44,10 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
       }));
 
       setIsEditingQuery(false);
-      showStatus('✅ User query updated!', 'success');
+      showStatus('User query updated!', 'success');
     } catch (error) {
       console.error('Error updating query:', error);
-      showStatus(`❌ Failed to update query: ${error.message}`, 'error');
+      showStatus(`Failed to update query: ${error.message}`, 'error');
     }
   };
 
@@ -54,7 +55,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
   useEffect(() => {
     const fetchRecordingDetails = async () => {
       if (!sessionId) {
-        showStatus('❌ No session ID provided', 'error');
+        showStatus('No session ID provided', 'error');
         setLoading(false);
         return;
       }
@@ -70,7 +71,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
         setRecording(data);
       } catch (error) {
         console.error('Error fetching recording details:', error);
-        showStatus(`❌ Failed to load recording: ${error.message}`, 'error');
+        showStatus(`Failed to load recording: ${error.message}`, 'error');
       } finally {
         setLoading(false);
       }
@@ -80,7 +81,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
   }, [sessionId]);
 
   const handleGenerateWorkflow = async () => {
-    showStatus('✨ Generating MetaFlow from recording...', 'info');
+    showStatus('Generating MetaFlow from recording...', 'info');
 
     try {
       // Extract task_description and user_query from recording metadata
@@ -104,7 +105,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
 
       const data = await response.json();
 
-      showStatus('✅ MetaFlow generated! Please review.', 'success');
+      showStatus('MetaFlow generated! Please review.', 'success');
 
       // Navigate to MetaFlow preview page
       setTimeout(() => {
@@ -115,7 +116,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
       }, 500);
     } catch (error) {
       console.error('Error generating MetaFlow:', error);
-      showStatus(`❌ Failed to generate MetaFlow: ${error.message}`, 'error');
+      showStatus(`Failed to generate MetaFlow: ${error.message}`, 'error');
     }
   };
 
@@ -134,19 +135,36 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
 
   const getOperationTypeLabel = (type) => {
     const typeLabels = {
-      'click': '🖱️ Click',
-      'input': '⌨️ Input',
-      'navigate': '🌐 Navigate',
-      'scroll': '📜 Scroll',
-      'select': '📋 Select',
-      'submit': '✅ Submit',
-      'hover': '👆 Hover',
-      'copy_action': '📋 Copy Data',
-      'test': '🧪 Test',
-      'type': '⌨️ Type',
-      'fill': '⌨️ Fill'
+      'click': 'Click',
+      'input': 'Input',
+      'navigate': 'Navigate',
+      'scroll': 'Scroll',
+      'select': 'Select',
+      'submit': 'Submit',
+      'hover': 'Hover',
+      'copy_action': 'Copy Data',
+      'test': 'Test',
+      'type': 'Type',
+      'fill': 'Fill'
     };
-    return typeLabels[type] || `📌 ${type.charAt(0).toUpperCase() + type.slice(1)}`;
+    return typeLabels[type] || `${type.charAt(0).toUpperCase() + type.slice(1)}`;
+  };
+
+  const getOperationIcon = (type) => {
+    const typeIcons = {
+      'click': 'mousePointer',
+      'input': 'keyboard',
+      'navigate': 'globe',
+      'scroll': 'scroll',
+      'select': 'list',
+      'submit': 'checkCircle',
+      'hover': 'hand',
+      'copy_action': 'clipboard',
+      'test': 'flask',
+      'type': 'keyboard',
+      'fill': 'edit'
+    };
+    return typeIcons[type] || 'activity';
   };
 
   const renderOperationDetails = (operation) => {
@@ -183,7 +201,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
         const displayText = element.textContent.trim();
         details.push(
           <div key="element_text" className="action-detail highlight-action">
-            <span className="detail-label">👆 Clicked on:</span>
+            <span className="detail-label"><Icon icon="mousePointer" size={14} /> Clicked on:</span>
             <span className="detail-value clicked-text">"{displayText.substring(0, 100)}{displayText.length > 100 ? '...' : ''}"</span>
           </div>
         );
@@ -232,7 +250,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
         const selectedText = data.selectedText.trim();
         details.push(
           <div key="selected_text" className="action-detail highlight-action">
-            <span className="detail-label">📋 Selected:</span>
+            <span className="detail-label"><Icon icon="checkSquare" size={14} /> Selected:</span>
             <span className="detail-value selected-text">"{selectedText.substring(0, 100)}{selectedText.length > 100 ? '...' : ''}"</span>
           </div>
         );
@@ -261,7 +279,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
       if (data.copiedText) {
         details.push(
           <div key="copied_text" className="action-detail field-mapping">
-            <span className="detail-label">📋 Copied Text:</span>
+            <span className="detail-label"><Icon icon="clipboard" size={14} /> Copied Text:</span>
             <span className="detail-value field-value">"{data.copiedText}"</span>
           </div>
         );
@@ -328,7 +346,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
     return (
       <div className="recording-detail-page">
         <div className="error-container">
-          <div className="error-icon">❌</div>
+          <div className="error-icon"><Icon icon="alertCircle" size={64} /></div>
           <h2>Recording not found</h2>
           <p>The requested recording could not be loaded.</p>
           <button className="btn-back" onClick={() => onNavigate('recordings-library')}>
@@ -347,12 +365,10 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
       {/* Header */}
       <div className="page-header">
         <button className="back-button" onClick={() => onNavigate('recordings-library')}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M19 12H5M12 19l-7-7 7-7" />
-          </svg>
+          <Icon icon="arrowLeft" />
         </button>
         <h1 className="page-title">
-          📹 {recording.task_metadata?.name || `Recording ${sessionId}`}
+          <Icon icon="video" /> {recording.task_metadata?.name || `Recording ${sessionId}`}
         </h1>
         <div className="header-spacer"></div>
       </div>
@@ -368,12 +384,12 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
             <div className="task-metadata-section">
               {recording.task_metadata.task_description && (
                 <div className="metadata-item">
-                  <span className="metadata-label">📝 Task Description:</span>
+                  <span className="metadata-label"><Icon icon="fileText" size={16} /> Task Description:</span>
                   <span className="metadata-value">{recording.task_metadata.task_description}</span>
                 </div>
               )}
               <div className="metadata-item">
-                <span className="metadata-label">🎯 User Query:</span>
+                <span className="metadata-label"><Icon icon="target" size={16} /> User Query:</span>
                 {isEditingQuery ? (
                   <div className="edit-query-container">
                     <input
@@ -384,8 +400,8 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
                       autoFocus
                     />
                     <div className="edit-actions">
-                      <button className="btn-save-mini" onClick={handleSaveQuery}>✅</button>
-                      <button className="btn-cancel-mini" onClick={() => setIsEditingQuery(false)}>❌</button>
+                      <button className="btn-save-mini" onClick={handleSaveQuery}><Icon icon="check" size={14} /></button>
+                      <button className="btn-cancel-mini" onClick={() => setIsEditingQuery(false)}><Icon icon="x" size={14} /></button>
                     </div>
                   </div>
                 ) : (
@@ -401,14 +417,14 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
                       }}
                       title="Edit User Query"
                     >
-                      ✏️
+                      <Icon icon="edit" size={14} />
                     </button>
                   </div>
                 )}
               </div>
               {recording.task_metadata.session_id && (
                 <div className="metadata-item">
-                  <span className="metadata-label">🔖 Session ID:</span>
+                  <span className="metadata-label"><Icon icon="tag" size={16} /> Session ID:</span>
                   <span className="metadata-value">{recording.task_metadata.session_id}</span>
                 </div>
               )}
@@ -444,11 +460,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
                   onClick={() => onNavigate('metaflow-preview', { metaflowId: recording.metaflow_id })}
                 >
                   {recording.metaflow_id}
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                    <polyline points="15 3 21 3 21 9" />
-                    <line x1="10" y1="14" x2="21" y2="3" />
-                  </svg>
+                  <Icon icon="externalLink" size={14} />
                 </button>
               </div>
             </div>
@@ -463,21 +475,14 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
               className={`tab-button ${activeTab === 'timeline' ? 'active' : ''}`}
               onClick={() => setActiveTab('timeline')}
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <line x1="12" y1="20" x2="12" y2="10" />
-                <line x1="18" y1="20" x2="18" y2="4" />
-                <line x1="6" y1="20" x2="6" y2="16" />
-              </svg>
+              <Icon icon="list" />
               <span>Timeline</span>
             </button>
             <button
               className={`tab-button ${activeTab === 'yaml' ? 'active' : ''}`}
               onClick={() => setActiveTab('yaml')}
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polyline points="16 18 22 12 16 6" />
-                <polyline points="8 6 2 12 8 18" />
-              </svg>
+              <Icon icon="code" />
               <span>YAML</span>
             </button>
           </div>
@@ -512,9 +517,10 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
                                 {operation.timestamp}
                               </span>
                               <span className="action-label">
+                                <Icon icon={getOperationIcon(operation.type)} size={16} />
                                 {getOperationTypeLabel(operation.type)}
                               </span>
-                              {isCopyAction && <span className="copy-badge">⭐ Data Extract</span>}
+                              {isCopyAction && <span className="copy-badge"><Icon icon="star" size={12} /> Data Extract</span>}
                             </div>
 
                             <div className="action-details">
@@ -570,9 +576,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
         {/* Generate Workflow Button */}
         <div className="action-section">
           <button className="btn-generate-workflow" onClick={handleGenerateWorkflow}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-            </svg>
+            <Icon icon="zap" />
             Generate Workflow
           </button>
           <p className="action-hint">

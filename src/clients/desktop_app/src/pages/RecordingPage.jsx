@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import Icon from '../components/Icons';
+import '../styles/RecordingPage.css';
 
 const API_BASE = "http://127.0.0.1:8765";
 
@@ -18,12 +20,12 @@ function RecordingPage({ session, onNavigate, showStatus }) {
   // Start recording
   const handleStartRecording = async () => {
     if (!recordUrl || !recordTitle || !recordDescription) {
-      showStatus("⚠️ 请填写所有必填项", "error");
+      showStatus("请填写所有必填项", "error");
       return;
     }
 
     try {
-      showStatus("🎬 启动录制...", "info");
+      showStatus("启动录制...", "info");
 
       const response = await fetch(`${API_BASE}/api/recording/start`, {
         method: "POST",
@@ -41,17 +43,17 @@ function RecordingPage({ session, onNavigate, showStatus }) {
       const result = await response.json();
       setRecording(true);
       setSessionId(result.session_id);
-      showStatus("✅ 录制已开始！请在浏览器中操作", "success");
+      showStatus("录制已开始！请在浏览器中操作", "success");
     } catch (error) {
       console.error("Start recording error:", error);
-      showStatus(`❌ 启动录制失败: ${error.message}`, "error");
+      showStatus(`启动录制失败: ${error.message}`, "error");
     }
   };
 
   // Stop recording
   const handleStopRecording = async () => {
     try {
-      showStatus("⏹️ 停止录制...", "info");
+      showStatus("停止录制...", "info");
 
       const response = await fetch(`${API_BASE}/api/recording/stop`, {
         method: "POST",
@@ -63,10 +65,10 @@ function RecordingPage({ session, onNavigate, showStatus }) {
       const result = await response.json();
       setRecording(false);
       setOperationsCount(result.operations_count);
-      showStatus(`✅ 录制完成！捕获了 ${result.operations_count} 个操作`, "success");
+      showStatus(`录制完成！捕获了 ${result.operations_count} 个操作`, "success");
     } catch (error) {
       console.error("Stop recording error:", error);
-      showStatus(`❌ 停止录制失败: ${error.message}`, "error");
+      showStatus(`停止录制失败: ${error.message}`, "error");
       setRecording(false);
     }
   };
@@ -74,13 +76,13 @@ function RecordingPage({ session, onNavigate, showStatus }) {
   // Upload recording
   const handleUpload = async () => {
     if (!sessionId) {
-      showStatus("⚠️ 没有可上传的录制", "error");
+      showStatus("没有可上传的录制", "error");
       return;
     }
 
     try {
       setUploading(true);
-      showStatus("📤 上传录制到云端...", "info");
+      showStatus("上传录制到云端...", "info");
 
       const response = await fetch(`${API_BASE}/api/recordings/upload`, {
         method: "POST",
@@ -95,7 +97,7 @@ function RecordingPage({ session, onNavigate, showStatus }) {
       if (!response.ok) throw new Error("Upload failed");
 
       const result = await response.json();
-      showStatus("✅ 上传成功！录制已保存到云端", "success");
+      showStatus("上传成功！录制已保存到云端", "success");
 
       // Return to main page after successful upload
       setTimeout(() => {
@@ -103,7 +105,7 @@ function RecordingPage({ session, onNavigate, showStatus }) {
       }, 2000);
     } catch (error) {
       console.error("Upload error:", error);
-      showStatus(`❌ 上传失败: ${error.message}`, "error");
+      showStatus(`上传失败: ${error.message}`, "error");
     } finally {
       setUploading(false);
     }
@@ -112,7 +114,7 @@ function RecordingPage({ session, onNavigate, showStatus }) {
   // Generate MetaFlow from recording
   const handleQuickGenerate = async () => {
     if (!sessionId) {
-      showStatus("⚠️ 没有可生成MetaFlow的录制", "error");
+      showStatus("没有可生成MetaFlow的录制", "error");
       return;
     }
 
@@ -120,7 +122,7 @@ function RecordingPage({ session, onNavigate, showStatus }) {
       setQuickGenerating(true);
 
       // Generate MetaFlow from recording
-      showStatus("⚡ 正在生成MetaFlow...", "info");
+      showStatus("正在生成MetaFlow...", "info");
 
       const metaflowResponse = await fetch(`${API_BASE}/api/metaflows/from-recording`, {
         method: "POST",
@@ -137,7 +139,7 @@ function RecordingPage({ session, onNavigate, showStatus }) {
       }
 
       const metaflowResult = await metaflowResponse.json();
-      showStatus("✅ MetaFlow生成成功！正在跳转预览...", "success");
+      showStatus("MetaFlow生成成功！正在跳转预览...", "success");
 
       // Navigate to MetaFlow preview page (user will review and generate workflow from there)
       setTimeout(() => {
@@ -148,21 +150,19 @@ function RecordingPage({ session, onNavigate, showStatus }) {
       }, 500);
     } catch (error) {
       console.error("Generate MetaFlow error:", error);
-      showStatus(`❌ 生成失败: ${error.message}`, "error");
+      showStatus(`生成失败: ${error.message}`, "error");
     } finally {
       setQuickGenerating(false);
     }
   };
 
   return (
-    <div className="page record-page">
+    <div className="page recording-page">
       <div className="page-header">
         <button className="back-button" onClick={() => onNavigate("main")} disabled={recording}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="#667eea" strokeWidth="2">
-            <path d="M19 12H5M12 19l-7-7 7-7"/>
-          </svg>
+          <Icon icon="arrowLeft" />
         </button>
-        <div className="page-title">录制 Workflow</div>
+        <div className="page-title"><Icon icon="video" size={28} /> 录制 Workflow</div>
       </div>
 
       <div className="record-content">
@@ -216,9 +216,7 @@ function RecordingPage({ session, onNavigate, showStatus }) {
                 className="start-record-button"
                 onClick={handleStartRecording}
               >
-                <svg viewBox="0 0 24 24" fill="currentColor">
-                  <circle cx="12" cy="12" r="8"></circle>
-                </svg>
+                <Icon icon="circle" size={20} fill="currentColor" />
                 <span>开始录制</span>
               </button>
             </div>
@@ -232,7 +230,7 @@ function RecordingPage({ session, onNavigate, showStatus }) {
                 <span>录制中...</span>
               </div>
               <p className="recording-hint">
-                请在自动打开的浏览器窗口中执行操作<br/>
+                请在自动打开的浏览器窗口中执行操作<br />
                 完成后点击下方按钮停止录制
               </p>
               <p className="session-info">Session ID: {sessionId}</p>
@@ -241,9 +239,7 @@ function RecordingPage({ session, onNavigate, showStatus }) {
                 className="start-record-button recording"
                 onClick={handleStopRecording}
               >
-                <svg viewBox="0 0 24 24" fill="currentColor">
-                  <rect x="6" y="6" width="12" height="12"></rect>
-                </svg>
+                <Icon icon="square" size={20} />
                 <span>停止录制</span>
               </button>
             </div>
@@ -252,7 +248,7 @@ function RecordingPage({ session, onNavigate, showStatus }) {
           {/* Step 3: Recording completed, ready to upload */}
           {sessionId && !recording && (
             <div className="recording-complete">
-              <div className="complete-icon">✅</div>
+              <div className="complete-icon"><Icon icon="checkCircle" size={48} /></div>
               <h3>录制完成</h3>
 
               <div className="recording-summary">
@@ -280,7 +276,17 @@ function RecordingPage({ session, onNavigate, showStatus }) {
                   onClick={handleQuickGenerate}
                   disabled={quickGenerating || uploading}
                 >
-                  {quickGenerating ? "生成中..." : "⚡ 快速生成 Workflow"}
+                  {quickGenerating ? (
+                    <>
+                      <div className="btn-spinner"></div>
+                      <span>生成中...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Icon icon="zap" size={16} />
+                      <span>快速生成 Workflow</span>
+                    </>
+                  )}
                 </button>
 
                 <button
@@ -288,7 +294,17 @@ function RecordingPage({ session, onNavigate, showStatus }) {
                   onClick={handleUpload}
                   disabled={uploading || quickGenerating}
                 >
-                  {uploading ? "上传中..." : "📤 上传到云端"}
+                  {uploading ? (
+                    <>
+                      <div className="btn-spinner"></div>
+                      <span>上传中...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Icon icon="upload" size={16} />
+                      <span>上传到云端</span>
+                    </>
+                  )}
                 </button>
 
                 <button
@@ -301,12 +317,13 @@ function RecordingPage({ session, onNavigate, showStatus }) {
                   }}
                   disabled={uploading || quickGenerating}
                 >
-                  🔄 重新录制
+                  <Icon icon="refreshCw" size={16} />
+                  <span>重新录制</span>
                 </button>
               </div>
 
               <p className="upload-hint">
-                ⚡ 快速生成：直接从录制操作生成可执行的Workflow<br/>
+                ⚡ 快速生成：直接从录制操作生成可执行的Workflow<br />
                 📤 上传到云端：进入对话生成 MetaFlow 流程
               </p>
             </div>

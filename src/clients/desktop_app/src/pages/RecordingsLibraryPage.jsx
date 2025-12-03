@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import Icon from '../components/Icons';
 import '../styles/RecordingsLibraryPage.css';
 
 const API_BASE = "http://127.0.0.1:8765";
@@ -46,7 +47,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
         });
       } catch (error) {
         console.error('Error fetching recordings:', error);
-        showStatus(`❌ Failed to load recordings: ${error.message}`, 'error');
+        showStatus(`Failed to load recordings: ${error.message}`, 'error');
         setRecordings([]);
         setFilteredRecordings([]);
       } finally {
@@ -84,7 +85,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
   };
 
   const handleGenerateWorkflow = async (sessionId) => {
-    showStatus('✨ Generating MetaFlow from recording...', 'info');
+    showStatus('Generating MetaFlow from recording...', 'info');
 
     try {
       const response = await fetch(`${API_BASE}/api/metaflows/from-recording`, {
@@ -109,7 +110,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
         [sessionId]: data.metaflow_id
       }));
 
-      showStatus('✅ MetaFlow generated! Please review.', 'success');
+      showStatus('MetaFlow generated! Please review.', 'success');
 
       // Navigate to MetaFlow preview page
       setTimeout(() => {
@@ -120,7 +121,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
       }, 500);
     } catch (error) {
       console.error('Error generating MetaFlow:', error);
-      showStatus(`❌ Failed to generate MetaFlow: ${error.message}`, 'error');
+      showStatus(`Failed to generate MetaFlow: ${error.message}`, 'error');
     }
   };
 
@@ -138,7 +139,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
     setDeleteConfirm(null);
 
     try {
-      showStatus('🗑️ Deleting recording...', 'info');
+      showStatus('Deleting recording...', 'info');
 
       const url = `${API_BASE}/api/recordings/${sessionId}?user_id=userId`;
       const response = await fetch(url, {
@@ -159,10 +160,10 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
         return updated;
       });
 
-      showStatus('✅ Recording deleted successfully', 'success');
+      showStatus('Recording deleted successfully', 'success');
     } catch (error) {
       console.error('Error deleting recording:', error);
-      showStatus(`❌ Failed to delete recording: ${error.message}`, 'error');
+      showStatus(`Failed to delete recording: ${error.message}`, 'error');
     }
   };
 
@@ -204,21 +205,18 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
       {/* Header */}
       <div className="page-header">
         <button className="back-button" onClick={() => onNavigate('main')}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M19 12H5M12 19l-7-7 7-7"/>
-          </svg>
+          <Icon icon="arrowLeft" />
         </button>
-        <h1 className="page-title">📚 Recordings Library</h1>
+        <h1 className="page-title"><Icon icon="book" /> Recordings Library</h1>
         <div className="header-spacer"></div>
       </div>
 
       {/* Search Bar */}
       <div className="search-section">
         <div className="search-input-wrapper">
-          <svg className="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="11" cy="11" r="8"/>
-            <path d="m21 21-4.35-4.35"/>
-          </svg>
+          <span className="search-icon">
+            <Icon icon="search" />
+          </span>
           <input
             type="text"
             className="search-input"
@@ -228,10 +226,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
           />
           {searchQuery && (
             <button className="clear-search" onClick={() => setSearchQuery('')}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <line x1="18" y1="6" x2="6" y2="18"/>
-                <line x1="6" y1="6" x2="18" y2="18"/>
-              </svg>
+              <Icon icon="x" />
             </button>
           )}
         </div>
@@ -252,17 +247,17 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
           <div className="empty-state">
             {recordings.length === 0 ? (
               <>
-                <div className="empty-icon">📹</div>
+                <div className="empty-icon"><Icon icon="video" /></div>
                 <h3>No recordings yet</h3>
                 <p>Start recording a new workflow to see it here.</p>
                 <button className="btn-start-recording" onClick={() => onNavigate('quick-start')}>
-                  <span className="button-icon">🎬</span>
+                  <span className="button-icon"><Icon icon="video" /></span>
                   <span>Start Recording</span>
                 </button>
               </>
             ) : (
               <>
-                <div className="empty-icon">🔍</div>
+                <div className="empty-icon"><Icon icon="search" /></div>
                 <h3>No results found</h3>
                 <p>Try adjusting your search query.</p>
                 <button className="btn-clear-search" onClick={() => setSearchQuery('')}>
@@ -275,23 +270,18 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
           filteredRecordings.map((recording) => (
             <div key={recording.session_id} className="recording-card">
               <div className="recording-header">
-                <div className="recording-icon">📹</div>
+                <div className="recording-icon"><Icon icon="video" /></div>
                 <div className="recording-info">
                   <h3 className="recording-title">
                     {recording.task_metadata?.name || `Recording ${recording.session_id}`}
                   </h3>
                   <div className="recording-meta">
                     <span className="meta-item">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <circle cx="12" cy="12" r="10"/>
-                        <polyline points="12 6 12 12 16 14"/>
-                      </svg>
+                      <Icon icon="clock" />
                       {formatDate(recording.created_at)}
                     </span>
                     <span className="meta-item">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-                      </svg>
+                      <Icon icon="activity" />
                       {recording.action_count || 0} operations
                     </span>
                   </div>
@@ -303,10 +293,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
                   className="btn-action primary"
                   onClick={() => handleViewDetails(recording.session_id)}
                 >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                    <circle cx="12" cy="12" r="3"/>
-                  </svg>
+                  <Icon icon="eye" />
                   View Details
                 </button>
                 {metaflowIds[recording.session_id] ? (
@@ -314,12 +301,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
                     className="btn-action info"
                     onClick={() => handleViewMetaflow(metaflowIds[recording.session_id])}
                   >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                      <polyline points="14 2 14 8 20 8"/>
-                      <line x1="12" y1="18" x2="12" y2="12"/>
-                      <line x1="9" y1="15" x2="15" y2="15"/>
-                    </svg>
+                    <Icon icon="fileText" />
                     View MetaFlow
                   </button>
                 ) : (
@@ -327,9 +309,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
                     className="btn-action secondary"
                     onClick={() => handleGenerateWorkflow(recording.session_id)}
                   >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-                    </svg>
+                    <Icon icon="zap" />
                     Generate Workflow
                   </button>
                 )}
@@ -342,10 +322,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
                   }}
                   title="Delete recording"
                 >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <polyline points="3 6 5 6 21 6"/>
-                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                  </svg>
+                  <Icon icon="trash" />
                 </button>
               </div>
             </div>

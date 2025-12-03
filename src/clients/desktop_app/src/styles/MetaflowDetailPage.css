@@ -1,9 +1,13 @@
+/* ===================================
+   METAFLOW DETAIL PAGE
+   =================================== */
+
 .metaflow-detail-page {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #0a0a0f;
-  color: #e5e7eb;
+  background: var(--bg-app);
+  color: var(--text-primary);
 }
 
 /* Header */
@@ -11,21 +15,24 @@
   display: flex;
   align-items: center;
   padding: 16px 20px;
-  background: rgba(20, 20, 30, 0.9);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .metaflow-detail-page .back-button {
   background: none;
-  border: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
   padding: 8px;
   cursor: pointer;
-  color: #9ca3af;
-  transition: color 0.2s;
+  color: var(--text-secondary);
+  transition: all 0.2s;
 }
 
 .metaflow-detail-page .back-button:hover {
-  color: #fff;
+  background: var(--color-gray-100);
+  border-color: var(--primary-main);
+  color: var(--primary-main);
 }
 
 .metaflow-detail-page .back-button svg {
@@ -39,6 +46,7 @@
   font-size: 18px;
   font-weight: 600;
   text-align: center;
+  color: var(--text-primary);
 }
 
 .metaflow-detail-page .header-spacer {
@@ -60,14 +68,16 @@
 .metaflow-detail-page .spinner-large {
   width: 40px;
   height: 40px;
-  border: 3px solid rgba(99, 102, 241, 0.3);
-  border-top-color: #6366f1;
+  border: 3px solid var(--color-primary-200);
+  border-top-color: var(--primary-main);
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .metaflow-detail-page .error-icon {
@@ -78,16 +88,16 @@
 .metaflow-detail-page .btn-back {
   margin-top: 16px;
   padding: 10px 20px;
-  background: #6366f1;
+  background: var(--primary-main);
   border: none;
-  border-radius: 8px;
-  color: #fff;
+  border-radius: var(--radius-lg);
+  color: white;
   cursor: pointer;
   transition: background 0.2s;
 }
 
 .metaflow-detail-page .btn-back:hover {
-  background: #4f46e5;
+  background: var(--primary-hover);
 }
 
 /* Content */
@@ -99,18 +109,19 @@
 
 /* Info Section */
 .metaflow-detail-page .info-section {
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 12px;
+  background: var(--bg-surface);
+  border-radius: var(--radius-xl);
   padding: 20px;
   margin-bottom: 20px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-sm);
 }
 
 .metaflow-detail-page .section-title {
   font-size: 16px;
   font-weight: 600;
   margin: 0 0 16px;
-  color: #f3f4f6;
+  color: var(--text-primary);
 }
 
 .metaflow-detail-page .metadata-section {
@@ -125,19 +136,22 @@
 
 .metaflow-detail-page .metadata-label {
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--text-secondary);
   margin-bottom: 4px;
 }
 
 .metaflow-detail-page .metadata-value {
   font-size: 14px;
-  color: #e5e7eb;
+  color: var(--text-primary);
 }
 
 .metaflow-detail-page .metadata-value.code {
-  font-family: monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
-  color: #a5b4fc;
+  color: var(--text-secondary);
+  background: var(--bg-app);
+  padding: 2px 6px;
+  border-radius: 4px;
 }
 
 .metaflow-detail-page .info-grid {
@@ -153,44 +167,48 @@
 
 .metaflow-detail-page .info-label {
   font-size: 12px;
-  color: #6b7280;
+  color: var(--text-tertiary);
   margin-bottom: 4px;
 }
 
 .metaflow-detail-page .info-value {
   font-size: 14px;
-  color: #e5e7eb;
+  color: var(--text-primary);
 }
 
 .metaflow-detail-page .info-value.link {
-  color: #818cf8;
+  color: var(--primary-main);
   cursor: pointer;
   text-decoration: underline;
 }
 
 .metaflow-detail-page .info-value.link:hover {
-  color: #a5b4fc;
+  color: var(--primary-hover);
 }
 
 .metaflow-detail-page .info-value.code {
-  font-family: monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
-  color: #a5b4fc;
+  color: var(--text-secondary);
+  background: var(--bg-app);
+  padding: 2px 6px;
+  border-radius: 4px;
 }
 
 /* Tab Section */
 .metaflow-detail-page .tab-section {
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--bg-surface);
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border-subtle);
   overflow: hidden;
   margin-bottom: 20px;
+  box-shadow: var(--shadow-sm);
 }
 
 .metaflow-detail-page .tab-header {
   display: flex;
-  background: rgba(0, 0, 0, 0.3);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .metaflow-detail-page .tab-button {
@@ -202,21 +220,21 @@
   padding: 12px 16px;
   background: none;
   border: none;
-  color: #6b7280;
+  color: var(--text-secondary);
   font-size: 14px;
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .metaflow-detail-page .tab-button:hover {
-  color: #9ca3af;
-  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-primary);
+  background: var(--color-gray-100);
 }
 
 .metaflow-detail-page .tab-button.active {
-  color: #818cf8;
-  background: rgba(129, 140, 248, 0.1);
-  border-bottom: 2px solid #818cf8;
+  color: var(--primary-main);
+  background: var(--color-primary-50);
+  border-bottom: 2px solid var(--primary-main);
 }
 
 .metaflow-detail-page .tab-button svg {
@@ -239,28 +257,28 @@
 
 .metaflow-detail-page .task-overview {
   padding: 16px;
-  background: rgba(99, 102, 241, 0.1);
-  border-radius: 8px;
-  border-left: 3px solid #6366f1;
+  background: var(--color-primary-50);
+  border-radius: var(--radius-lg);
+  border-left: 3px solid var(--primary-main);
 }
 
 .metaflow-detail-page .task-overview h3 {
   margin: 0 0 8px;
   font-size: 14px;
-  color: #a5b4fc;
+  color: var(--primary-main);
 }
 
 .metaflow-detail-page .task-description {
   margin: 0 0 12px;
   font-size: 14px;
-  color: #e5e7eb;
+  color: var(--text-primary);
   line-height: 1.5;
 }
 
 .metaflow-detail-page .task-context {
   margin: 0;
   font-size: 13px;
-  color: #9ca3af;
+  color: var(--text-secondary);
   line-height: 1.5;
 }
 
@@ -268,7 +286,7 @@
 .metaflow-detail-page .steps-section h3 {
   margin: 0 0 12px;
   font-size: 14px;
-  color: #f3f4f6;
+  color: var(--text-primary);
 }
 
 .metaflow-detail-page .steps-list {
@@ -294,19 +312,19 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(99, 102, 241, 0.2);
+  background: var(--color-primary-100);
   border-radius: 50%;
   font-size: 12px;
   font-weight: 600;
-  color: #a5b4fc;
+  color: var(--primary-main);
 }
 
 .metaflow-detail-page .step-content {
   flex: 1;
   padding: 12px;
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--bg-app);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
 }
 
 .metaflow-detail-page .step-header {
@@ -319,20 +337,20 @@
 .metaflow-detail-page .step-action {
   font-size: 13px;
   font-weight: 600;
-  color: #818cf8;
+  color: var(--primary-main);
   text-transform: uppercase;
 }
 
 .metaflow-detail-page .step-id {
   font-size: 11px;
-  color: #6b7280;
-  font-family: monospace;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
 }
 
 .metaflow-detail-page .step-description {
   margin: 0 0 8px;
   font-size: 13px;
-  color: #d1d5db;
+  color: var(--text-secondary);
 }
 
 .metaflow-detail-page .step-params {
@@ -348,11 +366,11 @@
 }
 
 .metaflow-detail-page .param-key {
-  color: #9ca3af;
+  color: var(--text-tertiary);
 }
 
 .metaflow-detail-page .param-value {
-  color: #e5e7eb;
+  color: var(--text-primary);
   word-break: break-all;
 }
 
@@ -362,18 +380,19 @@
 }
 
 .metaflow-detail-page .yaml-container {
-  background: rgba(0, 0, 0, 0.4);
-  border-radius: 8px;
+  background: var(--bg-app);
+  border-radius: var(--radius-lg);
   overflow: hidden;
+  border: 1px solid var(--border-subtle);
 }
 
 .metaflow-detail-page .yaml-content {
   margin: 0;
   padding: 16px;
-  font-family: 'Consolas', 'Monaco', monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.6;
-  color: #e5e7eb;
+  color: var(--text-primary);
   white-space: pre-wrap;
   word-break: break-all;
 }
@@ -397,7 +416,7 @@
   align-items: center;
   gap: 8px;
   padding: 12px 20px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
@@ -405,14 +424,16 @@
 }
 
 .metaflow-detail-page .btn-primary {
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  background: var(--primary-main);
   border: none;
   color: #fff;
+  box-shadow: var(--shadow-md);
 }
 
 .metaflow-detail-page .btn-primary:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+  box-shadow: var(--shadow-lg);
+  background: var(--primary-hover);
 }
 
 .metaflow-detail-page .btn-primary:disabled {
@@ -422,14 +443,15 @@
 }
 
 .metaflow-detail-page .btn-secondary {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #e5e7eb;
+  background: var(--bg-app);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
 }
 
 .metaflow-detail-page .btn-secondary:hover {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.2);
+  background: var(--color-gray-100);
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
 }
 
 .metaflow-detail-page .btn-primary svg,
@@ -441,12 +463,12 @@
 .metaflow-detail-page .action-hint {
   margin: 0;
   font-size: 12px;
-  color: #6b7280;
+  color: var(--text-tertiary);
 }
 
 /* Empty Section */
 .metaflow-detail-page .empty-section {
   text-align: center;
   padding: 40px;
-  color: #6b7280;
+  color: var(--text-tertiary);
 }

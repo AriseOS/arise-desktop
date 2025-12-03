@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import Icon from '../components/Icons';
 import '../styles/CollectionDetailPage.css';
 
 const API_BASE = "http://127.0.0.1:8765";
@@ -32,7 +33,7 @@ function CollectionDetailPage({ session, onNavigate, showStatus, collectionName 
       setCollection(data);
     } catch (error) {
       console.error('Error loading collection:', error);
-      showStatus(`❌ Failed to load collection: ${error.message}`, 'error');
+      showStatus(`Failed to load collection: ${error.message}`, 'error');
       setTimeout(() => onNavigate('data-management'), 2000);
     } finally {
       setLoading(false);
@@ -41,7 +42,7 @@ function CollectionDetailPage({ session, onNavigate, showStatus, collectionName 
 
   const handleExport = async () => {
     setExporting(true);
-    showStatus(`📤 Exporting ${collectionName}...`, 'info');
+    showStatus(`Exporting ${collectionName}...`, 'info');
 
     try {
       const response = await fetch(
@@ -62,10 +63,10 @@ function CollectionDetailPage({ session, onNavigate, showStatus, collectionName 
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
 
-      showStatus(`✅ Exported successfully!`, 'success');
+      showStatus(`Exported successfully!`, 'success');
     } catch (error) {
       console.error('Export error:', error);
-      showStatus(`❌ Export failed: ${error.message}`, 'error');
+      showStatus(`Export failed: ${error.message}`, 'error');
     } finally {
       setExporting(false);
     }
@@ -73,7 +74,7 @@ function CollectionDetailPage({ session, onNavigate, showStatus, collectionName 
 
   const handleDelete = async () => {
     setDeleting(true);
-    showStatus(`🗑️ Deleting ${collectionName}...`, 'info');
+    showStatus(`Deleting ${collectionName}...`, 'info');
 
     try {
       const response = await fetch(
@@ -85,11 +86,11 @@ function CollectionDetailPage({ session, onNavigate, showStatus, collectionName 
         throw new Error(`Delete failed: ${response.status}`);
       }
 
-      showStatus(`✅ Collection deleted successfully!`, 'success');
+      showStatus(`Collection deleted successfully!`, 'success');
       setTimeout(() => onNavigate('data-management'), 1000);
     } catch (error) {
       console.error('Delete error:', error);
-      showStatus(`❌ Delete failed: ${error.message}`, 'error');
+      showStatus(`Delete failed: ${error.message}`, 'error');
       setDeleting(false);
       setDeleteConfirm(false);
     }
@@ -141,9 +142,7 @@ function CollectionDetailPage({ session, onNavigate, showStatus, collectionName 
       <div className="page-header-simple">
         <div className="header-left">
           <button className="back-button" onClick={() => onNavigate('data-management')}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M19 12H5M12 19l-7-7 7-7"/>
-            </svg>
+            <Icon icon="arrowLeft" />
           </button>
           <div className="header-title-group">
             <h1 className="page-title">{collection.collection_name}</h1>
@@ -165,11 +164,7 @@ function CollectionDetailPage({ session, onNavigate, showStatus, collectionName 
               </>
             ) : (
               <>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-                  <polyline points="7 10 12 15 17 10"/>
-                  <line x1="12" y1="15" x2="12" y2="3"/>
-                </svg>
+                <Icon icon="download" size={16} />
                 <span>Export CSV</span>
               </>
             )}
@@ -179,9 +174,7 @@ function CollectionDetailPage({ session, onNavigate, showStatus, collectionName 
             onClick={() => setDeleteConfirm(true)}
             disabled={deleting}
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
-            </svg>
+            <Icon icon="trash" size={16} />
             <span>Delete</span>
           </button>
         </div>
@@ -233,7 +226,7 @@ function CollectionDetailPage({ session, onNavigate, showStatus, collectionName 
       {deleteConfirm && (
         <div className="modal-overlay" onClick={() => !deleting && setDeleteConfirm(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-icon delete">⚠️</div>
+            <div className="modal-icon delete"><Icon icon="alertTriangle" size={48} /></div>
             <h3>Delete Collection?</h3>
             <p>
               Are you sure you want to delete <strong>{collection.collection_name}</strong>?

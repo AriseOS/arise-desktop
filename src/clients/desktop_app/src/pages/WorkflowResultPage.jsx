@@ -3,6 +3,8 @@ import ReactMarkdown from 'react-markdown'
 import jsPDF from 'jspdf'
 import html2canvas from 'html2canvas'
 import { DEFAULT_CONFIG_KEY, getWorkflow } from '../config/index'
+import Icon from '../components/Icons'
+import '../styles/WorkflowResultPage.css'
 
 // Store blob URLs for cleanup
 const blobUrlsToCleanup = new Set()
@@ -294,7 +296,7 @@ function WorkflowResultPage({ session, onNavigate, showStatus, params }) {
       setLoading(false)
     } catch (err) {
       console.error('Load result data error:', err)
-      showStatus('❌ 加载结果失败', 'error')
+      showStatus('加载结果失败', 'error')
       setLoading(false)
     }
   }
@@ -302,7 +304,7 @@ function WorkflowResultPage({ session, onNavigate, showStatus, params }) {
   const downloadPDF = async () => {
     if (!reportRef.current) return
 
-    showStatus('📄 正在生成PDF...', 'info')
+    showStatus('正在生成PDF...', 'info')
 
     try {
       const canvas = await html2canvas(reportRef.current, {
@@ -353,17 +355,17 @@ function WorkflowResultPage({ session, onNavigate, showStatus, params }) {
 
         if (response && response.success) {
           console.log(`Download initiated: ${filename} with ID: ${response.downloadId}`)
-          showStatus('✅ PDF已下载', 'success')
+          showStatus('PDF已下载', 'success')
         } else {
-          showStatus('❌ PDF下载失败', 'error')
+          showStatus('PDF下载失败', 'error')
         }
       } catch (error) {
         console.error('Download error:', error)
-        showStatus('❌ PDF下载失败', 'error')
+        showStatus('PDF下载失败', 'error')
       }
     } catch (error) {
       console.error('PDF generation error:', error)
-      showStatus('❌ PDF生成失败', 'error')
+      showStatus('PDF生成失败', 'error')
     }
   }
 
@@ -404,9 +406,9 @@ function WorkflowResultPage({ session, onNavigate, showStatus, params }) {
       }
 
       if (successCount === resultData.collections.length) {
-        showStatus(`✅ 已下载 ${successCount} 个CSV文件`, 'success')
+        showStatus(`已下载 ${successCount} 个CSV文件`, 'success')
       } else {
-        showStatus('❌ 部分CSV文件下载失败', 'error')
+        showStatus('部分CSV文件下载失败', 'error')
       }
     } else {
       // Single collection CSV download
@@ -432,13 +434,13 @@ function WorkflowResultPage({ session, onNavigate, showStatus, params }) {
 
         if (response && response.success) {
           console.log(`Download initiated: ${filename} with ID: ${response.downloadId}`)
-          showStatus('✅ CSV文件已下载', 'success')
+          showStatus('CSV文件已下载', 'success')
         } else {
-          showStatus('❌ CSV下载失败', 'error')
+          showStatus('CSV下载失败', 'error')
         }
       } catch (error) {
         console.error('Download error:', error)
-        showStatus('❌ CSV下载失败', 'error')
+        showStatus('CSV下载失败', 'error')
       }
     }
   }
@@ -459,18 +461,12 @@ function WorkflowResultPage({ session, onNavigate, showStatus, params }) {
           className="back-button"
           onClick={() => onNavigate('workflow-generation')}
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="#667eea" strokeWidth="2">
-            <path d="M19 12H5M12 19l-7-7 7-7"/>
-          </svg>
+          <Icon icon="arrowLeft" />
         </button>
         <div className="page-title">运行结果</div>
         {!loading && (workflowName === 'coffee-market-analysis-workflow' || resultData) && (
           <button className="download-button" onClick={handleDownload}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-              <polyline points="7 10 12 15 17 10"></polyline>
-              <line x1="12" y1="15" x2="12" y2="3"></line>
-            </svg>
+            <Icon icon="download" size={18} />
             <span>下载</span>
           </button>
         )}
@@ -479,7 +475,7 @@ function WorkflowResultPage({ session, onNavigate, showStatus, params }) {
       <div className="workflow-result-content">
         {loading && (
           <div className="empty-state">
-            <div className="empty-state-icon">⏳</div>
+            <div className="empty-state-icon"><Icon icon="clock" size={48} /></div>
             <div className="empty-state-title">加载中...</div>
           </div>
         )}

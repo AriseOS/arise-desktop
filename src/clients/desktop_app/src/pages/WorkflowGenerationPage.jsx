@@ -12,6 +12,8 @@ import 'reactflow/dist/style.css'
 import CustomNode from '../components/CustomNode'
 import { getWorkflow } from '../config/workflows'
 import { DEFAULT_CONFIG_KEY } from '../config/index'
+import Icon from '../components/Icons'
+import '../styles/WorkflowGenerationPage.css'
 
 const nodeTypes = {
   custom: CustomNode,
@@ -38,17 +40,17 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
   const loadQuickGeneratedWorkflow = async (workflowName) => {
     setLoading(true);
     try {
-      showStatus("📋 加载快速生成的Workflow...", "info");
-      
+      showStatus("加载快速生成的Workflow...", "info");
+
       // Fetch workflow detail from backend
       const response = await fetch(`http://127.0.0.1:8765/api/workflows/${workflowName}/detail?user_id=userId`);
-      
+
       if (!response.ok) {
         throw new Error(`Failed to load workflow: ${response.status}`);
       }
-      
+
       const workflowDetail = await response.json();
-      
+
       // Transform to workflow visualization format
       const steps = [
         {
@@ -182,10 +184,10 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
       };
 
       setWorkflowData(workflow);
-      showStatus("✅ Workflow加载成功", "success");
+      showStatus("Workflow加载成功", "success");
     } catch (error) {
       console.error("Load quick generated workflow error:", error);
-      showStatus(`❌ 加载Workflow失败: ${error.message}`, "error");
+      showStatus(`加载Workflow失败: ${error.message}`, "error");
       // Fallback to default workflow
       generateWorkflowData();
     } finally {
@@ -344,7 +346,7 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
 
     const poll = async () => {
       if (attempts >= maxAttempts) {
-        showStatus('❌ 执行超时', 'error')
+        showStatus('执行超时', 'error')
         setIsRunning(false)
         return
       }
@@ -373,7 +375,7 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
           const endTime = new Date(endNow.getTime() - endNow.getTimezoneOffset() * 60000).toISOString().replace('Z', '')
 
           if (taskInfo.result && taskInfo.result.success) {
-            showStatus('✅ 执行成功', 'success')
+            showStatus('执行成功', 'success')
             // Navigate to result page with time range
             setTimeout(() => {
               onNavigate('workflow-result', {
@@ -383,12 +385,12 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
               })
             }, 1000)
           } else {
-            showStatus('⚠️ 执行完成但有错误', 'warning')
+            showStatus('执行完成但有错误', 'warning')
           }
           return
         } else if (taskInfo.status === 'failed') {
           setIsRunning(false)
-          showStatus(`❌ 执行失败: ${taskInfo.error || '未知错误'}`, 'error')
+          showStatus(`执行失败: ${taskInfo.error || '未知错误'}`, 'error')
           return
         } else if (taskInfo.status === 'running') {
           // Continue polling
@@ -397,7 +399,7 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
         }
       } catch (err) {
         console.error('Poll task status error:', err)
-        showStatus('❌ 获取状态失败', 'error')
+        showStatus('获取状态失败', 'error')
         setIsRunning(false)
       }
     }
@@ -409,7 +411,7 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
     if (isRunning) return
 
     setIsRunning(true)
-    showStatus('🚀 开始执行...', 'info')
+    showStatus('开始执行...', 'info')
 
     // Record start time in local timezone to match database format
     const now = new Date()
@@ -439,24 +441,24 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
         // Start polling for task status, pass startTime and workflowName
         pollTaskStatus(result.task_id, startTime, workflowName)
       } else {
-        showStatus('❌ 启动失败', 'error')
+        showStatus('启动失败', 'error')
         setIsRunning(false)
       }
     } catch (err) {
       console.error('Run workflow error:', err)
-      showStatus('❌ 启动失败', 'error')
+      showStatus('启动失败', 'error')
       setIsRunning(false)
     }
   }
 
   const handleSave = async () => {
-    showStatus('💾 保存中...', 'info')
+    showStatus('保存中...', 'info')
 
     try {
       // TODO: Call actual save workflow API
       await new Promise(resolve => setTimeout(resolve, 1000))
 
-      showStatus('✅ 保存成功', 'success')
+      showStatus('保存成功', 'success')
 
       // Navigate back to main page after save
       setTimeout(() => {
@@ -464,7 +466,7 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
       }, 1000)
     } catch (err) {
       console.error('Save workflow error:', err)
-      showStatus('❌ 保存失败', 'error')
+      showStatus('保存失败', 'error')
     }
   }
 
@@ -475,9 +477,7 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
           className="back-button"
           onClick={() => onNavigate('metaflow')}
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="#667eea" strokeWidth="2">
-            <path d="M19 12H5M12 19l-7-7 7-7"/>
-          </svg>
+          <Icon icon="arrowLeft" />
         </button>
         <div className="page-title">Workflow</div>
         <button
@@ -487,14 +487,12 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
         >
           {isRunning ? (
             <>
-              <span className="loading-spinner"></span>
+              <div className="btn-spinner"></div>
               <span>运行中</span>
             </>
           ) : (
             <>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polygon points="5 3 19 12 5 21 5 3"></polygon>
-              </svg>
+              <Icon icon="play" size={16} />
               <span>运行</span>
             </>
           )}
@@ -504,7 +502,7 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
       <div className="workflow-generation-content">
         {loading && (
           <div className="empty-state">
-            <div className="empty-state-icon">⏳</div>
+            <div className="empty-state-icon"><Icon icon="clock" size={48} /></div>
             <div className="empty-state-title">生成中...</div>
           </div>
         )}
@@ -521,11 +519,7 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
             className="start-record-button"
             onClick={handleSave}
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-              <polyline points="17 21 17 13 7 13 7 21"/>
-              <polyline points="7 3 7 8 15 8"/>
-            </svg>
+            <Icon icon="save" size={20} />
             <span>保存 Workflow</span>
           </button>
         </div>
@@ -552,7 +546,7 @@ function WorkflowVisualization({ workflowData }) {
   if (!workflowData || !workflowData.steps || workflowData.steps.length === 0) {
     return (
       <div className="empty-state">
-        <div className="empty-state-icon">📋</div>
+        <div className="empty-state-icon"><Icon icon="clipboard" size={48} /></div>
         <div className="empty-state-title">无流程数据</div>
       </div>
     )
@@ -679,7 +673,7 @@ const transformWorkflowData = (workflowData) => {
       position = { x: 50, y: branchEndY }
       currentY = branchEndY + verticalGap
     } else if (branchStartIndex !== -1 && branchEndIndex !== -1 &&
-               index > branchStartIndex && index < branchEndIndex) {
+      index > branchStartIndex && index < branchEndIndex) {
       // This step is inside branch section
       if (step.branch === 'allegro') {
         // Left branch (Allegro) - calculate Y based on position in allegro array

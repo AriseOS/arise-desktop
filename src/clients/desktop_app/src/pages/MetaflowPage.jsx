@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { getMetaflow } from '../config/metaflows'
 import { DEFAULT_CONFIG_KEY, getConfig } from '../config/index'
+import Icon from '../components/Icons'
+import '../styles/MetaflowPage.css'
 
 function MetaflowPage({ onNavigate, showStatus, recordingData, params }) {
   const [metaflows, setMetaflows] = useState([])
@@ -125,25 +127,25 @@ function MetaflowPage({ onNavigate, showStatus, recordingData, params }) {
   const getMetaflowIcon = (type) => {
     switch (type) {
       case 'start':
-        return '🚀'
+        return <Icon icon="rocket" size={20} />
       case 'branch_start':
-        return '🔀'
+        return <Icon icon="gitBranch" size={20} />
       case 'branch_end':
-        return '🔗'
+        return <Icon icon="link" size={20} />
       case 'navigate':
-        return '🌐'
+        return <Icon icon="globe" size={20} />
       case 'interact':
-        return '👆'
+        return <Icon icon="mousePointer" size={20} />
       case 'extract':
-        return '📊'
+        return <Icon icon="barChart" size={20} />
       case 'process':
-        return '⚙️'
+        return <Icon icon="cpu" size={20} />
       case 'loop':
-        return '🔄'
+        return <Icon icon="repeat" size={20} />
       case 'end':
-        return '✅'
+        return <Icon icon="checkCircle" size={20} />
       default:
-        return '📌'
+        return <Icon icon="mapPin" size={20} />
     }
   }
 
@@ -216,10 +218,7 @@ function MetaflowPage({ onNavigate, showStatus, recordingData, params }) {
           <React.Fragment key={metaflow.id}>
             {renderMetaflowNode(metaflow)}
             <div className="metaflow-arrow">
-              <svg width="24" height="40" viewBox="0 0 24 40">
-                <line x1="12" y1="0" x2="12" y2="32" stroke="#d1d5db" strokeWidth="2"/>
-                <polygon points="12,40 8,32 16,32" fill="#d1d5db"/>
-              </svg>
+              <Icon icon="arrowDown" size={24} color="#d1d5db" />
             </div>
           </React.Fragment>
         )
@@ -253,10 +252,7 @@ function MetaflowPage({ onNavigate, showStatus, recordingData, params }) {
                       {renderMetaflowNode(node)}
                       {nodeIndex < branchNodes[branchName].length - 1 && (
                         <div className="metaflow-arrow">
-                          <svg width="24" height="40" viewBox="0 0 24 40">
-                            <line x1="12" y1="0" x2="12" y2="32" stroke="#d1d5db" strokeWidth="2"/>
-                            <polygon points="12,40 8,32 16,32" fill="#d1d5db"/>
-                          </svg>
+                          <Icon icon="arrowDown" size={24} color="#d1d5db" />
                         </div>
                       )}
                     </React.Fragment>
@@ -274,10 +270,7 @@ function MetaflowPage({ onNavigate, showStatus, recordingData, params }) {
         if (i < metaflows.length) {
           elements.push(
             <div key={`merge-arrow-${i}`} className="metaflow-arrow">
-              <svg width="24" height="40" viewBox="0 0 24 40">
-                <line x1="12" y1="0" x2="12" y2="32" stroke="#d1d5db" strokeWidth="2"/>
-                <polygon points="12,40 8,32 16,32" fill="#d1d5db"/>
-              </svg>
+              <Icon icon="arrowDown" size={24} color="#d1d5db" />
             </div>
           )
         }
@@ -288,10 +281,7 @@ function MetaflowPage({ onNavigate, showStatus, recordingData, params }) {
             {renderMetaflowNode(metaflow)}
             {i < metaflows.length - 1 && (
               <div className="metaflow-arrow">
-                <svg width="24" height="40" viewBox="0 0 24 40">
-                  <line x1="12" y1="0" x2="12" y2="32" stroke="#d1d5db" strokeWidth="2"/>
-                  <polygon points="12,40 8,32 16,32" fill="#d1d5db"/>
-                </svg>
+                <Icon icon="arrowDown" size={24} color="#d1d5db" />
               </div>
             )}
           </React.Fragment>
@@ -306,9 +296,9 @@ function MetaflowPage({ onNavigate, showStatus, recordingData, params }) {
   const handleEdit = () => {
     setIsEditing(!isEditing)
     if (!isEditing) {
-      showStatus('📝 进入编辑模式', 'info')
+      showStatus('进入编辑模式', 'info')
     } else {
-      showStatus('✅ 保存成功', 'success')
+      showStatus('保存成功', 'success')
       setEditingNode(null)
     }
   }
@@ -324,13 +314,13 @@ function MetaflowPage({ onNavigate, showStatus, recordingData, params }) {
       node.id === updatedNode.id ? updatedNode : node
     ))
     setEditingNode(null)
-    showStatus('✅ 节点已更新', 'success')
+    showStatus('节点已更新', 'success')
   }
 
   const handleDeleteNode = (nodeId) => {
     setMetaflows(metaflows.filter(node => node.id !== nodeId))
     setEditingNode(null)
-    showStatus('✅ 节点已删除', 'success')
+    showStatus('节点已删除', 'success')
   }
 
   const handleNext = () => {
@@ -344,19 +334,14 @@ function MetaflowPage({ onNavigate, showStatus, recordingData, params }) {
           className="back-button"
           onClick={() => onNavigate(params?.fromPage || 'record')}
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="#667eea" strokeWidth="2">
-            <path d="M19 12H5M12 19l-7-7 7-7"/>
-          </svg>
+          <Icon icon="arrowLeft" />
         </button>
-        <div className="page-title">Metaflow</div>
+        <div className="page-title"><Icon icon="gitBranch" size={28} /> Metaflow</div>
         <button
           className="run-button"
           onClick={handleEdit}
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-          </svg>
+          <Icon icon={isEditing ? "save" : "edit"} size={16} />
           <span>{isEditing ? '保存' : '编辑'}</span>
         </button>
       </div>
@@ -374,9 +359,7 @@ function MetaflowPage({ onNavigate, showStatus, recordingData, params }) {
             onClick={handleNext}
           >
             <span>下一步：生成 Workflow</span>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <path d="M5 12h14M12 5l7 7-7 7"/>
-            </svg>
+            <Icon icon="arrowRight" size={20} />
           </button>
         </div>
       </div>

@@ -1,0 +1,102 @@
+version: '3.8'
+
+services:
+  # API Proxy Service
+  api-proxy:
+    build:
+      context: ../..
+      dockerfile: src/api_proxy/Dockerfile
+    container_name: ami-api-proxy
+    restart: unless-stopped
+    expose:
+      - "8080"
+    environment:
+      # Override database to use PostgreSQL container
+      - API_PROXY_DATABASE__TYPE=postgresql
+      - API_PROXY_DATABASE__POSTGRESQL__HOST=postgres
+      - API_PROXY_DATABASE__POSTGRESQL__PASSWORD=${DB_PASSWORD}
+
+      # Security keys from .env (required)
+      - API_PROXY_JWT__SECRET_KEY=${JWT_SECRET}
+      - API_PROXY_SECURITY__ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - API_PROXY_ADMIN__PASSWORD=${ADMIN_PASSWORD}
+
+      # LLM API key from .env (required)
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+
+      # Other settings use defaults from config/api-proxy.yaml
+    volumes:
+      # Mount logs directory
+      - ./logs:/root/.ami/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - ami-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: ami-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=ami_proxy
+      - POSTGRES_USER=ami_user
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-ami_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - ami-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ami_user -d ami_proxy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Caddy Reverse Proxy (Auto HTTPS)
+  caddy:
+    image: caddy:2-alpine
+    container_name: ami-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"      # HTTP (auto redirect to HTTPS)
+      - "443:443"    # HTTPS
+      - "443:443/udp" # HTTP/3
+    environment:
+      # Domain name (change this to your actual domain)
+      - DOMAIN=${DOMAIN:-api.example.com}
+      # Email for Let's Encrypt notifications
+      - ACME_EMAIL=${ACME_EMAIL:-admin@example.com}
+    volumes:
+      # Caddyfile configuration
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      # Persistent certificate storage
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api-proxy
+    networks:
+      - ami-network
+
+volumes:
+  # PostgreSQL data persistence
+  postgres_data:
+    driver: local
+
+  # Caddy certificate storage (Let's Encrypt)
+  caddy_data:
+    driver: local
+
+  # Caddy configuration
+  caddy_config:
+    driver: local
+
+networks:
+  ami-network:
+    driver: bridge

@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import Icon from '../components/Icons';
+import '../styles/GenerationPage.css';
 
 const API_BASE = "http://127.0.0.1:8765";
 
@@ -18,13 +20,13 @@ function GenerationPage({ session, onNavigate, showStatus, params = {} }) {
   // Generate MetaFlow
   const handleGenerateMetaflow = async () => {
     if (!chatInput.trim()) {
-      showStatus("⚠️ 请输入任务描述", "error");
+      showStatus("请输入任务描述", "error");
       return;
     }
 
     try {
       setGeneratingMetaflow(true);
-      showStatus("🔄 生成 MetaFlow 中... (30-60秒)", "info");
+      showStatus("生成 MetaFlow 中... (30-60秒)", "info");
 
       const response = await fetch(`${API_BASE}/api/metaflows/generate`, {
         method: "POST",
@@ -53,10 +55,10 @@ function GenerationPage({ session, onNavigate, showStatus, params = {} }) {
         setMetaflowYaml(`# MetaFlow 已生成\n# 文件路径: ${result.local_path}\n# ID: ${result.metaflow_id}`);
       }
 
-      showStatus("✅ MetaFlow 生成成功！", "success");
+      showStatus("MetaFlow 生成成功！", "success");
     } catch (error) {
       console.error("Generate MetaFlow error:", error);
-      showStatus(`❌ 生成 MetaFlow 失败: ${error.message}`, "error");
+      showStatus(`生成 MetaFlow 失败: ${error.message}`, "error");
     } finally {
       setGeneratingMetaflow(false);
     }
@@ -65,13 +67,13 @@ function GenerationPage({ session, onNavigate, showStatus, params = {} }) {
   // Generate Workflow
   const handleGenerateWorkflow = async () => {
     if (!metaflowId) {
-      showStatus("⚠️ 请先生成 MetaFlow", "error");
+      showStatus("请先生成 MetaFlow", "error");
       return;
     }
 
     try {
       setGeneratingWorkflow(true);
-      showStatus("⚙️ 生成 Workflow 中... (30-60秒)", "info");
+      showStatus("生成 Workflow 中... (30-60秒)", "info");
 
       const response = await fetch(`${API_BASE}/api/workflows/generate`, {
         method: "POST",
@@ -99,10 +101,10 @@ function GenerationPage({ session, onNavigate, showStatus, params = {} }) {
         setWorkflowYaml(`# Workflow 已生成\n# 文件路径: ${result.local_path}\n# 名称: ${result.workflow_name}`);
       }
 
-      showStatus("✅ Workflow 生成成功！", "success");
+      showStatus("Workflow 生成成功！", "success");
     } catch (error) {
       console.error("Generate Workflow error:", error);
-      showStatus(`❌ 生成 Workflow 失败: ${error.message}`, "error");
+      showStatus(`生成 Workflow 失败: ${error.message}`, "error");
     } finally {
       setGeneratingWorkflow(false);
     }
@@ -110,7 +112,7 @@ function GenerationPage({ session, onNavigate, showStatus, params = {} }) {
 
   // Save and go to workflows
   const handleSaveAndGo = () => {
-    showStatus("✅ Workflow 已保存！跳转到工作流列表...", "success");
+    showStatus("Workflow 已保存！跳转到工作流列表...", "success");
     setTimeout(() => {
       onNavigate("workflows");
     }, 1000);
@@ -120,11 +122,9 @@ function GenerationPage({ session, onNavigate, showStatus, params = {} }) {
     <div className="page generation-page">
       <div className="page-header">
         <button className="back-button" onClick={() => onNavigate("main")}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="#667eea" strokeWidth="2">
-            <path d="M19 12H5M12 19l-7-7 7-7"/>
-          </svg>
+          <Icon icon="arrowLeft" />
         </button>
-        <div className="page-title">生成 Workflow</div>
+        <div className="page-title"><Icon icon="cpu" size={28} /> 生成 Workflow</div>
       </div>
 
       <div className="generation-content">
@@ -152,7 +152,22 @@ function GenerationPage({ session, onNavigate, showStatus, params = {} }) {
               onClick={handleGenerateMetaflow}
               disabled={generatingMetaflow || !!metaflowId}
             >
-              {generatingMetaflow ? "生成中..." : metaflowId ? "✅ 已生成" : "🔄 生成 MetaFlow"}
+              {generatingMetaflow ? (
+                <>
+                  <div className="btn-spinner"></div>
+                  <span>生成中...</span>
+                </>
+              ) : metaflowId ? (
+                <>
+                  <Icon icon="checkCircle" size={16} />
+                  <span>已生成</span>
+                </>
+              ) : (
+                <>
+                  <Icon icon="refreshCw" size={16} />
+                  <span>生成 MetaFlow</span>
+                </>
+              )}
             </button>
 
             {metaflowYaml && (
@@ -184,7 +199,22 @@ function GenerationPage({ session, onNavigate, showStatus, params = {} }) {
               onClick={handleGenerateWorkflow}
               disabled={!metaflowId || generatingWorkflow || !!workflowName}
             >
-              {generatingWorkflow ? "生成中..." : workflowName ? "✅ 已生成" : "⚙️ 生成 Workflow"}
+              {generatingWorkflow ? (
+                <>
+                  <div className="btn-spinner"></div>
+                  <span>生成中...</span>
+                </>
+              ) : workflowName ? (
+                <>
+                  <Icon icon="checkCircle" size={16} />
+                  <span>已生成</span>
+                </>
+              ) : (
+                <>
+                  <Icon icon="settings" size={16} />
+                  <span>生成 Workflow</span>
+                </>
+              )}
             </button>
 
             {workflowYaml && (
@@ -203,7 +233,8 @@ function GenerationPage({ session, onNavigate, showStatus, params = {} }) {
                   className="btn btn-success"
                   onClick={handleSaveAndGo}
                 >
-                  ✅ 保存并查看工作流
+                  <Icon icon="checkCircle" size={16} />
+                  <span>保存并查看工作流</span>
                 </button>
               </div>
             )}

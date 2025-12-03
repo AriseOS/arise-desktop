@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react'
+import Icon from '../components/Icons'
+import '../styles/MyWorkflowsPage.css'
 
 const API_BASE = "http://127.0.0.1:8765";
 
@@ -40,7 +42,7 @@ function MyWorkflowsPage({ session, onNavigate, onLogout }) {
             last_run: "2025-01-13T11:00:00Z"
           },
           {
-            agent_id: "workflow_demo_002", 
+            agent_id: "workflow_demo_002",
             name: "表单填写助手",
             description: "自动填写网页表单，支持多种表单类型",
             created_at: "2025-01-12T16:45:00Z",
@@ -68,7 +70,7 @@ function MyWorkflowsPage({ session, onNavigate, onLogout }) {
       setWorkflows(data.workflows || [])
     } catch (err) {
       console.error('Load workflows error:', err)
-      
+
       // Show mock data for demo
       const mockWorkflows = [
         {
@@ -83,7 +85,7 @@ function MyWorkflowsPage({ session, onNavigate, onLogout }) {
         },
         {
           agent_id: "workflow_demo_002",
-          name: "表单填写助手", 
+          name: "表单填写助手",
           description: "自动填写网页表单，支持多种表单类型",
           created_at: "2025-01-12T16:45:00Z",
           is_downloaded: true,
@@ -185,24 +187,16 @@ function MyWorkflowsPage({ session, onNavigate, onLogout }) {
           className="back-button"
           onClick={() => onNavigate('main')}
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="#667eea" strokeWidth="2">
-            <path d="M19 12H5M12 19l-7-7 7-7"/>
-          </svg>
+          <Icon icon="arrowLeft" />
         </button>
-        <div className="page-title">🤖 Workflow 管理</div>
+        <div className="page-title"><Icon icon="cpu" size={28} /> Workflow 管理</div>
         <div className="header-actions">
           <button className="secondary-button" onClick={handleQuickGenerate}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polygon points="5 3 19 12 5 21 5 3"/>
-            </svg>
+            <Icon icon="zap" size={16} />
             <span>快速生成</span>
           </button>
           <button className="primary-button" onClick={handleGenerateWorkflow}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="10"/>
-              <line x1="12" y1="8" x2="12" y2="16"/>
-              <line x1="8" y1="12" x2="16" y2="12"/>
-            </svg>
+            <Icon icon="plusCircle" size={16} />
             <span>新建 Workflow</span>
           </button>
         </div>
@@ -227,7 +221,7 @@ function MyWorkflowsPage({ session, onNavigate, onLogout }) {
             </div>
           ) : error ? (
             <div className="error-state">
-              <div className="error-icon">❌</div>
+              <div className="error-icon"><Icon icon="alertCircle" size={48} /></div>
               <div className="error-message">{error}</div>
               <button className="retry-button" onClick={loadWorkflows}>
                 重试
@@ -235,24 +229,18 @@ function MyWorkflowsPage({ session, onNavigate, onLogout }) {
             </div>
           ) : workflows.length === 0 ? (
             <div className="empty-state">
-              <div className="empty-state-icon">🤖</div>
+              <div className="empty-state-icon"><Icon icon="cpu" size={48} /></div>
               <div className="empty-state-title">暂无 Workflow</div>
               <div className="empty-state-desc">
                 创建你的第一个自动化工作流，提高工作效率
               </div>
               <div className="empty-actions">
                 <button className="primary-button" onClick={handleQuickGenerate}>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <polygon points="5 3 19 12 5 21 5 3"/>
-                  </svg>
+                  <Icon icon="zap" size={16} />
                   <span>从录制快速生成</span>
                 </button>
                 <button className="secondary-button" onClick={handleGenerateWorkflow}>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <circle cx="12" cy="12" r="10"/>
-                    <line x1="12" y1="8" x2="12" y2="16"/>
-                    <line x1="8" y1="12" x2="16" y2="12"/>
-                  </svg>
+                  <Icon icon="plusCircle" size={16} />
                   <span>AI 智能生成</span>
                 </button>
               </div>
@@ -264,7 +252,7 @@ function MyWorkflowsPage({ session, onNavigate, onLogout }) {
                   <div className="workflow-header">
                     <div className="workflow-title">
                       <h4>{workflow.name}</h4>
-                      <div 
+                      <div
                         className="status-badge"
                         style={{ backgroundColor: getStatusColor(workflow.status) }}
                       >
@@ -272,63 +260,55 @@ function MyWorkflowsPage({ session, onNavigate, onLogout }) {
                       </div>
                     </div>
                     <div className="workflow-source">
-                      {workflow.source === 'cloud' ? '☁️' : '💻'} 
+                      {workflow.source === 'cloud' ? <Icon icon="cloud" size={12} /> : <Icon icon="monitor" size={12} />}
                       {workflow.source === 'cloud' ? '云端' : '本地'}
                     </div>
                   </div>
-                  
+
                   <div className="workflow-description">
                     {workflow.description}
                   </div>
-                  
+
                   <div className="workflow-meta">
                     <div className="meta-item">
-                      <span className="meta-icon">📅</span>
+                      <span className="meta-icon"><Icon icon="calendar" size={12} /></span>
                       <span className="meta-label">创建时间:</span>
                       <span className="meta-value">{formatDate(workflow.created_at)}</span>
                     </div>
                     <div className="meta-item">
-                      <span className="meta-icon">🚀</span>
+                      <span className="meta-icon"><Icon icon="clock" size={12} /></span>
                       <span className="meta-label">最后运行:</span>
                       <span className="meta-value">{formatDate(workflow.last_run)}</span>
                     </div>
                     <div className="meta-item">
-                      <span className="meta-icon">🆔</span>
+                      <span className="meta-icon"><Icon icon="hash" size={12} /></span>
                       <span className="meta-label">ID:</span>
                       <span className="meta-value">{workflow.agent_id}</span>
                     </div>
                   </div>
-                  
+
                   <div className="workflow-actions">
-                    <button 
+                    <button
                       className="action-button primary"
                       onClick={() => handleWorkflowClick(workflow.agent_id)}
                     >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                        <circle cx="12" cy="12" r="3"/>
-                      </svg>
+                      <Icon icon="eye" size={14} />
                       <span>查看详情</span>
                     </button>
-                    
+
                     <button
                       className="action-button secondary"
                       onClick={() => handleRunWorkflow(workflow.agent_id)}
                     >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <polygon points="5 3 19 12 5 21 5 3"/>
-                      </svg>
+                      <Icon icon="play" size={14} />
                       <span>运行</span>
                     </button>
-                    
+
                     <button
                       className="action-button danger"
                       onClick={() => handleDeleteClick(workflow.agent_id)}
                     >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <polyline points="3 6 5 6 21 6"/>
-                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                      </svg>
+                      <Icon icon="trash" size={14} />
                       <span>删除</span>
                     </button>
                   </div>
@@ -344,28 +324,28 @@ function MyWorkflowsPage({ session, onNavigate, onLogout }) {
           </div>
           <div className="feature-grid">
             <div className="feature-item">
-              <div className="feature-icon">⚡</div>
+              <div className="feature-icon"><Icon icon="zap" size={24} /></div>
               <div className="feature-text">
                 <h4>快速生成</h4>
                 <p>从已有录制直接生成 Workflow，无需等待</p>
               </div>
             </div>
             <div className="feature-item">
-              <div className="feature-icon">🤖</div>
+              <div className="feature-icon"><Icon icon="cpu" size={24} /></div>
               <div className="feature-text">
                 <h4>AI 智能生成</h4>
                 <p>描述需求，AI 自动生成复杂 Workflow</p>
               </div>
             </div>
             <div className="feature-item">
-              <div className="feature-icon">🔍</div>
+              <div className="feature-icon"><Icon icon="layout" size={24} /></div>
               <div className="feature-text">
                 <h4>可视化编辑</h4>
                 <p>拖拽式编辑 Workflow，直观易用</p>
               </div>
             </div>
             <div className="feature-item">
-              <div className="feature-icon">🚀</div>
+              <div className="feature-icon"><Icon icon="play" size={24} /></div>
               <div className="feature-text">
                 <h4>一键运行</h4>
                 <p>点击即可执行 Workflow，查看运行结果</p>

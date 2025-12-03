@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import "./App.css";
 import "./extension.css";
+import Icon from "./components/Icons";
 
 // Import utilities
 import { auth } from "./utils/auth";
@@ -96,19 +97,19 @@ function App() {
     if (browserOpening) return;
 
     setBrowserOpening(true);
-    showStatus("🌐 Opening browser...", "info");
+    showStatus("Opening browser...", "info");
 
     try {
       const result = await api.startBrowser(false);
 
       if (result.status === "already_running") {
-        showStatus("✅ Browser is already running", "success");
+        showStatus("Browser is already running", "success");
       } else {
-        showStatus("✅ Browser opened successfully!", "success");
+        showStatus("Browser opened successfully!", "success");
       }
     } catch (error) {
       console.error("Open browser error:", error);
-      showStatus(`❌ Failed to open browser: ${error.message}`, "error");
+      showStatus(`Failed to open browser: ${error.message}`, "error");
     } finally {
       setBrowserOpening(false);
     }
@@ -143,61 +144,62 @@ function App() {
 
   // Main page for NEW users
   const renderNewUserHome = () => (
-    <div className="page home-page new-user">
+    <div className="page home-page new-user fade-in">
       <div className="home-hero">
-        <div className="hero-icon">🤖</div>
-        <h1 className="hero-title">Ami</h1>
+        <div className="hero-icon-container">
+          <div className="hero-icon-circle">
+            <span style={{ fontSize: '48px' }}>🤖</span>
+          </div>
+        </div>
+        <h1 className="hero-title">Welcome to Ami</h1>
         <p className="hero-subtitle">Let AI automate your repetitive work</p>
       </div>
 
-      <div className="home-main-card">
-        <h2 className="card-title">3 minutes to automate your workflow</h2>
-        <p className="card-description">
+      <div className="card home-main-card" style={{ padding: '40px', maxWidth: '600px', margin: '0 auto' }}>
+        <h2 style={{ textAlign: 'center', marginBottom: '16px' }}>Start your first automation</h2>
+        <p style={{ textAlign: 'center', marginBottom: '32px', color: 'var(--text-secondary)' }}>
           Just perform the task once, copy the data you need.<br />
           Leave the rest to AI.
         </p>
 
-        <div className="button-group">
-          <button className="hero-button primary" onClick={() => navigate("quick-start")}>
-            <span className="button-icon">🎬</span>
+        <div className="flex-row" style={{ gap: '20px', justifyContent: 'center' }}>
+          <button className="btn btn-primary" onClick={() => navigate("quick-start")} style={{ padding: '12px 24px', fontSize: '16px', minWidth: '180px', justifyContent: 'center' }}>
+            <Icon name="record" size={20} />
             <span>Start Recording</span>
           </button>
 
           <button
-            className="hero-button secondary"
+            className="btn btn-secondary"
             onClick={handleOpenBrowser}
             disabled={browserOpening}
+            style={{ padding: '12px 24px', fontSize: '16px', minWidth: '180px', justifyContent: 'center' }}
           >
-            <span className="button-icon">🌐</span>
+            <Icon name="browser" size={20} />
             <span>{browserOpening ? "Opening..." : "Open Browser"}</span>
           </button>
         </div>
 
-        <a className="card-link" onClick={() => navigate("workflows")}>
-          See what others are using it for →
-        </a>
+        <div style={{ textAlign: 'center', marginTop: '24px' }}>
+          <a style={{ color: 'var(--primary-main)', cursor: 'pointer', fontSize: '14px', fontWeight: 500 }} onClick={() => navigate("workflows")}>
+            See what others are using it for →
+          </a>
+        </div>
       </div>
 
-      <button className="help-button" title="Help">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <circle cx="12" cy="12" r="10" />
-          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-          <line x1="12" y1="17" x2="12.01" y2="17" />
-        </svg>
+      <button className="btn btn-secondary" title="Help" style={{ position: 'fixed', bottom: '30px', right: '30px', borderRadius: '50%', width: '48px', height: '48px', padding: 0 }}>
+        <Icon name="help" size={24} />
       </button>
 
       <button
-        className="settings-button"
+        className="btn btn-ghost"
         title="Settings"
         onClick={() => navigate("settings")}
+        style={{ position: 'absolute', top: '20px', right: '20px' }}
       >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <circle cx="12" cy="12" r="3" />
-          <path d="M12 1v6m0 6v6M6 12H1m6 0h6m6 0h4" />
-        </svg>
+        <Icon name="settings" size={24} />
       </button>
 
-      <div className="footer">
+      <div className="footer" style={{ textAlign: 'center', marginTop: '40px', color: 'var(--text-tertiary)', fontSize: '12px' }}>
         <p>Ami v1.0.0 • {session?.username && `Logged in as ${session.username}`}</p>
       </div>
     </div>
@@ -205,93 +207,92 @@ function App() {
 
   // Main page for RETURNING users
   const renderReturningUserHome = () => (
-    <div className="page home-page returning-user">
-      <div className="page-header-simple">
-        <div className="header-left">
-          <div className="app-name">Ami</div>
+    <div className="page home-page returning-user fade-in">
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Good Morning, {session?.username || 'User'}</h1>
+          <p className="page-subtitle">Ready to automate your work?</p>
         </div>
-        <div className="header-right">
-          <button
-            className="icon-button"
-            title="Settings"
-            onClick={() => navigate("settings")}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M12 1v6m0 6v6M6 12H1m6 0h6m6 0h4" />
-            </svg>
-          </button>
-        </div>
+        <button
+          className="btn btn-ghost"
+          title="Settings"
+          onClick={() => navigate("settings")}
+        >
+          <Icon name="settings" size={24} />
+        </button>
       </div>
 
       <div className="home-content">
         {/* Quick Start Section */}
-        <div className="quick-start-section">
-          <div className="section-card">
-            <div className="section-icon">🚀</div>
-            <h2 className="section-title">Create new automation workflow</h2>
-            <p className="section-subtitle">Perform once → Copy data → AI completes automatically</p>
-
-            <div className="button-group">
-              <button className="start-button primary" onClick={() => navigate("quick-start")}>
-                <span className="button-icon">🎬</span>
-                <span>Start Recording</span>
-              </button>
-
-              <button
-                className="start-button secondary"
-                onClick={handleOpenBrowser}
-                disabled={browserOpening}
-              >
-                <span className="button-icon">🌐</span>
-                <span>{browserOpening ? "Opening..." : "Open Browser"}</span>
-              </button>
-            </div>
+        <div className="card" style={{ padding: '24px', marginBottom: '24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <h2 style={{ fontSize: '20px', marginBottom: '8px' }}>Create new workflow</h2>
+            <p style={{ margin: 0 }}>Record your actions and let AI learn from them.</p>
+          </div>
+          <div className="flex-row" style={{ gap: '12px' }}>
+            <button className="btn btn-primary" onClick={() => navigate("quick-start")} style={{ minWidth: '140px', justifyContent: 'center' }}>
+              <Icon name="record" size={18} />
+              <span>Start Recording</span>
+            </button>
+            <button
+              className="btn btn-secondary"
+              onClick={handleOpenBrowser}
+              disabled={browserOpening}
+              style={{ minWidth: '140px', justifyContent: 'center' }}
+            >
+              <Icon name="browser" size={18} />
+              <span>{browserOpening ? "Opening..." : "Open Browser"}</span>
+            </button>
           </div>
         </div>
 
         {/* Recent Workflows Section */}
         <div className="recent-section">
-          <div className="section-header-row">
-            <h3>📌 Recent</h3>
-            <a className="view-all-link" onClick={() => navigate("workflows")}>
-              View All →
+          <div className="flex-row" style={{ justifyContent: 'space-between', marginBottom: '16px', alignItems: 'center' }}>
+            <h3 style={{ margin: 0 }}>Recent Workflows</h3>
+            <a style={{ color: 'var(--primary-main)', cursor: 'pointer', fontSize: '14px', fontWeight: 500 }} onClick={() => navigate("workflows")}>
+              View All
             </a>
           </div>
 
-          <div className="recent-workflows">
+          <div className="recent-workflows flex-col" style={{ gap: '12px' }}>
             {recentWorkflows.map((workflow) => (
-              <div key={workflow.id} className="recent-workflow-card">
-                <div className="workflow-info-section">
-                  <div className="workflow-status-icon">
-                    {workflow.status === "success" ? "✅" : "⚠️"}
+              <div key={workflow.id} className="card" style={{ padding: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderRadius: 'var(--radius-lg)' }}>
+                <div className="flex-row" style={{ gap: '16px', alignItems: 'center' }}>
+                  <div style={{
+                    width: '40px', height: '40px',
+                    borderRadius: '50%',
+                    backgroundColor: workflow.status === "success" ? 'var(--status-success-bg)' : 'var(--status-warning-bg)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    color: workflow.status === "success" ? 'var(--status-success-text)' : 'var(--status-warning-text)'
+                  }}>
+                    <Icon name={workflow.status === "success" ? "check" : "alert"} size={20} />
                   </div>
-                  <div className="workflow-details">
-                    <h4 className="workflow-name">{workflow.name}</h4>
-                    <p className="workflow-last-run">
-                      Last run: {workflow.lastRun} • {workflow.status === "success" ? "Success" : "Failed"}
+                  <div>
+                    <h4 style={{ fontSize: '16px', margin: '0 0 4px 0' }}>{workflow.name}</h4>
+                    <p style={{ fontSize: '13px', margin: 0 }}>
+                      Last run: {workflow.lastRun}
                     </p>
                   </div>
                 </div>
-                <div className="workflow-action-buttons">
-                  <button className="action-btn primary" onClick={() => navigate("workflow-detail", { workflowId: workflow.id })}>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <polygon points="5 3 19 12 5 21 5 3" />
-                    </svg>
+                <div className="flex-row" style={{ gap: '8px' }}>
+                  <button className="btn btn-primary" style={{ padding: '8px 16px', fontSize: '13px' }} onClick={() => navigate("workflow-detail", { workflowId: workflow.id })}>
+                    <Icon name="play" size={14} />
                     <span>Run</span>
                   </button>
-                  <button className="action-btn secondary" onClick={() => navigate("workflow-detail", { workflowId: workflow.id })}>
-                    <span>View Details</span>
+                  <button className="btn btn-secondary" style={{ padding: '8px 16px', fontSize: '13px' }} onClick={() => navigate("workflow-detail", { workflowId: workflow.id })}>
+                    <span>Details</span>
                   </button>
                 </div>
               </div>
             ))}
+            {recentWorkflows.length === 0 && (
+              <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-tertiary)' }}>
+                No recent workflows found.
+              </div>
+            )}
           </div>
         </div>
-      </div>
-
-      <div className="footer">
-        <p>Ami v1.0.0 • {session?.username && `Logged in as ${session.username}`}</p>
       </div>
     </div>
   );
@@ -306,8 +307,8 @@ function App() {
     // Show loading while checking auth
     if (authChecking) {
       return (
-        <div className="page auth-loading-page">
-          <div className="auth-loading">
+        <div className="page auth-loading-page flex-center" style={{ height: '100vh' }}>
+          <div className="auth-loading flex-col" style={{ alignItems: 'center', gap: '16px' }}>
             <div className="loading-spinner"></div>
             <p>Loading...</p>
           </div>
@@ -539,11 +540,11 @@ function App() {
     }
 
     const navItems = [
-      { id: "quick-start", icon: "🎬", label: "Record" },
-      { id: "workflows", icon: "📋", label: "Workflows" },
-      { id: "recordings-library", icon: "📹", label: "Recordings" },
-      { id: "data-management", icon: "💾", label: "Data" },
-      { id: "conversational-generation", icon: "💬", label: "AI Chat" }
+      { id: "quick-start", icon: "record", label: "Record" },
+      { id: "workflows", icon: "workflows", label: "Workflows" },
+      { id: "recordings-library", icon: "library", label: "Library" },
+      { id: "data-management", icon: "data", label: "Data" },
+      { id: "conversational-generation", icon: "chat", label: "AI Chat" }
     ];
 
     return (
@@ -554,7 +555,9 @@ function App() {
             className={`nav-item ${currentPage === item.id ? 'active' : ''}`}
             onClick={() => navigate(item.id)}
           >
-            <span className="nav-icon">{item.icon}</span>
+            <span className="nav-icon">
+              <Icon name={item.icon} size={24} />
+            </span>
             <span className="nav-label">{item.label}</span>
           </button>
         ))}
@@ -567,6 +570,8 @@ function App() {
       {/* Status Message */}
       {statusMessage && (
         <div className={`status-message status-${statusType}`}>
+          {statusType === 'success' && <Icon name="check" size={16} />}
+          {statusType === 'error' && <Icon name="alert" size={16} />}
           {statusMessage}
         </div>
       )}

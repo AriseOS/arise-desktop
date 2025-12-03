@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
+import Icon from '../components/Icons';
+import '../styles/IntentBuilderPage.css';
 
 const API_BASE = "http://127.0.0.1:8765";
 
@@ -59,7 +61,7 @@ function IntentBuilderPage({ session, onNavigate, showStatus, params = {} }) {
   const startSession = async (userQuery) => {
     try {
       setIsConnecting(true);
-      showStatus('🚀 Starting Intent Builder session...', 'info');
+      showStatus('Starting Intent Builder session...', 'info');
 
       // Create session
       const response = await fetch(`${API_BASE}/api/intent-builder/start`, {
@@ -90,7 +92,7 @@ function IntentBuilderPage({ session, onNavigate, showStatus, params = {} }) {
 
     } catch (error) {
       console.error('Start session error:', error);
-      showStatus(`❌ Failed to start session: ${error.message}`, 'error');
+      showStatus(`Failed to start session: ${error.message}`, 'error');
     } finally {
       setIsConnecting(false);
     }
@@ -190,7 +192,7 @@ function IntentBuilderPage({ session, onNavigate, showStatus, params = {} }) {
 
     } catch (error) {
       console.error('Stream error:', error);
-      showStatus(`❌ Stream error: ${error.message}`, 'error');
+      showStatus(`Stream error: ${error.message}`, 'error');
     } finally {
       setIsStreaming(false);
       setCurrentText('');
@@ -238,11 +240,11 @@ function IntentBuilderPage({ session, onNavigate, showStatus, params = {} }) {
           eventSourceRef.current.close();
         }
         setIsStreaming(false);
-        showStatus('✅ Response complete (auto-saved to cloud)', 'success');
+        showStatus('Response complete (auto-saved to cloud)', 'success');
         break;
 
       case 'error':
-        showStatus(`❌ Error: ${event.content}`, 'error');
+        showStatus(`Error: ${event.content}`, 'error');
         if (eventSourceRef.current) {
           eventSourceRef.current.close();
         }
@@ -329,11 +331,9 @@ function IntentBuilderPage({ session, onNavigate, showStatus, params = {} }) {
     <div className="page intent-builder-page">
       <div className="page-header">
         <button className="back-button" onClick={() => onNavigate('main')}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="#667eea" strokeWidth="2">
-            <path d="M19 12H5M12 19l-7-7 7-7"/>
-          </svg>
+          <Icon icon="arrowLeft" />
         </button>
-        <div className="page-title">Intent Builder</div>
+        <div className="page-title"><Icon icon="cpu" size={28} /> Intent Builder</div>
         {agentState && (
           <div className="agent-state-badge">
             Phase: {agentState.phase}
@@ -346,7 +346,7 @@ function IntentBuilderPage({ session, onNavigate, showStatus, params = {} }) {
         <div className="messages-list">
           {messages.length === 0 && !isStreaming && (
             <div className="empty-state">
-              <h3>🤖 Intent Builder Assistant</h3>
+              <h3><Icon icon="cpu" size={32} /> Intent Builder Assistant</h3>
               <p>Describe what modifications you want to make to your MetaFlow or Workflow.</p>
               <div className="example-prompts">
                 <p><strong>Example prompts:</strong></p>
@@ -362,7 +362,7 @@ function IntentBuilderPage({ session, onNavigate, showStatus, params = {} }) {
           {messages.map((msg, index) => (
             <div key={index} className={`message ${msg.role}`}>
               <div className="message-avatar">
-                {msg.role === 'user' ? '👤' : '🤖'}
+                {msg.role === 'user' ? <Icon icon="user" size={20} /> : <Icon icon="cpu" size={20} />}
               </div>
               <div className="message-content">
                 <pre>{msg.content}</pre>
@@ -373,7 +373,7 @@ function IntentBuilderPage({ session, onNavigate, showStatus, params = {} }) {
           {/* Current streaming content */}
           {isStreaming && currentText && (
             <div className="message assistant streaming">
-              <div className="message-avatar">🤖</div>
+              <div className="message-avatar"><Icon icon="cpu" size={20} /></div>
               <div className="message-content">
                 <pre>{currentText}</pre>
                 <span className="cursor-blink">▊</span>
@@ -405,9 +405,7 @@ function IntentBuilderPage({ session, onNavigate, showStatus, params = {} }) {
             {isStreaming ? (
               <div className="button-spinner"></div>
             ) : (
-              <svg viewBox="0 0 24 24" fill="currentColor">
-                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
-              </svg>
+              <Icon icon="send" size={20} />
             )}
           </button>
         </div>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import Icon from '../components/Icons';
 import '../styles/MetaflowDetailPage.css';
 import FlowVisualization from '../components/FlowVisualization';
 import yaml from 'js-yaml';
@@ -163,7 +164,7 @@ function MetaflowDetailPage({ session, onNavigate, showStatus, metaflowId }) {
     return (
       <div className="metaflow-detail-page">
         <div className="error-container">
-          <div className="error-icon">Not found</div>
+          <div className="error-icon"><Icon icon="alertCircle" size={64} /></div>
           <h2>MetaFlow not found</h2>
           <p>The requested MetaFlow could not be loaded.</p>
           <button className="btn-back" onClick={() => onNavigate('recordings-library')}>
@@ -181,12 +182,10 @@ function MetaflowDetailPage({ session, onNavigate, showStatus, metaflowId }) {
       {/* Header */}
       <div className="page-header">
         <button className="back-button" onClick={() => onNavigate('recordings-library')}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M19 12H5M12 19l-7-7 7-7" />
-          </svg>
+          <Icon icon="arrowLeft" />
         </button>
         <h1 className="page-title">
-          MetaFlow Details
+          <Icon icon="fileText" /> MetaFlow Details
         </h1>
         <div className="header-spacer"></div>
       </div>
@@ -237,32 +236,21 @@ function MetaflowDetailPage({ session, onNavigate, showStatus, metaflowId }) {
               className={`tab-button ${activeTab === 'preview' ? 'active' : ''}`}
               onClick={() => setActiveTab('preview')}
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                <circle cx="12" cy="12" r="3" />
-              </svg>
+              <Icon icon="eye" />
               <span>Preview</span>
             </button>
             <button
               className={`tab-button ${activeTab === 'visual' ? 'active' : ''}`}
               onClick={() => setActiveTab('visual')}
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <rect x="3" y="3" width="7" height="7" />
-                <rect x="14" y="3" width="7" height="7" />
-                <rect x="14" y="14" width="7" height="7" />
-                <rect x="3" y="14" width="7" height="7" />
-              </svg>
+              <Icon icon="layout" />
               <span>Visual</span>
             </button>
             <button
               className={`tab-button ${activeTab === 'yaml' ? 'active' : ''}`}
               onClick={() => setActiveTab('yaml')}
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polyline points="16 18 22 12 16 6" />
-                <polyline points="8 6 2 12 8 18" />
-              </svg>
+              <Icon icon="code" />
               <span>YAML</span>
             </button>
           </div>
@@ -355,16 +343,11 @@ function MetaflowDetailPage({ session, onNavigate, showStatus, metaflowId }) {
               onClick={handleGenerateWorkflow}
               disabled={isGeneratingWorkflow || metaflow.workflow_id}
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-              </svg>
+              <Icon icon="zap" />
               {metaflow.workflow_id ? 'Workflow Generated' : isGeneratingWorkflow ? 'Generating...' : 'Generate Workflow'}
             </button>
             <button className="btn-secondary" onClick={handleModifyMetaflow}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-              </svg>
+              <Icon icon="edit" />
               Modify MetaFlow
             </button>
           </div>

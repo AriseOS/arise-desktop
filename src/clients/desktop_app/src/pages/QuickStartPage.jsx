@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import Icon from '../components/Icons';
 import '../styles/QuickStartPage.css';
 
 const API_BASE = "http://127.0.0.1:8765";
@@ -24,19 +25,19 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
       title: "Recording Tutorial",
       description: "Learn how to record your workflow in 3 simple steps",
       content: "1. Operate normally in the browser\n2. Select and copy the data you want\n3. Stop recording, AI generates workflow automatically",
-      icon: "📹"
+      icon: "video"
     },
     {
       title: "Copy Data Fields",
       description: "Mark the data you want to extract",
       content: "When you see important data:\n1. Select the text with your mouse\n2. Press Ctrl+C (or Cmd+C) to copy\n3. System will automatically record this field",
-      icon: "📋"
+      icon: "clipboard"
     },
     {
       title: "AI Automation",
       description: "Let AI handle the repetitive work",
       content: "After recording:\n• AI analyzes your operations\n• Generates executable workflow\n• Run anytime with one click",
-      icon: "🤖"
+      icon: "cpu"
     }
   ];
 
@@ -61,7 +62,7 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
 
   const handleStartRecording = async () => {
     try {
-      showStatus("📹 Starting recording...", "info");
+      showStatus("Starting recording...", "info");
 
       // Use about:blank as default URL - user can navigate anywhere in browser
       const response = await fetch(`${API_BASE}/api/recording/start`, {
@@ -85,17 +86,17 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
       const result = await response.json();
       setCurrentSessionId(result.session_id);
       setStep('recording');
-      showStatus("✅ Recording started! Navigate to any website in the browser", "success");
+      showStatus("Recording started! Navigate to any website in the browser", "success");
 
     } catch (error) {
       console.error("Start recording error:", error);
-      showStatus(`❌ Failed to start recording: ${error.message}`, "error");
+      showStatus(`Failed to start recording: ${error.message}`, "error");
     }
   };
 
   const handleStopRecording = async () => {
     try {
-      showStatus("⏹️ Stopping recording...", "info");
+      showStatus("Stopping recording...", "info");
 
       const response = await fetch(`${API_BASE}/api/recording/stop`, {
         method: "POST",
@@ -108,7 +109,7 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
 
       const result = await response.json();
       setOperationsCount(result.operations_count);
-      showStatus(`✅ Recording completed! Captured ${result.operations_count} operations`, "success");
+      showStatus(`Recording completed! Captured ${result.operations_count} operations`, "success");
 
       // Analyze recording with AI
       setStep('analyzing');
@@ -116,7 +117,7 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
 
     } catch (error) {
       console.error("Stop recording error:", error);
-      showStatus(`❌ Failed to stop recording: ${error.message}`, "error");
+      showStatus(`Failed to stop recording: ${error.message}`, "error");
       setStep('input');
     }
   };
@@ -124,7 +125,7 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
   const handleAnalyzeRecording = async (sessionId) => {
     try {
       setAnalysisProgress(0);
-      showStatus("🤖 AI is analyzing your operations...", "info");
+      showStatus("AI is analyzing your operations...", "info");
 
       const progressInterval = setInterval(() => {
         setAnalysisProgress(prev => {
@@ -154,7 +155,7 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
 
       const analysisResult = await analyzeResponse.json();
 
-      showStatus(`✅ Analysis complete!`, "success");
+      showStatus(`Analysis complete!`, "success");
 
       // Save metadata immediately after analysis
       try {
@@ -191,7 +192,7 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
 
     } catch (error) {
       console.error("Analysis error:", error);
-      showStatus(`❌ Failed to analyze recording: ${error.message}`, "error");
+      showStatus(`Failed to analyze recording: ${error.message}`, "error");
       setStep('input');
     }
   };
@@ -205,11 +206,13 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
       <div className="tutorial-overlay">
         <div className="tutorial-modal">
           <button className="tutorial-skip" onClick={handleSkipTutorial}>
-            ✕ Skip Tutorial
+            <Icon icon="x" /> Skip Tutorial
           </button>
 
           <div className="tutorial-content">
-            <div className="tutorial-icon">{currentTutorial.icon}</div>
+            <div className="tutorial-icon">
+              <Icon icon={currentTutorial.icon} />
+            </div>
             <h2 className="tutorial-title">{currentTutorial.title}</h2>
             <p className="tutorial-description">{currentTutorial.description}</p>
 
@@ -251,11 +254,11 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
     <div className="quick-start-container">
       <div className="page-header">
         <button className="back-button" onClick={() => onNavigate("main")}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M19 12H5M12 19l-7-7 7-7"/>
-          </svg>
+          <Icon icon="arrowLeft" />
         </button>
-        <div className="page-title">⚡ Quick Start</div>
+        <div className="page-title">
+          <Icon icon="zap" /> Quick Start
+        </div>
       </div>
 
       <div className="input-card">
@@ -268,13 +271,15 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
           className="start-recording-btn"
           onClick={handleStartRecording}
         >
-          <span className="btn-icon">🎬</span>
+          <span className="btn-icon">
+            <Icon icon="video" />
+          </span>
           <span>Open Browser & Start Recording</span>
         </button>
       </div>
 
       <div className="tips-section">
-        <h3>💡 Tips</h3>
+        <h3><Icon icon="info" /> Tips</h3>
         <ul>
           <li>Browser will open - navigate to any website in the address bar</li>
           <li>Perform your task naturally - AI will analyze it automatically</li>
@@ -296,15 +301,17 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
 
         <div className="recording-info">
           <p className="recording-count">Recorded {operationsCount} operations</p>
-          <p className="recording-hint">💡 Tip: Select data and copy</p>
+          <p className="recording-hint"><Icon icon="info" /> Tip: Select data and copy</p>
         </div>
 
         <button className="stop-recording-btn" onClick={handleStopRecording}>
-          <span>⏹</span>
+          <span><Icon icon="square" /></span>
           <span>Stop Recording</span>
         </button>
 
-        <button className="minimize-btn">− Minimize</button>
+        <button className="minimize-btn">
+          <Icon icon="minus" /> Minimize
+        </button>
       </div>
 
       {/* Background instruction */}
@@ -322,7 +329,7 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
       <div className="generating-content">
         <div className="generating-animation">
           <div className="spinner-large"></div>
-          <h2>🤖 AI is analyzing...</h2>
+          <h2><Icon icon="cpu" /> AI is analyzing...</h2>
         </div>
 
         <p className="generating-status">Understanding your operations</p>
@@ -337,15 +344,21 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
 
         <div className="generation-steps">
           <div className={`step-item ${analysisProgress > 30 ? 'completed' : 'active'}`}>
-            <span className="step-icon">{analysisProgress > 30 ? '✅' : '⏳'}</span>
+            <span className="step-icon">
+              {analysisProgress > 30 ? <Icon icon="check" /> : <Icon icon="clock" />}
+            </span>
             <span>Analyzing operation sequence</span>
           </div>
           <div className={`step-item ${analysisProgress > 60 ? 'completed' : analysisProgress > 30 ? 'active' : ''}`}>
-            <span className="step-icon">{analysisProgress > 60 ? '✅' : '⏳'}</span>
+            <span className="step-icon">
+              {analysisProgress > 60 ? <Icon icon="check" /> : <Icon icon="clock" />}
+            </span>
             <span>Detecting patterns</span>
           </div>
           <div className={`step-item ${analysisProgress > 90 ? 'completed' : analysisProgress > 60 ? 'active' : ''}`}>
-            <span className="step-icon">{analysisProgress > 90 ? '✅' : '⏳'}</span>
+            <span className="step-icon">
+              {analysisProgress > 90 ? <Icon icon="check" /> : <Icon icon="clock" />}
+            </span>
             <span>Generating description</span>
           </div>
         </div>

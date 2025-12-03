@@ -1,7 +1,7 @@
 /* Data Management Page Styles */
 
 .data-management-page {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: var(--bg-app);
   min-height: 100vh;
   overflow-y: auto;
 }
@@ -19,20 +19,22 @@
   align-items: center;
   justify-content: center;
   min-height: 400px;
-  color: white;
+  color: var(--text-secondary);
 }
 
 .spinner {
   width: 40px;
   height: 40px;
-  border: 3px solid rgba(255, 255, 255, 0.3);
-  border-top-color: white;
+  border: 3px solid var(--color-gray-200);
+  border-top-color: var(--primary-main);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .loading-state p {
@@ -45,7 +47,7 @@
 .empty-state {
   text-align: center;
   padding: 80px 20px;
-  color: white;
+  color: var(--text-tertiary);
 }
 
 .empty-icon {
@@ -58,7 +60,7 @@
   font-size: 24px;
   font-weight: 600;
   margin-bottom: 12px;
-  color: white;
+  color: var(--text-primary);
 }
 
 .empty-state p {
@@ -67,6 +69,7 @@
   max-width: 400px;
   margin: 0 auto;
   line-height: 1.6;
+  color: var(--text-secondary);
 }
 
 /* Collections Container */
@@ -79,6 +82,7 @@
     opacity: 0;
     transform: translateY(10px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -87,7 +91,7 @@
 
 .collections-header {
   margin-bottom: 24px;
-  color: white;
+  color: var(--text-primary);
 }
 
 .collections-header h2 {
@@ -98,7 +102,7 @@
 
 .collections-subtitle {
   font-size: 14px;
-  opacity: 0.8;
+  color: var(--text-secondary);
 }
 
 /* Collections Grid */
@@ -110,16 +114,18 @@
 
 /* Collection Card */
 .collection-card {
-  background: white;
-  border-radius: 12px;
+  background: var(--bg-surface);
+  border-radius: var(--radius-xl);
   padding: 20px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-sm);
   transition: all 0.2s ease;
+  border: 1px solid var(--border-subtle);
 }
 
 .collection-card:hover {
   transform: translateY(-4px);
-  box-shadow: 0 8px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-md);
+  border-color: var(--primary-main);
 }
 
 /* Collection Header */
@@ -129,7 +135,7 @@
   gap: 12px;
   margin-bottom: 16px;
   padding-bottom: 16px;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .collection-icon {
@@ -145,14 +151,14 @@
 .collection-name {
   font-size: 16px;
   font-weight: 600;
-  color: #1f2937;
+  color: var(--text-primary);
   margin: 0 0 6px 0;
   word-break: break-word;
 }
 
 .collection-meta {
   font-size: 13px;
-  color: #6b7280;
+  color: var(--text-secondary);
   margin: 0;
 }
 
@@ -164,7 +170,7 @@
 .fields-label {
   font-size: 12px;
   font-weight: 500;
-  color: #6b7280;
+  color: var(--text-tertiary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-bottom: 8px;
@@ -179,22 +185,24 @@
 .field-tag {
   display: inline-block;
   padding: 4px 10px;
-  background: #f3f4f6;
-  color: #4b5563;
-  border-radius: 6px;
+  background: var(--bg-app);
+  color: var(--text-secondary);
+  border-radius: var(--radius-md);
   font-size: 12px;
   font-weight: 500;
+  border: 1px solid var(--border-subtle);
 }
 
 .field-tag.more {
-  background: #e5e7eb;
-  color: #6b7280;
+  background: var(--color-gray-100);
+  color: var(--text-tertiary);
 }
 
 /* Collection Actions */
 .collection-actions {
   display: flex;
-  gap: 8px;
+  gap: 12px;
+  /* Increased gap for better button separation */
 }
 
 .action-button {
@@ -205,11 +213,12 @@
   gap: 8px;
   padding: 10px 16px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s ease;
+  box-shadow: var(--shadow-sm);
 }
 
 .action-button svg {
@@ -218,18 +227,20 @@
 }
 
 .action-button.primary {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: var(--primary-main);
   color: white;
 }
 
 .action-button.primary:hover:not(:disabled) {
-  opacity: 0.9;
+  background: var(--primary-hover);
   transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
 }
 
 .action-button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+  box-shadow: none;
 }
 
 /* Button Spinner */

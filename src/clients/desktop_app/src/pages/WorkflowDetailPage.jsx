@@ -2,6 +2,9 @@ import React, { useState, useEffect, useRef } from 'react'
 import 'reactflow/dist/style.css'
 import CustomNode from '../components/CustomNode'
 import yaml from 'js-yaml'
+import Icon from '../components/Icons'
+import FlowVisualization from '../components/FlowVisualization'
+import '../styles/WorkflowDetailPage.css'
 
 const API_BASE = "http://127.0.0.1:8765"
 
@@ -75,7 +78,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
     setIsRunning(true)
 
     try {
-      showStatus('🚀 启动 Workflow 执行...', 'info')
+      showStatus('启动 Workflow 执行...', 'info')
 
       const response = await fetch(`${API_BASE}/api/workflow/execute`, {
         method: 'POST',
@@ -95,7 +98,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
       const result = await response.json()
       const taskId = result.task_id
 
-      showStatus(`🔄 执行中... (Task ID: ${taskId})`, 'info')
+      showStatus(`执行中... (Task ID: ${taskId})`, 'info')
 
       // Poll task status
       let completed = false
@@ -115,13 +118,13 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
         if (statusResponse.ok) {
           const statusData = await statusResponse.json()
 
-          showStatus(`🔄 执行中... ${statusData.progress}% (${statusData.current_step}/${statusData.total_steps})`, 'info')
+          showStatus(`执行中... ${statusData.progress}% (${statusData.current_step}/${statusData.total_steps})`, 'info')
 
           if (statusData.status === 'completed' || statusData.status === 'failed') {
             completed = true
 
             if (statusData.status === 'completed') {
-              showStatus('✅ 执行成功！', 'success')
+              showStatus('执行成功！', 'success')
               setTimeout(() => {
                 onNavigate('workflow-result', {
                   workflowName: workflowId,
@@ -130,7 +133,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                 })
               }, 1500)
             } else {
-              showStatus(`❌ 执行失败: ${statusData.error || '未知错误'}`, 'error')
+              showStatus(`执行失败: ${statusData.error || '未知错误'}`, 'error')
             }
           }
         }
@@ -139,11 +142,11 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
       }
 
       if (!completed) {
-        showStatus('⚠️ 执行超时，请稍后查看结果', 'warning')
+        showStatus('执行超时，请稍后查看结果', 'warning')
       }
     } catch (err) {
       console.error('Run workflow error:', err)
-      showStatus('❌ 执行失败', 'error')
+      showStatus('执行失败', 'error')
     } finally {
       setIsRunning(false)
     }
@@ -265,13 +268,13 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                       }
                     }).catch(err => {
                       console.error('❌ Failed to save workflow:', err)
-                      showStatus('⚠️ Workflow modified but save failed. Changes may be lost on reload.', 'warning')
+                      showStatus('Workflow modified but save failed. Changes may be lost on reload.', 'warning')
                     })
                   }
-                  showStatus('✅ Modification complete!', 'success')
+                  showStatus('Modification complete!', 'success')
                   break
                 case 'error':
-                  showStatus(`❌ Error: ${event.content}`, 'error')
+                  showStatus(`Error: ${event.content}`, 'error')
                   break
               }
             } catch (e) {
@@ -283,7 +286,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
 
     } catch (error) {
       console.error('Modification error:', error)
-      showStatus(`❌ Modification failed: ${error.message}`, 'error')
+      showStatus(`Modification failed: ${error.message}`, 'error')
       setModificationLog(prev => [...prev, { type: 'error', content: error.message }])
     } finally {
       setIsModifying(false)
@@ -304,9 +307,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
           className="back-button"
           onClick={() => onNavigate('my-workflows')}
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="#667eea" strokeWidth="2">
-            <path d="M19 12H5M12 19l-7-7 7-7" />
-          </svg>
+          <Icon icon="arrowLeft" />
         </button>
         <div className="page-title">Workflow 详情</div>
         <button
@@ -316,14 +317,12 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
         >
           {isRunning ? (
             <>
-              <span className="loading-spinner"></span>
+              <div className="btn-spinner"></div>
               <span>运行中</span>
             </>
           ) : (
             <>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polygon points="5 3 19 12 5 21 5 3"></polygon>
-              </svg>
+              <Icon icon="play" size={16} />
               <span>运行</span>
             </>
           )}
@@ -333,14 +332,14 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
       <div className="workflow-detail-content">
         {loading && (
           <div className="empty-state">
-            <div className="empty-state-icon">⏳</div>
+            <div className="empty-state-icon"><Icon icon="clock" size={48} /></div>
             <div className="empty-state-title">加载中...</div>
           </div>
         )}
 
         {error && (
           <div className="empty-state">
-            <div className="empty-state-icon">⚠️</div>
+            <div className="empty-state-icon"><Icon icon="alertTriangle" size={48} /></div>
             <div className="empty-state-title">错误</div>
             <div className="empty-state-desc">{error}</div>
           </div>
@@ -352,11 +351,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
             {(workflowData.source_metaflow_id || workflowData.source_recording_id) && (
               <div className="workflow-traceability-card">
                 <div className="traceability-header">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M12 2L2 7L12 12L22 7L12 2Z" />
-                    <path d="M2 17L12 22L22 17" />
-                    <path d="M2 12L12 17L22 12" />
-                  </svg>
+                  <Icon icon="gitBranch" size={16} />
                   <h3>来源信息</h3>
                 </div>
                 <div className="traceability-content">
@@ -369,11 +364,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                         onClick={() => onNavigate('metaflow-preview', { metaflowId: workflowData.source_metaflow_id })}
                         title="查看MetaFlow详情"
                       >
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                          <polyline points="15 3 21 3 21 9" />
-                          <line x1="10" y1="14" x2="21" y2="3" />
-                        </svg>
+                        <Icon icon="externalLink" size={14} />
                       </button>
                     </div>
                   )}
@@ -386,11 +377,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                         onClick={() => onNavigate('recording-detail', { sessionId: workflowData.source_recording_id })}
                         title="查看Recording详情"
                       >
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                          <polyline points="15 3 21 3 21 9" />
-                          <line x1="10" y1="14" x2="21" y2="3" />
-                        </svg>
+                        <Icon icon="externalLink" size={14} />
                       </button>
                     </div>
                   )}
@@ -409,31 +396,21 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                 className={`workflow-tab-button ${activeTab === 'visual' ? 'active' : ''}`}
                 onClick={() => setActiveTab('visual')}
               >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <rect x="3" y="3" width="7" height="7" />
-                  <rect x="14" y="3" width="7" height="7" />
-                  <rect x="14" y="14" width="7" height="7" />
-                  <rect x="3" y="14" width="7" height="7" />
-                </svg>
+                <Icon icon="layout" size={16} />
                 <span>Visual</span>
               </button>
               <button
                 className={`workflow-tab-button ${activeTab === 'yaml' ? 'active' : ''}`}
                 onClick={() => setActiveTab('yaml')}
               >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <polyline points="16 18 22 12 16 6" />
-                  <polyline points="8 6 2 12 8 18" />
-                </svg>
+                <Icon icon="code" size={16} />
                 <span>YAML</span>
               </button>
               <button
                 className={`workflow-tab-button ${activeTab === 'chat' ? 'active' : ''}`}
                 onClick={() => setActiveTab('chat')}
               >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                </svg>
+                <Icon icon="messageSquare" size={16} />
                 <span>AI 修改</span>
               </button>
             </div>
@@ -451,7 +428,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
               ) : (
                 <div className="workflow-chat-container">
                   <div className="chat-instructions">
-                    <h3>🤖 AI 助手</h3>
+                    <h3><Icon icon="bot" size={20} /> AI 助手</h3>
                     <p>使用自然语言描述你想要的修改，AI 会帮你调整 workflow 配置</p>
                   </div>
 
@@ -461,7 +438,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                       {modificationLog.map((msg, index) => (
                         <div key={index} className={`log-message ${msg.type}`}>
                           <span className="log-avatar">
-                            {msg.type === 'user' ? '👤' : msg.type === 'error' ? '❌' : '🤖'}
+                            {msg.type === 'user' ? <Icon icon="user" size={16} /> : msg.type === 'error' ? <Icon icon="xCircle" size={16} /> : <Icon icon="bot" size={16} />}
                           </span>
                           <pre className="log-content">{msg.content}</pre>
                         </div>
@@ -500,9 +477,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                       {isModifying ? (
                         <div className="btn-spinner"></div>
                       ) : (
-                        <svg viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-                        </svg>
+                        <Icon icon="send" size={16} />
                       )}
                     </button>
                   </div>
@@ -519,10 +494,6 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
     </div>
   )
 }
-
-// Workflow Visualization Component
-// Replaced by shared FlowVisualization component
-import FlowVisualization from '../components/FlowVisualization'
 
 export default WorkflowDetailPage
 

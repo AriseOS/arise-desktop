@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import Icon from '../components/Icons';
 import '../styles/ConversationalGenerationPage.css';
 
 const API_BASE = "http://127.0.0.1:8765";
@@ -33,7 +34,7 @@ function ConversationalGenerationPage({ session, onNavigate, showStatus }) {
   const handleGenerateWorkflow = async () => {
     const description = taskDescription.trim();
     if (!description) {
-      showStatus('❌ Please describe the task you want to automate', 'error');
+      showStatus('Please describe the task you want to automate', 'error');
       return;
     }
 
@@ -53,7 +54,7 @@ function ConversationalGenerationPage({ session, onNavigate, showStatus }) {
           task_description: description,
           user_id: "userId"
         };
-        showStatus('✨ Generating MetaFlow from recording...', 'info');
+        showStatus('Generating MetaFlow from recording...', 'info');
       } else {
         // Generate MetaFlow from text description
         apiEndpoint = `${API_BASE}/api/metaflows/generate`;
@@ -61,7 +62,7 @@ function ConversationalGenerationPage({ session, onNavigate, showStatus }) {
           task_description: description,
           user_id: "userId"
         };
-        showStatus('✨ Generating MetaFlow from your description...', 'info');
+        showStatus('Generating MetaFlow from your description...', 'info');
       }
 
       response = await fetch(apiEndpoint, {
@@ -76,7 +77,7 @@ function ConversationalGenerationPage({ session, onNavigate, showStatus }) {
 
       const data = await response.json();
 
-      showStatus('✅ MetaFlow generated! Please review.', 'success');
+      showStatus('MetaFlow generated! Please review.', 'success');
 
       // Navigate to MetaFlow preview page
       setTimeout(() => {
@@ -87,7 +88,7 @@ function ConversationalGenerationPage({ session, onNavigate, showStatus }) {
       }, 500);
     } catch (error) {
       console.error('Error generating MetaFlow:', error);
-      showStatus(`❌ Failed to generate MetaFlow: ${error.message}`, 'error');
+      showStatus(`Failed to generate MetaFlow: ${error.message}`, 'error');
     } finally {
       setIsGenerating(false);
     }
@@ -96,7 +97,7 @@ function ConversationalGenerationPage({ session, onNavigate, showStatus }) {
   const handleReferenceRecording = (recording) => {
     setReferencedRecording(recording);
     setShowRecordingsSidebar(false);
-    showStatus(`📎 Referenced recording: ${recording.name || recording.session_id}`, 'info');
+    showStatus(`Referenced recording: ${recording.name || recording.session_id}`, 'info');
   };
 
   const handleClearReference = () => {
@@ -126,24 +127,20 @@ function ConversationalGenerationPage({ session, onNavigate, showStatus }) {
       {/* Header */}
       <div className="page-header">
         <button className="back-button" onClick={() => onNavigate('main')}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M19 12H5M12 19l-7-7 7-7"/>
-          </svg>
+          <Icon icon="arrowLeft" />
         </button>
-        <h1 className="page-title">💬 AI Workflow Generation</h1>
+        <h1 className="page-title"><Icon icon="messageSquare" size={28} /> AI Workflow Generation</h1>
         <div className="header-spacer"></div>
         <button
           className="toggle-sidebar-btn"
           onClick={() => setShowRecordingsSidebar(!showRecordingsSidebar)}
           title={showRecordingsSidebar ? 'Hide recordings' : 'Show recordings'}
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            {showRecordingsSidebar ? (
-              <path d="M9 18l6-6-6-6"/>
-            ) : (
-              <path d="M15 18l-6-6 6-6"/>
-            )}
-          </svg>
+          {showRecordingsSidebar ? (
+            <Icon icon="chevronRight" />
+          ) : (
+            <Icon icon="chevronLeft" />
+          )}
         </button>
       </div>
 
@@ -154,7 +151,7 @@ function ConversationalGenerationPage({ session, onNavigate, showStatus }) {
           <div className="generation-container">
             {/* Welcome Section */}
             <div className="welcome-section">
-              <div className="welcome-icon">🤖</div>
+              <div className="welcome-icon"><Icon icon="cpu" size={48} /></div>
               <h2>AI Workflow Generator</h2>
               <p>Describe the task you want to automate, and AI will create a workflow for you.</p>
             </div>
@@ -163,15 +160,12 @@ function ConversationalGenerationPage({ session, onNavigate, showStatus }) {
             {referencedRecording && (
               <div className="referenced-recording-badge">
                 <div className="badge-content">
-                  <span className="badge-icon">📎</span>
+                  <span className="badge-icon"><Icon icon="paperclip" size={16} /></span>
                   <span className="badge-text">
                     Using recording: {referencedRecording.name || referencedRecording.session_id}
                   </span>
                   <button className="badge-clear" onClick={handleClearReference}>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <line x1="18" y1="6" x2="6" y2="18"/>
-                      <line x1="6" y1="6" x2="18" y2="18"/>
-                    </svg>
+                    <Icon icon="x" size={14} />
                   </button>
                 </div>
               </div>
@@ -193,22 +187,22 @@ function ConversationalGenerationPage({ session, onNavigate, showStatus }) {
                 disabled={isGenerating}
               />
               <div className="input-hint">
-                💡 Be specific about: What data to extract, from which website, and how to save it.
-                <br/>
+                <Icon icon="info" size={14} /> Be specific about: What data to extract, from which website, and how to save it.
+                <br />
                 <span className="keyboard-hint">Press Ctrl+Enter to generate</span>
               </div>
             </div>
 
             {/* Example Prompts */}
             <div className="example-prompts-section">
-              <p className="examples-label">💡 Example tasks:</p>
+              <p className="examples-label"><Icon icon="info" size={14} /> Example tasks:</p>
               <div className="examples-grid">
                 <button
                   className="example-card"
                   onClick={() => setTaskDescription('Download daily sales reports from the company dashboard and save them to a local folder.')}
                   disabled={isGenerating}
                 >
-                  <span className="example-icon">📊</span>
+                  <span className="example-icon"><Icon icon="barChart" size={20} /></span>
                   <span className="example-text">Download daily sales reports from dashboard</span>
                 </button>
                 <button
@@ -216,7 +210,7 @@ function ConversationalGenerationPage({ session, onNavigate, showStatus }) {
                   onClick={() => setTaskDescription('Scrape product names, prices, and stock levels from an e-commerce website and save to Excel.')}
                   disabled={isGenerating}
                 >
-                  <span className="example-icon">🛒</span>
+                  <span className="example-icon"><Icon icon="shoppingCart" size={20} /></span>
                   <span className="example-text">Scrape product info from e-commerce site</span>
                 </button>
                 <button
@@ -224,7 +218,7 @@ function ConversationalGenerationPage({ session, onNavigate, showStatus }) {
                   onClick={() => setTaskDescription('Automatically fill out a registration form with user data from a CSV file.')}
                   disabled={isGenerating}
                 >
-                  <span className="example-icon">📝</span>
+                  <span className="example-icon"><Icon icon="fileText" size={20} /></span>
                   <span className="example-text">Auto-fill registration forms</span>
                 </button>
               </div>
@@ -244,9 +238,7 @@ function ConversationalGenerationPage({ session, onNavigate, showStatus }) {
                   </>
                 ) : (
                   <>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-                    </svg>
+                    <Icon icon="zap" size={20} />
                     <span>Generate Workflow</span>
                   </>
                 )}
@@ -259,15 +251,12 @@ function ConversationalGenerationPage({ session, onNavigate, showStatus }) {
         {showRecordingsSidebar && (
           <div className="recordings-sidebar">
             <div className="sidebar-header">
-              <h3>📚 Reference a Recording</h3>
+              <h3><Icon icon="video" size={18} /> Reference a Recording</h3>
               <button
                 className="close-sidebar-btn"
                 onClick={() => setShowRecordingsSidebar(false)}
               >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="18" y1="6" x2="6" y2="18"/>
-                  <line x1="6" y1="6" x2="18" y2="18"/>
-                </svg>
+                <Icon icon="x" size={18} />
               </button>
             </div>
 
@@ -276,10 +265,7 @@ function ConversationalGenerationPage({ session, onNavigate, showStatus }) {
             </div>
 
             <div className="sidebar-search">
-              <svg className="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="11" cy="11" r="8"/>
-                <path d="m21 21-4.35-4.35"/>
-              </svg>
+              <div className="search-icon"><Icon icon="search" size={16} /></div>
               <input
                 type="text"
                 placeholder="Search recordings..."
@@ -299,7 +285,7 @@ function ConversationalGenerationPage({ session, onNavigate, showStatus }) {
                     key={recording.session_id}
                     className={`recording-item ${referencedRecording?.session_id === recording.session_id ? 'selected' : ''}`}
                   >
-                    <div className="recording-item-icon">📹</div>
+                    <div className="recording-item-icon"><Icon icon="video" size={16} /></div>
                     <div className="recording-item-info">
                       <div className="recording-item-name">
                         {recording.name || `Recording ${recording.session_id.substring(0, 8)}...`}

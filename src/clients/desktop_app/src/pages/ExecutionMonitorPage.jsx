@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import Icon from '../components/Icons';
 import '../styles/ExecutionMonitorPage.css';
 
 const API_BASE = "http://127.0.0.1:8765";
@@ -81,7 +82,7 @@ function ExecutionMonitorPage({
   const handleStopConfirm = () => {
     setStopConfirm(false);
     setStatus('paused');
-    showStatus('⏸ Execution stopped', 'info');
+    showStatus('Execution stopped', 'info');
   };
 
   const handleStopCancel = () => {
@@ -90,7 +91,7 @@ function ExecutionMonitorPage({
 
   const handleContinue = () => {
     setStatus('running');
-    showStatus('▶️ Execution resumed', 'info');
+    showStatus('Execution resumed', 'info');
   };
 
   const formatTime = (seconds) => {
@@ -101,19 +102,19 @@ function ExecutionMonitorPage({
 
   const getStatusIcon = (stepStatus) => {
     switch (stepStatus) {
-      case 'completed': return '✅';
-      case 'in_progress': return '⏳';
-      case 'failed': return '❌';
-      default: return '⏸';
+      case 'completed': return <Icon icon="checkCircle" size={16} />;
+      case 'in_progress': return <Icon icon="clock" size={16} />;
+      case 'failed': return <Icon icon="alertCircle" size={16} />;
+      default: return <Icon icon="circle" size={16} />;
     }
   };
 
   const getLogIcon = (level) => {
     switch (level) {
-      case 'success': return '✅';
-      case 'error': return '❌';
-      case 'warning': return '⚠️';
-      default: return 'ℹ️';
+      case 'success': return <Icon icon="check" size={14} />;
+      case 'error': return <Icon icon="x" size={14} />;
+      case 'warning': return <Icon icon="alertTriangle" size={14} />;
+      default: return <Icon icon="info" size={14} />;
     }
   };
 
@@ -132,18 +133,16 @@ function ExecutionMonitorPage({
       <div className="execution-header">
         <div className="header-left">
           <button className="back-button" onClick={() => onNavigate("main")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M19 12H5M12 19l-7-7 7-7"/>
-            </svg>
+            <Icon icon="arrowLeft" />
           </button>
           <div className="header-info">
             <h1 className="execution-title">Execution: {workflowName}</h1>
             <div className="execution-meta">
               <span className="meta-badge" data-status={status}>
-                {status === 'running' && '▶️ Running'}
-                {status === 'paused' && '⏸ Paused'}
-                {status === 'completed' && '✅ Completed'}
-                {status === 'failed' && '❌ Failed'}
+                {status === 'running' && <><Icon icon="play" size={14} /> Running</>}
+                {status === 'paused' && <><Icon icon="pause" size={14} /> Paused</>}
+                {status === 'completed' && <><Icon icon="checkCircle" size={14} /> Completed</>}
+                {status === 'failed' && <><Icon icon="alertCircle" size={14} /> Failed</>}
               </span>
               <span className="meta-time">Elapsed: {formatTime(elapsedTime)}</span>
               {status === 'running' && (
@@ -155,21 +154,17 @@ function ExecutionMonitorPage({
         <div className="header-actions">
           {status === 'running' ? (
             <button className="btn-stop" onClick={handleStopClick}>
-              <svg viewBox="0 0 24 24" fill="currentColor">
-                <rect x="6" y="6" width="12" height="12"></rect>
-              </svg>
+              <Icon icon="square" />
               Stop
             </button>
           ) : status === 'paused' ? (
             <button className="btn-continue" onClick={handleContinue}>
-              <svg viewBox="0 0 24 24" fill="currentColor">
-                <polygon points="5 3 19 12 5 21 5 3"/>
-              </svg>
+              <Icon icon="play" />
               Continue
             </button>
           ) : status === 'completed' ? (
             <button className="btn-view-results" onClick={() => onNavigate('execution-result')}>
-              📊 View Results
+              <Icon icon="barChart" /> View Results
             </button>
           ) : null}
         </div>
@@ -197,18 +192,14 @@ function ExecutionMonitorPage({
               <span className="browser-dot green"></span>
             </div>
             <div className="browser-url">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10"/>
-                <line x1="2" y1="12" x2="22" y2="12"/>
-                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-              </svg>
+              <Icon icon="globe" size={14} />
               <span>{browserUrl}</span>
             </div>
           </div>
           <div className="browser-content">
             <div className="browser-placeholder">
               <div className="browser-notice">
-                <h3>🌐 Browser Window</h3>
+                <h3><Icon icon="globe" size={24} /> Browser Window</h3>
                 <p>Real-time browser view will be displayed here</p>
                 <p className="current-action">Current: Scraping product 10/25</p>
               </div>
@@ -219,7 +210,7 @@ function ExecutionMonitorPage({
         {/* Execution Logs */}
         <div className="logs-panel">
           <div className="logs-header">
-            <h3>📋 Execution Logs</h3>
+            <h3><Icon icon="fileText" size={18} /> Execution Logs</h3>
             <div className="logs-actions">
               <button className="btn-clear-logs" onClick={() => setLogs([])}>
                 Clear

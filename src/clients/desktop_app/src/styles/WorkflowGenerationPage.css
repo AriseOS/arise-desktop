@@ -1,0 +1,117 @@
+/* Workflow Generation Page Styles */
+.workflow-generation-page {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+}
+
+.workflow-generation-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    position: relative;
+}
+
+.workflow-canvas {
+    flex: 1;
+    width: 100%;
+    height: 100%;
+    background-color: var(--bg-secondary);
+}
+
+.workflow-save-actions {
+    position: absolute;
+    bottom: var(--spacing-xl);
+    right: var(--spacing-xl);
+    z-index: 10;
+}
+
+.start-record-button {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-md) var(--spacing-xl);
+    background-color: var(--primary-color);
+    color: white;
+    border: none;
+    border-radius: var(--radius-full);
+    font-weight: 600;
+    font-size: var(--font-size-md);
+    cursor: pointer;
+    box-shadow: var(--shadow-lg);
+    transition: all var(--transition-fast);
+}
+
+.start-record-button:hover {
+    background-color: var(--primary-hover);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-xl);
+}
+
+.start-record-button svg {
+    width: 20px;
+    height: 20px;
+}
+
+/* Empty State */
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-secondary);
+    gap: var(--spacing-md);
+}
+
+.empty-state-icon {
+    font-size: 48px;
+    color: var(--text-tertiary);
+}
+
+.empty-state-title {
+    font-size: var(--font-size-xl);
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+/* React Flow Customization */
+.react-flow__node {
+    font-family: inherit;
+}
+
+.react-flow__edge-path {
+    stroke: var(--border-color);
+    stroke-width: 2;
+}
+
+.react-flow__controls {
+    box-shadow: var(--shadow-md);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    border: 1px solid var(--border-color);
+}
+
+.react-flow__controls-button {
+    background-color: var(--bg-primary);
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-secondary);
+}
+
+.react-flow__controls-button:hover {
+    background-color: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+.react-flow__minimap {
+    background-color: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    border: 1px solid var(--border-color);
+}
+
+/* Node Styles (if not using CustomNode styles) */
+/* .start-node, .end-node, .branch-node styles can be added here if needed */
