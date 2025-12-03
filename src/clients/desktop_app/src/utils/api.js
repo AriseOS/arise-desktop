@@ -197,14 +197,15 @@ export const api = {
    * Start recording
    *
    * @param {string} url - Starting URL
+   * @param {string} userId - User ID
    * @param {string} title - Recording title
    * @param {string} description - Recording description
    * @returns {Promise<object>} Recording session info
    */
-  async startRecording(url, title = '', description = '') {
+  async startRecording(url, userId, title = '', description = '') {
     return await this.callAppBackend('/api/recording/start', {
       method: 'POST',
-      body: JSON.stringify({ url, title, description })
+      body: JSON.stringify({ url, user_id: userId, title, description })
     });
   },
 

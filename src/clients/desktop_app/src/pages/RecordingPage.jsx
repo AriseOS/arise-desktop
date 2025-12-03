@@ -32,6 +32,7 @@ function RecordingPage({ session, onNavigate, showStatus }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           url: recordUrl,
+          user_id: userId,  // User ID is required
           title: recordTitle,
           description: recordDescription,
           task_metadata: { task_description: recordDescription }

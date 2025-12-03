@@ -30,6 +30,7 @@ class CDPRecorder:
 
         # Recording state
         self.current_session_id: Optional[str] = None
+        self.current_user_id: Optional[str] = None  # Track user_id for current recording
         self.operations: List[Dict[str, Any]] = []
         self.monitor = None
         self.recording_start_time = None
@@ -72,11 +73,12 @@ class CDPRecorder:
         except Exception as e:
             logger.error(f"Error stopping recording after user close: {e}")
 
-    async def start_recording(self, url: str, metadata: Dict[str, Any] = None) -> Dict[str, Any]:
+    async def start_recording(self, url: str, user_id: str, metadata: Dict[str, Any] = None) -> Dict[str, Any]:
         """Start CDP recording session
 
         Args:
             url: Starting URL to navigate to
+            user_id: User ID for multi-user support
             metadata: Task metadata including user's natural language description
 
         Returns:
@@ -84,6 +86,7 @@ class CDPRecorder:
         """
         # Create session ID
         self.current_session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        self.current_user_id = user_id  # Store user_id for later use
         self.operations = []
         self.recording_start_time = datetime.now()
         self.task_metadata = metadata or {}  # Store metadata
@@ -145,8 +148,11 @@ class CDPRecorder:
         }
 
         # Save to local storage
+        if not self.current_user_id:
+            raise RuntimeError("User ID not set for current recording session")
+
         self.storage.save_recording(
-            user_id="default_user",  # MVP: single user
+            user_id=self.current_user_id,
             session_id=self.current_session_id,
             recording_data=recording_data
         )
@@ -155,7 +161,7 @@ class CDPRecorder:
             "session_id": self.current_session_id,
             "operations_count": len(self.operations),
             "local_file_path": str(
-                self.storage._user_path("default_user") / "recordings" /
+                self.storage._user_path(self.current_user_id) / "recordings" /
                 self.current_session_id / "operations.json"
             )
         }
@@ -163,6 +169,7 @@ class CDPRecorder:
         # Cleanup
         session_id = self.current_session_id
         self.current_session_id = None
+        self.current_user_id = None
         self.operations = []
         self.monitor = None
         self.recording_start_time = None

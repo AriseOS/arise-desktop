@@ -70,11 +70,11 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           url: "about:blank",
+          user_id: userId,  // User ID is required at top level
           title: "Quick Start Recording",
           description: "Recording from Quick Start",
           task_metadata: {
-            quick_start: true,
-            user_id: userId
+            quick_start: true
           }
         })
       });
