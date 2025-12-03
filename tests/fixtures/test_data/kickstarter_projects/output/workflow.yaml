@@ -106,7 +106,8 @@ steps:
     inputs:
       operation: "set"
       data:
-        page_numbers: [3,8, 9]
+        # page_numbers: [3,8, 9]
+        page_numbers: [1]
     outputs:
       page_numbers: "page_numbers"
     timeout: 10
@@ -246,11 +247,31 @@ steps:
           extracted_data: "creator_info"
         timeout: 60
 
+      - id: "generate-chinese-translation"
+        name: "Generate Chinese translation and introduction"
+        agent_type: "text_agent"
+        description: "Generate Chinese translation and introduction for project"
+        agent_instruction: |
+          Translate and introduce this Kickstarter project in Chinese. Provide a brief, plain text introduction (2-3 sentences, no special formatting, no line breaks).
+
+          Project: {{project_funding.0.project_title}}
+          Funding: {{project_funding.0.funding_amount}}
+          Creator: {{creator_info.0.creator_name}} from {{creator_info.0.creator_location}}
+          Description: {{creator_info.0.creator_description}}
+
+          Return only plain Chinese text without markdown, without line breaks, without special formatting. Keep it concise and informative.
+        inputs:
+          project_funding: "{{project_funding}}"
+          creator_info: "{{creator_info}}"
+        outputs:
+          chinese_introduction: "chinese_introduction"
+        timeout: 30
+
       - id: "merge-project-data"
         name: "Merge project and creator data"
         agent_type: "variable"
-        description: "Merge funding and creator information"
-        agent_instruction: "Merge project funding and creator information into one object"
+        description: "Merge funding, creator information and Chinese translation"
+        agent_instruction: "Merge project funding, creator information and Chinese translation into one object"
         inputs:
           operation: "set"
           data:
@@ -264,6 +285,7 @@ steps:
               creator_description: "{{creator_info.0.creator_description}}"
               social_media_links: "{{creator_info.0.social_media_links}}"
               creator_location: "{{creator_info.0.creator_location}}"
+              chinese_introduction: "{{chinese_introduction}}"
         outputs:
           merged_project: "merged_project"
         timeout: 10
@@ -303,7 +325,7 @@ steps:
       operation: "set"
       data:
         all_project_details: "{{all_project_details}}"
-        final_response: "Successfully collected details for {{project_index}} Kickstarter technology projects"
+        final_response: "Successfully collected Kickstarter technology projects with Chinese translations"
     outputs:
       all_project_details: "all_project_details"
       final_response: "final_response"
