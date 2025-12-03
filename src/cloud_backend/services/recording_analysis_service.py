@@ -1,6 +1,7 @@
 """Recording Analysis Service - Analyze user operations using LLM"""
 import logging
 import json
+import re
 from typing import List, Dict, Any
 from src.common.llm import AnthropicProvider
 
@@ -57,6 +58,9 @@ class RecordingAnalysisService:
             if cleaned_response.endswith("```"):
                 cleaned_response = cleaned_response[:-3]  # Remove trailing ```
             cleaned_response = cleaned_response.strip()
+
+            # Fix unescaped newlines in JSON strings
+            cleaned_response = self._fix_json_control_chars(cleaned_response)
 
             result = json.loads(cleaned_response)
             logger.info("Analysis successful:")
@@ -264,4 +268,59 @@ Scenario 3: User opens Twitter, clicks on trending topic "AI news", scrolls thro
 Now analyze:"""
 
         return prompt
+
+    def _fix_json_control_chars(self, json_str: str) -> str:
+        """Fix unescaped control characters in JSON string values
+
+        This handles cases where LLM returns JSON with unescaped newlines, tabs, etc.
+        in string values, which causes JSON parsing to fail.
+
+        Args:
+            json_str: Raw JSON string that may contain unescaped control chars
+
+        Returns:
+            Fixed JSON string with properly escaped control characters
+        """
+        try:
+            # Simple approach: replace literal newlines with escaped newlines
+            # Only do this between quoted strings
+            result = []
+            in_string = False
+            escape_next = False
+
+            for i, char in enumerate(json_str):
+                if escape_next:
+                    result.append(char)
+                    escape_next = False
+                    continue
+
+                if char == '\\':
+                    result.append(char)
+                    escape_next = True
+                    continue
+
+                if char == '"':
+                    in_string = not in_string
+                    result.append(char)
+                    continue
+
+                # If we're inside a string, escape control characters
+                if in_string:
+                    if char == '\n':
+                        result.append('\\n')
+                    elif char == '\r':
+                        result.append('\\r')
+                    elif char == '\t':
+                        result.append('\\t')
+                    elif ord(char) < 32:  # Other control characters
+                        result.append(f'\\u{ord(char):04x}')
+                    else:
+                        result.append(char)
+                else:
+                    result.append(char)
+
+            return ''.join(result)
+        except Exception as e:
+            logger.warning(f"Failed to fix JSON control chars: {e}, returning original")
+            return json_str
 
