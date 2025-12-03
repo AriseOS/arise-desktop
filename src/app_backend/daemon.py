@@ -81,6 +81,7 @@ app.add_middleware(
 
 class StartRecordingRequest(BaseModel):
     url: str
+    user_id: str  # User ID for multi-user support
     title: Optional[str] = ""
     description: Optional[str] = ""
     task_metadata: Optional[Dict[str, Any]] = None  # User's natural language description of what they're doing
@@ -568,8 +569,12 @@ async def start_recording(request: StartRecordingRequest):
         })
 
         # 3. Start recording
-        result = await cdp_recorder.start_recording(request.url, metadata=metadata)
-        logger.info(f"Recording started: session_id={result['session_id']}")
+        result = await cdp_recorder.start_recording(
+            url=request.url,
+            user_id=request.user_id,
+            metadata=metadata
+        )
+        logger.info(f"Recording started: session_id={result['session_id']}, user_id={request.user_id}")
         return result
 
     except Exception as e:

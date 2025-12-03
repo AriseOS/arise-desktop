@@ -93,6 +93,8 @@ function RecordPage({ onNavigate, showStatus, currentUser }) {
           'Authorization': `Bearer ${currentUser.token}`
         },
         body: JSON.stringify({
+          url: "about:blank",  // Default URL for extension-based recording
+          user_id: currentUser.username,  // User ID is username
           title: title,
           description: description || ''
         })
