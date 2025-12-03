@@ -9,6 +9,9 @@
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
+  "bundle": {
+    "resources": []
+  },
   "plugins": {},
   "app": {
     "windows": [

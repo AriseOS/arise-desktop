@@ -14,7 +14,7 @@ const API_BASE = "http://127.0.0.1:8765";
  * - Generated content
  */
 function IntentBuilderPage({ session, onNavigate, showStatus, params = {} }) {
-  const userId = session?.username || 'default_user';
+  const userId = session?.username;
   // Session state
   const [sessionId, setSessionId] = useState(null);
   const [isConnecting, setIsConnecting] = useState(false);

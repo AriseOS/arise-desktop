@@ -6,15 +6,17 @@ const API_BASE = "http://127.0.0.1:8765";
 
 function MyWorkflowsPage({ session, onNavigate, onLogout }) {
   // Get user_id from session
-  const userId = session?.username || 'default_user';
+  const userId = session?.username;
   const [workflows, setWorkflows] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [deleteConfirm, setDeleteConfirm] = useState(null) // { workflowId, workflowName }
 
   useEffect(() => {
-    loadWorkflows()
-  }, [])
+    if (userId) {
+      loadWorkflows()
+    }
+  }, [userId])
 
   const loadWorkflows = async () => {
     setLoading(true)

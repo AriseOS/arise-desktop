@@ -121,8 +121,15 @@ function App() {
 
   // Load dashboard data
   const fetchDashboard = async () => {
+    if (!session?.username) {
+      console.log('[App] Cannot fetch dashboard: user not logged in');
+      setHasWorkflows(false);
+      setRecentWorkflows([]);
+      return;
+    }
+
     try {
-      const data = await api.getDashboard();
+      const data = await api.getDashboard(session.username);
 
       // Determine if user is returning user based on workflow count
       setHasWorkflows(data.has_workflows || data.total_workflows > 0);
@@ -137,10 +144,10 @@ function App() {
 
   // Load dashboard data on mount and when returning to main page
   useEffect(() => {
-    if (currentPage === "main") {
+    if (currentPage === "main" && session?.username) {
       fetchDashboard();
     }
-  }, [currentPage]);
+  }, [currentPage, session?.username]);
 
   // Main page for NEW users
   const renderNewUserHome = () => (

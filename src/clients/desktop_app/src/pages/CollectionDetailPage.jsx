@@ -5,7 +5,7 @@ import '../styles/CollectionDetailPage.css';
 const API_BASE = "http://127.0.0.1:8765";
 
 function CollectionDetailPage({ session, onNavigate, showStatus, collectionName }) {
-  const userId = session?.username || 'default_user';
+  const userId = session?.username;
   const [collection, setCollection] = useState(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
@@ -13,10 +13,10 @@ function CollectionDetailPage({ session, onNavigate, showStatus, collectionName 
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
-    if (collectionName) {
+    if (userId && collectionName) {
       loadCollectionDetail();
     }
-  }, [collectionName]);
+  }, [userId, collectionName]);
 
   const loadCollectionDetail = async () => {
     setLoading(true);

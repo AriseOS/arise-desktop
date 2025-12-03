@@ -29,6 +29,18 @@ fn main() {
             app.manage(app_state);
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .on_window_event(|window, event| {
+            // Ensure cleanup when window closes
+            if let tauri::WindowEvent::Destroyed = event {
+                println!("Window destroyed, cleaning up...");
+            }
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, event| {
+            // Ensure cleanup on exit
+            if let tauri::RunEvent::Exit = event {
+                println!("Application exiting, cleanup will be handled by Drop");
+            }
+        });
 }

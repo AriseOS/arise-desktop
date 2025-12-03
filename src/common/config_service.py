@@ -5,6 +5,7 @@ A unified configuration service for all backend services (App Backend, Cloud Bac
 Manages configuration via YAML files and environment variables.
 """
 import os
+import sys
 import re
 import yaml
 from typing import Dict, Any, Optional
@@ -41,7 +42,12 @@ class ConfigService:
         if project_root_env := os.getenv("PROJECT_ROOT"):
             return Path(project_root_env).resolve()
 
-        # Method 2: Calculate from current file location
+        # Method 2: Check if running in PyInstaller bundle
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            # Running in PyInstaller bundle
+            return Path(sys._MEIPASS)
+
+        # Method 3: Calculate from current file location
         # Current file: src/common/config_service.py
         # Project root: ../../ (up 2 levels to ami/)
         return Path(__file__).parent.parent.parent.resolve()

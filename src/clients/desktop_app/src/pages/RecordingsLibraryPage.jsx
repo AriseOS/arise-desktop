@@ -5,7 +5,7 @@ import '../styles/RecordingsLibraryPage.css';
 const API_BASE = "http://127.0.0.1:8765";
 
 function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
-  const userId = session?.username || 'userId';
+  const userId = session?.username;
   const [recordings, setRecordings] = useState([]);
   const [filteredRecordings, setFilteredRecordings] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -15,9 +15,11 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
 
   // Fetch recordings from API
   useEffect(() => {
+    if (!userId) return;
+
     const fetchRecordings = async () => {
       try {
-        const response = await fetch(`${API_BASE}/api/recordings`);
+        const response = await fetch(`${API_BASE}/api/recordings?user_id=${userId}`);
 
         if (!response.ok) {
           throw new Error(`Failed to fetch recordings: ${response.status}`);
@@ -30,7 +32,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
         // Asynchronously fetch metaflow_id for each recording
         (data.recordings || []).forEach(async (recording) => {
           try {
-            const detailResponse = await fetch(`${API_BASE}/api/recordings/${recording.session_id}?user_id=userId`);
+            const detailResponse = await fetch(`${API_BASE}/api/recordings/${recording.session_id}?user_id=${userId}`);
             if (detailResponse.ok) {
               const detail = await detailResponse.json();
               if (detail.metaflow_id) {
@@ -56,7 +58,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
     };
 
     fetchRecordings();
-  }, []);
+  }, [userId]);
 
   // Search filter
   useEffect(() => {
@@ -94,7 +96,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
         body: JSON.stringify({
           session_id: sessionId,
           task_description: "Auto-generated workflow from recording",
-          user_id: "userId"
+          user_id: userId
         })
       });
 
@@ -141,7 +143,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
     try {
       showStatus('Deleting recording...', 'info');
 
-      const url = `${API_BASE}/api/recordings/${sessionId}?user_id=userId`;
+      const url = `${API_BASE}/api/recordings/${sessionId}?user_id=${userId}`;
       const response = await fetch(url, {
         method: 'DELETE'
       });

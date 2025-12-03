@@ -54,9 +54,39 @@ impl PythonDaemon {
         }
     }
 
-    /// Start the daemon process with proper process group configuration
-    fn start_daemon_process() -> Result<(Child, u32), Box<dyn std::error::Error>> {
-        // Get project root (4 levels up from src-tauri)
+    /// Detect if running in development or production mode and get daemon path
+    fn get_daemon_path() -> Result<(String, Vec<String>), Box<dyn std::error::Error>> {
+        // Method 1: Check for bundled binary in resources directory (production mode)
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                // macOS: binary is in Contents/MacOS/, resources in Contents/Resources/
+                #[cfg(target_os = "macos")]
+                let resources_dir = exe_dir.parent()
+                    .and_then(|p| Some(p.join("Resources")))
+                    .unwrap_or_else(|| exe_dir.join("resources"));
+
+                // Other platforms: resources are typically next to binary
+                #[cfg(not(target_os = "macos"))]
+                let resources_dir = exe_dir.join("resources");
+
+                #[cfg(target_os = "windows")]
+                let binary_name = "ami-daemon.exe";
+                #[cfg(not(target_os = "windows"))]
+                let binary_name = "ami-daemon";
+
+                let binary_path = resources_dir.join(binary_name);
+
+                if binary_path.exists() {
+                    println!("✓ Found bundled daemon binary: {}", binary_path.display());
+                    return Ok((binary_path.to_string_lossy().to_string(), vec![]));
+                } else {
+                    println!("✗ Bundled daemon binary not found at: {}", binary_path.display());
+                }
+            }
+        }
+
+        // Method 2: Development mode - use Python script
+        println!("Running in development mode, using Python script");
         let current_dir = std::env::current_dir()?;
         let project_root = current_dir
             .parent()
@@ -68,21 +98,46 @@ impl PythonDaemon {
 
         let daemon_path = project_root.join("src/app_backend/daemon.py");
 
-        println!("Starting Python HTTP daemon from: {}", daemon_path.display());
+        if !daemon_path.exists() {
+            return Err(format!("Daemon not found at: {}", daemon_path.display()).into());
+        }
 
-        // Try multiple Python commands
-        let python_commands = ["python3", "python", "py"];
+        println!("Found daemon script: {}", daemon_path.display());
+
+        // Return Python command and script path
+        Ok(("python3".to_string(), vec![daemon_path.to_string_lossy().to_string()]))
+    }
+
+    /// Start the daemon process with proper process group configuration
+    fn start_daemon_process() -> Result<(Child, u32), Box<dyn std::error::Error>> {
+        // Get daemon path (binary or script)
+        let (command, args) = Self::get_daemon_path()?;
+
+        println!("Starting daemon with command: {} {:?}", command, args);
+
+        // If using Python script, try multiple Python commands
+        let commands_to_try = if command == "python3" {
+            vec!["python3", "python", "py"]
+        } else {
+            vec![command.as_str()]
+        };
+
         let mut last_error = None;
 
-        for cmd in &python_commands {
+        for cmd in &commands_to_try {
             #[cfg(unix)]
             {
                 use std::os::unix::process::CommandExt;
 
+                let mut command = Command::new(cmd);
+
+                // Add arguments if any (for Python script mode)
+                if !args.is_empty() {
+                    command.args(&args);
+                }
+
                 match unsafe {
-                    Command::new(cmd)
-                        .arg(&daemon_path)
-                        .current_dir(&project_root)
+                    command
                         .stdout(Stdio::inherit())
                         .stderr(Stdio::inherit())
                         .pre_exec(|| {
@@ -98,7 +153,7 @@ impl PythonDaemon {
                     Ok(p) => {
                         let pid = p.id();
                         println!(
-                            "Python daemon started with '{}' (PID: {}, Process Group: {})",
+                            "Daemon started with '{}' (PID: {}, Process Group: {})",
                             cmd, pid, pid
                         );
                         return Ok((p, pid));
@@ -112,16 +167,21 @@ impl PythonDaemon {
 
             #[cfg(not(unix))]
             {
-                match Command::new(cmd)
-                    .arg(&daemon_path)
-                    .current_dir(&project_root)
+                let mut command = Command::new(cmd);
+
+                // Add arguments if any (for Python script mode)
+                if !args.is_empty() {
+                    command.args(&args);
+                }
+
+                match command
                     .stdout(Stdio::inherit())
                     .stderr(Stdio::inherit())
                     .spawn()
                 {
                     Ok(p) => {
                         let pid = p.id();
-                        println!("Python daemon started with '{}' (PID: {})", cmd, pid);
+                        println!("Daemon started with '{}' (PID: {})", cmd, pid);
                         return Ok((p, pid));
                     }
                     Err(e) => {
@@ -133,8 +193,8 @@ impl PythonDaemon {
         }
 
         Err(format!(
-            "Failed to start Python daemon. Tried commands: {:?}. Last error: {:?}",
-            python_commands, last_error
+            "Failed to start daemon. Tried commands: {:?}. Last error: {:?}",
+            commands_to_try, last_error
         )
         .into())
     }
@@ -142,6 +202,7 @@ impl PythonDaemon {
 
 impl Drop for PythonDaemon {
     fn drop(&mut self) {
+        println!("=== PythonDaemon Drop called ===");
         println!("Shutting down Python HTTP daemon...");
 
         // Phase 1: Try graceful HTTP shutdown first
@@ -149,6 +210,8 @@ impl Drop for PythonDaemon {
 
         // Phase 2: Use signals for cleanup
         if let Some(pid) = self.pid {
+            println!("Daemon PID: {}, proceeding with signal-based cleanup", pid);
+
             #[cfg(unix)]
             {
                 self.unix_two_phase_termination(pid);
@@ -158,7 +221,11 @@ impl Drop for PythonDaemon {
             {
                 self.windows_termination();
             }
+        } else {
+            println!("No PID stored, cannot send signals");
         }
+
+        println!("=== PythonDaemon Drop completed ===");
     }
 }
 

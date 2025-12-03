@@ -7,7 +7,7 @@ import FlowVisualization from '../components/FlowVisualization';
 const API_BASE = "http://127.0.0.1:8765";
 
 function MetaflowPreviewPage({ session, onNavigate, showStatus, metaflowId, metaflowYaml }) {
-  const userId = session?.username || 'default_user';
+  const userId = session?.username;
   const [isGenerating, setIsGenerating] = useState(false);
   const [yamlContent, setYamlContent] = useState('');
   const [metaflowData, setMetaflowData] = useState(null);
@@ -81,7 +81,7 @@ function MetaflowPreviewPage({ session, onNavigate, showStatus, metaflowId, meta
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           metaflow_id: metaflowId,
-          user_id: "default_user"
+          user_id: userId
         })
       });
 

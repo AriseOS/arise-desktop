@@ -5,7 +5,7 @@ import '../styles/QuickStartPage.css';
 const API_BASE = "http://127.0.0.1:8765";
 
 function QuickStartPage({ session, onNavigate, showStatus }) {
-  const userId = session?.username || 'default_user';
+  const userId = session?.username;
   const [step, setStep] = useState('tutorial'); // 'tutorial', 'input', 'recording', 'analyzing'
   const [tutorialPage, setTutorialPage] = useState(0);
   const [currentSessionId, setCurrentSessionId] = useState(null);

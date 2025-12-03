@@ -11,7 +11,7 @@ function ExecutionResultPage({
   workflowId,
   executionId
 }) {
-  const userId = session?.username || 'default_user';
+  const userId = session?.username;
   const [workflowName, setWorkflowName] = useState('');
   const [isEditingName, setIsEditingName] = useState(false);
   const [executionStats, setExecutionStats] = useState(null);

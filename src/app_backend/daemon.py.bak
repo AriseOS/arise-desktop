@@ -17,21 +17,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 
-# Detect if running in PyInstaller bundle
-def get_project_root() -> Path:
-    """Get project root, handling both development and PyInstaller environments"""
-    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-        # Running in PyInstaller bundle
-        # sys._MEIPASS is the temporary folder where PyInstaller extracts files
-        bundle_dir = Path(sys._MEIPASS)
-        return bundle_dir
-    else:
-        # Running from source
-        project_root = Path(__file__).parent.parent.parent
-        return project_root
-
 # Add project root to sys.path
-project_root = get_project_root()
+project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.app_backend.core.config_service import get_config
@@ -102,7 +89,7 @@ class UploadRecordingRequest(BaseModel):
     session_id: str
     task_description: str
     user_query: Optional[str] = None  # What user wants to do
-    user_id: str
+    user_id: str = "default_user"
 
 
 class UploadRecordingResponse(BaseModel):
@@ -113,7 +100,7 @@ class UploadRecordingResponse(BaseModel):
 class GenerateMetaflowRequest(BaseModel):
     task_description: str
     user_query: Optional[str] = None  # What user wants to do
-    user_id: str
+    user_id: str = "default_user"
 
 
 class GenerateMetaflowResponse(BaseModel):
@@ -127,13 +114,13 @@ class GenerateMetaflowFromRecordingRequest(BaseModel):
     session_id: str
     task_description: str
     user_query: Optional[str] = None  # What user wants to do
-    user_id: str
+    user_id: str = "default_user"
 
 
 class AnalyzeRecordingRequest(BaseModel):
     """Request model for analyzing recording"""
     session_id: str
-    user_id: str
+    user_id: str = "default_user"
 
 
 class AnalyzeRecordingResponse(BaseModel):
@@ -150,7 +137,7 @@ class UpdateRecordingMetadataRequest(BaseModel):
     task_description: str
     user_query: str
     name: Optional[str] = None
-    user_id: str
+    user_id: str = "default_user"
 
 
 class GenerateWorkflowRequest(BaseModel):
@@ -160,7 +147,7 @@ class GenerateWorkflowRequest(BaseModel):
     User must review and confirm MetaFlow before generating Workflow.
     """
     metaflow_id: str
-    user_id: str
+    user_id: str = "default_user"
 
 
 class GenerateWorkflowResponse(BaseModel):
@@ -173,7 +160,7 @@ class GenerateWorkflowResponse(BaseModel):
 
 class ExecuteWorkflowRequest(BaseModel):
     workflow_name: str
-    user_id: str
+    user_id: str = "default_user"
 
 
 class ExecuteWorkflowResponse(BaseModel):
@@ -461,7 +448,7 @@ async def arrange_windows():
 # ============================================================================
 
 @app.get("/api/dashboard")
-async def get_dashboard(user_id: str):
+async def get_dashboard(user_id: str = "default_user"):
     """Get dashboard statistics and recent workflows for user"""
     try:
         logger.info(f"Getting dashboard for user: {user_id}")
@@ -727,7 +714,7 @@ async def get_recording_detail(session_id: str, user_id: str):
 
 
 @app.delete("/api/recordings/{session_id}")
-async def delete_recording(session_id: str, user_id: str):
+async def delete_recording(session_id: str, user_id: str = "default_user"):
     """Delete a recording"""
     try:
         logger.info(f"Deleting recording: session_id={session_id}")
@@ -939,7 +926,7 @@ async def generate_metaflow_from_recording(request: GenerateMetaflowFromRecordin
 
 
 @app.get("/api/metaflows")
-async def list_metaflows(user_id: str):
+async def list_metaflows(user_id: str = "default_user"):
     """List all MetaFlows for user (proxy to Cloud Backend)"""
     try:
         metaflows = await cloud_client.list_metaflows(user_id)
@@ -950,7 +937,7 @@ async def list_metaflows(user_id: str):
 
 
 @app.get("/api/metaflows/{metaflow_id}")
-async def get_metaflow(metaflow_id: str, user_id: str):
+async def get_metaflow(metaflow_id: str, user_id: str = "default_user"):
     """Get MetaFlow detail (proxy to Cloud Backend)"""
     try:
         metaflow = await cloud_client.get_metaflow(metaflow_id, user_id)
@@ -970,7 +957,7 @@ async def update_metaflow(metaflow_id: str, data: dict):
     3. Return success if at least one succeeds
     """
     try:
-        user_id = data.get("user_id")
+        user_id = data.get("user_id", "default_user")
         metaflow_yaml = data.get("metaflow_yaml")
 
         if not metaflow_yaml:
@@ -1025,7 +1012,7 @@ async def generate_workflow_from_metaflow_api(data: dict):
     """Generate Workflow from MetaFlow (alternative endpoint used by frontend)"""
     try:
         metaflow_id = data.get("metaflow_id")
-        user_id = data.get("user_id")
+        user_id = data.get("user_id", "default_user")
 
         if not metaflow_id:
             raise HTTPException(status_code=400, detail="Missing metaflow_id")
@@ -1171,7 +1158,7 @@ async def get_workflow_status(task_id: str):
 
 
 @app.get("/api/workflows", response_model=ListWorkflowsResponse)
-async def list_workflows(user_id: str):
+async def list_workflows(user_id: str = "default_user"):
     """List all workflows for a user (Cloud + Local merged)
 
     Strategy:
@@ -1247,7 +1234,7 @@ async def list_workflows(user_id: str):
 
 
 @app.get("/api/workflows/{workflow_id}/detail")
-async def get_workflow_detail(workflow_id: str, user_id: str):
+async def get_workflow_detail(workflow_id: str, user_id: str = "default_user"):
     """Get detailed workflow data for visualization
 
     Returns workflow structure with steps and connections for ReactFlow
@@ -1338,7 +1325,7 @@ async def update_workflow(workflow_id: str, data: dict):
     3. Return success if at least one succeeds
     """
     try:
-        user_id = data.get("user_id")
+        user_id = data.get("user_id", "default_user")
         workflow_yaml = data.get("workflow_yaml")
 
         if not workflow_yaml:
@@ -1385,7 +1372,7 @@ async def update_workflow(workflow_id: str, data: dict):
 
 
 @app.delete("/api/workflows/{workflow_id}")
-async def delete_workflow(workflow_id: str, user_id: str):
+async def delete_workflow(workflow_id: str, user_id: str = "default_user"):
     """Delete a workflow from both Cloud and local storage
 
     Sync Strategy:
@@ -1438,7 +1425,7 @@ async def delete_workflow(workflow_id: str, user_id: str):
 # ============================================================================
 
 @app.get("/api/data/collections")
-async def list_collections(user_id: str):
+async def list_collections(user_id: str = "default_user"):
     """List all data collections with metadata
 
     Returns collections from storage.db with:
@@ -1512,7 +1499,7 @@ async def list_collections(user_id: str):
 
 
 @app.get("/api/data/collections/{collection_name}")
-async def get_collection_detail(collection_name: str, user_id: str, limit: int = 10):
+async def get_collection_detail(collection_name: str, user_id: str = "default_user", limit: int = 10):
     """Get collection detail with data preview
 
     Args:
@@ -1594,7 +1581,7 @@ async def get_collection_detail(collection_name: str, user_id: str, limit: int =
 
 
 @app.delete("/api/data/collections/{collection_name}")
-async def delete_collection(collection_name: str, user_id: str):
+async def delete_collection(collection_name: str, user_id: str = "default_user"):
     """Delete a collection and its related caches
 
     Args:
@@ -1681,7 +1668,7 @@ async def delete_collection(collection_name: str, user_id: str):
 
 
 @app.get("/api/data/collections/{collection_name}/export")
-async def export_collection(collection_name: str, user_id: str, limit: Optional[int] = None):
+async def export_collection(collection_name: str, user_id: str = "default_user", limit: Optional[int] = None):
     """Export collection data as CSV
 
     Args:
@@ -1768,7 +1755,7 @@ async def export_collection(collection_name: str, user_id: str, limit: Optional[
 
 class StartIntentBuilderRequest(BaseModel):
     """Request model for starting Intent Builder session"""
-    user_id: str
+    user_id: str = "default_user"
     user_query: str
     task_description: Optional[str] = None
     session_id: Optional[str] = None  # For resuming from recording

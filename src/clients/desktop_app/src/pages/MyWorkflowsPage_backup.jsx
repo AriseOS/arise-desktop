@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react'
 
 const API_BASE = "http://127.0.0.1:8765";
-const DEFAULT_USER = "default_user";
 
 function MyWorkflowsPage({ currentUser, onNavigate, onLogout }) {
   const [workflows, setWorkflows] = useState([])

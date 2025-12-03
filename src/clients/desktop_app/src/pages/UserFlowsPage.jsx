@@ -5,15 +5,17 @@ import '../styles/UserFlowsPage.css';
 const API_BASE = "http://127.0.0.1:8765";
 
 function UserFlowsPage({ session, onNavigate, showStatus }) {
-  const userId = session?.username || 'default_user';
+  const userId = session?.username;
   const [recordings, setRecordings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedRecording, setSelectedRecording] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null); // { sessionId, recordingName }
 
   useEffect(() => {
-    loadRecordings();
-  }, []);
+    if (userId) {
+      loadRecordings();
+    }
+  }, [userId]);
 
   const loadRecordings = async () => {
     try {

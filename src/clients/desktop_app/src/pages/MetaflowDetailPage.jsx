@@ -7,7 +7,7 @@ import yaml from 'js-yaml';
 const API_BASE = "http://127.0.0.1:8765";
 
 function MetaflowDetailPage({ session, onNavigate, showStatus, metaflowId }) {
-  const userId = session?.username || 'userId';
+  const userId = session?.username;
   const [metaflow, setMetaflow] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('preview'); // 'preview' or 'yaml'
@@ -54,7 +54,7 @@ function MetaflowDetailPage({ session, onNavigate, showStatus, metaflowId }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           metaflow_id: metaflowId,
-          user_id: "userId"
+          user_id: userId
         })
       });
 

@@ -20,7 +20,7 @@ const nodeTypes = {
 }
 
 function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData }) {
-  const userId = session?.username || 'userId';
+  const userId = session?.username;
   const [workflowData, setWorkflowData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [isRunning, setIsRunning] = useState(false)

@@ -230,7 +230,7 @@ export const api = {
    * @param {string} userId - User ID
    * @returns {Promise<object>} Upload result
    */
-  async uploadRecording(sessionId, taskDescription, userQuery = null, userId = 'default_user') {
+  async uploadRecording(sessionId, taskDescription, userQuery = null, userId) {
     return await this.callAppBackend('/api/recordings/upload', {
       method: 'POST',
       body: JSON.stringify({
@@ -250,7 +250,7 @@ export const api = {
    * @param {string} userId - User ID
    * @returns {Promise<object>} MetaFlow result
    */
-  async generateMetaflow(taskDescription, userQuery = null, userId = 'default_user') {
+  async generateMetaflow(taskDescription, userQuery = null, userId) {
     return await this.callAppBackend('/api/metaflows/generate', {
       method: 'POST',
       body: JSON.stringify({
@@ -270,7 +270,7 @@ export const api = {
    * @param {string} userId - User ID
    * @returns {Promise<object>} MetaFlow result
    */
-  async generateMetaflowFromRecording(sessionId, taskDescription, userQuery = null, userId = 'default_user') {
+  async generateMetaflowFromRecording(sessionId, taskDescription, userQuery = null, userId) {
     return await this.callAppBackend('/api/metaflows/from-recording', {
       method: 'POST',
       body: JSON.stringify({
@@ -289,7 +289,7 @@ export const api = {
    * @param {string} userId - User ID
    * @returns {Promise<object>} Workflow result
    */
-  async generateWorkflow(metaflowId, userId = 'default_user') {
+  async generateWorkflow(metaflowId, userId) {
     return await this.callAppBackend('/api/workflows/generate', {
       method: 'POST',
       body: JSON.stringify({
@@ -306,7 +306,7 @@ export const api = {
    * @param {string} userId - User ID
    * @returns {Promise<object>} Execution result with task_id
    */
-  async executeWorkflow(workflowName, userId = 'default_user') {
+  async executeWorkflow(workflowName, userId) {
     return await this.callAppBackend('/api/workflow/execute', {
       method: 'POST',
       body: JSON.stringify({
@@ -332,7 +332,7 @@ export const api = {
    * @param {string} userId - User ID
    * @returns {Promise<object>} Workflows list
    */
-  async listWorkflows(userId = 'default_user') {
+  async listWorkflows(userId) {
     return await this.callAppBackend(`/api/workflows?user_id=${userId}`);
   },
 
@@ -343,7 +343,7 @@ export const api = {
    * @param {string} userId - User ID
    * @returns {Promise<object>} Workflow detail
    */
-  async getWorkflowDetail(workflowId, userId = 'default_user') {
+  async getWorkflowDetail(workflowId, userId) {
     return await this.callAppBackend(`/api/workflows/${workflowId}?user_id=${userId}`);
   },
 
@@ -353,7 +353,7 @@ export const api = {
    * @param {string} userId - User ID
    * @returns {Promise<object>} Dashboard data
    */
-  async getDashboard(userId = 'default_user') {
+  async getDashboard(userId) {
     return await this.callAppBackend(`/api/dashboard?user_id=${userId}`);
   },
 
@@ -364,7 +364,7 @@ export const api = {
    * @param {string} userId - User ID
    * @returns {Promise<object>} Analysis result
    */
-  async analyzeRecording(sessionId, userId = 'default_user') {
+  async analyzeRecording(sessionId, userId) {
     return await this.callAppBackend('/api/recordings/analyze', {
       method: 'POST',
       body: JSON.stringify({

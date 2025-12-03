@@ -14,7 +14,7 @@ const nodeTypes = {
 
 function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStatus, onLogout }) {
   // Get user_id from session
-  const userId = session?.username || 'default_user';
+  const userId = session?.username;
   const [workflowData, setWorkflowData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -30,8 +30,10 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
   const logEndRef = useRef(null)
 
   useEffect(() => {
-    loadWorkflowData()
-  }, [workflowId])
+    if (userId && workflowId) {
+      loadWorkflowData()
+    }
+  }, [userId, workflowId])
 
   // Auto-run workflow if autoRun is true
   useEffect(() => {

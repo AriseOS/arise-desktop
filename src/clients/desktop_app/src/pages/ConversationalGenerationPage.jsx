@@ -5,7 +5,7 @@ import '../styles/ConversationalGenerationPage.css';
 const API_BASE = "http://127.0.0.1:8765";
 
 function ConversationalGenerationPage({ session, onNavigate, showStatus }) {
-  const userId = session?.username || 'userId';
+  const userId = session?.username;
   const [taskDescription, setTaskDescription] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [showRecordingsSidebar, setShowRecordingsSidebar] = useState(true);
@@ -52,7 +52,7 @@ function ConversationalGenerationPage({ session, onNavigate, showStatus }) {
         requestBody = {
           session_id: referencedRecording.session_id,
           task_description: description,
-          user_id: "userId"
+          user_id: userId
         };
         showStatus('Generating MetaFlow from recording...', 'info');
       } else {
@@ -60,7 +60,7 @@ function ConversationalGenerationPage({ session, onNavigate, showStatus }) {
         apiEndpoint = `${API_BASE}/api/metaflows/generate`;
         requestBody = {
           task_description: description,
-          user_id: "userId"
+          user_id: userId
         };
         showStatus('Generating MetaFlow from your description...', 'info');
       }

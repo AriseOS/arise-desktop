@@ -5,13 +5,15 @@ import '../styles/DataManagementPage.css';
 const API_BASE = "http://127.0.0.1:8765";
 
 function DataManagementPage({ session, onNavigate, showStatus }) {
-  const userId = session?.username || 'default_user';
+  const userId = session?.username;
   const [collections, setCollections] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadCollections();
-  }, []);
+    if (userId) {
+      loadCollections();
+    }
+  }, [userId]);
 
   const loadCollections = async () => {
     setLoading(true);

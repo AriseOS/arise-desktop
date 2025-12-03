@@ -5,7 +5,7 @@ import '../styles/GenerationPage.css';
 const API_BASE = "http://127.0.0.1:8765";
 
 function GenerationPage({ session, onNavigate, showStatus, params = {} }) {
-  const userId = session?.username || 'default_user';
+  const userId = session?.username;
   // Step 1: MetaFlow generation
   const [chatInput, setChatInput] = useState("");
   const [metaflowId, setMetaflowId] = useState("");

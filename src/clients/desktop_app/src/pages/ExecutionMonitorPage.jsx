@@ -13,7 +13,7 @@ function ExecutionMonitorPage({
   initialStatus = 'running',
   initialSteps = []
 }) {
-  const userId = session?.username || 'default_user';
+  const userId = session?.username;
   const [status, setStatus] = useState(initialStatus); // 'running', 'paused', 'completed', 'failed'
   const [progress, setProgress] = useState(0);
   const [currentStep, setCurrentStep] = useState(0);
