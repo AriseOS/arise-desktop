@@ -49,10 +49,6 @@ class ApiProxyConfigService(ConfigService):
         """Get JWT access token expiration time"""
         return self.get("jwt.access_token_expire_minutes", 43200)
 
-    def get_cloud_backend_url(self) -> str:
-        """Get Cloud Backend base URL"""
-        return self.get("cloud_backend.base_url", "http://localhost:8000")
-
     def get_anthropic_api_key(self) -> str:
         """Get Anthropic API key from config or environment"""
         import os

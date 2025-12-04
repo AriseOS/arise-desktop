@@ -29,7 +29,7 @@ llm:
   # - OPENAI_API_KEY for openai
 
 cloud:
-  api_url: http://127.0.0.1:9000
+  api_url: https://api.ariseos.com
   timeout: 120
 
 logging:

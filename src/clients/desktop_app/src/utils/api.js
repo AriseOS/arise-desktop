@@ -6,7 +6,7 @@
 import { auth } from './auth';
 
 // API endpoints
-const API_PROXY_BASE = 'http://localhost:8080';
+const API_PROXY_BASE = 'https://api.ariseos.com';
 const APP_BACKEND_BASE = 'http://127.0.0.1:8765';
 
 /**

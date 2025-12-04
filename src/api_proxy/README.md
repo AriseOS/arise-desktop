@@ -1,6 +1,6 @@
-# API Proxy Microservice
+# API Proxy
 
-User management and LLM API proxy service for Ami platform.
+User management and LLM API proxy microservice for Ami platform.
 
 ## Features
 
@@ -9,55 +9,32 @@ User management and LLM API proxy service for Ami platform.
 - LLM API request forwarding (Anthropic Claude)
 - Token usage statistics tracking
 - Workflow execution quota management
-- Admin dashboard
 
-## Architecture
+## Deployment
 
-```
-Desktop App / Cloud Backend
-  ↓ (X-API-Key: ami_xxx)
-API Proxy
-  - Validate user API Key
-  - Track token usage
-  - Forward to Anthropic
-  ↓ (X-API-Key: sk-ant-real-key)
-Anthropic API
-```
+See: `docs/deployment/api_proxy_deployment.md`
 
-## Setup
-
-### 1. Install Dependencies
+Quick deployment on server:
 
 ```bash
-cd src/api_proxy
-pip install -r requirements.txt
-```
+# 1. Prepare config
+mkdir -p /opt/ami/config
+cp src/api_proxy/config/api-proxy.yaml /opt/ami/config/
+vim /opt/ami/config/api-proxy.yaml  # Edit encryption_key
 
-### 2. Configure Environment
+# 2. Build image
+cd /data/workspace/Ami
+./scripts/deploy_api_proxy.sh
 
-```bash
-cp .env.example .env
-# Edit .env and fill in your values
-```
-
-### 3. Setup Database
-
-```bash
-# Create PostgreSQL database
-createdb ami_proxy
-
-# Run migrations
-alembic upgrade head
-```
-
-### 4. Run Server
-
-```bash
-# Development
-uvicorn main:app --reload --host 0.0.0.0 --port 8080
-
-# Production
-uvicorn main:app --host 0.0.0.0 --port 8080 --workers 4
+# 3. Run container
+docker run -d \
+    --name ami-api-proxy \
+    --restart unless-stopped \
+    -p 127.0.0.1:8080:8080 \
+    -v /opt/ami/config/api-proxy.yaml:/app/src/api_proxy/config/api-proxy.yaml:ro \
+    -v /opt/ami/logs:/root/.ami/logs \
+    -v /opt/ami/database:/root/.ami/database \
+    ami-api-proxy:latest
 ```
 
 ## API Endpoints
@@ -80,45 +57,16 @@ uvicorn main:app --host 0.0.0.0 --port 8080 --workers 4
 
 ## Configuration
 
-Edit `config.yaml` to configure:
-- Server settings
-- Database connection
-- Security settings (JWT, encryption)
-- LLM API keys
-- Quota limits
-
-## Development
-
-### Run Tests
-
-```bash
-pytest tests/ -v
-```
-
-### Database Migrations
-
-```bash
-# Create new migration
-alembic revision --autogenerate -m "description"
-
-# Apply migrations
-alembic upgrade head
-
-# Rollback
-alembic downgrade -1
-```
+Edit `config/api-proxy.yaml`:
+- Database settings (SQLite/PostgreSQL)
+- Security (JWT secret, encryption key)
+- LLM provider settings
+- User quota limits
 
 ## Security
 
-- API Keys are encrypted with Fernet before storage
-- Passwords are hashed with bcrypt (12 rounds)
-- JWT tokens for session management
-- HTTPS required for production
-
-## Monitoring
-
-Access admin dashboard at: `http://localhost:8080/admin/`
-
-Default admin credentials:
-- Username: admin
-- Password: (set in ADMIN_PASSWORD env var)
+- API Keys encrypted with Fernet
+- Passwords hashed with bcrypt
+- JWT tokens for sessions
+- Bind to localhost only (127.0.0.1:8080)
+- External access via reverse proxy only

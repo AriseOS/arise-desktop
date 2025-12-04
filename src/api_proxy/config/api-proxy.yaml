@@ -11,7 +11,7 @@ server:
 # Database Settings
 database:
   # Database type: postgresql or sqlite
-  type: "sqlite"  # Use SQLite by default for easier setup
+  type: "postgresql"  # Use SQLite by default for easier setup
 
   # PostgreSQL settings
   postgresql:
@@ -37,18 +37,13 @@ jwt:
 security:
   # Encryption key for API keys (base64-encoded Fernet key)
   # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-  encryption_key: "your-encryption-key-change-in-production-use-fernet-generate-key"
+  encryption_key: "-Jy1i_byVFOwl0-SKX6W6CkBU0ivKy8dpN8UNGXaq3w"
   bcrypt_rounds: 12
 
 # API Key Settings
 api_key:
   prefix: "ami_"
   length: 32
-
-# Cloud Backend Proxy Settings
-cloud_backend:
-  base_url: "http://localhost:8000"
-  timeout_seconds: 300
 
 # LLM Provider Settings (for proxying)
 llm:

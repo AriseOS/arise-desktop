@@ -88,3 +88,22 @@ yarn-error.log*
 *.temp
 .cache/
 # *output/
+
+# PyInstaller
+*.spec.bak
+src/app_backend/build/
+src/app_backend/dist/
+src/app_backend/*.spec~
+
+# Compiled daemon binary (will be built during release)
+src/clients/desktop_app/src-tauri/resources/ami-daemon
+src/clients/desktop_app/src-tauri/resources/ami-daemon.exe
+
+# Tauri config backups
+src/clients/desktop_app/src-tauri/tauri.conf.json.backup
+src/clients/desktop_app/src-tauri/tauri.conf.json.bak
+
+# Docker image archives (offline deployment)
+*.tar
+*.tar.gz
+ami-api-proxy-*.tar.gz
