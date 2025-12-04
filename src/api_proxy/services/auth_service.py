@@ -33,8 +33,24 @@ class AuthService:
 
         Returns:
             Hashed password
+
+        Raises:
+            ValueError: If password is too long (>72 bytes for bcrypt)
         """
-        return pwd_context.hash(password)
+        # Bcrypt has a 72-byte limit
+        password_bytes = password.encode('utf-8')
+        if len(password_bytes) > 72:
+            raise ValueError(f"Password is too long ({len(password_bytes)} bytes). Maximum is 72 bytes.")
+
+        try:
+            return pwd_context.hash(password)
+        except Exception as e:
+            # Log the error with more context
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to hash password: {e}")
+            logger.error(f"Password length: {len(password)} chars, {len(password_bytes)} bytes")
+            raise ValueError(f"Password hashing failed: {str(e)}")
 
     def verify_password(self, plain_password: str, hashed_password: str) -> bool:
         """Verify a password against its hash

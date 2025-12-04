@@ -9,6 +9,9 @@ RUN apt-get update && apt-get install -y \
     curl \
     gcc \
     g++ \
+    make \
+    libffi-dev \
+    libssl-dev \
     postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 

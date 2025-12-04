@@ -89,6 +89,19 @@ function App() {
     await checkLoginStatus();
   };
 
+  const handleLogout = async () => {
+    // Clear local state
+    setIsLoggedIn(false);
+    setSession(null);
+    setHasWorkflows(false);
+    setRecentWorkflows([]);
+
+    // Navigate to login page
+    navigate('login');
+
+    console.log('[App] User logged out');
+  };
+
   // Browser state
   const [browserOpening, setBrowserOpening] = useState(false);
 
@@ -357,6 +370,7 @@ function App() {
           <SettingsPage
             navigate={navigate}
             showStatus={showStatus}
+            onLogout={handleLogout}
           />
         );
 

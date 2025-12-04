@@ -8,11 +8,12 @@ import '../styles/SettingsPage.css';
  * Settings Page Component
  * Displays user account info, quota status, and logout option
  */
-function SettingsPage({ navigate, showStatus }) {
+function SettingsPage({ navigate, showStatus, onLogout }) {
   const [session, setSession] = useState(null);
   const [quota, setQuota] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -54,18 +55,32 @@ function SettingsPage({ navigate, showStatus }) {
     }
   };
 
-  const handleLogout = async () => {
-    const confirmed = window.confirm('Are you sure you want to logout?');
-    if (!confirmed) return;
+  const handleLogoutClick = () => {
+    setShowLogoutConfirm(true);
+  };
+
+  const handleLogoutConfirm = async () => {
+    setShowLogoutConfirm(false);
 
     try {
       await auth.clearSession();
       showStatus('Logged out successfully', 'success');
-      navigate('login');
+
+      // Call parent logout handler to clear App state
+      if (onLogout) {
+        await onLogout();
+      } else {
+        // Fallback if onLogout not provided
+        navigate('login');
+      }
     } catch (error) {
       console.error('[SettingsPage] Logout error:', error);
       showStatus(`Failed to logout: ${error.message}`, 'error');
     }
+  };
+
+  const handleLogoutCancel = () => {
+    setShowLogoutConfirm(false);
   };
 
   if (loading) {
@@ -126,7 +141,7 @@ function SettingsPage({ navigate, showStatus }) {
               </div>
             )}
           </div>
-          <button className="btn btn-danger" onClick={handleLogout}>
+          <button className="btn btn-danger" onClick={handleLogoutClick}>
             <Icon icon="logOut" size={16} /> Logout
           </button>
         </section>
@@ -240,6 +255,29 @@ function SettingsPage({ navigate, showStatus }) {
           )}
         </section>
       </div>
+
+      {/* Logout Confirmation Modal */}
+      {showLogoutConfirm && (
+        <div className="modal-overlay" onClick={handleLogoutCancel}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Confirm Logout</h3>
+            </div>
+            <div className="modal-body">
+              <p>Are you sure you want to logout?</p>
+              <p className="warning-text">You will need to login again to use the app.</p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn-cancel" onClick={handleLogoutCancel}>
+                Cancel
+              </button>
+              <button className="btn-confirm-delete" onClick={handleLogoutConfirm}>
+                Logout
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
