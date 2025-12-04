@@ -27,33 +27,43 @@ class CloudClient:
         self.token = token
         self.user_api_key = user_api_key
 
-        # Build headers
+        # Build base headers (only static headers)
+        # Note: Dynamic headers (like X-Ami-API-Key) must be passed per-request
         headers = {}
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        if user_api_key:
-            headers["X-Ami-API-Key"] = user_api_key
-            logger.info(f"CloudClient initialized with API key: {user_api_key[:10]}...")
 
         # No timeout limit (as per requirements)
+        # Explicitly use Clash proxy to handle Fake-IP mode
+        # Clash's HTTP proxy: 127.0.0.1:7890
+        import os
+        proxy_url = os.environ.get('HTTPS_PROXY') or os.environ.get('HTTP_PROXY') or "http://127.0.0.1:7890"
+
         self.client = httpx.AsyncClient(
             base_url=self.api_url,
             headers=headers,
-            timeout=None  # No timeout
+            timeout=None,  # No timeout
+            proxy=proxy_url  # Use Clash HTTP proxy
         )
+
+        logger.info(f"CloudClient using proxy: {proxy_url}")
+
+        if user_api_key:
+            logger.info(f"CloudClient initialized with API key: {user_api_key[:10]}...")
 
     def set_user_api_key(self, api_key: Optional[str]):
         """Update user API key for subsequent requests
+
+        Note: The API key is stored and will be sent as X-Ami-API-Key header
+        in each request that requires it.
 
         Args:
             api_key: User's Ami API key (ami_xxxxx format)
         """
         self.user_api_key = api_key
         if api_key:
-            self.client.headers["X-Ami-API-Key"] = api_key
             logger.info(f"API key updated: {api_key[:10]}...")
-        elif "X-Ami-API-Key" in self.client.headers:
-            del self.client.headers["X-Ami-API-Key"]
+        else:
             logger.info("API key cleared")
 
     async def get_recording(
@@ -137,12 +147,18 @@ class CloudClient:
         if user_query:
             logger.info(f"User query: {user_query}")
 
+        # Build request headers
+        headers = {}
+        if self.user_api_key:
+            headers["X-Ami-API-Key"] = self.user_api_key
+
         response = await self.client.post(
             f"/api/users/{user_id}/generate_metaflow",
             json={
                 "task_description": task_description,
                 "user_query": user_query
-            }
+            },
+            headers=headers
         )
         response.raise_for_status()
         result = response.json()
@@ -177,13 +193,19 @@ class CloudClient:
         if user_query:
             logger.info(f"User query: {user_query}")
 
+        # Build request headers
+        headers = {}
+        if self.user_api_key:
+            headers["X-Ami-API-Key"] = self.user_api_key
+
         response = await self.client.post(
             f"/api/recordings/{recording_id}/generate_metaflow",
             json={
                 "user_id": user_id,
                 "task_description": task_description,
                 "user_query": user_query
-            }
+            },
+            headers=headers
         )
         response.raise_for_status()
         result = response.json()
@@ -211,9 +233,15 @@ class CloudClient:
         """
         logger.info(f"Generating Workflow from MetaFlow: {metaflow_id}")
 
+        # Build request headers
+        headers = {}
+        if self.user_api_key:
+            headers["X-Ami-API-Key"] = self.user_api_key
+
         response = await self.client.post(
             f"/api/metaflows/{metaflow_id}/generate_workflow",
-            json={"user_id": user_id}
+            json={"user_id": user_id},
+            headers=headers
         )
         response.raise_for_status()
         result = response.json()
@@ -454,12 +482,21 @@ class CloudClient:
         try:
             logger.info(f"Analyzing {len(operations)} operations...")
 
+            # Build request headers
+            headers = {}
+            if self.user_api_key:
+                headers["X-Ami-API-Key"] = self.user_api_key
+                logger.info(f"Sending request with API key: {self.user_api_key[:10]}...")
+            else:
+                logger.warning("No user API key set, request will fail")
+
             response = await self.client.post(
                 "/api/analyze_recording",
                 json={
                     "operations": operations,
                     "user_id": user_id
-                }
+                },
+                headers=headers
             )
             response.raise_for_status()
             result = response.json()
@@ -471,7 +508,10 @@ class CloudClient:
             logger.error(f"Analysis failed: {e.response.status_code} {e.response.text}")
             raise
         except Exception as e:
-            logger.error(f"Analysis error: {e}")
+            logger.error(f"Analysis error: {type(e).__name__}: {e}")
+            logger.error(f"Request URL: {self.client.base_url}/api/analyze_recording")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             raise
 
     # ===== Intent Builder Agent APIs (SSE Streaming) =====

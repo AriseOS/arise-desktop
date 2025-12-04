@@ -610,10 +610,22 @@ async def stop_recording():
 
 
 @app.post("/api/recording/analyze", response_model=AnalyzeRecordingResponse)
-async def analyze_recording(request: AnalyzeRecordingRequest):
+async def analyze_recording(
+    request: AnalyzeRecordingRequest,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
     """Analyze recording and generate suggested task_description and user_query using AI"""
     try:
         logger.info(f"Analyzing recording: session_id={request.session_id}")
+        logger.info(f"X-Ami-API-Key header received: {x_ami_api_key[:10] if x_ami_api_key else 'None'}...")
+
+        # Set user API key on cloud client
+        if x_ami_api_key:
+            cloud_client.set_user_api_key(x_ami_api_key)
+            logger.info(f"Set user API key on cloud client: {x_ami_api_key[:10]}...")
+            logger.info(f"CloudClient headers: {dict(cloud_client.client.headers)}")
+        else:
+            logger.warning("No X-Ami-API-Key header provided")
 
         # 1. Load recording
         recording_data = storage_manager.get_recording(request.user_id, request.session_id)

@@ -366,7 +366,7 @@ export const api = {
    * @returns {Promise<object>} Analysis result
    */
   async analyzeRecording(sessionId, userId) {
-    return await this.callAppBackend('/api/recordings/analyze', {
+    return await this.callAppBackend('/api/recording/analyze', {
       method: 'POST',
       body: JSON.stringify({
         session_id: sessionId,

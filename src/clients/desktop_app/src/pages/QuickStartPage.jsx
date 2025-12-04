@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import Icon from '../components/Icons';
+import { api } from '../utils/api';
 import '../styles/QuickStartPage.css';
 
 const API_BASE = "http://127.0.0.1:8765";
@@ -137,23 +138,11 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
         });
       }, 300);
 
-      const analyzeResponse = await fetch(`${API_BASE}/api/recording/analyze`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          session_id: sessionId,
-          user_id: userId
-        })
-      });
+      // Use api.analyzeRecording() which auto-injects X-Ami-API-Key header
+      const analysisResult = await api.analyzeRecording(sessionId, userId);
 
       clearInterval(progressInterval);
       setAnalysisProgress(100);
-
-      if (!analyzeResponse.ok) {
-        throw new Error(`Analysis failed: ${analyzeResponse.status}`);
-      }
-
-      const analysisResult = await analyzeResponse.json();
 
       showStatus(`Analysis complete!`, "success");
 

@@ -432,7 +432,7 @@ async def analyze_recording(data: dict, x_ami_api_key: Optional[str] = Header(No
 
     try:
         # Create LLM provider with user's API key through API Proxy
-        from common.llm.anthropic_provider import AnthropicProvider
+        from src.common.llm.anthropic_provider import AnthropicProvider
         llm_provider = AnthropicProvider(
             api_key=x_ami_api_key,
             base_url=config_service.get("llm.proxy_base_url", "https://api.ariseos.com")
