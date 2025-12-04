@@ -28,6 +28,7 @@ import ConversationalGenerationPage from "./pages/ConversationalGenerationPage";
 import MetaflowPreviewPage from "./pages/MetaflowPreviewPage";
 import DataManagementPage from "./pages/DataManagementPage";
 import CollectionDetailPage from "./pages/CollectionDetailPage";
+import WorkflowExecutionLivePage from "./pages/WorkflowExecutionLivePage";
 
 function App() {
   // Auth state
@@ -476,6 +477,17 @@ function App() {
             showStatus={showStatus}
             workflowId={pageParams.workflowId}
             executionId={pageParams.executionId}
+          />
+        );
+
+      case "workflow-execution-live":
+        return (
+          <WorkflowExecutionLivePage
+            session={session}
+            onNavigate={navigate}
+            showStatus={showStatus}
+            taskId={pageParams.taskId}
+            workflowName={pageParams.workflowName}
           />
         );
 

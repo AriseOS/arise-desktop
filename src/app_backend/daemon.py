@@ -10,12 +10,14 @@ import asyncio
 import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, List
+from datetime import datetime
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
+import json
 
 # Detect if running in PyInstaller bundle
 def get_project_root() -> Path:
@@ -57,6 +59,63 @@ browser_manager: Optional[BrowserManager] = None
 workflow_executor: Optional[WorkflowExecutor] = None
 cdp_recorder: Optional[CDPRecorder] = None
 cloud_client: Optional[CloudClient] = None
+
+# WebSocket connection manager
+class WebSocketConnectionManager:
+    """Manage WebSocket connections for real-time progress updates"""
+
+    def __init__(self):
+        # Map task_id to list of active WebSocket connections
+        self.active_connections: Dict[str, List[WebSocket]] = {}
+        self.lock = asyncio.Lock()
+
+    async def connect(self, task_id: str, websocket: WebSocket):
+        """Connect a WebSocket for a specific task"""
+        await websocket.accept()
+        async with self.lock:
+            if task_id not in self.active_connections:
+                self.active_connections[task_id] = []
+            self.active_connections[task_id].append(websocket)
+            logger.info(f"WebSocket connected for task {task_id}. Total connections: {len(self.active_connections[task_id])}")
+
+    async def disconnect(self, task_id: str, websocket: WebSocket):
+        """Disconnect a WebSocket"""
+        async with self.lock:
+            if task_id in self.active_connections:
+                if websocket in self.active_connections[task_id]:
+                    self.active_connections[task_id].remove(websocket)
+                    logger.info(f"WebSocket disconnected for task {task_id}. Remaining: {len(self.active_connections[task_id])}")
+                if not self.active_connections[task_id]:
+                    del self.active_connections[task_id]
+
+    async def send_progress_update(self, task_id: str, data: dict):
+        """Send progress update to all connected clients for a task"""
+        async with self.lock:
+            if task_id not in self.active_connections:
+                return
+
+            connections = self.active_connections[task_id].copy()
+
+        # Send to all connections outside the lock to avoid blocking
+        disconnected = []
+        for connection in connections:
+            try:
+                await connection.send_json(data)
+            except Exception as e:
+                logger.error(f"Failed to send progress update: {e}")
+                disconnected.append(connection)
+
+        # Clean up disconnected clients
+        if disconnected:
+            async with self.lock:
+                if task_id in self.active_connections:
+                    for conn in disconnected:
+                        if conn in self.active_connections[task_id]:
+                            self.active_connections[task_id].remove(conn)
+                    if not self.active_connections[task_id]:
+                        del self.active_connections[task_id]
+
+ws_manager = WebSocketConnectionManager()
 
 # FastAPI app
 app = FastAPI(
@@ -224,7 +283,10 @@ async def startup_event():
 
     # Initialize workflow executor
     workflow_executor = WorkflowExecutor(storage_manager, browser_manager)
-    logger.info("✓ Workflow executor initialized")
+
+    # Set up progress callback for WebSocket updates
+    workflow_executor.set_progress_callback(ws_manager.send_progress_update)
+    logger.info("✓ Workflow executor initialized with WebSocket progress callback")
 
     # Initialize CDP recorder
     cdp_recorder = CDPRecorder(storage_manager, browser_manager)
@@ -1185,6 +1247,77 @@ async def get_workflow_status(task_id: str):
     except Exception as e:
         logger.error(f"Failed to get status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.websocket("/ws/workflow/{task_id}")
+async def workflow_progress_websocket(websocket: WebSocket, task_id: str):
+    """WebSocket endpoint for real-time workflow execution progress updates
+
+    The client connects with task_id to receive real-time progress updates
+    for that specific workflow execution.
+
+    Message format:
+    {
+        "type": "progress_update",
+        "task_id": "task_xxx",
+        "status": "running|completed|failed",
+        "progress": 50,
+        "current_step": 2,
+        "total_steps": 5,
+        "step_info": {
+            "name": "Step 2: Extract data",
+            "status": "in_progress|completed|failed",
+            "result": "...",
+            "duration": 1.5
+        },
+        "message": "Processing...",
+        "logs": [...],
+        "timestamp": "2024-12-03T12:00:00"
+    }
+    """
+    await ws_manager.connect(task_id, websocket)
+    logger.info(f"Client connected to workflow progress stream: task_id={task_id}")
+
+    try:
+        # Small delay to ensure connection is fully established
+        await asyncio.sleep(0.1)
+
+        # Send initial status if task exists
+        initial_status = workflow_executor.get_task_status(task_id)
+        if initial_status:
+            try:
+                await websocket.send_json({
+                    "type": "initial_status",
+                    "data": initial_status,
+                    "timestamp": datetime.now().isoformat()
+                })
+                logger.info(f"Sent initial status to client for task {task_id}")
+            except Exception as e:
+                logger.error(f"Failed to send initial status: {e}")
+
+        # Keep connection alive and handle client messages
+        while True:
+            try:
+                # Wait for client messages (heartbeat, etc.)
+                data = await websocket.receive_text()
+
+                # Handle heartbeat
+                if data == "ping":
+                    try:
+                        await websocket.send_text("pong")
+                    except Exception as e:
+                        logger.error(f"Failed to send pong: {e}")
+                        break
+
+            except WebSocketDisconnect:
+                logger.info(f"Client disconnected from workflow progress stream: task_id={task_id}")
+                break
+            except Exception as e:
+                logger.error(f"Error in WebSocket loop: {e}")
+                break
+
+    finally:
+        await ws_manager.disconnect(task_id, websocket)
 
 
 @app.get("/api/workflows", response_model=ListWorkflowsResponse)

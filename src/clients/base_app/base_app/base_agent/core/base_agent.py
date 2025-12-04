@@ -226,60 +226,70 @@ class BaseAgent:
     # ==================== 工作流接口 ====================
     
     async def run_workflow(
-        self, 
-        workflow: Union[Workflow, List[AgentWorkflowStep]], 
-        input_data: Dict[str, Any] = None
+        self,
+        workflow: Union[Workflow, List[AgentWorkflowStep]],
+        input_data: Dict[str, Any] = None,
+        step_callback: Optional[Any] = None
     ) -> WorkflowResult:
-        """
-        执行工作流
-        
+        """Execute workflow with optional step progress callback
+
         Args:
-            workflow: 工作流定义或步骤列表
-            input_data: 输入数据
-            
+            workflow: Workflow definition or list of steps
+            input_data: Input data dict
+            step_callback: Optional async callback function(step_index, step_name, status, result)
+                          Called when step starts and completes for real-time progress updates
+
         Returns:
-            WorkflowResult: 工作流执行结果
-            
+            WorkflowResult: Workflow execution result
+
         Example:
-            # 使用步骤列表
+            # Using step list
             steps = [
                 AgentWorkflowStep(
-                    name="搜索记忆",
+                    name="Search memory",
                     step_type=StepType.MEMORY,
                     memory_action="search",
-                    query="用户偏好"
+                    query="user preferences"
                 ),
                 AgentWorkflowStep(
-                    name="生成响应",
+                    name="Generate response",
                     step_type=StepType.CODE,
-                    code="result = f'基于记忆: {step_results}'"
+                    code="result = f'Based on memory: {step_results}'"
                 )
             ]
             result = await self.run_workflow(steps)
-            
-            # 使用完整工作流
-            workflow = Workflow(name="用户问答", steps=steps)
-            result = await self.run_workflow(workflow, {"user_input": "你好"})
+
+            # Using complete workflow
+            workflow = Workflow(name="user_qa", steps=steps)
+            result = await self.run_workflow(workflow, {"user_input": "hello"})
+
+            # With step callback for progress tracking
+            async def progress_callback(step_idx, step_name, status, result):
+                print(f"Step {step_idx}: {step_name} - {status}")
+
+            result = await self.run_workflow(workflow, input_data, step_callback=progress_callback)
         """
         if isinstance(workflow, list):
-            # 现在所有步骤都是AgentWorkflowStep，直接使用Agent工作流引擎
+            # All steps are AgentWorkflowStep, use Agent workflow engine
             if self.agent_workflow_engine:
                 return await self.agent_workflow_engine.execute_workflow(
                     workflow,
-                    input_data=input_data or {}
+                    input_data=input_data or {},
+                    step_callback=step_callback
                 )
             else:
-                raise RuntimeError("Agent工作流引擎未初始化，无法执行工作流")
+                raise RuntimeError("Agent workflow engine not initialized")
         else:
-            # 现在所有工作流都使用AgentWorkflowStep，直接使用Agent工作流引擎
+            # All workflows use AgentWorkflowStep, use Agent workflow engine
             if self.agent_workflow_engine:
                 return await self.agent_workflow_engine.execute_workflow(
                     workflow.steps,
                     workflow_id=workflow.name,
-                    input_data=input_data or {}
+                    input_data=input_data or {},
+                    step_callback=step_callback
                 )
             else:
-                raise RuntimeError("Agent工作流引擎未初始化，无法执行工作流")
+                raise RuntimeError("Agent workflow engine not initialized")
     
     async def process_user_input(self, user_input: str, user_id: str = None) -> str:
         """

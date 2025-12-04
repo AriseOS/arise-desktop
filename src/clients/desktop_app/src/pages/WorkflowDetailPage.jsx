@@ -100,52 +100,15 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
       const result = await response.json()
       const taskId = result.task_id
 
-      showStatus(`执行中... (Task ID: ${taskId})`, 'info')
+      showStatus('Workflow started! Redirecting to live execution page...', 'success')
 
-      // Poll task status
-      let completed = false
-      let pollCount = 0
-      const maxPolls = 60
-
-      while (!completed && pollCount < maxPolls) {
-        await new Promise(resolve => setTimeout(resolve, 5000))
-
-        const statusResponse = await fetch(`${API_BASE}/api/workflow/status/${taskId}`, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json'
-          }
+      // Navigate to live execution page immediately
+      setTimeout(() => {
+        onNavigate('workflow-execution-live', {
+          taskId: taskId,
+          workflowName: workflowId
         })
-
-        if (statusResponse.ok) {
-          const statusData = await statusResponse.json()
-
-          showStatus(`执行中... ${statusData.progress}% (${statusData.current_step}/${statusData.total_steps})`, 'info')
-
-          if (statusData.status === 'completed' || statusData.status === 'failed') {
-            completed = true
-
-            if (statusData.status === 'completed') {
-              showStatus('执行成功！', 'success')
-              setTimeout(() => {
-                onNavigate('workflow-result', {
-                  workflowName: workflowId,
-                  taskId: taskId,
-                  result: statusData.result
-                })
-              }, 1500)
-            } else {
-              showStatus(`执行失败: ${statusData.error || '未知错误'}`, 'error')
-            }
-          }
-        }
-
-        pollCount++
-      }
-
-      if (!completed) {
-        showStatus('执行超时，请稍后查看结果', 'warning')
-      }
+      }, 500)
     } catch (err) {
       console.error('Run workflow error:', err)
       showStatus('执行失败', 'error')

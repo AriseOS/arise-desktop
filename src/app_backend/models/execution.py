@@ -1,8 +1,8 @@
 """Execution task data model"""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
 
 @dataclass
@@ -21,3 +21,4 @@ class ExecutionTask:
     completed_at: Optional[datetime] = None
     result: Optional[dict] = None
     error: Optional[str] = None
+    steps: List[Dict[str, Any]] = field(default_factory=list)  # List of step info for timeline

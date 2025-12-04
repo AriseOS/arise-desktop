@@ -112,13 +112,22 @@ class AgentWorkflowEngine:
         self,
         steps: List[AgentWorkflowStep],
         workflow_id: str = None,
-        input_data: Dict[str, Any] = None
+        input_data: Dict[str, Any] = None,
+        step_callback: Optional[Any] = None
     ) -> WorkflowResult:
-        """执行Agent工作流"""
+        """Execute agent workflow with optional step progress callback
+
+        Args:
+            steps: List of workflow steps
+            workflow_id: Optional workflow ID
+            input_data: Input data dict
+            step_callback: Optional async callback function(step_index, step_name, status, result)
+                          Called when step starts (status='in_progress') and completes (status='completed'/'failed')
+        """
         start_time = time.time()
         workflow_id = workflow_id or f"agent_workflow_{int(time.time())}"
 
-        # 初始化执行上下文
+        # Initialize execution context
         context = AgentContext(
             workflow_id=workflow_id,
             step_id="",
@@ -129,16 +138,23 @@ class AgentWorkflowEngine:
             memory_manager=getattr(self.agent, 'memory_manager', None),
             logger=logger
         )
-        
+
         executed_steps = []
-        last_step_output = None  # 跟踪最后一步的输出
-        
+        last_step_output = None
+
         try:
-            for step in steps:
-                # 更新上下文
+            for step_index, step in enumerate(steps):
+                # Update context
                 context.step_id = step.id
-                
-                # 根据步骤类型执行不同逻辑
+
+                # Notify step start
+                if step_callback:
+                    try:
+                        await step_callback(step_index, step.name, 'in_progress', None)
+                    except Exception as e:
+                        logger.warning(f"Step callback error (start): {e}")
+
+                # Execute step based on type
                 if step.agent_type == "if":
                     step_result = await self._execute_if_step(step, context)
                 elif step.agent_type == "while":
@@ -146,27 +162,32 @@ class AgentWorkflowEngine:
                 elif step.agent_type == "foreach":
                     step_result = await self._execute_foreach_step(step, context)
                 else:
-                    # 检查普通步骤的执行条件
+                    # Check execution condition for normal steps
                     if step.condition and not await self._evaluate_condition(step.condition, context):
-                        logger.info(f"步骤 {step.name} 条件不满足，跳过执行")
+                        logger.info(f"Step {step.name} condition not met, skipping")
                         continue
 
-                    # 执行普通Agent步骤
+                    # Execute normal agent step
                     step_result = await self._execute_agent_step(step, context)
-                # print(f"step_result: {step_result}")
-                
-                # 更新上下文变量
+                # Update context variables
                 if step_result.success and step.outputs:
                     await self._update_context_variables(step_result, step.outputs, context)
-                    # 更新最后一步的输出
+                    # Update last step output
                     last_step_output = await self._extract_step_outputs(step_result, step.outputs)
-                # print(f"last_step_output {last_step_output}")
-                
+
                 executed_steps.append(step_result)
-                
-                # 如果步骤失败且没有设置继续执行，则停止
+
+                # Notify step completion
+                if step_callback:
+                    try:
+                        step_status = 'completed' if step_result.success else 'failed'
+                        await step_callback(step_index, step.name, step_status, step_result.data)
+                    except Exception as e:
+                        logger.warning(f"Step callback error (complete): {e}")
+
+                # Stop if step failed and no continue flag
                 if not step_result.success:
-                    logger.error(f"步骤执行失败 [step_id={step.id}, name={step.name}, agent_type={step.agent_type}]: {step_result.message}")
+                    logger.error(f"Step execution failed [step_id={step.id}, name={step.name}, agent_type={step.agent_type}]: {step_result.message}")
                     break
             
             # 提取final_response作为最终结果
