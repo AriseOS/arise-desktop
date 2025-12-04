@@ -30,7 +30,7 @@ llm:
   proxy_url: https://api.ariseos.com
 
 cloud:
-  api_url: https://api.ariseos.com
+  api_url: https://cloud.ariseos.com
   timeout: 120
 
 logging:

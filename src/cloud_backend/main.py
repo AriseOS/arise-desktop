@@ -394,7 +394,7 @@ async def add_intents_to_user_graph_background(
 
 
 @app.post("/api/analyze_recording")
-async def analyze_recording(data: dict):
+async def analyze_recording(data: dict, x_ami_api_key: Optional[str] = Header(None)):
     """
     Analyze recording operations using AI and generate suggested descriptions
 
@@ -403,6 +403,9 @@ async def analyze_recording(data: dict):
             "operations": [...],
             "user_id": "user123"
         }
+
+    Headers:
+        X-Ami-API-Key: User's API key (required)
 
     Returns:
         {
@@ -422,12 +425,22 @@ async def analyze_recording(data: dict):
     if not operations:
         raise HTTPException(400, "Missing operations")
 
+    if not x_ami_api_key:
+        raise HTTPException(400, "Missing X-Ami-API-Key header")
+
     logger.info(f"Analyzing recording with {len(operations)} operations for user {user_id}")
 
     try:
+        # Create LLM provider with user's API key through API Proxy
+        from common.llm.anthropic_provider import AnthropicProvider
+        llm_provider = AnthropicProvider(
+            api_key=x_ami_api_key,
+            base_url=config_service.get("llm.proxy_base_url", "https://api.ariseos.com")
+        )
+
         # Import and initialize analysis service
         from services.recording_analysis_service import RecordingAnalysisService
-        analysis_service = RecordingAnalysisService()
+        analysis_service = RecordingAnalysisService(llm_provider=llm_provider)
 
         # Analyze operations
         result = await analysis_service.analyze_operations(

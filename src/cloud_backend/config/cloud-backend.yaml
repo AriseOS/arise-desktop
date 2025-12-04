@@ -3,7 +3,7 @@
 
 # Server Configuration
 server:
-  host: 0.0.0.0
+  host: 127.0.0.1  # Only listen on localhost (Caddy will handle external access)
   port: 9000
   debug: false
   reload: false  # Set to true for development
