@@ -38,31 +38,30 @@ database:
   #   password_env: DB_PASSWORD
 
 # LLM Configuration
+# All LLM calls go through API Proxy
 llm:
   default_provider: anthropic  # Options: anthropic, openai
 
   # API Proxy Configuration
-  # Set use_proxy: true to route all LLM calls through API Proxy
-  use_proxy: false  # Set to true to enable API Proxy
+  # All LLM calls route through API Proxy
+  use_proxy: true  # Always use API Proxy
   proxy_base_url: "https://api.ariseos.com"  # API Proxy URL
 
   # Anthropic Configuration
+  # Note: API keys are provided by users through API Proxy
+  # System API key (ANTHROPIC_API_KEY env var) is no longer used
   anthropic:
-    api_key_env: ANTHROPIC_API_KEY
     model: claude-sonnet-4-5-20250929
     max_tokens: 4096
     temperature: 0.0
-    # Custom base URL (optional, only if use_proxy is false)
-    # base_url: "https://api.anthropic.com"
 
   # OpenAI Configuration
+  # Note: API keys are provided by users through API Proxy
+  # System API key (OPENAI_API_KEY env var) is no longer used
   openai:
-    api_key_env: OPENAI_API_KEY
     model: gpt-4
     max_tokens: 4096
     temperature: 0.0
-    # Custom base URL (optional, only if use_proxy is false)
-    # base_url: "https://api.openai.com"
 
 # Workflow Generation Configuration
 workflow_generation:

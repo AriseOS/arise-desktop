@@ -21,12 +21,13 @@ browser:
   timeout: 30
 
 # LLM Provider Configuration
+# All LLM calls go through API Proxy
 llm:
   provider: anthropic  # openai or anthropic
   model: claude-sonnet-4-5-20250929 # Model name
-  # API keys are read from environment variables:
-  # - ANTHROPIC_API_KEY for anthropic
-  # - OPENAI_API_KEY for openai
+  # Use API Proxy for all LLM calls
+  use_proxy: true
+  proxy_url: https://api.ariseos.com
 
 cloud:
   api_url: https://api.ariseos.com

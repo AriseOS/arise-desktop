@@ -11,9 +11,15 @@ logger = logging.getLogger(__name__)
 class RecordingAnalysisService:
     """Analyze user recording operations and generate task descriptions using AI"""
 
-    def __init__(self):
-        """Initialize with LLM provider"""
-        self.llm_provider = AnthropicProvider()
+    def __init__(self, llm_provider=None):
+        """Initialize with LLM provider
+
+        Args:
+            llm_provider: LLM provider instance (must be provided with user's API key)
+        """
+        if llm_provider is None:
+            raise ValueError("llm_provider is required - must be created with user's API key and API Proxy URL")
+        self.llm_provider = llm_provider
 
     async def analyze_operations(
         self,

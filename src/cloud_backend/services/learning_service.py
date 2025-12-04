@@ -28,9 +28,11 @@ class LearningService:
         """Initialize learning service
 
         Args:
-            llm_provider: LLM provider instance, if None will use AnthropicProvider
+            llm_provider: LLM provider instance (must be provided with user's API key)
         """
-        self.llm_provider = llm_provider or AnthropicProvider()
+        if llm_provider is None:
+            raise ValueError("llm_provider is required - must be created with user's API key and API Proxy URL")
+        self.llm_provider = llm_provider
         self.storage = storage_service
 
     async def extract_intents(self, user_id: int, session_id: str) -> Dict:

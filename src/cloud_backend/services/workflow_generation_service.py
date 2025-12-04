@@ -61,47 +61,45 @@ class WorkflowGenerationService:
             self.use_proxy = False
             self.proxy_base_url = "http://localhost:8080"
 
-        # Create default LLM provider (will be overridden per-request if user_api_key provided)
-        if llm_provider_name == "anthropic":
-            self.default_llm = AnthropicProvider()
-        elif llm_provider_name == "openai":
-            self.default_llm = OpenAIProvider()
-        else:
-            raise ValueError(f"Unsupported LLM provider: {llm_provider_name}")
+        # No default LLM provider - always require user_api_key
+        self.default_llm = None
 
         logger.info(f"✅ Workflow Generation Service initialized")
         logger.info(f"   Provider: {llm_provider_name}")
-        logger.info(f"   API Proxy: {'enabled' if self.use_proxy else 'disabled'}")
-        if self.use_proxy:
-            logger.info(f"   Proxy URL: {self.proxy_base_url}")
+        logger.info(f"   API Proxy: always enabled (user API keys required)")
+        logger.info(f"   Proxy URL: {self.proxy_base_url}")
 
     def _create_llm_provider(self, user_api_key: Optional[str] = None):
         """
         Create LLM provider instance
 
         Args:
-            user_api_key: User's Ami API key (for API Proxy)
+            user_api_key: User's Ami API key (required)
 
         Returns:
-            LLM provider instance configured for API Proxy or direct API
-        """
-        # If use_proxy is enabled and user_api_key provided, route through API Proxy
-        if self.use_proxy and user_api_key:
-            logger.info(f"Creating LLM provider for API Proxy (user_api_key: {user_api_key[:10]}...)")
-            if self.llm_provider_name == "anthropic":
-                return AnthropicProvider(
-                    api_key=user_api_key,
-                    base_url=self.proxy_base_url
-                )
-            elif self.llm_provider_name == "openai":
-                return OpenAIProvider(
-                    api_key=user_api_key,
-                    base_url=self.proxy_base_url
-                )
+            LLM provider instance configured for API Proxy
 
-        # Otherwise, use default provider (with system API key)
-        logger.info(f"Using default LLM provider (direct API)")
-        return self.default_llm
+        Raises:
+            ValueError: If user_api_key is not provided
+        """
+        # Always require user_api_key
+        if not user_api_key:
+            raise ValueError("user_api_key is required - all LLM calls must use user's API key through API Proxy")
+
+        logger.info(f"Creating LLM provider for API Proxy (user_api_key: {user_api_key[:10]}...)")
+
+        if self.llm_provider_name == "anthropic":
+            return AnthropicProvider(
+                api_key=user_api_key,
+                base_url=self.proxy_base_url
+            )
+        elif self.llm_provider_name == "openai":
+            return OpenAIProvider(
+                api_key=user_api_key,
+                base_url=self.proxy_base_url
+            )
+        else:
+            raise ValueError(f"Unsupported LLM provider: {self.llm_provider_name}")
     
     async def add_intents_to_graph(
         self,
