@@ -4,9 +4,12 @@ LLM API proxy service
 Forwards requests to Anthropic API and tracks token usage
 """
 import httpx
+import logging
 from typing import Any, Dict, Optional
 
 from ..config import get_config
+
+logger = logging.getLogger(__name__)
 
 
 class ProxyService:
@@ -67,21 +70,23 @@ class ProxyService:
         # Replace user's API key with system's real key
         headers = headers.copy()
 
-        # Log before replacement
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"[ProxyService] Original x-api-key: {headers.get('x-api-key', 'NOT_PRESENT')[:20]}...")
-        logger.info(f"[ProxyService] System API key: {provider_config['api_key'][:20] if provider_config['api_key'] else 'EMPTY'}...")
+        # Filter out headers that should not be forwarded
+        # These headers must be set by httpx or will cause 403 errors
+        headers_to_remove = [
+            'host',              # Must match destination server
+            'content-length',    # Will be set automatically by httpx
+            'content-encoding',  # May cause decompression issues
+            'transfer-encoding', # May cause issues with chunked encoding
+            'connection',        # Hop-by-hop header
+        ]
+        for header in headers_to_remove:
+            headers.pop(header, None)
+            headers.pop(header.lower(), None)
 
         headers['x-api-key'] = provider_config['api_key']
 
-        # Log after replacement
-        logger.info(f"[ProxyService] Final x-api-key: {headers.get('x-api-key', 'NOT_PRESENT')[:20]}...")
-
         # Construct full URL
         url = f"{provider_config['base_url']}{endpoint}"
-        logger.info(f"[ProxyService] Request URL: {url}")
-        logger.info(f"[ProxyService] Request headers: {list(headers.keys())}")
 
         # Make request
         async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -92,11 +97,9 @@ class ProxyService:
             else:
                 raise ValueError(f"Unsupported HTTP method: {method}")
 
-        # Log response
-        logger.info(f"[ProxyService] Response status: {response.status_code}")
+        # Log errors only
         if response.status_code != 200:
-            response_preview = response.text[:500] if hasattr(response, 'text') else str(response.content[:500])
-            logger.error(f"[ProxyService] Error response: {response_preview}")
+            logger.error(f"Proxy request failed: {response.status_code} - {response.text[:200]}")
 
         # Return response
         return (

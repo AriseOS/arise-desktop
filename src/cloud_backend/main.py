@@ -1141,7 +1141,7 @@ _agent_sessions: dict = {}
 
 
 @app.post("/api/intent-builder/start")
-async def start_intent_builder_session(data: dict):
+async def start_intent_builder_session(data: dict, x_ami_api_key: Optional[str] = Header(None)):
     """
     Start a new Intent Builder Agent session
 
@@ -1159,9 +1159,15 @@ async def start_intent_builder_session(data: dict):
             "phase": "metaflow or workflow"
         }
 
+    Headers:
+        X-Ami-API-Key: User's API key (required)
+
     Returns:
         {"session_id": "..."}
     """
+    if not x_ami_api_key:
+        raise HTTPException(400, "Missing X-Ami-API-Key header")
+
     user_id = data.get("user_id", "default_user")
     user_query = data.get("user_query")
     task_description = data.get("task_description")
@@ -1247,7 +1253,9 @@ Please:
     agent = IntentBuilderAgent(
         working_dir=str(working_dir),
         user_operations_path=user_operations_path,
-        intent_graph_path=intent_graph_path
+        intent_graph_path=intent_graph_path,
+        user_api_key=x_ami_api_key,
+        config_service=config_service
     )
 
     # Set agent phase

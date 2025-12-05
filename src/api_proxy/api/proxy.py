@@ -1,6 +1,7 @@
 """
 LLM proxy API endpoints (Anthropic-compatible)
 """
+import json
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
@@ -123,8 +124,14 @@ async def proxy_messages(
             )
 
         # Return Anthropic's response
+        # Properly serialize response body to JSON if it's a dict
+        if isinstance(response_body, str):
+            content = response_body
+        else:
+            content = json.dumps(response_body)
+
         return Response(
-            content=response_body if isinstance(response_body, str) else str(response_body),
+            content=content,
             status_code=status_code,
             media_type="application/json",
             headers={k: v for k, v in response_headers.items() if k.lower() not in ['content-encoding', 'transfer-encoding']}

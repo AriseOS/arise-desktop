@@ -544,6 +544,14 @@ class CloudClient:
         """
         logger.info(f"Starting Intent Builder session for user: {user_id}")
 
+        # Build request headers
+        headers = {}
+        if self.user_api_key:
+            headers["X-Ami-API-Key"] = self.user_api_key
+            logger.info(f"Sending request with API key: {self.user_api_key[:10]}...")
+        else:
+            logger.warning("No user API key set, request may fail")
+
         response = await self.client.post(
             "/api/intent-builder/start",
             json={
@@ -555,7 +563,8 @@ class CloudClient:
                 "current_metaflow_yaml": current_metaflow_yaml,
                 "current_workflow_yaml": current_workflow_yaml,
                 "phase": phase
-            }
+            },
+            headers=headers
         )
         response.raise_for_status()
         result = response.json()

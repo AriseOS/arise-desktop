@@ -45,7 +45,7 @@ llm:
   # API Proxy Configuration
   # All LLM calls route through API Proxy
   use_proxy: true  # Always use API Proxy
-  proxy_base_url: "https://api.ariseos.com"  # API Proxy URL
+  proxy_base_url: "http://127.0.0.1:8080"  # API Proxy URL
 
   # Anthropic Configuration
   # Note: API keys are provided by users through API Proxy
