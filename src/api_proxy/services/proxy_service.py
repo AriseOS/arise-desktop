@@ -101,11 +101,33 @@ class ProxyService:
         if response.status_code != 200:
             logger.error(f"Proxy request failed: {response.status_code} - {response.text[:200]}")
 
+        # Parse response body
+        # Read the response content first to ensure it's fully loaded
+        try:
+            # Force read the response to handle streaming/compressed content
+            await response.aread()
+
+            if response.status_code == 200:
+                # Try to parse as JSON
+                response_body = response.json()
+            else:
+                response_body = response.text
+        except Exception as e:
+            logger.error(f"Failed to parse response: {e}")
+            logger.error(f"Response headers: {dict(response.headers)}")
+            logger.error(f"Response content (first 100 bytes): {response.content[:100]}")
+            # If JSON parsing fails, try to get text
+            try:
+                response_body = response.text
+            except:
+                # If text also fails, return raw bytes as string
+                response_body = str(response.content)
+
         # Return response
         return (
             response.status_code,
             dict(response.headers),
-            response.json() if response.status_code == 200 else response.text
+            response_body
         )
 
     async def forward_anthropic_request(

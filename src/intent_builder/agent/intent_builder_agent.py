@@ -262,14 +262,26 @@ Present the MetaFlow to me for review before proceeding to Workflow generation.
         try:
             from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 
+            # Get API proxy base URL from config
+            proxy_base_url = None
+            if self.config_service:
+                use_proxy = self.config_service.get("llm.use_proxy", True)
+                if use_proxy:
+                    proxy_base_url = self.config_service.get("llm.proxy_base_url", "http://127.0.0.1:8080")
+                    logger.info(f"Using API proxy: {proxy_base_url}")
+
             # Configure SDK options
+            env_vars = {"ANTHROPIC_API_KEY": self.api_key}
+            if proxy_base_url:
+                env_vars["ANTHROPIC_BASE_URL"] = proxy_base_url
+
             options = ClaudeAgentOptions(
                 model=self.model,
                 cwd=str(self.working_dir),
                 allowed_tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
                 permission_mode="acceptEdits",
                 system_prompt=self.system_prompt,
-                env={"ANTHROPIC_API_KEY": self.api_key}
+                env=env_vars
             )
 
             # Create and connect client

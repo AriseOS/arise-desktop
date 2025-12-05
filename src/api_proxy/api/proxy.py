@@ -88,9 +88,17 @@ async def proxy_messages(
     Returns:
         Same as Anthropic Messages API (with usage info)
     """
+    import logging
+    logger = logging.getLogger(__name__)
+
     try:
+        # Log incoming request
+        logger.info(f"[PROXY] Incoming request URL: {request.url}")
+        logger.info(f"[PROXY] Query string: {request.url.query}")
+
         # Get request body
         body = await request.json()
+        logger.info(f"[PROXY] Request body keys: {list(body.keys())}")
 
         # Get headers
         headers = dict(request.headers)
@@ -98,13 +106,22 @@ async def proxy_messages(
         # Extract model name for logging
         model = proxy_service.extract_model_name(body)
 
+        # Build endpoint with query parameters
+        endpoint = "/v1/messages"
+        if request.url.query:
+            endpoint = f"{endpoint}?{request.url.query}"
+
+        logger.info(f"[PROXY] Forwarding to endpoint: {endpoint}")
+
         # Forward request to Anthropic
         status_code, response_headers, response_body = await proxy_service.forward_anthropic_request(
-            endpoint="/v1/messages",
+            endpoint=endpoint,
             method="POST",
             headers=headers,
             body=body
         )
+
+        logger.info(f"[PROXY] Response status: {status_code}")
 
         # If successful, record statistics
         if status_code == 200:
@@ -139,6 +156,10 @@ async def proxy_messages(
 
     except Exception as e:
         # Log error and return 500
+        logger.error(f"[PROXY] Error occurred: {type(e).__name__}: {str(e)}")
+        import traceback
+        logger.error(f"[PROXY] Traceback:\n{traceback.format_exc()}")
+
         # Record failed API call
         try:
             stats_service.record_api_call(
@@ -151,8 +172,8 @@ async def proxy_messages(
                 success=False,
                 error_message=str(e),
             )
-        except:
-            pass  # Don't fail if we can't record the error
+        except Exception as stats_error:
+            logger.error(f"[PROXY] Failed to record stats: {stats_error}")
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
