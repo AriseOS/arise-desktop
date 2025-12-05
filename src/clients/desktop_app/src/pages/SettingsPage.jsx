@@ -128,8 +128,8 @@ function SettingsPage({ navigate, showStatus, onLogout }) {
             </div>
             <div className="info-row">
               <span className="info-label">API Key:</span>
-              <span className="info-value api-key">
-                {session?.apiKey ? `${session.apiKey.slice(0, 15)}...` : 'N/A'}
+              <span className="info-value api-key" style={{ wordBreak: 'break-all', fontFamily: 'monospace', fontSize: '12px' }}>
+                {session?.apiKey || 'N/A'}
               </span>
             </div>
             {session?.loginTimestamp && (
