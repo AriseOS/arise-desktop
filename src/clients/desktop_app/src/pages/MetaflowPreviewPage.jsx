@@ -3,6 +3,7 @@ import Icon from '../components/Icons';
 import '../styles/MetaflowPreviewPage.css';
 import yaml from 'js-yaml';
 import FlowVisualization from '../components/FlowVisualization';
+import { api } from '../utils/api';
 
 const API_BASE = "http://127.0.0.1:8765";
 
@@ -137,9 +138,8 @@ function MetaflowPreviewPage({ session, onNavigate, showStatus, metaflowId, meta
       // Create session if not exists
       let sid = sessionId;
       if (!sid) {
-        const response = await fetch(`${API_BASE}/api/intent-builder/start`, {
+        const result = await api.callAppBackend('/api/intent-builder/start', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             user_id: userId,
             user_query: `Modify the following MetaFlow based on this request: ${userMessage}`,
@@ -151,9 +151,6 @@ function MetaflowPreviewPage({ session, onNavigate, showStatus, metaflowId, meta
           })
         });
 
-        if (!response.ok) throw new Error(`Failed to start session: ${response.statusText}`);
-
-        const result = await response.json();
         sid = result.session_id;
         setSessionId(sid);
       }
@@ -246,6 +243,12 @@ function MetaflowPreviewPage({ session, onNavigate, showStatus, metaflowId, meta
       console.error('Modification error:', error);
       showStatus(`❌ Modification failed: ${error.message}`, 'error');
       setModificationLog(prev => [...prev, { type: 'error', content: error.message }]);
+
+      // If session not found (404), clear session ID to force recreation next time
+      if (error.message.includes('404') || error.message.includes('Session not found')) {
+        console.log('Session expired or not found, clearing session ID');
+        setSessionId(null);
+      }
     } finally {
       setIsModifying(false);
     }

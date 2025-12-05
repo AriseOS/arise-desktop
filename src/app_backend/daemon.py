@@ -1935,15 +1935,28 @@ class IntentBuilderChatRequest(BaseModel):
 
 
 @app.post("/api/intent-builder/start")
-async def start_intent_builder_session(request: StartIntentBuilderRequest):
+async def start_intent_builder_session(
+    request: StartIntentBuilderRequest,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
     """
     Start a new Intent Builder Agent session via Cloud Backend
+
+    Headers:
+        X-Ami-API-Key: User's Ami API key (optional, for API Proxy)
 
     Returns:
         {"session_id": "..."}
     """
     try:
         logger.info(f"Starting Intent Builder session for user: {request.user_id}")
+
+        # Set user API key on cloud client
+        if x_ami_api_key:
+            cloud_client.set_user_api_key(x_ami_api_key)
+            logger.info(f"Set user API key on cloud client: {x_ami_api_key[:10]}...")
+        else:
+            logger.warning("No X-Ami-API-Key header provided")
 
         # Forward to Cloud Backend
         result = await cloud_client.start_intent_builder_session(

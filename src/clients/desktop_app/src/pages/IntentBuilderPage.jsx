@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Icon from '../components/Icons';
+import { api } from '../utils/api';
 import '../styles/IntentBuilderPage.css';
 
 const API_BASE = "http://127.0.0.1:8765";
@@ -64,21 +65,14 @@ function IntentBuilderPage({ session, onNavigate, showStatus, params = {} }) {
       showStatus('Starting Intent Builder session...', 'info');
 
       // Create session
-      const response = await fetch(`${API_BASE}/api/intent-builder/start`, {
+      const result = await api.callAppBackend('/api/intent-builder/start', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           user_id: userId,
           user_query: userQuery,
           task_description: params.taskDescription || null
         })
       });
-
-      if (!response.ok) {
-        throw new Error(`Failed to start session: ${response.statusText}`);
-      }
-
-      const result = await response.json();
       setSessionId(result.session_id);
 
       // Add user message
