@@ -108,8 +108,16 @@ class StatsService:
             monthly_stats.total_tokens += total_tokens
             monthly_stats.call_count += 1
 
-        db.commit()
-        db.refresh(api_call)
+        try:
+            db.commit()
+            db.refresh(api_call)
+        except Exception as e:
+            db.rollback()
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to commit API call stats: {e}")
+            # Don't raise - stats recording failure shouldn't break the API call
+            # Just log the error and continue
 
         return api_call
 
