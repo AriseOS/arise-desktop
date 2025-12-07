@@ -125,7 +125,7 @@ async def proxy_messages(
 
         # If successful, record statistics
         if status_code == 200:
-            # Extract token usage
+            # Extract token usage from parsed response
             input_tokens, output_tokens = proxy_service.extract_token_usage(response_body)
 
             # Record API call
@@ -140,8 +140,8 @@ async def proxy_messages(
                 success=True,
             )
 
-        # Return Anthropic's response
-        # Properly serialize response body to JSON if it's a dict
+        # Return response (proxy_service already decompressed and parsed)
+        # Serialize back to JSON for client
         if isinstance(response_body, str):
             content = response_body
         else:
@@ -151,6 +151,7 @@ async def proxy_messages(
             content=content,
             status_code=status_code,
             media_type="application/json",
+            # Remove compression headers since we're returning decompressed JSON
             headers={k: v for k, v in response_headers.items() if k.lower() not in ['content-encoding', 'transfer-encoding']}
         )
 

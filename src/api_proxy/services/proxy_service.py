@@ -83,10 +83,28 @@ class ProxyService:
             headers.pop(header, None)
             headers.pop(header.lower(), None)
 
+        # Override accept-encoding to only use compressions httpx can handle
+        # httpx supports gzip, deflate, and br (brotli), but NOT zstd
+        headers['accept-encoding'] = 'gzip, deflate, br'
+
         headers['x-api-key'] = provider_config['api_key']
+
+        # Ensure required Anthropic headers are present
+        if 'anthropic-version' not in headers and 'anthropic-version' not in [h.lower() for h in headers.keys()]:
+            headers['anthropic-version'] = '2023-06-01'
+            logger.info("[ProxyService] Added missing anthropic-version header")
+
+        if 'content-type' not in headers and 'content-type' not in [h.lower() for h in headers.keys()]:
+            headers['content-type'] = 'application/json'
+            logger.info("[ProxyService] Added missing content-type header")
 
         # Construct full URL
         url = f"{provider_config['base_url']}{endpoint}"
+
+        # Log request details
+        logger.info(f"[ProxyService] Forwarding to: {url}")
+        logger.info(f"[ProxyService] Headers being sent: {list(headers.keys())}")
+        logger.info(f"[ProxyService] anthropic-version: {headers.get('anthropic-version', 'NOT SET')}")
 
         # Make request
         async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -99,31 +117,24 @@ class ProxyService:
 
         # Log errors only
         if response.status_code != 200:
-            logger.error(f"Proxy request failed: {response.status_code} - {response.text[:200]}")
+            logger.error(f"Proxy request failed: {response.status_code}")
 
-        # Parse response body
-        # Read the response content first to ensure it's fully loaded
+        # Parse response - httpx will auto-decompress if it can
+        # For formats httpx can't decompress (brotli/zstd without libs), this will fail
         try:
-            # Force read the response to handle streaming/compressed content
-            await response.aread()
-
             if response.status_code == 200:
-                # Try to parse as JSON
+                # Try to parse as JSON (httpx will decompress automatically)
                 response_body = response.json()
             else:
                 response_body = response.text
         except Exception as e:
             logger.error(f"Failed to parse response: {e}")
-            logger.error(f"Response headers: {dict(response.headers)}")
-            logger.error(f"Response content (first 100 bytes): {response.content[:100]}")
-            # If JSON parsing fails, try to get text
-            try:
-                response_body = response.text
-            except:
-                # If text also fails, return raw bytes as string
-                response_body = str(response.content)
+            # If decompression fails, we need brotli/zstd libraries
+            logger.error("Response may be compressed with unsupported format (brotli/zstd)")
+            logger.error("Install: pip install brotli brotlicffi")
+            raise RuntimeError(f"Cannot decompress response: {e}")
 
-        # Return response
+        # Return decompressed, parsed response
         return (
             response.status_code,
             dict(response.headers),
