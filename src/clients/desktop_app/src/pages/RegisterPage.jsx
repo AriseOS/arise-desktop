@@ -80,12 +80,13 @@ function RegisterPage({ navigate, showStatus, onRegisterSuccess }) {
 
       console.log('[RegisterPage] Registration successful, saving session');
 
-      // Save session with API key
+      // Save session with API key and token (CRS provides token in registration response)
       await auth.saveSession(
         result.api_key,
         result.user.username,
         result.user.email,
-        result.user
+        result.user,
+        result.token // CRS JWT token (if provided)
       );
 
       showStatus('Registration successful! Welcome to Ami!', 'success');

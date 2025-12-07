@@ -172,7 +172,7 @@ class WorkflowExecutor:
                 # User provided API key - use API Proxy
                 llm_provider = config_service.get('llm.provider', 'anthropic')
                 llm_model = config_service.get('llm.model', 'claude-3-5-sonnet-20241022')
-                proxy_url = config_service.get('llm.proxy_url', 'https://api.ariseos.com')
+                proxy_url = config_service.get('llm.proxy_url', 'https://api.ariseos.com/api')
 
                 provider_config = {
                     'type': llm_provider,

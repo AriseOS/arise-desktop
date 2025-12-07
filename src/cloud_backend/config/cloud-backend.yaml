@@ -38,17 +38,19 @@ database:
   #   password_env: DB_PASSWORD
 
 # LLM Configuration
-# All LLM calls go through API Proxy
+# All LLM calls go through Claude Relay Service (CRS)
 llm:
   default_provider: anthropic  # Options: anthropic, openai
 
-  # API Proxy Configuration
-  # All LLM calls route through API Proxy
-  use_proxy: true  # Always use API Proxy
-  proxy_url: "http://127.0.0.1:8080"  # API Proxy URL
+  # CRS (Claude Relay Service) Configuration
+  # All LLM calls route through CRS
+  # Migration: Upgraded old API Proxy to CRS (port remains 8080)
+  use_proxy: true  # Always use CRS for LLM calls
+  proxy_url: "http://127.0.0.1:8080"  # CRS port (custom configuration)
+  # For production, change to: https://crs.ariseos.com
 
   # Anthropic Configuration
-  # Note: API keys are provided by users through API Proxy
+  # Note: API keys are provided by users through CRS (Claude Relay Service)
   # System API key (ANTHROPIC_API_KEY env var) is no longer used
   anthropic:
     model: claude-sonnet-4-5-20250929
@@ -56,7 +58,7 @@ llm:
     temperature: 0.0
 
   # OpenAI Configuration
-  # Note: API keys are provided by users through API Proxy
+  # Note: API keys are provided by users through CRS (Claude Relay Service)
   # System API key (OPENAI_API_KEY env var) is no longer used
   openai:
     model: gpt-4

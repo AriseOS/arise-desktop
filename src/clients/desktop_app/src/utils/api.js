@@ -1,12 +1,18 @@
 /**
  * API Client with Auto-injected API Key
- * Handles communication with API Proxy and App Backend
+ * Handles communication with Claude Relay Service (CRS) and App Backend
+ *
+ * Migration Notes:
+ * - Migrated from old API Proxy to Claude Relay Service (CRS)
+ * - CRS uses /api/users/* endpoints for user management
+ * - API key prefix changed from ami_ to cr_ (configurable in CRS)
  */
 
 import { auth } from './auth';
 
 // API endpoints
-const API_PROXY_BASE = 'https://api.ariseos.com';
+// CRS (Claude Relay Service) - User Management and LLM Proxy
+const CRS_BASE = 'https://api.ariseos.com'; // CRS production URL
 const APP_BACKEND_BASE = 'http://127.0.0.1:8765';
 
 /**
@@ -18,7 +24,7 @@ export const api = {
   // ============================================================================
 
   /**
-   * Register new user
+   * Register new user (CRS)
    *
    * @param {string} username - Username
    * @param {string} email - Email address
@@ -27,9 +33,9 @@ export const api = {
    */
   async register(username, email, password) {
     try {
-      console.log('[API] Registering user:', username);
+      console.log('[API] Registering user with CRS:', username);
 
-      const response = await fetch(`${API_PROXY_BASE}/api/auth/register`, {
+      const response = await fetch(`${CRS_BASE}/api/users/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, email, password })
@@ -37,13 +43,30 @@ export const api = {
 
       if (!response.ok) {
         const error = await response.json();
-        throw new Error(error.detail || 'Registration failed');
+        // CRS returns error.message or error.detail
+        throw new Error(error.message || error.detail || 'Registration failed');
       }
 
-      const data = await response.json();
-      console.log('[API] Registration successful');
+      const result = await response.json();
+      console.log('[API] Registration successful (CRS)');
 
-      return data; // { success: true, user: {...}, api_key: "ami_xxxxx" }
+      // Adapt CRS response format to match old API Proxy format
+      // CRS returns: { success, data: { user, apiKey, apiKeyId }, message }
+      // Old format: { success, user, api_key }
+      return {
+        success: result.success,
+        user: {
+          user_id: result.data.user.id, // Map id → user_id
+          username: result.data.user.username,
+          email: result.data.user.email,
+          is_active: result.data.user.status !== 'suspended',
+          is_admin: result.data.user.role === 'admin',
+          trial_end: result.data.user.trial_end_date,
+          quota: result.data.user.quota
+        },
+        api_key: result.data.apiKey, // Note: CRS uses 'apiKey' not 'api_key'
+        api_key_id: result.data.apiKeyId
+      };
     } catch (error) {
       console.error('[API] Registration error:', error);
       throw error;
@@ -51,31 +74,79 @@ export const api = {
   },
 
   /**
-   * Login user
+   * Login user (CRS)
    *
-   * @param {string} username - Username
+   * IMPORTANT: CRS only supports email-based login (not username)
+   *
+   * @param {string} emailOrUsername - Email address (CRS requires email)
    * @param {string} password - Password
    * @returns {Promise<object>} Login result with API key
    */
-  async login(username, password) {
+  async login(emailOrUsername, password) {
     try {
-      console.log('[API] Logging in user:', username);
+      console.log('[API] Logging in user with CRS:', emailOrUsername);
 
-      const response = await fetch(`${API_PROXY_BASE}/api/auth/login`, {
+      // CRS only supports email login
+      // Detect if input is email or username
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      const isEmail = emailRegex.test(emailOrUsername);
+
+      if (!isEmail) {
+        // TODO: Option 1 - Throw error and require email
+        throw new Error('CRS only supports email login. Please use your email address.');
+
+        // TODO: Option 2 - Call backend to convert username → email (requires new endpoint)
+        // const email = await this.convertUsernameToEmail(emailOrUsername);
+      }
+
+      const email = emailOrUsername;
+
+      const response = await fetch(`${CRS_BASE}/api/users/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
+        body: JSON.stringify({ email, password })
       });
 
       if (!response.ok) {
         const error = await response.json();
-        throw new Error(error.detail || 'Login failed');
+        throw new Error(error.message || error.detail || 'Login failed');
       }
 
-      const data = await response.json();
-      console.log('[API] Login successful');
+      const result = await response.json();
+      console.log('[API] Login successful (CRS)');
 
-      return data; // { success: true, user: {...}, api_key: "ami_xxxxx" }
+      // CRS login returns JWT token but NOT the API key
+      // We need to fetch user profile to get the API key
+      const profileResponse = await fetch(`${CRS_BASE}/api/users/profile`, {
+        headers: {
+          'Authorization': `Bearer ${result.data.token}`
+        }
+      });
+
+      if (!profileResponse.ok) {
+        throw new Error('Failed to fetch user profile');
+      }
+
+      const profile = await profileResponse.json();
+
+      // Adapt CRS response format
+      // CRS login returns: { success, data: { token, user, expiresIn } }
+      // CRS profile returns: { success, data: { user, apiKeys, status } }
+      // NOTE: After modification, CRS now returns DECRYPTED plaintext API keys
+      return {
+        success: result.success,
+        token: result.data.token,
+        user: {
+          user_id: result.data.user.id,
+          username: result.data.user.username,
+          email: result.data.user.email,
+          is_active: result.data.user.status !== 'suspended',
+          is_admin: result.data.user.role === 'admin'
+        },
+        // CRS now returns plaintext API key (decrypted from encrypted storage)
+        api_key: profile.data.apiKeys?.[0]?.key || null,
+        api_keys: profile.data.apiKeys
+      };
     } catch (error) {
       console.error('[API] Login error:', error);
       throw error;
@@ -83,31 +154,37 @@ export const api = {
   },
 
   /**
-   * Get user's quota status from API Proxy
+   * Get user's quota status from CRS
+   *
+   * NOTE: CRS uses JWT token authentication for this endpoint, not API key
    *
    * @returns {Promise<object>} Quota status
    */
   async getQuotaStatus() {
     try {
-      const apiKey = await auth.getApiKey();
-      if (!apiKey) {
+      // CRS uses JWT token for quota endpoint
+      const session = await auth.getSession();
+      if (!session || !session.token) {
         throw new Error('Not logged in');
       }
 
-      console.log('[API] Fetching quota status');
+      console.log('[API] Fetching quota status from CRS');
 
-      const response = await fetch(`${API_PROXY_BASE}/api/stats/quota`, {
-        headers: { 'x-api-key': apiKey }
+      const response = await fetch(`${CRS_BASE}/api/users/quota`, {
+        headers: {
+          'Authorization': `Bearer ${session.token}`
+        }
       });
 
       if (!response.ok) {
         throw new Error('Failed to get quota status');
       }
 
-      const data = await response.json();
-      console.log('[API] Quota status retrieved');
+      const result = await response.json();
+      console.log('[API] Quota status retrieved (CRS)');
 
-      return data;
+      // CRS returns: { success, data: { current_usage, limit, remaining, percent_used, quota_exceeded, reset_date } }
+      return result.data;
     } catch (error) {
       console.error('[API] Quota status error:', error);
       throw error;

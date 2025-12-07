@@ -21,13 +21,14 @@ browser:
   timeout: 30
 
 # LLM Provider Configuration
-# All LLM calls go through API Proxy
+# All LLM calls go through Claude Relay Service (CRS)
 llm:
   provider: anthropic  # openai or anthropic
   model: claude-sonnet-4-5-20250929 # Model name
-  # Use API Proxy for all LLM calls
+  # Use CRS (Claude Relay Service) for all LLM calls
+  # Migration: Changed from old API Proxy to CRS
   use_proxy: true
-  proxy_url: https://api.ariseos.com
+  proxy_url: https://api.ariseos.com/api  # CRS production URL with /api prefix
 
 cloud:
   api_url: https://cloud.ariseos.com

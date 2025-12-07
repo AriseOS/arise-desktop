@@ -25,12 +25,13 @@ export const auth = {
   /**
    * Save user session after successful login/registration
    *
-   * @param {string} apiKey - User's Ami API key (ami_xxxxx format)
+   * @param {string} apiKey - User's API key (cr_xxxxx format for CRS)
    * @param {string} username - Username
    * @param {string} email - User email
    * @param {object} userData - Additional user data
+   * @param {string} token - JWT token (optional, from CRS login)
    */
-  async saveSession(apiKey, username, email, userData = {}) {
+  async saveSession(apiKey, username, email, userData = {}, token = null) {
     try {
       const store = await getStore();
       await store.set('user_api_key', apiKey);
@@ -38,6 +39,12 @@ export const auth = {
       await store.set('email', email);
       await store.set('user_data', userData);
       await store.set('login_timestamp', new Date().toISOString());
+
+      // Store JWT token if provided (CRS uses this for some endpoints)
+      if (token) {
+        await store.set('jwt_token', token);
+      }
+
       await store.save();
 
       console.log('[Auth] Session saved successfully');
@@ -60,6 +67,7 @@ export const auth = {
       const email = await store.get('email');
       const userData = await store.get('user_data');
       const loginTimestamp = await store.get('login_timestamp');
+      const token = await store.get('jwt_token'); // CRS JWT token
 
       if (!apiKey) {
         return null;
@@ -70,7 +78,8 @@ export const auth = {
         username,
         email,
         userData: userData || {},
-        loginTimestamp
+        loginTimestamp,
+        token // CRS JWT token for authenticated endpoints
       };
     } catch (error) {
       console.error('[Auth] Failed to get session:', error);
@@ -105,6 +114,7 @@ export const auth = {
       await store.delete('email');
       await store.delete('user_data');
       await store.delete('login_timestamp');
+      await store.delete('jwt_token'); // Also clear CRS JWT token
       await store.save();
 
       console.log('[Auth] Session cleared');

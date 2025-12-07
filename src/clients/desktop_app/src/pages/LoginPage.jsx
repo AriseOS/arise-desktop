@@ -41,12 +41,13 @@ function LoginPage({ navigate, showStatus, onLoginSuccess }) {
 
       console.log('[LoginPage] Login successful, saving session');
 
-      // Save session with API key
+      // Save session with API key and token (CRS provides token in login response)
       await auth.saveSession(
         result.api_key,
         result.user.username,
         result.user.email,
-        result.user
+        result.user,
+        result.token // CRS JWT token
       );
 
       showStatus('Login successful!', 'success');
@@ -80,17 +81,18 @@ function LoginPage({ navigate, showStatus, onLoginSuccess }) {
         {/* Login Form */}
         <form className="auth-form" onSubmit={handleLogin}>
           <div className="form-group">
-            <label htmlFor="username">Username</label>
+            <label htmlFor="username">Email</label>
             <input
               id="username"
               type="text"
               className="form-input"
-              placeholder="Enter your username"
+              placeholder="Enter your email address"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               disabled={loading}
               autoFocus
             />
+            <div className="form-hint">CRS requires email for login</div>
           </div>
 
           <div className="form-group">

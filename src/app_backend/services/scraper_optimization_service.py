@@ -301,7 +301,7 @@ Please respond to the user now.
                 }
 
             # Read base_url and model from config (same as workflow_executor)
-            base_url = self.config_service.get('llm.proxy_url', 'https://api.ariseos.com')
+            base_url = self.config_service.get('llm.proxy_url', 'https://api.ariseos.com/api')
             model = self.config_service.get('llm.model', 'claude-sonnet-4-5-20250929')
 
             logger.info(f"Using API key for Claude Agent: {api_key[:10]}...")
