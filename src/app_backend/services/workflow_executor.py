@@ -36,7 +36,8 @@ class WorkflowExecutor:
         self,
         user_id: str,
         workflow_name: str,
-        inputs: Optional[dict] = None
+        inputs: Optional[dict] = None,
+        user_api_key: Optional[str] = None
     ) -> Dict[str, str]:
         """Execute workflow asynchronously
 
@@ -44,6 +45,7 @@ class WorkflowExecutor:
             user_id: User ID
             workflow_name: Workflow name
             inputs: Input parameters (optional)
+            user_api_key: User's Ami API key for LLM calls via API Proxy (optional)
 
         Returns:
             Dict with task_id and status
@@ -99,7 +101,7 @@ class WorkflowExecutor:
         # Execute in background
         import asyncio
         asyncio.create_task(
-            self._execute_workflow(task_id, user_id, workflow_yaml, inputs)
+            self._execute_workflow(task_id, user_id, workflow_yaml, inputs, user_api_key)
         )
 
         return {"task_id": task_id, "status": "running"}
@@ -136,7 +138,8 @@ class WorkflowExecutor:
         task_id: str,
         user_id: str,
         workflow_yaml: str,
-        inputs: Optional[dict]
+        inputs: Optional[dict],
+        user_api_key: Optional[str] = None
     ):
         """Internal execution logic (runs in background)"""
         task = self.tasks[task_id]
@@ -157,27 +160,30 @@ class WorkflowExecutor:
             from src.clients.base_app.base_app.base_agent.core.base_agent import BaseAgent
             from src.clients.base_app.base_app.base_agent.core.schemas import Workflow
             from src.app_backend.core.config_service import get_config
-            import os
+            import logging
+            logger = logging.getLogger(__name__)
 
             # Get config service for BaseAgent
             config_service = get_config()
 
-            # Get LLM provider configuration
-            llm_provider = config_service.get('llm.provider', 'anthropic')
-            llm_model = config_service.get('llm.model', 'claude-3-5-sonnet-20241022')
+            # Build provider config - only if user provides API key
+            provider_config = None
+            if user_api_key:
+                # User provided API key - use API Proxy
+                llm_provider = config_service.get('llm.provider', 'anthropic')
+                llm_model = config_service.get('llm.model', 'claude-3-5-sonnet-20241022')
+                proxy_url = config_service.get('llm.proxy_url', 'https://api.ariseos.com')
 
-            # Get API key from environment
-            if llm_provider == 'anthropic':
-                api_key = os.environ.get('ANTHROPIC_API_KEY')
+                provider_config = {
+                    'type': llm_provider,
+                    'model_name': llm_model,
+                    'api_key': user_api_key,
+                    'base_url': proxy_url
+                }
+                logger.info(f"Using user API key with API Proxy: {proxy_url}")
             else:
-                api_key = os.environ.get('OPENAI_API_KEY')
-
-            # Build provider config
-            provider_config = {
-                'type': llm_provider,
-                'model_name': llm_model,
-                'api_key': api_key
-            }
+                # No user API key - let BaseAgent auto-load from config_service
+                logger.info("No user API key provided, BaseAgent will use config_service defaults")
 
             agent = BaseAgent(
                 user_id=user_id,

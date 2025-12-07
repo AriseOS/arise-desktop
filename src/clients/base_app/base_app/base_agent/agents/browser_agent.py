@@ -219,8 +219,9 @@ class BrowserAgent(BaseStepAgent):
 
             # Get current URL from browser session
             try:
-                current_url = self.browser_session.context.pages[0].url if self.browser_session else (target_url or "")
-            except:
+                current_url = await self.browser_session.get_current_page_url() if self.browser_session else (target_url or "")
+            except Exception as e:
+                logger.debug(f"Could not get URL from browser session: {e}")
                 current_url = target_url or ""
 
             # Success response

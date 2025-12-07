@@ -48,6 +48,18 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [modificationLog, currentToolUse])
 
+  // Handle optimize script button click
+  const handleOptimizeScript = (stepData) => {
+    console.log('Optimize script clicked for step:', stepData)
+    onNavigate('scraper-optimization', {
+      userId: userId,
+      workflowId: workflowId,
+      stepId: stepData.id,
+      workflowName: workflowData?.workflow_id || workflowId,
+      stepName: stepData.label || stepData.id
+    })
+  }
+
   const loadWorkflowData = async () => {
     setLoading(true)
     setError(null)
@@ -83,22 +95,8 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
     try {
       showStatus('启动 Workflow 执行...', 'info')
 
-      const response = await fetch(`${API_BASE}/api/workflow/execute`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          workflow_name: workflowId,
-          user_id: userId
-        })
-      })
-
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`)
-      }
-
-      const result = await response.json()
+      // Use api.executeWorkflow to automatically include API key header
+      const result = await api.executeWorkflow(workflowId, userId)
       const taskId = result.task_id
 
       showStatus('Workflow started! Redirecting to live execution page...', 'success')
@@ -385,7 +383,11 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
             {/* Tabs Content */}
             <div className="workflow-tabs-content">
               {activeTab === 'visual' ? (
-                <FlowVisualization data={workflowData} type="workflow" />
+                <FlowVisualization
+                  data={workflowData}
+                  type="workflow"
+                  onOptimizeScript={handleOptimizeScript}
+                />
               ) : activeTab === 'yaml' ? (
                 <div className="workflow-yaml-container">
                   <pre className="workflow-yaml-content">

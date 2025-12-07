@@ -353,8 +353,8 @@
   position: absolute;
   width: 16px;
   height: 16px;
-  left: -4px;
-  top: -4px;
+  left: -6px;
+  top: -6px;
   border-radius: 50%;
   border: 2px solid transparent;
   border-top-color: var(--color-primary-500);

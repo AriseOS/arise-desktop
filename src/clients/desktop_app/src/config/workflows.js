@@ -438,7 +438,7 @@ export const WORKFLOWS = {
       }
     },
     config: {
-      max_execution_time: 1800,
+      max_execution_time: 3600,
       enable_parallel: false,
       enable_cache: true
     },

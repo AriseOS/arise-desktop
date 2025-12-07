@@ -265,7 +265,7 @@ outputs:
     description: <description>
 
 config:
-  max_execution_time: 1800
+  max_execution_time: 3600
   enable_parallel: false
   enable_cache: true
 
@@ -1106,7 +1106,7 @@ outputs:
     description: "Completion message"
 
 config:
-  max_execution_time: 1800
+  max_execution_time: 3600
   enable_parallel: false
   enable_cache: true
 

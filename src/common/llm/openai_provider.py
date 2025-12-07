@@ -18,33 +18,47 @@ class OpenAIProvider(BaseProvider):
     """
     OpenAI provider implementation using official SDK
     """
-    
-    def __init__(self, api_key: Optional[str] = None, model_name: Optional[str] = None):
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model_name: Optional[str] = None,
+        base_url: Optional[str] = None
+    ):
         """
         Initialize OpenAI provider
-        
+
         Args:
             api_key: OpenAI API key (will use OPENAI_API_KEY env var if not provided)
-            model_name: Model name (defaults to gpt-3.5-turbo)
+            model_name: Model name (defaults to gpt-4o)
+            base_url: Custom base URL for API proxy (defaults to official OpenAI API)
         """
         super().__init__(api_key, model_name)
+        self.base_url = base_url
         self.temperature = 0.7
         self.max_tokens = 2048
     
     async def _initialize_client(self) -> None:
         """Initialize the OpenAI client"""
-        
+
         # Get API key from env var if not provided
         self.api_key = self.api_key or os.environ.get("OPENAI_API_KEY")
         if not self.api_key:
             raise ValueError("OpenAI API key not provided and not found in OPENAI_API_KEY environment variable")
-        
+
         # Set default model if not specified
         if not self.model_name:
             self.model_name = "gpt-4o"
-        
-        # Initialize client
-        self._client = OpenAI(api_key=self.api_key)
+
+        # Initialize client with optional base_url
+        client_kwargs = {"api_key": self.api_key}
+
+        # Add custom base_url if provided (for API proxy)
+        if self.base_url:
+            client_kwargs["base_url"] = self.base_url
+            logger.info(f"Using custom base URL: {self.base_url}")
+
+        self._client = OpenAI(**client_kwargs)
         logger.info(f"Initialized OpenAI client with model {self.model_name}")
     
     async def generate_response(

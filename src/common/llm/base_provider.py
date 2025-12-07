@@ -102,12 +102,19 @@ IMPORTANT JSON FORMAT REQUIREMENTS:
 - Return pure JSON object only"""
 
         # Get raw response from LLM
-        raw_response = await self.generate_response(enhanced_system_prompt, user_prompt)
+        try:
+            raw_response = await self.generate_response(enhanced_system_prompt, user_prompt)
+        except Exception as e:
+            logger.error(f"❌ LLM generate_response failed: {e}")
+            logger.error(f"   Error type: {type(e).__name__}")
+            raise
 
         # Log raw response for debugging
         logger.info("=" * 80)
         logger.info("🔍 LLM Raw Response:")
-        logger.info(raw_response)
+        logger.info(f"   Type: {type(raw_response)}")
+        logger.info(f"   Length: {len(raw_response) if raw_response else 0}")
+        logger.info(f"   Content preview (first 500 chars): {raw_response[:500] if raw_response else '<EMPTY>'}")
         logger.info("=" * 80)
 
         # Parse JSON with automatic repair

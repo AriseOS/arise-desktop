@@ -5,6 +5,7 @@ Anthropic provider implementation
 import os
 import asyncio
 import logging
+import json
 from typing import Optional
 
 from anthropic import Anthropic, APIStatusError, APIConnectionError
@@ -86,18 +87,61 @@ class AnthropicProvider(BaseProvider):
             messages = [
                 {"role": "user", "content": user_prompt}
             ]
-            
-            response = await asyncio.to_thread(
-                self._client.messages.create,
-                model=self.model_name,
-                system=system_prompt,  # Claude uses separate system parameter
-                messages=messages,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens
-            )
-            
-            logger.info(f"Anthropic API call successful, model: {self.model_name}")
-            return response.content[0].text
+
+            logger.info(f"Calling Anthropic API...")
+            logger.info(f"  Client type: {type(self._client)}")
+            logger.info(f"  Client base_url: {self._client.base_url}")
+
+            # Make the API call and catch any errors
+            try:
+                response = await asyncio.to_thread(
+                    self._client.messages.create,
+                    model=self.model_name,
+                    system=system_prompt,  # Claude uses separate system parameter
+                    messages=messages,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens
+                )
+
+                logger.info(f"Anthropic API call successful, model: {self.model_name}")
+                logger.info(f"Response type: {type(response)}")
+                logger.info(f"Response: {response}")
+                return response.content[0].text
+
+            except json.JSONDecodeError as json_err:
+                logger.error(f"JSONDecodeError caught! {json_err}")
+                logger.error(f"  This means API Proxy returned invalid/empty JSON")
+
+                # The JSONDecodeError is raised from httpx response.json()
+                # Let's trace back through the exception to find the response
+                import sys
+                tb = sys.exc_info()[2]
+
+                # Walk up the traceback to find local variables
+                logger.error("Searching for httpx response in exception traceback...")
+                frame = tb.tb_frame
+                while frame:
+                    local_vars = frame.f_locals
+                    logger.error(f"  Frame: {frame.f_code.co_name}, locals: {list(local_vars.keys())[:10]}")
+
+                    # Look for 'response' or 'self' that might be httpx.Response
+                    if 'response' in local_vars:
+                        resp = local_vars['response']
+                        logger.error(f"  Found 'response': {type(resp)}")
+
+                        # If it's httpx.Response, print its content
+                        if hasattr(resp, 'content'):
+                            logger.error(f"  ✅ Found httpx Response!")
+                            logger.error(f"    Status: {resp.status_code}")
+                            logger.error(f"    Headers: {dict(resp.headers)}")
+                            logger.error(f"    Content length: {len(resp.content)}")
+                            logger.error(f"    Content (bytes): {resp.content}")
+                            logger.error(f"    Content (text): {resp.text}")
+                            break
+
+                    frame = frame.f_back
+
+                raise
             
         except APIStatusError as e:
             logger.error(f"Anthropic API Status Error: {e.status_code}")
@@ -108,4 +152,26 @@ class AnthropicProvider(BaseProvider):
             raise
         except Exception as e:
             logger.error(f"Error calling Anthropic API: {e}")
+            logger.error(f"Error type: {type(e).__name__}")
+
+            # Try to get the underlying httpx response
+            if hasattr(e, '__cause__'):
+                logger.error(f"Underlying cause: {e.__cause__}")
+
+            # For JSONDecodeError, the httpx response should be in the exception chain
+            # Try to extract it
+            import sys
+            exc_info = sys.exc_info()
+            logger.error(f"Exception chain: {exc_info}")
+
+            # Try to access the httpx response from Anthropic SDK internals
+            try:
+                # The response might be stored in the exception or somewhere in the SDK
+                import traceback
+                tb_lines = traceback.format_exception(*exc_info)
+                for line in tb_lines:
+                    logger.error(f"  {line.strip()}")
+            except:
+                pass
+
             raise

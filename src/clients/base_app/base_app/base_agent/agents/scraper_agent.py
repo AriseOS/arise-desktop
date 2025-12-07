@@ -494,6 +494,98 @@ class ScraperAgent(BaseStepAgent):
             logger.warning(f"Anti-bot behavior failed (non-critical): {e}")
 
 
+    def _generate_url_hash(self, url: str) -> str:
+        """Generate hash for URL to use as storage key
+
+        Args:
+            url: The webpage URL
+
+        Returns:
+            8-character hash string
+        """
+        return hashlib.md5(url.encode()).hexdigest()[:8]
+
+
+    async def _save_dom_snapshot(self, url: str, dom_dict: Dict) -> None:
+        """Save full DOM snapshot for a specific URL to script workspace directory
+
+        Args:
+            url: The webpage URL
+            dom_dict: DOM dictionary to save (should be full DOM)
+        """
+        if not url:
+            logger.warning("⚠️  No URL provided, skipping DOM snapshot save")
+            return
+
+        if not self.config_service:
+            logger.warning("⚠️  Cannot save DOM snapshot: ConfigService not available")
+            return
+
+        # Use cached script_key (set in _extract_data_from_current_page)
+        if not hasattr(self, '_current_script_key') or not self._current_script_key:
+            logger.warning("⚠️  No script key available, skipping DOM snapshot save")
+            return
+
+        try:
+            scripts_root = self.config_service.get_path("data.scripts")
+            script_workspace = scripts_root / self._current_script_key
+
+            # Save in script workspace: dom_snapshots/{url_hash}/
+            url_hash = self._generate_url_hash(url)
+            snapshot_dir = script_workspace / "dom_snapshots" / url_hash
+            snapshot_dir.mkdir(parents=True, exist_ok=True)
+
+            # Save metadata
+            metadata_file = snapshot_dir / "metadata.json"
+            metadata = {
+                "url": url,
+                "url_hash": url_hash,
+                "timestamp": datetime.now().isoformat()
+            }
+            metadata_file.write_text(
+                json.dumps(metadata, indent=2, ensure_ascii=False),
+                encoding='utf-8'
+            )
+
+            # Save full DOM dict
+            dom_file = snapshot_dir / "dom_data.json"
+            dom_file.write_text(
+                json.dumps(dom_dict, indent=2, ensure_ascii=False),
+                encoding='utf-8'
+            )
+
+            # Update URL index file for fast lookup
+            dom_snapshots_dir = script_workspace / "dom_snapshots"
+            index_file = dom_snapshots_dir / "url_index.json"
+
+            # Load existing index
+            url_index = {}
+            if index_file.exists():
+                try:
+                    url_index = json.loads(index_file.read_text(encoding='utf-8'))
+                except Exception as e:
+                    logger.warning(f"Failed to load URL index, creating new one: {e}")
+
+            # Update index
+            url_index[url] = {
+                "hash": url_hash,
+                "timestamp": datetime.now().isoformat()
+            }
+
+            # Save index
+            index_file.write_text(
+                json.dumps(url_index, indent=2, ensure_ascii=False),
+                encoding='utf-8'
+            )
+
+            logger.info(f"✅ DOM snapshot saved to: {snapshot_dir}")
+            logger.info(f"   URL: {url}")
+            logger.info(f"   Hash: {url_hash}")
+            logger.info(f"   DOM size: {dom_file.stat().st_size} bytes")
+
+        except Exception as e:
+            logger.warning(f"⚠️  Failed to save DOM snapshot: {e}")
+
     async def _get_current_page_dom(self) -> tuple:
         """Get DOM from current page with stability check
 
@@ -552,9 +644,21 @@ class ScraperAgent(BaseStepAgent):
         config: Optional[Dict] = None,
         auto_fix_missing_fields: bool = False
     ) -> Dict[str, Any]:
-        """Extract data from current page"""
+        """Extract data from current page
+
+        Args:
+            data_requirements: Data requirements specification
+            max_items: Maximum number of items to extract
+            timeout: Timeout in seconds
+            context: Agent context
+            config: Configuration dict
+            auto_fix_missing_fields: Whether to auto-fix missing fields
+        """
 
         try:
+            # Cache script key for this extraction (used by _save_dom_snapshot)
+            self._current_script_key = self._generate_script_key(data_requirements)
+
             # Get DOM from current page
             target_dom, dom_dict, llm_view = await self._get_current_page_dom()
 
@@ -603,8 +707,8 @@ class ScraperAgent(BaseStepAgent):
         from pathlib import Path
 
         try:
-            # Generate script key and workspace path
-            script_key = self._generate_script_key(data_requirements)
+            # Use cached script key (set in _extract_data_from_current_page)
+            script_key = self._current_script_key
 
             if not self.config_service:
                 raise RuntimeError("ConfigService required for file-based script storage")
@@ -677,6 +781,22 @@ class ScraperAgent(BaseStepAgent):
             result = await self._execute_generated_script_direct(
                 generated_script, execution_dom, execution_dict, max_items
             )
+
+            # Save DOM snapshot after successful execution
+            # Get current page URL for snapshot
+            current_url = None
+            if self.browser_session:
+                try:
+                    current_url = await self.browser_session.get_current_page_url()
+                    logger.info(f"📍 Current page URL: {current_url}")
+                except Exception as e:
+                    logger.warning(f"⚠️  Could not get URL from browser session: {e}")
+
+            if current_url:
+                # Save full DOM snapshot (use execution_dict which is always full DOM in script mode)
+                await self._save_dom_snapshot(current_url, execution_dict)
+            else:
+                logger.warning("⚠️  No URL available, skipping DOM snapshot save")
 
             # Check if result has missing fields (None values or empty strings)
             # Only do auto-fix if enabled in workflow inputs
@@ -886,8 +1006,20 @@ After fixing (if needed):
 Start by reading the files and analyzing the DOM!
 """
 
-            # Initialize Claude Agent
-            claude_provider = ClaudeAgentProvider(config_service=self.config_service)
+            # Initialize Claude Agent with user's API key and base URL
+            # Get API key and base_url from BaseAgent's provider (which has user's API key)
+            api_key = None
+            base_url = None
+            if self.provider and hasattr(self.provider, 'api_key'):
+                api_key = self.provider.api_key
+                base_url = getattr(self.provider, 'base_url', None)
+                logger.info(f"Using API key from BaseAgent provider for Claude Agent (base_url: {base_url})")
+
+            claude_provider = ClaudeAgentProvider(
+                config_service=self.config_service,
+                api_key=api_key,
+                base_url=base_url
+            )
             max_iterations = self.config_service.get("claude_agent.fix_max_iterations", 25)
 
             logger.info(f"🔍 Starting Claude Agent analysis (max_iterations={max_iterations})")
@@ -1324,8 +1456,20 @@ You MUST use a "Dual Anchor" strategy for robust extraction:
 Create and run a test to validate your extraction_script.py works correctly.
 """
 
-            # 4. Initialize Claude Agent Provider
-            claude_provider = ClaudeAgentProvider(config_service=self.config_service)
+            # 4. Initialize Claude Agent Provider with user's API key and base URL
+            # Get API key and base_url from BaseAgent's provider (which has user's API key)
+            api_key = None
+            base_url = None
+            if self.provider and hasattr(self.provider, 'api_key'):
+                api_key = self.provider.api_key
+                base_url = getattr(self.provider, 'base_url', None)
+                logger.info(f"Using API key from BaseAgent provider for Claude Agent (base_url: {base_url})")
+
+            claude_provider = ClaudeAgentProvider(
+                config_service=self.config_service,
+                api_key=api_key,
+                base_url=base_url
+            )
             logger.info("Claude Agent Provider initialized")
 
             # 5. Run Claude SDK to generate and test script

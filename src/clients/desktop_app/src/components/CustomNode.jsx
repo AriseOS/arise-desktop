@@ -1,8 +1,14 @@
 import React, { useState } from 'react'
 import { Handle, Position } from 'reactflow'
 
-function CustomNode({ data }) {
+function CustomNode({ data, onOptimizeScript }) {
   const [showModal, setShowModal] = useState(false)
+
+  // Check if this is a scraper agent
+  // Check multiple conditions: agent_type, tools array, or description/label containing 'scraper'
+  const isScraperAgent = data.agent_type === 'scraper' || data.agent_type === 'scraper_agent' || (data.agent_type === 'tool' && data.tools?.includes('scraper')) ||
+    data.label?.toLowerCase().includes('scraper') ||
+    data.description?.toLowerCase().includes('scraper')
 
   const getNodeStyle = () => {
     const baseStyle = {
@@ -187,6 +193,41 @@ function CustomNode({ data }) {
                       </pre>
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Optimize Script Button for Scraper Agents */}
+              {isScraperAgent && onOptimizeScript && (
+                <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #e5e7eb' }}>
+                  <button
+                    onClick={() => {
+                      setShowModal(false)
+                      onOptimizeScript(data)
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '12px 20px',
+                      background: '#3b82f6',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      fontWeight: '600',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                      transition: 'background 0.2s'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = '#2563eb'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = '#3b82f6'}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                    </svg>
+                    优化脚本
+                  </button>
                 </div>
               )}
             </div>

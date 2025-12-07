@@ -17,6 +17,14 @@ from ...models import User, ApiCall, MonthlyUsageStats, WorkflowQuota
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
+# Simple cache for stats (avoid expensive queries on every request)
+_stats_cache = {
+    "data": None,
+    "timestamp": None
+}
+_CACHE_TTL_SECONDS = 60  # Cache for 60 seconds
+
+
 # Response Models
 class UserListItem(BaseModel):
     """User list item for admin dashboard"""
@@ -220,7 +228,18 @@ async def get_usage_stats(
     db: Session = Depends(get_db_session),
     _admin: bool = Depends(verify_admin)
 ):
-    """Get overall usage statistics"""
+    """Get overall usage statistics (with 60-second cache)"""
+    global _stats_cache
+
+    # Check cache
+    now = datetime.utcnow()
+    if (_stats_cache["data"] is not None and
+        _stats_cache["timestamp"] is not None and
+        (now - _stats_cache["timestamp"]).total_seconds() < _CACHE_TTL_SECONDS):
+        # Return cached data
+        return _stats_cache["data"]
+
+    # Cache miss or expired - query database
     # Total and active users
     total_users = db.query(func.count(User.user_id)).scalar() or 0
     active_users = db.query(func.count(User.user_id)).filter(User.is_active == True).scalar() or 0
@@ -241,7 +260,7 @@ async def get_usage_stats(
     output_tokens = token_stats.output or 0 if token_stats else 0
     api_calls = token_stats.calls or 0 if token_stats else 0
 
-    return UsageStatsResponse(
+    result = UsageStatsResponse(
         total_users=total_users,
         active_users=active_users,
         total_workflow_executions=total_workflows,
@@ -250,6 +269,12 @@ async def get_usage_stats(
         total_output_tokens=output_tokens,
         total_tokens=input_tokens + output_tokens
     )
+
+    # Update cache
+    _stats_cache["data"] = result
+    _stats_cache["timestamp"] = now
+
+    return result
 
 
 @router.get("/stats/daily", response_model=List[DailyUsageResponse])

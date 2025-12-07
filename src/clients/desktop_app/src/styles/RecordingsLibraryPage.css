@@ -20,32 +20,6 @@
   border-bottom: 1px solid var(--border-subtle);
 }
 
-.back-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  background: transparent;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all 0.2s;
-  margin-right: 20px;
-}
-
-.back-button:hover {
-  background: var(--color-gray-100);
-  border-color: var(--primary-main);
-  color: var(--primary-main);
-}
-
-.back-button svg {
-  width: 20px;
-  height: 20px;
-}
-
 .page-title {
   font-size: 24px;
   font-weight: 600;
@@ -270,90 +244,29 @@
    =================================== */
 
 .recording-actions {
-  display: flex;
-  gap: 16px;
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  gap: 12px;
   align-items: center;
+  width: 100%;
 }
 
-.btn-action {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 18px;
-  border: none;
-  border-radius: var(--radius-lg);
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
+.recording-actions .btn {
+  /* Prevent full width stretching */
+  flex: 0 0 auto !important;
+  width: auto !important;
+  /* Ensure they don't shrink too much */
+  white-space: nowrap;
 }
 
-.btn-action svg {
-  width: 16px;
-  height: 16px;
+.recording-actions .btn-icon-danger {
+  margin-left: auto !important;
+  /* Push to the right */
+  flex: 0 0 auto !important;
 }
 
-.btn-action.primary {
-  background: var(--primary-main);
-  color: white;
-  box-shadow: var(--shadow-md);
-}
-
-.btn-action.primary:hover {
-  background: var(--primary-hover);
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-lg);
-}
-
-.btn-action.secondary {
-  background: transparent;
-  border: 1px solid var(--border-subtle);
-  color: var(--text-secondary);
-}
-
-.btn-action.secondary:hover {
-  border-color: var(--status-success-text);
-  color: var(--status-success-text);
-  background: var(--status-success-bg);
-}
-
-.btn-action.info {
-  background: var(--color-primary-500);
-  /* Using primary for info */
-  color: white;
-}
-
-.btn-action.info:hover {
-  background: var(--color-primary-600);
-  transform: translateY(-2px);
-}
-
-.btn-delete {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  background: transparent;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all 0.2s;
-  margin-left: auto;
-}
-
-.btn-delete:hover {
-  background: var(--status-error-bg);
-  border-color: var(--status-error-text);
-  color: var(--status-error-text);
-}
-
-.btn-delete svg {
-  width: 18px;
-  height: 18px;
-  pointer-events: none;
-}
+/* Old .btn-action styles removed, using global .btn classes */
 
 /* ===================================
    EMPTY STATE
@@ -546,8 +459,7 @@
   gap: 12px;
 }
 
-.btn-cancel,
-.btn-confirm-delete {
+.btn-cancel {
   padding: 10px 24px;
   border-radius: var(--radius-lg);
   font-size: 14px;
@@ -555,9 +467,6 @@
   cursor: pointer;
   transition: all 0.2s;
   border: none;
-}
-
-.btn-cancel {
   background: transparent;
   border: 1px solid var(--border-subtle);
   color: var(--text-secondary);
@@ -567,18 +476,6 @@
   background: var(--color-gray-100);
   border-color: var(--color-gray-300);
   color: var(--text-primary);
-}
-
-.btn-confirm-delete {
-  background: var(--status-error-text);
-  color: white;
-  box-shadow: var(--shadow-md);
-}
-
-.btn-confirm-delete:hover {
-  background: #b91c1c;
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-lg);
 }
 
 /* ===================================
@@ -627,16 +524,13 @@
   }
 
   .recording-actions {
-    flex-direction: column;
+    /* Keep row layout on mobile as requested, but maybe wrap if tiny */
+    flex-direction: row;
+    flex-wrap: wrap;
   }
 
-  .btn-action {
-    width: 100%;
-    justify-content: center;
-  }
-
-  .btn-delete {
-    width: 100%;
-    margin-left: 0;
-  }
+  /* Note: btn-action styles are gone, but assuming .btn from global is used. 
+     If we want full width on mobile, we might need a helper class or global .btn-block logic.
+     For now, we leave the query, but remove specific .btn-action references if they don't exist.
+  */
 }

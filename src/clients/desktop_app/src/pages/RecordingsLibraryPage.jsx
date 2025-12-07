@@ -206,10 +206,10 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
     <div className="recordings-library-page">
       {/* Header */}
       <div className="page-header">
-        <button className="back-button" onClick={() => onNavigate('main')}>
-          <Icon icon="arrowLeft" />
+        <button className="btn-icon" onClick={() => onNavigate('main')} aria-label="Go Back">
+          <Icon name="arrowLeft" />
         </button>
-        <h1 className="page-title"><Icon icon="book" /> Recordings Library</h1>
+        <h1 className="page-title"><Icon name="book" /> Recordings Library</h1>
         <div className="header-spacer"></div>
       </div>
 
@@ -217,7 +217,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
       <div className="search-section">
         <div className="search-input-wrapper">
           <span className="search-icon">
-            <Icon icon="search" />
+            <Icon name="search" />
           </span>
           <input
             type="text"
@@ -228,7 +228,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
           />
           {searchQuery && (
             <button className="clear-search" onClick={() => setSearchQuery('')}>
-              <Icon icon="x" />
+              <Icon name="x" />
             </button>
           )}
         </div>
@@ -249,17 +249,17 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
           <div className="empty-state">
             {recordings.length === 0 ? (
               <>
-                <div className="empty-icon"><Icon icon="video" /></div>
+                <div className="empty-icon"><Icon name="video" /></div>
                 <h3>No recordings yet</h3>
                 <p>Start recording a new workflow to see it here.</p>
                 <button className="btn-start-recording" onClick={() => onNavigate('quick-start')}>
-                  <span className="button-icon"><Icon icon="video" /></span>
+                  <span className="button-icon"><Icon name="video" /></span>
                   <span>Start Recording</span>
                 </button>
               </>
             ) : (
               <>
-                <div className="empty-icon"><Icon icon="search" /></div>
+                <div className="empty-icon"><Icon name="search" /></div>
                 <h3>No results found</h3>
                 <p>Try adjusting your search query.</p>
                 <button className="btn-clear-search" onClick={() => setSearchQuery('')}>
@@ -272,18 +272,18 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
           filteredRecordings.map((recording) => (
             <div key={recording.session_id} className="recording-card">
               <div className="recording-header">
-                <div className="recording-icon"><Icon icon="video" /></div>
+                <div className="recording-icon"><Icon name="video" /></div>
                 <div className="recording-info">
                   <h3 className="recording-title">
                     {recording.task_metadata?.name || `Recording ${recording.session_id}`}
                   </h3>
                   <div className="recording-meta">
                     <span className="meta-item">
-                      <Icon icon="clock" />
+                      <Icon name="clock" />
                       {formatDate(recording.created_at)}
                     </span>
                     <span className="meta-item">
-                      <Icon icon="activity" />
+                      <Icon name="activity" />
                       {recording.action_count || 0} operations
                     </span>
                   </div>
@@ -292,31 +292,31 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
 
               <div className="recording-actions">
                 <button
-                  className="btn-action primary"
+                  className="btn btn-primary"
                   onClick={() => handleViewDetails(recording.session_id)}
                 >
-                  <Icon icon="eye" />
+                  <Icon name="eye" />
                   View Details
                 </button>
                 {metaflowIds[recording.session_id] ? (
                   <button
-                    className="btn-action info"
+                    className="btn btn-primary"
                     onClick={() => handleViewMetaflow(metaflowIds[recording.session_id])}
                   >
-                    <Icon icon="fileText" />
+                    <Icon name="fileText" />
                     View MetaFlow
                   </button>
                 ) : (
                   <button
-                    className="btn-action secondary"
+                    className="btn btn-secondary"
                     onClick={() => handleGenerateWorkflow(recording.session_id)}
                   >
-                    <Icon icon="zap" />
+                    <Icon name="zap" />
                     Generate Workflow
                   </button>
                 )}
                 <button
-                  className="btn-delete"
+                  className="btn-icon-danger"
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -324,7 +324,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
                   }}
                   title="Delete recording"
                 >
-                  <Icon icon="trash" />
+                  <Icon name="trash" />
                 </button>
               </div>
             </div>
@@ -347,7 +347,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
               <button className="btn-cancel" onClick={handleDeleteCancel}>
                 Cancel
               </button>
-              <button className="btn-confirm-delete" onClick={handleDeleteConfirm}>
+              <button className="btn btn-danger-solid" onClick={handleDeleteConfirm}>
                 Delete
               </button>
             </div>

@@ -57,7 +57,8 @@ class ClaudeAgentProvider:
         self,
         config_service: Optional["ConfigService"] = None,
         api_key: Optional[str] = None,
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        base_url: Optional[str] = None
     ):
         """
         Initialize Claude Agent Provider
@@ -66,10 +67,12 @@ class ClaudeAgentProvider:
             config_service: ConfigService instance to read configuration
             api_key: Anthropic API key (overrides config/env if provided)
             model: Claude model to use (overrides config if provided)
+            base_url: Custom base URL for API proxy (e.g., https://api.ariseos.com)
 
         Raises:
             ValueError: If API key cannot be found in config, env, or parameters
         """
+        self.base_url = base_url
         # Priority: parameter > config > environment variable
         if api_key:
             self.api_key = api_key
@@ -166,31 +169,96 @@ class ClaudeAgentProvider:
             )
 
             # Configure SDK options using ClaudeAgentOptions class
+            # Start with current environment variables (to inherit ANTHROPIC_LOG, etc.)
+            env_vars = dict(os.environ)
+
+            # Set our specific API key (override if exists in environment)
+            env_vars["ANTHROPIC_API_KEY"] = self.api_key
+
+            # Add ANTHROPIC_BASE_URL for API proxy if configured
+            if self.base_url:
+                env_vars["ANTHROPIC_BASE_URL"] = self.base_url
+                logger.info(f"Using API Proxy base URL for Claude SDK: {self.base_url}")
+
+            # Log if debug mode is enabled
+            if env_vars.get("ANTHROPIC_LOG") == "debug":
+                logger.info("ANTHROPIC_LOG=debug is set, SDK will output detailed logs")
+
+            # Stderr callback to capture SDK internal logs
+            def stderr_callback(line: str):
+                """Capture stderr from Claude SDK subprocess"""
+                logger.info(f"[Claude SDK stderr] {line}")
+
             options = ClaudeAgentOptions(
                 model=self.model,
                 cwd=str(working_dir),
                 max_turns=max_iterations,
                 allowed_tools=tools,
                 permission_mode="acceptEdits",
-                # Pass API key through env dict to the subprocess
-                env={"ANTHROPIC_API_KEY": self.api_key}
+                # Pass environment variables to the subprocess
+                env=env_vars,
+                # Capture stderr output
+                stderr=stderr_callback
             )
 
             # Execute the query
             turn_count = 0
             final_success = False
             last_result_message = None
+            last_assistant_message = None
+
+            logger.info("Starting to iterate over Claude SDK messages...")
+            logger.info("NOTE: Messages may arrive in batches after each turn completes. Please wait...")
+
+            # Add timeout tracking
+            import time
+            last_message_time = time.time()
+            message_count = 0
+            start_time = time.time()
 
             async for message in query(prompt=prompt, options=options):
+                message_count += 1
+                current_time = time.time()
+                time_since_last = current_time - last_message_time
+                last_message_time = current_time
+
+                # Log all message types for debugging
+                msg_type = type(message).__name__
+                logger.info(f"📨 Received message #{message_count} (after {time_since_last:.1f}s): {msg_type}")
+
                 # Count assistant turns
                 if isinstance(message, AssistantMessage):
                     turn_count += 1
+                    last_assistant_message = message
+                    logger.info(f"🤖 AssistantMessage #{turn_count}")
+
+                    # Log assistant message content
+                    if hasattr(message, 'content'):
+                        for i, block in enumerate(message.content):
+                            if isinstance(block, TextBlock):
+                                text_preview = block.text[:200] if len(block.text) > 200 else block.text
+                                logger.info(f"   Text block {i}: {text_preview}...")
+                            elif isinstance(block, ToolUseBlock):
+                                logger.info(f"   Tool use block {i}: {block.name}")
+
+                # User message
+                if isinstance(message, UserMessage):
+                    logger.info(f"👤 UserMessage received")
+
+                # System message
+                if isinstance(message, SystemMessage):
+                    logger.info(f"⚙️  SystemMessage received")
 
                 # ResultMessage indicates task completion
                 if isinstance(message, ResultMessage):
                     last_result_message = message
                     final_success = not message.is_error
-                    logger.info(f"Claude Agent completed: success={final_success}, turns={message.num_turns}, duration={message.duration_ms/1000:.1f}s")
+                    logger.info(f"✅ Claude Agent completed: success={final_success}, turns={message.num_turns}, duration={message.duration_ms/1000:.1f}s")
+                    if not final_success:
+                        logger.error(f"   Error result: {message.result}")
+
+            total_duration = time.time() - start_time
+            logger.info(f"Finished iterating messages after {total_duration:.1f}s. Total messages: {message_count}, assistant turns: {turn_count}")
 
             # If we got a result message, use its data
             if last_result_message:
@@ -200,11 +268,36 @@ class ClaudeAgentProvider:
                     error=last_result_message.result if not final_success else None
                 )
 
-            # Fallback if no result message received
+            # Fallback: if we got assistant messages but no result message
+            # This might happen if Claude finished normally but SDK didn't send ResultMessage
+            if last_assistant_message:
+                logger.warning(f"No ResultMessage received, but got {turn_count} assistant turns.")
+                logger.info("Checking if task completed successfully by examining workspace...")
+
+                # Check if script was actually generated
+                script_file = working_dir / "extraction_script.py"
+                if script_file.exists():
+                    logger.info(f"✅ Script file found at {script_file}, treating as success")
+                    return AgentResult(
+                        success=True,
+                        iterations=turn_count,
+                        error=None
+                    )
+                else:
+                    logger.warning(f"❌ Script file not found at {script_file}, treating as failure")
+                    return AgentResult(
+                        success=False,
+                        iterations=turn_count,
+                        error="Script file was not generated"
+                    )
+
+            # No messages at all - this is a problem
+            logger.error("No messages received from Claude SDK")
+            logger.info("This might indicate a problem with SDK subprocess or API connectivity")
             return AgentResult(
                 success=False,
-                iterations=turn_count,
-                error="No result message received from Claude SDK"
+                iterations=0,
+                error="No messages received from Claude SDK. Check logs for subprocess errors."
             )
 
         except ImportError as e:

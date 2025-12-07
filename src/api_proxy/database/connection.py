@@ -36,14 +36,15 @@ def init_db():
     db_url = config.get_db_url()
     pool_size = config.get("database.postgresql.pool_size", 10)
     max_overflow = config.get("database.postgresql.max_overflow", 20)
-    echo = config.get("server.reload", False)
+    # Use separate config for SQL logging, default to False to reduce noise
+    echo = config.get("database.echo_sql", False)
 
     # Create engine
     _engine = create_engine(
         db_url,
         pool_size=pool_size,
         max_overflow=max_overflow,
-        echo=echo,  # Log SQL queries in debug mode
+        echo=echo,  # Log SQL queries only if explicitly enabled
     )
 
     # Create session factory

@@ -466,29 +466,58 @@ class BaseAgent:
     # ==================== Provider管理 ====================
     
     def _initialize_provider(self) -> None:
-        """初始化Provider"""
+        """初始化Provider - 自动从config_service读取配置"""
         try:
-            # 默认使用OpenAI Provider
+            # If provider_config is empty but config_service exists, auto-load from config
+            if not self.provider_config and self.config_service:
+                import os
+                logger.info("No provider_config provided, loading from config_service")
+
+                provider_type = self.config_service.get('llm.provider', 'anthropic')
+                model_name = self.config_service.get('llm.model', 'claude-3-5-sonnet-20241022')
+
+                # Auto-detect API key source
+                # Priority: provider_config['api_key'] > env var
+                if provider_type == 'anthropic':
+                    api_key = os.environ.get('ANTHROPIC_API_KEY')
+                else:
+                    api_key = os.environ.get('OPENAI_API_KEY')
+
+                # Check if should use API Proxy
+                use_proxy = self.config_service.get('llm.use_proxy', False)
+                base_url = None
+                if use_proxy:
+                    base_url = self.config_service.get('llm.proxy_url', 'http://127.0.0.1:8080')
+                    logger.info(f"API Proxy enabled: {base_url}")
+
+                self.provider_config = {
+                    'type': provider_type,
+                    'api_key': api_key,
+                    'model_name': model_name,
+                    'base_url': base_url
+                }
+
+            # Get provider config values
             provider_type = self.provider_config.get('type', 'openai')
-            
+            api_key = self.provider_config.get('api_key')
+            model_name = self.provider_config.get('model_name')
+            base_url = self.provider_config.get('base_url')
+
+            # Initialize provider based on type
             if provider_type == 'openai':
                 from src.common.llm import OpenAIProvider
-                api_key = self.provider_config.get('api_key')
-                model_name = self.provider_config.get('model_name')
-                self.provider = OpenAIProvider(api_key=api_key, model_name=model_name)
+                self.provider = OpenAIProvider(api_key=api_key, model_name=model_name, base_url=base_url)
             elif provider_type == 'anthropic':
                 from src.common.llm import AnthropicProvider
-                api_key = self.provider_config.get('api_key')
-                model_name = self.provider_config.get('model_name')
-                self.provider = AnthropicProvider(api_key=api_key, model_name=model_name)
+                self.provider = AnthropicProvider(api_key=api_key, model_name=model_name, base_url=base_url)
             else:
-                logger.warning(f"未知的Provider类型: {provider_type}")
+                logger.warning(f"Unknown provider type: {provider_type}")
                 return
-            
-            logger.info(f"Provider初始化成功: {provider_type}")
-            
+
+            logger.info(f"Provider initialized: {provider_type}, model: {model_name}, base_url: {base_url or 'default'}")
+
         except Exception as e:
-            logger.error(f"Provider初始化失败: {e}")
+            logger.error(f"Provider initialization failed: {e}")
             self.provider = None
     
     async def initialize_provider_async(self) -> bool:

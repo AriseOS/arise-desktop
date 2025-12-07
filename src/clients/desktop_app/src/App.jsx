@@ -29,6 +29,7 @@ import MetaflowPreviewPage from "./pages/MetaflowPreviewPage";
 import DataManagementPage from "./pages/DataManagementPage";
 import CollectionDetailPage from "./pages/CollectionDetailPage";
 import WorkflowExecutionLivePage from "./pages/WorkflowExecutionLivePage";
+import ScraperOptimizationPage from "./pages/ScraperOptimizationPage";
 
 function App() {
   // Auth state
@@ -235,7 +236,7 @@ function App() {
           <p className="page-subtitle">Ready to automate your work?</p>
         </div>
         <button
-          className="btn btn-ghost"
+          className="btn-icon"
           title="Settings"
           onClick={() => navigate("settings")}
         >
@@ -556,6 +557,16 @@ function App() {
             onNavigate={navigate}
             showStatus={showStatus}
             collectionName={pageParams.collectionName}
+          />
+        );
+
+      case "scraper-optimization":
+        return (
+          <ScraperOptimizationPage
+            session={session}
+            pageParams={pageParams}
+            onNavigate={navigate}
+            showStatus={showStatus}
           />
         );
 

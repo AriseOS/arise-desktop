@@ -56,7 +56,7 @@ class WorkflowGenerationService:
         # Store config for API Proxy
         if config_service:
             self.use_proxy = config_service.get("llm.use_proxy", False)
-            self.proxy_base_url = config_service.get("llm.proxy_base_url", "http://localhost:8080")
+            self.proxy_base_url = config_service.get("llm.proxy_url", "http://localhost:8080")
         else:
             self.use_proxy = False
             self.proxy_base_url = "http://localhost:8080"

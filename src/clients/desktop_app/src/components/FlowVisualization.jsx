@@ -13,9 +13,7 @@ import CustomNode from './CustomNode';
 import { transformWorkflowData, transformMetaflowData } from '../utils/flowLayout';
 import yaml from 'js-yaml';
 
-const nodeTypes = {
-    custom: CustomNode,
-};
+// Custom node types will be created with onOptimizeScript callback
 
 const nodeColor = (node) => {
     switch (node.data?.type) {
@@ -34,7 +32,12 @@ const nodeColor = (node) => {
     }
 };
 
-function FlowVisualization({ data, type = 'workflow' }) {
+function FlowVisualization({ data, type = 'workflow', onOptimizeScript }) {
+    // Create custom node component with onOptimizeScript callback
+    const nodeTypes = useMemo(() => ({
+        custom: (props) => <CustomNode {...props} onOptimizeScript={onOptimizeScript} />
+    }), [onOptimizeScript]);
+
     const { nodes: initialNodes, edges: initialEdges } = useMemo(() => {
         if (type === 'workflow') {
             // Prefer parsing YAML if available to ensure we get the full nested structure

@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Icon from '../components/Icons';
 import '../styles/MetaflowDetailPage.css';
 import FlowVisualization from '../components/FlowVisualization';
 import yaml from 'js-yaml';
+import { api } from '../utils/api';
 
 const API_BASE = "http://127.0.0.1:8765";
 
@@ -10,8 +11,16 @@ function MetaflowDetailPage({ session, onNavigate, showStatus, metaflowId }) {
   const userId = session?.username;
   const [metaflow, setMetaflow] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('preview'); // 'preview' or 'yaml'
+  const [activeTab, setActiveTab] = useState('preview'); // 'preview', 'visual', 'yaml', 'chat'
   const [isGeneratingWorkflow, setIsGeneratingWorkflow] = useState(false);
+
+  // Chat/Modification state
+  const [chatInput, setChatInput] = useState('');
+  const [isModifying, setIsModifying] = useState(false);
+  const [sessionId, setSessionId] = useState(null);
+  const [modificationLog, setModificationLog] = useState([]);
+  const [currentToolUse, setCurrentToolUse] = useState(null);
+  const logEndRef = useRef(null);
 
   // Fetch MetaFlow details
   useEffect(() => {
@@ -23,7 +32,7 @@ function MetaflowDetailPage({ session, onNavigate, showStatus, metaflowId }) {
       }
 
       try {
-        const response = await fetch(`${API_BASE}/api/metaflows/${metaflowId}?user_id=userId`);
+        const response = await fetch(`${API_BASE}/api/metaflows/${metaflowId}?user_id=${userId}`);
 
         if (!response.ok) {
           throw new Error(`Failed to fetch MetaFlow: ${response.status}`);
@@ -40,7 +49,12 @@ function MetaflowDetailPage({ session, onNavigate, showStatus, metaflowId }) {
     };
 
     fetchMetaflowDetails();
-  }, [metaflowId]);
+  }, [metaflowId, userId]);
+
+  // Auto-scroll modification log
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [modificationLog, currentToolUse]);
 
   const handleGenerateWorkflow = async () => {
     if (isGeneratingWorkflow) return;
@@ -78,14 +92,6 @@ function MetaflowDetailPage({ session, onNavigate, showStatus, metaflowId }) {
     } finally {
       setIsGeneratingWorkflow(false);
     }
-  };
-
-  const handleModifyMetaflow = () => {
-    // Navigate to MetaFlow preview page for modification
-    onNavigate('metaflow-preview', {
-      metaflowId: metaflowId,
-      metaflowYaml: metaflow.metaflow_yaml
-    });
   };
 
   const handleViewWorkflow = () => {
@@ -146,6 +152,137 @@ function MetaflowDetailPage({ session, onNavigate, showStatus, metaflowId }) {
     } catch (error) {
       console.error('Error parsing MetaFlow YAML:', error);
       return null;
+    }
+  };
+
+  // Handle modification request
+  const handleModify = async () => {
+    if (!chatInput.trim() || isModifying) return;
+
+    const userMessage = chatInput.trim();
+    setChatInput('');
+    setIsModifying(true);
+    setModificationLog(prev => [...prev, { type: 'user', content: userMessage }]);
+
+    try {
+      // Create session if not exists
+      let sid = sessionId;
+      if (!sid) {
+        const result = await api.callAppBackend('/api/intent-builder/start', {
+          method: 'POST',
+          body: JSON.stringify({
+            user_id: userId,
+            user_query: `Modify the following MetaFlow based on this request: ${userMessage}`,
+            task_description: `Current MetaFlow ID: ${metaflowId}`,
+            metaflow_id: metaflowId,  // Pass MetaFlow ID so Agent can save modifications
+            // Pass current MetaFlow content so Agent has context
+            current_metaflow_yaml: metaflow.metaflow_yaml,
+            phase: 'metaflow'  // Tell Agent we're in MetaFlow phase
+          })
+        });
+
+        sid = result.session_id;
+        setSessionId(sid);
+      }
+
+      // Stream the modification response
+      const response = await fetch(`${API_BASE}/api/intent-builder/${sid}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: userMessage })
+      });
+
+      if (!response.ok) throw new Error(`Request failed: ${response.statusText}`);
+
+      // Read SSE stream
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let accumulatedText = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const event = JSON.parse(line.slice(6));
+
+              switch (event.type) {
+                case 'text':
+                  accumulatedText += event.content;
+                  break;
+                case 'tool_use':
+                  setCurrentToolUse({ name: event.tool_name, input: event.tool_input });
+                  break;
+                case 'tool_result':
+                  setCurrentToolUse(null);
+                  break;
+                case 'complete':
+                  setCurrentToolUse(null);
+                  if (accumulatedText) {
+                    setModificationLog(prev => [...prev, { type: 'assistant', content: accumulatedText }]);
+                  }
+                  // Reload updated MetaFlow YAML from the response
+                  if (event.result?.updated_yaml) {
+                    const updatedMetaflow = { ...metaflow, metaflow_yaml: event.result.updated_yaml };
+                    setMetaflow(updatedMetaflow);
+
+                    // Sync to local cache (Cloud already saved by Agent)
+                    fetch(`${API_BASE}/api/metaflows/${metaflowId}`, {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        user_id: userId,
+                        metaflow_yaml: event.result.updated_yaml
+                      })
+                    }).then(response => {
+                      if (response.ok) {
+                        console.log('✓ MetaFlow synced to local cache');
+                      } else {
+                        console.warn('⚠ Failed to sync metaflow to local cache');
+                      }
+                    }).catch(err => {
+                      console.error('Failed to sync metaflow:', err);
+                    });
+                  }
+                  showStatus('Modification complete!', 'success');
+                  break;
+                case 'error':
+                  showStatus(`Error: ${event.content}`, 'error');
+                  break;
+              }
+            } catch (e) {
+              console.error('Failed to parse event:', e);
+            }
+          }
+        }
+      }
+
+    } catch (error) {
+      console.error('Modification error:', error);
+      showStatus(`Modification failed: ${error.message}`, 'error');
+      setModificationLog(prev => [...prev, { type: 'error', content: error.message }]);
+
+      // If session not found (404), clear session ID to force recreation next time
+      if (error.message.includes('404') || error.message.includes('Session not found')) {
+        console.log('Session expired or not found, clearing session ID');
+        setSessionId(null);
+      }
+    } finally {
+      setIsModifying(false);
+    }
+  };
+
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleModify();
     }
   };
 
@@ -253,6 +390,13 @@ function MetaflowDetailPage({ session, onNavigate, showStatus, metaflowId }) {
               <Icon icon="code" />
               <span>YAML</span>
             </button>
+            <button
+              className={`tab-button ${activeTab === 'chat' ? 'active' : ''}`}
+              onClick={() => setActiveTab('chat')}
+            >
+              <Icon icon="messageSquare" />
+              <span>AI 修改</span>
+            </button>
           </div>
 
           <div className="tab-content">
@@ -306,7 +450,7 @@ function MetaflowDetailPage({ session, onNavigate, showStatus, metaflowId }) {
                 )}
               </div>
             ) : activeTab === 'visual' ? (
-              <div className="visual-section" style={{ height: '600px', background: '#fff', borderRadius: '8px', overflow: 'hidden' }}>
+              <div className="visual-section" style={{ height: '100%', minHeight: '600px', background: '#fff', borderRadius: '8px', overflow: 'hidden' }}>
                 <FlowVisualization
                   data={(() => {
                     try {
@@ -325,6 +469,63 @@ function MetaflowDetailPage({ session, onNavigate, showStatus, metaflowId }) {
                   <pre className="yaml-content">
                     <code>{metaflow.metaflow_yaml || 'No YAML content'}</code>
                   </pre>
+                </div>
+              </div>
+            ) : activeTab === 'chat' ? (
+              <div className="metaflow-chat-container">
+                <div className="chat-instructions">
+                  <h3><Icon icon="bot" size={20} /> AI 助手</h3>
+                  <p>使用自然语言描述你想要的修改，AI 会帮你调整 MetaFlow 配置</p>
+                </div>
+
+                {/* Modification Log */}
+                {modificationLog.length > 0 && (
+                  <div className="modification-log">
+                    {modificationLog.map((msg, index) => (
+                      <div key={index} className={`log-message ${msg.type}`}>
+                        <span className="log-avatar">
+                          {msg.type === 'user' ? <Icon icon="user" size={16} /> : msg.type === 'error' ? <Icon icon="alertCircle" size={16} /> : <Icon icon="bot" size={16} />}
+                        </span>
+                        <pre className="log-content">{msg.content}</pre>
+                      </div>
+                    ))}
+                    {currentToolUse && (
+                      <div className="tool-indicator">
+                        <div className="tool-spinner"></div>
+                        <span className="tool-name">{currentToolUse.name}</span>
+                        <span className="tool-desc">
+                          {currentToolUse.name === 'Edit' && `Editing ${currentToolUse.input?.file_path || 'file'}...`}
+                          {currentToolUse.name === 'Read' && `Reading ${currentToolUse.input?.file_path || 'file'}...`}
+                          {currentToolUse.name === 'Write' && `Writing to ${currentToolUse.input?.file_path || 'file'}...`}
+                          {!['Edit', 'Read', 'Write'].includes(currentToolUse.name) && `Using ${currentToolUse.name}...`}
+                        </span>
+                      </div>
+                    )}
+                    <div ref={logEndRef} />
+                  </div>
+                )}
+
+                {/* Modification Input */}
+                <div className="modification-input">
+                  <textarea
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyPress={handleKeyPress}
+                    placeholder="例如：在数据提取前添加一个过滤步骤..."
+                    disabled={isModifying}
+                    rows={3}
+                  />
+                  <button
+                    onClick={handleModify}
+                    disabled={!chatInput.trim() || isModifying}
+                    className="modify-button"
+                  >
+                    {isModifying ? (
+                      <div className="btn-spinner"></div>
+                    ) : (
+                      <Icon icon="send" size={16} />
+                    )}
+                  </button>
                 </div>
               </div>
             ) : (
@@ -346,14 +547,10 @@ function MetaflowDetailPage({ session, onNavigate, showStatus, metaflowId }) {
               <Icon icon="zap" />
               {metaflow.workflow_id ? 'Workflow Generated' : isGeneratingWorkflow ? 'Generating...' : 'Generate Workflow'}
             </button>
-            <button className="btn-secondary" onClick={handleModifyMetaflow}>
-              <Icon icon="edit" />
-              Modify MetaFlow
-            </button>
           </div>
           {metaflow.workflow_id && (
             <p className="action-hint">
-              Workflow already generated. Click to view or modify the MetaFlow.
+              Workflow already generated.
             </p>
           )}
         </div>

@@ -267,7 +267,7 @@ Present the MetaFlow to me for review before proceeding to Workflow generation.
             if self.config_service:
                 use_proxy = self.config_service.get("llm.use_proxy", True)
                 if use_proxy:
-                    proxy_base_url = self.config_service.get("llm.proxy_base_url", "http://127.0.0.1:8080")
+                    proxy_base_url = self.config_service.get("llm.proxy_url", "http://127.0.0.1:8080")
                     logger.info(f"Using API proxy: {proxy_base_url}")
 
             # Configure SDK options

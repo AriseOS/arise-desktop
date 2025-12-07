@@ -43,12 +43,31 @@ from src.app_backend.services.workflow_executor import WorkflowExecutor
 from src.app_backend.services.cdp_recorder import CDPRecorder
 from src.app_backend.services.cloud_client import CloudClient
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
-)
+# Configure logging with both console and file output
+log_format = '%(asctime)s [%(levelname)s] %(name)s: %(message)s'
+
+# Create formatters and handlers
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(logging.Formatter(log_format))
+
+# File handler - log to ~/.ami/logs/app-backend.log
+log_dir = Path.home() / '.ami' / 'logs'
+log_dir.mkdir(parents=True, exist_ok=True)
+log_file = log_dir / 'app-backend.log'
+
+file_handler = logging.FileHandler(log_file, encoding='utf-8')
+file_handler.setLevel(logging.DEBUG)  # File gets DEBUG level
+file_handler.setFormatter(logging.Formatter(log_format))
+
+# Configure root logger
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.DEBUG)  # Capture all levels
+root_logger.addHandler(console_handler)
+root_logger.addHandler(file_handler)
+
 logger = logging.getLogger(__name__)
+logger.info(f"Logging to file: {log_file}")
 
 # Load configuration
 config = get_config()
@@ -1220,12 +1239,27 @@ async def generate_workflow(
 
 
 @app.post("/api/workflow/execute", response_model=ExecuteWorkflowResponse)
-async def execute_workflow(request: ExecuteWorkflowRequest):
-    """Execute a workflow asynchronously"""
+async def execute_workflow(
+    request: ExecuteWorkflowRequest,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """Execute a workflow asynchronously
+
+    Headers:
+        X-Ami-API-Key: User's Ami API key (required for LLM calls via API Proxy)
+    """
     try:
         logger.info(f"Executing workflow: {request.workflow_name}")
+
+        if not x_ami_api_key:
+            logger.warning("No X-Ami-API-Key header provided for workflow execution")
+        else:
+            logger.info(f"Using user API key for workflow execution: {x_ami_api_key[:10]}...")
+
         result = await workflow_executor.execute_workflow_async(
-            request.user_id, request.workflow_name
+            user_id=request.user_id,
+            workflow_name=request.workflow_name,
+            user_api_key=x_ami_api_key
         )
         logger.info(f"Workflow execution started: task_id={result['task_id']}")
         return result
@@ -1423,21 +1457,30 @@ async def get_workflow_detail(workflow_id: str, user_id: str):
         description = metadata.get('description', '')
 
         # Extract steps
-        steps_list = []
         steps_data = workflow_data.get('steps', [])
 
-        for idx, step in enumerate(steps_data):
-            step_id = step.get('id', f"step-{idx}")
-            steps_list.append({
-                'id': step_id,
-                'name': step.get('name', step_id),
-                'type': step.get('type', 'unknown'),
-                'description': step.get('description', ''),
-                'branch': step.get('branch'),
-                'agent_type': step.get('agent_type'),
-                'prompt': step.get('prompt'),
-                'tool': step.get('tool')
-            })
+        def process_steps(steps_in):
+            results = []
+            for idx, step in enumerate(steps_in):
+                # Preserved all original keys from step to ensure nothing is lost, 
+                # but explicitely handle known fields for clarity
+                processed_step = step.copy()
+                
+                # Ensure id exists
+                step_id = step.get('id', f"step-{idx}")
+                processed_step['id'] = step_id
+                
+                # Recursively process children/steps
+                if 'steps' in step and isinstance(step['steps'], list):
+                    processed_step['steps'] = process_steps(step['steps'])
+                
+                if 'children' in step and isinstance(step['children'], list):
+                    processed_step['children'] = process_steps(step['children'])
+                    
+                results.append(processed_step)
+            return results
+
+        steps_list = process_steps(steps_data)
 
         # Extract connections (if exists) or auto-generate
         connections = workflow_data.get('connections', [])
@@ -2060,6 +2103,154 @@ async def close_intent_builder_session(session_id: str):
     except Exception as e:
         logger.error(f"Failed to close Intent Builder session: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Scraper Optimization Endpoints
+# ============================================================================
+
+class LoadWorkspaceRequest(BaseModel):
+    """Request to load script workspace context"""
+    user_id: str
+    workflow_id: str
+    step_id: str
+
+
+class LoadWorkspaceResponse(BaseModel):
+    """Response with workspace context"""
+    success: bool
+    script_path: Optional[str] = None
+    requirement: Optional[Dict] = None
+    script_content: Optional[str] = None
+    has_script: bool = False
+    cached_urls: List[Dict] = []  # List of cached DOM URLs
+    error: Optional[str] = None
+
+
+class ChatWithClaudeRequest(BaseModel):
+    """Request to chat with Claude about script optimization"""
+    user_id: str
+    workflow_id: str
+    step_id: str
+    message: str
+    conversation_history: List[Dict] = []
+
+
+class ChatWithClaudeResponse(BaseModel):
+    """Response from Claude chat"""
+    success: bool
+    response: str
+    error: Optional[str] = None
+
+
+@app.post("/api/scraper-optimization/load-workspace", response_model=LoadWorkspaceResponse)
+async def load_scraper_workspace(request: LoadWorkspaceRequest):
+    """Load script workspace context for optimization
+
+    Args:
+        request: Request with user_id, workflow_id, step_id
+
+    Returns:
+        Workspace context including script, requirements, etc.
+    """
+    try:
+        from src.app_backend.services.scraper_optimization_service import ScraperOptimizationService
+
+        service = ScraperOptimizationService(config)
+
+        # Get script workspace
+        workspace = service.get_script_workspace(
+            request.user_id,
+            request.workflow_id,
+            request.step_id
+        )
+
+        if not workspace:
+            return LoadWorkspaceResponse(
+                success=False,
+                error=f"Script workspace not found for workflow={request.workflow_id}, step={request.step_id}"
+            )
+
+        # Load workspace context
+        context = service.load_workspace_context(workspace)
+
+        return LoadWorkspaceResponse(
+            success=True,
+            script_path=context["script_path"],
+            requirement=context["requirement"],
+            script_content=context["script_content"],
+            has_script=context["has_script"],
+            cached_urls=context["cached_urls"]
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to load workspace: {e}", exc_info=True)
+        return LoadWorkspaceResponse(
+            success=False,
+            error=str(e)
+        )
+
+
+@app.post("/api/scraper-optimization/chat", response_model=ChatWithClaudeResponse)
+async def chat_with_claude_for_optimization(
+    request: ChatWithClaudeRequest,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """Chat with Claude Agent for script optimization
+
+    This endpoint:
+    1. Loads the script workspace
+    2. Passes user message to Claude Agent
+    3. Claude analyzes, potentially modifies the script
+    4. Returns Claude's response
+
+    Args:
+        request: Chat request with message and conversation history
+        x_ami_api_key: User's API key from X-Ami-API-Key header
+
+    Returns:
+        Claude's response
+    """
+    try:
+        from src.app_backend.services.scraper_optimization_service import ScraperOptimizationService
+
+        service = ScraperOptimizationService(config)
+
+        # Get script workspace
+        workspace = service.get_script_workspace(
+            request.user_id,
+            request.workflow_id,
+            request.step_id
+        )
+
+        if not workspace:
+            return ChatWithClaudeResponse(
+                success=False,
+                response="",
+                error=f"Script workspace not found for workflow={request.workflow_id}, step={request.step_id}"
+            )
+
+        # Chat with Claude (pass user's API key)
+        result = await service.chat_with_claude(
+            workspace=workspace,
+            user_message=request.message,
+            conversation_history=request.conversation_history,
+            user_api_key=x_ami_api_key
+        )
+
+        return ChatWithClaudeResponse(
+            success=result["success"],
+            response=result["response"],
+            error=result.get("error")
+        )
+
+    except Exception as e:
+        logger.error(f"Chat with Claude failed: {e}", exc_info=True)
+        return ChatWithClaudeResponse(
+            success=False,
+            response="",
+            error=str(e)
+        )
 
 
 # ============================================================================

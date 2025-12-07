@@ -242,233 +242,192 @@
   height: 16px;
 }
 
+/* ... existing styles ... */
+
 .metaflow-detail-page .tab-content {
-  padding: 20px;
-  max-height: 400px;
-  overflow-y: auto;
-}
-
-/* Preview Section */
-.metaflow-detail-page .preview-section {
+  padding: 0;
+  min-height: 800px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
 }
 
-.metaflow-detail-page .task-overview {
-  padding: 16px;
-  background: var(--color-primary-50);
-  border-radius: var(--radius-lg);
-  border-left: 3px solid var(--primary-main);
-}
-
-.metaflow-detail-page .task-overview h3 {
-  margin: 0 0 8px;
-  font-size: 14px;
-  color: var(--primary-main);
-}
-
-.metaflow-detail-page .task-description {
-  margin: 0 0 12px;
-  font-size: 14px;
-  color: var(--text-primary);
-  line-height: 1.5;
-}
-
-.metaflow-detail-page .task-context {
-  margin: 0;
-  font-size: 13px;
-  color: var(--text-secondary);
-  line-height: 1.5;
-}
-
-/* Steps Section */
-.metaflow-detail-page .steps-section h3 {
-  margin: 0 0 12px;
-  font-size: 14px;
-  color: var(--text-primary);
-}
-
-.metaflow-detail-page .steps-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.metaflow-detail-page .step-item {
-  display: flex;
-  gap: 12px;
-}
-
-.metaflow-detail-page .step-marker {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.metaflow-detail-page .step-number {
-  width: 24px;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--color-primary-100);
-  border-radius: 50%;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--primary-main);
-}
-
-.metaflow-detail-page .step-content {
+.metaflow-detail-page .preview-section,
+.metaflow-detail-page .yaml-section,
+.metaflow-detail-page .visual-section,
+.metaflow-detail-page .metaflow-chat-container {
   flex: 1;
-  padding: 12px;
-  background: var(--bg-app);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border-subtle);
-}
-
-.metaflow-detail-page .step-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.metaflow-detail-page .step-action {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--primary-main);
-  text-transform: uppercase;
-}
-
-.metaflow-detail-page .step-id {
-  font-size: 11px;
-  color: var(--text-tertiary);
-  font-family: var(--font-mono);
-}
-
-.metaflow-detail-page .step-description {
-  margin: 0 0 8px;
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-
-.metaflow-detail-page .step-params {
   display: flex;
   flex-direction: column;
-  gap: 4px;
 }
 
-.metaflow-detail-page .param-item {
-  display: flex;
-  gap: 8px;
-  font-size: 12px;
+/* Chat container styles (matching WorkflowDetailPage) */
+.metaflow-chat-container {
+  background-color: var(--bg-secondary);
 }
 
-.metaflow-detail-page .param-key {
-  color: var(--text-tertiary);
+.chat-instructions {
+  padding: var(--spacing-lg);
+  border-bottom: 1px solid var(--border-color);
+  background-color: var(--bg-primary);
 }
 
-.metaflow-detail-page .param-value {
+.chat-instructions h3 {
+  margin: 0 0 var(--spacing-xs) 0;
+  font-size: var(--font-size-lg);
   color: var(--text-primary);
-  word-break: break-all;
-}
-
-/* YAML Section */
-.metaflow-detail-page .yaml-section {
-  height: 100%;
-}
-
-.metaflow-detail-page .yaml-container {
-  background: var(--bg-app);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-  border: 1px solid var(--border-subtle);
-}
-
-.metaflow-detail-page .yaml-content {
-  margin: 0;
-  padding: 16px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--text-primary);
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
-/* Action Section */
-.metaflow-detail-page .action-section {
-  text-align: center;
-  padding: 20px 0;
-}
-
-.metaflow-detail-page .action-buttons {
-  display: flex;
-  gap: 12px;
-  justify-content: center;
-  margin-bottom: 12px;
-}
-
-.metaflow-detail-page .btn-primary,
-.metaflow-detail-page .btn-secondary {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 20px;
-  border-radius: var(--radius-lg);
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
+  gap: var(--spacing-sm);
 }
 
-.metaflow-detail-page .btn-primary {
-  background: var(--primary-main);
-  border: none;
-  color: #fff;
-  box-shadow: var(--shadow-md);
-}
-
-.metaflow-detail-page .btn-primary:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-lg);
-  background: var(--primary-hover);
-}
-
-.metaflow-detail-page .btn-primary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  transform: none;
-}
-
-.metaflow-detail-page .btn-secondary {
-  background: var(--bg-app);
-  border: 1px solid var(--border-subtle);
+.chat-instructions p {
+  margin: 0;
   color: var(--text-secondary);
+  font-size: var(--font-size-sm);
 }
 
-.metaflow-detail-page .btn-secondary:hover {
-  background: var(--color-gray-100);
-  border-color: var(--text-secondary);
+.modification-log {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.log-message {
+  display: flex;
+  gap: var(--spacing-md);
+  max-width: 80%;
+}
+
+.log-message.user {
+  align-self: flex-end;
+  flex-direction: row-reverse;
+}
+
+.log-message.assistant {
+  align-self: flex-start;
+}
+
+.log-message.error {
+  align-self: center;
+  color: var(--error-color);
+  background-color: #fff5f5;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-md);
+  border: 1px solid #fed7d7;
+}
+
+.log-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-full);
+  background-color: var(--bg-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.log-content {
+  background-color: var(--bg-primary);
+  padding: var(--spacing-md);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  box-shadow: var(--shadow-sm);
+  margin: 0;
+  font-family: inherit;
+}
+
+.log-message.user .log-content {
+  background-color: var(--primary-color);
+  color: white;
+}
+
+.tool-indicator {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background-color: var(--bg-tertiary);
+  border-radius: var(--radius-full);
+  align-self: center;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+}
+
+.tool-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--text-tertiary);
+  border-top-color: var(--primary-color);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.tool-name {
+  font-weight: 600;
   color: var(--text-primary);
 }
 
-.metaflow-detail-page .btn-primary svg,
-.metaflow-detail-page .btn-secondary svg {
-  width: 18px;
-  height: 18px;
+.modification-input {
+  padding: var(--spacing-lg);
+  border-top: 1px solid var(--border-color);
+  background-color: var(--bg-primary);
+  display: flex;
+  gap: var(--spacing-md);
+  align-items: flex-end;
 }
 
-.metaflow-detail-page .action-hint {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-tertiary);
+.modification-input textarea {
+  flex: 1;
+  padding: var(--spacing-md);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  resize: none;
+  font-family: inherit;
+  font-size: var(--font-size-md);
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  transition: all var(--transition-fast);
 }
 
-/* Empty Section */
-.metaflow-detail-page .empty-section {
-  text-align: center;
-  padding: 40px;
-  color: var(--text-tertiary);
+.modification-input textarea:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 2px var(--primary-color-alpha);
+}
+
+.modify-button {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  background-color: var(--primary-color);
+  color: white;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+}
+
+.modify-button:hover:not(:disabled) {
+  background-color: var(--primary-hover);
+  transform: scale(1.05);
+}
+
+.modify-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.modify-button svg {
+  width: 20px;
+  height: 20px;
 }

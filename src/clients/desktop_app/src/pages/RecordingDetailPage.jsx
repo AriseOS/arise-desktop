@@ -61,7 +61,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
       }
 
       try {
-        const response = await fetch(`${API_BASE}/api/recordings/${sessionId}`);
+        const response = await fetch(`${API_BASE}/api/recordings/${sessionId}?user_id=${userId}`);
 
         if (!response.ok) {
           throw new Error(`Failed to fetch recording details: ${response.status}`);

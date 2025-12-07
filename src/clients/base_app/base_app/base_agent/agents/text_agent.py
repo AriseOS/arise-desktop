@@ -125,6 +125,15 @@ class TextAgent(BaseStepAgent):
                 expected_outputs=expected_outputs
             )
 
+            self.logger.info(f"[TextAgent] Calling LLM provider")
+            self.logger.info(f"  Provider type: {type(self.provider).__name__}")
+            self.logger.info(f"  Provider has base_url: {hasattr(self.provider, 'base_url')}")
+            if hasattr(self.provider, 'base_url'):
+                self.logger.info(f"  Base URL: {self.provider.base_url}")
+            if hasattr(self.provider, 'api_key'):
+                self.logger.info(f"  API Key: {self.provider.api_key[:10]}..." if self.provider.api_key else "  API Key: None")
+            self.logger.info(f"  Complete prompt length: {len(complete_prompt)} chars")
+
             # Use Provider's JSON generation capability
             # This automatically handles:
             # 1. Strong JSON constraints in prompts
@@ -135,6 +144,10 @@ class TextAgent(BaseStepAgent):
                 user_prompt=complete_prompt
             )
 
+            self.logger.info(f"[TextAgent] LLM response received")
+            self.logger.info(f"  Response type: {type(parsed_data)}")
+            self.logger.info(f"  Response keys: {list(parsed_data.keys()) if isinstance(parsed_data, dict) else 'N/A'}")
+
             return AgentOutput(
                 success=True,
                 data=parsed_data,
@@ -142,6 +155,11 @@ class TextAgent(BaseStepAgent):
             )
 
         except Exception as e:
+            self.logger.error(f"[TextAgent] Text generation failed: {str(e)}")
+            self.logger.error(f"  Error type: {type(e).__name__}")
+            import traceback
+            self.logger.error(f"  Traceback: {traceback.format_exc()}")
+
             if context.logger:
                 context.logger.error(f"Text generation failed: {str(e)}")
 
