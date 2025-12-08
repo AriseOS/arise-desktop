@@ -144,6 +144,7 @@ class AgentContext(BaseModel):
 
     # 日志和监控
     logger: Optional[Any] = Field(default=None, description="日志记录器")
+    log_callback: Optional[Any] = Field(default=None, description="日志回调函数 (async callable)")
     metrics: Dict[str, Any] = Field(default_factory=dict, description="执行指标")
 
     # 私有字段 - 浏览器会话管理

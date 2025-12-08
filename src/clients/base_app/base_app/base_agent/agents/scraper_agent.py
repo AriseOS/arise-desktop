@@ -333,6 +333,21 @@ class ScraperAgent(BaseStepAgent):
                 # Log full output for debugging
                 logger.info(f"📦 Full extracted_data output (type={type(extraction_result['data'])}, length={len(extraction_result['data'])}): {extraction_result['data']}")
 
+                # Send extraction results to frontend
+                if context and context.log_callback:
+                    try:
+                        await context.log_callback(
+                            "success",
+                            f"✅ Extracted {extraction_result['total_count']} items successfully",
+                            {
+                                "extraction_method": config['extraction_method'],
+                                "total_items": extraction_result['total_count'],
+                                "extracted_data": extraction_result['data']  # Send all data
+                            }
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send log callback: {e}")
+
                 return self._create_response(
                     True,
                     f'成功提取{extraction_result["total_count"]}条数据',
@@ -726,6 +741,17 @@ class ScraperAgent(BaseStepAgent):
                 logger.info(f"✅ Loaded cached script from {script_file}")
                 logger.info(f"   Script size: {len(script_content)} chars")
 
+                # Send log to frontend
+                if context and context.log_callback:
+                    try:
+                        await context.log_callback(
+                            "info",
+                            f"✅ Using cached extraction script ({len(script_content)} chars)",
+                            {"cache_path": str(script_file)}
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send log callback: {e}")
+
                 # Wrap the script with execution wrapper (same as fresh generation)
                 generated_script = self._extract_and_wrap_code(script_content)
             else:
@@ -733,6 +759,17 @@ class ScraperAgent(BaseStepAgent):
                 logger.info(f"📝 Script not found at {script_file}")
                 logger.info(f"   Generating new script with Claude SDK...")
                 logger.info(f"   Using full DOM for script generation (ensures all fields are captured)")
+
+                # Send log to frontend
+                if context and context.log_callback:
+                    try:
+                        await context.log_callback(
+                            "info",
+                            "📝 No cached script found, generating new script with Claude SDK...",
+                            {"script_path": str(script_file)}
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send log callback: {e}")
 
                 # Force full DOM for script generation to capture all page content
                 # This ensures the script can extract fields even if they're below the fold

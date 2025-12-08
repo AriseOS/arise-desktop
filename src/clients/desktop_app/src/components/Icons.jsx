@@ -18,6 +18,18 @@ export const Icon = ({ name, size = 24, className = "", ...props }) => {
         chevronRight: (
             <path d="M9 18l6-6-6-6" />
         ),
+        chevronDown: (
+            <path d="M6 9l6 6 6-6" />
+        ),
+        'chevron-down': (
+            <path d="M6 9l6 6 6-6" />
+        ),
+        chevronUp: (
+            <path d="M18 15l-6-6-6 6" />
+        ),
+        'chevron-up': (
+            <path d="M18 15l-6-6-6 6" />
+        ),
         menu: (
             <path d="M3 12h18M3 6h18M3 18h18" />
         ),

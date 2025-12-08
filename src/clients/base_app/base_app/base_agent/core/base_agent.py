@@ -229,15 +229,18 @@ class BaseAgent:
         self,
         workflow: Union[Workflow, List[AgentWorkflowStep]],
         input_data: Dict[str, Any] = None,
-        step_callback: Optional[Any] = None
+        step_callback: Optional[Any] = None,
+        log_callback: Optional[Any] = None
     ) -> WorkflowResult:
-        """Execute workflow with optional step progress callback
+        """Execute workflow with optional step progress and log callbacks
 
         Args:
             workflow: Workflow definition or list of steps
             input_data: Input data dict
             step_callback: Optional async callback function(step_index, step_name, status, result)
                           Called when step starts and completes for real-time progress updates
+            log_callback: Optional async callback function(level, message, metadata)
+                         Called for detailed execution logs from agents
 
         Returns:
             WorkflowResult: Workflow execution result
@@ -263,11 +266,16 @@ class BaseAgent:
             workflow = Workflow(name="user_qa", steps=steps)
             result = await self.run_workflow(workflow, {"user_input": "hello"})
 
-            # With step callback for progress tracking
+            # With callbacks for progress and logs
             async def progress_callback(step_idx, step_name, status, result):
                 print(f"Step {step_idx}: {step_name} - {status}")
 
-            result = await self.run_workflow(workflow, input_data, step_callback=progress_callback)
+            async def log_callback(level, message, metadata):
+                print(f"[{level}] {message}")
+
+            result = await self.run_workflow(workflow, input_data,
+                                            step_callback=progress_callback,
+                                            log_callback=log_callback)
         """
         if isinstance(workflow, list):
             # All steps are AgentWorkflowStep, use Agent workflow engine
@@ -275,7 +283,8 @@ class BaseAgent:
                 return await self.agent_workflow_engine.execute_workflow(
                     workflow,
                     input_data=input_data or {},
-                    step_callback=step_callback
+                    step_callback=step_callback,
+                    log_callback=log_callback
                 )
             else:
                 raise RuntimeError("Agent workflow engine not initialized")
@@ -286,7 +295,8 @@ class BaseAgent:
                     workflow.steps,
                     workflow_id=workflow.name,
                     input_data=input_data or {},
-                    step_callback=step_callback
+                    step_callback=step_callback,
+                    log_callback=log_callback
                 )
             else:
                 raise RuntimeError("Agent workflow engine not initialized")

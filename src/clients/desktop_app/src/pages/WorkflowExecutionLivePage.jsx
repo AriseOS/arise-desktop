@@ -18,6 +18,7 @@ function WorkflowExecutionLivePage({
   const [totalSteps, setTotalSteps] = useState(0);
   const [steps, setSteps] = useState([]);
   const [logs, setLogs] = useState([]);
+  const [expandedLogs, setExpandedLogs] = useState(new Set());
   const [currentMessage, setCurrentMessage] = useState('Connecting...');
   const [elapsedTime, setElapsedTime] = useState(0);
   const [wsConnected, setWsConnected] = useState(false);
@@ -181,7 +182,8 @@ function WorkflowExecutionLivePage({
         addLogEntry({
           level: data.log.level || 'info',
           message: data.log.message,
-          time: data.log.time
+          time: data.log.time,
+          metadata: data.log.metadata || null
         });
       }
 
@@ -225,6 +227,18 @@ function WorkflowExecutionLivePage({
 
   const addLogEntry = (logEntry) => {
     setLogs(prevLogs => [...prevLogs, logEntry]);
+  };
+
+  const toggleLogExpand = (idx) => {
+    setExpandedLogs(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(idx)) {
+        newSet.delete(idx);
+      } else {
+        newSet.add(idx);
+      }
+      return newSet;
+    });
   };
 
   // Time tracking
@@ -391,15 +405,36 @@ function WorkflowExecutionLivePage({
             </div>
           ) : (
             <div className="logs-list">
-              {logs.map((log, idx) => (
-                <div key={idx} className="log-entry" data-level={log.level}>
-                  <span className="log-icon">{getLogIcon(log.level)}</span>
-                  <span className="log-time">{log.time}</span>
-                  <span className="log-message" style={{ color: getLogColor(log.level) }}>
-                    {log.message}
-                  </span>
-                </div>
-              ))}
+              {logs.map((log, idx) => {
+                const hasMetadata = log.metadata && Object.keys(log.metadata).length > 0;
+                const isExpanded = expandedLogs.has(idx);
+
+                return (
+                  <div key={idx} className="log-entry" data-level={log.level}>
+                    <div className="log-main">
+                      <span className="log-icon">{getLogIcon(log.level)}</span>
+                      <span className="log-time">{log.time}</span>
+                      <span className="log-message" style={{ color: getLogColor(log.level) }}>
+                        {log.message}
+                      </span>
+                      {hasMetadata && (
+                        <button
+                          className="log-expand-btn"
+                          onClick={() => toggleLogExpand(idx)}
+                          title={isExpanded ? "Hide details" : "Show details"}
+                        >
+                          <Icon icon={isExpanded ? "chevron-up" : "chevron-down"} size={14} />
+                        </button>
+                      )}
+                    </div>
+                    {hasMetadata && isExpanded && (
+                      <div className="log-metadata">
+                        <pre>{JSON.stringify(log.metadata, null, 2)}</pre>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
               <div ref={logsEndRef} />
             </div>
           )}

@@ -113,7 +113,8 @@ class AgentWorkflowEngine:
         steps: List[AgentWorkflowStep],
         workflow_id: str = None,
         input_data: Dict[str, Any] = None,
-        step_callback: Optional[Any] = None
+        step_callback: Optional[Any] = None,
+        log_callback: Optional[Any] = None
     ) -> WorkflowResult:
         """Execute agent workflow with optional step progress callback
 
@@ -123,6 +124,8 @@ class AgentWorkflowEngine:
             input_data: Input data dict
             step_callback: Optional async callback function(step_index, step_name, status, result)
                           Called when step starts (status='in_progress') and completes (status='completed'/'failed')
+            log_callback: Optional async callback function(level, message, metadata)
+                         Called for detailed execution logs from agents
         """
         start_time = time.time()
         workflow_id = workflow_id or f"agent_workflow_{int(time.time())}"
@@ -136,7 +139,8 @@ class AgentWorkflowEngine:
             agent_instance=self.agent,
             tools_registry=getattr(self.agent, 'tools_registry', None),
             memory_manager=getattr(self.agent, 'memory_manager', None),
-            logger=logger
+            logger=logger,
+            log_callback=log_callback
         )
 
         executed_steps = []

@@ -203,10 +203,10 @@ class BrowserAgent(BaseStepAgent):
         try:
             # Navigate to target URL and/or execute interactions
             if target_url:
-                result = await self._navigate_to_pages(target_url, interaction_steps)
+                result = await self._navigate_to_pages(target_url, interaction_steps, context)
             elif interaction_steps:
                 # Only execute interactions on current page (no navigation)
-                result = await self._execute_interactions_only(interaction_steps)
+                result = await self._execute_interactions_only(interaction_steps, context)
             else:
                 raise ValueError("Must provide either target_url or interaction_steps")
 
@@ -267,11 +267,12 @@ class BrowserAgent(BaseStepAgent):
             else:
                 return error_response
 
-    async def _execute_interactions_only(self, interaction_steps: List[Dict]) -> ActionResult:
+    async def _execute_interactions_only(self, interaction_steps: List[Dict], context: 'AgentContext' = None) -> ActionResult:
         """Execute interaction steps on current page without navigation
 
         Args:
             interaction_steps: Interaction steps to execute
+            context: Agent execution context (optional)
 
         Returns:
             ActionResult with execution result
@@ -309,7 +310,8 @@ class BrowserAgent(BaseStepAgent):
 
     async def _navigate_to_pages(self,
                                 path: Union[str, List[str]],
-                                interaction_steps: List[Dict]) -> ActionResult:
+                                interaction_steps: List[Dict],
+                                context: 'AgentContext' = None) -> ActionResult:
         """Execute sequential page navigation in the same tab
 
         This method is copied from ScraperAgent with minor modifications.
@@ -319,6 +321,7 @@ class BrowserAgent(BaseStepAgent):
         Args:
             path: Target URL or list of URLs
             interaction_steps: Interaction steps to execute after navigation
+            context: Agent execution context (optional)
 
         Returns:
             ActionResult with navigation result
@@ -332,6 +335,17 @@ class BrowserAgent(BaseStepAgent):
             for i, url in enumerate(urls):
                 logger.info(f"🔗 Navigating to: {url}")
 
+                # Send log to frontend
+                if context and context.log_callback:
+                    try:
+                        await context.log_callback(
+                            "info",
+                            f"🔗 Navigating to URL: {url}",
+                            {"url": url, "index": i + 1, "total": len(urls)}
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send log callback: {e}")
+
                 # Use event system directly (v0.9+ recommended approach)
                 event = self.browser_session.event_bus.dispatch(
                     NavigateToUrlEvent(url=url, new_tab=False)
@@ -344,6 +358,17 @@ class BrowserAgent(BaseStepAgent):
                 if result and hasattr(result, 'success') and result.success is False:
                     logger.error(f"❌ Navigation failed for URL: {url}, error: {result.error}")
                     return result
+
+                # Send success log to frontend
+                if context and context.log_callback:
+                    try:
+                        await context.log_callback(
+                            "success",
+                            f"✅ Successfully loaded: {url}",
+                            {"url": url, "index": i + 1, "total": len(urls)}
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send log callback: {e}")
 
                 last_result = result
 

@@ -238,11 +238,30 @@ class WorkflowExecutor:
                     "timestamp": datetime.now().isoformat()
                 })
 
-            # Execute workflow with real-time step callback
+            async def log_callback(level: str, message: str, metadata: dict = None):
+                """Callback for detailed execution logs"""
+                await self._send_progress_update(task_id, {
+                    "type": "progress_update",
+                    "task_id": task_id,
+                    "status": "running",
+                    "progress": task.progress,
+                    "current_step": task.current_step,
+                    "total_steps": task.total_steps,
+                    "log": {
+                        "level": level,
+                        "message": message,
+                        "time": datetime.now().strftime("%H:%M:%S"),
+                        "metadata": metadata or {}
+                    },
+                    "timestamp": datetime.now().isoformat()
+                })
+
+            # Execute workflow with real-time callbacks
             result = await agent.run_workflow(
                 workflow,
                 input_data=inputs or {},
-                step_callback=step_progress_callback
+                step_callback=step_progress_callback,
+                log_callback=log_callback
             )
 
             # Update task
@@ -259,7 +278,7 @@ class WorkflowExecutor:
                 "task_id": task_id,
                 "status": task.status,
                 "progress": 100,
-                "current_step": task.total_steps,
+                "current_step": task.total_steps - 1,  # Last step index (0-based)
                 "total_steps": task.total_steps,
                 "message": task.message,
                 "result": task.result,

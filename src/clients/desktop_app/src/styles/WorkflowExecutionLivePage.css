@@ -493,8 +493,8 @@
 
 .log-entry {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
+  flex-direction: column;
+  gap: 8px;
   padding: 8px 12px;
   background: var(--bg-app);
   border-radius: var(--radius-sm);
@@ -519,6 +519,13 @@
   background: rgba(16, 185, 129, 0.05);
 }
 
+.log-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+}
+
 .log-icon {
   display: flex;
   align-items: center;
@@ -535,6 +542,45 @@
   flex: 1;
   line-height: 1.5;
   word-wrap: break-word;
+}
+
+.log-expand-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 4px 6px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+  opacity: 0.7;
+}
+
+.log-expand-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  opacity: 1;
+  transform: translateY(-1px);
+}
+
+.log-metadata {
+  margin-left: 90px;
+  padding: 8px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  font-size: 12px;
+  overflow-x: auto;
+}
+
+.log-metadata pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  color: var(--text-primary);
+  line-height: 1.4;
 }
 
 /* ===================================
