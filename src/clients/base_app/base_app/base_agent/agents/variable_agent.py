@@ -300,17 +300,7 @@ class VariableAgent(BaseStepAgent):
             start_value: "https://watcha.cn/products/agentscope"
             match_field: "url"
         """
-        self.logger.info(f"🔪 [SLICE DEBUG] step_config keys: {step_config.keys()}")
-        self.logger.info(f"🔪 [SLICE DEBUG] step_config.get('source'): {step_config.get('source')}")
-        self.logger.info(f"🔪 [SLICE DEBUG] step_config.get('start_value'): {step_config.get('start_value')}")
-        self.logger.info(f"🔪 [SLICE DEBUG] step_config.get('match_field'): {step_config.get('match_field')}")
-
         source = self._resolve_variable(step_config.get('source'), context)
-
-        self.logger.info(f"🔪 [SLICE DEBUG] Resolved source type: {type(source)}")
-        self.logger.info(f"🔪 [SLICE DEBUG] Resolved source length: {len(source) if isinstance(source, list) else 'N/A'}")
-        if isinstance(source, list) and len(source) > 0:
-            self.logger.info(f"🔪 [SLICE DEBUG] First item: {source[0]}")
 
         if not isinstance(source, list):
             raise TypeError(f"Cannot slice non-list: {type(source)}")
@@ -319,14 +309,11 @@ class VariableAgent(BaseStepAgent):
         start = step_config.get('start')
         if start is not None:
             start_idx = int(start)
-            self.logger.info(f"🔪 [SLICE DEBUG] Using direct index: {start_idx}")
             return source[start_idx:]
 
         # Method 2: Find index by matching field value
         start_value = step_config.get('start_value')
         match_field = step_config.get('match_field')
-
-        self.logger.info(f"🔪 [SLICE DEBUG] Looking for start_value={start_value}, match_field={match_field}")
 
         if start_value is not None:
             if not match_field:
@@ -339,22 +326,14 @@ class VariableAgent(BaseStepAgent):
                 else:
                     field_value = getattr(item, match_field, None)
 
-                # Log first few items for debugging
-                if idx < 5:
-                    self.logger.info(f"🔪 [SLICE DEBUG] Item {idx}: field_value={field_value}, match={str(field_value) == str(start_value)}")
-
                 if str(field_value) == str(start_value):
-                    self.logger.info(f"✅ [SLICE DEBUG] Found matching item at index {idx}, slicing from there")
-                    sliced = source[idx:]
-                    self.logger.info(f"✅ [SLICE DEBUG] Returning {len(sliced)} items (from {idx} to {len(source)})")
-                    return sliced
+                    return source[idx:]
 
-            # If not found, log warning and return original list
-            self.logger.warning(f"⚠️ [SLICE DEBUG] Could not find item with {match_field}={start_value}, returning original list of {len(source)} items")
+            # If not found, return original list
+            self.logger.warning(f"Could not find item with {match_field}={start_value}, returning original list")
             return source
 
         # No start specified, return original
-        self.logger.info(f"🔪 [SLICE DEBUG] No start specified, returning original list")
         return source
 
     def _resolve_variable(self, value: Any, context: Any) -> Any:
