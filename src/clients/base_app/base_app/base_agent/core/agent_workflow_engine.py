@@ -436,6 +436,10 @@ class AgentWorkflowEngine:
                             f"Returning None for: {var_expression}"
                         )
                         return None
+                elif part == 'length':
+                    # Support .length as syntax sugar for len() (JavaScript-style)
+                    value = len(value)
+                    logger.debug(f"Resolved list.length to {value} for: {var_expression}")
                 elif len(value) == 1:
                     # Auto-unwrap single-item list: {{list.field}} → {{list.0.field}}
                     # This makes scraper_agent output more ergonomic for single-item extraction
