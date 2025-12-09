@@ -121,20 +121,19 @@ class AutonomousBrowserAgent(BaseStepAgent):
                     data={}
                 )
 
-            logger.info(f"AutonomousBrowserAgent calling browser-use Agent with max_actions={max_actions}")
+            logger.info(f"AutonomousBrowserAgent calling browser-use Agent with max_steps={max_actions}")
 
             # Create browser-use Agent with shared browser session
             agent = Agent(
                 task=task,
                 llm=self.llm,
                 browser_session=self.browser_session,
-                max_actions=max_actions,
                 use_vision=True
             )
 
-            # Execute task
+            # Execute task with max_steps parameter
             logger.info("Starting browser-use Agent execution...")
-            result = await agent.run()
+            result = await agent.run(max_steps=max_actions)
             logger.info(f"browser-use Agent execution completed, result length: {len(str(result))}")
 
             return AgentOutput(

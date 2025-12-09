@@ -1,16 +1,19 @@
 # Browser-Use API Reference
 
-This document provides a comprehensive API reference for browser-use library version 0.9+, focusing on DOM manipulation, browser control actions, and data structures for LLM integration.
+This document provides a comprehensive API reference for browser-use library version 0.10.1, focusing on DOM manipulation, browser control actions, and data structures for LLM integration.
 
-**Version:** 0.9.5+
-**Breaking Changes from 0.7:** Action API has been refactored - see Migration Guide below.
+**Version:** 0.10.1
+**Breaking Changes from 0.9:** Agent API parameter changes - `max_actions` moved to `run()` method as `max_steps`.
 
 ## Import Reference
 
 ### Core Imports
 ```python
 # Main classes
-from browser_use import Agent, BrowserSession, Tools, DomService
+from browser_use import Agent, Browser, BrowserSession, Tools, DomService
+
+# Note: Browser is an alias for BrowserSession (v0.10.1+)
+# Both can be used interchangeably
 
 # LLM providers
 from browser_use.llm.openai.chat import ChatOpenAI
@@ -495,16 +498,31 @@ class Agent:
     def __init__(
         self,
         task: str,
-        llm: BaseChatModel,
+        llm: BaseChatModel = None,
         browser_session: BrowserSession = None,
+        browser: Browser = None,  # Alias for browser_session (v0.10.1+)
         tools: Tools = None,
-        use_vision: bool = True,
-        max_actions: int = 100,
-        agent_settings: AgentSettings = None
+        controller: Tools = None,  # Alias for tools (v0.10.1+)
+        use_vision: bool | Literal['auto'] = True,
+        max_actions_per_step: int = 3,  # Actions per step (v0.10.1+)
+        agent_settings: AgentSettings = None,
+        # ... many other parameters
     )
-    
-    async def run(self) -> AgentHistoryList
+
+    async def run(
+        self,
+        max_steps: int = 100,  # Total execution steps (v0.10.1+)
+        on_step_start: AgentHookFunc = None,
+        on_step_end: AgentHookFunc = None
+    ) -> AgentHistoryList
 ```
+
+**Key Changes in v0.10.1:**
+- ❌ **Removed**: `max_actions` parameter from `__init__`
+- ➕ **Added**: `max_steps` parameter in `run()` method (controls total execution steps)
+- ➕ **Added**: `max_actions_per_step` in `__init__` (controls actions per single step, default: 3)
+- ➕ **Added**: `browser` alias for `browser_session`
+- ➕ **Added**: `controller` alias for `tools`
 
 ### Basic Agent Usage
 
@@ -515,16 +533,15 @@ from browser_use.llm.openai.chat import ChatOpenAI
 # Create LLM instance
 llm = ChatOpenAI(model="gpt-4o")
 
-# Create and run agent
+# Create agent
 agent = Agent(
     task="Search for Python tutorials on Google and extract the first 3 results",
     llm=llm,
-    use_vision=True,
-    max_actions=20
+    use_vision=True
 )
 
-# Execute the task
-history = await agent.run()
+# Execute the task with max_steps
+history = await agent.run(max_steps=20)
 
 # Check results
 if history.is_successful():
@@ -770,12 +787,11 @@ async def main():
     agent = Agent(
         task="Go to example.com and extract the main heading text",
         llm=llm,
-        use_vision=True,
-        max_actions=10
+        use_vision=True
     )
-    
+
     try:
-        history = await agent.run()
+        history = await agent.run(max_steps=10)
         
         if history.is_successful():
             print("Task completed successfully!")
@@ -825,11 +841,10 @@ async def advanced_example():
             task="Search for AI news on Google and get the top 3 article titles",
             llm=llm,
             browser_session=browser_session,
-            tools=tools,
-            max_actions=20
+            tools=tools
         )
-        
-        history = await agent.run()
+
+        history = await agent.run(max_steps=20)
         print(f"Agent completed with {len(history.history)} steps")
         
         # Method 2: Use Tools directly for precise control
@@ -908,6 +923,37 @@ This API reference provides complete coverage of browser-use v0.9+ core function
 
 ## Version History
 
-- **v0.9.5** (Current): ActionModel refactor, NavigateAction replaces GoToUrlAction, ScrollAction parameter renames
+- **v0.10.1** (Current): Agent API parameter changes - `max_actions` moved to `run()` as `max_steps`, added `max_actions_per_step`, added `browser` and `controller` aliases
+- **v0.9.5**: ActionModel refactor, NavigateAction replaces GoToUrlAction, ScrollAction parameter renames
 - **v0.7**: Tools replaces Controller, action models moved to tools.views
 - **v0.6**: Initial stable release
+
+## Migration Guide: v0.9 to v0.10.1
+
+**Agent Parameter Changes:**
+
+```python
+# OLD API (v0.9.x)
+agent = Agent(
+    task=task,
+    llm=llm,
+    browser_session=browser_session,
+    max_actions=20,  # ❌ Removed
+    use_vision=True
+)
+result = await agent.run()
+
+# NEW API (v0.10.1)
+agent = Agent(
+    task=task,
+    llm=llm,
+    browser_session=browser_session,
+    use_vision=True
+)
+result = await agent.run(max_steps=20)  # ✅ Pass to run() instead
+```
+
+**New Features in v0.10.1:**
+- `Browser` is now an alias for `BrowserSession` (can be used interchangeably)
+- `max_actions_per_step` controls actions allowed per single step (default: 3)
+- `controller` is an alias for `tools` parameter

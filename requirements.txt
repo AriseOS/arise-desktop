@@ -10,6 +10,6 @@ passlib
 aiofiles
 pyyaml
 jsonschema
-browser-use==0.9.5
+browser-use==0.10.1
 playwright
 aiosqlite
