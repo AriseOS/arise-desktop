@@ -68,6 +68,10 @@ class VariableAgent(BaseStepAgent):
                 result = await self._handle_calculate(step_config, context)
             elif operation == 'condition_check':
                 result = await self._handle_condition_check(step_config, context)
+            elif operation == 'filter':
+                result = await self._handle_filter(step_config, context)
+            elif operation == 'slice':
+                result = await self._handle_slice(step_config, context)
             else:
                 raise ValueError(f"Unsupported operation: {operation}")
 
@@ -231,6 +235,127 @@ class VariableAgent(BaseStepAgent):
             'has_next': has_next,
             'progress': f"Processed page {current_page}"
         }
+
+    async def _handle_filter(self, step_config: Dict, context: Any) -> List:
+        """Handle filter operation - filter list by matching field value
+
+        Examples:
+            # Find items where url contains 'agentscope'
+            operation: filter
+            source: "{{all_urls}}"
+            field: "url"
+            contains: "agentscope"
+
+            # Find items where url equals specific value
+            operation: filter
+            source: "{{all_urls}}"
+            field: "url"
+            equals: "https://watcha.cn/products/agentscope"
+        """
+        source = self._resolve_variable(step_config.get('source'), context)
+
+        if not isinstance(source, list):
+            raise TypeError(f"Cannot filter non-list: {type(source)}")
+
+        field = step_config.get('field')
+        contains = step_config.get('contains')
+        equals = step_config.get('equals')
+
+        if not field:
+            raise ValueError("Field is required for filter operation")
+
+        result = []
+        for item in source:
+            # Get field value from item
+            if isinstance(item, dict):
+                field_value = item.get(field)
+            else:
+                field_value = getattr(item, field, None)
+
+            if field_value is None:
+                continue
+
+            # Check filter conditions
+            if equals is not None:
+                if str(field_value) == str(equals):
+                    result.append(item)
+            elif contains is not None:
+                if str(contains) in str(field_value):
+                    result.append(item)
+
+        return result
+
+    async def _handle_slice(self, step_config: Dict, context: Any) -> List:
+        """Handle slice operation - slice list from start_index onwards
+
+        Examples:
+            # Keep items from index 10 onwards (including index 10)
+            operation: slice
+            source: "{{all_urls}}"
+            start: 10
+
+            # Keep items from start_value onwards (find index by matching field value)
+            operation: slice
+            source: "{{all_urls}}"
+            start_value: "https://watcha.cn/products/agentscope"
+            match_field: "url"
+        """
+        self.logger.info(f"🔪 [SLICE DEBUG] step_config keys: {step_config.keys()}")
+        self.logger.info(f"🔪 [SLICE DEBUG] step_config.get('source'): {step_config.get('source')}")
+        self.logger.info(f"🔪 [SLICE DEBUG] step_config.get('start_value'): {step_config.get('start_value')}")
+        self.logger.info(f"🔪 [SLICE DEBUG] step_config.get('match_field'): {step_config.get('match_field')}")
+
+        source = self._resolve_variable(step_config.get('source'), context)
+
+        self.logger.info(f"🔪 [SLICE DEBUG] Resolved source type: {type(source)}")
+        self.logger.info(f"🔪 [SLICE DEBUG] Resolved source length: {len(source) if isinstance(source, list) else 'N/A'}")
+        if isinstance(source, list) and len(source) > 0:
+            self.logger.info(f"🔪 [SLICE DEBUG] First item: {source[0]}")
+
+        if not isinstance(source, list):
+            raise TypeError(f"Cannot slice non-list: {type(source)}")
+
+        # Method 1: Direct index
+        start = step_config.get('start')
+        if start is not None:
+            start_idx = int(start)
+            self.logger.info(f"🔪 [SLICE DEBUG] Using direct index: {start_idx}")
+            return source[start_idx:]
+
+        # Method 2: Find index by matching field value
+        start_value = step_config.get('start_value')
+        match_field = step_config.get('match_field')
+
+        self.logger.info(f"🔪 [SLICE DEBUG] Looking for start_value={start_value}, match_field={match_field}")
+
+        if start_value is not None:
+            if not match_field:
+                raise ValueError("match_field is required when using start_value")
+
+            # Find the index where field matches start_value
+            for idx, item in enumerate(source):
+                if isinstance(item, dict):
+                    field_value = item.get(match_field)
+                else:
+                    field_value = getattr(item, match_field, None)
+
+                # Log first few items for debugging
+                if idx < 5:
+                    self.logger.info(f"🔪 [SLICE DEBUG] Item {idx}: field_value={field_value}, match={str(field_value) == str(start_value)}")
+
+                if str(field_value) == str(start_value):
+                    self.logger.info(f"✅ [SLICE DEBUG] Found matching item at index {idx}, slicing from there")
+                    sliced = source[idx:]
+                    self.logger.info(f"✅ [SLICE DEBUG] Returning {len(sliced)} items (from {idx} to {len(source)})")
+                    return sliced
+
+            # If not found, log warning and return original list
+            self.logger.warning(f"⚠️ [SLICE DEBUG] Could not find item with {match_field}={start_value}, returning original list of {len(source)} items")
+            return source
+
+        # No start specified, return original
+        self.logger.info(f"🔪 [SLICE DEBUG] No start specified, returning original list")
+        return source
 
     def _resolve_variable(self, value: Any, context: Any) -> Any:
         """Resolve variable references in value, supports nested property access like {{item.name}}"""

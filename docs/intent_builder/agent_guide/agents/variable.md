@@ -97,6 +97,61 @@ Decrease a counter by 1.
     result: "count"
 ```
 
+### 5. Slice Operation
+
+Extract a subset of a list from a starting index or value.
+
+```yaml
+# Slice from index 10 onwards
+- id: "slice-by-index"
+  agent_type: "variable"
+  inputs:
+    operation: "slice"
+    source: "{{all_items}}"
+    start: 10
+  outputs:
+    result: "filtered_items"
+
+# Slice from matching item onwards
+- id: "slice-from-product"
+  agent_type: "variable"
+  inputs:
+    operation: "slice"
+    source: "{{product_urls}}"
+    start_value: "https://example.com/products/target-product"
+    match_field: "url"
+  outputs:
+    result: "filtered_urls"
+```
+
+### 6. Filter Operation
+
+Filter list items by matching criteria.
+
+```yaml
+# Filter by exact match
+- id: "filter-exact"
+  agent_type: "variable"
+  inputs:
+    operation: "filter"
+    source: "{{all_items}}"
+    field: "status"
+    equals: "active"
+  outputs:
+    result: "active_items"
+
+# Filter by substring
+- id: "filter-contains"
+  agent_type: "variable"
+  inputs:
+    operation: "filter"
+    source: "{{product_urls}}"
+    field: "url"
+    contains: "electronics"
+  outputs:
+    result: "electronics_urls"
+```
+
 ---
 
 ## Input Parameters
@@ -122,6 +177,27 @@ Decrease a counter by 1.
 |-----------|------|-------------|
 | `operation` | string | `"increment"` or `"decrement"` |
 | `source` | string | Source counter variable (e.g., `"{{count}}"`) |
+| `value` | number | (Optional) Amount to increment/decrement, default: 1 |
+
+### For `slice` operation
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `operation` | string | Must be `"slice"` |
+| `source` | string | Source list variable (e.g., `"{{my_list}}"`) |
+| `start` | number | (Option 1) Start index (0-based) |
+| `start_value` | string | (Option 2) Value to match for start position |
+| `match_field` | string | Field name to match (required with `start_value`) |
+
+### For `filter` operation
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `operation` | string | Must be `"filter"` |
+| `source` | string | Source list variable (e.g., `"{{my_list}}"`) |
+| `field` | string | Field name to check |
+| `equals` | string | (Option 1) Exact value to match |
+| `contains` | string | (Option 2) Substring to search for |
 
 ---
 
@@ -363,15 +439,52 @@ outputs:
 
 ---
 
+## Additional Scenarios
+
+### Scenario 6: Slice List from Specific Item
+
+**Purpose**: Keep only items from a specific point onwards
+
+```yaml
+- id: "slice-from-target"
+  agent_type: "variable"
+  inputs:
+    operation: "slice"
+    source: "{{all_urls}}"
+    start_value: "https://example.com/target"
+    match_field: "url"
+  outputs:
+    result: "filtered_urls"
+```
+
+### Scenario 7: Filter Items by Criteria
+
+**Purpose**: Keep only items matching a condition
+
+```yaml
+- id: "filter-active"
+  agent_type: "variable"
+  inputs:
+    operation: "filter"
+    source: "{{all_items}}"
+    field: "status"
+    equals: "active"
+  outputs:
+    result: "active_items"
+```
+
+---
+
 ## Limitations
 
-- **No complex logic**: Cannot do filtering, mapping, or conditional logic
+- **Simple matching only**: `filter` and `slice` use exact or substring matching
+- **No transformations**: Cannot map or modify items, only select them
 - **No external access**: Cannot fetch URLs or access files
-- **Simple operations only**: Set, append, increment, decrement
 
 For complex data manipulation, use `code_agent`.
 
 ---
 
-**Version**: 1.0
-**Last Updated**: 2025-11-20
+**Version**: 1.1
+**Last Updated**: 2025-12-09
+**Changes**: Added `slice` and `filter` operations

@@ -157,7 +157,7 @@ class ClaudeAgentProvider:
         try:
             # Import Claude SDK here to avoid import errors if SDK not installed
             from claude_agent_sdk import (
-                query,
+                ClaudeSDKClient,  # Use ClaudeSDKClient instead of query()
                 ClaudeAgentOptions,
                 ResultMessage,
                 AssistantMessage,
@@ -187,18 +187,24 @@ class ClaudeAgentProvider:
             # Stderr callback to capture SDK internal logs
             def stderr_callback(line: str):
                 """Capture stderr from Claude SDK subprocess"""
-                logger.info(f"[Claude SDK stderr] {line}")
+                # Always log stderr, even if empty
+                if line and line.strip():
+                    logger.warning(f"[Claude SDK stderr] {line.strip()}")
+                else:
+                    logger.debug(f"[Claude SDK stderr] (empty line)")
 
             options = ClaudeAgentOptions(
                 model=self.model,
                 cwd=str(working_dir),
                 max_turns=max_iterations,
                 allowed_tools=tools,
-                permission_mode="acceptEdits",
+                permission_mode="bypassPermissions",  # Bypass permission checks to avoid async issues
                 # Pass environment variables to the subprocess
                 env=env_vars,
                 # Capture stderr output
-                stderr=stderr_callback
+                stderr=stderr_callback,
+                # Increase buffer size to prevent blocking (default is 65536)
+                max_buffer_size=1024 * 1024  # 1MB buffer
             )
 
             # Execute the query
@@ -208,6 +214,11 @@ class ClaudeAgentProvider:
             last_assistant_message = None
 
             logger.info("Starting to iterate over Claude SDK messages...")
+            logger.info(f"Prompt length: {len(prompt)} characters")
+            logger.info(f"Working directory: {working_dir}")
+            logger.info(f"Model: {self.model}")
+            logger.info(f"API key (first 10 chars): {self.api_key[:10]}...")
+            logger.info(f"Base URL: {self.base_url}")
             logger.info("NOTE: Messages may arrive in batches after each turn completes. Please wait...")
 
             # Add timeout tracking
@@ -216,46 +227,66 @@ class ClaudeAgentProvider:
             message_count = 0
             start_time = time.time()
 
-            async for message in query(prompt=prompt, options=options):
-                message_count += 1
-                current_time = time.time()
-                time_since_last = current_time - last_message_time
-                last_message_time = current_time
+            # Add overall timeout to prevent infinite hanging
+            import asyncio
 
-                # Log all message types for debugging
-                msg_type = type(message).__name__
-                logger.info(f"📨 Received message #{message_count} (after {time_since_last:.1f}s): {msg_type}")
+            try:
+                # Wrap everything in a timeout
+                async with asyncio.timeout(max_iterations * 30):  # 30 seconds per iteration
+                    # Use ClaudeSDKClient context manager (correct API)
+                    async with ClaudeSDKClient(options=options) as client:
+                        # Send the query
+                        await client.query(prompt)
+                        logger.info("Query sent to Claude SDK")
 
-                # Count assistant turns
-                if isinstance(message, AssistantMessage):
-                    turn_count += 1
-                    last_assistant_message = message
-                    logger.info(f"🤖 AssistantMessage #{turn_count}")
+                        # Receive response messages
+                        async for message in client.receive_response():
+                            message_count += 1
+                            current_time = time.time()
+                            time_since_last = current_time - last_message_time
+                            last_message_time = current_time
 
-                    # Log assistant message content
-                    if hasattr(message, 'content'):
-                        for i, block in enumerate(message.content):
-                            if isinstance(block, TextBlock):
-                                text_preview = block.text[:200] if len(block.text) > 200 else block.text
-                                logger.info(f"   Text block {i}: {text_preview}...")
-                            elif isinstance(block, ToolUseBlock):
-                                logger.info(f"   Tool use block {i}: {block.name}")
+                            # Log all message types for debugging
+                            msg_type = type(message).__name__
+                            logger.info(f"📨 Received message #{message_count} (after {time_since_last:.1f}s): {msg_type}")
 
-                # User message
-                if isinstance(message, UserMessage):
-                    logger.info(f"👤 UserMessage received")
+                            # Count assistant turns
+                            if isinstance(message, AssistantMessage):
+                                turn_count += 1
+                                last_assistant_message = message
+                                logger.info(f"🤖 AssistantMessage #{turn_count}")
 
-                # System message
-                if isinstance(message, SystemMessage):
-                    logger.info(f"⚙️  SystemMessage received")
+                                # Log assistant message content
+                                if hasattr(message, 'content'):
+                                    for i, block in enumerate(message.content):
+                                        if isinstance(block, TextBlock):
+                                            text_preview = block.text[:200] if len(block.text) > 200 else block.text
+                                            logger.info(f"   Text block {i}: {text_preview}...")
+                                        elif isinstance(block, ToolUseBlock):
+                                            logger.info(f"   Tool use block {i}: {block.name}")
 
-                # ResultMessage indicates task completion
-                if isinstance(message, ResultMessage):
-                    last_result_message = message
-                    final_success = not message.is_error
-                    logger.info(f"✅ Claude Agent completed: success={final_success}, turns={message.num_turns}, duration={message.duration_ms/1000:.1f}s")
-                    if not final_success:
-                        logger.error(f"   Error result: {message.result}")
+                            # User message
+                            if isinstance(message, UserMessage):
+                                logger.info(f"👤 UserMessage received")
+
+                            # System message
+                            if isinstance(message, SystemMessage):
+                                logger.info(f"⚙️  SystemMessage received")
+                                logger.info(f"   Subtype: {message.subtype}")
+                                logger.info(f"   Data: {message.data}")
+
+                            # ResultMessage indicates task completion
+                            if isinstance(message, ResultMessage):
+                                last_result_message = message
+                                final_success = not message.is_error
+                                logger.info(f"✅ Claude Agent completed: success={final_success}, turns={message.num_turns}, duration={message.duration_ms/1000:.1f}s")
+                                if not final_success:
+                                    logger.error(f"   Error result: {message.result}")
+
+                        logger.info("Query iteration completed normally")
+            except Exception as query_error:
+                logger.error(f"Error during query iteration: {query_error}", exc_info=True)
+                raise
 
             total_duration = time.time() - start_time
             logger.info(f"Finished iterating messages after {total_duration:.1f}s. Total messages: {message_count}, assistant turns: {turn_count}")

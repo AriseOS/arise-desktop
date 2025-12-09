@@ -328,7 +328,14 @@ class AgentWorkflowEngine:
                     "updates": resolved_input.get('updates', None),
                     "current_page": resolved_input.get('current_page', None),
                     "max_pages": resolved_input.get('max_pages', None),
-                    "items_found": resolved_input.get('items_found', None)
+                    "items_found": resolved_input.get('items_found', None),
+                    # slice operation parameters
+                    "start": resolved_input.get('start', None),
+                    "start_value": resolved_input.get('start_value', None),
+                    "match_field": resolved_input.get('match_field', None),
+                    # filter operation parameters
+                    "contains": resolved_input.get('contains', None),
+                    "equals": resolved_input.get('equals', None)
                 },
                 "context": context
             })
