@@ -299,6 +299,20 @@ class WorkflowExecutor:
                 "timestamp": datetime.now().isoformat()
             })
 
+            # Send completion log to Execution Logs
+            if result.success:
+                await log_callback(
+                    "success",
+                    f"✅ Workflow completed successfully",
+                    {"result": task.result}
+                )
+            else:
+                await log_callback(
+                    "error",
+                    f"❌ Workflow failed: {result.error}",
+                    {"error": result.error}
+                )
+
             # Save result
             execution_id = str(uuid.uuid4())
             self.storage.save_execution_result(
