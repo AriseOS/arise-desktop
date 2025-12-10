@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import Icon from '../components/Icons';
+import { api } from '../utils/api';
 import '../styles/RecordingPage.css';
 
 const API_BASE = "http://127.0.0.1:8765";
@@ -125,21 +126,12 @@ function RecordingPage({ session, onNavigate, showStatus }) {
       // Generate MetaFlow from recording
       showStatus("正在生成MetaFlow...", "info");
 
-      const metaflowResponse = await fetch(`${API_BASE}/api/metaflows/from-recording`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          session_id: sessionId,
-          task_description: recordDescription,
-          user_id: userId
-        })
-      });
-
-      if (!metaflowResponse.ok) {
-        throw new Error("MetaFlow generation failed");
-      }
-
-      const metaflowResult = await metaflowResponse.json();
+      const metaflowResult = await api.generateMetaflowFromRecording(
+        sessionId,
+        recordDescription,
+        null, // user_query
+        userId
+      );
       showStatus("MetaFlow生成成功！正在跳转预览...", "success");
 
       // Navigate to MetaFlow preview page (user will review and generate workflow from there)

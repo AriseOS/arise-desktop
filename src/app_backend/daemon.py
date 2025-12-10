@@ -971,7 +971,10 @@ async def generate_metaflow(
 
 
 @app.post("/api/metaflows/from-recording", response_model=GenerateMetaflowResponse)
-async def generate_metaflow_from_recording(request: GenerateMetaflowFromRecordingRequest):
+async def generate_metaflow_from_recording(
+    request: GenerateMetaflowFromRecordingRequest,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
     """Generate MetaFlow from recording
 
     This endpoint:
@@ -980,9 +983,19 @@ async def generate_metaflow_from_recording(request: GenerateMetaflowFromRecordin
     3. Calls Cloud Backend to generate MetaFlow from recording's intents only
     4. Saves MetaFlow locally
     5. Returns metaflow_yaml for frontend preview
+
+    Headers:
+        X-Ami-API-Key: User's Ami API key (required for LLM calls via API Proxy)
     """
     try:
         logger.info(f"Generating MetaFlow from recording: {request.session_id}")
+
+        # Set user API key on cloud client
+        if x_ami_api_key:
+            cloud_client.set_user_api_key(x_ami_api_key)
+            logger.info(f"Set user API key on cloud client: {x_ami_api_key[:10]}...")
+        else:
+            logger.warning("No X-Ami-API-Key header provided")
 
         # Load recording data
         recording_data = storage_manager.get_recording(
@@ -1413,8 +1426,15 @@ async def upload_to_cloud(
 # ============================================================================
 
 @app.post("/api/workflows/from-metaflow")
-async def generate_workflow_from_metaflow_api(data: dict):
-    """Generate Workflow from MetaFlow (alternative endpoint used by frontend)"""
+async def generate_workflow_from_metaflow_api(
+    data: dict,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """Generate Workflow from MetaFlow (alternative endpoint used by frontend)
+
+    Headers:
+        X-Ami-API-Key: User's Ami API key (required for LLM calls via API Proxy)
+    """
     try:
         metaflow_id = data.get("metaflow_id")
         user_id = data.get("user_id")
@@ -1423,6 +1443,13 @@ async def generate_workflow_from_metaflow_api(data: dict):
             raise HTTPException(status_code=400, detail="Missing metaflow_id")
 
         logger.info(f"Generating Workflow from MetaFlow: {metaflow_id}")
+
+        # Set user API key on cloud client
+        if x_ami_api_key:
+            cloud_client.set_user_api_key(x_ami_api_key)
+            logger.info(f"Set user API key on cloud client: {x_ami_api_key[:10]}...")
+        else:
+            logger.warning("No X-Ami-API-Key header provided")
 
         # Generate Workflow from MetaFlow via Cloud Backend
         workflow_result = await cloud_client.generate_workflow(

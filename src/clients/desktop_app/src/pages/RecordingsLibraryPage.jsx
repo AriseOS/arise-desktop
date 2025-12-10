@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import Icon from '../components/Icons';
+import { api } from '../utils/api';
 import '../styles/RecordingsLibraryPage.css';
 
 const API_BASE = "http://127.0.0.1:8765";
@@ -90,21 +91,12 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
     showStatus('Generating MetaFlow from recording...', 'info');
 
     try {
-      const response = await fetch(`${API_BASE}/api/metaflows/from-recording`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          session_id: sessionId,
-          task_description: "Auto-generated workflow from recording",
-          user_id: userId
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to generate MetaFlow: ${response.status}`);
-      }
-
-      const data = await response.json();
+      const data = await api.generateMetaflowFromRecording(
+        sessionId,
+        "Auto-generated workflow from recording",
+        null, // user_query
+        userId
+      );
 
       // Update metaflowIds state so the button appears immediately
       setMetaflowIds(prev => ({
