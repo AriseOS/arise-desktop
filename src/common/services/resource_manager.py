@@ -256,30 +256,39 @@ class ResourceManager:
             (needs_sync, direction) where direction is "download", "upload", or "none"
         """
         if not self.storage_service:
+            logger.warning(f"[Sync Check] No storage service configured for {workflow_id}")
             return False, "none"
 
         try:
             local_metadata = self.get_local_metadata(user_id, workflow_id)
             local_updated_at = local_metadata.get("updated_at") if local_metadata else None
+            logger.info(f"[Sync Check] Local metadata for {workflow_id}: updated_at={local_updated_at}")
 
             cloud_metadata = await self.storage_service.get_workflow_metadata(user_id, workflow_id)
             cloud_updated_at = cloud_metadata.get("updated_at") if cloud_metadata else None
+            logger.info(f"[Sync Check] Cloud metadata for {workflow_id}: updated_at={cloud_updated_at}")
 
             if local_updated_at is None and cloud_updated_at is None:
+                logger.info(f"[Sync Check] Both local and cloud metadata missing for {workflow_id}")
                 return False, "none"
             elif local_updated_at is None:
+                logger.info(f"[Sync Check] Local metadata missing, will download from cloud for {workflow_id}")
                 return True, "download"
             elif cloud_updated_at is None:
+                logger.info(f"[Sync Check] Cloud metadata missing, will upload to cloud for {workflow_id}")
                 return True, "upload"
             elif cloud_updated_at > local_updated_at:
+                logger.info(f"[Sync Check] Cloud is newer ({cloud_updated_at} > {local_updated_at}), will download for {workflow_id}")
                 return True, "download"
             elif local_updated_at > cloud_updated_at:
+                logger.info(f"[Sync Check] Local is newer ({local_updated_at} > {cloud_updated_at}), will upload for {workflow_id}")
                 return True, "upload"
             else:
+                logger.info(f"[Sync Check] Timestamps match ({local_updated_at}), no sync needed for {workflow_id}")
                 return False, "none"
 
         except Exception as e:
-            logger.error(f"Failed to check sync status: {e}")
+            logger.error(f"[Sync Check] Failed to check sync status for {workflow_id}: {e}", exc_info=True)
             return False, "none"
 
     async def sync_workflow_resources(
@@ -344,8 +353,10 @@ class ResourceManager:
         errors = []
 
         try:
+            logger.info(f"[Upload] Starting upload for workflow {workflow_id}")
             local_metadata = self.get_local_metadata(user_id, workflow_id)
             if not local_metadata:
+                logger.warning(f"[Upload] No local metadata found for {workflow_id}")
                 return SyncResult(
                     success=False,
                     message="No local metadata found",
@@ -355,7 +366,8 @@ class ResourceManager:
 
             # CRITICAL: Get local timestamp before upload
             local_updated_at = local_metadata["updated_at"]
-            logger.info(f"Uploading resources with timestamp: {local_updated_at}")
+            logger.info(f"[Upload] Uploading resources with timestamp: {local_updated_at}")
+            logger.info(f"[Upload] Local metadata resources: {list(local_metadata.get('resources', {}).keys())}")
 
             # Upload each resource type
             for resource_type_key, resource_list in local_metadata.get("resources", {}).items():
@@ -369,20 +381,25 @@ class ResourceManager:
                     try:
                         step_id = resource_entry["step_id"]
                         resource_id = resource_entry["resource_id"]
+                        logger.info(f"[Upload] Processing resource {resource_id} in step {step_id}")
 
                         files = self.load_resource_local(
                             user_id, workflow_id, step_id, resource_type, resource_id
                         )
 
                         if not files:
+                            logger.warning(f"[Upload] Failed to load resource {resource_id} from local")
                             errors.append(f"Failed to load resource {resource_id}")
                             continue
+
+                        logger.info(f"[Upload] Loaded {len(files)} files for {resource_id}: {list(files.keys())}")
 
                         success = await self.storage_service.save_workflow_resource(
                             user_id, workflow_id, step_id, resource_type, resource_id, files
                         )
 
                         if success:
+                            logger.info(f"[Upload] Successfully uploaded resource {resource_id}")
                             synced.append(ResourceInfo(
                                 step_id=step_id,
                                 resource_id=resource_id,
@@ -392,10 +409,11 @@ class ResourceManager:
                                 updated_at=resource_entry.get("updated_at", "")
                             ))
                         else:
+                            logger.error(f"[Upload] Failed to upload resource {resource_id}")
                             errors.append(f"Failed to upload resource {resource_id}")
 
                     except Exception as e:
-                        logger.error(f"Failed to upload resource: {e}")
+                        logger.error(f"[Upload] Failed to upload resource: {e}", exc_info=True)
                         errors.append(str(e))
 
             # CRITICAL: Upload metadata with PRESERVED timestamp
@@ -430,8 +448,10 @@ class ResourceManager:
         errors = []
 
         try:
+            logger.info(f"[Download] Starting download for workflow {workflow_id}")
             cloud_metadata = await self.storage_service.get_workflow_metadata(user_id, workflow_id)
             if not cloud_metadata:
+                logger.warning(f"[Download] No cloud metadata found for {workflow_id}")
                 return SyncResult(
                     success=False,
                     message="No cloud metadata found",
@@ -441,7 +461,8 @@ class ResourceManager:
 
             # CRITICAL: Get cloud timestamp before download
             cloud_updated_at = cloud_metadata["updated_at"]
-            logger.info(f"Downloading resources with timestamp: {cloud_updated_at}")
+            logger.info(f"[Download] Downloading resources with timestamp: {cloud_updated_at}")
+            logger.info(f"[Download] Cloud metadata resources: {list(cloud_metadata.get('resources', {}).keys())}")
 
             # Download each resource type
             for resource_type_key, resource_list in cloud_metadata.get("resources", {}).items():
@@ -455,14 +476,18 @@ class ResourceManager:
                     try:
                         step_id = resource_entry["step_id"]
                         resource_id = resource_entry["resource_id"]
+                        logger.info(f"[Download] Processing resource {resource_id} in step {step_id}")
 
                         files = await self.storage_service.load_workflow_resource(
                             user_id, workflow_id, step_id, resource_type, resource_id
                         )
 
                         if not files:
+                            logger.warning(f"[Download] Failed to load resource {resource_id} from cloud")
                             errors.append(f"Failed to download resource {resource_id}")
                             continue
+
+                        logger.info(f"[Download] Downloaded {len(files)} files for {resource_id}: {list(files.keys())}")
 
                         # CRITICAL: Save to local with PRESERVED cloud timestamp
                         success = self.save_resource_local(
@@ -471,6 +496,7 @@ class ResourceManager:
                         )
 
                         if success:
+                            logger.info(f"[Download] Successfully saved resource {resource_id} to local")
                             synced.append(ResourceInfo(
                                 step_id=step_id,
                                 resource_id=resource_id,
@@ -480,10 +506,11 @@ class ResourceManager:
                                 updated_at=resource_entry.get("updated_at", "")
                             ))
                         else:
+                            logger.error(f"[Download] Failed to save resource {resource_id} to local")
                             errors.append(f"Failed to save resource {resource_id}")
 
                     except Exception as e:
-                        logger.error(f"Failed to download resource: {e}")
+                        logger.error(f"[Download] Failed to download resource: {e}", exc_info=True)
                         errors.append(str(e))
 
             # Save metadata locally with preserved timestamp

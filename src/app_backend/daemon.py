@@ -1141,6 +1141,274 @@ async def update_metaflow(metaflow_id: str, data: dict):
 
 
 # ============================================================================
+# Workflow Resource Sync Functions
+# ============================================================================
+
+async def sync_workflow_resources(workflow_id: str, user_id: str) -> Dict[str, Any]:
+    """Synchronize workflow resources between local and cloud
+
+    This is the main sync orchestration function called when user views workflow.
+    It compares timestamps and decides whether to upload or download.
+
+    Args:
+        workflow_id: Workflow ID
+        user_id: User ID
+
+    Returns:
+        dict with sync result:
+        {
+            "synced": true/false,
+            "direction": "upload"/"download"/"none",
+            "message": "...",
+            "files_transferred": 5
+        }
+    """
+    from src.common.services.simple_sync import SimpleSync
+
+    try:
+        logger.info(f"[Sync] Checking sync for workflow {workflow_id}")
+
+        # Get local workflow path
+        home_dir = Path.home()
+        ami_root = home_dir / ".ami"
+        local_workflow_path = ami_root / "users" / user_id / "workflows" / workflow_id
+
+        # Read local metadata
+        local_metadata_path = local_workflow_path / "metadata.json"
+        local_metadata = None
+        local_updated_at = None
+
+        if local_metadata_path.exists():
+            with open(local_metadata_path, 'r') as f:
+                local_metadata = json.load(f)
+                local_updated_at = local_metadata.get("updated_at")
+
+        # Get cloud metadata
+        cloud_metadata = await cloud_client.get_workflow_metadata(workflow_id, user_id)
+        cloud_updated_at = cloud_metadata.get("updated_at") if cloud_metadata else None
+
+        logger.info(f"[Sync] Timestamps - Local: {local_updated_at}, Cloud: {cloud_updated_at}")
+
+        # Decide sync direction based on timestamps
+        if not local_updated_at and not cloud_updated_at:
+            logger.info(f"[Sync] No metadata found on either side for {workflow_id}")
+            return {"synced": False, "direction": "none", "message": "No metadata found"}
+
+        if not cloud_updated_at or (local_updated_at and local_updated_at > cloud_updated_at):
+            # Local is newer or cloud doesn't exist → Upload
+            return await upload_to_cloud(workflow_id, user_id, local_metadata, local_workflow_path)
+
+        elif not local_updated_at or cloud_updated_at > local_updated_at:
+            # Cloud is newer or local doesn't exist → Download
+            return await download_from_cloud(workflow_id, user_id, cloud_metadata, local_workflow_path)
+
+        else:
+            # Timestamps are equal → No sync needed
+            logger.info(f"[Sync] Timestamps match, no sync needed for {workflow_id}")
+            return {"synced": False, "direction": "none", "message": "Already in sync"}
+
+    except Exception as e:
+        logger.error(f"[Sync] Failed to sync workflow {workflow_id}: {e}")
+        return {"synced": False, "direction": "error", "message": str(e)}
+
+
+async def download_from_cloud(
+    workflow_id: str,
+    user_id: str,
+    cloud_metadata: Dict[str, Any],
+    local_workflow_path: Path
+) -> Dict[str, Any]:
+    """Download resources from cloud to local
+
+    Args:
+        workflow_id: Workflow ID
+        user_id: User ID
+        cloud_metadata: Cloud metadata.json content
+        local_workflow_path: Local workflow directory path
+
+    Returns:
+        Sync result dict
+    """
+    logger.info(f"[Download] Starting download from cloud for {workflow_id}")
+
+    files_downloaded = 0
+    errors = []
+
+    try:
+        # Process each resource type
+        resources = cloud_metadata.get("resources", {})
+
+        for resource_type, resource_list in resources.items():
+            if not isinstance(resource_list, list):
+                continue
+
+            logger.info(f"[Download] Processing {len(resource_list)} {resource_type}")
+
+            for resource in resource_list:
+                step_id = resource.get("step_id")
+                resource_id = resource.get("resource_id")
+                files = resource.get("files", [])
+
+                logger.info(f"[Download] Resource: {step_id}/{resource_id} ({len(files)} files)")
+
+                for filename in files:
+                    try:
+                        # Construct file path: step_id/resource_id/filename
+                        file_path = f"{step_id}/{resource_id}/{filename}"
+
+                        # Download file
+                        content = await cloud_client.download_workflow_file(workflow_id, file_path, user_id)
+
+                        # Save to local
+                        local_file_path = local_workflow_path / step_id / resource_id / filename
+                        local_file_path.parent.mkdir(parents=True, exist_ok=True)
+                        local_file_path.write_bytes(content)
+
+                        logger.info(f"[Download] ✓ {file_path} ({len(content)} bytes)")
+                        files_downloaded += 1
+
+                    except Exception as e:
+                        error_msg = f"Failed to download {filename}: {e}"
+                        logger.error(f"[Download] ✗ {error_msg}")
+                        errors.append(error_msg)
+
+        # Save local metadata with cloud timestamp (CRITICAL: preserve timestamp)
+        local_metadata_path = local_workflow_path / "metadata.json"
+        local_metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(local_metadata_path, 'w') as f:
+            json.dump(cloud_metadata, f, indent=2)
+
+        logger.info(f"[Download] Saved metadata.json (timestamp: {cloud_metadata.get('updated_at')})")
+
+        result = {
+            "synced": True,
+            "direction": "download",
+            "message": f"Downloaded {files_downloaded} files from cloud",
+            "files_transferred": files_downloaded
+        }
+
+        if errors:
+            result["errors"] = errors
+
+        return result
+
+    except Exception as e:
+        logger.error(f"[Download] Failed: {e}")
+        return {
+            "synced": False,
+            "direction": "download",
+            "message": f"Download failed: {e}",
+            "files_transferred": files_downloaded,
+            "errors": errors
+        }
+
+
+async def upload_to_cloud(
+    workflow_id: str,
+    user_id: str,
+    local_metadata: Dict[str, Any],
+    local_workflow_path: Path
+) -> Dict[str, Any]:
+    """Upload resources from local to cloud
+
+    Args:
+        workflow_id: Workflow ID
+        user_id: User ID
+        local_metadata: Local metadata.json content
+        local_workflow_path: Local workflow directory path
+
+    Returns:
+        Sync result dict
+    """
+    from src.common.services.simple_sync import SimpleSync
+
+    logger.info(f"[Upload] Starting upload to cloud for {workflow_id}")
+
+    files_uploaded = 0
+    errors = []
+    sync = SimpleSync()  # Use default ignore patterns
+
+    try:
+        # Process each resource type
+        resources = local_metadata.get("resources", {})
+
+        for resource_type, resource_list in resources.items():
+            if not isinstance(resource_list, list):
+                continue
+
+            logger.info(f"[Upload] Processing {len(resource_list)} {resource_type}")
+
+            for resource in resource_list:
+                step_id = resource.get("step_id")
+                resource_id = resource.get("resource_id")
+
+                # Collect files using SimpleSync (auto-ignore dom_snapshots/, etc.)
+                resource_path = local_workflow_path / step_id / resource_id
+
+                if not resource_path.exists():
+                    logger.warning(f"[Upload] Resource path not found: {resource_path}")
+                    continue
+
+                files_to_upload = sync.collect_files(resource_path)
+                logger.info(f"[Upload] Resource: {step_id}/{resource_id} ({len(files_to_upload)} files after filtering)")
+
+                for rel_path, abs_path in files_to_upload.items():
+                    try:
+                        # Construct cloud file path: step_id/resource_id/filename
+                        file_path = f"{step_id}/{resource_id}/{rel_path}"
+
+                        # Read file content
+                        content = abs_path.read_bytes()
+
+                        # Upload file
+                        success = await cloud_client.upload_workflow_file(workflow_id, file_path, content, user_id)
+
+                        if success:
+                            logger.info(f"[Upload] ✓ {file_path} ({len(content)} bytes)")
+                            files_uploaded += 1
+                        else:
+                            error_msg = f"Upload returned false for {rel_path}"
+                            logger.error(f"[Upload] ✗ {error_msg}")
+                            errors.append(error_msg)
+
+                    except Exception as e:
+                        error_msg = f"Failed to upload {rel_path}: {e}"
+                        logger.error(f"[Upload] ✗ {error_msg}")
+                        errors.append(error_msg)
+
+        # Upload metadata with local timestamp (CRITICAL: preserve timestamp)
+        success = await cloud_client.save_workflow_metadata(workflow_id, local_metadata, user_id)
+
+        if success:
+            logger.info(f"[Upload] Saved metadata.json to cloud (timestamp: {local_metadata.get('updated_at')})")
+        else:
+            logger.error(f"[Upload] Failed to save metadata.json to cloud")
+            errors.append("Failed to save metadata")
+
+        result = {
+            "synced": True,
+            "direction": "upload",
+            "message": f"Uploaded {files_uploaded} files to cloud",
+            "files_transferred": files_uploaded
+        }
+
+        if errors:
+            result["errors"] = errors
+
+        return result
+
+    except Exception as e:
+        logger.error(f"[Upload] Failed: {e}")
+        return {
+            "synced": False,
+            "direction": "upload",
+            "message": f"Upload failed: {e}",
+            "files_transferred": files_uploaded,
+            "errors": errors
+        }
+
+
+# ============================================================================
 # Workflow APIs
 # ============================================================================
 
@@ -1468,7 +1736,7 @@ async def get_workflow_detail(workflow_id: str, user_id: str):
         # Auto-sync workflow resources with Cloud Backend
         # This ensures user always sees the latest version
         try:
-            sync_result = await cloud_client.check_and_sync_workflow(workflow_id, user_id)
+            sync_result = await sync_workflow_resources(workflow_id, user_id)
             if sync_result.get("synced"):
                 logger.info(f"Workflow auto-synced: {sync_result.get('direction')} - {sync_result.get('message')}")
         except Exception as e:

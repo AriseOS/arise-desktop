@@ -21,9 +21,9 @@ import uuid
 import asyncio
 import json
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from typing import Optional
 
 # 添加项目根目录到 Python 路径
@@ -1445,132 +1445,118 @@ async def close_intent_builder_session(session_id: str):
 
 # ===== Workflow Resource Sync API =====
 
-@app.get("/api/workflows/{workflow_id}/sync/status")
-async def check_workflow_sync_status(
-    workflow_id: str,
-    user_id: str
-):
+# ============================================================================
+# Workflow Resource Sync APIs (Simple File CRUD)
+# ============================================================================
+
+@app.get("/api/workflows/{workflow_id}/metadata")
+async def get_workflow_metadata(workflow_id: str, user_id: str):
     """
-    Check if workflow needs sync by comparing timestamps
+    Get workflow metadata from cloud storage
 
     Returns:
-        {
-            "needs_sync": bool,
-            "direction": "upload" | "download" | "none",
-            "local_updated_at": "2025-12-10T10:30:00Z",
-            "cloud_updated_at": "2025-12-09T14:18:00Z"
-        }
+        metadata.json content
     """
-    from src.common.services.resource_manager import ResourceManager
-
-    resource_manager = ResourceManager(config_service, storage_service)
-    needs_sync, direction = await resource_manager.check_sync_needed(user_id, workflow_id)
-
-    local_metadata = resource_manager.get_local_metadata(user_id, workflow_id)
-    cloud_metadata = await storage_service.get_workflow_metadata(user_id, workflow_id)
-
-    return {
-        "needs_sync": needs_sync,
-        "direction": direction,
-        "local_updated_at": local_metadata.get("updated_at") if local_metadata else None,
-        "cloud_updated_at": cloud_metadata.get("updated_at") if cloud_metadata else None
-    }
-
-
-@app.post("/api/workflows/{workflow_id}/sync")
-async def sync_workflow_resources(
-    workflow_id: str,
-    user_id: str,
-    direction: Optional[str] = None
-):
-    """
-    Sync workflow resources between local and cloud
-
-    Args:
-        direction: "upload", "download", or None (auto-detect)
-
-    Returns:
-        {
-            "success": bool,
-            "message": str,
-            "synced_resources": [
-                {
-                    "step_id": "extract-daily-link",
-                    "resource_id": "scraper_script_922ed7ac",
-                    "resource_type": "scraper_scripts",
-                    "files": ["extraction_script.py", "requirement.json", "test_extraction.py"]
-                }
-            ],
-            "errors": []
-        }
-    """
-    from src.common.services.resource_manager import ResourceManager
-
-    resource_manager = ResourceManager(config_service, storage_service)
-    result = await resource_manager.sync_workflow_resources(user_id, workflow_id, direction)
-
-    return {
-        "success": result.success,
-        "message": result.message,
-        "synced_resources": [
-            {
-                "step_id": r.step_id,
-                "resource_id": r.resource_id,
-                "resource_type": r.resource_type.value,
-                "files": r.files
-            }
-            for r in result.synced_resources
-        ],
-        "errors": result.errors
-    }
-
-
-@app.get("/api/workflows/{workflow_id}/resources")
-async def list_workflow_resources(
-    workflow_id: str,
-    user_id: str,
-    source: str = "local"
-):
-    """
-    List all resources for a workflow
-
-    Args:
-        source: "local" or "cloud"
-
-    Returns:
-        {
-            "workflow_id": str,
-            "updated_at": str,
-            "resources": {
-                "scraper_scripts": [
-                    {
-                        "step_id": "extract-daily-link",
-                        "resource_id": "scraper_script_922ed7ac",
-                        "files": [...],
-                        "created_at": "...",
-                        "updated_at": "..."
-                    }
-                ]
-            }
-        }
-    """
-    from src.common.services.resource_manager import ResourceManager
-
-    resource_manager = ResourceManager(config_service, storage_service)
-
-    if source == "local":
-        metadata = resource_manager.get_local_metadata(user_id, workflow_id)
-    else:
+    try:
         metadata = await storage_service.get_workflow_metadata(user_id, workflow_id)
+        if not metadata:
+            raise HTTPException(status_code=404, detail=f"Metadata not found for workflow {workflow_id}")
+        return metadata
+    except Exception as e:
+        logger.error(f"Failed to get metadata for {workflow_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-    if not metadata:
-        raise HTTPException(status_code=404, detail=f"Workflow {workflow_id} not found in {source}")
 
-    return {
-        "workflow_id": workflow_id,
-        "updated_at": metadata.get("updated_at"),
-        "resources": metadata.get("resources", {})
-    }
+@app.put("/api/workflows/{workflow_id}/metadata")
+async def save_workflow_metadata(workflow_id: str, user_id: str, metadata: dict):
+    """
+    Save workflow metadata to cloud storage
+
+    Body: metadata.json content (JSON)
+
+    Returns:
+        {"success": true}
+    """
+    try:
+        success = await storage_service.save_workflow_metadata(user_id, workflow_id, metadata)
+        return {"success": success}
+    except Exception as e:
+        logger.error(f"Failed to save metadata for {workflow_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/workflows/{workflow_id}/files")
+async def get_workflow_file(workflow_id: str, user_id: str, path: str):
+    """
+    Get a single file from workflow
+
+    Args:
+        path: Relative path like "extract-daily-link/scraper_script_922ed7ac/extraction_script.py"
+
+    Returns:
+        File bytes (binary)
+    """
+    try:
+        workflow_path = storage_service.get_workflow_path(user_id, workflow_id)
+        file_path = workflow_path / path
+
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail=f"File not found: {path}")
+
+        # Security: Ensure file is within workflow directory
+        if not str(file_path.resolve()).startswith(str(workflow_path.resolve())):
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        return FileResponse(file_path)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get file {path} for {workflow_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/workflows/{workflow_id}/files")
+async def save_workflow_file(
+    workflow_id: str,
+    user_id: str,
+    path: str,
+    file: UploadFile
+):
+    """
+    Save a single file to workflow
+
+    Args:
+        path: Relative path like "extract-daily-link/scraper_script_922ed7ac/extraction_script.py"
+        file: File upload (multipart/form-data)
+
+    Returns:
+        {"success": true, "size": 12345}
+    """
+    try:
+        workflow_path = storage_service.get_workflow_path(user_id, workflow_id)
+        file_path = workflow_path / path
+
+        # Security: Ensure file is within workflow directory
+        if not str(file_path.resolve()).startswith(str(workflow_path.resolve())):
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        # Create parent directory
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Read and save file
+        content = await file.read()
+        file_path.write_bytes(content)
+
+        logger.info(f"Saved file {path} ({len(content)} bytes) for {workflow_id}")
+
+        return {"success": True, "size": len(content)}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to save file {path} for {workflow_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

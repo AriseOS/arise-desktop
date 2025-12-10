@@ -438,57 +438,6 @@ class CloudClient:
             logger.warning(f"Failed to delete workflow from Cloud: {e}")
             return False
 
-    async def check_and_sync_workflow(
-        self,
-        workflow_id: str,
-        user_id: str = "default_user"
-    ) -> Dict[str, Any]:
-        """Check and automatically sync workflow resources with Cloud Backend
-
-        This method checks if the workflow needs sync and automatically performs
-        the sync operation (upload or download) based on timestamp comparison.
-
-        Args:
-            workflow_id: Workflow ID
-            user_id: User ID (default: "default_user")
-
-        Returns:
-            Dict with sync result:
-            {
-                "synced": bool,
-                "direction": "upload" | "download" | "none",
-                "message": str,
-                "synced_resources": list
-            }
-        """
-        logger.info(f"Auto-syncing workflow resources: {workflow_id}")
-
-        try:
-            # Call Cloud Backend sync endpoint with auto-sync enabled
-            response = await self.client.post(
-                f"/api/workflows/{workflow_id}/sync",
-                params={"user_id": user_id},
-                json={"direction": None}  # None = auto-detect direction
-            )
-            response.raise_for_status()
-            result = response.json()
-
-            if result.get("success"):
-                logger.info(f"Workflow sync completed: {result.get('message')}")
-            else:
-                logger.warning(f"Workflow sync failed: {result.get('message')}")
-
-            return result
-
-        except Exception as e:
-            logger.warning(f"Failed to sync workflow resources: {e}")
-            return {
-                "synced": False,
-                "direction": "none",
-                "message": f"Sync failed: {str(e)}",
-                "synced_resources": []
-            }
-
     async def report_execution(
         self,
         user_id: str,
@@ -790,6 +739,148 @@ class CloudClient:
         except Exception as e:
             logger.error(f"Failed to get quota status: {e}")
             return None
+
+    # ============================================================================
+    # Workflow Resource Sync Methods
+    # ============================================================================
+
+    async def get_workflow_metadata(
+        self,
+        workflow_id: str,
+        user_id: str = "default_user"
+    ) -> Optional[Dict[str, Any]]:
+        """Get workflow metadata from Cloud Backend
+
+        Args:
+            workflow_id: Workflow ID
+            user_id: User ID
+
+        Returns:
+            metadata.json content or None if not found
+        """
+        try:
+            logger.info(f"[CloudClient] Getting metadata for workflow {workflow_id}")
+            response = await self.client.get(
+                f"/api/workflows/{workflow_id}/metadata",
+                params={"user_id": user_id}
+            )
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                logger.info(f"[CloudClient] Metadata not found for workflow {workflow_id}")
+                return None
+            logger.error(f"[CloudClient] Failed to get metadata: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"[CloudClient] Failed to get metadata: {e}")
+            raise
+
+    async def save_workflow_metadata(
+        self,
+        workflow_id: str,
+        metadata: Dict[str, Any],
+        user_id: str = "default_user"
+    ) -> bool:
+        """Save workflow metadata to Cloud Backend
+
+        Args:
+            workflow_id: Workflow ID
+            metadata: metadata.json content
+            user_id: User ID
+
+        Returns:
+            True if successful
+        """
+        try:
+            logger.info(f"[CloudClient] Saving metadata for workflow {workflow_id}")
+            response = await self.client.put(
+                f"/api/workflows/{workflow_id}/metadata",
+                params={"user_id": user_id},
+                json=metadata
+            )
+            response.raise_for_status()
+            result = response.json()
+            return result.get("success", False)
+        except Exception as e:
+            logger.error(f"[CloudClient] Failed to save metadata: {e}")
+            raise
+
+    async def download_workflow_file(
+        self,
+        workflow_id: str,
+        file_path: str,
+        user_id: str = "default_user"
+    ) -> bytes:
+        """Download a single file from Cloud Backend
+
+        Args:
+            workflow_id: Workflow ID
+            file_path: Relative path like "extract-daily-link/scraper_script_922ed7ac/extraction_script.py"
+            user_id: User ID
+
+        Returns:
+            File bytes
+        """
+        try:
+            logger.debug(f"[CloudClient] Downloading file {file_path} from workflow {workflow_id}")
+            response = await self.client.get(
+                f"/api/workflows/{workflow_id}/files",
+                params={
+                    "user_id": user_id,
+                    "path": file_path
+                }
+            )
+            response.raise_for_status()
+            return response.content
+        except Exception as e:
+            logger.error(f"[CloudClient] Failed to download file {file_path}: {e}")
+            raise
+
+    async def upload_workflow_file(
+        self,
+        workflow_id: str,
+        file_path: str,
+        content: bytes,
+        user_id: str = "default_user"
+    ) -> bool:
+        """Upload a single file to Cloud Backend
+
+        Args:
+            workflow_id: Workflow ID
+            file_path: Relative path like "extract-daily-link/scraper_script_922ed7ac/extraction_script.py"
+            content: File bytes
+            user_id: User ID
+
+        Returns:
+            True if successful
+        """
+        try:
+            logger.debug(f"[CloudClient] Uploading file {file_path} to workflow {workflow_id} ({len(content)} bytes)")
+
+            # Create multipart form data with file
+            files = {
+                'file': (file_path.split('/')[-1], content, 'application/octet-stream')
+            }
+
+            response = await self.client.put(
+                f"/api/workflows/{workflow_id}/files",
+                params={
+                    "user_id": user_id,
+                    "path": file_path
+                },
+                files=files
+            )
+            response.raise_for_status()
+            result = response.json()
+
+            if result.get("success"):
+                logger.debug(f"[CloudClient] Uploaded {file_path} ({result.get('size')} bytes)")
+
+            return result.get("success", False)
+        except Exception as e:
+            logger.error(f"[CloudClient] Failed to upload file {file_path}: {e}")
+            raise
 
     async def close(self):
         """Close HTTP client"""
