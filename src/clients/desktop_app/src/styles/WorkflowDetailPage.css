@@ -7,6 +7,50 @@
     color: var(--text-primary);
 }
 
+/* Sync status banner */
+.sync-status-banner {
+    padding: var(--spacing-md) var(--spacing-lg);
+    margin: 0 var(--spacing-lg);
+    margin-top: var(--spacing-md);
+    border-radius: var(--radius-md);
+    font-size: 14px;
+    font-weight: 500;
+    animation: slideDown 0.3s ease-out;
+}
+
+.sync-status-banner.checking,
+.sync-status-banner.downloading,
+.sync-status-banner.uploading {
+    background-color: #EBF8FF;
+    color: #2C5282;
+    border-left: 4px solid #3182CE;
+}
+
+.sync-status-banner.downloaded,
+.sync-status-banner.uploaded,
+.sync-status-banner.synced {
+    background-color: #F0FFF4;
+    color: #22543D;
+    border-left: 4px solid #38A169;
+}
+
+.sync-status-banner.error {
+    background-color: #FFF5F5;
+    color: #742A2A;
+    border-left: 4px solid #E53E3E;
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
 .workflow-detail-content {
     flex: 1;
     display: flex;

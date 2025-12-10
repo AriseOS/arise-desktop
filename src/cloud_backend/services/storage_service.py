@@ -671,3 +671,129 @@ class StorageService:
         shutil.rmtree(workflow_path)
         logger.info(f"Workflow deleted: {workflow_id}")
         return True
+
+    # ===== Workflow Resource Sync =====
+
+    def get_workflow_path(self, user_id: str, workflow_id: str) -> Path:
+        """Get workflow directory path"""
+        return self._user_path(user_id) / "workflows" / workflow_id
+
+    async def get_workflow_metadata(self, user_id: str, workflow_id: str) -> Optional[Dict]:
+        """Get workflow metadata from cloud"""
+        try:
+            metadata_path = self.get_workflow_path(user_id, workflow_id) / "metadata.json"
+            if not metadata_path.exists():
+                return None
+
+            with open(metadata_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Failed to read cloud metadata: {e}")
+            return None
+
+    async def save_workflow_metadata(
+        self,
+        user_id: str,
+        workflow_id: str,
+        metadata: Dict
+    ) -> bool:
+        """
+        Save workflow metadata to cloud
+
+        CRITICAL: This method should preserve the updated_at timestamp in metadata
+        """
+        try:
+            metadata_path = self.get_workflow_path(user_id, workflow_id) / "metadata.json"
+            metadata_path.parent.mkdir(parents=True, exist_ok=True)
+
+            with open(metadata_path, 'w', encoding='utf-8') as f:
+                json.dump(metadata, f, indent=2, ensure_ascii=False)
+
+            logger.info(f"Saved workflow metadata to cloud: {workflow_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save cloud metadata: {e}")
+            return False
+
+    def get_resource_path(
+        self,
+        user_id: str,
+        workflow_id: str,
+        step_id: str,
+        resource_type,  # ResourceType enum
+        resource_id: str
+    ) -> Path:
+        """Get cloud resource directory path"""
+        from src.common.resource_types import ResourceType
+        workflow_path = self.get_workflow_path(user_id, workflow_id)
+        resource_type_value = resource_type.value if isinstance(resource_type, ResourceType) else resource_type
+        return workflow_path / "resources" / resource_type_value / step_id / resource_id
+
+    async def save_workflow_resource(
+        self,
+        user_id: str,
+        workflow_id: str,
+        step_id: str,
+        resource_type,  # ResourceType enum
+        resource_id: str,
+        files: Dict[str, bytes]
+    ) -> bool:
+        """Save resource files to cloud"""
+        try:
+            resource_path = self.get_resource_path(
+                user_id, workflow_id, step_id, resource_type, resource_id
+            )
+            resource_path.mkdir(parents=True, exist_ok=True)
+
+            for filename, content in files.items():
+                file_path = resource_path / filename
+                if isinstance(content, str):
+                    file_path.write_text(content, encoding='utf-8')
+                else:
+                    file_path.write_bytes(content)
+
+            logger.info(f"Saved resource {resource_id} to cloud: {resource_path}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to save resource to cloud: {e}")
+            return False
+
+    async def load_workflow_resource(
+        self,
+        user_id: str,
+        workflow_id: str,
+        step_id: str,
+        resource_type,  # ResourceType enum
+        resource_id: str
+    ) -> Optional[Dict[str, bytes]]:
+        """Load resource files from cloud"""
+        try:
+            from src.common.resource_types import ResourceConfig, ResourceType
+
+            resource_path = self.get_resource_path(
+                user_id, workflow_id, step_id, resource_type, resource_id
+            )
+
+            if not resource_path.exists():
+                logger.warning(f"Resource not found in cloud: {resource_path}")
+                return None
+
+            # Convert to ResourceType if needed
+            if not isinstance(resource_type, ResourceType):
+                resource_type = ResourceType(resource_type)
+
+            sync_files = ResourceConfig.get_sync_files(resource_type)
+            files = {}
+
+            for filename in sync_files:
+                file_path = resource_path / filename
+                if file_path.exists():
+                    files[filename] = file_path.read_bytes()
+
+            logger.info(f"Loaded {len(files)} files from cloud: {resource_path}")
+            return files
+
+        except Exception as e:
+            logger.error(f"Failed to load resource from cloud: {e}")
+            return None

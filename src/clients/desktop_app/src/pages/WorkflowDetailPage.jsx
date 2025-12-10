@@ -5,6 +5,7 @@ import yaml from 'js-yaml'
 import Icon from '../components/Icons'
 import FlowVisualization from '../components/FlowVisualization'
 import { api } from '../utils/api'
+import { autoSyncOnView, syncResources, checkSyncStatus } from '../utils/workflowSync'
 import '../styles/WorkflowDetailPage.css'
 
 const API_BASE = "http://127.0.0.1:8765"
@@ -30,9 +31,14 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
   const [currentToolUse, setCurrentToolUse] = useState(null)
   const logEndRef = useRef(null)
 
+  // Sync state
+  const [isSyncing, setIsSyncing] = useState(false)
+  const [syncMessage, setSyncMessage] = useState(null) // { type, message }
+
   useEffect(() => {
     if (userId && workflowId) {
       loadWorkflowData()
+      checkAndAutoSync()
     }
   }, [userId, workflowId])
 
@@ -84,6 +90,65 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
       setError('加载工作流数据失败')
     } finally {
       setLoading(false)
+    }
+  }
+
+  // Auto-sync on page load
+  const checkAndAutoSync = async () => {
+    try {
+      await autoSyncOnView(workflowId, (status) => {
+        setSyncMessage({ type: status.type, message: status.message })
+
+        // Handle different sync status types
+        if (status.type === 'downloaded') {
+          // Reload workflow data after download
+          setTimeout(() => {
+            loadWorkflowData()
+            setSyncMessage(null)
+          }, 2000)
+        } else if (status.type === 'local_newer') {
+          // Auto-upload local changes to cloud
+          autoUploadToCloud()
+        } else if (status.type === 'synced') {
+          // Clear message after 2 seconds
+          setTimeout(() => setSyncMessage(null), 2000)
+        }
+      })
+    } catch (error) {
+      console.error('Auto-sync failed:', error)
+      // Don't block the page if sync fails
+    }
+  }
+
+  // Auto-upload when local is newer
+  const autoUploadToCloud = async () => {
+    setIsSyncing(true)
+    setSyncMessage({ type: 'uploading', message: 'Uploading local changes to cloud...' })
+
+    try {
+      const result = await syncResources(workflowId, 'upload')
+
+      if (result.success) {
+        setSyncMessage({
+          type: 'uploaded',
+          message: `Successfully synced ${result.synced_resources.length} resources to cloud`
+        })
+
+        // Clear message after 3 seconds
+        setTimeout(() => setSyncMessage(null), 3000)
+      } else {
+        setSyncMessage({
+          type: 'error',
+          message: `Sync failed: ${result.errors.join(', ')}`
+        })
+      }
+    } catch (error) {
+      setSyncMessage({
+        type: 'error',
+        message: `Sync failed: ${error.message}`
+      })
+    } finally {
+      setIsSyncing(false)
     }
   }
 
@@ -293,6 +358,20 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
           )}
         </button>
       </div>
+
+      {/* Sync status message */}
+      {syncMessage && (
+        <div className={`sync-status-banner ${syncMessage.type}`}>
+          {syncMessage.type === 'checking' && '🔄 '}
+          {syncMessage.type === 'downloading' && '⬇️ '}
+          {syncMessage.type === 'uploading' && '⬆️ '}
+          {syncMessage.type === 'downloaded' && '✅ '}
+          {syncMessage.type === 'uploaded' && '✅ '}
+          {syncMessage.type === 'synced' && '✅ '}
+          {syncMessage.type === 'error' && '❌ '}
+          {syncMessage.message}
+        </div>
+      )}
 
       <div className="workflow-detail-content">
         {loading && (

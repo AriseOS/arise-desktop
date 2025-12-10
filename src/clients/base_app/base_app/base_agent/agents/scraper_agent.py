@@ -82,6 +82,13 @@ class ScraperAgent(BaseStepAgent):
         # 保存配置服务
         self.config_service = config_service
 
+        # Initialize ResourceManager for workflow resource sync
+        self.resource_manager = None
+        if config_service:
+            from src.common.services.resource_manager import ResourceManager
+            self.resource_manager = ResourceManager(config_service)
+            logger.info("ResourceManager initialized for workflow resource sync")
+
         # 默认配置（运行时可覆盖）
         self.extraction_method = extraction_method
         self.dom_scope = dom_scope
@@ -1538,7 +1545,30 @@ Create and run a test to validate your extraction_script.py works correctly.
             script_content = script_file.read_text(encoding='utf-8')
             logger.info(f"Script loaded from {script_file} ({len(script_content)} chars)")
 
-            # 8. Wrap script with execution wrapper (same as before)
+            # 8. Update workflow metadata with ResourceManager
+            if self.resource_manager and hasattr(self, '_context') and self._context:
+                from src.common.resource_types import ResourceType
+
+                user_id = getattr(self._context, 'user_id', 'default_user')
+                workflow_id = getattr(self._context, 'workflow_id', 'default_workflow')
+                step_id = getattr(self._context, 'step_id', 'default_step')
+
+                # Extract resource_id from script_key (last component)
+                script_key = self._current_script_key if hasattr(self, '_current_script_key') else ''
+                resource_id = script_key.split('/')[-1] if script_key else 'unknown_resource'
+
+                logger.info(f"Updating workflow metadata for resource: {resource_id}")
+
+                self.resource_manager.update_workflow_metadata(
+                    user_id=user_id,
+                    workflow_id=workflow_id,
+                    step_id=step_id,
+                    resource_type=ResourceType.SCRAPER_SCRIPT,
+                    resource_id=resource_id,
+                    files=["extraction_script.py", "requirement.json", "test_extraction.py"]
+                )
+
+            # 9. Wrap script with execution wrapper (same as before)
             return self._extract_and_wrap_code(script_content)
             
         except Exception as e:
