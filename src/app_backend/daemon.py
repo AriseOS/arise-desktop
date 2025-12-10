@@ -4,13 +4,12 @@ App Backend Daemon - HTTP API Version
 Provides REST API endpoints for desktop app communication
 """
 import sys
-import os
-import signal
 import asyncio
 import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from datetime import datetime
+from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Header, WebSocket, WebSocketDisconnect
@@ -136,11 +135,79 @@ class WebSocketConnectionManager:
 
 ws_manager = WebSocketConnectionManager()
 
-# FastAPI app
+
+# ============================================================================
+# Application Lifespan Management
+# ============================================================================
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage application lifecycle - startup and shutdown
+
+    This lifespan context manager is called by uvicorn:
+    - On startup: Initialize all services
+    - On shutdown: Cleanup all resources (triggered by SIGTERM/SIGINT)
+    """
+    global browser_manager, workflow_executor, cdp_recorder, cloud_client
+
+    # ========== STARTUP ==========
+    logger.info("=" * 60)
+    logger.info("Starting App Backend services...")
+    logger.info("=" * 60)
+
+    try:
+        # Initialize browser manager (but do NOT start browser yet - on-demand startup)
+        browser_manager = BrowserManager(config_service=config)
+        logger.info("✓ Browser manager initialized (browser not started - will start on demand)")
+
+        # Initialize workflow executor
+        workflow_executor = WorkflowExecutor(storage_manager, browser_manager)
+
+        # Set up progress callback for WebSocket updates
+        workflow_executor.set_progress_callback(ws_manager.send_progress_update)
+        logger.info("✓ Workflow executor initialized with WebSocket progress callback")
+
+        # Initialize CDP recorder
+        cdp_recorder = CDPRecorder(storage_manager, browser_manager)
+        logger.info("✓ CDP recorder initialized")
+
+        # Initialize cloud client (without user_api_key initially)
+        cloud_client = CloudClient(
+            api_url=config.get("cloud.api_url", "https://api.ami.com")
+        )
+        logger.info("✓ Cloud client initialized")
+        logger.info(f"  Cloud Backend URL: {config.get('cloud.api_url', 'https://api.ami.com')}")
+        logger.info(f"  API Proxy URL: {config.get('api_proxy.url', 'http://localhost:8080')}")
+
+        logger.info("=" * 60)
+        logger.info("✅ App Backend ready!")
+        logger.info("=" * 60)
+
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize services: {e}")
+        raise
+
+    # ========== APPLICATION RUNNING ==========
+    yield
+
+    # ========== SHUTDOWN ==========
+    logger.info("=" * 60)
+    logger.info("Shutting down App Backend...")
+    logger.info("=" * 60)
+
+    await cleanup_resources()
+
+    logger.info("=" * 60)
+    logger.info("✅ Shutdown complete")
+    logger.info("=" * 60)
+
+
+# FastAPI app with lifespan
 app = FastAPI(
     title="Ami App Backend",
     description="HTTP API for desktop app communication",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan  # Use lifespan instead of @app.on_event
 )
 
 # Add CORS middleware for desktop app
@@ -286,52 +353,11 @@ class ListWorkflowsResponse(BaseModel):
 
 
 # ============================================================================
-# Startup/Shutdown Events
+# Startup/Shutdown Events (REMOVED - now using lifespan)
 # ============================================================================
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize services on startup"""
-    global browser_manager, workflow_executor, cdp_recorder, cloud_client
-
-    logger.info("Initializing App Backend services...")
-
-    # Initialize browser manager (but do NOT start browser yet - on-demand startup)
-    browser_manager = BrowserManager(config_service=config)
-    logger.info("✓ Browser manager initialized (browser not started - will start on demand)")
-
-    # Initialize workflow executor
-    workflow_executor = WorkflowExecutor(storage_manager, browser_manager)
-
-    # Set up progress callback for WebSocket updates
-    workflow_executor.set_progress_callback(ws_manager.send_progress_update)
-    logger.info("✓ Workflow executor initialized with WebSocket progress callback")
-
-    # Initialize CDP recorder
-    cdp_recorder = CDPRecorder(storage_manager, browser_manager)
-    logger.info("✓ CDP recorder initialized")
-
-    # Initialize cloud client (without user_api_key initially)
-    cloud_client = CloudClient(
-        api_url=config.get("cloud.api_url", "https://api.ami.com")
-    )
-    logger.info("✓ Cloud client initialized")
-    logger.info(f"  Cloud Backend URL: {config.get('cloud.api_url', 'https://api.ami.com')}")
-    logger.info(f"  API Proxy URL: {config.get('api_proxy.url', 'http://localhost:8080')}")
-
-    logger.info("App Backend daemon ready!")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown"""
-    logger.info("Shutting down App Backend...")
-
-    if browser_manager:
-        await browser_manager.cleanup()
-        logger.info("✓ Browser cleaned up")
-
-    logger.info("Shutdown complete")
+# The old @app.on_event("startup") and @app.on_event("shutdown") decorators
+# have been replaced with the lifespan context manager above.
+# This ensures proper cleanup when uvicorn receives SIGTERM/SIGINT.
 
 
 # ============================================================================
@@ -2256,75 +2282,120 @@ async def chat_with_claude_for_optimization(
 # ============================================================================
 # Main Entry Point
 # ============================================================================
-# Shutdown Endpoint (for graceful shutdown)
+# Resource Cleanup
 # ============================================================================
 
-@app.post("/api/shutdown")
-async def shutdown_daemon():
-    """Graceful shutdown endpoint
-
-    This endpoint allows external processes (like Tauri app) to request
-    a graceful shutdown of the daemon.
-    """
-    logger.info("Received shutdown request via HTTP endpoint")
-
-    # Cleanup resources
-    await cleanup_resources()
-
-    # Schedule shutdown after response is sent
-    def delayed_shutdown():
-        import time
-        time.sleep(0.5)
-        logger.info("Shutting down daemon...")
-        os.kill(os.getpid(), signal.SIGTERM)
-
-    import threading
-    threading.Thread(target=delayed_shutdown, daemon=True).start()
-
-    return {"status": "shutting down", "message": "Daemon will shutdown in 0.5 seconds"}
-
-
 async def cleanup_resources():
-    """Cleanup all resources before shutdown"""
+    """Cleanup all resources before shutdown
+
+    This function is called by the lifespan shutdown context manager
+    when uvicorn receives SIGTERM/SIGINT from the parent process (Tauri).
+    """
     global browser_manager, workflow_executor, cdp_recorder, cloud_client
 
-    logger.info("Cleaning up resources...")
+    logger.info("🧹 Cleaning up resources...")
+
+    cleanup_errors = []
 
     try:
-        # Stop browser if running
-        if browser_manager and browser_manager.get_status().get("is_running"):
-            logger.info("Stopping browser...")
-            await browser_manager.stop_browser()
+        # 1. Stop active recording if any
+        if cdp_recorder and cdp_recorder._is_recording:
+            logger.info("Stopping active recording...")
+            try:
+                await asyncio.wait_for(cdp_recorder.stop_recording(), timeout=3.0)
+                logger.info("✓ Recording stopped")
+            except asyncio.TimeoutError:
+                logger.warning("⚠️  Recording stop timeout")
+                cleanup_errors.append("Recording stop timeout")
+            except Exception as e:
+                logger.error(f"⚠️  Failed to stop recording: {e}")
+                cleanup_errors.append(f"Recording: {e}")
 
-        # Close cloud client connection
+        # 2. Cancel running workflow tasks
+        if workflow_executor:
+            logger.info("Checking for running workflow tasks...")
+            running_tasks = [
+                task_id for task_id, task in workflow_executor.tasks.items()
+                if task.status == "running"
+            ]
+
+            if running_tasks:
+                logger.info(f"Found {len(running_tasks)} running tasks, marking as cancelled...")
+                for task_id in running_tasks:
+                    task = workflow_executor.tasks[task_id]
+                    task.status = "cancelled"
+                    task.message = "Cancelled due to shutdown"
+                logger.info("✓ Running tasks cancelled")
+            else:
+                logger.info("✓ No running tasks")
+
+        # 3. Stop browser sessions (from BrowserSessionManager)
+        # Note: Workflows may create browser sessions without updating BrowserManager state
+        # So we need to close all sessions directly, not rely on BrowserManager.is_running
+        try:
+            from src.clients.base_app.base_app.base_agent.tools.browser_session_manager import BrowserSessionManager
+
+            session_manager = await BrowserSessionManager.get_instance()
+            active_sessions = session_manager.list_sessions()
+
+            if active_sessions:
+                logger.info(f"Closing {len(active_sessions)} active browser sessions...")
+                await asyncio.wait_for(
+                    session_manager.close_all_sessions(),
+                    timeout=5.0
+                )
+                logger.info("✓ All browser sessions closed")
+            else:
+                logger.info("✓ No active browser sessions")
+        except asyncio.TimeoutError:
+            logger.warning("⚠️  Browser session cleanup timeout")
+            cleanup_errors.append("Browser session cleanup timeout")
+        except Exception as e:
+            logger.error(f"⚠️  Failed to close browser sessions: {e}")
+            cleanup_errors.append(f"Browser sessions: {e}")
+
+        # 4. Also cleanup BrowserManager if it was started
+        if browser_manager:
+            status = browser_manager.get_status()
+            if status.get("is_running"):
+                logger.info("Stopping browser manager...")
+                try:
+                    await asyncio.wait_for(
+                        browser_manager.cleanup(),
+                        timeout=3.0
+                    )
+                    logger.info("✓ Browser manager stopped")
+                except Exception as e:
+                    logger.error(f"⚠️  Browser manager cleanup error: {e}")
+                    cleanup_errors.append(f"Browser manager: {e}")
+
+        # 4. Close cloud client connection
         if cloud_client:
             logger.info("Closing cloud client...")
-            await cloud_client.close()
+            try:
+                await asyncio.wait_for(cloud_client.close(), timeout=2.0)
+                logger.info("✓ Cloud client closed")
+            except asyncio.TimeoutError:
+                logger.warning("⚠️  Cloud client close timeout")
+                cleanup_errors.append("Cloud client timeout")
+            except Exception as e:
+                logger.error(f"⚠️  Failed to close cloud client: {e}")
+                cleanup_errors.append(f"Cloud: {e}")
 
-        logger.info("Resource cleanup completed")
-    except Exception as e:
-        logger.error(f"Error during cleanup: {e}")
-
-
-def signal_handler(sig, frame):
-    """Handle shutdown signals gracefully (SIGTERM, SIGINT)"""
-    logger.info(f"Received signal {sig}, initiating graceful shutdown...")
-
-    # Run async cleanup in sync context
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.create_task(cleanup_resources())
+        # 5. Summary
+        if cleanup_errors:
+            logger.warning(f"⚠️  Cleanup completed with {len(cleanup_errors)} errors: {cleanup_errors}")
         else:
-            loop.run_until_complete(cleanup_resources())
+            logger.info("✅ All resources cleaned up successfully")
+
     except Exception as e:
-        logger.error(f"Error during signal handler cleanup: {e}")
-
-    # Exit
-    logger.info("Exiting daemon process")
-    sys.exit(0)
+        logger.error(f"❌ Critical error during cleanup: {e}")
+        import traceback
+        traceback.print_exc()
 
 
+# ============================================================================
+# Main Entry Point
 # ============================================================================
 
 def main():
@@ -2332,12 +2403,13 @@ def main():
     port = config.get("daemon.port", 8765)
     host = config.get("daemon.host", "127.0.0.1")
 
-    # Register signal handlers for graceful shutdown
-    signal.signal(signal.SIGTERM, signal_handler)
-    signal.signal(signal.SIGINT, signal_handler)
+    # DO NOT register signal handlers - uvicorn handles them automatically
+    # and will call our lifespan shutdown context manager
 
+    logger.info("=" * 60)
     logger.info(f"Starting App Backend daemon on {host}:{port}")
-    logger.info("Press Ctrl+C or send SIGTERM to gracefully shutdown")
+    logger.info("Process will respond to SIGTERM/SIGINT for graceful shutdown")
+    logger.info("=" * 60)
 
     uvicorn.run(
         app,

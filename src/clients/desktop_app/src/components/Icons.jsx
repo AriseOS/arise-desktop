@@ -43,12 +43,6 @@ export const Icon = ({ name, size = 24, className = "", ...props }) => {
 
         // Actions
         search: (
-            <circle cx="11" cy="11" r="8" />
-        ), // Wait, search needs the handle.
-        // Let's use fragments for complex ones or just paths.
-        // React accepts fragments or arrays if key. But strictly JSX elements is easiest.
-        // SVG paths:
-        search: (
             <path d="M21 21l-4.35-4.35M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z" />
         ),
         x: (
@@ -118,10 +112,6 @@ export const Icon = ({ name, size = 24, className = "", ...props }) => {
         bookOpen: (
             <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2zM22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
         ),
-        data: (
-            <path d="M12 2c-5.52 0-10 1.8-10 4s4.48 4 10 4 10-1.8 10-4-4.48-4-10-4zm0 6c-5.52 0-10-1.8-10-4S6.48 0 12 0s10 1.8 10 4-4.48 4-10 4zm0 7c-5.52 0-10-1.8-10-4 0-.6.18-1.2.53-1.74.34-.53.82-1.02 1.4-1.4 1.74-3.4 5.25-5.86 9.4-5.86s7.66 2.46 9.4 5.86c.58.38 1.06.87 1.4 1.4.35.54.53 1.14.53 1.74 0 2.2-4.48 4-10 4zm0 7c-5.52 0-10-1.8-10-4 0-.6.18-1.2.53-1.74.34-.53.82-1.02 1.4-1.4 1.74-3.4 5.25-5.86 9.4-5.86s7.66 2.46 9.4 5.86c.58.38 1.06.87 1.4 1.4.35.54.53 1.14.53 1.74 0 2.2-4.48 4-10 4z" transform="scale(0.8) translate(3, 3)" />
-        ),
-        // Actually that path is complex. Let's use standard Lucide "Database" but scaled.
         data: (
             <g transform="scale(0.85) translate(2,2)">
                 <ellipse cx="12" cy="5" rx="9" ry="3" />

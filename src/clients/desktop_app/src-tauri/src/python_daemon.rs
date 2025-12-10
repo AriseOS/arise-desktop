@@ -8,50 +8,15 @@ pub struct PythonDaemon {
 
 impl PythonDaemon {
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        // Step 1: Try to shutdown old daemon gracefully via HTTP
-        Self::cleanup_old_daemon_http();
-
-        // Step 2: Start new daemon process
+        // Start daemon process directly
+        // If an old daemon is running on port 8765, the new one will fail to bind
+        // and Python will exit with an error, which is the correct behavior
         let (process, pid) = Self::start_daemon_process()?;
 
         Ok(Self {
             process: Some(process),
             pid: Some(pid),
         })
-    }
-
-    /// Try to shutdown old daemon via HTTP endpoint (graceful shutdown)
-    fn cleanup_old_daemon_http() {
-        println!("Checking for old daemon process...");
-
-        let client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(2))
-            .build();
-
-        match client {
-            Ok(client) => {
-                match client
-                    .post("http://127.0.0.1:8765/api/shutdown")
-                    .send()
-                {
-                    Ok(response) => {
-                        if response.status().is_success() {
-                            println!("Sent shutdown request to old daemon, waiting for graceful shutdown...");
-                            std::thread::sleep(Duration::from_secs(3));
-                            println!("Old daemon should have shut down gracefully");
-                        } else {
-                            println!("Old daemon responded with non-success status: {}", response.status());
-                        }
-                    }
-                    Err(_) => {
-                        println!("No old daemon running (connection refused)");
-                    }
-                }
-            }
-            Err(e) => {
-                println!("Failed to create HTTP client: {}", e);
-            }
-        }
     }
 
     /// Detect if running in development or production mode and get daemon path
@@ -127,8 +92,6 @@ impl PythonDaemon {
         for cmd in &commands_to_try {
             #[cfg(unix)]
             {
-                use std::os::unix::process::CommandExt;
-
                 let mut command = Command::new(cmd);
 
                 // Add arguments if any (for Python script mode)
@@ -136,26 +99,19 @@ impl PythonDaemon {
                     command.args(&args);
                 }
 
-                match unsafe {
-                    command
-                        .stdout(Stdio::inherit())
-                        .stderr(Stdio::inherit())
-                        .pre_exec(|| {
-                            // Create new session (process group) with this process as leader
-                            // This ensures all child processes can be killed together
-                            nix::unistd::setsid().map_err(|e| {
-                                std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-                            })?;
-                            Ok(())
-                        })
-                        .spawn()
-                } {
+                // Do NOT use setsid() - keep daemon.py as child process of Tauri
+                // This allows OS to automatically manage process lifecycle:
+                // - When Tauri exits, daemon.py receives SIGHUP automatically
+                // - Child::drop() will wait for daemon.py to exit
+                // - Simpler and more reliable process management
+                match command
+                    .stdout(Stdio::inherit())
+                    .stderr(Stdio::inherit())
+                    .spawn()
+                {
                     Ok(p) => {
                         let pid = p.id();
-                        println!(
-                            "Daemon started with '{}' (PID: {}, Process Group: {})",
-                            cmd, pid, pid
-                        );
+                        println!("Daemon started with '{}' (PID: {})", cmd, pid);
                         return Ok((p, pid));
                     }
                     Err(e) => {
@@ -205,24 +161,60 @@ impl Drop for PythonDaemon {
         println!("=== PythonDaemon Drop called ===");
         println!("Shutting down Python HTTP daemon...");
 
-        // Phase 1: Try graceful HTTP shutdown first
-        self.try_graceful_http_shutdown();
+        // Send SIGTERM to daemon process for graceful shutdown
+        // Since we removed setsid() (方案1), daemon.py is a direct child process
+        if let Some(mut process) = self.process.take() {
+            let pid = process.id();
+            println!("Sending SIGTERM to daemon process (PID: {})...", pid);
 
-        // Phase 2: Use signals for cleanup
-        if let Some(pid) = self.pid {
-            println!("Daemon PID: {}, proceeding with signal-based cleanup", pid);
-
+            // Send SIGTERM (graceful shutdown signal)
             #[cfg(unix)]
             {
-                self.unix_two_phase_termination(pid);
+                use nix::sys::signal::{self, Signal};
+                use nix::unistd::Pid;
+
+                match signal::kill(Pid::from_raw(pid as i32), Signal::SIGTERM) {
+                    Ok(_) => {
+                        println!("SIGTERM sent, waiting for process to exit...");
+
+                        // Wait for process to exit (with timeout)
+                        match Self::wait_with_timeout(&mut process, Duration::from_secs(5)) {
+                            Ok(status) => {
+                                println!("✅ Daemon exited gracefully with status: {}", status);
+                            }
+                            Err(e) => {
+                                println!("⚠️  Daemon did not exit within timeout: {}", e);
+                                println!("   Sending SIGKILL to force termination...");
+                                let _ = process.kill(); // Force kill as last resort
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        println!("❌ Failed to send SIGTERM: {}", e);
+                        println!("   Trying SIGKILL...");
+                        let _ = process.kill();
+                    }
+                }
             }
 
             #[cfg(not(unix))]
             {
-                self.windows_termination();
+                // Windows: use kill() which terminates the process
+                match process.kill() {
+                    Ok(_) => {
+                        println!("Termination signal sent, waiting for process to exit...");
+                        match process.wait() {
+                            Ok(status) => println!("✅ Daemon exited with status: {}", status),
+                            Err(e) => println!("⚠️  Error waiting for daemon: {}", e),
+                        }
+                    }
+                    Err(e) => {
+                        println!("❌ Failed to terminate daemon: {}", e);
+                    }
+                }
             }
         } else {
-            println!("No PID stored, cannot send signals");
+            println!("⚠️  No process handle available");
         }
 
         println!("=== PythonDaemon Drop completed ===");
@@ -230,106 +222,33 @@ impl Drop for PythonDaemon {
 }
 
 impl PythonDaemon {
-    /// Try to gracefully shutdown via HTTP endpoint
-    fn try_graceful_http_shutdown(&self) {
-        println!("Attempting graceful shutdown via HTTP...");
+    /// Wait for process to exit with timeout
+    fn wait_with_timeout(
+        process: &mut Child,
+        timeout: Duration,
+    ) -> Result<std::process::ExitStatus, String> {
+        use std::thread;
 
-        let client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(2))
-            .build();
+        // Use try_wait() in a loop to check if process has exited
+        let start = std::time::Instant::now();
 
-        match client {
-            Ok(client) => {
-                match client
-                    .post("http://127.0.0.1:8765/api/shutdown")
-                    .send()
-                {
-                    Ok(_) => {
-                        println!("Shutdown request sent, waiting for daemon to exit...");
-                        std::thread::sleep(Duration::from_secs(2));
+        loop {
+            // Check if process has exited
+            match process.try_wait() {
+                Ok(Some(status)) => {
+                    return Ok(status);
+                }
+                Ok(None) => {
+                    // Process still running
+                    if start.elapsed() >= timeout {
+                        return Err("Process did not exit within timeout".to_string());
                     }
-                    Err(e) => {
-                        println!("HTTP shutdown failed: {} (will use signal-based shutdown)", e);
-                    }
+                    // Sleep a bit before checking again
+                    thread::sleep(Duration::from_millis(100));
                 }
-            }
-            Err(e) => {
-                println!("Failed to create HTTP client: {} (will use signal-based shutdown)", e);
-            }
-        }
-    }
-
-    /// Unix: Two-phase termination (SIGTERM → wait → SIGKILL)
-    #[cfg(unix)]
-    fn unix_two_phase_termination(&self, pid: u32) {
-        use nix::sys::signal::{self, Signal};
-        use nix::unistd::Pid;
-
-        let pid = Pid::from_raw(pid as i32);
-
-        println!("Phase 1: Sending SIGTERM to process group {}", pid);
-
-        // Send SIGTERM to entire process group (negative PID)
-        match signal::killpg(Pid::from_raw(pid.as_raw()), Signal::SIGTERM) {
-            Ok(_) => {
-                println!("SIGTERM sent, waiting up to 3 seconds for graceful shutdown...");
-
-                // Wait for up to 3 seconds for process to exit
-                for i in 0..30 {
-                    std::thread::sleep(Duration::from_millis(100));
-
-                    // Check if process still exists (signal 0 = existence check)
-                    match signal::kill(pid, None) {
-                        Err(_) => {
-                            println!("✅ Process exited gracefully");
-                            return;
-                        }
-                        Ok(_) => {
-                            // Process still running
-                            if i == 29 {
-                                println!("⚠️  Process didn't exit after SIGTERM timeout");
-                            }
-                        }
-                    }
+                Err(e) => {
+                    return Err(format!("Error checking process status: {}", e));
                 }
-
-                // Phase 2: Force kill with SIGKILL
-                println!("Phase 2: Sending SIGKILL to force termination...");
-                match signal::killpg(Pid::from_raw(pid.as_raw()), Signal::SIGKILL) {
-                    Ok(_) => println!("SIGKILL sent to process group"),
-                    Err(e) => println!("Failed to send SIGKILL: {}", e),
-                }
-
-                // Final wait
-                std::thread::sleep(Duration::from_millis(500));
-                match signal::kill(pid, None) {
-                    Err(_) => println!("✅ Process forcefully terminated"),
-                    Ok(_) => println!("⚠️  Process may still be running (zombie or stuck)"),
-                }
-            }
-            Err(e) => {
-                println!(
-                    "Failed to send SIGTERM: {}, trying SIGKILL directly",
-                    e
-                );
-                let _ = signal::killpg(Pid::from_raw(pid.as_raw()), Signal::SIGKILL);
-            }
-        }
-    }
-
-    /// Windows: Direct termination
-    #[cfg(not(unix))]
-    fn windows_termination(&mut self) {
-        if let Some(mut process) = self.process.take() {
-            match process.kill() {
-                Ok(_) => {
-                    println!("Process kill signal sent");
-                    match process.wait() {
-                        Ok(status) => println!("Process exited with status: {}", status),
-                        Err(e) => println!("Error waiting for process: {}", e),
-                    }
-                }
-                Err(e) => println!("Error killing process: {}", e),
             }
         }
     }
