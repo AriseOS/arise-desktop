@@ -20,6 +20,45 @@ const APP_BACKEND_BASE = 'http://127.0.0.1:8765';
  */
 export const api = {
   // ============================================================================
+  // System APIs
+  // ============================================================================
+
+  /**
+   * Check backend health
+   * @returns {Promise<boolean>} True if backend is ready
+   */
+  async healthCheck() {
+    try {
+      const response = await fetch(`${APP_BACKEND_BASE}/health`, {
+        method: 'GET',
+        // Short timeout to avoid long hangs
+        signal: AbortSignal.timeout(2000)
+      });
+      return response.ok;
+    } catch (error) {
+      return false;
+    }
+  },
+
+  /**
+   * Wait for backend to be ready
+   * @param {number} timeoutMs - Max wait time in ms (default 20000)
+   * @returns {Promise<boolean>} True if ready, False if timed out
+   */
+  async waitForBackend(timeoutMs = 20000) {
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < timeoutMs) {
+      if (await this.healthCheck()) {
+        return true;
+      }
+      // Wait 1s before retry
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    return false;
+  },
+
+  // ============================================================================
   // Auth APIs (API Proxy)
   // ============================================================================
 

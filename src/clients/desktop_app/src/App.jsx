@@ -8,6 +8,7 @@ import { auth } from "./utils/auth";
 import { api } from "./utils/api";
 
 // Import pages
+import InitializingPage from "./pages/InitializingPage";
 import SetupPage from "./pages/SetupPage";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
@@ -39,6 +40,7 @@ function App() {
   // Setup state
   const [setupComplete, setSetupComplete] = useState(false);
   const [setupChecking, setSetupChecking] = useState(true);
+  const [backendChecking, setBackendChecking] = useState(false);
 
   // Auth state
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -73,21 +75,38 @@ function App() {
 
   const checkSetupStatus = async () => {
     try {
-      const response = await api.get("/api/browser/installation-status");
-      if (response.status === "ready") {
-        setSetupComplete(true);
-        // Once setup is complete, check login status
-        checkLoginStatus();
+      // Use Tauri command to check browser (no dependency on daemon)
+      const browserInfo = await invoke("check_browser_installed");
+      if (browserInfo.available) {
+        // Browser is valid, but now we must wait for Backend
+        setBackendChecking(true);
+        setSetupChecking(false); // Stop setup check UI (if we want to switch)
+
+        // Wait for backend (up to 20s)
+        const isReady = await api.waitForBackend();
+
+        if (isReady) {
+          setSetupComplete(true);
+          checkLoginStatus();
+        } else {
+          // Backend failed to start? Show error or fallback to setup?
+          console.error("Backend failed to start or connect.");
+          showStatus("Backend failed to connect.", "error");
+          // Still allow setup complete to show UI, but subsequent calls will fail
+          setSetupComplete(true);
+        }
       } else {
         // Setup not complete, show setup page
         setSetupComplete(false);
+        setSetupChecking(false);
       }
     } catch (error) {
       console.error("[App] Failed to check setup status:", error);
       // Assume setup needed
       setSetupComplete(false);
-    } finally {
       setSetupChecking(false);
+    } finally {
+      setBackendChecking(false);
     }
   };
 

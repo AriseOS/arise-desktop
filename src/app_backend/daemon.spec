@@ -122,6 +122,24 @@ a = Analysis(
         'jupyter',
         'IPython',
         'setuptools._vendor.packaging.licenses',  # Optional module causing warnings
+
+        # Heavy libraries not needed at runtime
+        'PyQt5',
+        'PyQt6',
+        'PySide2',
+        'PySide6',
+        'cv2',  # OpenCV
+        'numpy',  # Only used in examples/tests
+        'mypy',  # Type checker (dev tool)
+        'Cython',  # Compiler (dev tool)
+        'h5py',  # HDF5 format
+        'astropy',  # Astronomy library
+        'numba',  # JIT compiler
+        'torch',  # PyTorch
+        'tensorflow',  # TensorFlow
+        'keras',  # Keras
+        'sklearn',  # Scikit-learn
+        'PIL.ImageQt',  # Qt integration for PIL
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,

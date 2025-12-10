@@ -50,11 +50,24 @@ fi
 echo -e "${GREEN}✓ Resources configured${NC}"
 echo ""
 
-# Step 3: Build Tauri application
-echo -e "${YELLOW}Step 3: Building Tauri application...${NC}"
-
+# Step 3: Build frontend first
+echo -e "${YELLOW}Step 3: Building frontend...${NC}"
 cd "${PROJECT_ROOT}/src/clients/desktop_app"
-npx tauri build
+npm run build
+
+if [ $? -ne 0 ]; then
+    echo -e "${RED}ERROR: Failed to build frontend${NC}"
+    # Restore original config
+    mv "${TAURI_CONF_BACKUP}" "${TAURI_CONF}"
+    exit 1
+fi
+
+echo -e "${GREEN}✓ Frontend built${NC}"
+echo ""
+
+# Step 4: Build Tauri application
+echo -e "${YELLOW}Step 4: Building Tauri application...${NC}"
+npx tauri build --bundles app
 
 if [ $? -ne 0 ]; then
     echo -e "${RED}ERROR: Failed to build Tauri application${NC}"
@@ -69,7 +82,7 @@ mv "${TAURI_CONF_BACKUP}" "${TAURI_CONF}"
 echo -e "${GREEN}✓ Tauri application built${NC}"
 echo ""
 
-# Step 4: Show results
+# Step 5: Show results
 echo -e "${GREEN}=== Build Complete ===${NC}"
 echo ""
 echo "Release artifacts:"

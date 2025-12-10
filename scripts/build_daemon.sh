@@ -43,14 +43,24 @@ echo -e "${YELLOW}Project root: ${PROJECT_ROOT}${NC}"
 cd "${PROJECT_ROOT}/src/app_backend"
 echo -e "${YELLOW}Working directory: $(pwd)${NC}"
 
-# Check if PyInstaller is installed
-if ! command -v pyinstaller &> /dev/null; then
-    echo -e "${RED}ERROR: PyInstaller not found${NC}"
-    echo "Please install PyInstaller: pip install pyinstaller"
-    exit 1
+# Create and use virtual environment for clean build
+VENV_DIR="venv-build"
+if [ ! -d "${VENV_DIR}" ]; then
+    echo -e "${YELLOW}Creating build virtual environment...${NC}"
+    python3 -m venv "${VENV_DIR}"
+    echo -e "${GREEN}✓ Virtual environment created${NC}"
 fi
 
-echo -e "${GREEN}✓ PyInstaller found${NC}"
+# Activate virtual environment
+echo -e "${YELLOW}Activating virtual environment...${NC}"
+source "${VENV_DIR}/bin/activate"
+
+# Upgrade pip and install dependencies
+echo -e "${YELLOW}Installing dependencies in clean environment...${NC}"
+pip install --upgrade pip > /dev/null 2>&1
+pip install pyinstaller > /dev/null 2>&1
+pip install -r requirements.txt > /dev/null 2>&1
+echo -e "${GREEN}✓ Dependencies installed${NC}"
 
 # Determine binary name based on OS
 if [ "$OS" = "Windows" ]; then
@@ -59,40 +69,18 @@ else
     BINARY_NAME="ami-daemon"
 fi
 
-# Check if we need to rebuild
-NEED_REBUILD=false
+# Always rebuild (no incremental build optimization)
+echo -e "${YELLOW}Building daemon binary (always rebuild)...${NC}"
 
-if [ "$FORCE_REBUILD" = true ]; then
-    echo -e "${YELLOW}--force flag set, rebuilding${NC}"
-    NEED_REBUILD=true
-elif [ ! -f "dist/${BINARY_NAME}" ]; then
-    echo -e "${YELLOW}Binary not found, need to build${NC}"
-    NEED_REBUILD=true
-else
-    # Check if source files are newer than binary
-    if [ "daemon.py" -nt "dist/${BINARY_NAME}" ] || \
-       [ "daemon.spec" -nt "dist/${BINARY_NAME}" ] || \
-       find ../.. -name "*.py" -path "*/src/app_backend/*" -newer "dist/${BINARY_NAME}" | grep -q .; then
-        echo -e "${YELLOW}Source files changed, need to rebuild${NC}"
-        NEED_REBUILD=true
-    else
-        echo -e "${GREEN}✓ Binary is up to date, skipping build${NC}"
-    fi
-fi
+# Clean previous build artifacts
+echo -e "${YELLOW}Cleaning previous build artifacts...${NC}"
+rm -rf build dist
+rm -f ami-daemon ami-daemon.exe
+echo -e "${GREEN}✓ Cleaned${NC}"
 
-if [ "$NEED_REBUILD" = true ]; then
-    # Clean previous build artifacts
-    echo -e "${YELLOW}Cleaning previous build artifacts...${NC}"
-    rm -rf build dist
-    rm -f ami-daemon ami-daemon.exe
-    echo -e "${GREEN}✓ Cleaned${NC}"
-
-    # Run PyInstaller
-    echo -e "${YELLOW}Running PyInstaller...${NC}"
-    pyinstaller daemon.spec --clean --noconfirm
-else
-    echo -e "${GREEN}Skipping PyInstaller build (use --force to rebuild)${NC}"
-fi
+# Run PyInstaller
+echo -e "${YELLOW}Running PyInstaller...${NC}"
+pyinstaller daemon.spec --clean --noconfirm
 
 # Check if build succeeded
 if [ ! -f "dist/ami-daemon" ] && [ ! -f "dist/ami-daemon.exe" ]; then
@@ -141,6 +129,10 @@ echo ""
 echo -e "${GREEN}=== Build Complete ===${NC}"
 echo -e "Binary location: ${GREEN}${TAURI_RESOURCES_DIR}/${BINARY_NAME}${NC}"
 echo ""
+
+# Deactivate virtual environment
+deactivate 2>/dev/null || true
+
 echo "Next steps:"
 echo "1. Test the binary: ${TAURI_RESOURCES_DIR}/${BINARY_NAME}"
 echo "2. Build Tauri app: cd src/clients/desktop_app/src-tauri && cargo tauri build"
