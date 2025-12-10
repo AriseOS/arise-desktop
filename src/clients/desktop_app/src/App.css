@@ -232,3 +232,74 @@ p {
   color: var(--text-secondary);
   margin-top: var(--space-1);
 }
+
+/* Home Page Hero */
+.home-hero {
+  text-align: center;
+  margin-top: 48px;
+  margin-bottom: 48px;
+  animation: fadeIn 0.6s ease-out;
+}
+
+.hero-title {
+  font-size: 48px;
+  font-weight: 800;
+  color: var(--text-primary);
+  margin-bottom: 16px;
+  /* Optional: Gradient text for "Friendly Modern" wow factor */
+  background: linear-gradient(135deg, var(--primary-main) 0%, var(--primary-hover) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  /* Standard property for compatibility */
+}
+
+.hero-subtitle {
+  font-size: 20px;
+  color: var(--text-secondary);
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+/* Home Main Card */
+.home-main-card {
+  background: var(--bg-surface);
+  border-radius: var(--radius-xl);
+  padding: 40px;
+  box-shadow: var(--shadow-lg);
+  max-width: 600px;
+  margin: 0 auto;
+  border: 1px solid var(--border-subtle);
+  animation: slideUp 0.6s ease-out 0.2s backwards;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Recent Workflows */
+.recent-section {
+  margin-top: 32px;
+}
+
+.recent-workflows {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Footer */
+.footer {
+  text-align: center;
+  margin-top: 48px;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}

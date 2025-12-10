@@ -167,6 +167,7 @@ function App() {
   // Check if user has workflows
   const [hasWorkflows, setHasWorkflows] = useState(false);
   const [recentWorkflows, setRecentWorkflows] = useState([]);
+  const [dashboardLoading, setDashboardLoading] = useState(true);
 
   // Load dashboard data
   const fetchDashboard = async () => {
@@ -188,6 +189,8 @@ function App() {
       // Default to new user experience on error
       setHasWorkflows(false);
       setRecentWorkflows([]);
+    } finally {
+      setDashboardLoading(false);
     }
   };
 
@@ -202,11 +205,7 @@ function App() {
   const renderNewUserHome = () => (
     <div className="page home-page new-user fade-in">
       <div className="home-hero">
-        <div className="hero-icon-container">
-          <div className="hero-icon-circle">
-            <span style={{ fontSize: '48px' }}>🤖</span>
-          </div>
-        </div>
+
         <h1 className="hero-title">Welcome to Ami</h1>
         <p className="hero-subtitle">Let AI automate your repetitive work</p>
       </div>
@@ -247,7 +246,7 @@ function App() {
       </button>
 
       <button
-        className="btn btn-ghost"
+        className="btn-icon-ghost"
         title="Settings"
         onClick={() => navigate("settings")}
         style={{ position: 'absolute', top: '20px', right: '20px' }}
@@ -355,6 +354,16 @@ function App() {
 
   // Main page
   const renderMainPage = () => {
+    if (dashboardLoading) {
+      return (
+        <div className="page auth-loading-page flex-center" style={{ height: '100vh' }}>
+          <div className="auth-loading flex-col" style={{ alignItems: 'center', gap: '16px' }}>
+            <div className="loading-spinner"></div>
+            <p>Loading Dashboard...</p>
+          </div>
+        </div>
+      );
+    }
     return hasWorkflows ? renderReturningUserHome() : renderNewUserHome();
   };
 
