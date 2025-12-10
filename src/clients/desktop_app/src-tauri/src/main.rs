@@ -5,15 +5,74 @@ mod python_daemon;
 
 use python_daemon::PythonDaemon;
 use tauri::Manager;
+use std::path::PathBuf;
 
 // Shared daemon state - holds the daemon process for lifecycle management
 struct AppState {
     daemon: std::sync::Mutex<Option<PythonDaemon>>,
 }
 
+/// Check if a usable browser is available (Chrome or Playwright Chromium)
+#[tauri::command]
+fn check_browser_installed() -> serde_json::Value {
+    // Priority 1: Check for Google Chrome (user's installed browser)
+    #[cfg(target_os = "macos")]
+    let chrome_path = PathBuf::from("/Applications/Google Chrome.app");
+
+    #[cfg(target_os = "windows")]
+    let chrome_path = PathBuf::from("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe");
+
+    #[cfg(target_os = "linux")]
+    let chrome_path = PathBuf::from("/usr/bin/google-chrome");
+
+    if chrome_path.exists() {
+        println!("✓ Found Google Chrome at: {}", chrome_path.display());
+        return serde_json::json!({
+            "available": true,
+            "browser_type": "chrome",
+            "path": chrome_path.to_string_lossy().to_string(),
+            "needs_install": false
+        });
+    }
+
+    // Priority 2: Check for Playwright Chromium
+    let home = std::env::var("HOME").unwrap_or_else(|_| String::from("~"));
+    let playwright_cache = PathBuf::from(home)
+        .join("Library")
+        .join("Caches")
+        .join("ms-playwright");
+
+    if playwright_cache.exists() {
+        if let Ok(entries) = std::fs::read_dir(&playwright_cache) {
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    if name.starts_with("chromium-") {
+                        println!("✓ Found Playwright Chromium: {}", name);
+                        return serde_json::json!({
+                            "available": true,
+                            "browser_type": "playwright-chromium",
+                            "path": entry.path().to_string_lossy().to_string(),
+                            "needs_install": false
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // No browser found
+    println!("✗ No usable browser found. Will need to install Playwright Chromium.");
+    serde_json::json!({
+        "available": false,
+        "browser_type": "none",
+        "needs_install": true
+    })
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
+        .invoke_handler(tauri::generate_handler![check_browser_installed])
         .setup(|app| {
             // Initialize HTTP daemon on startup
             println!("🚀 Initializing Python HTTP daemon...");

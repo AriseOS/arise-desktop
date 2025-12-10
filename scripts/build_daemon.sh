@@ -2,8 +2,18 @@
 
 # Build script for Ami daemon
 # Compiles daemon.py into a binary executable using PyInstaller
+# Usage: ./build_daemon.sh [--force]
+#   --force: Force rebuild even if binary is up to date
 
 set -e  # Exit on error
+
+# Parse arguments
+FORCE_REBUILD=false
+for arg in "$@"; do
+    if [ "$arg" = "--force" ]; then
+        FORCE_REBUILD=true
+    fi
+done
 
 # Color output
 GREEN='\033[0;32m'
@@ -42,15 +52,47 @@ fi
 
 echo -e "${GREEN}✓ PyInstaller found${NC}"
 
-# Clean previous build artifacts
-echo -e "${YELLOW}Cleaning previous build artifacts...${NC}"
-rm -rf build dist
-rm -f ami-daemon ami-daemon.exe
-echo -e "${GREEN}✓ Cleaned${NC}"
+# Determine binary name based on OS
+if [ "$OS" = "Windows" ]; then
+    BINARY_NAME="ami-daemon.exe"
+else
+    BINARY_NAME="ami-daemon"
+fi
 
-# Run PyInstaller
-echo -e "${YELLOW}Running PyInstaller...${NC}"
-pyinstaller daemon.spec --clean --noconfirm
+# Check if we need to rebuild
+NEED_REBUILD=false
+
+if [ "$FORCE_REBUILD" = true ]; then
+    echo -e "${YELLOW}--force flag set, rebuilding${NC}"
+    NEED_REBUILD=true
+elif [ ! -f "dist/${BINARY_NAME}" ]; then
+    echo -e "${YELLOW}Binary not found, need to build${NC}"
+    NEED_REBUILD=true
+else
+    # Check if source files are newer than binary
+    if [ "daemon.py" -nt "dist/${BINARY_NAME}" ] || \
+       [ "daemon.spec" -nt "dist/${BINARY_NAME}" ] || \
+       find ../.. -name "*.py" -path "*/src/app_backend/*" -newer "dist/${BINARY_NAME}" | grep -q .; then
+        echo -e "${YELLOW}Source files changed, need to rebuild${NC}"
+        NEED_REBUILD=true
+    else
+        echo -e "${GREEN}✓ Binary is up to date, skipping build${NC}"
+    fi
+fi
+
+if [ "$NEED_REBUILD" = true ]; then
+    # Clean previous build artifacts
+    echo -e "${YELLOW}Cleaning previous build artifacts...${NC}"
+    rm -rf build dist
+    rm -f ami-daemon ami-daemon.exe
+    echo -e "${GREEN}✓ Cleaned${NC}"
+
+    # Run PyInstaller
+    echo -e "${YELLOW}Running PyInstaller...${NC}"
+    pyinstaller daemon.spec --clean --noconfirm
+else
+    echo -e "${GREEN}Skipping PyInstaller build (use --force to rebuild)${NC}"
+fi
 
 # Check if build succeeded
 if [ ! -f "dist/ami-daemon" ] && [ ! -f "dist/ami-daemon.exe" ]; then
@@ -59,13 +101,6 @@ if [ ! -f "dist/ami-daemon" ] && [ ! -f "dist/ami-daemon.exe" ]; then
 fi
 
 echo -e "${GREEN}✓ Binary built successfully${NC}"
-
-# Determine binary name based on OS
-if [ "$OS" = "Windows" ]; then
-    BINARY_NAME="ami-daemon.exe"
-else
-    BINARY_NAME="ami-daemon"
-fi
 
 # Create Tauri resources directory if it doesn't exist
 TAURI_RESOURCES_DIR="${PROJECT_ROOT}/src/clients/desktop_app/src-tauri/resources"
@@ -81,6 +116,10 @@ if [ "$OS" != "Windows" ]; then
 fi
 
 echo -e "${GREEN}✓ Binary copied to: ${TAURI_RESOURCES_DIR}/${BINARY_NAME}${NC}"
+
+# Note: Chromium browser is NOT bundled
+# It will be auto-installed on first launch via 'playwright install chromium'
+echo -e "${YELLOW}Chromium browser will be auto-installed on first app launch${NC}"
 
 # Get binary size
 if [ "$OS" = "macOS" ]; then

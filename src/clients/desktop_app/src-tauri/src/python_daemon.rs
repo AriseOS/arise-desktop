@@ -24,28 +24,31 @@ impl PythonDaemon {
         // Method 1: Check for bundled binary in resources directory (production mode)
         if let Ok(exe_path) = std::env::current_exe() {
             if let Some(exe_dir) = exe_path.parent() {
-                // macOS: binary is in Contents/MacOS/, resources in Contents/Resources/
-                #[cfg(target_os = "macos")]
-                let resources_dir = exe_dir.parent()
-                    .and_then(|p| Some(p.join("Resources")))
-                    .unwrap_or_else(|| exe_dir.join("resources"));
-
-                // Other platforms: resources are typically next to binary
-                #[cfg(not(target_os = "macos"))]
-                let resources_dir = exe_dir.join("resources");
+                // Try multiple possible locations for resources
+                let possible_resources_dirs = vec![
+                    // macOS .app bundle: Contents/MacOS/ -> Contents/Resources/resources/
+                    exe_dir.parent().map(|p| p.join("Resources").join("resources")),
+                    // macOS .app bundle: Contents/MacOS/ -> Contents/Resources/
+                    exe_dir.parent().map(|p| p.join("Resources")),
+                    // Direct binary: same directory as binary + resources/
+                    Some(exe_dir.join("resources")),
+                ];
 
                 #[cfg(target_os = "windows")]
                 let binary_name = "ami-daemon.exe";
                 #[cfg(not(target_os = "windows"))]
                 let binary_name = "ami-daemon";
 
-                let binary_path = resources_dir.join(binary_name);
-
-                if binary_path.exists() {
-                    println!("✓ Found bundled daemon binary: {}", binary_path.display());
-                    return Ok((binary_path.to_string_lossy().to_string(), vec![]));
-                } else {
-                    println!("✗ Bundled daemon binary not found at: {}", binary_path.display());
+                for resources_dir_opt in possible_resources_dirs {
+                    if let Some(resources_dir) = resources_dir_opt {
+                        let binary_path = resources_dir.join(binary_name);
+                        if binary_path.exists() {
+                            println!("✓ Found bundled daemon binary: {}", binary_path.display());
+                            return Ok((binary_path.to_string_lossy().to_string(), vec![]));
+                        } else {
+                            println!("✗ Bundled daemon binary not found at: {}", binary_path.display());
+                        }
+                    }
                 }
             }
         }

@@ -53,8 +53,8 @@ echo ""
 # Step 3: Build Tauri application
 echo -e "${YELLOW}Step 3: Building Tauri application...${NC}"
 
-cd "${PROJECT_ROOT}/src/clients/desktop_app/src-tauri"
-cargo tauri build
+cd "${PROJECT_ROOT}/src/clients/desktop_app"
+npx tauri build
 
 if [ $? -ne 0 ]; then
     echo -e "${RED}ERROR: Failed to build Tauri application${NC}"

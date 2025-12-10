@@ -243,6 +243,36 @@ export const api = {
   },
 
   // ============================================================================
+  // Generic HTTP Methods for App Backend
+  // ============================================================================
+
+  /**
+   * Generic GET request to App Backend
+   *
+   * @param {string} endpoint - API endpoint path
+   * @returns {Promise<any>} Response data
+   */
+  async get(endpoint) {
+    return await this.callAppBackend(endpoint, {
+      method: 'GET'
+    });
+  },
+
+  /**
+   * Generic POST request to App Backend
+   *
+   * @param {string} endpoint - API endpoint path
+   * @param {object} data - Request body data
+   * @returns {Promise<any>} Response data
+   */
+  async post(endpoint, data = {}) {
+    return await this.callAppBackend(endpoint, {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  },
+
+  // ============================================================================
   // Convenience Methods for App Backend
   // ============================================================================
 

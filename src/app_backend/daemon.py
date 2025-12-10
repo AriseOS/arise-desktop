@@ -4,6 +4,7 @@ App Backend Daemon - HTTP API Version
 Provides REST API endpoints for desktop app communication
 """
 import sys
+import os
 import asyncio
 import logging
 from pathlib import Path
@@ -34,6 +35,89 @@ def get_project_root() -> Path:
 # Add project root to sys.path
 project_root = get_project_root()
 sys.path.insert(0, str(project_root))
+
+# Browser installation status tracking
+class BrowserInstallationStatus:
+    """Track browser installation progress"""
+    def __init__(self):
+        self.status = "checking"  # checking, installing, ready, error
+        self.message = "Checking browser installation..."
+        self.progress = 0  # 0-100
+
+browser_install_status = BrowserInstallationStatus()
+
+def check_playwright_browser_installed():
+    """Check if Playwright Chromium browser is installed"""
+    playwright_cache = Path.home() / 'Library' / 'Caches' / 'ms-playwright'
+    if playwright_cache.exists():
+        chromium_dirs = list(playwright_cache.glob('chromium-*'))
+        return len(chromium_dirs) > 0
+    return False
+
+async def install_playwright_browser_async():
+    """Install Playwright Chromium browser asynchronously"""
+    import subprocess
+
+    browser_install_status.status = "installing"
+    browser_install_status.message = "Downloading Chromium browser (this may take a few minutes)..."
+    browser_install_status.progress = 10
+
+    print("⚠ Playwright Chromium not found, installing automatically...")
+    print("This is a one-time setup and may take a few minutes.")
+
+    try:
+        # Use playwright install chromium
+        process = await asyncio.create_subprocess_exec(
+            sys.executable, '-m', 'playwright', 'install', 'chromium',
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+        browser_install_status.progress = 30
+        browser_install_status.message = "Installing Chromium browser..."
+
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(),
+            timeout=300  # 5 minutes timeout
+        )
+
+        if process.returncode == 0:
+            browser_install_status.status = "ready"
+            browser_install_status.message = "Browser installed successfully"
+            browser_install_status.progress = 100
+            print("✓ Playwright Chromium installed successfully")
+            return True
+        else:
+            browser_install_status.status = "error"
+            browser_install_status.message = f"Failed to install browser: {stderr.decode()}"
+            browser_install_status.progress = 0
+            print(f"❌ Failed to install Chromium: {stderr.decode()}")
+            return False
+
+    except asyncio.TimeoutError:
+        browser_install_status.status = "error"
+        browser_install_status.message = "Browser installation timed out"
+        browser_install_status.progress = 0
+        print("❌ Browser installation timed out")
+        return False
+    except Exception as e:
+        browser_install_status.status = "error"
+        browser_install_status.message = f"Error installing browser: {str(e)}"
+        browser_install_status.progress = 0
+        print(f"❌ Error installing browser: {e}")
+        return False
+
+# Initial browser check (non-blocking)
+if check_playwright_browser_installed():
+    browser_install_status.status = "ready"
+    browser_install_status.message = "Browser is ready"
+    browser_install_status.progress = 100
+    print(f"✓ Playwright Chromium already installed")
+else:
+    # Will install on first API call that needs browser
+    browser_install_status.status = "pending"
+    browser_install_status.message = "Browser installation pending"
+    browser_install_status.progress = 0
 
 from src.app_backend.core.config_service import get_config
 from src.app_backend.services.storage_manager import StorageManager
@@ -385,6 +469,50 @@ async def health_check():
     return {
         "status": "ok",
         "browser_ready": browser_manager.is_ready() if browser_manager else False
+    }
+
+
+@app.get("/api/browser/installation-status")
+async def get_browser_installation_status():
+    """Get browser installation status
+
+    Returns:
+        status: pending, installing, ready, error
+        message: Human-readable status message
+        progress: 0-100 installation progress
+    """
+    return {
+        "status": browser_install_status.status,
+        "message": browser_install_status.message,
+        "progress": browser_install_status.progress
+    }
+
+
+@app.post("/api/browser/install")
+async def trigger_browser_installation():
+    """Trigger browser installation if not already installed
+
+    Returns:
+        Installation result
+    """
+    if browser_install_status.status == "ready":
+        return {
+            "status": "ready",
+            "message": "Browser is already installed"
+        }
+
+    if browser_install_status.status == "installing":
+        return {
+            "status": "installing",
+            "message": "Browser installation already in progress"
+        }
+
+    # Trigger installation in background
+    asyncio.create_task(install_playwright_browser_async())
+
+    return {
+        "status": "installing",
+        "message": "Browser installation started"
     }
 
 

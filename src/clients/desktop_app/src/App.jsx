@@ -8,6 +8,7 @@ import { auth } from "./utils/auth";
 import { api } from "./utils/api";
 
 // Import pages
+import SetupPage from "./pages/SetupPage";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import SettingsPage from "./pages/SettingsPage";
@@ -31,7 +32,14 @@ import CollectionDetailPage from "./pages/CollectionDetailPage";
 import WorkflowExecutionLivePage from "./pages/WorkflowExecutionLivePage";
 import ScraperOptimizationPage from "./pages/ScraperOptimizationPage";
 
+// Import setup styles
+import "./styles/SetupPage.css";
+
 function App() {
+  // Setup state
+  const [setupComplete, setSetupComplete] = useState(false);
+  const [setupChecking, setSetupChecking] = useState(true);
+
   // Auth state
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [session, setSession] = useState(null);
@@ -58,10 +66,36 @@ function App() {
     setPageParams(params);
   };
 
-  // Check login status on mount
+  // Check setup status on mount
   useEffect(() => {
-    checkLoginStatus();
+    checkSetupStatus();
   }, []);
+
+  const checkSetupStatus = async () => {
+    try {
+      const response = await api.get("/api/browser/installation-status");
+      if (response.status === "ready") {
+        setSetupComplete(true);
+        // Once setup is complete, check login status
+        checkLoginStatus();
+      } else {
+        // Setup not complete, show setup page
+        setSetupComplete(false);
+      }
+    } catch (error) {
+      console.error("[App] Failed to check setup status:", error);
+      // Assume setup needed
+      setSetupComplete(false);
+    } finally {
+      setSetupChecking(false);
+    }
+  };
+
+  const handleSetupComplete = () => {
+    setSetupComplete(true);
+    // After setup, check login status
+    checkLoginStatus();
+  };
 
   const checkLoginStatus = async () => {
     try {
@@ -326,6 +360,23 @@ function App() {
 
   // Render current page
   const renderPage = () => {
+    // Show loading while checking setup
+    if (setupChecking) {
+      return (
+        <div className="page auth-loading-page flex-center" style={{ height: '100vh' }}>
+          <div className="auth-loading flex-col" style={{ alignItems: 'center', gap: '16px' }}>
+            <div className="loading-spinner"></div>
+            <p>Loading...</p>
+          </div>
+        </div>
+      );
+    }
+
+    // Show setup page if setup not complete
+    if (!setupComplete) {
+      return <SetupPage onSetupComplete={handleSetupComplete} />;
+    }
+
     // Show loading while checking auth
     if (authChecking) {
       return (

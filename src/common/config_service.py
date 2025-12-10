@@ -75,10 +75,17 @@ class ConfigService:
             else:
                 raise FileNotFoundError(f"Specified config file not found: {config_path}")
 
-        # 3. Default config in service directory
+        config_filename = f"{self.service_name.replace('_', '-')}.yaml"
+
+        # 3. PyInstaller bundled config (when running from frozen bundle)
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            # Config files are bundled directly under {_MEIPASS}/config/
+            bundled_config = Path(sys._MEIPASS) / "config" / config_filename
+            search_paths.append(bundled_config)
+
+        # 4. Default config in service directory
         # src/{service_name}/config/{service_name}.yaml
         service_dir = self.project_root / "src" / self.service_name
-        config_filename = f"{self.service_name.replace('_', '-')}.yaml"
         default_config = service_dir / "config" / config_filename
         search_paths.append(default_config)
 

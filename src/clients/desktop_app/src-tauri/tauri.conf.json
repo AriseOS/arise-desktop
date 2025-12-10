@@ -10,7 +10,9 @@
     "frontendDist": "../dist"
   },
   "bundle": {
-    "resources": []
+    "resources": [
+      "resources/ami-daemon*"
+    ]
   },
   "plugins": {},
   "app": {
@@ -32,7 +34,9 @@
         {
           "identifier": "main-capability",
           "description": "Main window capabilities",
-          "windows": ["main"],
+          "windows": [
+            "main"
+          ],
           "permissions": [
             "core:default",
             "shell:default",

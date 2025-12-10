@@ -6,11 +6,21 @@ Compiles daemon.py and all dependencies into a single binary executable
 """
 
 import sys
+import os
 from pathlib import Path
 
 # Project root (ami/)
-project_root = Path(__file__).parent.parent.parent
+# In spec files, use SPECPATH which is the directory containing the spec file
+spec_dir = Path(SPECPATH)
+project_root = spec_dir.parent.parent
 sys.path.insert(0, str(project_root))
+
+# Find Playwright browsers directory
+# Note: We will NOT bundle Chromium directly in PyInstaller due to codesign issues
+# Instead, we'll copy it to Tauri resources and reference it there
+playwright_browsers = []
+print("Skipping Playwright Chromium bundling in PyInstaller (will be handled by Tauri)")
+print("Chromium will be copied to Tauri resources directory separately")
 
 block_cipher = None
 
@@ -30,7 +40,7 @@ a = Analysis(
 
         # Workflows (if any default workflows need to be bundled)
         (str(project_root / 'src/clients/base_app/base_app/base_agent/workflows'), 'base_app/base_agent/workflows'),
-    ],
+    ] + playwright_browsers,
     hiddenimports=[
         # Uvicorn and FastAPI
         'uvicorn.logging',
@@ -111,6 +121,7 @@ a = Analysis(
         'pandas',
         'jupyter',
         'IPython',
+        'setuptools._vendor.packaging.licenses',  # Optional module causing warnings
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
