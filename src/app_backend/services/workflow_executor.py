@@ -149,7 +149,6 @@ class WorkflowExecutor:
             workflow_dict = yaml.safe_load(workflow_yaml)
 
             # Use the actual workflow name for script organization
-            # Note: browser session will use 'global' (set in AgentContext.browser_session_id)
             if 'name' not in workflow_dict:
                 workflow_dict['name'] = task.workflow_name
 
@@ -165,6 +164,18 @@ class WorkflowExecutor:
 
             # Get config service for BaseAgent
             config_service = get_config()
+
+            # Start browser through BrowserManager before creating BaseAgent
+            logger.info(f"Starting browser for workflow {task_id}...")
+            try:
+                browser_result = await self.browser.start_browser_for_workflow(
+                    workflow_id=task_id,
+                    headless=False  # Show browser during workflow execution
+                )
+                logger.info(f"✅ Browser started for workflow: {browser_result}")
+            except Exception as e:
+                logger.error(f"Failed to start browser for workflow: {e}")
+                raise
 
             # Build provider config - only if user provides API key
             provider_config = None
@@ -188,7 +199,9 @@ class WorkflowExecutor:
             agent = BaseAgent(
                 user_id=user_id,
                 config_service=config_service,
-                provider_config=provider_config
+                provider_config=provider_config,
+                browser_manager=self.browser,  # Pass BrowserManager reference
+                browser_session_id=f"workflow_{task_id}"  # Specify session ID
             )
 
             # Convert to Workflow object

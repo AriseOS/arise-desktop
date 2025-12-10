@@ -147,8 +147,7 @@ class AgentContext(BaseModel):
     log_callback: Optional[Any] = Field(default=None, description="日志回调函数 (async callable)")
     metrics: Dict[str, Any] = Field(default_factory=dict, description="执行指标")
 
-    # 私有字段 - 浏览器会话管理
-    _browser_session_manager: Optional[Any] = PrivateAttr(default=None)
+    # 私有字段 - 浏览器会话信息
     _browser_session_info: Optional[Any] = PrivateAttr(default=None)
 
     class Config:
@@ -158,46 +157,82 @@ class AgentContext(BaseModel):
     async def get_browser_session(self):
         """获取浏览器会话（懒加载）
 
-        第一次调用时创建会话，后续调用返回已有会话。
-        所有需要浏览器的Agent都会共享同一个会话。
+        第一次调用时从 BrowserManager 获取会话，后续调用返回已有会话。
+        所有浏览器会话必须通过 BrowserManager 统一管理。
         """
         if not self._browser_session_info:
-            # 动态导入，避免循环依赖
-            from ..tools.browser_session_manager import BrowserSessionManager
+            # 获取 browser_manager（必须存在）
+            browser_manager = getattr(self.agent_instance, 'browser_manager', None)
 
-            # 获取会话管理器
-            if not self._browser_session_manager:
-                self._browser_session_manager = await BrowserSessionManager.get_instance()
+            if not browser_manager:
+                error_msg = (
+                    "BrowserManager is required but not found in agent_instance. "
+                    "BaseAgent must be initialized with browser_manager parameter."
+                )
+                if self.logger:
+                    self.logger.error(error_msg)
+                else:
+                    logger.error(error_msg)
+                raise RuntimeError(error_msg)
 
-            # 获取配置服务
-            config_service = getattr(self.agent_instance, 'config_service', None)
+            # 获取 session_id（必须存在）
+            session_id = getattr(self.agent_instance, 'browser_session_id', None)
+            if not session_id:
+                error_msg = (
+                    "browser_session_id is required but not found in agent_instance. "
+                    "BaseAgent must be initialized with browser_session_id parameter."
+                )
+                if self.logger:
+                    self.logger.error(error_msg)
+                else:
+                    logger.error(error_msg)
+                raise RuntimeError(error_msg)
 
-            # 创建或获取会话 (使用 browser_session_id 以便多个 workflow 共享同一会话)
-            self._browser_session_info = await self._browser_session_manager.get_or_create_session(
-                session_id=self.browser_session_id,
-                config_service=config_service,
-                headless=False,  # 可以从配置中读取
-                keep_alive=True
-            )
+            # 通过 BrowserManager 获取会话（BrowserManager 应该已经创建好了）
+            self._browser_session_info = browser_manager.get_session(session_id)
+
+            if not self._browser_session_info:
+                error_msg = (
+                    f"Browser session '{session_id}' not found in BrowserManager. "
+                    f"BrowserManager.start_browser_for_workflow() or "
+                    f"BrowserManager.start_browser_for_recording() must be called first."
+                )
+                if self.logger:
+                    self.logger.error(error_msg)
+                else:
+                    logger.error(error_msg)
+                raise RuntimeError(error_msg)
 
             if self.logger:
-                self.logger.info(f"Workflow {self.workflow_id} 使用浏览器会话 {self.browser_session_id}")
+                self.logger.info(
+                    f"Workflow {self.workflow_id} retrieved browser session {session_id} "
+                    "from BrowserManager"
+                )
             else:
-                logger.info(f"Workflow {self.workflow_id} 使用浏览器会话 {self.browser_session_id}")
+                logger.info(
+                    f"Workflow {self.workflow_id} retrieved browser session {session_id} "
+                    "from BrowserManager"
+                )
 
         return self._browser_session_info
 
     async def cleanup_browser_session(self):
         """清理浏览器会话引用
 
-        释放会话引用，但不关闭浏览器（可能有其他workflow在使用）。
+        Note: 浏览器会话的实际关闭由 BrowserManager 统一管理。
+        AgentContext 只需清理本地引用即可。
         """
-        if self._browser_session_info and self._browser_session_manager:
-            self._browser_session_manager.release_session(self.browser_session_id)
+        if self._browser_session_info:
             if self.logger:
-                self.logger.info(f"Workflow {self.workflow_id} 释放浏览器会话引用")
+                self.logger.info(
+                    f"Workflow {self.workflow_id} cleanup browser session reference "
+                    f"(actual session managed by BrowserManager)"
+                )
             else:
-                logger.info(f"Workflow {self.workflow_id} 释放浏览器会话引用")
+                logger.info(
+                    f"Workflow {self.workflow_id} cleanup browser session reference "
+                    f"(actual session managed by BrowserManager)"
+                )
 
             self._browser_session_info = None
 

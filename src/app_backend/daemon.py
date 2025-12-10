@@ -2329,45 +2329,29 @@ async def cleanup_resources():
             else:
                 logger.info("✓ No running tasks")
 
-        # 3. Stop browser sessions (from BrowserSessionManager)
-        # Note: Workflows may create browser sessions without updating BrowserManager state
-        # So we need to close all sessions directly, not rely on BrowserManager.is_running
-        try:
-            from src.clients.base_app.base_app.base_agent.tools.browser_session_manager import BrowserSessionManager
-
-            session_manager = await BrowserSessionManager.get_instance()
-            active_sessions = session_manager.list_sessions()
-
-            if active_sessions:
-                logger.info(f"Closing {len(active_sessions)} active browser sessions...")
-                await asyncio.wait_for(
-                    session_manager.close_all_sessions(),
-                    timeout=5.0
-                )
-                logger.info("✓ All browser sessions closed")
-            else:
-                logger.info("✓ No active browser sessions")
-        except asyncio.TimeoutError:
-            logger.warning("⚠️  Browser session cleanup timeout")
-            cleanup_errors.append("Browser session cleanup timeout")
-        except Exception as e:
-            logger.error(f"⚠️  Failed to close browser sessions: {e}")
-            cleanup_errors.append(f"Browser sessions: {e}")
-
-        # 4. Also cleanup BrowserManager if it was started
+        # 3. Stop all browser sessions through BrowserManager
+        # BrowserManager now manages ALL sessions (recording + workflows)
         if browser_manager:
-            status = browser_manager.get_status()
-            if status.get("is_running"):
-                logger.info("Stopping browser manager...")
-                try:
+            try:
+                # Check if there are any managed sessions
+                browser_status = browser_manager.get_status()
+                total_sessions = browser_status.get('total_sessions', 0)
+
+                if total_sessions > 0:
+                    logger.info(f"Stopping browser manager ({total_sessions} sessions)...")
                     await asyncio.wait_for(
                         browser_manager.cleanup(),
-                        timeout=3.0
+                        timeout=5.0
                     )
-                    logger.info("✓ Browser manager stopped")
-                except Exception as e:
-                    logger.error(f"⚠️  Browser manager cleanup error: {e}")
-                    cleanup_errors.append(f"Browser manager: {e}")
+                    logger.info("✓ Browser manager stopped, all sessions closed")
+                else:
+                    logger.info("✓ No active browser sessions")
+            except asyncio.TimeoutError:
+                logger.error("⚠️  Browser manager cleanup timeout")
+                cleanup_errors.append("Browser manager: timeout")
+            except Exception as e:
+                logger.error(f"⚠️  Browser manager cleanup error: {e}")
+                cleanup_errors.append(f"Browser manager: {e}")
 
         # 4. Close cloud client connection
         if cloud_client:

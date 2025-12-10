@@ -239,10 +239,13 @@ class BrowserSessionManager:
         """列出所有会话的状态"""
         result = {}
         for session_id, info in self._sessions.items():
+            # Check if session is active by checking if session object exists
+            is_active = info.session is not None
+
             result[session_id] = {
                 "created_at": info.created_at.isoformat(),
                 "last_accessed": info.last_accessed.isoformat(),
                 "reference_count": info.reference_count,
-                "is_active": info.session.context is not None  # 检查浏览器是否活跃
+                "is_active": is_active
             }
         return result

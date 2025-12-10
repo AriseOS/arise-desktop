@@ -39,7 +39,9 @@ class BaseAgent:
         config: Optional[AgentConfig] = None,
         config_service: Optional[Any] = None,
         provider_config: Optional[Dict[str, Any]] = None,
-        user_id: Optional[str] = None
+        user_id: Optional[str] = None,
+        browser_manager: Optional[Any] = None,
+        browser_session_id: Optional[str] = None
     ):
         """初始化BaseAgent
 
@@ -48,11 +50,24 @@ class BaseAgent:
             config_service: 配置服务实例
             provider_config: LLM provider配置
             user_id: 用户ID，用于Memory隔离。如果不指定，每个BaseAgent实例将拥有独立的Memory命名空间
+            browser_manager: BrowserManager实例引用，用于统一管理浏览器会话。
+                            如果workflow中使用浏览器相关工具，此参数必须提供。
+            browser_session_id: 浏览器会话ID，指定使用哪个browser session。
+                               必须与 browser_manager 一起使用。
+
+        Important:
+            如果workflow需要使用浏览器（BrowserAgent/ToolAgent with browser tools），
+            必须同时提供 browser_manager 和 browser_session_id 参数。
+            BrowserManager 必须在调用 BaseAgent 之前先创建对应的浏览器会话。
         """
         # 基础配置
         self.config = config or AgentConfig(name="BaseAgent")
         self.config_service = config_service
         self.id = str(uuid.uuid4())
+
+        # Browser management
+        self.browser_manager = browser_manager
+        self.browser_session_id = browser_session_id
 
         # 核心组件
         self.tools: Dict[str, BaseTool] = {}
