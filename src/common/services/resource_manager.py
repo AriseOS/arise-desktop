@@ -50,9 +50,15 @@ class ResourceManager:
         self.storage_service = storage_service
 
     def get_local_workflow_path(self, user_id: str, workflow_id: str) -> Path:
-        """Get local workflow directory path"""
-        scripts_root = self.config_service.get_path("data.scripts")
-        return scripts_root / f"users/{user_id}/workflows/{workflow_id}"
+        """Get local workflow directory path
+
+        Path structure: ~/.ami/users/{user_id}/workflows/{workflow_id}/
+        Resources are stored directly under workflow directory
+        """
+        # Get user home directory
+        home_dir = Path.home()
+        ami_root = home_dir / ".ami"
+        return ami_root / "users" / user_id / "workflows" / workflow_id
 
     def get_local_resource_path(
         self,

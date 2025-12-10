@@ -1461,8 +1461,20 @@ async def get_workflow_detail(workflow_id: str, user_id: str):
     """Get detailed workflow data for visualization
 
     Returns workflow structure with steps and connections for ReactFlow
+
+    Auto-sync workflow resources before returning details
     """
     try:
+        # Auto-sync workflow resources with Cloud Backend
+        # This ensures user always sees the latest version
+        try:
+            sync_result = await cloud_client.check_and_sync_workflow(workflow_id, user_id)
+            if sync_result.get("synced"):
+                logger.info(f"Workflow auto-synced: {sync_result.get('direction')} - {sync_result.get('message')}")
+        except Exception as e:
+            # Don't block page load if sync fails
+            logger.warning(f"Auto-sync failed for workflow {workflow_id}: {e}")
+
         # Check if workflow exists locally
         if not storage_manager.workflow_exists(user_id, workflow_id):
             raise HTTPException(status_code=404, detail=f"Workflow not found: {workflow_id}")

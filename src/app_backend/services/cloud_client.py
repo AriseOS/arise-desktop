@@ -438,6 +438,57 @@ class CloudClient:
             logger.warning(f"Failed to delete workflow from Cloud: {e}")
             return False
 
+    async def check_and_sync_workflow(
+        self,
+        workflow_id: str,
+        user_id: str = "default_user"
+    ) -> Dict[str, Any]:
+        """Check and automatically sync workflow resources with Cloud Backend
+
+        This method checks if the workflow needs sync and automatically performs
+        the sync operation (upload or download) based on timestamp comparison.
+
+        Args:
+            workflow_id: Workflow ID
+            user_id: User ID (default: "default_user")
+
+        Returns:
+            Dict with sync result:
+            {
+                "synced": bool,
+                "direction": "upload" | "download" | "none",
+                "message": str,
+                "synced_resources": list
+            }
+        """
+        logger.info(f"Auto-syncing workflow resources: {workflow_id}")
+
+        try:
+            # Call Cloud Backend sync endpoint with auto-sync enabled
+            response = await self.client.post(
+                f"/api/workflows/{workflow_id}/sync",
+                params={"user_id": user_id},
+                json={"direction": None}  # None = auto-detect direction
+            )
+            response.raise_for_status()
+            result = response.json()
+
+            if result.get("success"):
+                logger.info(f"Workflow sync completed: {result.get('message')}")
+            else:
+                logger.warning(f"Workflow sync failed: {result.get('message')}")
+
+            return result
+
+        except Exception as e:
+            logger.warning(f"Failed to sync workflow resources: {e}")
+            return {
+                "synced": False,
+                "direction": "none",
+                "message": f"Sync failed: {str(e)}",
+                "synced_resources": []
+            }
+
     async def report_execution(
         self,
         user_id: str,

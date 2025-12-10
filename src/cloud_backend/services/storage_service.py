@@ -723,11 +723,15 @@ class StorageService:
         resource_type,  # ResourceType enum
         resource_id: str
     ) -> Path:
-        """Get cloud resource directory path"""
-        from src.common.resource_types import ResourceType
+        """Get cloud resource directory path
+
+        Path structure matches local structure:
+        ~/ami-server/users/{user_id}/workflows/{workflow_id}/{step_id}/{resource_id}/
+
+        Note: resource_type parameter is kept for API compatibility but not used in path
+        """
         workflow_path = self.get_workflow_path(user_id, workflow_id)
-        resource_type_value = resource_type.value if isinstance(resource_type, ResourceType) else resource_type
-        return workflow_path / "resources" / resource_type_value / step_id / resource_id
+        return workflow_path / step_id / resource_id
 
     async def save_workflow_resource(
         self,
