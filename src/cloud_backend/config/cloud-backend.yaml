@@ -46,8 +46,7 @@ llm:
   # All LLM calls route through CRS
   # Migration: Upgraded old API Proxy to CRS (port remains 8080)
   use_proxy: true  # Always use CRS for LLM calls
-  # proxy_url: "http://127.0.0.1:8080"  # CRS port (custom configuration)
-  proxy_url: "http://api.ariseos.com/api"  # CRS port (custom configuration)
+  proxy_url: "http://127.0.0.1:8080"  # CRS port (custom configuration)
   # For production, change to: https://crs.ariseos.com
 
   # Anthropic Configuration
