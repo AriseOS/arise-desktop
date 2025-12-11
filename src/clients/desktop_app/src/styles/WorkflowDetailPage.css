@@ -222,17 +222,20 @@
     background-color: var(--bg-secondary);
     border-radius: var(--radius-lg);
     border: 1px solid var(--border-color);
-    min-height: 800px;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
 }
 
 /* YAML View */
 .workflow-yaml-container {
-    height: 100%;
+    flex: 1;
     overflow: auto;
     padding: var(--spacing-lg);
     background-color: #1e1e1e;
     /* Dark background for code */
     color: #d4d4d4;
+    min-height: 0;
 }
 
 .workflow-yaml-content {
@@ -240,13 +243,16 @@
     font-family: monospace;
     font-size: var(--font-size-sm);
     line-height: 1.5;
+    white-space: pre-wrap;
+    word-wrap: break-word;
 }
 
 /* Chat View */
 .workflow-chat-container {
     display: flex;
     flex-direction: column;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     background-color: var(--bg-secondary);
 }
 
