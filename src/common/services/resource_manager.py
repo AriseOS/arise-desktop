@@ -12,6 +12,7 @@ from datetime import datetime
 from dataclasses import dataclass
 
 from src.common.resource_types import ResourceType, ResourceConfig
+from src.common.timestamp_utils import get_current_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -177,7 +178,7 @@ class ResourceManager:
             else:
                 metadata = {
                     "workflow_id": workflow_id,
-                    "created_at": datetime.utcnow().isoformat() + "Z",
+                    "created_at": get_current_timestamp(),
                     "resources": {}
                 }
 
@@ -188,7 +189,7 @@ class ResourceManager:
                 logger.debug(f"Preserving timestamp from source: {custom_timestamp}")
             else:
                 # Local modification: use wall-clock time
-                metadata["updated_at"] = datetime.utcnow().isoformat() + "Z"
+                metadata["updated_at"] = get_current_timestamp()
                 logger.debug(f"Using wall-clock timestamp: {metadata['updated_at']}")
 
             # Update resource info
@@ -208,7 +209,7 @@ class ResourceManager:
                 resource_entry = {
                     "step_id": step_id,
                     "resource_id": resource_id,
-                    "created_at": datetime.utcnow().isoformat() + "Z"
+                    "created_at": get_current_timestamp()
                 }
                 resource_list.append(resource_entry)
 

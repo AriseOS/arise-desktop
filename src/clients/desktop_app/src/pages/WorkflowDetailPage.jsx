@@ -377,7 +377,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                 onClick={() => setActiveTab('chat')}
               >
                 <Icon icon="messageSquare" size={16} />
-                <span>AI 修改</span>
+                <span>AI 对话</span>
               </button>
             </div>
 

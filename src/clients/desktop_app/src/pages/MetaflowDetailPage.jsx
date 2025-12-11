@@ -322,9 +322,31 @@ function MetaflowDetailPage({ session, onNavigate, showStatus, metaflowId }) {
           <Icon icon="arrowLeft" />
         </button>
         <h1 className="page-title">
-          <Icon icon="fileText" /> MetaFlow Details
+          <Icon icon="fileText" /> MetaFlow 详情
         </h1>
-        <div className="header-spacer"></div>
+        <button
+          className="run-button"
+          onClick={handleGenerateWorkflow}
+          disabled={isGeneratingWorkflow || metaflow.workflow_id}
+          title={metaflow.workflow_id ? 'Workflow 已生成' : '生成 Workflow'}
+        >
+          {isGeneratingWorkflow ? (
+            <>
+              <div className="btn-spinner"></div>
+              <span>生成中...</span>
+            </>
+          ) : metaflow.workflow_id ? (
+            <>
+              <Icon icon="check" size={16} />
+              <span>已生成</span>
+            </>
+          ) : (
+            <>
+              <Icon icon="zap" size={16} />
+              <span>生成 Workflow</span>
+            </>
+          )}
+        </button>
       </div>
 
       {/* Content */}
@@ -395,7 +417,7 @@ function MetaflowDetailPage({ session, onNavigate, showStatus, metaflowId }) {
               onClick={() => setActiveTab('chat')}
             >
               <Icon icon="messageSquare" />
-              <span>AI 修改</span>
+              <span>AI 对话</span>
             </button>
           </div>
 
@@ -537,23 +559,7 @@ function MetaflowDetailPage({ session, onNavigate, showStatus, metaflowId }) {
         </div>
 
         {/* Action Section */}
-        <div className="action-section">
-          <div className="action-buttons">
-            <button
-              className="btn-primary"
-              onClick={handleGenerateWorkflow}
-              disabled={isGeneratingWorkflow || metaflow.workflow_id}
-            >
-              <Icon icon="zap" />
-              {metaflow.workflow_id ? 'Workflow Generated' : isGeneratingWorkflow ? 'Generating...' : 'Generate Workflow'}
-            </button>
-          </div>
-          {metaflow.workflow_id && (
-            <p className="action-hint">
-              Workflow already generated.
-            </p>
-          )}
-        </div>
+
       </div>
     </div>
   );

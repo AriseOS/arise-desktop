@@ -35,6 +35,8 @@ from typing import Dict, List, Optional
 from datetime import datetime, timezone
 import logging
 
+from src.common.timestamp_utils import get_current_timestamp
+
 logger = logging.getLogger(__name__)
 
 class StorageService:
@@ -203,7 +205,7 @@ class StorageService:
         data = {
             "recording_id": recording_id,
             "user_id": user_id,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": get_current_timestamp(),
             "operations_count": len(operations),
             "operations": operations
         }
@@ -301,7 +303,7 @@ class StorageService:
                 metadata = json.load(f)
 
         metadata["metaflow_id"] = metaflow_id
-        metadata["updated_at"] = datetime.now(timezone.utc).isoformat()
+        metadata["updated_at"] = get_current_timestamp()
 
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
@@ -372,8 +374,8 @@ class StorageService:
             "workflow_id": None,
             "source_recording_id": recording_id,  # 反向追溯：记录来源recording
             "source_type": source_type,           # 反向追溯：记录生成方式
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "updated_at": datetime.now(timezone.utc).isoformat()
+            "created_at": get_current_timestamp(),
+            "updated_at": get_current_timestamp()
         }
         metadata_file = metaflow_path / "metadata.json"
         with open(metadata_file, 'w', encoding='utf-8') as f:
@@ -454,7 +456,7 @@ class StorageService:
         if metadata_file.exists():
             with open(metadata_file, 'r') as f:
                 metadata = json.load(f)
-            metadata["updated_at"] = datetime.now(timezone.utc).isoformat()
+            metadata["updated_at"] = get_current_timestamp()
             with open(metadata_file, 'w') as f:
                 json.dump(metadata, f, indent=2)
 
@@ -473,7 +475,7 @@ class StorageService:
             metadata = json.load(f)
 
         metadata["workflow_id"] = workflow_id
-        metadata["updated_at"] = datetime.now(timezone.utc).isoformat()
+        metadata["updated_at"] = get_current_timestamp()
 
         with open(metadata_file, 'w') as f:
             json.dump(metadata, f, indent=2)
@@ -567,8 +569,8 @@ class StorageService:
             "workflow_name": workflow_name,
             "source_metaflow_id": metaflow_id,    # 反向追溯：记录来源metaflow
             "source_recording_id": source_recording_id,  # 反向追溯：记录原始recording（可选）
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "updated_at": datetime.now(timezone.utc).isoformat()
+            "created_at": get_current_timestamp(),
+            "updated_at": get_current_timestamp()
         }
         metadata_file = workflow_path / "metadata.json"
         with open(metadata_file, 'w', encoding='utf-8') as f:
@@ -621,7 +623,7 @@ class StorageService:
         if metadata_file.exists():
             with open(metadata_file, 'r') as f:
                 metadata = json.load(f)
-            metadata["updated_at"] = datetime.now(timezone.utc).isoformat()
+            metadata["updated_at"] = get_current_timestamp()
             with open(metadata_file, 'w') as f:
                 json.dump(metadata, f, indent=2)
 

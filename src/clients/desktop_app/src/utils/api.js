@@ -87,23 +87,24 @@ export const api = {
       }
 
       const result = await response.json();
-      console.log('[API] Registration successful (CRS)');
+      console.log('[API] Registration successful (CRS Extension)');
 
-      // Adapt CRS response format to match old API Proxy format
-      // CRS returns: { success, data: { user, apiKey, apiKeyId }, message }
-      // Old format: { success, user, api_key }
+      // Adapt CRS Extension response format
+      // CRS Extension returns: { success, data: { user, apiKey, apiKeyId }, message }
+      const regUser = result.data.user;
       return {
         success: result.success,
         user: {
-          user_id: result.data.user.id, // Map id → user_id
-          username: result.data.user.username,
-          email: result.data.user.email,
-          is_active: result.data.user.status !== 'suspended',
-          is_admin: result.data.user.role === 'admin',
-          trial_end: result.data.user.trial_end_date,
-          quota: result.data.user.quota
+          user_id: regUser.id,
+          username: regUser.username,
+          email: regUser.email,
+          // CRS Extension uses is_active/isActive boolean, not status string
+          is_active: regUser.isActive ?? regUser.is_active ?? true,
+          is_admin: regUser.role === 'admin',
+          trial_end: regUser.trialEndDate || regUser.trial_end_date,
+          quota: regUser.quota
         },
-        api_key: result.data.apiKey, // Note: CRS uses 'apiKey' not 'api_key'
+        api_key: result.data.apiKey,
         api_key_id: result.data.apiKeyId
       };
     } catch (error) {
@@ -168,21 +169,23 @@ export const api = {
 
       const profile = await profileResponse.json();
 
-      // Adapt CRS response format
-      // CRS login returns: { success, data: { token, user, expiresIn } }
-      // CRS profile returns: { success, data: { user, apiKeys, status } }
-      // NOTE: After modification, CRS now returns DECRYPTED plaintext API keys
+      // Adapt CRS Extension response format
+      // CRS Extension login returns: { success, data: { token, user, expiresIn } }
+      // CRS Extension profile returns: { success, data: { user, apiKeys, status } }
+      // NOTE: CRS Extension returns DECRYPTED plaintext API keys
+      const loginUser = result.data.user;
       return {
         success: result.success,
         token: result.data.token,
         user: {
-          user_id: result.data.user.id,
-          username: result.data.user.username,
-          email: result.data.user.email,
-          is_active: result.data.user.status !== 'suspended',
-          is_admin: result.data.user.role === 'admin'
+          user_id: loginUser.id,
+          username: loginUser.username,
+          email: loginUser.email,
+          // CRS Extension uses is_active/isActive boolean, not status string
+          is_active: loginUser.isActive ?? loginUser.is_active ?? true,
+          is_admin: loginUser.role === 'admin'
         },
-        // CRS now returns plaintext API key (decrypted from encrypted storage)
+        // CRS Extension returns plaintext API key (decrypted from encrypted storage)
         api_key: profile.data.apiKeys?.[0]?.key || null,
         api_keys: profile.data.apiKeys
       };

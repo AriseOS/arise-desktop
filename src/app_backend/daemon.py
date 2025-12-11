@@ -1175,12 +1175,20 @@ async def sync_workflow_resources(workflow_id: str, user_id: str) -> Dict[str, A
             logger.info(f"[Sync] No metadata found on either side for {workflow_id}")
             return {"synced": False, "direction": "none", "message": "No metadata found"}
 
-        if not cloud_updated_at or (local_updated_at and local_updated_at > cloud_updated_at):
+        # Parse timestamps for proper comparison
+        from src.common.timestamp_utils import parse_timestamp, compare_timestamps
+
+        local_dt = parse_timestamp(local_updated_at) if local_updated_at else None
+        cloud_dt = parse_timestamp(cloud_updated_at) if cloud_updated_at else None
+
+        if not cloud_dt or (local_dt and local_dt > cloud_dt):
             # Local is newer or cloud doesn't exist → Upload
+            logger.info(f"[Sync] Local is newer, uploading to cloud")
             return await upload_to_cloud(workflow_id, user_id, local_metadata, local_workflow_path)
 
-        elif not local_updated_at or cloud_updated_at > local_updated_at:
+        elif not local_dt or cloud_dt > local_dt:
             # Cloud is newer or local doesn't exist → Download
+            logger.info(f"[Sync] Cloud is newer, downloading from cloud")
             return await download_from_cloud(workflow_id, user_id, cloud_metadata, local_workflow_path)
 
         else:

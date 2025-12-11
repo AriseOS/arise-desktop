@@ -9,8 +9,10 @@ before the resource sync feature was implemented.
 import json
 import logging
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
+
+from src.common.timestamp_utils import get_current_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +51,9 @@ class MetadataGenerator:
         # Get workflow.yaml modification time as base timestamp
         workflow_yaml = workflow_path / "workflow.yaml"
         if workflow_yaml.exists():
-            base_timestamp = datetime.fromtimestamp(workflow_yaml.stat().st_mtime).isoformat() + "Z"
+            base_timestamp = datetime.fromtimestamp(workflow_yaml.stat().st_mtime, tz=timezone.utc).isoformat()
         else:
-            base_timestamp = datetime.utcnow().isoformat() + "Z"
+            base_timestamp = get_current_timestamp()
 
         # Initialize metadata structure
         metadata = {
@@ -124,9 +126,9 @@ class MetadataGenerator:
 
                 if timestamps:
                     latest_mtime = max(timestamps)
-                    updated_at = datetime.fromtimestamp(latest_mtime).isoformat() + "Z"
+                    updated_at = datetime.fromtimestamp(latest_mtime, tz=timezone.utc).isoformat()
                 else:
-                    updated_at = datetime.utcnow().isoformat() + "Z"
+                    updated_at = get_current_timestamp()
 
                 scraper_scripts.append({
                     "step_id": step_id,
