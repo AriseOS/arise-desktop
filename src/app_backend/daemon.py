@@ -506,23 +506,11 @@ async def update_window_layout(app_width_percent: float):
         # Update layout preferences
         layout = browser_manager.window_manager.update_layout(app_width_percent)
 
-        # If browser is running, apply the new layout
-        if browser_manager.state.value == "running" and browser_manager._browser_pid:
-            result = browser_manager.window_manager.arrange_windows(
-                browser_pid=browser_manager._browser_pid,
-                app_name="Ami"
-            )
-
-            return {
-                "layout": browser_manager.window_manager.get_layout_info(),
-                "applied": result.get("success", False)
-            }
-        else:
-            return {
-                "layout": browser_manager.window_manager.get_layout_info(),
-                "applied": False,
-                "message": "Layout saved but not applied (browser not running)"
-            }
+        return {
+            "layout": browser_manager.window_manager.get_layout_info(),
+            "applied": False,
+            "message": "Window arrangement is disabled"
+        }
 
     except HTTPException:
         raise
@@ -533,35 +521,15 @@ async def update_window_layout(app_width_percent: float):
 
 @app.post("/api/browser/window/arrange")
 async def arrange_windows():
-    """Manually trigger window arrangement
+    """Manually trigger window arrangement (disabled)
 
     Returns:
-        Arrangement result
+        Disabled message
     """
-    try:
-        if not browser_manager:
-            raise HTTPException(status_code=500, detail="Browser manager not initialized")
-
-        if browser_manager.state.value != "running" or not browser_manager._browser_pid:
-            raise HTTPException(
-                status_code=400,
-                detail="Browser must be running to arrange windows"
-            )
-
-        logger.info("API: Arranging windows")
-
-        result = browser_manager.window_manager.arrange_windows(
-            browser_pid=browser_manager._browser_pid,
-            app_name="Ami"
-        )
-
-        return result
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to arrange windows: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "success": False,
+        "message": "Window arrangement is disabled due to macOS permission issues"
+    }
 
 
 # ============================================================================
@@ -1248,7 +1216,26 @@ async def download_from_cloud(
     errors = []
 
     try:
-        # Process each resource type
+        # Step 1: Download workflow.yaml (required)
+        try:
+            logger.info(f"[Download] Downloading workflow.yaml")
+            workflow_yaml_content = await cloud_client.download_workflow_file(workflow_id, "workflow.yaml", user_id)
+
+            # Save workflow.yaml to local
+            workflow_yaml_path = local_workflow_path / "workflow.yaml"
+            workflow_yaml_path.parent.mkdir(parents=True, exist_ok=True)
+            workflow_yaml_path.write_bytes(workflow_yaml_content)
+
+            logger.info(f"[Download] ✓ workflow.yaml ({len(workflow_yaml_content)} bytes)")
+            files_downloaded += 1
+        except Exception as e:
+            error_msg = f"Failed to download workflow.yaml: {e}"
+            logger.error(f"[Download] ✗ {error_msg}")
+            errors.append(error_msg)
+            # workflow.yaml is critical - if it fails, the whole download fails
+            raise Exception(f"Cannot download workflow without workflow.yaml: {e}")
+
+        # Step 2: Process each resource type
         resources = cloud_metadata.get("resources", {})
 
         for resource_type, resource_list in resources.items():

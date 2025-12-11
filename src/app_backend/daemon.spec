@@ -79,6 +79,9 @@ a = Analysis(
         'src.common.config_service',
         'src.common.llm.anthropic_provider',
         'src.common.llm.openai_provider',
+        'src.common.services.simple_sync',
+        'src.common.services.metadata_generator',
+        'src.common.services.resource_manager',
 
         # Base app components
         'src.clients.base_app.base_app.base_agent.core.base_agent',
@@ -107,6 +110,15 @@ a = Analysis(
         # Pydantic
         'pydantic',
         'pydantic_settings',
+
+        # File sync utilities
+        'pathspec',  # For .gitignore-style pattern matching in simple_sync
+
+        # Claude Agent SDK
+        'claude_agent_sdk',
+        'claude_agent_sdk._internal',
+        'claude_agent_sdk._internal.transport',
+        'claude_agent_sdk._internal.query',
     ],
     hookspath=[],
     hooksconfig={},

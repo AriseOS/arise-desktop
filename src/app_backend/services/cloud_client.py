@@ -33,20 +33,15 @@ class CloudClient:
         if token:
             headers["Authorization"] = f"Bearer {token}"
 
-        # No timeout limit (as per requirements)
-        # Explicitly use Clash proxy to handle Fake-IP mode
-        # Clash's HTTP proxy: 127.0.0.1:7890
-        import os
-        proxy_url = os.environ.get('HTTPS_PROXY') or os.environ.get('HTTP_PROXY') or "http://127.0.0.1:7890"
-
+        # Create HTTP client
+        # Note: httpx automatically uses system HTTP_PROXY/HTTPS_PROXY if set
         self.client = httpx.AsyncClient(
             base_url=self.api_url,
             headers=headers,
-            timeout=None,  # No timeout
-            proxy=proxy_url  # Use Clash HTTP proxy
+            timeout=None,  # No timeout for long-running operations
         )
 
-        logger.info(f"CloudClient using proxy: {proxy_url}")
+        logger.info(f"CloudClient initialized for {self.api_url}")
 
         if user_api_key:
             logger.info(f"CloudClient initialized with API key: {user_api_key[:10]}...")

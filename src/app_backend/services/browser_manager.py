@@ -40,6 +40,17 @@ class BrowserManager:
         # Event callbacks
         self._status_callbacks: list[Callable] = []
 
+    @property
+    def global_session(self):
+        """Get global session (backward compatibility)
+
+        Returns:
+            BrowserSessionInfo or None
+        """
+        if "global" in self._managed_sessions:
+            return self._managed_sessions["global"].get("session_info")
+        return None
+
     async def start_browser(self, headless: bool = False) -> Dict[str, Any]:
         """Start browser for recording (creates 'global' session)
 
@@ -181,24 +192,11 @@ class BrowserManager:
 
             logger.info(f"✅ Browser session started: {session_id} (PID: {browser_pid})")
 
-            # Arrange windows if requested and not headless
-            window_result = {"arranged": False}
-            if arrange_windows and not headless and browser_pid:
-                # Wait for browser window to be ready
-                await asyncio.sleep(1.5)
-
-                # Arrange windows side by side
-                window_result = self.window_manager.arrange_windows(
-                    browser_pid=browser_pid,
-                    app_name="Ami"
-                )
-
             return {
                 "status": "started",
                 "session_id": session_id,
                 "pid": browser_pid,
-                "state": self.state.value,
-                "windows_arranged": window_result.get("success", False)
+                "state": self.state.value
             }
 
         except Exception as e:

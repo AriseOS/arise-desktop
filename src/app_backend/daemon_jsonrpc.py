@@ -48,8 +48,7 @@ async def initialize_services():
     global browser_manager, workflow_executor, cdp_recorder, cloud_client
 
     # Initialize browser manager
-    browser_manager = BrowserManager(headless=config.get("browser.headless", False))
-    await browser_manager.init_global_session()
+    browser_manager = BrowserManager(config_service=config)
 
     # Initialize workflow executor
     workflow_executor = WorkflowExecutor(storage_manager, browser_manager)

@@ -117,11 +117,7 @@ class BaseAgent:
         # 执行统计
         self._execution_history: List[Dict[str, Any]] = []
         self._last_checkpoint: Optional[datetime] = None
-        
-        # 默认工作流
-        self._default_workflows = {}
-        self._load_default_workflows()
-        
+
         # 初始化日志
         self._setup_logging()
         
@@ -318,41 +314,21 @@ class BaseAgent:
     
     async def process_user_input(self, user_input: str, user_id: str = None) -> str:
         """
-        处理用户输入的主方法 - BaseAgent的标准执行流程
-        
+        处理用户输入的主方法
+
+        DEPRECATED: This method is deprecated. Use workflow execution instead.
+
         Args:
             user_input: 用户输入
             user_id: 用户ID
-            
+
         Returns:
             str: 处理结果
-            
-        这是BaseAgent的核心方法，按照以下流程处理用户输入：
-        1. 分析用户输入
-        2. 搜索相关记忆
-        3. 根据需要调用工具
-        4. 整合信息并生成响应
         """
-        # 获取或创建默认的用户问答工作流
-        workflow = self._get_default_workflow("user_qa")
-        
-        # 执行工作流
-        result = await self.run_workflow(workflow, {
-            "user_input": user_input,
-            "user_id": user_id or f"user_{int(time.time())}"
-        })
-        
-        if result.success:
-            # 返回最终结果
-            if result.final_result:
-                logger.info(f"result.final_result: {str(result.final_result)}")
-                return str(result.final_result)
-            else:
-                return "处理完成，但未生成具体结果"
-        else:
-            error_msg = f"处理失败: {result.error_message}"
-            logger.error(error_msg)
-            return error_msg
+        raise NotImplementedError(
+            "process_user_input is deprecated. Please load and execute a workflow using "
+            "load_workflow() and run_workflow() instead."
+        )
     
     
     # ==================== 状态管理 ====================
@@ -404,22 +380,8 @@ class BaseAgent:
             return False
     
     # ==================== 私有方法 ====================
-    
-    def _load_default_workflows(self) -> None:
-        """加载默认工作流"""
-        from ..workflows.workflow_loader import load_workflow
-        # 用户问答工作流 - 从YAML配置文件加载
-        self._default_workflows["user_qa"] = load_workflow("user-qa-workflow")
-    
-    def _get_default_workflow(self, name: str) -> Workflow:
-        """获取默认工作流"""
-        if name in self._default_workflows:
-            return self._default_workflows[name]
-        else:
-            raise ValueError(f"未找到默认工作流: {name}")
-    
-    
-    
+
+
     def _setup_logging(self) -> None:
         """设置日志"""
         if self.config.enable_logging:

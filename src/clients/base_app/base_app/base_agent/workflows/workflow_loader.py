@@ -6,6 +6,7 @@ import yaml
 import json
 import re
 import logging
+import sys
 from pathlib import Path
 from typing import Dict, Any, List, Union, Optional
 from enum import Enum
@@ -14,6 +15,17 @@ from ..core.schemas import AgentWorkflowStep, Workflow
 
 
 logger = logging.getLogger(__name__)
+
+
+def get_workflows_base_dir() -> Path:
+    """Get workflows base directory (supports PyInstaller)"""
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        # Running in PyInstaller bundle
+        # Workflows are at {_MEIPASS}/base_app/base_agent/workflows/
+        return Path(sys._MEIPASS) / 'base_app' / 'base_agent' / 'workflows'
+    else:
+        # Running from source
+        return Path(__file__).parent
 
 
 class WorkflowFormat(str, Enum):
@@ -307,7 +319,8 @@ class WorkflowConfigLoader:
         Returns:
             Workflow: 工作流对象
         """
-        builtin_dir = Path(__file__).parent / "builtin"
+        workflows_dir = get_workflows_base_dir()
+        builtin_dir = workflows_dir / "builtin"
         workflow_file = builtin_dir / f"{workflow_name}.yaml"
 
         if not workflow_file.exists():
@@ -318,7 +331,7 @@ class WorkflowConfigLoader:
                     workflow_file = alt_file
                     break
             else:
-                raise FileNotFoundError(f"内置工作流 '{workflow_name}' 不存在")
+                raise FileNotFoundError(f"内置工作流 '{workflow_name}' 不存在 (searched: {builtin_dir})")
 
         return self.load_from_file(workflow_file)
 
@@ -332,7 +345,8 @@ class WorkflowConfigLoader:
         Returns:
             Workflow: 工作流对象
         """
-        user_dir = Path(__file__).parent / "user"
+        workflows_dir = get_workflows_base_dir()
+        user_dir = workflows_dir / "user"
         workflow_file = user_dir / f"{workflow_name}.yaml"
 
         if not workflow_file.exists():
@@ -343,13 +357,14 @@ class WorkflowConfigLoader:
                     workflow_file = alt_file
                     break
             else:
-                raise FileNotFoundError(f"用户工作流 '{workflow_name}' 不存在")
+                raise FileNotFoundError(f"用户工作流 '{workflow_name}' 不存在 (searched: {user_dir})")
 
         return self.load_from_file(workflow_file)
     
     def list_builtin_workflows(self) -> List[str]:
         """列出所有内置工作流"""
-        builtin_dir = Path(__file__).parent / "builtin"
+        workflows_dir = get_workflows_base_dir()
+        builtin_dir = workflows_dir / "builtin"
         if not builtin_dir.exists():
             return []
         

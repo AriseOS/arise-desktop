@@ -33,6 +33,8 @@ llm:
 cloud:
   api_url: https://cloud.ariseos.com
   timeout: 120
+  # Note: HTTP/HTTPS proxy is controlled by system environment variables
+  # Set HTTP_PROXY or HTTPS_PROXY in your system if needed
 
 logging:
   level: INFO
