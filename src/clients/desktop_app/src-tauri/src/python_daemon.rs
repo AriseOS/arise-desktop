@@ -19,8 +19,35 @@ impl PythonDaemon {
         })
     }
 
+    /// Get Python script path for development mode
+    fn get_python_script_path() -> Result<(String, Vec<String>), Box<dyn std::error::Error>> {
+        let current_dir = std::env::current_dir()?;
+        let project_root = current_dir
+            .parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
+            .ok_or("Failed to find project root")?
+            .to_path_buf();
+
+        let daemon_path = project_root.join("src/app_backend/daemon.py");
+
+        if !daemon_path.exists() {
+            return Err(format!("Daemon not found at: {}", daemon_path.display()).into());
+        }
+
+        println!("Found daemon script: {}", daemon_path.display());
+        Ok(("python3".to_string(), vec![daemon_path.to_string_lossy().to_string()]))
+    }
+
     /// Detect if running in development or production mode and get daemon path
     fn get_daemon_path() -> Result<(String, Vec<String>), Box<dyn std::error::Error>> {
+        // Check for dev mode override via environment variable
+        if std::env::var("AMI_DEV_MODE").is_ok() {
+            println!("🔧 AMI_DEV_MODE set, forcing Python script mode");
+            return Self::get_python_script_path();
+        }
+
         // Method 1: Check for bundled binary in resources directory (production mode)
         if let Ok(exe_path) = std::env::current_exe() {
             if let Some(exe_dir) = exe_path.parent() {
@@ -42,12 +69,21 @@ impl PythonDaemon {
                 for resources_dir_opt in possible_resources_dirs {
                     if let Some(resources_dir) = resources_dir_opt {
                         let binary_path = resources_dir.join(binary_name);
-                        if binary_path.exists() {
+
+                        if binary_path.is_file() {
                             println!("✓ Found bundled daemon binary: {}", binary_path.display());
                             return Ok((binary_path.to_string_lossy().to_string(), vec![]));
-                        } else {
-                            println!("✗ Bundled daemon binary not found at: {}", binary_path.display());
                         }
+
+                        if binary_path.is_dir() {
+                            let nested_binary = binary_path.join(binary_name);
+                            if nested_binary.is_file() {
+                                println!("✓ Found bundled daemon binary: {}", nested_binary.display());
+                                return Ok((nested_binary.to_string_lossy().to_string(), vec![]));
+                            }
+                        }
+
+                        println!("✗ Bundled daemon binary not found at: {}", binary_path.display());
                     }
                 }
             }
@@ -55,25 +91,7 @@ impl PythonDaemon {
 
         // Method 2: Development mode - use Python script
         println!("Running in development mode, using Python script");
-        let current_dir = std::env::current_dir()?;
-        let project_root = current_dir
-            .parent()
-            .and_then(|p| p.parent())
-            .and_then(|p| p.parent())
-            .and_then(|p| p.parent())
-            .ok_or("Failed to find project root")?
-            .to_path_buf();
-
-        let daemon_path = project_root.join("src/app_backend/daemon.py");
-
-        if !daemon_path.exists() {
-            return Err(format!("Daemon not found at: {}", daemon_path.display()).into());
-        }
-
-        println!("Found daemon script: {}", daemon_path.display());
-
-        // Return Python command and script path
-        Ok(("python3".to_string(), vec![daemon_path.to_string_lossy().to_string()]))
+        Self::get_python_script_path()
     }
 
     /// Start the daemon process with proper process group configuration

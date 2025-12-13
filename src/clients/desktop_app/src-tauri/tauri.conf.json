@@ -10,9 +10,6 @@
     "frontendDist": "../dist"
   },
   "bundle": {
-    "resources": [
-      "resources/ami-daemon*"
-    ]
   },
   "plugins": {},
   "app": {

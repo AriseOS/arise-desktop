@@ -63,8 +63,9 @@ const processStepsRecursive = (steps, startX, startY, parentId = null, nodes = [
                 isExpanded, // Pass expansion state
                 onToggleExpand // Pass toggle handler
             },
-            position: { x: currentX, y: currentY },
-            parentNode: parentId
+            position: { x: currentX, y: currentY }
+            // parentNode: parentId -- REMOVED: We use absolute positioning. 
+            // Setting parentNode would make these coordinates relative, causing double-offset.
         });
 
         // Update Bounds regarding THIS node
