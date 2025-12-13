@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "clean:daemon": "find src-tauri/target -name 'ami-daemon' -type f -delete"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.9.0",

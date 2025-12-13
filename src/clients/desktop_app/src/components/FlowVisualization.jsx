@@ -10,10 +10,16 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import CustomNode from './CustomNode';
+import GroupNode from './GroupNode';
 import { transformWorkflowData, transformMetaflowData } from '../utils/flowLayout';
 import yaml from 'js-yaml';
 
 // Custom node types will be created with onOptimizeScript callback
+
+const nodeTypes = {
+    custom: CustomNode,
+    group: GroupNode
+};
 
 const nodeColor = (node) => {
     switch (node.data?.type) {
@@ -39,87 +45,112 @@ function FlowVisualization({ data, type = 'workflow', onOptimizeScript }) {
     }), [onOptimizeScript]);
 
     const { nodes: initialNodes, edges: initialEdges } = useMemo(() => {
+        let parsedData = {};
+
+        // 1. Try to parse Workflow YAML
         if (type === 'workflow') {
-            // Prefer parsing YAML if available to ensure we get the full nested structure
-            let workflowDataToUse = data;
-            if (data && data.workflow_yaml) {
+            if (data?.workflow_yaml) {
                 try {
                     const parsed = yaml.load(data.workflow_yaml);
-                    if (parsed && parsed.steps) {
-                        workflowDataToUse = { ...data, steps: parsed.steps, connections: parsed.connections };
-                    }
+                    return transformWorkflowData(parsed, expandedNodeIds, onToggleExpand);
                 } catch (e) {
-                    console.error("Failed to parse workflow YAML:", e);
+                    console.error("YAML Parse Error", e);
+                    return { nodes: [], edges: [] };
                 }
-            }
-            return transformWorkflowData(workflowDataToUse);
-        } else {
-            // For Metaflow, we might also want to parse YAML if passed as object with metaflow_yaml
-            let metaflowDataToUse = data;
-            if (data && data.metaflow_yaml && !data.nodes && !data.steps) {
+            } else if (data?.metaflow_yaml) { // Prioritize YAML for Metaflow too
                 try {
                     const parsed = yaml.load(data.metaflow_yaml);
-                    metaflowDataToUse = parsed;
+                    return transformMetaflowData(parsed, expandedNodeIds, onToggleExpand);
                 } catch (e) {
-                    console.error("Failed to parse metaflow YAML:", e);
+                    console.error("Metaflow YAML Parse Error", e);
+                    return { nodes: [], edges: [] };
                 }
             }
-            return transformMetaflowData(metaflowDataToUse);
-        }
-    }, [data, type]);
+            else if (data?.workflow) {
+                return transformWorkflowData(data.workflow, expandedNodeIds, onToggleExpand);
+            } else if (data?.metaflow) {
+                return transformMetaflowData(data.metaflow, expandedNodeIds, onToggleExpand);
+            }
+            return { nodes: [], edges: [] };
+        }, [data, expandedNodeIds, onToggleExpand]);
 
     const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
     const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
     // Update nodes/edges when data changes
-    React.useEffect(() => {
-        let result;
-        if (type === 'workflow') {
-            result = transformWorkflowData(data);
+    useEffect(() => {
+        let result = { nodes: [], edges: [] };
+
+        if (data && data.workflow_yaml) {
+            try {
+                const parsed = yaml.load(data.workflow_yaml);
+                if (parsed && parsed.steps) {
+                    result = transformWorkflowData({ ...data, ...parsed });
+                }
+            } catch (e) { console.error(e); }
         } else {
-            result = transformMetaflowData(data);
+            // Fallback if needed, but we want to depend on YAML
+            result = transformWorkflowData(data || {});
         }
-        setNodes(result.nodes);
-        setEdges(result.edges);
+    } else {
+        if(data && data.metaflow_yaml) {
+        try {
+            const parsed = yaml.load(data.metaflow_yaml);
+            result = transformMetaflowData(parsed || {});
+        } catch (e) { console.error(e); }
+    } else {
+        result = transformMetaflowData(data || {});
+    }
+}
+setNodes(result.nodes);
+setEdges(result.edges);
     }, [data, type, setNodes, setEdges]);
 
-    if (!data) {
-        return (
-            <div className="empty-state">
-                <div className="empty-state-icon">📋</div>
-                <div className="empty-state-title">No Data</div>
-            </div>
-        );
-    }
-
+if (!data) {
     return (
-        <div className="workflow-canvas" style={{ height: '100%', minHeight: '500px' }}>
-            <ReactFlowProvider>
-                <ReactFlow
-                    nodes={nodes}
-                    edges={edges}
-                    onNodesChange={onNodesChange}
-                    onEdgesChange={onEdgesChange}
-                    fitView
-                    nodeTypes={nodeTypes}
-                    fitViewOptions={{ padding: 0.2, minZoom: 0.5, maxZoom: 1.5 }}
-                    minZoom={0.1}
-                    maxZoom={2}
-                    defaultViewport={{ x: 0, y: 0, zoom: 0.8 }}
-                >
-                    <Controls showInteractive={false} />
-                    <MiniMap
-                        nodeColor={nodeColor}
-                        nodeStrokeWidth={3}
-                        zoomable
-                        pannable
-                        style={{ width: 80, height: 60 }}
-                    />
-                    <Background variant="dots" gap={12} size={1} />
-                </ReactFlow>
-            </ReactFlowProvider>
+        <div className="empty-state">
+            <div className="empty-state-icon">📋</div>
+            <div className="empty-state-title">No Data</div>
         </div>
     );
+}
+
+return (
+    <div className="workflow-canvas" style={{ height: '100%', minHeight: '500px' }}>
+        <ReactFlowProvider>
+            <ReactFlow
+                nodes={nodes}
+                edges={edges}
+                connectionLineType="smoothstep"
+                connectionLineStyle={{ stroke: '#cbd5e1', strokeWidth: 2 }}
+                defaultEdgeOptions={{
+                    type: 'smoothstep',
+                    style: { stroke: '#cbd5e1', strokeWidth: 2 },
+                    markerEnd: { type: 'arrowclosed', color: '#cbd5e1' },
+                    animated: false,
+                }}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                fitView
+                nodeTypes={nodeTypes}
+                fitViewOptions={{ padding: 0.2, minZoom: 0.5, maxZoom: 1.2 }}
+                minZoom={0.1}
+                maxZoom={2}
+                defaultViewport={{ x: 0, y: 0, zoom: 0.8 }}
+            >
+                <Controls showInteractive={false} />
+                <MiniMap
+                    nodeColor={nodeColor}
+                    nodeStrokeWidth={3}
+                    zoomable
+                    pannable
+                    style={{ width: 80, height: 60 }}
+                />
+                <Background variant="dots" gap={12} size={1} />
+            </ReactFlow>
+        </ReactFlowProvider>
+    </div>
+);
 }
 
 export default FlowVisualization;
