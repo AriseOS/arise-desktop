@@ -122,30 +122,35 @@ const CustomNode = ({ data }) => {
         )}
       </div>
 
-      {/* Connection Handles - Subtle positioning */}
+      {/* Connection Handles - All 4 sides for smart routing */}
+      {/* Target: Left (Standard) */}
       <Handle
         type="target"
         position={Position.Left}
-        style={{
-          width: '8px',
-          height: '8px',
-          background: '#9ca3af',
-          left: '-4px', // Slightly tucked under
-          border: '2px solid white',
-          zIndex: 10
-        }}
+        id="target-left"
+        style={{ width: '8px', height: '8px', background: '#9ca3af', left: '-4px', border: '2px solid white', zIndex: 10 }}
       />
+      {/* Target: Top (Vertical Stack) */}
+      <Handle
+        type="target"
+        position={Position.Top}
+        id="target-top"
+        style={{ width: '8px', height: '8px', background: '#9ca3af', top: '-4px', border: '2px solid white', zIndex: 10 }}
+      />
+
+      {/* Source: Right (Standard) */}
       <Handle
         type="source"
         position={Position.Right}
-        style={{
-          width: '8px',
-          height: '8px',
-          background: '#9ca3af',
-          right: '-4px',
-          border: '2px solid white',
-          zIndex: 10
-        }}
+        id="source-right"
+        style={{ width: '8px', height: '8px', background: '#9ca3af', right: '-4px', border: '2px solid white', zIndex: 10 }}
+      />
+      {/* Source: Bottom (Vertical Stack) */}
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        id="source-bottom"
+        style={{ width: '8px', height: '8px', background: '#9ca3af', bottom: '-4px', border: '2px solid white', zIndex: 10 }}
       />
     </div>
   );

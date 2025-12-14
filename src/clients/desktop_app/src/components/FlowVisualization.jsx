@@ -9,12 +9,17 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import CustomNode from './CustomNode';
 import GroupNode from './GroupNode';
+import SimpleFloatingEdge from './SimpleFloatingEdge';
 import { transformWorkflowData, transformMetaflowData } from '../utils/flowLayout';
 import yaml from 'js-yaml';
 
 const nodeTypes = {
     custom: CustomNode,
     group: GroupNode
+};
+
+const edgeTypes = {
+    floating: SimpleFloatingEdge,
 };
 
 const FlowVisualization = ({ data, type = 'workflow' }) => {
@@ -58,6 +63,14 @@ const FlowVisualization = ({ data, type = 'workflow' }) => {
         } else if (data?.metaflow) {
             return transformMetaflowData(data.metaflow, expandedNodeIds, onToggleExpand);
         }
+
+        // Fallback: If data is the object itself (not wrapped)
+        if (type === 'workflow') {
+            return transformWorkflowData(data, expandedNodeIds, onToggleExpand);
+        } else if (type === 'metaflow') {
+            return transformMetaflowData(data, expandedNodeIds, onToggleExpand);
+        }
+
         return { nodes: [], edges: [] };
     }, [data, expandedNodeIds, onToggleExpand]);
 
@@ -77,6 +90,7 @@ const FlowVisualization = ({ data, type = 'workflow' }) => {
                 nodes={nodes}
                 edges={edges}
                 nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
                 connectionLineType="smoothstep"

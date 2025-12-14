@@ -73,16 +73,15 @@ const processStepsRecursive = (steps, startX, startY, parentId = null, nodes = [
         maxY = Math.max(maxY, currentY + NODE_HEIGHT);
 
         // 2. Connect to Previous
+        // Check if we need to connect to previous sibling
         if (previousNodeId) {
             edges.push({
                 id: `e-${previousNodeId}-${nodeId}`,
                 source: previousNodeId,
                 target: nodeId,
-                type: 'smoothstep',
-                sourceHandle: isNested ? 'bottom' : 'right', // Nested moves Down, Main moves Right
-                targetHandle: isNested ? 'top' : 'left',
-                markerEnd: { type: 'arrowclosed' },
-                animated: false
+                type: 'floating', // Use our smart floating edge
+                style: { stroke: '#cbd5e1', strokeWidth: 2 },
+                markerEnd: { type: 'arrowclosed', color: '#cbd5e1' }
             });
         } else if (parentId) {
             // First child of a container
@@ -229,14 +228,18 @@ const processStepsRecursive = (steps, startX, startY, parentId = null, nodes = [
  * Transform Metaflow data (nested) to ReactFlow nodes and edges
  */
 export const transformMetaflowData = (metaflow, expandedNodeIds = new Set(), onToggleExpand = null) => {
+    console.log("transformMetaflowData input:", metaflow);
     if (!metaflow) return { nodes: [], edges: [] };
 
     const steps = metaflow.nodes || metaflow.steps || [];
+    console.log("transformMetaflowData steps found:", steps.length, steps);
+
     const nodes = [];
     const edges = [];
 
     processStepsRecursive(steps, 0, 0, null, nodes, edges, false, expandedNodeIds, onToggleExpand);
 
+    console.log("transformMetaflowData outputs:", { nodes, edges });
     return { nodes, edges };
 };
 
@@ -425,10 +428,9 @@ export const transformWorkflowData = (workflowData, expandedNodeIds = new Set(),
                     id: `e-${current.id}-${next.id}`,
                     source: current.id,
                     target: next.id,
-                    type: 'smoothstep',
-                    sourceHandle: 'right',
-                    targetHandle: 'left',
-                    markerEnd: { type: 'arrowclosed' }
+                    type: 'floating',
+                    style: { stroke: '#cbd5e1', strokeWidth: 2 },
+                    markerEnd: { type: 'arrowclosed', color: '#cbd5e1' }
                 });
             }
         }
