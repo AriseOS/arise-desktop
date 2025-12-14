@@ -36,14 +36,14 @@ TAURI_CONF_BACKUP="${TAURI_CONF}.backup"
 # Backup original config
 cp "${TAURI_CONF}" "${TAURI_CONF_BACKUP}"
 
-# Add resources configuration
+# Add resources configuration (Tauri 2.x resource map format)
 if command -v jq &> /dev/null; then
     # Use jq if available
-    jq '.bundle.resources = ["resources/ami-daemon*"]' "${TAURI_CONF}" > "${TAURI_CONF}.tmp"
+    jq '.bundle.resources = {"resources/ami-daemon": "ami-daemon"}' "${TAURI_CONF}" > "${TAURI_CONF}.tmp"
     mv "${TAURI_CONF}.tmp" "${TAURI_CONF}"
 else
     # Fallback: use sed (less robust but works)
-    sed -i.bak 's/"resources": \[\]/"resources": ["resources\/ami-daemon*"]/' "${TAURI_CONF}"
+    sed -i.bak 's/"bundle": {/"bundle": { "resources": {"resources\/ami-daemon": "ami-daemon"}/' "${TAURI_CONF}"
     rm -f "${TAURI_CONF}.bak"
 fi
 

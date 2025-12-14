@@ -31,7 +31,8 @@ if ! npm list @tauri-apps/cli > /dev/null 2>&1; then
     npm install --save-dev @tauri-apps/cli
 fi
 
-# Start the app
-echo "✅ Starting Tauri app..."
+# Start the app in development mode
+echo "✅ Starting Tauri app (Development Mode)..."
+echo "   AMI_DEV_MODE=1 → Using Python source code"
 echo ""
-npm run tauri dev
+AMI_DEV_MODE=1 npm run tauri dev
