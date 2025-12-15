@@ -64,8 +64,6 @@ const processStepsRecursive = (steps, startX, startY, parentId = null, nodes = [
                 onToggleExpand // Pass toggle handler
             },
             position: { x: currentX, y: currentY }
-            // parentNode: parentId -- REMOVED: We use absolute positioning. 
-            // Setting parentNode would make these coordinates relative, causing double-offset.
         });
 
         // Update Bounds regarding THIS node
@@ -85,21 +83,15 @@ const processStepsRecursive = (steps, startX, startY, parentId = null, nodes = [
             });
         } else if (parentId) {
             // First child of a container
-            // Parent (Loop Header) is Horizontal (Main Flow) -> Child is Vertical (Nested)
-            // So Parent connects from Bottom/Right -> Child connects from Top/Left?
-            // "Vertical Detour" style: Parent Right -> Child Left (but child is shifted down)
-            // Or Parent Bottom -> Child Top (Tower style)
-
-            // Let's go with "Tower Style": Loop Header sits on top of the stack.
+            // Use floating edge for parent-child connection too
             edges.push({
                 id: `e-${parentId}-${nodeId}`,
                 source: parentId,
                 target: nodeId,
-                type: 'default', // straight/bezier default often better for close proximity than smoothstep
-                sourceHandle: 'bottom',
-                targetHandle: 'top',
-                markerEnd: { type: 'arrowclosed' },
+                type: 'floating',
+                markerEnd: { type: 'arrowclosed', color: '#cbd5e1' },
                 animated: true,
+                style: { stroke: '#cbd5e1', strokeWidth: 2 },
                 label: 'Start Loop'
             });
         }
@@ -111,13 +103,7 @@ const processStepsRecursive = (steps, startX, startY, parentId = null, nodes = [
         // CONDITIONAL RECURSION: Only render children if Expanded!
         if (isLoop && !isExpanded) {
             // Collapsed State: Do not process children.
-            // The flow continues from THIS node to the next sibling.
-            // stepWidth remains NODE_WIDTH.
-            // No edges to children are created.
         } else if (children && children.length > 0) {
-            // If we are Main Flow, children are essentially a "Tower" hanging off this node.
-            // If we are already Nested, children are a "Sub-Tower" (further indented).
-
             // Position for children:
             // Vertical Stack means they start BELOW this node.
             const childStartX = currentX + NESTED_INDENT;
@@ -131,33 +117,15 @@ const processStepsRecursive = (steps, startX, startY, parentId = null, nodes = [
             maxY = Math.max(maxY, childResult.maxY);
 
             // Calculate effective size of this block
-            // Even though children are vertical (increasing Y), they might have width (indents).
-            // For the Main Flow (Horizontal), we care about how wide this tower became.
             stepWidth = Math.max(NODE_WIDTH, childResult.maxX - currentX + NESTED_INDENT);
 
             // ---------------------------------------------------------
             // VISUAL GROUP BOX GENERATION
             // ---------------------------------------------------------
-            // We want to draw a box around the children we just laid out.
-            // Bounds:
-            // x: childStartX
-            // y: childStartY
-            // width: childResult.maxX - childStartX + NODE_WIDTH (approx?) 
-            // height: childResult.maxY - childStartY + NODE_HEIGHT
-
-            // Let's optimize the box size:
-            // The children stack vertically. 
-            // Width is basically NODE_WIDTH + indent drifts? 
-            // Let's use the bounds returned by the recursion.
-
             const PADDING = 24;
             const groupX = childStartX - PADDING;
             const groupY = childStartY - PADDING;
             const groupWidth = (childResult.maxX - childStartX) + NODE_WIDTH + (PADDING * 2);
-            // This width calculation assumes children might step right. 
-            // In pure vertical stack, childResult.maxX might just be childStartX + NODE_WIDTH.
-            // Safe to max it.
-
             const groupHeight = (childResult.maxY - childStartY) + NODE_HEIGHT + (PADDING * 2);
 
             nodes.push({
@@ -168,22 +136,19 @@ const processStepsRecursive = (steps, startX, startY, parentId = null, nodes = [
                 style: { width: groupWidth, height: groupHeight },
                 zIndex: -1 // Behind everything
             });
-            // ---------------------------------------------------------
-
 
             // Connect Last Child back to Parent
             const lastChild = nodes[nodes.length - 1]; // Approximation
             if (lastChild && lastChild.parentNode === nodeId) {
+                // Use floating for loop-back too
                 edges.push({
                     id: `e-${lastChild.id}-${nodeId}`,
                     source: lastChild.id,
                     target: nodeId,
-                    type: 'default',
+                    type: 'floating',
                     markerEnd: { type: 'arrowclosed' },
                     animated: true,
                     style: { strokeDasharray: '5, 5', stroke: '#722ed1', opacity: 0.5 },
-                    sourceHandle: 'right',
-                    targetHandle: 'right', // Loop back on side
                     label: 'Repeat'
                 });
             }
@@ -192,28 +157,10 @@ const processStepsRecursive = (steps, startX, startY, parentId = null, nodes = [
         // 4. Move Cursor for NEXT Sibling
         if (isNested) {
             // If we are inside a loop, siblings stack VERTICALLY
-            // We need to move Y down past *this* node (and its descendants!)
-            // But wait, `maxY` tracks the deepest point of *this node's tree*.
-            // So for the next sibling in a vertical stack, we start at `maxY + GAP`.
-
-            // However, `maxY` is global cumulative. 
-            // We need to know the height of JUST this step's branch.
-            // `maxY` is accurate because it was updated by recursive children.
             currentY = maxY + NESTED_VERTICAL_GAP;
-
             // X stays aligned for vertical stack
-            // currentX = startX; 
         } else {
             // Main Flow: Siblings move HORIZONTALLY
-            // We need to move X past this node's "Tower Width".
-            // `maxX` tracks the widest point.
-            // But siblings align Top-to-Bottom? No, Main Flow is Left-to-Right.
-            // So we move Right.
-
-            // We need to ensure we don't overlap with the children we just drew below.
-            // The children are strictly *below*, but they have width (indentation).
-            // So we shift X by `stepWidth + GAP`.
-
             currentX += stepWidth + HORIZONTAL_GAP;
         }
 
@@ -277,19 +224,10 @@ export const transformWorkflowData = (workflowData, expandedNodeIds = new Set(),
     // Track Y positions per branch (Stacking branches vertically)
     const branchYTracker = {};
 
-    // To properly layout parallel branches, we need to know:
-    // 1. Where branches split (Branch Start)
-    // 2. Where they merge (Branch End)
-
-    // Current assumption: "branch": "name" property on steps.
-
     // Map branch names to Y levels
     const branchNames = [...new Set(steps.map(s => s.branch).filter(Boolean))];
     const branchYs = {};
     branchNames.forEach((name, i) => {
-        // Base Y + (Index * Gap). Center around 0?
-        // Let's stack them: 0, 120, 240...
-        // Or centered: -120, 0, 120...
         const offset = (i - (branchNames.length - 1) / 2) * VERTICAL_GAP;
         branchYs[name] = startY + offset;
     });
@@ -306,25 +244,13 @@ export const transformWorkflowData = (workflowData, expandedNodeIds = new Set(),
             currentX += HORIZONTAL_GAP * 0.8; // Short gap to branches
         } else if (step.type === 'branch_end') {
             // Merge point
-            // Should be to the right of the furthest branch step
-            // For simple linear scan, we just increment X
             x = currentX + HORIZONTAL_GAP * 0.5;
             y = startY;
             currentX = x + HORIZONTAL_GAP;
         } else if (step.branch) {
             // It's a branch step
             y = branchYs[step.branch] || startY;
-
-            // X position:
-            // Needs to be tracked PER BRANCH?
-            // If steps are sequential in the array, we can just increment global X?
-            // No, parallel branches should be at generally same X range.
-
-            // Simple Logic: 
-            // If previous step was SAME branch, increment X for that branch.
-            // If specific per-branch tracking is needed:
             if (!branchYTracker[step.branch]) branchYTracker[step.branch] = currentX;
-
             x = branchYTracker[step.branch];
             branchYTracker[step.branch] += HORIZONTAL_GAP;
 
@@ -356,17 +282,15 @@ export const transformWorkflowData = (workflowData, expandedNodeIds = new Set(),
         });
     });
 
-    // Generate Edges (Horizontal: Source Right -> Target Left)
+    // Generate Edges
     if (workflowData.connections) {
         workflowData.connections.forEach((conn, i) => {
             edges.push({
                 id: `e-${i}`,
                 source: conn.from,
                 target: conn.to,
-                type: 'smoothstep',
-                sourceHandle: 'right',
-                targetHandle: 'left',
-                markerEnd: { type: 'arrowclosed' }
+                type: 'floating',
+                markerEnd: { type: 'arrowclosed', color: '#cbd5e1' }
             });
         });
     } else {
@@ -385,10 +309,8 @@ export const transformWorkflowData = (workflowData, expandedNodeIds = new Set(),
                             id: `e-${current.id}-${firstBranchNode.id}`,
                             source: current.id,
                             target: firstBranchNode.id,
-                            type: 'smoothstep',
-                            sourceHandle: 'right',
-                            targetHandle: 'left',
-                            markerEnd: { type: 'arrowclosed' }
+                            type: 'floating',
+                            markerEnd: { type: 'arrowclosed', color: '#cbd5e1' }
                         });
                     }
                 });
@@ -408,10 +330,8 @@ export const transformWorkflowData = (workflowData, expandedNodeIds = new Set(),
                             id: `e-${prev.id}-${next.id}`,
                             source: prev.id,
                             target: next.id,
-                            type: 'smoothstep',
-                            sourceHandle: 'right',
-                            targetHandle: 'left',
-                            markerEnd: { type: 'arrowclosed' }
+                            type: 'floating',
+                            markerEnd: { type: 'arrowclosed', color: '#cbd5e1' }
                         });
                         processedBranches.add(prev._branch);
                     }

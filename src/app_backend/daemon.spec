@@ -32,14 +32,18 @@ a = Analysis(
         # Config files
         ('config/app-backend.yaml', 'config'),
 
-        # Browser tools from base_app
-        (str(project_root / 'src/clients/base_app/base_app/base_agent/tools'), 'base_app/base_agent/tools'),
+        # JavaScript files for browser behavior tracking (NOT Python - these are injected into browser)
+        (str(project_root / 'src/clients/base_app/base_app/base_agent/tools/browser_use/user_behavior/behavior_tracker.js'),
+         'base_app/base_agent/tools/browser_use/user_behavior'),
 
-        # Browser session manager
-        (str(project_root / 'src/clients/base_app/base_app/base_agent/core'), 'base_app/base_agent/core'),
+        # Workflow YAML files (data files, not Python code)
+        (str(project_root / 'src/clients/base_app/base_app/base_agent/workflows/builtin'),
+         'base_app/base_agent/workflows/builtin'),
+        (str(project_root / 'src/clients/base_app/base_app/base_agent/workflows/user'),
+         'base_app/base_agent/workflows/user'),
 
-        # Workflows (if any default workflows need to be bundled)
-        (str(project_root / 'src/clients/base_app/base_app/base_agent/workflows'), 'base_app/base_agent/workflows'),
+        # Note: Python code in tools/, core/ directories is handled by hiddenimports
+        # Do NOT include .py files as datas - they are redundant and expose source code
     ] + playwright_browsers,
     hiddenimports=[
         # Uvicorn and FastAPI
