@@ -5,12 +5,17 @@ metadata:
   name: "coffee-market-analysis-workflow"
   description: "Analyze coffee product opportunities by comparing Poland (Allegro) and US (Amazon) markets to identify profitable sourcing opportunities"
   version: "1.0.0"
-  tags: ["market-analysis", "scraper", "coffee", "allegro", "amazon", "comparison"]
+  tags: ["market-analysis", "coffee", "allegro", "amazon", "comparison"]
 
 inputs:
-  max_products:
+  max_allegro_products:
     type: "integer"
-    description: "Maximum products to collect from each platform"
+    description: "Maximum Allegro products to collect"
+    required: false
+    default: 20
+  max_amazon_products:
+    type: "integer"
+    description: "Maximum Amazon products to collect"
     required: false
     default: 20
 
@@ -34,23 +39,23 @@ steps:
   - id: "init-vars"
     name: "Initialize variables"
     agent_type: "variable"
-    description: "Initialize data collection variables for both platforms"
+    description: "Initialize data collection variables for both markets"
     agent_instruction: "Initialize product collection variables"
     inputs:
       operation: "set"
       data:
-        all_allegro_urls: []
-        all_allegro_products: []
-        all_amazon_urls: []
-        all_amazon_products: []
+        all_allegro_product_urls: []
+        all_allegro_product_details: []
+        all_amazon_product_urls: []
+        all_amazon_product_details: []
     outputs:
-      all_allegro_urls: "all_allegro_urls"
-      all_allegro_products: "all_allegro_products"
-      all_amazon_urls: "all_amazon_urls"
-      all_amazon_products: "all_amazon_products"
+      all_allegro_product_urls: "all_allegro_product_urls"
+      all_allegro_product_details: "all_allegro_product_details"
+      all_amazon_product_urls: "all_amazon_product_urls"
+      all_amazon_product_details: "all_amazon_product_details"
     timeout: 10
 
-  # Allegro workflow
+  # Allegro Market Collection
   - id: "extract-allegro-urls"
     name: "Extract Allegro product URLs"
     agent_type: "scraper_agent"
@@ -60,63 +65,69 @@ steps:
       target_path: "https://allegro.pl/kategoria/produkty-spozywcze-kawa-74030"
       extraction_method: "script"
       dom_scope: "full"
+<<<<<<< Updated upstream
       max_items: 10
       debug_mode: true
       data_requirements:
         user_description: "Extract all Allegro coffee product URLs from the listing page"
+=======
+      data_requirements:
+        user_description: "Extract all Allegro coffee product URLs only from product list"
+>>>>>>> Stashed changes
         output_format:
           url: "Product URL"
         sample_data:
-          - url: "https://allegro.pl/oferta/example-product-2"
-          - url: "https://allegro.pl/events/clicks?emission_unit_id=571bff70-d855-409a-9345-4159498483d6&emission_id=cefdee88-876f-4ace-9a1b-d65876a7e71c&type=OFFER&ts=1760958164482&redirect=https%3A%2F%2Fallegro.pl%2Foferta%2Fkawa-ziarnista-1kg-brazylia-cerrado-swiezo-palona-arabica-100-singleorigin-9664732492%3Fbi_s%3Dads%26bi_m%3Dproductlisting%253Adesktop%253Acategory%26bi_c%3DNTBiOGI0OTktYzUxNC00MWM4LTgwZmUtODhjYzVkMjQxOTcwAA%26bi_t%3Dape&placement=productlisting:desktop:category&sig=f3409ee77124290ba4e8db88fe52e010"
-        xpath_hints:
-          url: "//*[@id=\"search-results\"]/div[5]/div[2]/div/div/div/div/div/ul/li[1]/article/div/div[2]/div[1]/div/h2/a"
+          - url: "https://allegro.pl/oferta/kawa-ziarnista-1kg-brazylia-santos-swiezo-palona-100-arabica-tommy-cafe-12786896326"
+          - url: "https://allegro.pl/oferta/kawa-ziarnista-arabica-example-123456"
     outputs:
       extracted_data: "allegro_product_urls"
     timeout: 60
 
   - id: "save-allegro-urls"
-    name: "Save Allegro URLs"
+    name: "Save Allegro product URLs"
     agent_type: "variable"
     description: "Save extracted Allegro URLs to variable"
     agent_instruction: "Save Allegro product URLs"
     inputs:
       operation: "set"
       data:
-        all_allegro_urls: "{{allegro_product_urls}}"
+        all_allegro_product_urls: "{{allegro_product_urls}}"
     outputs:
-      all_allegro_urls: "all_allegro_urls"
+      all_allegro_product_urls: "all_allegro_product_urls"
     timeout: 10
 
   - id: "collect-allegro-details"
     name: "Collect Allegro product details"
     agent_type: "foreach"
-    description: "Iterate through Allegro products and collect detailed information"
-    source: "{{all_allegro_urls}}"
+    description: "Iterate through Allegro coffee products and extract detailed information"
+    source: "{{all_allegro_product_urls}}"
     item_var: "current_allegro_product"
-    index_var: "allegro_index"
+    index_var: "allegro_product_index"
     max_iterations: 20
     loop_timeout: 1200
     steps:
       - id: "scrape-allegro-product"
         name: "Scrape Allegro product information"
         agent_type: "scraper_agent"
-        description: "Extract product details including name, price, and purchase statistics"
-        agent_instruction: "Visit Allegro product page and extract title, price, and purchase count"
+        description: "Extract Allegro product details including name, price, and purchase statistics"
+        agent_instruction: "Visit Allegro product page and extract product name, price, and purchase statistics"
         inputs:
+          extraction_method: "script"
           target_path: "{{current_allegro_product.url}}"
-          extraction_method: "llm"
-          dom_scope: "partial"
           data_requirements:
-            user_description: "Extract coffee product details including name, price, and purchase statistics"
+            user_description: "Extract Allegro product name, price, and purchase count"
             output_format:
-              title: "Product title"
+              product_name: "Product name"
               price: "Product price"
-              purchases: "Number of recent purchases"
+              purchase_count: "Number of people who bought recently"
             sample_data:
-              title: "Kawa ziarnista 1kg BRAZYLIA Santos Świeżo Palona 100% ARABICA Tommy Cafe"
+              product_name: "Kawa ziarnista 1kg BRAZYLIA Santos Świeżo Palona 100% ARABICA Tommy Cafe"
               price: "69,50 zł"
-              purchases: "3 308 osób kupiło ostatnio"
+              purchase_count: "3 308 osób kupiło ostatnio"
+            xpath_hints:
+              product_name: "//*[@id='showproduct-left-column-wrapper']/div/div[1]/div/div/div/div/div/div[1]/div/div/div[1]/div/h1"
+              price: "//*[@id='showproduct-right-column-wrapper']/div/div[1]/div/div/div[2]/div/div/div/div/div/section/div[1]/div[1]"
+              purchase_count: "//*[@id='showproduct-left-column-wrapper']/div/div[1]/div/div/div/div/div/div[1]/div/div/div[1]/div/div[2]/div/div[1]/div/div[2]"
         outputs:
           extracted_data: "allegro_product_info"
         timeout: 60
@@ -124,14 +135,14 @@ steps:
       - id: "append-allegro-product"
         name: "Add Allegro product to list"
         agent_type: "variable"
-        description: "Append product info to collection"
+        description: "Append Allegro product info to collection"
         agent_instruction: "Add Allegro product to list"
         inputs:
           operation: "append"
-          source: "{{all_allegro_products}}"
+          source: "{{all_allegro_product_details}}"
           data: "{{allegro_product_info}}"
         outputs:
-          result: "all_allegro_products"
+          result: "all_allegro_product_details"
         timeout: 10
 
       - id: "store-allegro-product"
@@ -141,75 +152,82 @@ steps:
         agent_instruction: "Store Allegro product to database"
         inputs:
           operation: "store"
-          collection: "allegro_products"
+          collection: "allegro_coffee_products"
           data: "{{allegro_product_info}}"
         outputs:
           message: "allegro_store_message"
         timeout: 15
 
-  # Amazon workflow
+  # Amazon Market Collection
   - id: "extract-amazon-urls"
     name: "Extract Amazon product URLs"
     agent_type: "scraper_agent"
     description: "Navigate to Amazon coffee category and extract all product URLs"
-    agent_instruction: "Visit Amazon coffee category page with customer rating filter and extract all product URLs"
+    agent_instruction: "Visit Amazon coffee category page and extract all product URLs"
     inputs:
       target_path: "https://www.amazon.com/s?i=grocery&rh=n%3A23783759011%2Cp_72%3A4-&s=featured-rank"
       extraction_method: "script"
       dom_scope: "full"
+<<<<<<< Updated upstream
       max_items: 10
       debug_mode: true
       data_requirements:
         user_description: "Extract all Amazon coffee product URLs from the listing page"
+=======
+      data_requirements:
+        user_description: "Extract all Amazon coffee product URLs"
+>>>>>>> Stashed changes
         output_format:
           url: "Product URL"
         sample_data:
-          - url: "https://www.amazon.com/Lavazza-Coffee-Medium-Espresso-2-2-Pound/dp/B005OJ4X32/ref=sr_1_2?dib=eyJ2IjoiMSJ9.cbH_h_Q59JF_S9zZxX7NZwrhsy28IQLqNR8BfdceYAUdUEdmRTA-i3Eh6v_RBMO8-3SacFHO0vuDnif8SM9DcOy1bYQjlENAQtgsdyf6dRGhEzd_reteIZ6930wX9FiLsydPpiP4vmPKiQcNGXiuE01WD84Hl0wovzB7oapr3jjz6B_wTWM2hj2FkrOO35shGecSnnNvBt2zpRGHtpxAHAom3dR8XaWUQS8yEobiraW3Ij6358kOyvweS3yeDt290a8hIBbC1XzNxLuDhfrWykgdbVj7cFCjfAMzGnHvhmY.lH_RpvECMAhhleorg91ABkb9rkeOVDuCb-BCYsHD1zA&dib_tag=se&qid=1761124582&rdc=1&refinements=p_72%3A1248897011&s=grocery&sr=1-2"
-          - url: "https://www.amazon.com/Lavazza-Coffee-Medium-Espresso-2-2-Pound/dp/B000SDKDM4/ref=sr_1_1?dib=eyJ2IjoiMSJ9.cbH_h_Q59JF_S9zZxX7NZwrhsy28IQLqNR8BfdceYAUdUEdmRTA-i3Eh6v_RBMO8-3SacFHO0vuDnif8SM9DcOy1bYQjlENAQtgsdyf6dRGhEzd_reteIZ6930wX9FiLsydPpiP4vmPKiQcNGXiuE01WD84Hl0wovzB7oapr3jjz6B_wTWM2hj2FkrOO35shGecSnnNvBt2zpRGHtpxAHAom3dR8XaWUQS8yEobiraW3Ij6358kOyvweS3yeDt290a8hIBbC1XzNxLuDhfrWykgdbVj7cFCjfAMzGnHvhmY.lH_RpvECMAhhleorg91ABkb9rkeOVDuCb-BCYsHD1zA&dib_tag=se&qid=1761124582&rdc=1&refinements=p_72%3A1248897011&s=grocery&sr=1-1"
+          - url: "https://www.amazon.com/Lavazza-Dolcevita-Classico-Full-bodied-Intensity/dp/B00PQKRVFG"
+          - url: "https://www.amazon.com/Coffee-Product-Example/dp/B00EXAMPLE"
     outputs:
       extracted_data: "amazon_product_urls"
     timeout: 60
 
   - id: "save-amazon-urls"
-    name: "Save Amazon URLs"
+    name: "Save Amazon product URLs"
     agent_type: "variable"
     description: "Save extracted Amazon URLs to variable"
     agent_instruction: "Save Amazon product URLs"
     inputs:
       operation: "set"
       data:
-        all_amazon_urls: "{{amazon_product_urls}}"
+        all_amazon_product_urls: "{{amazon_product_urls}}"
     outputs:
-      all_amazon_urls: "all_amazon_urls"
+      all_amazon_product_urls: "all_amazon_product_urls"
     timeout: 10
 
   - id: "collect-amazon-details"
     name: "Collect Amazon product details"
     agent_type: "foreach"
-    description: "Iterate through Amazon products and collect detailed information"
-    source: "{{all_amazon_urls}}"
+    description: "Iterate through Amazon coffee products and extract detailed information"
+    source: "{{all_amazon_product_urls}}"
     item_var: "current_amazon_product"
-    index_var: "amazon_index"
+    index_var: "amazon_product_index"
     max_iterations: 20
     loop_timeout: 1200
     steps:
       - id: "scrape-amazon-product"
         name: "Scrape Amazon product information"
         agent_type: "scraper_agent"
-        description: "Extract product details including name and customer ratings"
+        description: "Extract Amazon product details including name and customer ratings"
         agent_instruction: "Visit Amazon product page and extract product name and customer ratings"
         inputs:
+          extraction_method: "script"
           target_path: "{{current_amazon_product.url}}"
-          extraction_method: "llm"
-          dom_scope: "partial"
           data_requirements:
-            user_description: "Extract coffee product information including product name and customer ratings"
+            user_description: "Extract Amazon product name and customer ratings"
             output_format:
-              title: "Product title"
-              ratings: "Customer ratings count"
+              product_name: "Product name"
+              ratings_count: "Number of customer ratings"
             sample_data:
-              title: "Lavazza House Blend Perfetto Ground Coffee 12oz Bag, Medium Roast, Full-bodied, Intensity 3/5, 100% Arabica, Ideal for Drip Brewers, (Pack of 1) - Package May Vary"
-              ratings: "8,168 ratings"
+              product_name: "Lavazza House Blend Perfetto Ground Coffee 12oz Bag, Medium Roast, Full-bodied, Intensity 3/5, 100% Arabica, Ideal for Drip Brewers, (Pack of 1) - Package May Vary"
+              ratings_count: "8,168 ratings"
+            xpath_hints:
+              product_name: "//*[@id='productTitle']"
+              ratings_count: "//*[@id='acrCustomerReviewText']"
         outputs:
           extracted_data: "amazon_product_info"
         timeout: 60
@@ -217,14 +235,14 @@ steps:
       - id: "append-amazon-product"
         name: "Add Amazon product to list"
         agent_type: "variable"
-        description: "Append product info to collection"
+        description: "Append Amazon product info to collection"
         agent_instruction: "Add Amazon product to list"
         inputs:
           operation: "append"
-          source: "{{all_amazon_products}}"
+          source: "{{all_amazon_product_details}}"
           data: "{{amazon_product_info}}"
         outputs:
-          result: "all_amazon_products"
+          result: "all_amazon_product_details"
         timeout: 10
 
       - id: "store-amazon-product"
@@ -234,23 +252,23 @@ steps:
         agent_instruction: "Store Amazon product to database"
         inputs:
           operation: "store"
-          collection: "amazon_products"
+          collection: "amazon_coffee_products"
           data: "{{amazon_product_info}}"
         outputs:
           message: "amazon_store_message"
         timeout: 15
 
-  - id: "prepare-final-output"
-    name: "Prepare final analysis output"
+  - id: "prepare-output"
+    name: "Prepare final output"
     agent_type: "variable"
-    description: "Organize market analysis results"
-    agent_instruction: "Prepare final output with collected data from both platforms"
+    description: "Organize collection results and prepare analysis summary"
+    agent_instruction: "Prepare final output with market comparison data"
     inputs:
       operation: "set"
       data:
-        allegro_products: "{{all_allegro_products}}"
-        amazon_products: "{{all_amazon_products}}"
-        final_response: "Successfully collected {{allegro_index}} Allegro products and {{amazon_index}} Amazon products for market analysis"
+        allegro_products: "{{all_allegro_product_details}}"
+        amazon_products: "{{all_amazon_product_details}}"
+        final_response: "Successfully collected {{allegro_product_index}} Allegro products and {{amazon_product_index}} Amazon products for market analysis"
     outputs:
       allegro_products: "allegro_products"
       amazon_products: "amazon_products"

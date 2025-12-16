@@ -87,17 +87,6 @@ steps:
       result: "newest_nav"
     timeout: 30
 
-  - id: "navigate-staff-picks"
-    name: "Navigate to staff picks filter"
-    agent_type: "browser_agent"
-    description: "Apply Projects We Love staff pick filter"
-    agent_instruction: "Navigate to staff picks filtered page"
-    inputs:
-      target_url: "https://www.kickstarter.com/discover/advanced?category_id=16&staff_picks=1&sort=newest&seed=2936830&page=1"
-    outputs:
-      result: "staff_picks_nav"
-    timeout: 30
-
   - id: "create-page-list"
     name: "Create page number list"
     agent_type: "variable"
@@ -107,7 +96,7 @@ steps:
       operation: "set"
       data:
         # page_numbers: [3,8, 9]
-        page_numbers: [1]
+        page_numbers: [1,2,3,4,5]
     outputs:
       page_numbers: "page_numbers"
     timeout: 10
@@ -128,7 +117,7 @@ steps:
         description: "Navigate to specific page number"
         agent_instruction: "Navigate to page {{page_num}} of search results"
         inputs:
-          target_url: "https://www.kickstarter.com/discover/advanced?category_id=16&woe_id=0&staff_picks=1&sort=newest&seed=2936830&page={{page_num}}"
+          target_url: "https://www.kickstarter.com/discover/advanced?category_id=16&woe_id=0&sort=newest&seed=2936830&page={{page_num}}"
         outputs:
           result: "page_nav"
         timeout: 30
@@ -276,6 +265,7 @@ steps:
           operation: "set"
           data:
             merged_project:
+              chinese_introduction: "{{chinese_introduction}}"
               project_url: "{{current_project.url}}"
               project_title: "{{project_funding.0.project_title}}"
               funding_amount: "{{project_funding.0.funding_amount}}"
@@ -285,7 +275,6 @@ steps:
               creator_description: "{{creator_info.0.creator_description}}"
               social_media_links: "{{creator_info.0.social_media_links}}"
               creator_location: "{{creator_info.0.creator_location}}"
-              chinese_introduction: "{{chinese_introduction}}"
         outputs:
           merged_project: "merged_project"
         timeout: 10

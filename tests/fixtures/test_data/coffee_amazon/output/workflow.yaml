@@ -54,7 +54,7 @@ steps:
       dom_scope: "full"
       max_items: 10
       data_requirements:
-        user_description: "Extract all coffee product URLs from the listing page"
+        user_description: "Extract all coffee product URLs from the listing page, and only extract homepage of product, not comments"
         output_format:
           url: "Product detail page URL"
         sample_data:
@@ -94,7 +94,7 @@ steps:
         agent_instruction: "Visit product detail page and extract product name, price, and customer ratings"
         inputs:
           target_path: "{{current_product.url}}"
-          extraction_method: "llm"
+          extraction_method: "script"
           dom_scope: "partial"
           data_requirements:
             user_description: "Extract product name, price, and customer ratings from Amazon product page"

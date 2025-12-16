@@ -97,7 +97,7 @@ steps:
         agent_instruction: "Visit product detail page and extract name, price, and sales count"
         inputs:
           target_path: "{{current_product.url}}"
-          extraction_method: "llm"
+          extraction_method: "script"
           dom_scope: "partial"
           data_requirements:
             user_description: "Extract coffee product details including name, price, and purchase statistics"

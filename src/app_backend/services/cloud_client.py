@@ -108,6 +108,7 @@ class CloudClient:
             "/api/recordings/upload",
             json={
                 "user_id": user_id,
+                "user_api_key": self.user_api_key,
                 "task_description": task_description,
                 "user_query": user_query,
                 "operations": operations,
