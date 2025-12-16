@@ -748,16 +748,23 @@ class ScraperAgent(BaseStepAgent):
                 logger.info(f"✅ Loaded cached script from {script_file}")
                 logger.info(f"   Script size: {len(script_content)} chars")
 
-                # Send log to frontend
+                # Send log to frontend with script content
                 if context and context.log_callback:
                     try:
+                        metadata = {
+                            "cache_path": str(script_file),
+                            "script_content": script_content,
+                            "content_type": "code",
+                            "language": "python"
+                        }
+                        logger.info(f"Sending script content to frontend: {len(script_content)} chars, metadata keys: {list(metadata.keys())}")
                         await context.log_callback(
                             "info",
                             f"✅ Using cached extraction script ({len(script_content)} chars)",
-                            {"cache_path": str(script_file)}
+                            metadata
                         )
                     except Exception as e:
-                        logger.warning(f"Failed to send log callback: {e}")
+                        logger.warning(f"Failed to send log callback: {e}", exc_info=True)
 
                 # Wrap the script with execution wrapper (same as fresh generation)
                 generated_script = self._extract_and_wrap_code(script_content)
@@ -801,7 +808,7 @@ class ScraperAgent(BaseStepAgent):
 
                 # Generate script using Claude SDK
                 generated_script = await self._generate_extraction_script_with_llm(
-                    dom_analysis, data_requirements, [], None
+                    dom_analysis, data_requirements, [], None, context=context
                 )
 
                 logger.info(f"✅ Script generated successfully by Claude SDK")
@@ -1348,7 +1355,8 @@ Extract data now:"""
                                                  data_requirements: Dict,
                                                  interaction_steps: List[Dict],
                                                  example_data: Optional[str] = None,
-                                                 max_dom_chars: int = 250000) -> str:
+                                                 max_dom_chars: int = 250000,
+                                                 context: Optional[AgentContext] = None) -> str:
         """Generate data extraction script using Claude Agent SDK with iterative refinement
 
         Args:
@@ -1357,6 +1365,7 @@ Extract data now:"""
             interaction_steps: Interaction steps (unused in Claude SDK mode)
             example_data: Example data (unused in Claude SDK mode)
             max_dom_chars: Maximum DOM characters (unused - Claude can grep the file)
+            context: Agent context for progress reporting
 
         Returns:
             Generated script content as string
@@ -1516,23 +1525,99 @@ Create and run a test to validate your extraction_script.py works correctly.
             )
             logger.info("Claude Agent Provider initialized")
 
-            # 5. Run Claude SDK to generate and test script
+            # 5. Run Claude SDK to generate and test script with streaming
             max_iterations = self.config_service.get("claude_agent.default_max_iterations", 50)
 
-            logger.info(f"Starting Claude SDK task with max_iterations={max_iterations}")
-            result = await claude_provider.run_task(
-                prompt=prompt,
-                working_dir=working_dir,
-                max_iterations=max_iterations
-            )
+            # Progress update ID for dynamic log updates
+            progress_update_id = f"script_generation_{id(self)}"
+
+            logger.info(f"Starting Claude SDK streaming task with max_iterations={max_iterations}")
+
+            # Use streaming version to get real-time progress
+            final_turn = 0
+            task_completed = False
+            task_error = None
+
+            try:
+                async for event in claude_provider.run_task_stream(
+                    prompt=prompt,
+                    working_dir=working_dir,
+                    max_iterations=max_iterations
+                ):
+                    # Forward streaming events to frontend
+                    if context and context.log_callback:
+                        try:
+                            if event.type == "text":
+                                # Claude's thinking text
+                                await context.log_callback(
+                                    "info",
+                                    f"📝 Generating script (iteration {event.turn}/{max_iterations})\n{event.content[:150]}...",
+                                    {
+                                        "update_id": progress_update_id,
+                                        "turn": event.turn,
+                                        "max_turns": max_iterations,
+                                        "message": event.content[:150]
+                                    }
+                                )
+                            elif event.type == "tool_use":
+                                # Tool usage
+                                tool_desc = f"Using {event.tool_name} tool"
+                                await context.log_callback(
+                                    "info",
+                                    f"📝 Generating script (iteration {event.turn}/{max_iterations})\n{tool_desc}",
+                                    {
+                                        "update_id": progress_update_id,
+                                        "turn": event.turn,
+                                        "max_turns": max_iterations,
+                                        "message": tool_desc,
+                                        "tool_name": event.tool_name
+                                    }
+                                )
+                            elif event.type == "thinking":
+                                # System messages
+                                await context.log_callback(
+                                    "info",
+                                    f"📝 Generating script\n{event.content}",
+                                    {
+                                        "update_id": progress_update_id,
+                                        "turn": event.turn or 0,
+                                        "max_turns": max_iterations,
+                                        "message": event.content
+                                    }
+                                )
+                            elif event.type == "complete":
+                                # Task completed successfully
+                                task_completed = True
+                                final_turn = event.turn or 0
+                                logger.info(f"✅ Streaming task completed: {event.content}")
+                            elif event.type == "error":
+                                # Task failed
+                                task_error = event.content
+                                final_turn = event.turn or 0
+                                logger.error(f"❌ Streaming task error: {event.content}")
+                        except Exception as e:
+                            logger.warning(f"Failed to forward streaming event: {e}")
+
+                    # Track final turn for all events
+                    if event.turn:
+                        final_turn = event.turn
+
+            except Exception as e:
+                task_error = str(e)
+                logger.error(f"Error during streaming task: {e}", exc_info=True)
 
             # 6. Check result
-            if not result.success:
-                error_msg = f"Claude SDK script generation failed after {result.iterations} iterations: {result.error}"
+            if task_error:
+                error_msg = f"Claude SDK script generation failed after {final_turn} iterations: {task_error}"
                 logger.error(error_msg)
                 raise RuntimeError(error_msg)
 
-            logger.info(f"Claude SDK completed successfully in {result.iterations} iterations")
+            if not task_completed:
+                error_msg = f"Claude SDK script generation did not complete (got {final_turn} turns)"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
+
+            logger.info(f"Claude SDK completed successfully in {final_turn} iterations")
 
             # 7. Read generated script
             script_file = working_dir / "extraction_script.py"
@@ -1544,6 +1629,38 @@ Create and run a test to validate your extraction_script.py works correctly.
 
             script_content = script_file.read_text(encoding='utf-8')
             logger.info(f"Script loaded from {script_file} ({len(script_content)} chars)")
+
+            # Send final update to mark the dynamic progress as completed
+            if context and context.log_callback:
+                try:
+                    # First, update the dynamic progress log to show completion
+                    await context.log_callback(
+                        "success",
+                        f"✅ Script generation completed in {final_turn} iterations",
+                        {
+                            "update_id": progress_update_id,
+                            "turn": final_turn,
+                            "max_turns": max_iterations,
+                            "message": "Completed",
+                            "completed": True
+                        }
+                    )
+
+                    # Then send a new log with the script content
+                    await context.log_callback(
+                        "success",
+                        f"✅ Script generated successfully ({len(script_content)} chars)",
+                        {
+                            "cache_path": str(script_file),
+                            "script_content": script_content,
+                            "content_type": "code",
+                            "language": "python",
+                            "iterations": final_turn
+                        }
+                    )
+                    logger.info(f"Sent script generation completion to frontend")
+                except Exception as e:
+                    logger.warning(f"Failed to send completion log: {e}", exc_info=True)
 
             # 8. Update workflow metadata with ResourceManager
             if self.resource_manager and hasattr(self, '_context') and self._context:

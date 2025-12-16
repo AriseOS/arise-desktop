@@ -15,7 +15,7 @@ Primary use case: ScraperAgent script generation with iterative refinement
 import os
 import logging
 from pathlib import Path
-from typing import Optional, List, TYPE_CHECKING
+from typing import Optional, List, AsyncIterator, TYPE_CHECKING
 from dataclasses import dataclass
 
 if TYPE_CHECKING:
@@ -37,6 +37,16 @@ class AgentResult:
     success: bool
     iterations: int
     error: Optional[str] = None
+
+
+@dataclass
+class StreamEvent:
+    """Streaming event from Claude Agent SDK"""
+    type: str  # "text", "tool_use", "tool_result", "thinking", "complete", "error"
+    content: Optional[str] = None
+    tool_name: Optional[str] = None
+    tool_input: Optional[dict] = None
+    turn: Optional[int] = None
 
 
 class ClaudeAgentProvider:
@@ -344,3 +354,107 @@ class ClaudeAgentProvider:
             error_msg = f"Claude SDK error: {str(e)}"
             logger.error(error_msg)
             raise RuntimeError(error_msg) from e
+
+    async def run_task_stream(
+        self,
+        prompt: str,
+        working_dir: Path,
+        max_iterations: int = 50,
+        tools: Optional[List[str]] = None
+    ) -> AsyncIterator[StreamEvent]:
+        """Execute a task using Claude Agent SDK with real-time streaming"""
+        working_dir = Path(working_dir)
+        if not working_dir.exists() or not working_dir.is_dir():
+            raise ValueError(f"Invalid working directory: {working_dir}")
+
+        if tools is None:
+            tools = ["Read", "Write", "Edit", "Bash", "Glob"]
+
+        try:
+            from claude_agent_sdk import (
+                ClaudeSDKClient,
+                ClaudeAgentOptions,
+                ResultMessage,
+                AssistantMessage,
+                SystemMessage,
+                TextBlock,
+                ToolUseBlock
+            )
+
+            env_vars = dict(os.environ)
+            env_vars["ANTHROPIC_API_KEY"] = self.api_key
+            if self.base_url:
+                env_vars["ANTHROPIC_BASE_URL"] = self.base_url
+
+            options = ClaudeAgentOptions(
+                model=self.model,
+                cwd=str(working_dir),
+                max_turns=max_iterations,
+                allowed_tools=tools,
+                permission_mode="bypassPermissions",
+                env=env_vars,
+                max_buffer_size=1024 * 1024
+            )
+
+            turn_count = 0
+            yield StreamEvent(type="thinking", content="Initializing Claude Agent...", turn=0)
+
+            import asyncio
+            async with asyncio.timeout(max_iterations * 30):
+                async with ClaudeSDKClient(options=options) as client:
+                    await client.query(prompt)
+                    logger.info("Query sent to Claude SDK, streaming responses...")
+
+                    async for message in client.receive_response():
+                        if isinstance(message, AssistantMessage):
+                            turn_count += 1
+                            logger.info(f"🤖 AssistantMessage #{turn_count}")
+
+                            if hasattr(message, 'content'):
+                                for block in message.content:
+                                    if isinstance(block, TextBlock):
+                                        logger.info(f"   [Turn {turn_count}] Text: {block.text[:100]}...")
+                                        yield StreamEvent(
+                                            type="text",
+                                            content=block.text,
+                                            turn=turn_count
+                                        )
+                                    elif isinstance(block, ToolUseBlock):
+                                        logger.info(f"   [Turn {turn_count}] Tool use: {block.name}")
+                                        yield StreamEvent(
+                                            type="tool_use",
+                                            tool_name=block.name,
+                                            tool_input=block.input if hasattr(block, 'input') else None,
+                                            turn=turn_count
+                                        )
+
+                        elif isinstance(message, SystemMessage):
+                            logger.info(f"⚙️  SystemMessage: {message.subtype}")
+                            if message.subtype == 'init':
+                                yield StreamEvent(type="thinking", content="Claude Agent initialized", turn=0)
+
+                        elif isinstance(message, ResultMessage):
+                            logger.info(
+                                f"✅ Claude Agent completed: success={not message.is_error}, "
+                                f"turns={message.num_turns}, duration={message.duration_ms/1000:.1f}s"
+                            )
+                            if message.is_error:
+                                yield StreamEvent(
+                                    type="error",
+                                    content=message.result or "Unknown error",
+                                    turn=message.num_turns
+                                )
+                            else:
+                                yield StreamEvent(
+                                    type="complete",
+                                    content=f"Task completed successfully in {message.num_turns} turns",
+                                    turn=message.num_turns
+                                )
+
+        except ImportError as e:
+            logger.error(f"Claude Agent SDK not installed: {e}")
+            yield StreamEvent(type="error", content="Claude Agent SDK not installed", turn=0)
+
+        except Exception as e:
+            logger.error(f"Claude SDK error: {e}", exc_info=True)
+            yield StreamEvent(type="error", content=str(e), turn=0)

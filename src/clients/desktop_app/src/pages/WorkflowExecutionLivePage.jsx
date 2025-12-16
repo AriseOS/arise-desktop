@@ -179,12 +179,23 @@ function WorkflowExecutionLivePage({
 
       // Add log entry if provided
       if (data.log) {
-        addLogEntry({
+        const logEntry = {
           level: data.log.level || 'info',
           message: data.log.message,
           time: data.log.time,
           metadata: data.log.metadata || null
-        });
+        };
+
+        // Debug: log when code content is received
+        if (logEntry.metadata && logEntry.metadata.content_type === 'code') {
+          console.log('[Debug] Code content received:', {
+            hasScriptContent: !!logEntry.metadata.script_content,
+            scriptLength: logEntry.metadata.script_content?.length,
+            metadata: logEntry.metadata
+          });
+        }
+
+        addLogEntry(logEntry);
       }
 
       // Handle completion
@@ -226,7 +237,32 @@ function WorkflowExecutionLivePage({
   };
 
   const addLogEntry = (logEntry) => {
-    setLogs(prevLogs => [...prevLogs, logEntry]);
+    setLogs(prevLogs => {
+      // Check if this is a dynamic update (has update_id in metadata)
+      const updateId = logEntry.metadata?.update_id;
+
+      if (updateId) {
+        // Find existing log with same update_id
+        const existingIndex = prevLogs.findIndex(
+          log => log.metadata?.update_id === updateId
+        );
+
+        if (existingIndex >= 0) {
+          // Update existing log
+          const newLogs = [...prevLogs];
+          newLogs[existingIndex] = {
+            ...newLogs[existingIndex],
+            message: logEntry.message,
+            metadata: logEntry.metadata,
+            time: logEntry.time
+          };
+          return newLogs;
+        }
+      }
+
+      // Add new log entry
+      return [...prevLogs, logEntry];
+    });
   };
 
   const toggleLogExpand = (idx) => {
@@ -412,7 +448,13 @@ function WorkflowExecutionLivePage({
                 return (
                   <div key={idx} className="log-entry" data-level={log.level}>
                     <div className="log-main">
-                      <span className="log-icon">{getLogIcon(log.level)}</span>
+                      <span className="log-icon">
+                        {log.metadata?.update_id && !log.metadata?.completed ? (
+                          <Icon icon="loader" size={14} className="spinning-loader" />
+                        ) : (
+                          getLogIcon(log.level)
+                        )}
+                      </span>
                       <span className="log-time">{log.time}</span>
                       <span className="log-message" style={{ color: getLogColor(log.level) }}>
                         {log.message}
@@ -429,7 +471,30 @@ function WorkflowExecutionLivePage({
                     </div>
                     {hasMetadata && isExpanded && (
                       <div className="log-metadata">
-                        <pre>{JSON.stringify(log.metadata, null, 2)}</pre>
+                        {log.metadata.content_type === 'code' ? (
+                          log.metadata.script_content ? (
+                            <div className="code-content">
+                              <div className="code-header">
+                                <span className="code-label">
+                                  {log.metadata.language || 'code'}
+                                </span>
+                                <span className="code-label" style={{ fontSize: '10px' }}>
+                                  {log.metadata.script_content.length} chars
+                                </span>
+                              </div>
+                              <pre className="code-block">
+                                <code>{log.metadata.script_content}</code>
+                              </pre>
+                            </div>
+                          ) : (
+                            <div style={{ padding: '8px', color: 'var(--status-error-text)' }}>
+                              Code content missing. Metadata keys: {Object.keys(log.metadata).join(', ')}
+                              <pre style={{ marginTop: '8px' }}>{JSON.stringify(log.metadata, null, 2)}</pre>
+                            </div>
+                          )
+                        ) : (
+                          <pre>{JSON.stringify(log.metadata, null, 2)}</pre>
+                        )}
                       </div>
                     )}
                   </div>
