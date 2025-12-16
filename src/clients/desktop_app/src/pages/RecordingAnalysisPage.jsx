@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import Icon from '../components/Icons';
+import { api } from '../utils/api';
 import '../styles/RecordingAnalysisPage.css';
 
 const API_BASE = "http://127.0.0.1:8765";
@@ -57,25 +58,15 @@ function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
         });
       }, 500);
 
-      const metaflowResponse = await fetch(`${API_BASE}/api/metaflows/from-recording`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          session_id: sessionId,
-          task_description: taskDescription,
-          user_query: userQuery,
-          user_id: userId
-        })
-      });
+      const metaflowResult = await api.generateMetaflowFromRecording(
+        sessionId,
+        taskDescription,
+        userQuery,
+        userId
+      );
 
       clearInterval(progressInterval);
       setGenerationProgress(100);
-
-      if (!metaflowResponse.ok) {
-        throw new Error(`MetaFlow generation failed: ${metaflowResponse.status}`);
-      }
-
-      const metaflowResult = await metaflowResponse.json();
 
       showStatus("MetaFlow generated! Redirecting to preview...", "success");
 

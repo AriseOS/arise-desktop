@@ -253,6 +253,7 @@ async def upload_recording(data: dict):
     Body:
         {
             "user_id": "user123",
+            "user_api_key": "ami_xxx...",  # User's Ami API key for LLM calls
             "task_description": "Search for coffee on Google",  # User's description of what they did
             "operations": [...]
         }
@@ -263,6 +264,7 @@ async def upload_recording(data: dict):
     Note: Intent extraction happens in background. Graph is updated asynchronously.
     """
     user_id = data.get("user_id")
+    user_api_key = data.get("user_api_key")
     task_description = data.get("task_description", "")
     user_query = data.get("user_query")
     operations = data.get("operations", [])
@@ -271,6 +273,9 @@ async def upload_recording(data: dict):
 
     if not user_id:
         raise HTTPException(400, "Missing user_id")
+
+    if not user_api_key:
+        raise HTTPException(400, "Missing user_api_key")
 
     if not operations:
         raise HTTPException(400, "Missing operations")
@@ -309,7 +314,8 @@ async def upload_recording(data: dict):
             user_id,
             recording_id,
             operations,
-            task_description
+            task_description,
+            user_api_key
         )
     )
 
@@ -367,7 +373,8 @@ async def add_intents_to_user_graph_background(
     user_id: str,
     recording_id: str,
     operations: list,
-    task_description: str
+    task_description: str,
+    user_api_key: str
 ):
     """Background task: Extract intents from operations and add to user's Intent Graph"""
     try:
@@ -382,7 +389,8 @@ async def add_intents_to_user_graph_background(
         new_intents_count = await workflow_generation_service.add_intents_to_graph(
             operations=operations,
             graph_filepath=graph_filepath,
-            task_description=task_description
+            task_description=task_description,
+            user_api_key=user_api_key
         )
 
         logger.info(f"✅ Background: Added {new_intents_count} intents from recording {recording_id}")

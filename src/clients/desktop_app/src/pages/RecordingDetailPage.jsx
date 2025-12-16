@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import Icon from '../components/Icons';
+import { api } from '../utils/api';
 import '../styles/RecordingDetailPage.css';
 
 const API_BASE = "http://127.0.0.1:8765";
@@ -88,22 +89,12 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
       const task_description = recording.task_metadata?.task_description || "Auto-generated workflow from recording";
       const user_query = recording.task_metadata?.user_query;
 
-      const response = await fetch(`${API_BASE}/api/metaflows/from-recording`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          session_id: sessionId,
-          task_description: task_description,
-          user_query: user_query,  // Pass user_query to backend
-          user_id: userId
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to generate MetaFlow: ${response.status}`);
-      }
-
-      const data = await response.json();
+      const data = await api.generateMetaflowFromRecording(
+        sessionId,
+        task_description,
+        user_query,
+        userId
+      );
 
       showStatus('MetaFlow generated! Please review.', 'success');
 

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import Icon from '../components/Icons';
+import { api } from '../utils/api';
 import '../styles/ConversationalGenerationPage.css';
 
 const API_BASE = "http://127.0.0.1:8765";
@@ -41,41 +42,23 @@ function ConversationalGenerationPage({ session, onNavigate, showStatus }) {
     setIsGenerating(true);
 
     try {
-      let response;
-      let apiEndpoint;
-      let requestBody;
+      let data;
 
-      // Choose API endpoint based on whether a recording is referenced
+      // Choose API based on whether a recording is referenced
       if (referencedRecording?.session_id) {
         // Generate MetaFlow from recording
-        apiEndpoint = `${API_BASE}/api/metaflows/from-recording`;
-        requestBody = {
-          session_id: referencedRecording.session_id,
-          task_description: description,
-          user_id: userId
-        };
         showStatus('Generating MetaFlow from recording...', 'info');
+        data = await api.generateMetaflowFromRecording(
+          referencedRecording.session_id,
+          description,
+          null,  // user_query
+          userId
+        );
       } else {
         // Generate MetaFlow from text description
-        apiEndpoint = `${API_BASE}/api/metaflows/generate`;
-        requestBody = {
-          task_description: description,
-          user_id: userId
-        };
         showStatus('Generating MetaFlow from your description...', 'info');
+        data = await api.generateMetaflow(description, null, userId);
       }
-
-      response = await fetch(apiEndpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody)
-      });
-
-      if (!response.ok) {
-        throw new Error(`MetaFlow generation failed: ${response.status}`);
-      }
-
-      const data = await response.json();
 
       showStatus('MetaFlow generated! Please review.', 'success');
 
