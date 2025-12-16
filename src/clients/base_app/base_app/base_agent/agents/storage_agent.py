@@ -237,6 +237,11 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
             for item in data:
                 await self._store_single(collection, item, user_id, context)
                 count += 1
+
+            # Send user-friendly log output via WebSocket
+            if context.logger:
+                context.logger.info(f"✅ Successfully stored {count} records to collection '{collection}'")
+
             return {
                 "message": f"Stored {count} records to collection '{collection}'",
                 "collection": collection,
@@ -245,6 +250,11 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
         else:
             # Single data
             await self._store_single(collection, data, user_id, context)
+
+            # Send user-friendly log output via WebSocket
+            if context.logger:
+                context.logger.info(f"✅ Successfully stored 1 record to collection '{collection}'")
+
             return {
                 "message": f"Stored 1 record to collection '{collection}'",
                 "collection": collection,
