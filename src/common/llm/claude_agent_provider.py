@@ -121,7 +121,7 @@ class ClaudeAgentProvider:
         self,
         prompt: str,
         working_dir: Path,
-        max_iterations: int = 50,
+        max_iterations: int = 25,
         tools: Optional[List[str]] = None
     ) -> AgentResult:
         """
@@ -138,7 +138,7 @@ class ClaudeAgentProvider:
             prompt: Task description for Claude (should include requirements,
                    context files, expected output format, etc.)
             working_dir: Directory where Claude can read/write files
-            max_iterations: Maximum number of iterations (default: 5)
+            max_iterations: Maximum number of iterations (default: 25)
             tools: List of tools Claude can use. Default: ["Read", "Write", "Edit", "Bash", "Glob"]
 
         Returns:
@@ -359,7 +359,7 @@ class ClaudeAgentProvider:
         self,
         prompt: str,
         working_dir: Path,
-        max_iterations: int = 50,
+        max_iterations: int = 25,
         tools: Optional[List[str]] = None
     ) -> AsyncIterator[StreamEvent]:
         """Execute a task using Claude Agent SDK with real-time streaming"""

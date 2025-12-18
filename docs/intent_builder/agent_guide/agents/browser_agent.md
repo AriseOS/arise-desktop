@@ -1,377 +1,184 @@
 # BrowserAgent Specification
 
-**Purpose**: Navigate to web pages and perform basic interactions without data extraction
+**Agent Type**: `browser_agent`
 
-**When to use**:
-- Intent is pure navigation (no data extraction)
-- Intent description contains keywords: "navigate", "enter", "visit", "go to"
-- NO extract operations in the intent
+## Purpose
 
-**When NOT to use**:
-- Intent involves data extraction → Use `scraper_agent` instead
-- Intent has extract operations → Use `scraper_agent`
+Browser interactions: navigate, click, fill, scroll. **browser_agent handles navigation and interactions, NOT data extraction**.
 
----
-
-## Basic Usage
-
-```yaml
-- id: "step-id"
-  agent_type: "browser_agent"
-  name: "Navigate to page"
-  description: "Navigate to target page"
-  inputs:
-    target_url: "https://example.com"
-  outputs:
-    result: "nav_result"
-  timeout: 30
-```
-
----
+**IMPORTANT - Separation of Concerns**:
+- browser_agent: Navigation + Interactions (click, fill, scroll)
+- scraper_agent: Data extraction
 
 ## Input Parameters
 
+### Optional
+```yaml
+inputs:
+  target_url: "https://example.com"     # URL to navigate to first
+  interaction_steps:                     # List of interactions to perform
+    - task: "Description of action"      # What to do (Claude Agent finds element)
+      xpath_hints:                       # Hints to help locate element
+        hint_name: "//xpath/expression"
+      text: "input text"                 # For fill operations only
+```
+
 **Note**: At least one of `target_url` or `interaction_steps` must be provided.
 
-### Optional
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `target_url` | string | - | Target URL to navigate to (if omitted, operations will be performed on current page) |
-| `interaction_steps` | array | `[]` | Interaction steps to execute (currently only supports scroll). If `target_url` is provided, steps execute after navigation; otherwise, steps execute on current page. |
-| `timeout` | integer | 30 | Timeout in seconds |
-
----
-
-## Interaction Steps
-
-Currently only supports **scroll** operations.
-
-### Scroll Configuration
+## Output
 
 ```yaml
-interaction_steps:
-  - action_type: "scroll"
-    parameters:
-      down: true           # true=scroll down, false=scroll up
-      num_pages: 2.0       # Number of pages to scroll (e.g., 2.0 = 2 pages)
+outputs:
+  result: "variable_name"   # Operation result
 ```
 
-**Example 1: Navigate and Scroll**
-```yaml
-- id: "navigate-and-scroll"
-  agent_type: "browser_agent"
-  inputs:
-    target_url: "https://example.com/page"
-    interaction_steps:
-      - action_type: "scroll"
-        parameters:
-          down: true
-          num_pages: 2.0
-```
-
-**Example 2: Scroll Only (on current page)**
-```yaml
-- id: "scroll-to-load-more"
-  agent_type: "browser_agent"
-  inputs:
-    interaction_steps:
-      - action_type: "scroll"
-        parameters:
-          down: true
-          num_pages: 5
-```
-
----
-
-## Output Format
-
+**Return Format**:
 ```yaml
 {
   "success": true,
-  "message": "Successfully navigated to https://example.com",
-  "current_url": "https://example.com",
-  "steps_executed": 0
+  "message": "All steps completed",
+  "current_url": "https://...",
+  "steps_executed": 3
 }
 ```
 
-**Output Fields**:
-- `success`: Whether navigation was successful
-- `message`: Execution message
-- `current_url`: Current page URL after navigation
-- `steps_executed`: Number of interaction steps executed
+## Supported Operations
 
----
+| Operation | How to Specify | Description |
+|-----------|----------------|-------------|
+| Navigate | `target_url: "url"` | Navigate to URL |
+| Click | `task: "Click the button"` | Click element (task contains "click") |
+| Fill | `task: "Fill the field"` + `text: "value"` | Fill input (task contains "fill/input/enter" + text provided) |
+| Scroll | `action_type: "scroll"` | Scroll page up/down |
+| Scroll to Element | `task: "Scroll to section"` | Scroll to make element visible (task contains "scroll to") |
 
-## Usage Scenarios
+## Examples
 
-### Scenario 1: Simple Navigation
-
-**Intent**: "Navigate to homepage"
-
-**Workflow**:
+### Navigate Only
 ```yaml
-- id: "navigate-home"
+- id: "navigate-to-page"
   agent_type: "browser_agent"
-  description: "Navigate to Allegro homepage"
-  inputs:
-    target_url: "https://allegro.pl/"
-  outputs:
-    result: "nav_result"
-  timeout: 30
-```
-
-### Scenario 2: Multi-step Navigation
-
-**Intent**: Multi-step navigation to establish session (prevent anti-bot detection)
-
-**Workflow**:
-```yaml
-steps:
-  # Step 1: Visit homepage first
-  - id: "navigate-homepage"
-    agent_type: "browser_agent"
-    inputs:
-      target_url: "https://example.com/"
-    outputs:
-      result: "homepage_result"
-
-  # Step 2: Navigate to category page
-  - id: "navigate-category"
-    agent_type: "browser_agent"
-    inputs:
-      target_url: "https://example.com/category/coffee"
-    outputs:
-      result: "category_result"
-
-  # Step 3: Extract data from current page (using scraper_agent)
-  - id: "extract-products"
-    agent_type: "scraper_agent"
-    inputs:
-      use_current_page: true  # Use page from previous step
-      data_requirements: {...}
-```
-
-### Scenario 3: Navigation with Scroll
-
-**Intent**: "Navigate to page and scroll to trigger lazy loading"
-
-**Workflow**:
-```yaml
-- id: "navigate-and-load"
-  agent_type: "browser_agent"
-  description: "Navigate and scroll to load more content"
   inputs:
     target_url: "https://example.com/products"
+```
+
+### Click Button
+```yaml
+- id: "click-new-mail"
+  agent_type: "browser_agent"
+  inputs:
+    interaction_steps:
+      - task: "Click the 'New mail' button"
+        xpath_hints:
+          button: "//button[contains(@aria-label, 'New mail')]"
+```
+
+### Fill Form
+```yaml
+- id: "fill-email"
+  agent_type: "browser_agent"
+  inputs:
+    interaction_steps:
+      - task: "Enter email in the recipient field"
+        xpath_hints:
+          to_field: "//input[@aria-label='To']"
+        text: "{{recipient_email}}"
+```
+
+### Scroll Page
+```yaml
+- id: "scroll-down"
+  agent_type: "browser_agent"
+  inputs:
     interaction_steps:
       - action_type: "scroll"
         parameters:
           down: true
-          num_pages: 2.0
-  outputs:
-    result: "nav_result"
-  timeout: 45
+          num_pages: 2
 ```
 
-### Scenario 4: Scroll Only on Current Page
-
-**Intent**: "After navigation, scroll to load all products via infinite scroll"
-
-**Workflow**:
+### Scroll to Element
 ```yaml
-steps:
-  # Step 1: Navigate to page
-  - id: "navigate-to-weekly"
-    agent_type: "browser_agent"
-    inputs:
-      target_url: "{{weekly_link.weekly_url}}"
-    timeout: 30
-
-  # Step 2: Scroll to load more content (on current page)
-  - id: "scroll-to-load-all"
-    agent_type: "browser_agent"
-    inputs:
-      interaction_steps:
-        - action_type: "scroll"
-          parameters:
-            down: true
-            num_pages: 5
-    timeout: 60
+- id: "scroll-to-section"
+  agent_type: "browser_agent"
+  inputs:
+    interaction_steps:
+      - task: "Scroll to the References section"
+        xpath_hints:
+          section: "//h2[@id='References']"
 ```
 
----
+### Complete Workflow: Navigate + Click + Fill
+```yaml
+- id: "compose-email"
+  agent_type: "browser_agent"
+  inputs:
+    target_url: "https://outlook.live.com/mail/"
+    interaction_steps:
+      - task: "Click the 'New mail' button"
+        xpath_hints:
+          button: "//button[contains(@aria-label, 'New')]"
+
+      - task: "Fill in the recipient email"
+        xpath_hints:
+          to_field: "//input[@aria-label='To']"
+        text: "{{recipient_email}}"
+
+      - task: "Fill in the subject"
+        xpath_hints:
+          subject: "//input[@aria-label='Subject']"
+        text: "{{subject}}"
+  timeout: 120
+```
 
 ## Cooperation with ScraperAgent
 
-**Pattern**: BrowserAgent navigates → ScraperAgent extracts
+**Pattern**: browser_agent navigates/interacts → scraper_agent extracts
 
 ```yaml
 steps:
-  # BrowserAgent: Navigate to page
-  - id: "step1"
+  # Step 1: Navigate and click to reveal data
+  - id: "navigate-and-expand"
     agent_type: "browser_agent"
     inputs:
-      target_url: "https://example.com/category"
-    outputs:
-      result: "nav_result"
+      target_url: "https://example.com/orders"
+      interaction_steps:
+        - task: "Click 'Show Details' button"
+          xpath_hints:
+            button: "//button[@class='show-details']"
 
-  # ScraperAgent: Extract data from current page
-  - id: "step2"
+  # Step 2: Extract data from current page
+  - id: "extract-data"
     agent_type: "scraper_agent"
     inputs:
-      use_current_page: true  # IMPORTANT: Don't navigate again
       data_requirements:
-        user_description: "Extract product URLs"
+        user_description: "Extract order details"
         output_format:
-          url: "Product URL"
+          order_id: "Order ID"
+          status: "Status"
     outputs:
-      extracted_data: "product_urls"
+      extracted_data: "order_info"
 ```
 
-**Key Point**: When ScraperAgent follows BrowserAgent, use `use_current_page: true` to avoid redundant navigation.
+## XPath Hints Guidelines
 
----
-
-## Browser Session Sharing
-
-**IMPORTANT**: BrowserAgent shares the same browser session with other agents in the workflow.
-
-**Benefits**:
-- Cookie/Session state is preserved across agents
-- Avoids redundant browser initialization
-- Enables proper navigation flow (homepage → category → detail)
-
-**Implementation**:
-- All agents get browser session from `AgentContext`
-- Navigation state persists between steps
-- ScraperAgent can use `use_current_page: true` to leverage BrowserAgent's navigation
-
----
-
-## Limitations (Current Version)
-
-**NOT Supported**:
-- ❌ Click operations
-- ❌ Input/form operations
-- ❌ Hover operations
-- ❌ Wait for specific conditions
-- ❌ Data extraction (use ScraperAgent)
-
-**Future Enhancements**:
-- Support click operations
-- Support input operations
-- Support complex interaction sequences
-
----
-
-## Decision Rules: BrowserAgent vs ScraperAgent
-
-### Use BrowserAgent when:
-- ✅ Intent is ONLY navigation
-- ✅ Intent description: "navigate", "enter", "visit", "go to"
-- ✅ NO extract operations
-- ✅ Purpose is to establish session or navigate to a page
-
-### Use ScraperAgent when:
-- ✅ Intent includes data extraction
-- ✅ Intent has extract operations
-- ✅ Intent description: "extract", "collect", "scrape", "get data"
-- ✅ Navigation + extraction in same step
-
-**Examples**:
-
-| Intent Description | Agent Type | Reason |
-|-------------------|------------|--------|
-| "Navigate to Allegro homepage" | `browser_agent` | Pure navigation |
-| "Navigate to coffee category through menu" | `browser_agent` | Pure navigation |
-| "Extract product URLs from category page" | `scraper_agent` | Has extraction |
-| "Visit product detail page and extract title and price" | `scraper_agent` | Navigation + extraction |
-| "Scroll to load more products and extract URLs" | `scraper_agent` | Scroll for extraction purpose |
-| "Scroll down to view content" (no extraction) | `browser_agent` | Pure interaction |
-
----
-
-## Error Handling
-
-**Navigation Failure**:
-```yaml
-{
-  "success": false,
-  "message": "Navigation failed",
-  "error": "Failed to load https://example.com/page: Timeout after 30s",
-  "current_url": "",
-  "steps_executed": 0
-}
-```
-
-**Unsupported Action**:
-```yaml
-{
-  "success": false,
-  "message": "Navigation failed",
-  "error": "Unsupported action type: click",
-  "current_url": "",
-  "steps_executed": 0
-}
-```
-
----
-
-## Example Workflow (Complete)
-
-**Task**: Navigate from homepage to category page, then extract products
+Provide multiple hints for robustness:
 
 ```yaml
-apiVersion: "ami.io/v1"
-kind: "Workflow"
-
-metadata:
-  name: "multi-step-navigation-example"
-  description: "Example of BrowserAgent + ScraperAgent cooperation"
-
-steps:
-  # Step 1: Navigate to homepage (establish session)
-  - id: "navigate-homepage"
-    name: "Navigate to homepage"
-    agent_type: "browser_agent"
-    description: "Navigate to Allegro homepage"
-    inputs:
-      target_url: "https://allegro.pl/"
-    outputs:
-      result: "homepage_nav"
-    timeout: 30
-
-  # Step 2: Navigate to category page
-  - id: "navigate-category"
-    name: "Navigate to category"
-    agent_type: "browser_agent"
-    description: "Navigate to coffee category page"
-    inputs:
-      target_url: "https://allegro.pl/kategoria/produkty-spozywcze-kawa-74030"
-    outputs:
-      result: "category_nav"
-    timeout: 30
-
-  # Step 3: Extract products from current page
-  - id: "extract-products"
-    name: "Extract product URLs"
-    agent_type: "scraper_agent"
-    description: "Extract all product URLs from category page"
-    inputs:
-      use_current_page: true  # Use page from step 2
-      extraction_method: "script"
-      data_requirements:
-        user_description: "Extract all coffee product URLs"
-        output_format:
-          url: "Product URL"
-        xpath_hints:
-          url: "//article//a[@class='product-link']"
-    outputs:
-      extracted_data: "product_urls"
-    timeout: 60
+xpath_hints:
+  by_aria: "//button[@aria-label='Submit']"        # Preferred: aria-label
+  by_text: "//button[contains(text(), 'Submit')]"  # Fallback: text content
+  by_class: "//button[contains(@class, 'submit')]" # Less stable: class
 ```
 
----
+Claude Agent uses hints as references but searches actual DOM.
 
-**Version**: 1.0
-**Last Updated**: 2025-11-02
+## How It Works
+
+1. **Get DOM**: Fetch page DOM with interactive elements
+2. **Check Cache**: Reuse cached script if exists
+3. **Claude Agent**: Generate `find_element.py` to locate target element
+4. **Execute**: Run script → get element → perform operation
+5. **Retry**: If failed, feedback to Claude Agent and retry
+
+Scripts are cached in `~/.ami/data/scripts/` for reuse.

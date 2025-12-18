@@ -278,6 +278,7 @@ Present the MetaFlow to me for review before proceeding to Workflow generation.
             options = ClaudeAgentOptions(
                 model=self.model,
                 cwd=str(self.working_dir),
+                max_turns=25,
                 allowed_tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
                 permission_mode="acceptEdits",
                 system_prompt=self.system_prompt,

@@ -1071,13 +1071,10 @@ Start by reading the files and analyzing the DOM!
                 api_key=api_key,
                 base_url=base_url
             )
-            max_iterations = self.config_service.get("claude_agent.fix_max_iterations", 25)
-
-            logger.info(f"🔍 Starting Claude Agent analysis (max_iterations={max_iterations})")
+            logger.info(f"Starting Claude Agent analysis...")
             result = await claude_provider.run_task(
                 prompt=prompt,
-                working_dir=script_workspace,
-                max_iterations=max_iterations
+                working_dir=script_workspace
             )
 
             # Analyze Claude Agent's result
@@ -1526,12 +1523,10 @@ Create and run a test to validate your extraction_script.py works correctly.
             logger.info("Claude Agent Provider initialized")
 
             # 5. Run Claude SDK to generate and test script with streaming
-            max_iterations = self.config_service.get("claude_agent.default_max_iterations", 50)
-
             # Progress update ID for dynamic log updates
             progress_update_id = f"script_generation_{id(self)}"
 
-            logger.info(f"Starting Claude SDK streaming task with max_iterations={max_iterations}")
+            logger.info(f"Starting Claude SDK streaming task...")
 
             # Use streaming version to get real-time progress
             final_turn = 0
@@ -1541,8 +1536,7 @@ Create and run a test to validate your extraction_script.py works correctly.
             try:
                 async for event in claude_provider.run_task_stream(
                     prompt=prompt,
-                    working_dir=working_dir,
-                    max_iterations=max_iterations
+                    working_dir=working_dir
                 ):
                     # Forward streaming events to frontend
                     if context and context.log_callback:
@@ -1551,11 +1545,10 @@ Create and run a test to validate your extraction_script.py works correctly.
                                 # Claude's thinking text
                                 await context.log_callback(
                                     "info",
-                                    f"📝 Generating script (iteration {event.turn}/{max_iterations})\n{event.content[:150]}...",
+                                    f"Generating script (turn {event.turn})\n{event.content[:150]}...",
                                     {
                                         "update_id": progress_update_id,
                                         "turn": event.turn,
-                                        "max_turns": max_iterations,
                                         "message": event.content[:150]
                                     }
                                 )
@@ -1564,11 +1557,10 @@ Create and run a test to validate your extraction_script.py works correctly.
                                 tool_desc = f"Using {event.tool_name} tool"
                                 await context.log_callback(
                                     "info",
-                                    f"📝 Generating script (iteration {event.turn}/{max_iterations})\n{tool_desc}",
+                                    f"Generating script (turn {event.turn})\n{tool_desc}",
                                     {
                                         "update_id": progress_update_id,
                                         "turn": event.turn,
-                                        "max_turns": max_iterations,
                                         "message": tool_desc,
                                         "tool_name": event.tool_name
                                     }
@@ -1577,11 +1569,10 @@ Create and run a test to validate your extraction_script.py works correctly.
                                 # System messages
                                 await context.log_callback(
                                     "info",
-                                    f"📝 Generating script\n{event.content}",
+                                    f"Generating script\n{event.content}",
                                     {
                                         "update_id": progress_update_id,
                                         "turn": event.turn or 0,
-                                        "max_turns": max_iterations,
                                         "message": event.content
                                     }
                                 )
@@ -1636,11 +1627,10 @@ Create and run a test to validate your extraction_script.py works correctly.
                     # First, update the dynamic progress log to show completion
                     await context.log_callback(
                         "success",
-                        f"✅ Script generation completed in {final_turn} iterations",
+                        f"Script generation completed in {final_turn} turns",
                         {
                             "update_id": progress_update_id,
                             "turn": final_turn,
-                            "max_turns": max_iterations,
                             "message": "Completed",
                             "completed": True
                         }

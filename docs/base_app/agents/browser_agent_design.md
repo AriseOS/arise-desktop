@@ -1,7 +1,7 @@
 # BrowserAgent 设计文档
 
-**版本**: 1.0
-**日期**: 2025-11-02
+**版本**: 2.0
+**日期**: 2025-12-16
 **状态**: 设计阶段
 
 ---
@@ -10,757 +10,501 @@
 
 ### 1.1 设计目标
 
-创建一个专门处理浏览器导航操作的 Agent，职责清晰：
+创建一个智能的浏览器交互 Agent，采用与 ScraperAgent 相同的"脚本生成 + 验证"模式：
 
-- **核心职责**: 页面导航 + 页面交互（scroll）
-- **不负责**: 数据提取
-- **协作方式**: 与 ScraperAgent 共享浏览器会话，完成导航后交给 ScraperAgent 提取数据
+- **核心职责**: 页面导航 + 智能交互（click、input、scroll、send_keys）
+- **设计原则**: LLM 根据实际 DOM 生成操作脚本，而非硬编码 xpath
+- **验证机制**: 执行后验证操作是否成功
+- **协作方式**: 与 ScraperAgent 共享浏览器会话
 
-### 1.2 架构位置
+### 1.2 与 ScraperAgent 的对比
+
+| 特性 | ScraperAgent | BrowserAgent (v2) |
+|------|-------------|-------------------|
+| 核心功能 | 数据提取 | 页面交互 |
+| 输入 | data_requirements + xpath_hints | task + xpath_hints |
+| 脚本生成 | LLM 根据 DOM 生成提取脚本 | LLM 根据 DOM 生成操作脚本 |
+| 验证方式 | 检查提取的数据是否符合格式 | 检查操作后页面是否变化 |
+| 缓存策略 | 缓存脚本（同结构页面复用） | 不缓存（每次页面状态不同） |
+
+### 1.3 架构位置
 
 ```
 BaseStepAgent (抽象基类)
-├── BrowserAgent (新建)
-│   ├── 职责: 导航 + scroll
-│   ├── 输入: target_url + interaction_steps
+├── BrowserAgent (v2 - 智能交互)
+│   ├── 职责: 导航 + 智能交互（click/input/scroll/send_keys）
+│   ├── 输入: target_url + interaction_steps (task + xpath_hints)
+│   ├── 脚本生成: LLM 根据 DOM + task 生成操作脚本
+│   ├── 验证: LLM 对比前后 DOM 判断是否成功
 │   └── 输出: success + current_url + message
 │
 ├── ScraperAgent (现有，不改动)
-│   ├── 职责: 导航 + 交互 + 数据提取
-│   ├── 输入: target_path + interaction_steps + data_requirements
-│   └── 输出: success + extracted_data + metadata
+│   ├── 职责: 导航 + 数据提取
+│   └── 模式: DOM → LLM 生成脚本 → 执行 → 验证
 │
 └── 其他 Agent...
 ```
 
-### 1.3 设计原则
+---
 
-1. **最小改动**: 不修改 ScraperAgent，复制必要代码
-2. **代码复用**: 从 ScraperAgent 复制浏览器会话管理和导航逻辑
-3. **职责单一**: BrowserAgent 只负责导航和交互，不负责数据提取
-4. **会话共享**: 通过 AgentContext 共享浏览器会话
-5. **可扩展性**: 预留扩展接口，方便后续添加 click、input 等操作
+## 二、核心设计：智能脚本生成模式
+
+### 2.1 为什么不使用硬编码 xpath？
+
+**问题**：
+- 硬编码的 xpath 可能在实际页面上不存在
+- 页面更新后 xpath 可能失效
+- 没有验证机制确保操作成功
+
+**解决方案**：采用 ScraperAgent 的成功模式
+
+```
+workflow 定义意图 → 获取 DOM → LLM 生成脚本 → 执行 → 验证结果 → (失败则修复)
+```
+
+### 2.2 执行流程
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Step 1: 执行前 - 获取 DOM + 生成脚本                    │
+│  ├─ 调用 _get_current_page_dom() 获取页面 DOM           │
+│  ├─ LLM 分析 DOM + task + xpath_hints                   │
+│  └─ 生成操作脚本（定位元素 + 执行操作）                   │
+├─────────────────────────────────────────────────────────┤
+│  Step 2: 执行脚本                                        │
+│  ├─ 从 DOM 中获取目标元素的 backend_node_id              │
+│  ├─ 创建 Element 对象                                    │
+│  └─ 执行 click() / fill() / send_keys()                 │
+├─────────────────────────────────────────────────────────┤
+│  Step 3: 执行后 - 验证结果                               │
+│  ├─ 等待页面变化稳定                                     │
+│  ├─ 再次调用 _get_current_page_dom() 获取新 DOM         │
+│  ├─ LLM 对比前后 DOM + task 描述                        │
+│  └─ 判断操作是否成功                                     │
+├─────────────────────────────────────────────────────────┤
+│  Step 4: 失败处理（可选）                                │
+│  ├─ 分析失败原因                                         │
+│  └─ 重试或调用 Claude Agent 修复                        │
+└─────────────────────────────────────────────────────────┘
+```
+
+### 2.3 DOM 数据结构
+
+复用 ScraperAgent 的 DOMExtractor，获取的 dom_dict 包含：
+
+```python
+{
+    "tag": "button",
+    "text": "Send Email",
+    "xpath": "//*[@id='send-btn']",
+    "backend_node_id": 12345,  # 关键：可直接用于操作
+    "node_id": 67890,
+    "interactive_index": 42,
+    "class": "btn btn-primary",
+    "id": "send-btn",
+    "children": [...]
+}
+```
+
+**关键点**：`backend_node_id` 可以直接用于创建 Element 对象执行操作。
 
 ---
 
-## 二、类设计
-
-### 2.1 类定义
-
-```python
-class BrowserAgent(BaseStepAgent):
-    """Browser navigation and interaction agent
-
-    Responsibilities:
-    - Navigate to specified URLs
-    - Execute scroll operations (optional)
-    - Share browser session with other agents
-
-    NOT responsible for:
-    - Data extraction (use ScraperAgent instead)
-    - Complex interactions like click, input (future enhancement)
-    """
-
-    def __init__(self,
-                 config_service=None,
-                 metadata: Optional[AgentMetadata] = None):
-        """Initialize BrowserAgent
-
-        Args:
-            config_service: Configuration service
-            metadata: Agent metadata
-        """
-
-    async def initialize(self, context: AgentContext) -> bool:
-        """Initialize agent with browser session from context"""
-
-    async def validate_input(self, input_data: Any) -> bool:
-        """Validate input data"""
-
-    async def execute(self, input_data: Any, context: AgentContext) -> Any:
-        """Execute navigation and interactions"""
-
-    # Private methods (copied from ScraperAgent)
-    async def _navigate_to_pages(self,
-                                path: Union[str, List[str]],
-                                interaction_steps: List[Dict]) -> ActionResult:
-        """Execute sequential page navigation"""
-
-    async def _execute_interaction_step(self, step_config: Dict) -> ActionResult:
-        """Execute single interaction step (scroll only in MVP)"""
-```
-
-### 2.2 属性设计
-
-```python
-class BrowserAgent:
-    # Configuration service
-    config_service: Optional[ConfigService]
-
-    # Browser-use components (shared from AgentContext)
-    browser_session: Optional[BrowserSession] = None
-    controller: Optional[Tools] = None
-
-    # Initialization flag
-    is_initialized: bool = False
-```
-
-### 2.3 方法设计
-
-#### 核心方法
-
-| 方法 | 职责 | 输入 | 输出 |
-|------|------|------|------|
-| `__init__()` | 初始化 Agent | config_service, metadata | - |
-| `initialize()` | 从 context 获取浏览器会话 | AgentContext | bool |
-| `validate_input()` | 验证输入数据 | input_data | bool |
-| `execute()` | 执行导航和交互 | input_data, context | AgentOutput |
-
-#### 私有方法（从 ScraperAgent 复制）
-
-| 方法 | 职责 | 来源 |
-|------|------|------|
-| `_navigate_to_pages()` | 导航到指定 URL | ScraperAgent:327-388 |
-| `_execute_interaction_step()` | 执行交互步骤（scroll） | ScraperAgent:389-419 |
-| `_create_response()` | 创建响应对象 | ScraperAgent:1500-1507 |
-
----
-
-## 三、数据流设计
+## 三、数据结构设计
 
 ### 3.1 输入数据结构
 
-```python
-# Workflow YAML 输入
+```yaml
 inputs:
-  target_url: str                    # 必需：目标 URL
-  interaction_steps: List[Dict] = [] # 可选：交互步骤
-  timeout: int = 30                  # 可选：超时时间
+  target_url: string              # 可选：目标 URL（如果省略则在当前页面操作）
+  interaction_steps:              # 必需：交互步骤列表
+    - task: string                # 必需：任务描述（LLM 用来理解意图和判断成功）
+      xpath_hints:                # 必需：xpath 提示（帮助 LLM 定位元素）
+        element_name: "xpath"
+      text: string                # 可选：仅 input 操作需要
+  timeout: int                    # 可选：超时时间（默认 60）
+```
 
-# interaction_steps 结构
+### 3.2 interaction_step 详细定义
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `task` | string | ✅ | 任务描述，LLM 用来理解意图和判断成功 |
+| `xpath_hints` | dict | ✅ | xpath 提示，帮助 LLM 定位目标元素 |
+| `text` | string | ❌ | 仅 input 操作需要的文本内容 |
+
+### 3.3 使用示例
+
+**示例 1：发送邮件流程**
+
+```yaml
+- id: "send-email"
+  agent_type: "browser_agent"
+  name: "Send email via Outlook"
+  inputs:
+    target_url: "https://outlook.office.com/mail/"
+    interaction_steps:
+      - task: "点击'新建邮件'按钮"
+        xpath_hints:
+          button: "//button[@aria-label='New mail']"
+
+      - task: "在收件人输入框中填写邮箱地址"
+        xpath_hints:
+          input: "//input[@aria-label='To']"
+        text: "{{recipient_email}}"
+
+      - task: "在邮件标题输入框中填写标题"
+        xpath_hints:
+          input: "//input[@aria-label='Subject']"
+        text: "{{email_subject}}"
+
+      - task: "在邮件正文区域填写内容"
+        xpath_hints:
+          editor: "//div[@role='textbox']"
+        text: "{{email_body}}"
+
+      - task: "点击发送按钮"
+        xpath_hints:
+          button: "//button[@aria-label='Send']"
+  outputs:
+    result: "send_result"
+  timeout: 120
+```
+
+**示例 2：标记订单已处理**
+
+```yaml
+- id: "mark-order-done"
+  agent_type: "browser_agent"
+  name: "Mark order as processed"
+  inputs:
+    interaction_steps:
+      - task: "点击'已反馈'按钮标记订单为已处理状态"
+        xpath_hints:
+          button: "//button[contains(@class, 'feedback-btn')]"
+  outputs:
+    result: "mark_result"
+```
+
+**示例 3：登录表单**
+
+```yaml
+- id: "login"
+  agent_type: "browser_agent"
+  name: "Login to system"
+  inputs:
+    target_url: "https://example.com/login"
+    interaction_steps:
+      - task: "在用户名输入框中填写用户名"
+        xpath_hints:
+          input: "//input[@name='username']"
+        text: "{{username}}"
+
+      - task: "在密码输入框中填写密码"
+        xpath_hints:
+          input: "//input[@name='password']"
+        text: "{{password}}"
+
+      - task: "点击登录按钮"
+        xpath_hints:
+          button: "//button[@type='submit']"
+  outputs:
+    result: "login_result"
+```
+
+### 3.4 输出数据结构
+
+```yaml
+{
+  "success": true,
+  "message": "All interaction steps completed successfully",
+  "data": {
+    "current_url": "https://outlook.office.com/mail/",
+    "steps_executed": 5,
+    "steps_results": [
+      {
+        "task": "点击'新建邮件'按钮",
+        "success": true,
+        "verification": "New mail compose window opened"
+      },
+      ...
+    ]
+  }
+}
+```
+
+---
+
+## 四、LLM 职责设计
+
+### 4.1 脚本生成阶段
+
+**输入**：
+- DOM data（包含 xpath、backend_node_id 等）
+- task 描述
+- xpath_hints
+
+**LLM 职责**：
+1. 分析 DOM 结构，理解页面布局
+2. 根据 xpath_hints 找到目标元素（可能需要适配实际 DOM）
+3. 获取目标元素的 backend_node_id
+4. 生成操作代码
+
+**输出**：操作脚本
+
+```python
+# LLM 生成的脚本示例
+def execute_interaction(dom_dict, browser_session):
+    # 根据 xpath hints 和 DOM 分析，找到目标元素
+    target_element = find_element_by_xpath(dom_dict, "//*[@id='send-btn']")
+
+    if not target_element:
+        # 尝试备选定位方式
+        target_element = find_element_by_text(dom_dict, "Send")
+
+    if not target_element:
+        return {"success": False, "error": "Target element not found"}
+
+    # 获取 backend_node_id
+    backend_node_id = target_element.get("backend_node_id")
+
+    # 执行点击
+    element = Element(browser_session, backend_node_id)
+    await element.click()
+
+    return {"success": True, "element_clicked": target_element}
+```
+
+### 4.2 验证阶段
+
+**输入**：
+- 执行前的 DOM
+- 执行后的 DOM
+- task 描述
+
+**LLM 职责**：
+1. 对比前后 DOM 的变化
+2. 根据 task 描述判断操作是否达到预期效果
+3. 返回验证结果
+
+**验证逻辑示例**：
+
+| task | 验证标准 |
+|------|---------|
+| "点击'新建邮件'按钮" | 页面出现邮件编辑区域 |
+| "在输入框中填写邮箱" | 输入框的 value 变为目标值 |
+| "点击发送按钮" | 出现"已发送"提示或页面跳转 |
+| "点击标记按钮" | 按钮状态变化或消失 |
+
+---
+
+## 五、技术实现细节
+
+### 5.1 Element 操作方式
+
+browser-use 的 Element 类提供的方法：
+
+```python
+# 通过 backend_node_id 创建 Element
+element = Element(browser_session, backend_node_id, session_id)
+
+# 可用操作
+await element.click()           # 点击
+await element.fill(text)        # 填充输入框（自动清空原内容）
+await element.hover()           # 悬停
+await element.focus()           # 聚焦
+await element.select_option()   # 选择下拉选项
+```
+
+### 5.2 xpath 到 backend_node_id 的映射
+
+```python
+def find_element_by_xpath(dom_dict: Dict, target_xpath: str) -> Optional[Dict]:
+    """在 dom_dict 中查找匹配 xpath 的元素"""
+
+    def search_recursive(node: Dict) -> Optional[Dict]:
+        # 检查当前节点的 xpath 是否匹配
+        if node.get("xpath") == target_xpath:
+            return node
+
+        # 递归搜索子节点
+        for child in node.get("children", []):
+            result = search_recursive(child)
+            if result:
+                return result
+
+        return None
+
+    return search_recursive(dom_dict)
+```
+
+### 5.3 复用 ScraperAgent 的 DOM 获取逻辑
+
+```python
+async def _get_current_page_dom(self) -> tuple:
+    """Get DOM from current page (复用 ScraperAgent 的实现)"""
+    from browser_use.browser.events import BrowserStateRequestEvent
+    from ..tools.browser_use.dom_extractor import DOMExtractor, extract_llm_view
+
+    # 等待页面稳定
+    await asyncio.sleep(3)
+
+    # 获取 DOM
+    event = self.browser_session.event_bus.dispatch(
+        BrowserStateRequestEvent(include_dom=True, include_screenshot=False)
+    )
+    await event.event_result(raise_if_any=True)
+
+    # 获取 enhanced DOM
+    enhanced_dom = self.browser_session._dom_watchdog.enhanced_dom_tree
+
+    # 转换为 dom_dict
+    extractor = DOMExtractor()
+    serialized_dom, _ = extractor.serialize_accessible_elements_custom(
+        enhanced_dom, include_non_visible=True
+    )
+    dom_dict = extractor.extract_dom_dict(serialized_dom)
+    llm_view = extract_llm_view(dom_dict, include_xpath=True)
+
+    return serialized_dom, dom_dict, llm_view
+```
+
+---
+
+## 六、与旧版本的对比
+
+### 6.1 旧版本（v1）- 硬编码操作
+
+```yaml
+# 旧版本：只支持 scroll，硬编码参数
 interaction_steps:
   - action_type: "scroll"
     parameters:
-      down: bool              # true=向下, false=向上
-      num_pages: float        # 滚动页数
-      frame_element_index: Optional[int]  # iframe 索引
+      down: true
+      num_pages: 2
 ```
 
-**验证规则**:
-- `target_url` 必须存在且为有效 URL
-- `interaction_steps` 如果存在，每个 step 必须有 `action_type`
-- 当前只支持 `action_type: "scroll"`
+**问题**：
+- 只支持 scroll
+- 无法支持 click、input
+- 没有验证机制
 
-### 3.2 输出数据结构
+### 6.2 新版本（v2）- 智能脚本生成
 
-```python
-# AgentOutput 结构
-{
-    "success": bool,           # 是否成功
-    "data": {
-        "current_url": str,    # 当前页面 URL
-        "message": str,        # 执行消息
-        "steps_executed": int  # 执行的步骤数
-    },
-    "message": str,            # 顶层消息
-    "error": Optional[str]     # 错误信息
-}
+```yaml
+# 新版本：支持任意交互，LLM 智能生成脚本
+interaction_steps:
+  - task: "点击发送按钮"
+    xpath_hints:
+      button: "//button[@aria-label='Send']"
 ```
 
-**示例输出**:
-```python
-# 成功案例
-{
-    "success": True,
-    "data": {
-        "current_url": "https://example.com/page",
-        "message": "Successfully navigated to https://example.com/page",
-        "steps_executed": 0
-    },
-    "message": "Navigation completed successfully"
-}
-
-# 有交互步骤的案例
-{
-    "success": True,
-    "data": {
-        "current_url": "https://example.com/page",
-        "message": "Successfully navigated and executed 2 interaction steps",
-        "steps_executed": 2
-    },
-    "message": "Navigation and interactions completed successfully"
-}
-
-# 失败案例
-{
-    "success": False,
-    "data": {},
-    "message": "Navigation failed",
-    "error": "Failed to load https://example.com/page: Timeout"
-}
-```
-
-### 3.3 数据流图
-
-```
-┌─────────────────┐
-│ Workflow Engine │
-└────────┬────────┘
-         │ AgentInput
-         │ {target_url, interaction_steps}
-         ▼
-┌─────────────────┐
-│ BrowserAgent    │
-│                 │
-│ 1. Initialize   │◄─────── AgentContext.get_browser_session()
-│ 2. Validate     │
-│ 3. Navigate     │
-│ 4. Interact     │         browser_session (shared)
-│ 5. Return       │                │
-└────────┬────────┘                │
-         │ AgentOutput              │
-         │ {success, current_url}   │
-         ▼                          ▼
-┌─────────────────┐         ┌─────────────────┐
-│ Next Agent      │◄────────│ Browser Session │
-│ (ScraperAgent)  │         │ (Shared State)  │
-└─────────────────┘         └─────────────────┘
-```
+**优势**：
+- 支持 click、input、scroll、send_keys
+- LLM 根据实际 DOM 生成脚本
+- 有验证机制确保操作成功
+- xpath_hints 只是提示，LLM 可以适配实际 DOM
 
 ---
 
-## 四、核心逻辑设计
+## 七、错误处理设计
 
-### 4.1 initialize() 实现
-
-```python
-async def initialize(self, context: AgentContext) -> bool:
-    """Initialize agent with browser session from context
-
-    Flow:
-    1. Get shared browser session from context
-    2. Set browser_session and controller
-    3. Mark as initialized
-
-    Args:
-        context: Agent execution context
-
-    Returns:
-        bool: True if successful, False otherwise
-    """
-    try:
-        # Get browser session from context (shared across workflow)
-        session_info = await context.get_browser_session()
-
-        # Set browser-use components
-        self.browser_session = session_info.session
-        self.controller = session_info.controller
-
-        # Mark as initialized
-        self.is_initialized = True
-
-        logger.info("BrowserAgent initialized successfully with shared session")
-        return True
-
-    except Exception as e:
-        logger.error(f"BrowserAgent initialization failed: {e}")
-        return False
-```
-
-**关键点**:
-- ✅ 从 AgentContext 获取共享会话（不创建新会话）
-- ✅ 复用 ScraperAgent 的实现逻辑
-- ✅ 异常处理和日志记录
-
-### 4.2 validate_input() 实现
-
-```python
-async def validate_input(self, input_data: Any) -> bool:
-    """Validate input data
-
-    Required fields:
-    - target_url: str
-
-    Optional fields:
-    - interaction_steps: List[Dict]
-    - timeout: int
-
-    Returns:
-        bool: True if valid, False otherwise
-    """
-    # Handle AgentInput wrapper
-    from ..core.schemas import AgentInput
-
-    if isinstance(input_data, AgentInput):
-        actual_data = input_data.data
-    elif isinstance(input_data, dict):
-        actual_data = input_data
-    else:
-        return False
-
-    # Check required field
-    if 'target_url' not in actual_data:
-        logger.error("Validation failed: missing 'target_url'")
-        return False
-
-    # Validate interaction_steps if present
-    if 'interaction_steps' in actual_data:
-        steps = actual_data['interaction_steps']
-        if not isinstance(steps, list):
-            logger.error("Validation failed: 'interaction_steps' must be a list")
-            return False
-
-        for step in steps:
-            if 'action_type' not in step:
-                logger.error("Validation failed: step missing 'action_type'")
-                return False
-
-            # Currently only support 'scroll'
-            if step['action_type'] not in ['scroll']:
-                logger.error(f"Validation failed: unsupported action_type '{step['action_type']}'")
-                return False
-
-    return True
-```
-
-**验证规则**:
-- ✅ `target_url` 必须存在
-- ✅ `interaction_steps` 如果存在必须是列表
-- ✅ 每个 step 必须有 `action_type`
-- ✅ 当前只支持 `scroll`
-
-### 4.3 execute() 实现
-
-```python
-async def execute(self, input_data: Any, context: AgentContext) -> Any:
-    """Execute navigation and interactions
-
-    Flow:
-    1. Check initialization
-    2. Extract input data
-    3. Navigate to target_url
-    4. Execute interaction_steps (if any)
-    5. Return result
-
-    Args:
-        input_data: Input data (AgentInput or dict)
-        context: Execution context
-
-    Returns:
-        AgentOutput with navigation result
-    """
-    if not self.is_initialized:
-        raise RuntimeError("BrowserAgent not initialized")
-
-    # Handle AgentInput wrapper
-    from ..core.schemas import AgentInput, AgentOutput
-
-    if isinstance(input_data, AgentInput):
-        actual_data = input_data.data
-    else:
-        actual_data = input_data
-
-    # Extract parameters
-    target_url = actual_data['target_url']
-    interaction_steps = actual_data.get('interaction_steps', [])
-    timeout = actual_data.get('timeout', 30)
-
-    logger.info(f"BrowserAgent executing: target_url={target_url}, "
-                f"interaction_steps={len(interaction_steps)}")
-
-    try:
-        # Navigate to target URL and execute interactions
-        result = await self._navigate_to_pages(target_url, interaction_steps)
-
-        # Check navigation result
-        if result.success is False:
-            return self._create_error_response(
-                f"Navigation failed: {result.error}"
-            )
-
-        # Get current URL from browser session
-        current_url = self.browser_session.context.pages[0].url if self.browser_session else target_url
-
-        # Success response
-        response = self._create_response(
-            success=True,
-            message=f"Successfully navigated to {target_url}",
-            current_url=current_url,
-            steps_executed=len(interaction_steps)
-        )
-
-        # Wrap in AgentOutput if needed
-        if isinstance(input_data, AgentInput):
-            return AgentOutput(
-                success=True,
-                data=response,
-                message=response['message']
-            )
-        else:
-            return response
-
-    except Exception as e:
-        logger.error(f"BrowserAgent execution failed: {e}")
-        error_response = self._create_error_response(str(e))
-
-        if isinstance(input_data, AgentInput):
-            return AgentOutput(
-                success=False,
-                data=error_response,
-                message=f"Execution failed: {e}"
-            )
-        else:
-            return error_response
-```
-
-**执行流程**:
-1. ✅ 检查初始化状态
-2. ✅ 提取输入参数
-3. ✅ 调用 `_navigate_to_pages()` 导航
-4. ✅ 检查导航结果
-5. ✅ 返回成功/失败响应
-
-### 4.4 _navigate_to_pages() 实现
-
-**复用 ScraperAgent 的实现** (scraper_agent.py:327-388)
-
-```python
-async def _navigate_to_pages(self,
-                           path: Union[str, List[str]],
-                           interaction_steps: List[Dict]) -> ActionResult:
-    """Execute sequential page navigation in the same tab
-
-    Copied from ScraperAgent with minor modifications.
-
-    Args:
-        path: Target URL or list of URLs
-        interaction_steps: Interaction steps to execute after navigation
-
-    Returns:
-        ActionResult with navigation result
-    """
-    try:
-        # Convert single path to list for unified processing
-        urls = path if isinstance(path, list) else [path]
-        last_result = None
-
-        # Navigate through all URLs in the same tab
-        for i, url in enumerate(urls):
-            logger.info(f"Navigating to: {url}")
-
-            # Create ActionModel for navigation
-            class GoToUrlActionModel(ActionModel):
-                go_to_url: GoToUrlAction | None = None
-
-            # Navigate (always in same tab, not new tab)
-            action_data = {'go_to_url': GoToUrlAction(url=url, new_tab=False)}
-            result = await self.controller.act(GoToUrlActionModel(**action_data), self.browser_session)
-            await asyncio.sleep(5)  # Wait for page stability
-
-            # Check for failure
-            if result.success is False:
-                logger.error(f"Navigation failed for URL: {url}, error: {result.error}")
-                return result
-
-            last_result = result
-
-        # Execute interaction steps after navigation (if provided)
-        if interaction_steps:
-            logger.info(f"Executing {len(interaction_steps)} interaction steps...")
-            for idx, step in enumerate(interaction_steps):
-                action_type = step.get('action_type', 'unknown')
-                logger.info(f"  Step {idx + 1}/{len(interaction_steps)}: {action_type}")
-
-                interaction_result = await self._execute_interaction_step(step)
-
-                # Check if interaction failed
-                if interaction_result.success is False:
-                    logger.error(f"Interaction step {idx + 1} failed: {interaction_result.error}")
-                    return interaction_result
-
-                # Small delay between interactions
-                await asyncio.sleep(0.5)
-
-            logger.info("All interaction steps completed successfully")
-
-            # Wait for content stability after interactions
-            await asyncio.sleep(3)
-
-        # Return the last result
-        return last_result if last_result else ActionResult(extracted_content="No navigation performed")
-
-    except Exception as e:
-        logger.error(f"Navigation failed: {e}")
-        return ActionResult(success=False, error=str(e))
-```
-
-**关键点**:
-- ✅ 支持单个 URL 或 URL 列表
-- ✅ 支持 interaction_steps（导航后执行）
-- ✅ 异常处理和错误返回
-- ✅ 等待页面稳定（browser-use 自动处理 + 额外 sleep）
-
-### 4.5 _execute_interaction_step() 实现
-
-**复用 ScraperAgent 的实现**（只保留 scroll 部分）
-
-```python
-async def _execute_interaction_step(self, step_config: Dict) -> ActionResult:
-    """Execute single interaction step (currently only supports scroll)
-
-    Copied from ScraperAgent, only scroll is supported in MVP.
-
-    Args:
-        step_config: Step configuration with action_type and parameters
-
-    Returns:
-        ActionResult with execution result
-    """
-    try:
-        action_type = step_config['action_type']
-        parameters = step_config.get('parameters', {})
-
-        if action_type == 'scroll':
-            # Create ScrollAction model
-            class ScrollActionModel(ActionModel):
-                scroll: ScrollAction | None = None
-
-            action_data = {'scroll': ScrollAction(
-                down=parameters.get('down', True),
-                num_pages=parameters.get('num_pages', 1.0),
-                frame_element_index=parameters.get('frame_element_index')
-            )}
-
-            logger.debug(f"Scrolling: down={parameters.get('down', True)}, "
-                        f"num_pages={parameters.get('num_pages', 1.0)}")
-            result = await self.controller.act(ScrollActionModel(**action_data), self.browser_session)
-
-            # Wait for page stability after scroll
-            await asyncio.sleep(1)
-
-            return result
-        else:
-            logger.warning(f"Unsupported action type: {action_type}. Currently only 'scroll' is supported.")
-            return ActionResult(success=False, error=f"Unsupported action type: {action_type}")
-
-    except Exception as e:
-        logger.error(f"Interaction step failed: {e}")
-        return ActionResult(success=False, error=str(e))
-```
-
-**关键点**:
-- ✅ 当前只支持 scroll
-- ✅ 使用 browser-use 的 ScrollAction
-- ✅ 滚动后等待页面稳定
-- ✅ 预留扩展接口（后续可添加 click、input 等）
-
----
-
-## 五、错误处理设计
-
-### 5.1 错误类型
+### 7.1 错误类型
 
 | 错误类型 | 触发条件 | 处理方式 |
 |---------|---------|---------|
-| **初始化错误** | 无法获取浏览器会话 | 返回 False，记录日志 |
-| **验证错误** | 缺少必需参数 | 返回 False，记录日志 |
-| **导航错误** | URL 无效、网络错误、超时 | 返回 ActionResult(success=False) |
-| **交互错误** | scroll 执行失败 | 返回 ActionResult(success=False) |
-| **未知错误** | 其他异常 | 捕获异常，返回错误响应 |
+| **元素未找到** | xpath_hints 指定的元素不存在 | LLM 尝试备选定位方式 |
+| **操作失败** | click/input 执行失败 | 重试或报告错误 |
+| **验证失败** | 操作后页面未达到预期状态 | 记录详情，可选重试 |
+| **超时** | 操作超过指定时间 | 返回超时错误 |
 
-### 5.2 错误响应格式
+### 7.2 重试策略
 
 ```python
-# 错误响应示例
-{
-    "success": False,
-    "data": {},
-    "message": "Navigation failed",
-    "error": "Failed to load https://example.com/page: Timeout after 30s"
-}
-```
+max_retries = 2
 
-### 5.3 日志设计
+for attempt in range(max_retries + 1):
+    # 生成脚本
+    script = await generate_script(dom_dict, task, xpath_hints)
 
-**日志级别**:
-- `INFO`: 正常执行流程（初始化、导航、交互）
-- `WARNING`: 不支持的操作（如 click）
-- `ERROR`: 错误情况（导航失败、交互失败）
-- `DEBUG`: 详细调试信息（参数值、中间状态）
+    # 执行脚本
+    result = await execute_script(script)
 
-**日志示例**:
-```python
-logger.info("BrowserAgent initialized successfully with shared session")
-logger.info(f"Navigating to: {url}")
-logger.info(f"Executing {len(interaction_steps)} interaction steps...")
-logger.error(f"Navigation failed for URL: {url}, error: {result.error}")
-logger.warning(f"Unsupported action type: {action_type}")
-logger.debug(f"Scrolling: down={down}, num_pages={num_pages}")
+    # 验证结果
+    if await verify_result(task, dom_before, dom_after):
+        return success_result
+
+    if attempt < max_retries:
+        logger.warning(f"Attempt {attempt + 1} failed, retrying...")
+        await asyncio.sleep(1)
+
+return failure_result
 ```
 
 ---
 
-## 六、测试设计
+## 八、测试设计
 
-### 6.1 单元测试
+### 8.1 单元测试
 
-| 测试用例 | 测试内容 | 预期结果 |
-|---------|---------|---------|
-| test_initialization | 初始化 BrowserAgent | ✅ 成功获取浏览器会话 |
-| test_validate_input_success | 验证有效输入 | ✅ 返回 True |
-| test_validate_input_missing_url | 验证缺少 URL | ✅ 返回 False |
-| test_validate_input_invalid_steps | 验证无效 interaction_steps | ✅ 返回 False |
-| test_execute_simple_navigation | 简单导航 | ✅ 成功导航，返回正确 URL |
-| test_execute_with_scroll | 导航 + 滚动 | ✅ 成功导航并滚动 |
-| test_execute_navigation_failure | 导航失败（无效 URL） | ✅ 返回失败响应 |
+| 测试用例 | 测试内容 |
+|---------|---------|
+| test_find_element_by_xpath | xpath 查找元素 |
+| test_script_generation | LLM 脚本生成 |
+| test_click_execution | click 操作执行 |
+| test_input_execution | input 操作执行 |
+| test_verification | 操作验证 |
 
-### 6.2 集成测试
+### 8.2 集成测试
 
-| 测试用例 | 测试内容 | 预期结果 |
-|---------|---------|---------|
-| test_browser_session_sharing | 与 ScraperAgent 共享会话 | ✅ 两个 Agent 使用同一个 session |
-| test_browser_then_scraper | BrowserAgent → ScraperAgent | ✅ ScraperAgent 能在当前页面提取数据 |
-| test_multi_step_navigation | 首页 → 分类页 → 详情页 | ✅ 所有导航步骤执行成功 |
-
-### 6.3 端到端测试
-
-| 测试用例 | 测试内容 | 预期结果 |
-|---------|---------|---------|
-| test_allegro_workflow | Allegro 咖啡产品抓取 | ✅ 完整流程运行成功 |
-| test_workflow_generation | MetaFlow → Workflow | ✅ 生成包含 BrowserAgent 的 workflow |
-| test_navigation_preservation | 导航步骤不被优化 | ✅ 首页导航被保留 |
-
----
-
-## 七、性能考虑
-
-### 7.1 性能指标
-
-| 指标 | 目标值 | 说明 |
-|------|--------|------|
-| 导航时间 | < 30s | 正常网络条件下 |
-| scroll 执行时间 | < 2s | 每次滚动操作 |
-| 初始化时间 | < 1s | 获取浏览器会话 |
-
-### 7.2 性能优化
-
-1. **复用浏览器会话**: 不创建新会话，复用 AgentContext 的共享会话
-2. **等待策略**: 使用 browser-use 的智能等待机制（_wait_for_stable_network）
-3. **并发控制**: 同一个 workflow 内的 Agent 串行执行（避免会话冲突）
-
----
-
-## 八、扩展设计
-
-### 8.1 后续功能扩展
-
-**Phase 2: 增加 click 操作**
-
-```python
-# 扩展 _execute_interaction_step() 支持 click
-if action_type == 'click':
-    class ClickActionModel(ActionModel):
-        click_element: ClickElementAction | None = None
-
-    action_data = {'click_element': ClickElementAction(
-        element_index=parameters.get('element_index')
-    )}
-    result = await self.controller.act(ClickActionModel(**action_data), self.browser_session)
-    return result
-```
-
-**Phase 3: 增加 input 操作**
-
-```python
-if action_type == 'input':
-    class InputTextActionModel(ActionModel):
-        input_text: InputTextAction | None = None
-
-    action_data = {'input_text': InputTextAction(
-        element_index=parameters.get('element_index'),
-        text=parameters.get('text')
-    )}
-    result = await self.controller.act(InputTextActionModel(**action_data), self.browser_session)
-    return result
-```
-
-### 8.2 代码重构扩展
-
-**未来可能的重构**:
-
-```python
-# 创建共享基类
-class BrowserBaseAgent(BaseStepAgent):
-    """Shared base class for browser-based agents"""
-
-    # Shared browser session management
-    async def initialize(self, context: AgentContext) -> bool:
-        ...
-
-    # Shared navigation methods
-    async def _navigate_to_pages(self, ...) -> ActionResult:
-        ...
-
-    async def _execute_interaction_step(self, ...) -> ActionResult:
-        ...
-
-# BrowserAgent 继承
-class BrowserAgent(BrowserBaseAgent):
-    # Pure navigation and interaction
-    ...
-
-# ScraperAgent 重构为继承
-class ScraperAgent(BrowserBaseAgent):
-    # Add data extraction on top of base
-    ...
-```
+| 测试用例 | 测试内容 |
+|---------|---------|
+| test_outlook_send_email | Outlook 发送邮件完整流程 |
+| test_login_flow | 登录表单填写和提交 |
+| test_mark_order | 订单标记操作 |
 
 ---
 
 ## 九、实现清单
 
-### 9.1 代码文件
+### 9.1 需要实现的功能
+
+| 功能 | 优先级 | 状态 |
+|------|--------|------|
+| DOM 获取（复用 ScraperAgent） | P0 | ⏳ 待实现 |
+| xpath 到 backend_node_id 映射 | P0 | ⏳ 待实现 |
+| Element 操作（click/fill） | P0 | ⏳ 待实现 |
+| LLM 脚本生成 | P0 | ⏳ 待实现 |
+| 操作验证 | P1 | ⏳ 待实现 |
+| 失败重试 | P2 | ⏳ 待实现 |
+
+### 9.2 代码文件
 
 | 文件 | 路径 | 状态 |
 |------|------|------|
-| BrowserAgent 实现 | `src/base_app/base_app/base_agent/agents/browser_agent.py` | ⏳ 待实现 |
-| BrowserAgent 测试 | `tests/base_app/test_browser_agent.py` | ⏳ 待实现 |
-
-### 9.2 文档文件
-
-| 文件 | 路径 | 状态 |
-|------|------|------|
-| 讨论记录 | `docs/intent_builder/discussions/05_browser_agent_integration.md` | ✅ 已完成 |
-| 需求文档 | `docs/baseagent/agents/browser_agent_requirements.md` | ✅ 已完成 |
-| 设计文档 | `docs/baseagent/agents/browser_agent_design.md` | ✅ 已完成 |
-| 规范文档 | `docs/baseagent/browser_agent_spec.md` | ⏳ 待创建 |
-
-### 9.3 配置文件
-
-| 文件 | 路径 | 修改内容 | 状态 |
-|------|------|---------|------|
-| PromptBuilder | `src/intent_builder/generators/prompt_builder.py` | 添加 BrowserAgent，删除优化规则 | ⏳ 待修改 |
+| BrowserAgent 实现 | `src/clients/base_app/base_app/base_agent/agents/browser_agent.py` | ⏳ 待修改 |
+| BrowserAgent 测试 | `tests/unit/baseagent/agents/test_browser_agent.py` | ⏳ 待更新 |
 
 ---
 
 ## 十、参考资料
 
-### 10.1 相关文档
-- [讨论记录](../../../intent_builder/discussions/05_browser_agent_integration.md)
-- [需求文档](./browser_agent_requirements.md)
-- [ScraperAgent 设计](./scraper_agent_design.md)
+### 10.1 相关代码
 
-### 10.2 相关代码
-- ScraperAgent: `src/base_app/base_app/base_agent/agents/scraper_agent.py`
-- BaseStepAgent: `src/base_app/base_app/base_agent/core/base_step_agent.py`
-- AgentContext: `src/base_app/base_app/base_agent/core/schemas.py`
+- ScraperAgent: `src/clients/base_app/base_app/base_agent/agents/scraper_agent.py`
+- DOMExtractor: `src/clients/base_app/base_app/base_agent/tools/browser_use/dom_extractor.py`
+- Element: `third-party/browser-use/browser_use/actor/element.py`
 
-### 10.3 依赖库
-- browser-use: 浏览器自动化库
-- playwright: 底层浏览器控制
+### 10.2 browser-use Element 方法
+
+- `click()` - 点击元素
+- `fill(value, clear=True)` - 填充输入框
+- `hover()` - 悬停
+- `focus()` - 聚焦
+- `select_option(values)` - 选择下拉选项
 
 ---
 
-**文档版本**: 1.0
-**最后更新**: 2025-11-02
+**文档版本**: 2.0
+**最后更新**: 2025-12-16
 **作者**: Claude Code
