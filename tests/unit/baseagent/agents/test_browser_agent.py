@@ -216,7 +216,7 @@ class TestBrowserAgent:
         with open(workflow_file, 'r') as f:
             workflow = yaml.safe_load(f)
 
-        assert workflow['apiVersion'] == "agentcrafter.io/v1"
+        assert workflow['apiVersion'] == "ami.io/v1"
         assert workflow['kind'] == "Workflow"
         assert 'metadata' in workflow
         assert 'steps' in workflow
@@ -235,7 +235,7 @@ class TestBrowserAgent:
         with open(workflow_file, 'r') as f:
             workflow = yaml.safe_load(f)
 
-        assert workflow['apiVersion'] == "agentcrafter.io/v1"
+        assert workflow['apiVersion'] == "ami.io/v1"
         assert workflow['kind'] == "Workflow"
 
         steps = workflow['steps']

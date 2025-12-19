@@ -142,7 +142,7 @@ async def test_simple_flat_data():
 
     # Create workflow
     workflow_name = "test_simple_store"
-    workflow_yaml = f"""apiVersion: "agentcrafter.io/v1"
+    workflow_yaml = f"""apiVersion: "ami.io/v1"
 kind: "Workflow"
 
 metadata:
@@ -290,7 +290,7 @@ async def test_nested_data_flattening():
 
     # Create workflow
     workflow_name = "test_nested_store"
-    workflow_yaml = f"""apiVersion: "agentcrafter.io/v1"
+    workflow_yaml = f"""apiVersion: "ami.io/v1"
 kind: "Workflow"
 
 metadata:
@@ -403,7 +403,7 @@ async def main():
     if not daemon_running:
         logger.error("❌ Daemon is NOT running!")
         logger.error("\nPlease start daemon first:")
-        logger.error("  cd /Users/shenyouren/workspace/arise-project/agentcloud/Ami")
+        logger.error("  cd /Users/shenyouren/workspace/arise-project/ami/Ami")
         logger.error("  python -m src.app_backend.daemon")
         return False
 
