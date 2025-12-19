@@ -148,6 +148,7 @@ class BrowserSessionManager:
             proxy=None,  # Can add proxy configuration
             highlight_elements=False,  # Disable yellow highlight boxes
             args=chrome_args,  # Additional args to hide automation
+            permissions=['clipboardReadWrite', 'clipboardSanitizedWrite'],  # Enable clipboard access for copy/paste operations
             # ignore_default_args already has '--enable-automation' removed by default
         )
         logger.info(f"✅ [DEBUG] BrowserProfile created with highlight_elements={profile.highlight_elements}")
@@ -168,6 +169,9 @@ class BrowserSessionManager:
         # 启动浏览器
         await session.start()
 
+        # 注入自动化 hooks（clipboard 拦截等）
+        await self._inject_automation_hooks(session)
+
         # 创建Controller（Tools）
         # Note: DomService is no longer needed as we use DOMWatchdog's cached enhanced_dom_tree
         controller = Controller()  # browser-use的Tools实例
@@ -179,6 +183,42 @@ class BrowserSessionManager:
 
         logger.info(f"浏览器会话创建成功: {session_id}")
         return info
+
+    async def _inject_automation_hooks(self, session: BrowserSession) -> None:
+        """Inject automation hooks JavaScript into browser session
+
+        This injects a script that:
+        - Intercepts navigator.clipboard.writeText() to capture clipboard content
+        - Intercepts document.execCommand('copy') as fallback
+        - Stores intercepted content in window.__interceptedClipboard
+
+        The script is injected via Page.addScriptToEvaluateOnNewDocument,
+        so it runs on every new page load including navigation.
+        """
+        from pathlib import Path
+
+        try:
+            # Load automation hooks script
+            script_path = Path(__file__).parent / "browser_use" / "automation_hooks.js"
+
+            with open(script_path, 'r', encoding='utf-8') as f:
+                script = f.read()
+
+            # Inject script via CDP (auto-runs on every page navigation)
+            await session._cdp_add_init_script(script)
+
+            # Also inject into current page immediately if exists
+            try:
+                page = await session.get_current_page()
+                if page:
+                    await page.evaluate(f"() => {{ {script} }}")
+            except Exception:
+                pass  # Page may not exist yet
+
+            logger.info("Automation hooks injected into browser session")
+
+        except Exception as e:
+            logger.warning(f"Failed to inject automation hooks: {e}")
 
     def release_session(self, session_id: str):
         """

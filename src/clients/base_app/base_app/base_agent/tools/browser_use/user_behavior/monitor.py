@@ -432,6 +432,10 @@ class SimpleUserBehaviorMonitor:
                 self._print_selection_details(data)
             elif data['type'] == 'copy_action':
                 self._print_copy_details(data)
+            elif data['type'] == 'clipboard_write':
+                self._print_clipboard_write_details(data)
+            elif data['type'] == 'paste_action':
+                self._print_paste_details(data)
             elif data['type'] == 'newtab':
                 self._print_newtab_details(data)
             elif data['type'] == 'closetab':
@@ -596,6 +600,53 @@ class SimpleUserBehaviorMonitor:
             print(f"     Copied: {copied_text[:100]}...")
         print(f"     Length: {text_length} characters")
         print(f"     Method: {copy_method}")
+
+    def _print_clipboard_write_details(self, data):
+        """Print clipboard write details (programmatic copy via clipboard API)"""
+        element = data.get('element', {})
+        user_data = data.get('data', {})
+        
+        print(f"  📋 Clipboard Write (API)")
+        
+        # XPath for context element (usually the button that triggered the copy)
+        if element.get('xpath'):
+            print(f"     Context XPath: {element['xpath']}")
+        
+        if element.get('id'):
+            print(f"     Context ID: {element['id']}")
+            
+        copied_text = user_data.get('copiedText', '')
+        text_length = user_data.get('textLength', 0)
+        
+        if copied_text:
+            print(f"     Copied: {copied_text[:100]}...")
+        print(f"     Length: {text_length} characters")
+        print(f"     Method: clipboard API (navigator.clipboard.writeText)")
+
+    def _print_paste_details(self, data):
+        """Print paste action details"""
+        element = data.get('element', {})
+        user_data = data.get('data', {})
+        
+        print(f"  📋 Paste Action")
+        
+        if element.get('xpath'):
+            print(f"     Target XPath: {element['xpath']}")
+        
+        if element.get('id'):
+            print(f"     Target ID: {element['id']}")
+        
+        if element.get('name'):
+            print(f"     Target Name: {element['name']}")
+            
+        pasted_text = user_data.get('pastedText', '')
+        text_length = user_data.get('textLength', 0)
+        input_type = user_data.get('inputType', 'UNKNOWN')
+        
+        if pasted_text:
+            print(f"     Pasted: {pasted_text[:100]}...")
+        print(f"     Length: {text_length} characters")
+        print(f"     Target Type: {input_type}")
 
     def _print_dataload_details(self, data):
         """Print data load event details"""

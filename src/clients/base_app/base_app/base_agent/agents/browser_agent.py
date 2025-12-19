@@ -1420,8 +1420,29 @@ Start by reading task.json and dom_data.json to understand the requirements and 
             )
 
             if operation == 'click':
+                # Read clipboard before click to detect if click triggers clipboard write
+                clipboard_before = await self._read_clipboard_silent()
+                logger.info(f"📋 Clipboard BEFORE click: '{clipboard_before[:100] if clipboard_before else '(empty)'}...'")
+
                 await element.click()
                 logger.info(f"✅ Click executed successfully")
+
+                # Read clipboard after click and check if it changed
+                # Wait longer for clipboard to be written (some sites have async clipboard operations)
+                await asyncio.sleep(1.0)
+                clipboard_after = await self._read_clipboard_silent()
+                logger.info(f"📋 Clipboard AFTER click: '{clipboard_after[:100] if clipboard_after else '(empty)'}...'")
+
+                if clipboard_after and clipboard_after != clipboard_before:
+                    logger.info(f"📋 Clipboard changed after click: {clipboard_after[:50]}...")
+                    # Save to context if available
+                    if self._context:
+                        self._context.set_variable('_last_clipboard_content', clipboard_after)
+                        logger.info(f"   Saved to context variable: _last_clipboard_content")
+                else:
+                    before_preview = clipboard_before[:30] if clipboard_before else "(empty)"
+                    after_preview = clipboard_after[:30] if clipboard_after else "(empty)"
+                    logger.warning(f"📋 Clipboard NOT changed. before='{before_preview}', after='{after_preview}'")
             elif operation == 'fill':
                 await element.fill(text, clear=True)
                 logger.info(f"✅ Fill executed successfully with text: {text[:50]}...")
@@ -1435,6 +1456,28 @@ Start by reading task.json and dom_data.json to understand the requirements and 
             import traceback
             traceback.print_exc()
             return {'success': False, 'error': str(e)}
+
+    async def _read_clipboard_silent(self) -> str:
+        """Read clipboard content from interceptor
+
+        Reads from window.__interceptedClipboard which is set by automation_hooks.js
+        when any page calls navigator.clipboard.writeText() or execCommand('copy').
+
+        Returns:
+            str: Clipboard text content, or empty string if not available
+        """
+        try:
+            page = await self.browser_session.get_current_page()
+            if page:
+                js_code = "() => window.__interceptedClipboard || ''"
+                clipboard_text = await page.evaluate(js_code)
+                if clipboard_text:
+                    logger.debug(f"Clipboard read via interceptor: {len(clipboard_text)} chars")
+                    return clipboard_text
+        except Exception as e:
+            logger.debug(f"Clipboard read failed: {e}")
+
+        return ""
 
     async def _execute_scroll(self, direction: str = 'down') -> Dict:
         """Execute scroll operation on the page

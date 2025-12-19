@@ -316,17 +316,13 @@ Please respond to the user now.
                 model=model
             )
 
-            # Get max iterations from config
-            max_iterations = self.config_service.get("claude_agent.default_max_iterations", 30)
-
-            logger.info(f"Starting Claude Agent conversation (max_iterations={max_iterations})")
+            logger.info(f"Starting Claude Agent conversation...")
             logger.info(f"User message: {user_message}")
 
             # Run Claude Agent task
             result = await claude_provider.run_task(
                 prompt=prompt,
-                working_dir=workspace,
-                max_iterations=max_iterations
+                working_dir=workspace
             )
 
             if result.success:

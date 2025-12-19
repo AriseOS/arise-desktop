@@ -398,7 +398,7 @@
     // Note: Removed old selectionchange-based monitoring
     // Now using drag-based selection detection for more precise control
     
-    // Monitor copy events
+    // Monitor copy events (user-initiated Ctrl+C or right-click copy)
     document.addEventListener('copy', function(e) {
         const selection = window.getSelection();
         if (selection.rangeCount > 0) {
@@ -421,9 +421,50 @@
                 
             collector.report('copy_action', targetElement, {
                 copiedText: selection.toString().slice(0, 200),
-                textLength: selection.toString().length
+                textLength: selection.toString().length,
+                copyMethod: 'user_selection'  // User manually selected and copied
             });
         }
+    });
+
+    // Hook Clipboard API to capture programmatic clipboard writes
+    // This captures when websites use navigator.clipboard.writeText() (e.g., "Copy Email" buttons)
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        const originalWriteText = navigator.clipboard.writeText.bind(navigator.clipboard);
+        
+        navigator.clipboard.writeText = async function(text) {
+            // Call original function first
+            const result = await originalWriteText(text);
+            
+            // Report the clipboard write
+            // Use document.activeElement or last clicked element as context
+            const targetElement = document.activeElement || document.body;
+            
+            collector.report('clipboard_write', targetElement, {
+                copiedText: text.slice(0, 200),
+                textLength: text.length,
+                copyMethod: 'api_call'  // Programmatically written via clipboard API
+            });
+            
+            return result;
+        };
+    }
+
+    // Monitor paste events (when user pastes content)
+    document.addEventListener('paste', function(e) {
+        const targetElement = e.target;
+        
+        // Read clipboard content
+        const clipboardData = e.clipboardData || window.clipboardData;
+        const pastedText = clipboardData ? clipboardData.getData('text') : '';
+        
+        collector.report('paste_action', targetElement, {
+            pastedText: pastedText.slice(0, 200),
+            textLength: pastedText.length,
+            inputType: targetElement.tagName,
+            inputName: targetElement.name || '',
+            inputId: targetElement.id || ''
+        });
     });
     
     

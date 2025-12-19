@@ -24,6 +24,7 @@ Examples:
 import asyncio
 import argparse
 import json
+import os
 import yaml
 import sys
 import logging
@@ -34,12 +35,15 @@ from datetime import datetime
 # Add project path to sys.path
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root / "src"))
+sys.path.insert(0, str(project_root / "src" / "clients"))
+sys.path.insert(0, str(project_root / "third-party" / "browser-use"))
 
-from base_app.base_app.base_agent.core.base_agent import BaseAgent
-from base_app.base_app.base_agent.core.schemas import AgentConfig, AgentContext
-from base_app.base_app.base_agent.workflows.workflow_loader import load_workflow, list_workflows
-from base_app.base_app.base_agent.agents.scraper_agent import ScraperAgent
-from base_app.base_app.server.core.config_service import ConfigService
+from clients.base_app.base_app.base_agent.core.base_agent import BaseAgent
+from clients.base_app.base_app.base_agent.core.schemas import AgentConfig, AgentContext
+from clients.base_app.base_app.base_agent.workflows.workflow_loader import load_workflow, list_workflows
+from clients.base_app.base_app.base_agent.agents.scraper_agent import ScraperAgent
+from app_backend.core.config_service import AppConfigService as ConfigService
+from app_backend.services.browser_manager import BrowserManager
 
 
 class WorkflowTestRunner:
@@ -89,6 +93,8 @@ class WorkflowTestRunner:
 
         self.base_agent = None
         self.context = None
+        self.browser_manager = None
+        self.browser_session_id = None
 
     async def initialize(self, llm_provider: str = None, llm_model: str = None):
         """Initialize BaseAgent and context (only once)
@@ -102,14 +108,28 @@ class WorkflowTestRunner:
             self.logger.info(f"BaseAgent already initialized for user '{self.user_id}', skipping initialization")
             return
 
-        # Get LLM config from service
-        # Use ConfigService's get method to properly handle environment variables
+        # Get LLM config from service (use same keys as app-backend.yaml)
         if not llm_provider:
-            llm_provider = self.config_service.get('agent.llm.provider', 'openai')
+            llm_provider = self.config_service.get('llm.provider', 'anthropic')
         if not llm_model:
-            llm_model = self.config_service.get('agent.llm.model', 'gpt-4o')
-        # Get API key from config - this will handle ${OPENAI_API_KEY} expansion
-        api_key = self.config_service.get('agent.llm.api_key')
+            llm_model = self.config_service.get('llm.model', 'claude-sonnet-4-5-20250929')
+
+        # Get API key and base_url from config
+        api_key = os.environ.get('ANTHROPIC_API_KEY') or self.config_service.get('llm.api_key')
+        base_url = self.config_service.get('llm.proxy_url')  # https://api.ariseos.com/api
+
+        self.logger.info(f"LLM config: provider={llm_provider}, model={llm_model}, base_url={base_url}")
+
+        # Initialize BrowserManager for browser_agent/scraper_agent support
+        self.browser_manager = BrowserManager(config_service=self.config_service)
+        workflow_id = self.force_session_id or f"workflow_test_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+        browser_result = await self.browser_manager.start_browser_for_workflow(
+            workflow_id=workflow_id,
+            headless=False  # Show browser for debugging
+        )
+        self.browser_session_id = browser_result.get("session_id")
+        self.logger.info(f"Browser started with session_id: {self.browser_session_id}")
 
         # Create BaseAgent
         agent_config = AgentConfig(
@@ -119,20 +139,22 @@ class WorkflowTestRunner:
             api_key=api_key or ""  # AgentConfig requires string, empty is ok
         )
 
-        # Create provider config for BaseAgent
-        # Don't pass empty string for api_key, let provider handle env var lookup
+        # Create provider config for BaseAgent (same as app-backend)
         provider_config = {
             'type': llm_provider,
-            'api_key': api_key if api_key else None,  # Pass None, not empty string
-            'model_name': llm_model
+            'api_key': api_key if api_key else None,
+            'model_name': llm_model,
+            'base_url': base_url  # CRS proxy URL
         }
 
-        # Create BaseAgent with user_id for memory isolation
+        # Create BaseAgent with user_id, browser_manager, and browser_session_id
         self.base_agent = BaseAgent(
             agent_config,
-            config_service=self.config_service,  # Pass config service
+            config_service=self.config_service,
             provider_config=provider_config,
-            user_id=self.user_id  # Pass user_id for memory isolation
+            user_id=self.user_id,
+            browser_manager=self.browser_manager,
+            browser_session_id=self.browser_session_id
         )
         self.logger.info(f"Initialized BaseAgent with {llm_provider}/{llm_model} for user '{self.user_id}'")
 
@@ -277,15 +299,10 @@ class WorkflowTestRunner:
     async def cleanup(self):
         """Cleanup resources
 
-        Note: Browser sessions are NOT closed to allow reuse across multiple workflow runs.
-        To manually close all browser sessions, you can call:
-        BrowserSessionManager.get_instance().close_all_sessions()
+        Note: Browser sessions are kept alive by default for debugging.
         """
-        # Don't close browser sessions - keep them alive for reuse
-        if self.context and self.context._browser_session_manager:
-            self.logger.info("Browser sessions kept alive for reuse")
-            # Uncomment the line below if you want to force close all sessions on exit:
-            # await self.context._browser_session_manager.close_all_sessions()
+        # Keep browser open for debugging - user can close it manually
+        self.logger.info("Cleanup completed. Browser kept open for debugging.")
 
 
 def parse_input_data(args) -> Dict[str, Any]:
