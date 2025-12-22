@@ -412,13 +412,13 @@ function MetaflowDetailPage({ session, onNavigate, showStatus, metaflowId }) {
               <Icon icon="code" />
               <span>YAML</span>
             </button>
-            <button
+            {/* <button
               className={`tab-button ${activeTab === 'chat' ? 'active' : ''}`}
               onClick={() => setActiveTab('chat')}
             >
               <Icon icon="messageSquare" />
               <span>AI 对话</span>
-            </button>
+            </button> */}
           </div>
 
           <div className="tab-content">

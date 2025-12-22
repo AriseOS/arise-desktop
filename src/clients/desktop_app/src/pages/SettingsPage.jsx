@@ -6,9 +6,9 @@ import '../styles/SettingsPage.css';
 
 /**
  * Settings Page Component
- * Displays user account info, quota status, and logout option
+ * Displays user account info, quota status, language selector, and logout option
  */
-function SettingsPage({ navigate, showStatus, onLogout }) {
+function SettingsPage({ navigate, showStatus, onLogout, language = 'en', onLanguageChange }) {
   const [session, setSession] = useState(null);
   const [quota, setQuota] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -83,6 +83,12 @@ function SettingsPage({ navigate, showStatus, onLogout }) {
     setShowLogoutConfirm(false);
   };
 
+  const handleLanguageChange = (lang) => {
+    if (onLanguageChange) {
+      onLanguageChange(lang);
+    }
+  };
+
   if (loading) {
     return (
       <div className="page settings-page">
@@ -144,6 +150,30 @@ function SettingsPage({ navigate, showStatus, onLogout }) {
           <button className="btn btn-danger" onClick={handleLogoutClick}>
             <Icon icon="logOut" size={16} /> Logout
           </button>
+        </section>
+
+        {/* Language Section */}
+        <section className="settings-section">
+          <h2 className="section-title">Language</h2>
+          <div className="info-card">
+            <p style={{ marginBottom: '12px' }}>Choose the language for the in-app documentation and some UI labels.</p>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                type="button"
+                className={`btn ${language === 'en' ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => handleLanguageChange('en')}
+              >
+                English
+              </button>
+              <button
+                type="button"
+                className={`btn ${language === 'zh' ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => handleLanguageChange('zh')}
+              >
+                简体中文
+              </button>
+            </div>
+          </div>
         </section>
 
         {/* Quota Section */}

@@ -32,6 +32,7 @@ import DataManagementPage from "./pages/DataManagementPage";
 import CollectionDetailPage from "./pages/CollectionDetailPage";
 import WorkflowExecutionLivePage from "./pages/WorkflowExecutionLivePage";
 import ScraperOptimizationPage from "./pages/ScraperOptimizationPage";
+import DocsPage from "./pages/DocsPage";
 
 // Import setup styles
 import "./styles/SetupPage.css";
@@ -50,6 +51,9 @@ function App() {
   // Navigation state
   const [currentPage, setCurrentPage] = useState("main");
   const [pageParams, setPageParams] = useState({});
+
+  // UI language state for docs and related UI
+  const [language, setLanguage] = useState("en");
 
   // Status message
   const [statusMessage, setStatusMessage] = useState("");
@@ -70,8 +74,25 @@ function App() {
 
   // Check setup status on mount
   useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem("ami_language");
+      if (saved === "en" || saved === "zh") {
+        setLanguage(saved);
+      }
+    } catch (e) {
+      console.error("[App] Failed to read language from storage:", e);
+    }
+
     checkSetupStatus();
   }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("ami_language", language);
+    } catch (e) {
+      console.error("[App] Failed to save language to storage:", e);
+    }
+  }, [language]);
 
   const checkSetupStatus = async () => {
     try {
@@ -260,8 +281,13 @@ function App() {
         </div>
       </div>
 
-      <button className="btn btn-secondary" title="Help" style={{ position: 'fixed', bottom: '30px', right: '30px', borderRadius: '50%', width: '48px', height: '48px', padding: 0 }}>
-        <Icon name="help" size={24} />
+      <button
+        className="btn btn-secondary"
+        title="Help"
+        style={{ position: 'fixed', bottom: '30px', right: '30px', borderRadius: '50%', width: '48px', height: '48px', padding: 0 }}
+        onClick={() => navigate("docs", { topicId: "overview-getting-started" })}
+      >
+        <Icon name="book" size={24} />
       </button>
 
       <button
@@ -287,13 +313,22 @@ function App() {
           <h1 className="page-title">Good Morning, {session?.username || 'User'}</h1>
           <p className="page-subtitle">Ready to automate your work?</p>
         </div>
-        <button
-          className="btn-icon"
-          title="Settings"
-          onClick={() => navigate("settings")}
-        >
-          <Icon name="settings" size={24} />
-        </button>
+        <div className="flex-row" style={{ gap: '8px', alignItems: 'center' }}>
+          <button
+            className="btn-icon"
+            title="Help"
+            onClick={() => navigate("docs", { topicId: "overview-getting-started" })}
+          >
+            <Icon name="book" size={24} />
+          </button>
+          <button
+            className="btn-icon"
+            title="Settings"
+            onClick={() => navigate("settings")}
+          >
+            <Icon name="settings" size={24} />
+          </button>
+        </div>
       </div>
 
       <div className="home-content">
@@ -452,6 +487,8 @@ function App() {
             navigate={navigate}
             showStatus={showStatus}
             onLogout={handleLogout}
+            language={language}
+            onLanguageChange={setLanguage}
           />
         );
 
@@ -649,6 +686,17 @@ function App() {
           />
         );
 
+      case "docs":
+        return (
+          <DocsPage
+            language={language}
+            onLanguageChange={setLanguage}
+            onNavigate={navigate}
+            showStatus={showStatus}
+            topicId={pageParams.topicId}
+          />
+        );
+
       default:
         return renderMainPage();
     }
@@ -667,7 +715,7 @@ function App() {
       { id: "workflows", icon: "workflows", label: "Workflows" },
       { id: "recordings-library", icon: "library", label: "Library" },
       { id: "data-management", icon: "data", label: "Data" },
-      { id: "conversational-generation", icon: "chat", label: "AI Chat" }
+      // { id: "conversational-generation", icon: "chat", label: "AI Chat" }
     ];
 
     return (

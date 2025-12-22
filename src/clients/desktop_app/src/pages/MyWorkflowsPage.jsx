@@ -197,10 +197,10 @@ function MyWorkflowsPage({ session, onNavigate, onLogout }) {
             <Icon icon="zap" size={16} />
             <span>快速生成</span>
           </button>
-          <button className="primary-button" onClick={handleGenerateWorkflow}>
+          {/* <button className="primary-button" onClick={handleGenerateWorkflow}>
             <Icon icon="plusCircle" size={16} />
             <span>新建 Workflow</span>
-          </button>
+          </button> */}
         </div>
       </div>
 
@@ -241,10 +241,10 @@ function MyWorkflowsPage({ session, onNavigate, onLogout }) {
                   <Icon icon="zap" size={16} />
                   <span>从录制快速生成</span>
                 </button>
-                <button className="secondary-button" onClick={handleGenerateWorkflow}>
+                {/* <button className="secondary-button" onClick={handleGenerateWorkflow}>
                   <Icon icon="plusCircle" size={16} />
                   <span>AI 智能生成</span>
-                </button>
+                </button> */}
               </div>
             </div>
           ) : (
@@ -332,13 +332,13 @@ function MyWorkflowsPage({ session, onNavigate, onLogout }) {
                 <p>从已有录制直接生成 Workflow，无需等待</p>
               </div>
             </div>
-            <div className="feature-item">
+            {/* <div className="feature-item">
               <div className="feature-icon"><Icon icon="cpu" size={24} /></div>
               <div className="feature-text">
                 <h4>AI 智能生成</h4>
                 <p>描述需求，AI 自动生成复杂 Workflow</p>
               </div>
-            </div>
+            </div> */}
             <div className="feature-item">
               <div className="feature-icon"><Icon icon="layout" size={24} /></div>
               <div className="feature-text">
