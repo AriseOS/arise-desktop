@@ -2582,6 +2582,111 @@ async def chat_with_claude_for_optimization(
 
 
 # ============================================================================
+# Workflow Feedback & Skill Execution Endpoints
+# ============================================================================
+
+class WorkflowFeedbackRequest(BaseModel):
+    """Request with user feedback about workflow execution"""
+    user_id: str
+    workflow_id: str
+    task_id: Optional[str] = None
+    message: str
+    workflow_result: Optional[Dict] = None  # Optional workflow execution result for context
+
+
+@app.post("/api/workflow-feedback")
+async def handle_workflow_feedback(
+    request: WorkflowFeedbackRequest,
+    x_ami_api_key: Optional[str] = Header(None)
+):
+    """
+    Handle user feedback about workflow execution and auto-invoke appropriate skill
+
+    This endpoint:
+    1. Analyzes user's feedback to determine intent
+    2. If a skill can help, executes it automatically
+    3. Streams the skill execution results
+
+    Returns:
+        StreamingResponse with Server-Sent Events (SSE) containing skill execution updates
+    """
+    try:
+        logger.info(f"Received workflow feedback from user {request.user_id}: {request.message}")
+
+        # Get workflow context
+        workflow_context = {
+            'user_id': request.user_id,
+            'workflow_id': request.workflow_id,
+            'workflow_result': request.workflow_result or {}
+        }
+
+        # If workflow_result is provided, extract steps info
+        if request.workflow_result:
+            workflow_yaml_str = request.workflow_result.get('workflow_yaml', '')
+            if workflow_yaml_str:
+                try:
+                    import yaml
+                    workflow_data = yaml.safe_load(workflow_yaml_str)
+                    workflow_context['steps'] = workflow_data.get('steps', [])
+                except Exception as e:
+                    logger.warning(f"Failed to parse workflow YAML: {e}")
+
+        # Debug: Log workflow context in detail
+        logger.info(f"Workflow context keys: {workflow_context.keys()}")
+        logger.info(f"Workflow steps count: {len(workflow_context.get('steps', []))}")
+        if workflow_context.get('workflow_result'):
+            logger.info(f"Workflow result keys: {workflow_context['workflow_result'].keys()}")
+            # Log if there are steps in workflow_result
+            if 'steps' in workflow_context:
+                logger.info(f"Workflow steps sample: {workflow_context['steps'][:2] if workflow_context['steps'] else 'empty'}")
+            # Log workflow_yaml if available
+            if 'workflow_yaml' in workflow_context.get('workflow_result', {}):
+                yaml_preview = workflow_context['workflow_result']['workflow_yaml'][:500]
+                logger.info(f"Workflow YAML preview: {yaml_preview}")
+
+        # Use ConversationSkillHandler - let Claude autonomously decide what to do
+        # No pre-classification of intent, Claude reads skill descriptions and decides
+        if x_ami_api_key:
+            logger.info("Using API key from X-Ami-API-Key header for conversation")
+
+        from src.app_backend.services.conversation_skill_handler import ConversationSkillHandler
+
+        conversation_handler = ConversationSkillHandler(config_service=config)
+
+        async def stream_conversation():
+            """Stream conversation with Claude Agent SDK"""
+            try:
+                # Stream conversation handling
+                async for event in conversation_handler.handle_feedback(
+                    user_message=request.message,
+                    workflow_context=workflow_context,
+                    api_key=x_ami_api_key
+                ):
+                    yield f"data: {json.dumps(event)}\n\n"
+
+                # Send completion
+                yield f"data: {json.dumps({'type': 'complete'})}\n\n"
+
+            except Exception as e:
+                logger.error(f"Error during conversation: {e}", exc_info=True)
+                yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+
+        return StreamingResponse(
+            stream_conversation(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"  # Disable buffering in nginx
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"Workflow feedback handler error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
 # Main Entry Point
 # ============================================================================
 # Resource Cleanup

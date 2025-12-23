@@ -285,7 +285,7 @@ class WorkflowExecutor:
             task.error = result.error if not result.success else None
             task.message = "Execution completed" if result.success else f"Failed: {result.error}"
 
-            # Send final progress update
+            # Send final progress update (include workflow_yaml for feedback context)
             await self._send_progress_update(task_id, {
                 "type": "progress_update",
                 "task_id": task_id,
@@ -294,7 +294,12 @@ class WorkflowExecutor:
                 "current_step": task.total_steps - 1,  # Last step index (0-based)
                 "total_steps": task.total_steps,
                 "message": task.message,
-                "result": task.result,
+                "result": {
+                    **(task.result if isinstance(task.result, dict) else {"value": task.result}),
+                    "workflow_yaml": workflow_yaml,  # Include workflow YAML for feedback system
+                    "workflow_name": task.workflow_name,
+                    "steps": task.steps  # Include steps info for scraper step lookup
+                },
                 "error": task.error,
                 "timestamp": datetime.now().isoformat()
             })
@@ -336,7 +341,7 @@ class WorkflowExecutor:
             task.message = f"Execution failed: {e}"
             task.completed_at = datetime.now()
 
-            # Send error progress update
+            # Send error progress update (include workflow_yaml for feedback context)
             await self._send_progress_update(task_id, {
                 "type": "progress_update",
                 "task_id": task_id,
@@ -345,6 +350,11 @@ class WorkflowExecutor:
                 "current_step": task.current_step,
                 "total_steps": task.total_steps,
                 "message": task.message,
+                "result": {
+                    "workflow_yaml": workflow_yaml,  # Include workflow YAML for feedback system
+                    "workflow_name": task.workflow_name,
+                    "steps": task.steps  # Include steps info for scraper step lookup
+                },
                 "error": task.error,
                 "timestamp": datetime.now().isoformat()
             })

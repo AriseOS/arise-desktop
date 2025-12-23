@@ -23,8 +23,17 @@ function WorkflowExecutionLivePage({
   const [elapsedTime, setElapsedTime] = useState(0);
   const [wsConnected, setWsConnected] = useState(false);
 
+  // Feedback state
+  const [feedbackMessage, setFeedbackMessage] = useState('');
+  const [isSendingFeedback, setIsSendingFeedback] = useState(false);
+  const [skillLog, setSkillLog] = useState([]);
+  const [workflowResult, setWorkflowResult] = useState(null);
+  const [conversationHistory, setConversationHistory] = useState([]);
+  const [isConversationActive, setIsConversationActive] = useState(false);
+
   const wsRef = useRef(null);
   const logsEndRef = useRef(null);
+  const conversationEndRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
   const heartbeatIntervalRef = useRef(null);
   const shouldReconnectRef = useRef(true);
@@ -205,6 +214,11 @@ function WorkflowExecutionLivePage({
           clearInterval(heartbeatIntervalRef.current);
           heartbeatIntervalRef.current = null;
         }
+
+        // Save workflow result for feedback context
+        if (data.result) {
+          setWorkflowResult(data.result);
+        }
       }
     }
   };
@@ -277,6 +291,141 @@ function WorkflowExecutionLivePage({
     });
   };
 
+  // Handle feedback submission
+  const handleFeedback = async () => {
+    if (!feedbackMessage.trim() || isSendingFeedback) return;
+
+    const userMessage = feedbackMessage.trim();
+    setIsSendingFeedback(true);
+    setIsConversationActive(true);  // Mark conversation as active
+    setSkillLog([]);
+
+    // Add user message to conversation history immediately
+    const userMessageObj = {
+      role: 'user',
+      content: userMessage,
+      timestamp: new Date().toISOString()
+    };
+    setConversationHistory(prev => [...prev, userMessageObj]);
+
+    // Clear input immediately so user sees their message in chat
+    setFeedbackMessage('');
+
+    try {
+      const API_BASE = "http://127.0.0.1:8765";
+      const apiKey = session?.apiKey;  // Get API key from session
+
+      const response = await fetch(`${API_BASE}/api/workflow-feedback`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(apiKey && { 'X-Ami-API-Key': apiKey })
+        },
+        body: JSON.stringify({
+          user_id: userId,
+          workflow_id: workflowName,
+          task_id: taskId,
+          message: userMessage,
+          workflow_result: workflowResult
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Request failed: ${response.statusText}`);
+      }
+
+      // Read SSE stream
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let aiResponseParts = []; // Collect AI response parts
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const event = JSON.parse(line.slice(6));
+
+              // Handle final result or error - clear progress and add result
+              if (event.type === 'result' || event.type === 'error') {
+                // Collect content for AI response
+                if (event.content) {
+                  aiResponseParts.push(event.content);
+                }
+
+                // Mark conversation as inactive (completed)
+                setIsConversationActive(false);
+
+                // Clear all progress messages (those with update_id) and add final result
+                setSkillLog(prev => {
+                  // Filter out all messages with update_id (progress messages)
+                  const withoutProgress = prev.filter(e => !e.update_id);
+                  // Add the final result message (which has no update_id)
+                  return [...withoutProgress, event];
+                });
+              }
+              // Handle progress updates with update_id (dynamic single message)
+              else if (event.update_id) {
+                setSkillLog(prev => {
+                  const existingIndex = prev.findIndex(e => e.update_id === event.update_id);
+                  if (existingIndex !== -1) {
+                    // Update existing progress message
+                    const newLog = [...prev];
+                    newLog[existingIndex] = event;
+                    return newLog;
+                  } else {
+                    // First time seeing this update_id, append it
+                    return [...prev, event];
+                  }
+                });
+              }
+              // Other messages without update_id - append normally
+              else {
+                setSkillLog(prev => [...prev, event]);
+              }
+
+              // Show status for important events
+              if (event.type === 'result') {
+                showStatus('✓ Optimization complete!', 'success');
+              } else if (event.type === 'error') {
+                showStatus(`Error: ${event.content}`, 'error');
+              }
+            } catch (e) {
+              console.error('Failed to parse event:', e);
+            }
+          }
+        }
+      }
+
+      // Add AI response to conversation history
+      if (aiResponseParts.length > 0) {
+        const aiMessageObj = {
+          role: 'assistant',
+          content: aiResponseParts.join('\n\n'),
+          timestamp: new Date().toISOString()
+        };
+        setConversationHistory(prev => [...prev, aiMessageObj]);
+      }
+
+    } catch (error) {
+      console.error('Feedback submission error:', error);
+      showStatus(`Feedback failed: ${error.message}`, 'error');
+      setSkillLog(prev => [...prev, {
+        type: 'error',
+        content: error.message
+      }]);
+    } finally {
+      setIsSendingFeedback(false);
+    }
+  };
+
   // Time tracking
   useEffect(() => {
     if (status === 'running') {
@@ -292,6 +441,11 @@ function WorkflowExecutionLivePage({
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs]);
+
+  // Auto-scroll conversation to bottom when new messages arrive
+  useEffect(() => {
+    conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [conversationHistory]);
 
   // Auto-scroll timeline to current step
   useEffect(() => {
@@ -505,6 +659,107 @@ function WorkflowExecutionLivePage({
           )}
         </div>
       </div>
+
+      {/* Feedback Section - Show during and after execution */}
+      {(status === 'running' || status === 'completed' || status === 'failed') && (
+        <div className="feedback-section">
+          <div className="feedback-header">
+            <h3><Icon icon="messageSquare" size={18} /> Feedback & Optimization</h3>
+            <p className="feedback-subtitle">Having issues? Tell me and I'll try to optimize automatically</p>
+          </div>
+
+          {/* Conversation History - Chat style */}
+          {conversationHistory.length > 0 && (
+            <div className="conversation-history">
+              {conversationHistory.map((message, idx) => (
+                <div key={idx} className={`chat-message ${message.role}`}>
+                  <div className="message-bubble">
+                    <div className="message-content">{message.content}</div>
+                    <div className="message-timestamp">
+                      {new Date(message.timestamp).toLocaleTimeString()}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              <div ref={conversationEndRef} />
+            </div>
+          )}
+
+          {/* Skill execution log - detailed technical log (only show during active conversation) */}
+          {skillLog.length > 0 && isConversationActive && (
+            <div className="skill-log">
+              {skillLog.map((entry, idx) => (
+                <div key={idx} className={`skill-log-entry ${entry.type}`}>
+                  {entry.type === 'intent' && (
+                    <div className="skill-intent">
+                      <Icon icon="zap" size={14} />
+                      <span>Detected: {entry.intent} (confidence: {(entry.confidence * 100).toFixed(0)}%)</span>
+                    </div>
+                  )}
+                  {entry.type === 'thinking' && (
+                    <div className="skill-thinking">
+                      <Icon icon="loader" size={14} className="spinning-loader" />
+                      <span>{entry.content}</span>
+                    </div>
+                  )}
+                  {entry.type === 'analyzing' && (
+                    <div className="skill-analyzing">
+                      <Icon icon="search" size={14} />
+                      <span>{entry.content}</span>
+                    </div>
+                  )}
+                  {entry.type === 'result' && (
+                    <div className="skill-result">
+                      <Icon icon="checkCircle" size={14} />
+                      <span>{entry.content}</span>
+                    </div>
+                  )}
+                  {entry.type === 'error' && (
+                    <div className="skill-error">
+                      <Icon icon="alertCircle" size={14} />
+                      <span>{entry.content}</span>
+                    </div>
+                  )}
+                  {entry.type === 'text' && (
+                    <div className="skill-text">
+                      <span>{entry.content}</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Feedback input */}
+          <div className="feedback-input-container">
+            <textarea
+              className="feedback-input"
+              value={feedbackMessage}
+              onChange={(e) => setFeedbackMessage(e.target.value)}
+              placeholder="例如：价格字段没有提取出来 / 第二个页面的图片链接缺失..."
+              disabled={isSendingFeedback}
+              rows={3}
+            />
+            <button
+              className="feedback-submit-btn"
+              onClick={handleFeedback}
+              disabled={!feedbackMessage.trim() || isSendingFeedback}
+            >
+              {isSendingFeedback ? (
+                <>
+                  <Icon icon="loader" size={16} className="spinning-loader" />
+                  <span>Processing...</span>
+                </>
+              ) : (
+                <>
+                  <Icon icon="send" size={16} />
+                  <span>Submit Feedback</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

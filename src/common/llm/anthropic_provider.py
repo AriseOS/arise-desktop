@@ -41,16 +41,16 @@ class AnthropicProvider(BaseProvider):
     
     async def _initialize_client(self) -> None:
         """Initialize the Anthropic client"""
-        
+
         # Get API key from env var if not provided
         self.api_key = self.api_key or os.environ.get("ANTHROPIC_API_KEY")
         if not self.api_key:
             raise ValueError("Anthropic API key not provided and not found in ANTHROPIC_API_KEY environment variable")
-        
+
         # Set default model if not specified
         if not self.model_name:
             self.model_name = "claude-sonnet-4-5-20250929"
-        
+
         # Initialize client with timeout
         client_kwargs = {
             "api_key": self.api_key,
@@ -58,11 +58,26 @@ class AnthropicProvider(BaseProvider):
         }
 
         # Add custom base_url if provided (for API proxy)
+        # IMPORTANT: If we explicitly set base_url, we need to ensure
+        # the environment variable doesn't override it
         if self.base_url:
             client_kwargs["base_url"] = self.base_url
             logger.info(f"Using custom base URL: {self.base_url}")
+            # Temporarily save and remove env var to prevent override
+            saved_base_url = os.environ.get("ANTHROPIC_BASE_URL")
+            if saved_base_url:
+                logger.info(f"Temporarily overriding ANTHROPIC_BASE_URL env var (was: {saved_base_url})")
+                del os.environ["ANTHROPIC_BASE_URL"]
 
-        self._client = Anthropic(**client_kwargs)
+            self._client = Anthropic(**client_kwargs)
+
+            # Restore env var
+            if saved_base_url:
+                os.environ["ANTHROPIC_BASE_URL"] = saved_base_url
+        else:
+            # Use environment variable if no explicit base_url
+            self._client = Anthropic(**client_kwargs)
+
         logger.info(f"Initialized Anthropic client with model {self.model_name}")
     
     async def generate_response(
