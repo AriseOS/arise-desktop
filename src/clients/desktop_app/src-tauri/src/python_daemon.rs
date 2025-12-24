@@ -81,11 +81,13 @@ impl PythonDaemon {
                     //                ├── MacOS/
                     //                │   └── ami-desktop
                     //                └── Resources/
-                    //                    └── ami-daemon/
-                    //                        └── ami-daemon
+                    //                    └── ami-daemon.app/
+                    //                        └── Contents/
+                    //                            └── MacOS/
+                    //                                └── ami-daemon
                     vec![
-                        exe_dir.parent().map(|p| p.join("Resources")),
-                        exe_dir.parent().map(|p| p.join("Resources").join("resources")),
+                        exe_dir.parent().map(|p| p.join("Resources").join("ami-daemon.app").join("Contents").join("MacOS")),
+                        exe_dir.parent().map(|p| p.join("Resources").join("resources").join("ami-daemon.app").join("Contents").join("MacOS")),
                     ]
                 };
 

@@ -13,3 +13,4 @@ browser-use>=0.1.0
 playwright>=1.40.0
 pathspec>=0.11.0
 claude-agent-sdk>=0.1.0
+pyinstaller>=6.0.0

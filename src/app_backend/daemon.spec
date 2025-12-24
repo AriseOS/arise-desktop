@@ -2,7 +2,8 @@
 
 """
 PyInstaller spec file for Ami daemon
-Compiles daemon.py and all dependencies into a single binary executable
+Compiles daemon.py and all dependencies into a macOS .app bundle
+Following industry best practices for code signing and notarization
 """
 
 import sys
@@ -10,17 +11,13 @@ import os
 from pathlib import Path
 
 # Project root (ami/)
-# In spec files, use SPECPATH which is the directory containing the spec file
 spec_dir = Path(SPECPATH)
 project_root = spec_dir.parent.parent
 sys.path.insert(0, str(project_root))
 
-# Find Playwright browsers directory
-# Note: We will NOT bundle Chromium directly in PyInstaller due to codesign issues
-# Instead, we'll copy it to Tauri resources and reference it there
+# Chromium is NOT bundled - will be auto-installed on first launch
 playwright_browsers = []
-print("Skipping Playwright Chromium bundling in PyInstaller (will be handled by Tauri)")
-print("Chromium will be copied to Tauri resources directory separately")
+print("Skipping Playwright Chromium bundling (will be handled separately)")
 
 block_cipher = None
 
@@ -32,18 +29,15 @@ a = Analysis(
         # Config files
         ('config/app-backend.yaml', 'config'),
 
-        # JavaScript files for browser behavior tracking (NOT Python - these are injected into browser)
+        # JavaScript files for browser behavior tracking
         (str(project_root / 'src/clients/base_app/base_app/base_agent/tools/browser_use/user_behavior/behavior_tracker.js'),
          'base_app/base_agent/tools/browser_use/user_behavior'),
 
-        # Workflow YAML files (data files, not Python code)
+        # Workflow YAML files
         (str(project_root / 'src/clients/base_app/base_app/base_agent/workflows/builtin'),
          'base_app/base_agent/workflows/builtin'),
         (str(project_root / 'src/clients/base_app/base_app/base_agent/workflows/user'),
          'base_app/base_agent/workflows/user'),
-
-        # Note: Python code in tools/, core/ directories is handled by hiddenimports
-        # Do NOT include .py files as datas - they are redundant and expose source code
     ] + playwright_browsers,
     hiddenimports=[
         # Uvicorn and FastAPI
@@ -116,7 +110,7 @@ a = Analysis(
         'pydantic_settings',
 
         # File sync utilities
-        'pathspec',  # For .gitignore-style pattern matching in simple_sync
+        'pathspec',
 
         # Claude Agent SDK
         'claude_agent_sdk',
@@ -124,7 +118,7 @@ a = Analysis(
         'claude_agent_sdk._internal.transport',
         'claude_agent_sdk._internal.query',
     ],
-    hookspath=[],
+    hookspath=['hooks'],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
@@ -137,25 +131,25 @@ a = Analysis(
         'pandas',
         'jupyter',
         'IPython',
-        'setuptools._vendor.packaging.licenses',  # Optional module causing warnings
+        'setuptools._vendor.packaging.licenses',
 
         # Heavy libraries not needed at runtime
         'PyQt5',
         'PyQt6',
         'PySide2',
         'PySide6',
-        'cv2',  # OpenCV
-        'numpy',  # Only used in examples/tests
-        'mypy',  # Type checker (dev tool)
-        'Cython',  # Compiler (dev tool)
-        'h5py',  # HDF5 format
-        'astropy',  # Astronomy library
-        'numba',  # JIT compiler
-        'torch',  # PyTorch
-        'tensorflow',  # TensorFlow
-        'keras',  # Keras
-        'sklearn',  # Scikit-learn
-        'PIL.ImageQt',  # Qt integration for PIL
+        'cv2',
+        'numpy',
+        'mypy',
+        'Cython',
+        'h5py',
+        'astropy',
+        'numba',
+        'torch',
+        'tensorflow',
+        'keras',
+        'sklearn',
+        'PIL.ImageQt',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -172,7 +166,7 @@ pyz = PYZ(
 exe = EXE(
     pyz,
     a.scripts,
-    exclude_binaries=True,  # Key for onedir mode - binaries go to COLLECT
+    exclude_binaries=True,  # onedir mode - binaries go to COLLECT
     name='ami-daemon',
     debug=False,
     bootloader_ignore_signals=False,
@@ -180,9 +174,11 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,  # Keep console for logging during development, change to False for production
+    console=False,  # No console window
     disable_windowed_traceback=False,
     target_arch=None,
+    # Note: We don't sign here because Tauri will overwrite it anyway
+    # Final signing happens in build.sh after Tauri bundles the app
     codesign_identity=None,
     entitlements_file=None,
 )
@@ -197,3 +193,30 @@ coll = COLLECT(
     upx_exclude=[],
     name='ami-daemon'
 )
+
+# macOS only: Create a proper .app bundle
+# Following Apple's bundle structure guidelines for notarization
+import platform
+if platform.system() == 'Darwin':
+    app = BUNDLE(
+        coll,
+        name='ami-daemon.app',
+        icon=None,
+        bundle_identifier='com.arise.ami-daemon',
+        info_plist={
+            'CFBundleName': 'ami-daemon',
+            'CFBundleDisplayName': 'Ami Daemon',
+            'CFBundleIdentifier': 'com.arise.ami-daemon',
+            'CFBundleVersion': '0.1.0',
+            'CFBundleShortVersionString': '0.1.0',
+            'CFBundleExecutable': 'ami-daemon',
+            'CFBundlePackageType': 'APPL',
+            'LSBackgroundOnly': True,
+            'LSUIElement': True,
+            'NSHighResolutionCapable': True,
+        },
+        # Note: We don't sign here because Tauri will overwrite it anyway
+        # Final signing happens in build.sh after Tauri bundles the app
+        codesign_identity=None,
+        entitlements_file=None,
+    )
