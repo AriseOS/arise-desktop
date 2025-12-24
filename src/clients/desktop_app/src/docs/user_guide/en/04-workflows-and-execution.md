@@ -1,13 +1,13 @@
-## 5. Workflows and Execution
+## 4. Workflows and Execution
 
-### 5.1 Workflows List
+### 4.1 Workflows List
 
 The **Workflows** area shows all workflows you have created:
 
 - Each entry includes a name, status, and last run time.
 - You can open a workflow to view details or run it.
 
-### 5.2 Workflow Details
+### 4.2 Workflow Details
 
 In a workflow detail view you can typically:
 
@@ -15,7 +15,7 @@ In a workflow detail view you can typically:
 - Adjust input parameters where supported.
 - Start a new run of the workflow.
 
-### 5.3 Monitoring a Run
+### 4.3 Monitoring a Run
 
 When you start a run you can open the **live execution** or **monitor** view:
 
@@ -23,7 +23,7 @@ When you start a run you can open the **live execution** or **monitor** view:
 - See which step is currently running.
 - Stop or cancel a run if necessary.
 
-### 5.4 Viewing Results
+### 4.4 Viewing Results
 
 After a run finishes you can open the **execution result**:
 
@@ -31,7 +31,7 @@ After a run finishes you can open the **execution result**:
 - Inspect logs and outputs.
 - Jump back to the workflow for adjustments.
 
-### 5.5 AI Changes and Script Generation Time
+### 4.5 AI Changes and Script Generation Time
 
 When you ask Ami to modify a workflow or generate one from a recording, the app may need time to:
 
@@ -45,7 +45,7 @@ You might see loading indicators or a "preparing" state before the workflow is r
 
 Similarly, when starting a run, Ami may spend a short period preparing or updating scripts before visible steps begin to execute. This is expected; you can watch progress from the monitor or live execution views.
 
-### 5.6 Using AI to Modify an Existing Workflow
+### 4.6 Using AI to Modify an Existing Workflow
 
 In addition to generating workflows from recordings or descriptions, you can ask AI to help **inspect and fix** an existing workflow.
 

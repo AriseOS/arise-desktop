@@ -1,13 +1,13 @@
-## 6. Recordings and Data
+## 5. Recordings and Data
 
-### 6.1 Recordings Library
+### 5.1 Recordings Library
 
 The **Recordings Library** keeps historical recordings:
 
 - Each item shows when it was recorded and basic metadata.
 - You can reopen a recording to review steps or generate a new workflow.
 
-### 6.2 Recording Details
+### 5.2 Recording Details
 
 In a recording detail view you can:
 
@@ -15,7 +15,7 @@ In a recording detail view you can:
 - Remove unneeded steps.
 - Start a new generation flow from this recording.
 
-### 6.3 Data Management and Collections
+### 5.3 Data Management and Collections
 
 The **Data** area lets you manage structured data used by workflows:
 

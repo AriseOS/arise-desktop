@@ -1,6 +1,6 @@
-## 3. Accounts and Settings
+## 2. Accounts and Settings
 
-### 3.1 Sign Up and Sign In
+### 2.1 Sign Up and Sign In
 
 - Use the **Register** screen to create an account.
 - After registration you will be redirected to the **Login** screen.
@@ -11,7 +11,7 @@ Typical problems:
 - Wrong password: the app shows an error message and stays on the login page.
 - Server unavailable: you might see a connection error; check that the backend is running.
 
-### 3.2 Settings
+### 2.2 Settings
 
 Open **Settings** from the main pages to:
 

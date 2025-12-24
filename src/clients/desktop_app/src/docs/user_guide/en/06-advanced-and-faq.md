@@ -1,6 +1,6 @@
-## 7. Advanced Features and FAQ
+## 6. Advanced Features and FAQ
 
-### 7.1 Conversational Generation
+### 6.1 Conversational Generation
 
 In **Conversational Generation** you can describe what you want in natural language:
 
@@ -9,14 +9,14 @@ In **Conversational Generation** you can describe what you want in natural langu
 
 This is an alternative to recording-based generation and is best for experienced users.
 
-### 7.2 Advanced Workflow Editing
+### 6.2 Advanced Workflow Editing
 
 Some versions of Ami expose advanced workflow editors where you can:
 
 - Inspect flows as graphs.
 - Tweak conditions and branching.
 
-### 7.3 FAQ and Troubleshooting
+### 6.3 FAQ and Troubleshooting
 
 Common issues include:
 

@@ -1,6 +1,6 @@
-## 7. 高级功能与常见问题
+## 5. 高级功能与常见问题
 
-### 7.1 Conversational Generation（对话式生成）
+### 5.1 Conversational Generation（对话式生成）
 
 在 **Conversational Generation** 中，你可以用自然语言描述需求：
 
@@ -9,14 +9,14 @@
 
 这是对录制生成的补充方式，更适合已经熟悉 Ami 的用户。
 
-### 7.2 高级 Workflow 编辑
+### 5.2 高级 Workflow 编辑
 
 部分版本中，Ami 会提供更高级的 Workflow 编辑能力：
 
 - 以图形方式查看 Workflow 结构；
 - 调整条件分支和复杂逻辑。
 
-### 7.3 常见问题与排查
+### 5.3 常见问题与排查
 
 常见问题示例：
 

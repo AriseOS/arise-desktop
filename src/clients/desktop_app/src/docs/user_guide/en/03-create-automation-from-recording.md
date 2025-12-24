@@ -1,8 +1,8 @@
-## 4. Create Automation from a Recording
+## 3. Create Automation from a Recording
 
 This chapter describes the main path from "do the task once" to a reusable workflow.
 
-### 4.1 Start Your First Recording
+### 3.1 Start Your First Recording
 
 You can start from the **home page**:
 
@@ -14,7 +14,7 @@ The app will:
 1. Open or connect to a browser.
 2. Begin capturing your actions.
 
-### 4.2 Perform the Task Once
+### 3.2 Perform the Task Once
 
 While recording:
 
@@ -33,14 +33,14 @@ This information is used later to understand your intent and to generate a workf
 
 When you are done, stop the recording from the recording controls.
 
-### 4.3 Analyze and Clean Up the Recording
+### 3.3 Analyze and Clean Up the Recording
 
 After stopping recording you will see an **analysis** view:
 
 - Review the captured steps.
 - Optionally remove incorrect steps or adjust descriptions.
 
-### 4.4 Generate a Workflow
+### 3.4 Generate a Workflow
 
 From the analysis flow you can start **generation**:
 
