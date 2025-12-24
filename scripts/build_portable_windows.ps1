@@ -107,9 +107,9 @@ if (-not $SkipFrontend) {
 }
 
 # Step 3: Build Tauri app (release exe)
-Invoke-Step "Step 3: Building Tauri application binary (cargo build --release)..." {
-    Set-Location $SrcTauriDir
-    cargo build --release
+Invoke-Step "Step 3: Building Tauri application binary (npx tauri build)..." {
+    Set-Location $DesktopDir
+    npx tauri build
 }
 
 # Step 4: Assemble portable directory
@@ -135,25 +135,12 @@ Invoke-Step "Step 4: Assembling portable directory..." {
 
     Copy-Item $exeSource $PortableBinDir -Force
 
-    # Copy resources/ami-daemon if present
-    $daemonSource = Join-Path $ResourcesDir 'ami-daemon'
-    if (Test-Path $daemonSource) {
-        Copy-Item $daemonSource (Join-Path $PortableBinDir 'ami-daemon') -Recurse -Force
-    } else {
-        Write-Warning "Daemon bundle not found in resources; portable package will rely on external daemon."
-    }
-
-    # Copy frontend dist assets if available (in case app expects ../dist)
-    $distDir = Join-Path $DesktopDir 'dist'
-    if (Test-Path $distDir) {
-        Copy-Item $distDir (Join-Path $PortableBinDir 'dist') -Recurse -Force
-    } else {
-        Write-Warning "Frontend dist/ directory not found; ensure npm run build was executed."
-    }
-
-    # Copy Tauri resources (if additional files exist)
+    # Copy Tauri resources directory (includes ami-daemon if present)
     if (Test-Path $ResourcesDir) {
         Copy-Item $ResourcesDir (Join-Path $PortableBinDir 'resources') -Recurse -Force
+        Write-Host "Resources copied to portable directory" -ForegroundColor Green
+    } else {
+        Write-Warning "Resources directory not found at $ResourcesDir"
     }
 }
 
