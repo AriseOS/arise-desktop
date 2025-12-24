@@ -1,0 +1,58 @@
+name: Test Build
+
+on:
+  workflow_dispatch:  # Manual trigger only
+
+jobs:
+  test-macos-build:
+    name: Test macOS Build (Apple Silicon)
+    runs-on: macos-14  # M1/M2 runner
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Setup Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Python dependencies
+        run: |
+          cd src/app_backend
+          python3 -m venv venv-build
+          source venv-build/bin/activate
+          pip install --upgrade pip
+          pip install pyinstaller
+          pip install -r requirements.txt
+          deactivate
+
+      - name: Install npm dependencies
+        run: |
+          cd src/clients/desktop_app
+          npm ci
+
+      - name: Build application (no signing)
+        run: |
+          ./scripts/build.sh --no-sign
+
+      - name: Check build output
+        run: |
+          ls -lh dist/
+          echo "DMG file:"
+          ls -lh dist/*.dmg
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ami-macos-arm64-test
+          path: dist/Ami-*.dmg
+          if-no-files-found: error
