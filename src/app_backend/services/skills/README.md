@@ -1,6 +1,6 @@
 # Claude Conversation Skills
 
-This directory contains the conversation skill system for automated workflow debugging and fixing.
+This directory contains skills for automated workflow debugging and fixing using Claude Agent SDK.
 
 ## Architecture
 
@@ -8,15 +8,16 @@ This directory contains the conversation skill system for automated workflow deb
 User Feedback
   ↓
 ConversationSkillHandler
-  - Loads skill metadata from YAML frontmatter
   - Creates temp workspace with workflow context
-  - Copies skill directories for Claude to access
+  - Copies skills to .claude/skills/ for SDK auto-discovery
+  - Enables skills via SDK setting_sources parameter
   ↓
-Claude Agent SDK (streaming)
+Claude Agent SDK (streaming with skills enabled)
+  - SDK automatically discovers skills from .claude/skills/
   - Claude reads user feedback
   - Claude autonomously decides which skill to use
   - Claude reads SKILL.md and follows instructions
-  - Claude uses Read/Edit/Bash tools directly
+  - Claude uses Read/Edit/Bash/Skill tools
   ↓
 Returns response with detailed report
 ```
@@ -86,7 +87,7 @@ Instructions...
 
 ## Usage
 
-The skill system is automatically invoked when users provide feedback on workflow execution. No manual configuration needed.
+The skill system is automatically invoked when users provide feedback on workflow execution.
 
 ```python
 from src.app_backend.services.conversation_skill_handler import ConversationSkillHandler
@@ -101,6 +102,18 @@ async for event in handler.handle_feedback(
     # Stream events to frontend
     print(event)
 ```
+
+### How Skills are Discovered
+
+Skills are automatically discovered by Claude Agent SDK using the standard mechanism:
+
+1. **Skills copied to `.claude/skills/`**: ConversationSkillHandler copies skills to temp workspace at `.claude/skills/`
+2. **SDK auto-discovery**: `setting_sources=["project"]` enables SDK to scan `.claude/skills/`
+3. **Skill tool enabled**: `"Skill"` tool is added to `allowed_tools`
+4. **Claude decides**: Claude autonomously chooses which skill to use based on description
+
+This follows the official Claude Agent SDK skills pattern:
+https://platform.claude.com/docs/en/agent-sdk/skills
 
 ## Benefits
 

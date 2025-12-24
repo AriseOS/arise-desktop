@@ -374,7 +374,8 @@ class ClaudeAgentProvider:
         prompt: str,
         working_dir: Path,
         max_iterations: int = 25,
-        tools: Optional[List[str]] = None
+        tools: Optional[List[str]] = None,
+        enable_skills: bool = False
     ) -> AsyncIterator[StreamEvent]:
         """Execute a task using Claude Agent SDK with real-time streaming"""
         working_dir = Path(working_dir)
@@ -383,6 +384,11 @@ class ClaudeAgentProvider:
 
         if tools is None:
             tools = ["Read", "Write", "Edit", "Bash", "Glob"]
+
+        # Add "Skill" tool if skills are enabled
+        if enable_skills and "Skill" not in tools:
+            tools = tools + ["Skill"]
+            logger.info("🎯 SDK Skills enabled - adding 'Skill' to allowed_tools")
 
         try:
             from claude_agent_sdk import (
@@ -400,6 +406,7 @@ class ClaudeAgentProvider:
             if self.base_url:
                 env_vars["ANTHROPIC_BASE_URL"] = self.base_url
 
+            # Configure options
             options = ClaudeAgentOptions(
                 model=self.model,
                 cwd=str(working_dir),
@@ -409,6 +416,17 @@ class ClaudeAgentProvider:
                 env=env_vars,
                 max_buffer_size=1024 * 1024
             )
+
+            # Enable skills if requested
+            if enable_skills:
+                options.setting_sources = ["project"]  # Load skills from .claude/skills/
+                logger.info("=" * 80)
+                logger.info("🎯 Claude Agent SDK Skills Configuration")
+                logger.info(f"   setting_sources: ['project']")
+                logger.info(f"   Skills directory: {working_dir}/.claude/skills/")
+                logger.info(f"   Allowed tools: {tools}")
+                logger.info("   SDK will auto-discover skills from .claude/skills/ directory")
+                logger.info("=" * 80)
 
             turn_count = 0
             yield StreamEvent(type="thinking", content="Initializing Claude Agent...", turn=0)

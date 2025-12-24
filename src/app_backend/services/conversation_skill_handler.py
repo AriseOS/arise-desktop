@@ -36,8 +36,8 @@ class ConversationSkillHandler:
             config_service: Optional config service for LLM configuration
         """
         self.config_service = config_service
-        self.skills_dir = Path(__file__).parent / "skills"
-        self.skills = self._load_skills()
+        # Skills are now loaded by Claude Agent SDK from .claude/skills/
+        # No need to manually scan and load them
 
     def _parse_skill_frontmatter(self, skill_md_path: Path) -> Optional[Dict]:
         """
@@ -125,7 +125,10 @@ class ConversationSkillHandler:
         workflow_context: Dict
     ) -> str:
         """
-        Build prompt for Claude with user feedback, workflow context, and skills
+        Build prompt for Claude with user feedback and workflow context
+
+        Skills are automatically discovered by Claude Agent SDK from .claude/skills/
+        No need to manually list skills in the prompt.
 
         Args:
             user_message: User's feedback message
@@ -140,16 +143,7 @@ class ConversationSkillHandler:
         workflow_name = workflow_result.get('workflow_name', 'Unknown Workflow')
         steps = workflow_result.get('steps', [])
 
-        # Build skills metadata section (only name and description)
-        if self.skills:
-            skills_list = "\n".join([
-                f"- **{skill['name']}**: {skill['description']}"
-                for skill in self.skills
-            ])
-        else:
-            skills_list = "No skills available"
-
-        # Build prompt
+        # Build simplified prompt - let Claude autonomously discover and use skills
         prompt = f"""# Workflow Feedback Assistant
 
 You are an intelligent assistant helping users debug and optimize their workflows.
@@ -159,8 +153,6 @@ You are an intelligent assistant helping users debug and optimize their workflow
 You have access to these files:
 - `workflow.yaml` - Full workflow configuration
 - `workflow_context.json` - Workflow metadata (user_id, workflow_id, steps)
-
-Use `cat` command to read these files.
 
 ## User's Feedback
 
@@ -191,54 +183,16 @@ Use `cat` command to read these files.
         if len(steps) > 10:
             prompt += f"\n... and {len(steps) - 10} more steps"
 
-        # Add available skills
+        # Simple task description - let Claude autonomously use skills
         prompt += f"""
-
----
-
-## AVAILABLE SKILLS
-
-You have access to specialized skills to help debug workflow issues. Each skill has detailed instructions in its SKILL.md file.
-
-{skills_list}
-
-### How to use skills
-
-1. **Identify the issue type** from the user's feedback
-2. **Read the skill's SKILL.md file**: `cat skills/<skill-name>/SKILL.md`
-3. **Follow the instructions** in SKILL.md exactly
-4. **Report results** back to the user
-
-### Skill files location
-
-Skills are located in the `skills/` directory:
-```
-skills/
-├── scraper-optimization/
-│   └── SKILL.md
-└── storage-debugging/
-    └── SKILL.md
-```
 
 ---
 
 ## YOUR TASK
 
-**User's feedback**: "{user_message}"
+User's feedback: "{user_message}"
 
-1. **Determine the issue type**:
-   - Scraper/extraction issues (missing fields, wrong data) → Use `scraper-optimization` skill
-   - Storage/database issues (data not saved, schema errors) → Use `storage-debugging` skill
-   - General questions → Answer directly
-
-2. **If it's a skill-based issue**:
-   - Read the appropriate skill's SKILL.md: `cat skills/<skill-name>/SKILL.md`
-   - Follow all steps in the SKILL.md instructions
-   - Report results to the user
-
-3. **If it's a general question**:
-   - Read workflow.yaml if needed
-   - Answer based on the workflow configuration
+Please analyze the feedback and help resolve the workflow issue. You have access to specialized skills that can help with specific problems - use them if appropriate.
 
 BEGIN NOW.
 """
@@ -308,18 +262,36 @@ BEGIN NOW.
                 context_data['api_key'] = api_key
             context_file.write_text(json.dumps(context_data, indent=2, ensure_ascii=False), encoding='utf-8')
 
-            # Copy skills to temp workspace
-            skills_dest_dir = temp_workspace / "skills"
-            skills_dest_dir.mkdir(exist_ok=True)
+            # Copy skills to .claude/skills/ structure for SDK auto-discovery
+            claude_skills_dir = temp_workspace / ".claude" / "skills"
+            claude_skills_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"📁 Created SDK skills directory: {claude_skills_dir}")
 
-            for skill in self.skills:
-                skill_src_dir = skill['skill_dir']
-                skill_name = skill['name']
-                skill_dest_dir = skills_dest_dir / skill_name
+            # Copy skills from src/app_backend/services/skills/ to .claude/skills/
+            source_skills_dir = Path(__file__).parent / "skills"
+            skill_count = 0
+            if source_skills_dir.exists():
+                for skill_dir in source_skills_dir.iterdir():
+                    if skill_dir.is_dir() and not skill_dir.name.startswith('.'):
+                        # Skip __pycache__ and other special directories
+                        if skill_dir.name in ['__pycache__']:
+                            continue
 
-                # Copy entire skill directory (including SKILL.md and scripts/)
-                shutil.copytree(skill_src_dir, skill_dest_dir)
-                logger.info(f"Copied skill '{skill_name}' to {skill_dest_dir}")
+                        dest_skill_dir = claude_skills_dir / skill_dir.name
+                        shutil.copytree(skill_dir, dest_skill_dir)
+                        skill_count += 1
+                        logger.info(f"✅ Copied skill '{skill_dir.name}' to {dest_skill_dir}")
+
+                        # Log SKILL.md existence
+                        skill_md = dest_skill_dir / "SKILL.md"
+                        if skill_md.exists():
+                            logger.info(f"   ✓ SKILL.md found: {skill_md}")
+                        else:
+                            logger.warning(f"   ⚠️  SKILL.md missing in {skill_dir.name}")
+
+                logger.info(f"🎯 Total skills copied: {skill_count}")
+            else:
+                logger.warning(f"⚠️  Skills directory not found: {source_skills_dir}")
 
             # Step 2: Build prompt
             yield {
@@ -343,14 +315,25 @@ BEGIN NOW.
             final_turn = 0
             last_text_content = None  # Track the last text message
             last_text_turn = 0
+            skill_usage_detected = False  # Track if Skill tool was used
+
+            logger.info("=" * 80)
+            logger.info("🚀 Starting Claude Agent SDK with Skills Enabled")
+            logger.info(f"   Working Directory: {temp_workspace}")
+            logger.info(f"   Skills Directory: {temp_workspace}/.claude/skills/")
+            logger.info(f"   Max Iterations: {max_iterations}")
+            logger.info(f"   Tools: Read, Bash, Edit, Skill")
+            logger.info(f"   User Message: {user_message}")
+            logger.info("=" * 80)
 
             try:
-                # Stream Claude Agent execution
+                # Stream Claude Agent execution with skills enabled
                 async for event in claude_agent.run_task_stream(
                     prompt=prompt,
-                    working_dir=temp_workspace,  # Use temp workspace with tools
+                    working_dir=temp_workspace,  # Use temp workspace with .claude/skills/
                     max_iterations=max_iterations,
-                    tools=["Read", "Bash", "Edit"]  # Enable tools needed for skills
+                    tools=["Read", "Bash", "Edit"],  # Base tools
+                    enable_skills=True  # Enable SDK skills auto-discovery
                 ):
                     # Forward streaming events to frontend
                     if event.type == "text":
@@ -382,6 +365,17 @@ BEGIN NOW.
                             tool_desc = f"🔧 Read: {event.tool_input['file_path']}"
                         elif event.tool_name == "Edit" and event.tool_input and 'file_path' in event.tool_input:
                             tool_desc = f"🔧 Edit: {event.tool_input['file_path']}"
+                        elif event.tool_name == "Skill":
+                            # Track Skill tool usage
+                            skill_usage_detected = True
+                            skill_name = event.tool_input.get('skill_name', 'unknown') if event.tool_input else 'unknown'
+                            logger.info("=" * 80)
+                            logger.info(f"🎯 SKILL TOOL DETECTED!")
+                            logger.info(f"   Skill Name: {skill_name}")
+                            logger.info(f"   Turn: {event.turn}")
+                            logger.info(f"   Input: {event.tool_input}")
+                            logger.info("=" * 80)
+                            tool_desc = f"🎯 Skill: {skill_name}"
 
                         yield {
                             'type': 'analyzing',
@@ -415,6 +409,18 @@ BEGIN NOW.
                 logger.error(f"Error during Claude Agent streaming: {e}", exc_info=True)
 
             # Step 4: Report result
+            logger.info("=" * 80)
+            logger.info("📊 Execution Summary")
+            logger.info(f"   Task Completed: {task_completed}")
+            logger.info(f"   Task Error: {task_error}")
+            logger.info(f"   Total Turns: {final_turn}")
+            logger.info(f"   Skill Tool Used: {skill_usage_detected}")
+            if skill_usage_detected:
+                logger.info("   ✅ Claude autonomously used SDK Skills!")
+            else:
+                logger.info("   ⚠️  No Skill tool usage detected (Claude may have solved it directly)")
+            logger.info("=" * 80)
+
             if task_error:
                 yield {
                     'type': 'error',
