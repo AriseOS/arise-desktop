@@ -1,5 +1,7 @@
 // Prevents additional console window on Windows in release mode
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// TEMPORARILY DISABLED for debugging - enable console to see error messages
+// Uncomment the line below after debugging is complete
+// #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod python_daemon;
 
@@ -70,23 +72,46 @@ fn check_browser_installed() -> serde_json::Value {
 }
 
 fn main() {
+    println!("========================================");
+    println!("Ami Desktop Application Starting");
+    println!("========================================");
+    println!("Current directory: {:?}", std::env::current_dir().unwrap_or_default());
+    println!("Executable path: {:?}", std::env::current_exe().unwrap_or_default());
+    println!("");
+
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
         .invoke_handler(tauri::generate_handler![check_browser_installed])
         .setup(|app| {
             // Initialize HTTP daemon on startup
             println!("🚀 Initializing Python HTTP daemon...");
-            let daemon = PythonDaemon::new()
-                .expect("Failed to initialize Python HTTP daemon");
 
-            println!("✅ Daemon started successfully. Frontend will connect to http://127.0.0.1:8765");
+            match PythonDaemon::new() {
+                Ok(daemon) => {
+                    println!("✅ Daemon started successfully. Frontend will connect to http://127.0.0.1:8765");
 
-            let app_state = AppState {
-                daemon: std::sync::Mutex::new(Some(daemon)),
-            };
+                    let app_state = AppState {
+                        daemon: std::sync::Mutex::new(Some(daemon)),
+                    };
 
-            app.manage(app_state);
-            Ok(())
+                    app.manage(app_state);
+                    Ok(())
+                }
+                Err(e) => {
+                    eprintln!("❌ FATAL ERROR: Failed to initialize Python HTTP daemon");
+                    eprintln!("Error details: {}", e);
+                    eprintln!("");
+                    eprintln!("Press Enter to exit...");
+
+                    let mut input = String::new();
+                    let _ = std::io::stdin().read_line(&mut input);
+
+                    Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("Failed to initialize daemon: {}", e)
+                    )))
+                }
+            }
         })
         .on_window_event(|_window, event| {
             // Handle window events

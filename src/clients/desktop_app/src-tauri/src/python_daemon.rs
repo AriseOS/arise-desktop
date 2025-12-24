@@ -42,6 +42,10 @@ impl PythonDaemon {
 
     /// Detect if running in development or production mode and get daemon path
     fn get_daemon_path() -> Result<(String, Vec<String>), Box<dyn std::error::Error>> {
+        println!("========================================");
+        println!("Searching for daemon binary...");
+        println!("========================================");
+
         // Check for dev mode override via environment variable
         if std::env::var("AMI_DEV_MODE").is_ok() {
             println!("🔧 AMI_DEV_MODE set, forcing Python script mode");
@@ -50,47 +54,108 @@ impl PythonDaemon {
 
         // Method 1: Check for bundled binary in resources directory (production mode)
         if let Ok(exe_path) = std::env::current_exe() {
+            println!("Executable path: {}", exe_path.display());
+
             if let Some(exe_dir) = exe_path.parent() {
-                // Try multiple possible locations for resources
-                let possible_resources_dirs = vec![
-                    // macOS .app bundle: Contents/MacOS/ -> Contents/Resources/resources/
-                    exe_dir.parent().map(|p| p.join("Resources").join("resources")),
-                    // macOS .app bundle: Contents/MacOS/ -> Contents/Resources/
-                    exe_dir.parent().map(|p| p.join("Resources")),
-                    // Direct binary: same directory as binary + resources/
-                    Some(exe_dir.join("resources")),
-                ];
+                println!("Executable directory: {}", exe_dir.display());
+
+                // Platform-specific search paths
+                #[cfg(target_os = "windows")]
+                let possible_resources_dirs = {
+                    // Windows: ami-desktop.exe and resources/ are in the same directory
+                    // Structure: AmiPortable/
+                    //            ├── ami-desktop.exe
+                    //            └── resources/
+                    //                └── ami-daemon/
+                    //                    └── ami-daemon.exe
+                    vec![
+                        Some(exe_dir.join("resources")),
+                    ]
+                };
+
+                #[cfg(target_os = "macos")]
+                let possible_resources_dirs = {
+                    // macOS: .app bundle structure
+                    // Structure: Ami.app/
+                    //            └── Contents/
+                    //                ├── MacOS/
+                    //                │   └── ami-desktop
+                    //                └── Resources/
+                    //                    └── ami-daemon/
+                    //                        └── ami-daemon
+                    vec![
+                        exe_dir.parent().map(|p| p.join("Resources")),
+                        exe_dir.parent().map(|p| p.join("Resources").join("resources")),
+                    ]
+                };
+
+                #[cfg(target_os = "linux")]
+                let possible_resources_dirs = {
+                    // Linux: similar to Windows portable structure
+                    vec![
+                        Some(exe_dir.join("resources")),
+                    ]
+                };
 
                 #[cfg(target_os = "windows")]
                 let binary_name = "ami-daemon.exe";
                 #[cfg(not(target_os = "windows"))]
                 let binary_name = "ami-daemon";
 
-                for resources_dir_opt in possible_resources_dirs {
+                println!("Platform-specific daemon search paths:");
+                println!("");
+
+                // Directory name doesn't include .exe extension (PyInstaller bundles are directories)
+                let daemon_dir_name = if cfg!(target_os = "windows") {
+                    "ami-daemon"
+                } else {
+                    binary_name
+                };
+
+                for (idx, resources_dir_opt) in possible_resources_dirs.iter().enumerate() {
                     if let Some(resources_dir) = resources_dir_opt {
-                        let binary_path = resources_dir.join(binary_name);
+                        println!("Search location #{}: {}", idx + 1, resources_dir.display());
 
-                        if binary_path.is_file() {
-                            println!("✓ Found bundled daemon binary: {}", binary_path.display());
-                            return Ok((binary_path.to_string_lossy().to_string(), vec![]));
-                        }
+                        // First, check if there's a daemon directory (e.g., resources/ami-daemon/)
+                        let dir_path = resources_dir.join(daemon_dir_name);
+                        println!("  - Checking for directory: {}", dir_path.display());
 
-                        if binary_path.is_dir() {
-                            let nested_binary = binary_path.join(binary_name);
+                        if dir_path.is_dir() {
+                            println!("  - Directory exists, checking for nested binary...");
+                            let nested_binary = dir_path.join(binary_name);
+                            println!("  - Checking: {}", nested_binary.display());
+
                             if nested_binary.is_file() {
-                                println!("✓ Found bundled daemon binary: {}", nested_binary.display());
+                                println!("  ✓ FOUND nested binary!");
+                                println!("");
                                 return Ok((nested_binary.to_string_lossy().to_string(), vec![]));
+                            } else {
+                                println!("  ✗ Nested binary not found");
+                            }
+                        } else {
+                            // Not a directory, check if it's a file directly (e.g., resources/ami-daemon.exe)
+                            println!("  - Not a directory, checking as file...");
+                            println!("  - Checking: {}", dir_path.display());
+
+                            if dir_path.is_file() {
+                                println!("  ✓ FOUND as file!");
+                                println!("");
+                                return Ok((dir_path.to_string_lossy().to_string(), vec![]));
+                            } else {
+                                println!("  ✗ Not found");
                             }
                         }
-
-                        println!("✗ Bundled daemon binary not found at: {}", binary_path.display());
+                        println!("");
                     }
                 }
+
+                println!("❌ Daemon binary not found in any expected location");
+                println!("");
             }
         }
 
         // Method 2: Development mode - use Python script
-        println!("Running in development mode, using Python script");
+        println!("Trying development mode (Python script)...");
         Self::get_python_script_path()
     }
 
