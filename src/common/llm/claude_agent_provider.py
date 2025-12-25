@@ -82,7 +82,17 @@ class ClaudeAgentProvider:
         Raises:
             ValueError: If API key cannot be found in config, env, or parameters
         """
-        self.base_url = base_url
+        # Get base_url configuration
+        # Priority: parameter > config > environment variable
+        if base_url:
+            self.base_url = base_url
+        elif config_service:
+            # Read from config: llm.proxy_url (same as AnthropicProvider)
+            self.base_url = config_service.get("llm.proxy_url")
+        else:
+            self.base_url = None
+
+        # Get API key configuration
         # Priority: parameter > config > environment variable
         if api_key:
             self.api_key = api_key
@@ -110,12 +120,16 @@ class ClaudeAgentProvider:
         elif config_service:
             self.model = (
                 config_service.get("claude_agent.model") or
+                config_service.get("llm.model") or  # Fallback to llm.model (same as AnthropicProvider)
                 "claude-sonnet-4-5"
             )
         else:
             self.model = "claude-sonnet-4-5"
 
-        logger.info(f"Initialized ClaudeAgentProvider with model {self.model}")
+        logger.info(f"Initialized ClaudeAgentProvider:")
+        logger.info(f"  Model: {self.model}")
+        logger.info(f"  Base URL: {self.base_url if self.base_url else '(using default Anthropic endpoint)'}")
+        logger.info(f"  API Key: {self.api_key[:10]}..." if self.api_key else "  API Key: (not set)")
 
     async def run_task(
         self,
@@ -360,7 +374,8 @@ class ClaudeAgentProvider:
         prompt: str,
         working_dir: Path,
         max_iterations: int = 25,
-        tools: Optional[List[str]] = None
+        tools: Optional[List[str]] = None,
+        enable_skills: bool = False
     ) -> AsyncIterator[StreamEvent]:
         """Execute a task using Claude Agent SDK with real-time streaming"""
         working_dir = Path(working_dir)
@@ -369,6 +384,11 @@ class ClaudeAgentProvider:
 
         if tools is None:
             tools = ["Read", "Write", "Edit", "Bash", "Glob"]
+
+        # Add "Skill" tool if skills are enabled
+        if enable_skills and "Skill" not in tools:
+            tools = tools + ["Skill"]
+            logger.info("🎯 SDK Skills enabled - adding 'Skill' to allowed_tools")
 
         try:
             from claude_agent_sdk import (
@@ -386,6 +406,7 @@ class ClaudeAgentProvider:
             if self.base_url:
                 env_vars["ANTHROPIC_BASE_URL"] = self.base_url
 
+            # Configure options
             options = ClaudeAgentOptions(
                 model=self.model,
                 cwd=str(working_dir),
@@ -395,6 +416,17 @@ class ClaudeAgentProvider:
                 env=env_vars,
                 max_buffer_size=1024 * 1024
             )
+
+            # Enable skills if requested
+            if enable_skills:
+                options.setting_sources = ["project"]  # Load skills from .claude/skills/
+                logger.info("=" * 80)
+                logger.info("🎯 Claude Agent SDK Skills Configuration")
+                logger.info(f"   setting_sources: ['project']")
+                logger.info(f"   Skills directory: {working_dir}/.claude/skills/")
+                logger.info(f"   Allowed tools: {tools}")
+                logger.info("   SDK will auto-discover skills from .claude/skills/ directory")
+                logger.info("=" * 80)
 
             turn_count = 0
             yield StreamEvent(type="thinking", content="Initializing Claude Agent...", turn=0)
@@ -413,18 +445,38 @@ class ClaudeAgentProvider:
                             if hasattr(message, 'content'):
                                 for block in message.content:
                                     if isinstance(block, TextBlock):
-                                        logger.info(f"   [Turn {turn_count}] Text: {block.text[:100]}...")
+                                        # Log full text content without truncation
+                                        logger.info(f"   [Turn {turn_count}] Text: {block.text}")
                                         yield StreamEvent(
                                             type="text",
                                             content=block.text,
                                             turn=turn_count
                                         )
                                     elif isinstance(block, ToolUseBlock):
+                                        # Log tool name and full input parameters
+                                        tool_input = block.input if hasattr(block, 'input') else {}
                                         logger.info(f"   [Turn {turn_count}] Tool use: {block.name}")
+
+                                        # For Bash tool, show the command explicitly
+                                        if block.name == "Bash" and 'command' in tool_input:
+                                            logger.info(f"      Command: {tool_input['command']}")
+                                        # For Read tool, show the file path
+                                        elif block.name == "Read" and 'file_path' in tool_input:
+                                            logger.info(f"      File: {tool_input['file_path']}")
+                                        # For Edit tool, show file path and change summary
+                                        elif block.name == "Edit" and 'file_path' in tool_input:
+                                            logger.info(f"      File: {tool_input['file_path']}")
+                                            if 'old_string' in tool_input:
+                                                old_preview = tool_input['old_string'][:100].replace('\n', '\\n')
+                                                logger.info(f"      Old: {old_preview}...")
+                                        # For other tools, show all input
+                                        else:
+                                            logger.info(f"      Input: {tool_input}")
+
                                         yield StreamEvent(
                                             type="tool_use",
                                             tool_name=block.name,
-                                            tool_input=block.input if hasattr(block, 'input') else None,
+                                            tool_input=tool_input,
                                             turn=turn_count
                                         )
 

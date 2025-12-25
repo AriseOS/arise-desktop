@@ -331,10 +331,36 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
                 async with db.execute(check_table_sql) as cursor:
                     existing_table = await cursor.fetchone()
                     if not existing_table:
-                        self.logger.error(f"Cache exists but table {table_name} does not exist!")
-                        self.logger.error(f"Cache key: {cache_key}")
-                        self.logger.error(f"Cached schema: {cached['field_order']}")
-                        raise Exception(f"Table {table_name} does not exist but cache was found. Cache may be stale.")
+                        self.logger.warning(f"Cache exists but table {table_name} does not exist! Recreating table...")
+                        self.logger.warning(f"Cache key: {cache_key}")
+                        self.logger.warning(f"Cached schema: {cached['field_order']}")
+
+                        # Clear stale cache
+                        await context.memory_manager.delete_data(cache_key)
+                        self.logger.info(f"Cleared stale cache for {cache_key}")
+
+                        # Regenerate and create table
+                        field_order = list(data.keys())
+                        create_sql = await self._generate_create_table_sql(table_name, data)
+                        insert_sql = await self._generate_insert_sql(table_name, field_order, create_sql)
+
+                        self.logger.info(f"Regenerated CREATE TABLE SQL: {create_sql}")
+                        self.logger.info(f"Regenerated INSERT SQL: {insert_sql}")
+
+                        # Create table
+                        await self._execute_sql(create_sql)
+
+                        # Update cache
+                        await context.memory_manager.set_data(cache_key, {
+                            "table_name": table_name,
+                            "create_table_sql": create_sql,
+                            "insert_sql": insert_sql,
+                            "field_order": field_order
+                        })
+
+                        # Reload cached data
+                        cached = await context.memory_manager.get_data(cache_key)
+                        self.logger.info(f"Table recreated and cache updated for {table_name}")
                     else:
                         # Verify schema matches
                         async with db.execute(f"PRAGMA table_info({table_name})") as cursor:
