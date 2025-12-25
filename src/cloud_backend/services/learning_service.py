@@ -12,10 +12,10 @@ project_root = str(backend_dir.parent.parent.parent.parent)
 sys.path.insert(0, project_root)
 
 from storage_service import storage_service
-from src.intent_builder.extractors.intent_extractor import IntentExtractor
-from src.intent_builder.core.intent_memory_graph import IntentMemoryGraph
-from src.intent_builder.storage.in_memory_storage import InMemoryIntentStorage
-from src.intent_builder.generators.metaflow_generator import MetaFlowGenerator
+from src.cloud_backend.intent_builder.extractors.intent_extractor import IntentExtractor
+from src.cloud_backend.intent_builder.core.intent_memory_graph import IntentMemoryGraph
+from src.cloud_backend.intent_builder.storage.in_memory_storage import InMemoryIntentStorage
+from src.cloud_backend.intent_builder.generators.metaflow_generator import MetaFlowGenerator
 from src.common.llm import AnthropicProvider
 
 logger = logging.getLogger(__name__)
@@ -113,7 +113,7 @@ class LearningService:
         task_description = session.get("description") or session.get("title", "")
 
         # 3. Convert dicts to Intent objects
-        from src.intent_builder.core.intent import Intent
+        from src.cloud_backend.intent_builder.core.intent import Intent
         intents = [Intent.from_dict(intent_dict) for intent_dict in intent_dicts]
 
         # 4. Build IntentMemoryGraph with in-memory storage

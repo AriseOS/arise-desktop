@@ -25,11 +25,11 @@ import yaml
 project_root = Path(__file__).parent.parent.parent.parent  # 向上4层
 sys.path.insert(0, str(project_root))
 
-from src.intent_builder.extractors.intent_extractor import IntentExtractor
-from src.intent_builder.generators.metaflow_generator import MetaFlowGenerator
-from src.intent_builder.generators.workflow_generator import WorkflowGenerator
-from src.intent_builder.core.intent_memory_graph import IntentMemoryGraph
-from src.intent_builder.storage.in_memory_storage import InMemoryIntentStorage
+from src.cloud_backend.intent_builder.extractors.intent_extractor import IntentExtractor
+from src.cloud_backend.intent_builder.generators.metaflow_generator import MetaFlowGenerator
+from src.cloud_backend.intent_builder.generators.workflow_generator import WorkflowGenerator
+from src.cloud_backend.intent_builder.core.intent_memory_graph import IntentMemoryGraph
+from src.cloud_backend.intent_builder.storage.in_memory_storage import InMemoryIntentStorage
 from src.common.llm import AnthropicProvider, OpenAIProvider
 
 logger = logging.getLogger(__name__)
@@ -264,7 +264,7 @@ class WorkflowGenerationService:
         logger.info(f"🚀 Generating Workflow from MetaFlow")
 
         # 1. Parse MetaFlow
-        from src.intent_builder.core.metaflow import MetaFlow
+        from src.cloud_backend.intent_builder.core.metaflow import MetaFlow
         metaflow = MetaFlow.from_yaml(metaflow_yaml)
 
         logger.info(f"=" * 80)

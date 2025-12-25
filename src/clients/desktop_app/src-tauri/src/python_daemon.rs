@@ -28,7 +28,7 @@ impl PythonDaemon {
             .ok_or("Failed to find project root")?
             .to_path_buf();
 
-        let daemon_path = project_root.join("src/app_backend/daemon.py");
+        let daemon_path = project_root.join("src/clients/desktop_app/ami_daemon/daemon.py");
 
         if !daemon_path.exists() {
             return Err(format!("Daemon not found at: {}", daemon_path.display()).into());

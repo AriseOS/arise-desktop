@@ -1256,7 +1256,7 @@ Please:
 5. Explain what you changed"""
 
     # Create agent instance
-    from src.intent_builder.agent import IntentBuilderAgent
+    from src.cloud_backend.intent_builder.agent import IntentBuilderAgent
 
     agent = IntentBuilderAgent(
         working_dir=str(working_dir),

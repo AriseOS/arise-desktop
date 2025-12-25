@@ -35,7 +35,7 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
-          cache-dependency-path: src/app_backend/requirements.txt
+          cache-dependency-path: src/clients/desktop_app/ami_daemon/requirements.txt
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -77,14 +77,14 @@ jobs:
       - name: Cache Python virtual environment
         uses: actions/cache@v4
         with:
-          path: src/app_backend/venv-build
-          key: ${{ runner.os }}-venv-${{ hashFiles('src/app_backend/requirements.txt') }}
+          path: src/clients/desktop_app/ami_daemon/venv-build
+          key: ${{ runner.os }}-venv-${{ hashFiles('src/clients/desktop_app/ami_daemon/requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-venv-
 
       - name: Install Python dependencies
         run: |
-          cd src/app_backend
+          cd src/clients/desktop_app/ami_daemon
           if [ ! -d "venv-build" ]; then
             python3 -m venv venv-build
           fi
@@ -111,11 +111,11 @@ jobs:
           if [ "$HAS_SIGNING_CERT" = "true" ]; then
             echo "Building with code signing..."
             export CODESIGN_IDENTITY="${{ secrets.MACOS_SIGNING_IDENTITY }}"
-            export ENTITLEMENTS_FILE="src/app_backend/entitlements.plist"
-            ./scripts/build.sh
+            export ENTITLEMENTS_FILE="src/clients/desktop_app/ami_daemon/entitlements.plist"
+            ./scripts/build_app_macos.sh
           else
             echo "Building without code signing..."
-            ./scripts/build.sh --no-sign
+            ./scripts/build_app_macos.sh --no-sign
           fi
         env:
           MACOSX_DEPLOYMENT_TARGET: '11.0'
@@ -205,7 +205,7 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
-          cache-dependency-path: src/app_backend/requirements.txt
+          cache-dependency-path: src/clients/desktop_app/ami_daemon/requirements.txt
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -245,15 +245,15 @@ jobs:
       - name: Cache Python virtual environment
         uses: actions/cache@v4
         with:
-          path: src/app_backend/venv-build
-          key: ${{ runner.os }}-venv-${{ hashFiles('src/app_backend/requirements.txt') }}
+          path: src/clients/desktop_app/ami_daemon/venv-build
+          key: ${{ runner.os }}-venv-${{ hashFiles('src/clients/desktop_app/ami_daemon/requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-venv-
 
       - name: Install Python dependencies
         shell: pwsh
         run: |
-          cd src/app_backend
+          cd src/clients/desktop_app/ami_daemon
           if (-not (Test-Path "venv-build")) {
             python -m venv venv-build
           }
@@ -271,7 +271,7 @@ jobs:
       - name: Build Windows application
         shell: pwsh
         run: |
-          .\scripts\build_portable_windows.ps1
+          .\scripts\build_app_windows.ps1
 
       - name: Rename ZIP
         shell: bash
