@@ -3,7 +3,6 @@ use std::time::Duration;
 
 pub struct PythonDaemon {
     process: Option<Child>,
-    pid: Option<u32>,
 }
 
 impl PythonDaemon {
@@ -11,11 +10,10 @@ impl PythonDaemon {
         // Start daemon process directly
         // If an old daemon is running on port 8765, the new one will fail to bind
         // and Python will exit with an error, which is the correct behavior
-        let (process, pid) = Self::start_daemon_process()?;
+        let (process, _pid) = Self::start_daemon_process()?;
 
         Ok(Self {
             process: Some(process),
-            pid: Some(pid),
         })
     }
 

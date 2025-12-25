@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Upload build artifacts to Cloudflare R2
 Supports tagging with platform, architecture, version, and signed/notarized status
@@ -11,6 +12,12 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
+
+# Force UTF-8 encoding for Windows console output
+if sys.platform == 'win32':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 try:
     import boto3
