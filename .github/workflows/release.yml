@@ -79,7 +79,7 @@ jobs:
           npm ci
 
       - name: Import Code-Signing Certificates
-        if: ${{ secrets.MACOS_CERTIFICATE }}
+        if: ${{ secrets.MACOS_CERTIFICATE != '' }}
         uses: Apple-Actions/import-codesign-certs@v2
         with:
           p12-file-base64: ${{ secrets.MACOS_CERTIFICATE }}
@@ -100,7 +100,7 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: '11.0'
 
       - name: Notarize DMG
-        if: ${{ secrets.MACOS_CERTIFICATE && secrets.NOTARIZE_APPLE_ID }}
+        if: ${{ secrets.MACOS_CERTIFICATE != '' && secrets.NOTARIZE_APPLE_ID != '' }}
         run: |
           echo "Storing notarization credentials..."
           xcrun notarytool store-credentials "notarytool-profile" \
@@ -223,7 +223,7 @@ jobs:
           npm ci
 
       - name: Import Code-Signing Certificates
-        if: ${{ secrets.MACOS_CERTIFICATE }}
+        if: ${{ secrets.MACOS_CERTIFICATE != '' }}
         uses: Apple-Actions/import-codesign-certs@v2
         with:
           p12-file-base64: ${{ secrets.MACOS_CERTIFICATE }}
@@ -242,7 +242,7 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: '10.13'
 
       - name: Notarize DMG
-        if: ${{ secrets.MACOS_CERTIFICATE && secrets.NOTARIZE_APPLE_ID }}
+        if: ${{ secrets.MACOS_CERTIFICATE != '' && secrets.NOTARIZE_APPLE_ID != '' }}
         run: |
           xcrun notarytool store-credentials "notarytool-profile" \
             --apple-id "${{ secrets.NOTARIZE_APPLE_ID }}" \
