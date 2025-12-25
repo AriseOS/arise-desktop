@@ -60,9 +60,12 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: src/clients/desktop_app/src-tauri
-          # Cache key includes Cargo.lock hash, not version number
           shared-key: "tauri-build"
           cache-on-failure: true
+          # Cache target directory for incremental compilation
+          cache-targets: true
+          # Cache registry and git dependencies
+          cache-all-crates: true
 
       - name: Update version in tauri.conf.json
         run: |
@@ -71,10 +74,20 @@ jobs:
           rm tauri.conf.json.bak
           echo "Updated version to ${{ steps.version.outputs.version }}"
 
+      - name: Cache Python virtual environment
+        uses: actions/cache@v4
+        with:
+          path: src/app_backend/venv-build
+          key: ${{ runner.os }}-venv-${{ hashFiles('src/app_backend/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-venv-
+
       - name: Install Python dependencies
         run: |
           cd src/app_backend
-          python3 -m venv venv-build
+          if [ ! -d "venv-build" ]; then
+            python3 -m venv venv-build
+          fi
           source venv-build/bin/activate
           pip install --upgrade pip
           pip install pyinstaller
@@ -218,14 +231,37 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: src/clients/desktop_app/src-tauri
-          shared-key: "tauri-build"
+          shared-key: "tauri-build-windows"
           cache-on-failure: true
+          cache-targets: true
+          cache-all-crates: true
 
       - name: Update version in tauri.conf.json
         shell: bash
         run: |
           cd src/clients/desktop_app/src-tauri
           sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${{ steps.version.outputs.version }}\"/" tauri.conf.json
+
+      - name: Cache Python virtual environment
+        uses: actions/cache@v4
+        with:
+          path: src/app_backend/venv-build
+          key: ${{ runner.os }}-venv-${{ hashFiles('src/app_backend/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-venv-
+
+      - name: Install Python dependencies
+        shell: pwsh
+        run: |
+          cd src/app_backend
+          if (-not (Test-Path "venv-build")) {
+            python -m venv venv-build
+          }
+          .\venv-build\Scripts\Activate.ps1
+          pip install --upgrade pip
+          pip install pyinstaller
+          pip install -r requirements.txt
+          deactivate
 
       - name: Install npm dependencies
         run: |
