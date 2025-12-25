@@ -22,6 +22,9 @@ jobs:
   build-macos-arm64:
     name: Build macOS (Apple Silicon)
     runs-on: macos-14
+    env:
+      HAS_SIGNING_CERT: ${{ secrets.MACOS_CERTIFICATE != '' }}
+      HAS_NOTARIZE_CREDS: ${{ secrets.NOTARIZE_APPLE_ID != '' }}
 
     steps:
       - name: Checkout code
@@ -79,7 +82,7 @@ jobs:
           npm ci
 
       - name: Import Code-Signing Certificates
-        if: ${{ secrets.MACOS_CERTIFICATE != '' }}
+        if: env.HAS_SIGNING_CERT == 'true'
         uses: Apple-Actions/import-codesign-certs@v2
         with:
           p12-file-base64: ${{ secrets.MACOS_CERTIFICATE }}
@@ -87,10 +90,10 @@ jobs:
 
       - name: Build application
         run: |
-          if [ -n "${{ secrets.MACOS_CERTIFICATE }}" ]; then
+          if [ "$HAS_SIGNING_CERT" = "true" ]; then
+            echo "Building with code signing..."
             export CODESIGN_IDENTITY="${{ secrets.MACOS_SIGNING_IDENTITY }}"
             export ENTITLEMENTS_FILE="src/app_backend/entitlements.plist"
-            echo "Building with code signing..."
             ./scripts/build.sh
           else
             echo "Building without code signing..."
@@ -100,7 +103,7 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: '11.0'
 
       - name: Notarize DMG
-        if: ${{ secrets.MACOS_CERTIFICATE != '' && secrets.NOTARIZE_APPLE_ID != '' }}
+        if: env.HAS_NOTARIZE_CREDS == 'true'
         run: |
           echo "Storing notarization credentials..."
           xcrun notarytool store-credentials "notarytool-profile" \
@@ -167,6 +170,9 @@ jobs:
   build-macos-x64:
     name: Build macOS (Intel)
     runs-on: macos-13
+    env:
+      HAS_SIGNING_CERT: ${{ secrets.MACOS_CERTIFICATE != '' }}
+      HAS_NOTARIZE_CREDS: ${{ secrets.NOTARIZE_APPLE_ID != '' }}
 
     steps:
       - name: Checkout code
@@ -223,7 +229,7 @@ jobs:
           npm ci
 
       - name: Import Code-Signing Certificates
-        if: ${{ secrets.MACOS_CERTIFICATE != '' }}
+        if: env.HAS_SIGNING_CERT == 'true'
         uses: Apple-Actions/import-codesign-certs@v2
         with:
           p12-file-base64: ${{ secrets.MACOS_CERTIFICATE }}
@@ -231,29 +237,36 @@ jobs:
 
       - name: Build application
         run: |
-          if [ -n "${{ secrets.MACOS_CERTIFICATE }}" ]; then
+          if [ "$HAS_SIGNING_CERT" = "true" ]; then
+            echo "Building with code signing..."
             export CODESIGN_IDENTITY="${{ secrets.MACOS_SIGNING_IDENTITY }}"
             export ENTITLEMENTS_FILE="src/app_backend/entitlements.plist"
             ./scripts/build.sh
           else
+            echo "Building without code signing..."
             ./scripts/build.sh --no-sign
           fi
         env:
           MACOSX_DEPLOYMENT_TARGET: '10.13'
 
       - name: Notarize DMG
-        if: ${{ secrets.MACOS_CERTIFICATE != '' && secrets.NOTARIZE_APPLE_ID != '' }}
+        if: env.HAS_NOTARIZE_CREDS == 'true'
         run: |
+          echo "Storing notarization credentials..."
           xcrun notarytool store-credentials "notarytool-profile" \
             --apple-id "${{ secrets.NOTARIZE_APPLE_ID }}" \
             --team-id "${{ secrets.APPLE_TEAM_ID }}" \
             --password "${{ secrets.NOTARIZE_APP_PWD }}"
 
+          echo "Submitting DMG for notarization..."
           xcrun notarytool submit dist/Ami-${{ steps.version.outputs.version }}.dmg \
             --keychain-profile "notarytool-profile" \
             --wait
 
+          echo "Stapling notarization ticket..."
           xcrun stapler staple dist/Ami-${{ steps.version.outputs.version }}.dmg
+
+          echo "✓ Notarization complete"
 
       - name: Rename DMG
         run: |
