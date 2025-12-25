@@ -34,6 +34,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          cache-dependency-path: src/app_backend/requirements.txt
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -45,11 +47,6 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: src/clients/desktop_app/src-tauri
-
       - name: Get version
         id: version
         run: |
@@ -58,6 +55,14 @@ jobs:
           else
             echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
           fi
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src/clients/desktop_app/src-tauri
+          # Cache key includes Cargo.lock hash, not version number
+          shared-key: "tauri-build"
+          cache-on-failure: true
 
       - name: Update version in tauri.conf.json
         run: |
@@ -165,151 +170,11 @@ jobs:
             $([ "$NOTARIZED" = "true" ] && echo "--notarized")
 
   # ============================================================================
-  # macOS Intel (x86_64)
+  # macOS Intel (x86_64) - DISABLED: macos-13 runner retired by GitHub
+  # Note: macOS on Apple Silicon can run x64 apps via Rosetta 2
+  # Universal binary support can be added later if needed
+  # See: https://github.com/actions/runner-images/issues/13046
   # ============================================================================
-  build-macos-x64:
-    name: Build macOS (Intel)
-    runs-on: macos-13
-    env:
-      HAS_SIGNING_CERT: ${{ secrets.MACOS_CERTIFICATE != '' }}
-      HAS_NOTARIZE_CREDS: ${{ secrets.NOTARIZE_APPLE_ID != '' }}
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: src/clients/desktop_app/package-lock.json
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: src/clients/desktop_app/src-tauri
-
-      - name: Get version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Update version in tauri.conf.json
-        run: |
-          cd src/clients/desktop_app/src-tauri
-          sed -i.bak "s/\"version\": \"[^\"]*\"/\"version\": \"${{ steps.version.outputs.version }}\"/" tauri.conf.json
-          rm tauri.conf.json.bak
-
-      - name: Install Python dependencies
-        run: |
-          cd src/app_backend
-          python3 -m venv venv-build
-          source venv-build/bin/activate
-          pip install --upgrade pip
-          pip install pyinstaller
-          pip install -r requirements.txt
-          deactivate
-
-      - name: Install npm dependencies
-        run: |
-          cd src/clients/desktop_app
-          npm ci
-
-      - name: Import Code-Signing Certificates
-        if: env.HAS_SIGNING_CERT == 'true'
-        uses: Apple-Actions/import-codesign-certs@v2
-        with:
-          p12-file-base64: ${{ secrets.MACOS_CERTIFICATE }}
-          p12-password: ${{ secrets.MACOS_CERTIFICATE_PWD }}
-
-      - name: Build application
-        run: |
-          if [ "$HAS_SIGNING_CERT" = "true" ]; then
-            echo "Building with code signing..."
-            export CODESIGN_IDENTITY="${{ secrets.MACOS_SIGNING_IDENTITY }}"
-            export ENTITLEMENTS_FILE="src/app_backend/entitlements.plist"
-            ./scripts/build.sh
-          else
-            echo "Building without code signing..."
-            ./scripts/build.sh --no-sign
-          fi
-        env:
-          MACOSX_DEPLOYMENT_TARGET: '10.13'
-
-      - name: Notarize DMG
-        if: env.HAS_NOTARIZE_CREDS == 'true'
-        run: |
-          echo "Storing notarization credentials..."
-          xcrun notarytool store-credentials "notarytool-profile" \
-            --apple-id "${{ secrets.NOTARIZE_APPLE_ID }}" \
-            --team-id "${{ secrets.APPLE_TEAM_ID }}" \
-            --password "${{ secrets.NOTARIZE_APP_PWD }}"
-
-          echo "Submitting DMG for notarization..."
-          xcrun notarytool submit dist/Ami-${{ steps.version.outputs.version }}.dmg \
-            --keychain-profile "notarytool-profile" \
-            --wait
-
-          echo "Stapling notarization ticket..."
-          xcrun stapler staple dist/Ami-${{ steps.version.outputs.version }}.dmg
-
-          echo "✓ Notarization complete"
-
-      - name: Rename DMG
-        run: |
-          cd dist
-          mv Ami-${{ steps.version.outputs.version }}.dmg Ami-${{ steps.version.outputs.version }}-macos-x64.dmg
-          ls -lh *.dmg
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-x64
-          path: dist/Ami-*-macos-x64.dmg
-          if-no-files-found: error
-
-      - name: Install boto3 for R2
-        run: pip3 install boto3
-
-      - name: Upload to Cloudflare R2
-        env:
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-          R2_BUCKET: ${{ secrets.R2_BUCKET }}
-        run: |
-          SIGNED="false"
-          NOTARIZED="false"
-
-          if [ -n "${{ secrets.MACOS_CERTIFICATE }}" ]; then
-            SIGNED="true"
-          fi
-
-          if [ -n "${{ secrets.NOTARIZE_APPLE_ID }}" ]; then
-            NOTARIZED="true"
-          fi
-
-          python3 .github/scripts/upload_to_r2.py \
-            --file "dist/Ami-${{ steps.version.outputs.version }}-macos-x64.dmg" \
-            --version "${{ steps.version.outputs.version }}" \
-            --platform macos \
-            --arch x64 \
-            --commit-sha "${{ github.sha }}" \
-            $([ "$SIGNED" = "true" ] && echo "--signed") \
-            $([ "$NOTARIZED" = "true" ] && echo "--notarized")
 
   # ============================================================================
   # Windows x64
@@ -326,6 +191,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          cache-dependency-path: src/app_backend/requirements.txt
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -337,11 +204,6 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: src/clients/desktop_app/src-tauri
-
       - name: Get version
         id: version
         shell: bash
@@ -351,6 +213,13 @@ jobs:
           else
             echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
           fi
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src/clients/desktop_app/src-tauri
+          shared-key: "tauri-build"
+          cache-on-failure: true
 
       - name: Update version in tauri.conf.json
         shell: bash
@@ -406,7 +275,7 @@ jobs:
   # ============================================================================
   create-release:
     name: Create GitHub Release
-    needs: [build-macos-arm64, build-macos-x64, build-windows]
+    needs: [build-macos-arm64, build-windows]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
 
@@ -435,7 +304,6 @@ jobs:
           generate_release_notes: true
           files: |
             artifacts/macos-arm64/Ami-*-macos-arm64.dmg
-            artifacts/macos-x64/Ami-*-macos-x64.dmg
             artifacts/windows-x64/Ami-*-windows-x64.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
