@@ -2706,4 +2706,19 @@ def main():
 
 
 if __name__ == "__main__":
+    # Fix for PyInstaller on Windows: ensure stdout/stderr are not None
+    # This prevents AttributeError in uvicorn's logging setup
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, 'w', encoding='utf-8')
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, 'w', encoding='utf-8')
+
+    # Force UTF-8 encoding for Windows console output
+    # This prevents UnicodeEncodeError when printing emoji or non-ASCII characters
+    if sys.platform == 'win32':
+        if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
+            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
     main()

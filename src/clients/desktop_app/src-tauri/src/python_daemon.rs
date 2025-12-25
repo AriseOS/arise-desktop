@@ -218,9 +218,11 @@ impl PythonDaemon {
                     command.args(&args);
                 }
 
+                // On Windows, use Stdio::null() to prevent console window from appearing
+                // The daemon logs to file anyway, so we don't need console output
                 match command
-                    .stdout(Stdio::inherit())
-                    .stderr(Stdio::inherit())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
                     .spawn()
                 {
                     Ok(p) => {
