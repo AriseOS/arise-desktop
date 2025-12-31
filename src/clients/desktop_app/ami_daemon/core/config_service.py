@@ -1,5 +1,6 @@
 """App Backend Configuration Service"""
 
+import sys
 from typing import Optional
 from pathlib import Path
 from src.common.config_service import ConfigService
@@ -11,13 +12,19 @@ class AppConfigService(ConfigService):
     def __init__(self, config_path: Optional[str] = None):
         # If no config_path provided, use default location
         if config_path is None:
-            # ami_daemon/core/config_service.py -> ami_daemon/config/app-backend.yaml
-            default_config = Path(__file__).parent.parent / "config" / "app-backend.yaml"
+            # Check if running in PyInstaller bundle
+            if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+                # PyInstaller: config is bundled under {_MEIPASS}/config/
+                default_config = Path(sys._MEIPASS) / "config" / "app-backend.yaml"
+            else:
+                # Development: ami_daemon/core/config_service.py -> ami_daemon/config/app-backend.yaml
+                default_config = Path(__file__).parent.parent / "config" / "app-backend.yaml"
+
             if default_config.exists():
                 config_path = str(default_config)
 
         super().__init__(
-            service_name="ami_daemon",
+            service_name="app_backend",  # Match config filename: app-backend.yaml
             config_path=config_path,
             env_prefix="APP_BACKEND"
         )
