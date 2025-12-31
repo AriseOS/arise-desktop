@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Icon from '../components/Icons';
 import { api } from '../utils/api';
 import '../styles/QuickStartPage.css';
@@ -9,7 +9,9 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
   const [tutorialPage, setTutorialPage] = useState(0);
   const [currentSessionId, setCurrentSessionId] = useState(null);
   const [operationsCount, setOperationsCount] = useState(0);
+  const [capturedOperations, setCapturedOperations] = useState([]);
   const [analysisProgress, setAnalysisProgress] = useState(0);
+  const operationsListRef = useRef(null);
 
   // Check if user has seen tutorial before
   useEffect(() => {
@@ -18,6 +20,64 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
       setStep('input');
     }
   }, []);
+
+  // Poll for operations while recording
+  useEffect(() => {
+    if (step !== 'recording') {
+      return;
+    }
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const result = await api.callAppBackend('/api/v1/recordings/current/operations', {
+          method: "GET"
+        });
+        if (result.is_recording) {
+          setCapturedOperations(result.operations || []);
+          setOperationsCount(result.operations_count || 0);
+        }
+      } catch (error) {
+        console.error('Failed to poll operations:', error);
+      }
+    }, 500);
+
+    return () => {
+      clearInterval(pollInterval);
+    };
+  }, [step]);
+
+  // Auto-scroll to bottom when new operations are added
+  useEffect(() => {
+    if (operationsListRef.current) {
+      operationsListRef.current.scrollTop = operationsListRef.current.scrollHeight;
+    }
+  }, [capturedOperations]);
+
+  // Get operation type label with icon
+  const getOperationTypeLabel = (type) => {
+    const typeLabels = {
+      'click': { text: '点击', icon: 'mousePointer' },
+      'input': { text: '输入', icon: 'keyboard' },
+      'navigate': { text: '导航', icon: 'globe' },
+      'scroll': { text: '滚动', icon: 'arrowDown' },
+      'select': { text: '选择', icon: 'list' },
+      'submit': { text: '提交', icon: 'checkCircle' },
+      'hover': { text: '悬停', icon: 'mousePointer' },
+      'keydown': { text: '按键', icon: 'keyboard' },
+      'change': { text: '修改', icon: 'edit' },
+      'newtab': { text: '新标签', icon: 'plus' },
+      'closetab': { text: '关闭标签', icon: 'x' },
+      'copy_action': { text: '复制', icon: 'clipboard' },
+      'paste_action': { text: '粘贴', icon: 'clipboard' }
+    };
+    const label = typeLabels[type] || { text: type || '操作', icon: 'mapPin' };
+    return (
+      <>
+        <Icon icon={label.icon} size={14} />
+        <span>{label.text}</span>
+      </>
+    );
+  };
 
   const tutorialSteps = [
     {
@@ -232,6 +292,10 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
         <div className="card-header">
           <h2>Start Recording</h2>
           <p>Click to open browser and navigate to any website you want!</p>
+          <div className="recording-warning">
+            <Icon icon="alertTriangle" />
+            <span>When finished, come back here and click "Stop Recording". Do not close the browser directly.</span>
+          </div>
         </div>
 
         <button
@@ -257,35 +321,86 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
     </div>
   );
 
-  // Render Recording Step (Floating Window Style)
+  // Render Recording Step (Full Page Layout)
   const renderRecording = () => (
-    <div className="recording-overlay">
-      <div className="recording-float-window">
-        <div className="recording-indicator">
-          <span className="recording-dot"></span>
-          <span>Recording...</span>
+    <div className="recording-page-container">
+      {/* Top header section */}
+      <div className="recording-top-section">
+        <div className="recording-status-bar">
+          <div className="recording-indicator">
+            <span className="recording-dot"></span>
+            <span>Recording...</span>
+          </div>
+          <div className="recording-stats">
+            <span className="operations-badge">{operationsCount} operations</span>
+            <span className="session-id">Session: {currentSessionId}</span>
+          </div>
         </div>
 
-        <div className="recording-info">
-          <p className="recording-count">Recorded {operationsCount} operations</p>
-          <p className="recording-hint"><Icon icon="info" /> Tip: Select data and copy</p>
+        <div className="recording-actions">
+          <button className="stop-recording-btn" onClick={handleStopRecording}>
+            <Icon icon="square" />
+            <span>Stop Recording</span>
+          </button>
         </div>
 
-        <button className="stop-recording-btn" onClick={handleStopRecording}>
-          <span><Icon icon="square" /></span>
-          <span>Stop Recording</span>
-        </button>
-
-        <button className="minimize-btn">
-          <Icon icon="minus" /> Minimize
-        </button>
+        <div className="recording-warning">
+          <Icon icon="alertTriangle" />
+          <span>Do not close the browser directly. Come back here and click "Stop Recording" when done.</span>
+        </div>
       </div>
 
-      {/* Background instruction */}
-      <div className="recording-background-instruction">
-        <h3>Recording in progress...</h3>
-        <p>Perform your task in the browser window</p>
-        <p className="session-id">Session ID: {currentSessionId}</p>
+      {/* Operations list - main content area */}
+      <div className="recording-operations-container">
+        <div className="operations-header">
+          <span className="operations-title">
+            <Icon icon="list" /> Captured Operations
+          </span>
+          <span className="operations-count">{capturedOperations.length}</span>
+        </div>
+        <div className="operations-list-full" ref={operationsListRef}>
+          {capturedOperations.length === 0 ? (
+            <div className="empty-operations-full">
+              <Icon icon="clipboard" size={64} />
+              <h3>Waiting for operations...</h3>
+              <p>Perform actions in the browser window. Your clicks, inputs, and navigation will appear here.</p>
+            </div>
+          ) : (
+            capturedOperations.map((op, index) => (
+              <div key={index} className="operation-item-full">
+                <div className="operation-index">{index + 1}</div>
+                <div className="operation-details">
+                  <div className="operation-type">{getOperationTypeLabel(op.type)}</div>
+                  <div className="operation-info">
+                    {op.element?.textContent && (
+                      <div className="operation-text">
+                        {op.element.textContent.slice(0, 80)}
+                        {op.element.textContent.length > 80 ? '...' : ''}
+                      </div>
+                    )}
+                    {op.data?.actualValue && (
+                      <div className="operation-value">
+                        Input: {op.data.actualValue.slice(0, 50)}
+                        {op.data.actualValue.length > 50 ? '...' : ''}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {op.url && (
+                  <div className="operation-url-badge">
+                    {(() => {
+                      try {
+                        return new URL(op.url).hostname;
+                      } catch {
+                        return op.url.slice(0, 30);
+                      }
+                    })()}
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+        </div>
       </div>
     </div>
   );

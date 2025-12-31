@@ -297,6 +297,14 @@ class StopRecordingResponse(BaseModel):
     local_file_path: str
 
 
+class CurrentOperationsResponse(BaseModel):
+    """Response model for getting current recording operations"""
+    is_recording: bool
+    session_id: Optional[str] = None
+    operations_count: int = 0
+    operations: List[Dict[str, Any]] = []
+
+
 class UploadRecordingRequest(BaseModel):
     task_description: str
     user_query: Optional[str] = None  # What user wants to do
@@ -925,6 +933,34 @@ async def stop_recording():
 
     except Exception as e:
         logger.error(f"Failed to stop recording: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/recordings/current/operations", response_model=CurrentOperationsResponse)
+async def get_current_operations():
+    """Get current recording operations in real-time
+
+    This endpoint is used for polling during active recording to show
+    real-time feedback of captured user operations.
+    """
+    try:
+        if not cdp_recorder or not cdp_recorder._is_recording:
+            return CurrentOperationsResponse(
+                is_recording=False,
+                session_id=None,
+                operations_count=0,
+                operations=[]
+            )
+
+        return CurrentOperationsResponse(
+            is_recording=True,
+            session_id=cdp_recorder.current_session_id,
+            operations_count=len(cdp_recorder.operations),
+            operations=cdp_recorder.operations
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to get current operations: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

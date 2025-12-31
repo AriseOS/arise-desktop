@@ -20,7 +20,16 @@ Tauri Frontend (React) ←→ Tauri Backend (Rust) ←→ ami_daemon (Python)
 
 - `src/pages/ExecutionHistoryPage.jsx` - Workflow execution history viewer
 - `src/pages/QuickStartPage.jsx` - Recording start page
+- `src/pages/RecordingPage.jsx` - Recording page with real-time operation feedback
 - `src/pages/MyWorkflowsPage.jsx` - Workflow list and management
+
+### RecordingPage Real-time Feedback
+
+`RecordingPage` displays captured operations in real-time during recording:
+- Polls `GET /api/v1/recordings/current/operations` every 500ms
+- Shows operation type (click, input, navigate, etc.) with icons
+- Displays element text, input values, and URLs
+- Auto-scrolls to latest operation
 
 ## Logging & Diagnostics
 

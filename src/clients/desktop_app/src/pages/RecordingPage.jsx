@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Icon from '../components/Icons';
 import { api } from '../utils/api';
 import '../styles/RecordingPage.css';
@@ -12,9 +12,65 @@ function RecordingPage({ session, onNavigate, showStatus }) {
   const [recording, setRecording] = useState(false);
   const [sessionId, setSessionId] = useState("");
   const [operationsCount, setOperationsCount] = useState(0);
+  const [capturedOperations, setCapturedOperations] = useState([]);
+  const operationsListRef = useRef(null);
 
   const [uploading, setUploading] = useState(false);
   const [quickGenerating, setQuickGenerating] = useState(false);
+
+  // Poll for operations while recording
+  useEffect(() => {
+    if (!recording) {
+      return;
+    }
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const result = await api.callAppBackend('/api/v1/recordings/current/operations', {
+          method: "GET"
+        });
+        if (result.is_recording) {
+          setCapturedOperations(result.operations || []);
+          setOperationsCount(result.operations_count || 0);
+        }
+      } catch (error) {
+        console.error('Failed to poll operations:', error);
+      }
+    }, 500);
+
+    return () => {
+      clearInterval(pollInterval);
+    };
+  }, [recording]);
+
+  // Auto-scroll to bottom when new operations are added
+  useEffect(() => {
+    if (operationsListRef.current) {
+      operationsListRef.current.scrollTop = operationsListRef.current.scrollHeight;
+    }
+  }, [capturedOperations]);
+
+  // Get operation type label with icon
+  const getOperationTypeLabel = (type) => {
+    const typeLabels = {
+      'click': { text: '点击', icon: 'mousePointer' },
+      'input': { text: '输入', icon: 'keyboard' },
+      'navigate': { text: '导航', icon: 'globe' },
+      'scroll': { text: '滚动', icon: 'arrowDown' },
+      'select': { text: '选择', icon: 'list' },
+      'submit': { text: '提交', icon: 'checkCircle' },
+      'hover': { text: '悬停', icon: 'mousePointer' },
+      'keydown': { text: '按键', icon: 'keyboard' },
+      'change': { text: '修改', icon: 'edit' }
+    };
+    const label = typeLabels[type] || { text: type || '操作', icon: 'mapPin' };
+    return (
+      <>
+        <Icon icon={label.icon} size={14} />
+        <span>{label.text}</span>
+      </>
+    );
+  };
 
   // Start recording
   const handleStartRecording = async () => {
@@ -204,11 +260,57 @@ function RecordingPage({ session, onNavigate, showStatus }) {
                 <div className="recording-dot"></div>
                 <span>录制中...</span>
               </div>
-              <p className="recording-hint">
-                请在自动打开的浏览器窗口中执行操作<br />
-                完成后点击下方按钮停止录制
-              </p>
-              <p className="session-info">Session ID: {sessionId}</p>
+
+              {/* Operations display */}
+              <div className="operations-display">
+                <div className="operations-header">
+                  <span className="operations-title">已捕获操作</span>
+                  <span className="operations-count">{capturedOperations.length} 个操作</span>
+                </div>
+                <div className="operations-list" ref={operationsListRef}>
+                  {capturedOperations.length === 0 ? (
+                    <div className="empty-operations">
+                      <div className="empty-icon"><Icon icon="clipboard" size={48} /></div>
+                      <div className="empty-text">等待捕获操作...</div>
+                      <div className="empty-hint">请在浏览器中执行操作</div>
+                    </div>
+                  ) : (
+                    capturedOperations.map((op, index) => (
+                      <div key={index} className="operation-item">
+                        <div className="operation-index">{index + 1}</div>
+                        <div className="operation-details">
+                          <div className="operation-type">{getOperationTypeLabel(op.type)}</div>
+                          <div className="operation-info">
+                            {op.element?.textContent && (
+                              <div className="operation-text">
+                                {op.element.textContent.slice(0, 50)}
+                                {op.element.textContent.length > 50 ? '...' : ''}
+                              </div>
+                            )}
+                            {op.data?.value && (
+                              <div className="operation-value">
+                                输入: {op.data.value.slice(0, 30)}
+                                {op.data.value.length > 30 ? '...' : ''}
+                              </div>
+                            )}
+                            {op.url && (
+                              <div className="operation-url">
+                                {(() => {
+                                  try {
+                                    return new URL(op.url).hostname;
+                                  } catch {
+                                    return op.url;
+                                  }
+                                })()}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
 
               <button
                 className="start-record-button recording"
