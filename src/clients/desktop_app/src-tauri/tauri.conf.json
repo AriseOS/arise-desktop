@@ -17,7 +17,12 @@
       "icons/256x256.png",
       "icons/512x512.png",
       "icons/icon.icns"
-    ]
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      }
+    }
   },
   "plugins": {},
   "app": {
