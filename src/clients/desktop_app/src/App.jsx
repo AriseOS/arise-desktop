@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 import "./extension.css";
 import Icon from "./components/Icons";
@@ -43,6 +44,13 @@ function App() {
   const [setupChecking, setSetupChecking] = useState(true);
   const [backendChecking, setBackendChecking] = useState(false);
 
+  // Version check state
+  const [versionInfo, setVersionInfo] = useState(null);
+  const [updateRequired, setUpdateRequired] = useState(false);
+
+  // Diagnostic upload state
+  const [diagnosticUploading, setDiagnosticUploading] = useState(false);
+
   // Auth state
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [session, setSession] = useState(null);
@@ -70,6 +78,28 @@ function App() {
   const navigate = (page, params = {}) => {
     setCurrentPage(page);
     setPageParams(params);
+  };
+
+  // Upload diagnostic package
+  const handleUploadDiagnostic = async () => {
+    if (diagnosticUploading) return;
+
+    setDiagnosticUploading(true);
+    showStatus("Collecting diagnostic data...", "info");
+
+    try {
+      const result = await api.uploadDiagnostic();
+      if (result.success) {
+        showStatus(`Diagnostic uploaded: ${result.diagnostic_id}`, "success");
+      } else {
+        showStatus("Failed to upload diagnostic", "error");
+      }
+    } catch (error) {
+      console.error("[App] Diagnostic upload failed:", error);
+      showStatus(`Diagnostic upload failed: ${error.message}`, "error");
+    } finally {
+      setDiagnosticUploading(false);
+    }
   };
 
   // Check setup status on mount
@@ -107,6 +137,17 @@ function App() {
         const isReady = await api.waitForBackend();
 
         if (isReady) {
+          // Check version after backend is ready
+          const versionData = await api.getVersionInfo();
+          setVersionInfo(versionData);
+
+          if (versionData.update_required) {
+            console.log('[App] Update required:', versionData);
+            setUpdateRequired(true);
+            // Don't proceed - show update required page
+            return;
+          }
+
           setSetupComplete(true);
           checkLoginStatus();
         } else {
@@ -421,8 +462,44 @@ function App() {
     return hasWorkflows ? renderReturningUserHome() : renderNewUserHome();
   };
 
+  // Render update required page
+  const renderUpdateRequired = () => (
+    <div className="page update-required-page flex-center" style={{ height: '100vh', background: 'var(--bg-primary)' }}>
+      <div className="card" style={{ padding: '40px', maxWidth: '500px', textAlign: 'center' }}>
+        <div style={{ marginBottom: '24px' }}>
+          <Icon name="alert" size={48} style={{ color: 'var(--status-warning-text)' }} />
+        </div>
+        <h1 style={{ fontSize: '24px', marginBottom: '16px' }}>Update Required</h1>
+        <p style={{ marginBottom: '8px', color: 'var(--text-secondary)' }}>
+          Your current version ({versionInfo?.version || 'unknown'}) is no longer supported.
+        </p>
+        <p style={{ marginBottom: '24px', color: 'var(--text-secondary)' }}>
+          Please update to version {versionInfo?.minimum_version || 'latest'} or later to continue.
+        </p>
+        <a
+          href={versionInfo?.update_url || 'http://download.ariseos.com/releases/latest/'}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="btn btn-primary"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '12px 24px', fontSize: '16px' }}
+        >
+          <Icon name="download" size={20} />
+          <span>Download Update</span>
+        </a>
+        <p style={{ marginTop: '16px', fontSize: '12px', color: 'var(--text-tertiary)' }}>
+          Platform: {versionInfo?.platform || 'unknown'}
+        </p>
+      </div>
+    </div>
+  );
+
   // Render current page
   const renderPage = () => {
+    // Show update required page if version is incompatible
+    if (updateRequired && versionInfo) {
+      return renderUpdateRequired();
+    }
+
     // Show loading while checking setup
     if (setupChecking) {
       return (
@@ -715,7 +792,6 @@ function App() {
       { id: "workflows", icon: "workflows", label: "Workflows" },
       { id: "recordings-library", icon: "library", label: "Library" },
       { id: "data-management", icon: "data", label: "Data" },
-      // { id: "conversational-generation", icon: "chat", label: "AI Chat" }
     ];
 
     return (
@@ -732,6 +808,17 @@ function App() {
             <span className="nav-label">{item.label}</span>
           </button>
         ))}
+        {/* Diagnostic upload button in corner */}
+        <button
+          className={`nav-item diagnostic-btn ${diagnosticUploading ? 'uploading' : ''}`}
+          onClick={handleUploadDiagnostic}
+          disabled={diagnosticUploading}
+          title="Upload diagnostic logs"
+        >
+          <span className="nav-icon">
+            <Icon name={diagnosticUploading ? "loader" : "bug"} size={18} />
+          </span>
+        </button>
       </nav>
     );
   };

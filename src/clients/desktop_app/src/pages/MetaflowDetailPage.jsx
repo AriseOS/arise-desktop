@@ -5,8 +5,6 @@ import FlowVisualization from '../components/FlowVisualization';
 import yaml from 'js-yaml';
 import { api } from '../utils/api';
 
-const API_BASE = "http://127.0.0.1:8765";
-
 function MetaflowDetailPage({ session, onNavigate, showStatus, metaflowId }) {
   const userId = session?.username;
   const [metaflow, setMetaflow] = useState(null);
@@ -32,13 +30,7 @@ function MetaflowDetailPage({ session, onNavigate, showStatus, metaflowId }) {
       }
 
       try {
-        const response = await fetch(`${API_BASE}/api/metaflows/${metaflowId}?user_id=${userId}`);
-
-        if (!response.ok) {
-          throw new Error(`Failed to fetch MetaFlow: ${response.status}`);
-        }
-
-        const data = await response.json();
+        const data = await api.callAppBackend(`/api/v1/metaflows/${metaflowId}?user_id=${userId}`);
         setMetaflow(data);
       } catch (error) {
         console.error('Error fetching MetaFlow:', error);
@@ -63,20 +55,13 @@ function MetaflowDetailPage({ session, onNavigate, showStatus, metaflowId }) {
     showStatus('Generating Workflow from MetaFlow...', 'info');
 
     try {
-      const response = await fetch(`${API_BASE}/api/workflows/from-metaflow`, {
+      const data = await api.callAppBackend('/api/v1/workflows/from-metaflow', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           metaflow_id: metaflowId,
           user_id: userId
         })
       });
-
-      if (!response.ok) {
-        throw new Error(`Failed to generate Workflow: ${response.status}`);
-      }
-
-      const data = await response.json();
 
       showStatus('Workflow generated successfully!', 'success');
 
@@ -168,7 +153,7 @@ function MetaflowDetailPage({ session, onNavigate, showStatus, metaflowId }) {
       // Create session if not exists
       let sid = sessionId;
       if (!sid) {
-        const result = await api.callAppBackend('/api/intent-builder/start', {
+        const result = await api.callAppBackend('/api/v1/intent-builder/sessions', {
           method: 'POST',
           body: JSON.stringify({
             user_id: userId,
@@ -186,9 +171,8 @@ function MetaflowDetailPage({ session, onNavigate, showStatus, metaflowId }) {
       }
 
       // Stream the modification response
-      const response = await fetch(`${API_BASE}/api/intent-builder/${sid}/chat`, {
+      const response = await api.callAppBackendRaw(`/api/v1/intent-builder/sessions/${sid}/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: userMessage })
       });
 
@@ -234,19 +218,14 @@ function MetaflowDetailPage({ session, onNavigate, showStatus, metaflowId }) {
                     setMetaflow(updatedMetaflow);
 
                     // Sync to local cache (Cloud already saved by Agent)
-                    fetch(`${API_BASE}/api/metaflows/${metaflowId}`, {
+                    api.callAppBackend(`/api/v1/metaflows/${metaflowId}`, {
                       method: 'PUT',
-                      headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({
                         user_id: userId,
                         metaflow_yaml: event.result.updated_yaml
                       })
-                    }).then(response => {
-                      if (response.ok) {
-                        console.log('✓ MetaFlow synced to local cache');
-                      } else {
-                        console.warn('⚠ Failed to sync metaflow to local cache');
-                      }
+                    }).then(() => {
+                      console.log('✓ MetaFlow synced to local cache');
                     }).catch(err => {
                       console.error('Failed to sync metaflow:', err);
                     });

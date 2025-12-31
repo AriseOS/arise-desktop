@@ -213,6 +213,34 @@ p {
   font-weight: 500;
 }
 
+/* Diagnostic button - smaller, in corner */
+.nav-item.diagnostic-btn {
+  min-width: 36px;
+  padding: var(--space-2);
+  margin-left: var(--space-2);
+  border-left: 1px solid var(--border-subtle);
+  opacity: 0.6;
+}
+
+.nav-item.diagnostic-btn:hover {
+  opacity: 1;
+  background-color: var(--color-gray-100);
+}
+
+.nav-item.diagnostic-btn.uploading {
+  opacity: 1;
+  color: var(--primary-main);
+}
+
+.nav-item.diagnostic-btn.uploading .nav-icon svg {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 /* Common Page Layouts */
 .page-header {
   display: flex;

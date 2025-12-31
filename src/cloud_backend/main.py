@@ -107,6 +107,10 @@ app.add_middleware(
     allow_headers=cors_headers,
 )
 
+# Add request context middleware for logging
+from core.middleware import RequestContextMiddleware
+app.add_middleware(RequestContextMiddleware)
+
 @app.on_event("startup")
 async def startup_event():
     """Startup initialization"""
@@ -137,13 +141,28 @@ async def startup_event():
         )
         print(f"✅ Workflow Generation ({llm_provider})")
 
-        # 4. Setup logging
+        # 4. Setup structured logging
         log_level = config_service.get("logging.level", "INFO")
-        logging.basicConfig(
-            level=getattr(logging, log_level),
-            format=config_service.get("logging.format", "%(asctime)s [%(levelname)8s] %(message)s")
+        json_logging = config_service.get("logging.json_format", True)
+        log_file = config_service.get("logging.file", None)
+        max_bytes = config_service.get("logging.max_bytes", 100 * 1024 * 1024)
+        backup_count = config_service.get("logging.backup_count", 5)
+        loki_url = config_service.get("logging.loki_url", None)
+
+        from core.logging_config import setup_logging
+        setup_logging(
+            service_name="cloud_backend",
+            level=log_level,
+            json_format=json_logging,
+            log_file=log_file,
+            max_bytes=max_bytes,
+            backup_count=backup_count,
+            loki_url=loki_url,
         )
-        print(f"✅ Logging: {log_level}")
+        log_info = f"✅ Logging: {log_level} (JSON={json_logging})"
+        if log_file:
+            log_info += f" -> {log_file}"
+        print(log_info)
 
         # 5. Start session cleanup background task
         session_timeout_minutes = config_service.get("session.timeout_minutes", 30)
@@ -196,9 +215,82 @@ def root():
         "docs": "/docs"
     }
 
+
+# ===== Version Check API =====
+
+def get_minimum_app_version() -> str:
+    """Get minimum app version from config"""
+    return config_service.get("app.minimum_version", "0.0.1")
+
+def parse_version(version: str) -> tuple:
+    """Parse semantic version string to tuple for comparison"""
+    try:
+        parts = version.split(".")
+        return tuple(int(p) for p in parts)
+    except (ValueError, AttributeError):
+        return (0, 0, 0)
+
+def is_version_compatible(client_version: str, minimum_version: str) -> bool:
+    """Check if client version meets minimum requirement"""
+    client = parse_version(client_version)
+    minimum = parse_version(minimum_version)
+    return client >= minimum
+
+
+@app.post("/api/v1/app/version-check")
+async def check_app_version(data: dict):
+    """
+    Check if app version is compatible
+
+    Body:
+        {
+            "version": "0.0.1",
+            "platform": "macos-arm64" | "macos-x64" | "windows-x64" | "linux-x64"
+        }
+
+    Returns:
+        {
+            "compatible": true/false,
+            "minimum_version": "0.0.1",
+            "update_url": "http://..." (only if not compatible),
+            "message": "..." (optional message)
+        }
+    """
+    client_version = data.get("version", "0.0.0")
+    platform = data.get("platform", "unknown")
+
+    minimum_version = get_minimum_app_version()
+    compatible = is_version_compatible(client_version, minimum_version)
+
+    response = {
+        "compatible": compatible,
+        "minimum_version": minimum_version,
+        "client_version": client_version
+    }
+
+    if not compatible:
+        # Build platform-specific download URL
+        # Only macos-arm64 and windows-x64 are currently supported
+        base_url = "http://download.ariseos.com/releases/latest"
+
+        platform_urls = {
+            "macos-arm64": f"{base_url}/macos-arm64/Ami-latest-macos-arm64.dmg",
+            "windows-x64": f"{base_url}/windows-x64/Ami-latest-windows-x64.zip",
+        }
+
+        response["update_url"] = platform_urls.get(platform, base_url)
+        response["message"] = f"Please update Ami to version {minimum_version} or later"
+
+        logger.info(f"Version check: {client_version} < {minimum_version} (platform: {platform})")
+    else:
+        logger.debug(f"Version check: {client_version} is compatible")
+
+    return response
+
+
 # ===== Auth API =====
 
-@app.post("/api/auth/login")
+@app.post("/api/v1/auth/login")
 async def login(data: dict):
     """
     用户登录
@@ -232,7 +324,7 @@ async def login(data: dict):
         "user_id": username
     }
 
-@app.post("/api/auth/register")
+@app.post("/api/v1/auth/register")
 async def register(data: dict):
     """
     用户注册
@@ -245,7 +337,7 @@ async def register(data: dict):
 
 # ===== Recordings API =====
 
-@app.post("/api/recordings/upload")
+@app.post("/api/v1/recordings")
 async def upload_recording(data: dict):
     """
     Upload recording and add intents to user's Intent Memory Graph (async)
@@ -401,7 +493,7 @@ async def add_intents_to_user_graph_background(
         traceback.print_exc()
 
 
-@app.post("/api/analyze_recording")
+@app.post("/api/v1/recordings/analyze")
 async def analyze_recording(data: dict, x_ami_api_key: Optional[str] = Header(None)):
     """
     Analyze recording operations using AI and generate suggested descriptions
@@ -428,7 +520,10 @@ async def analyze_recording(data: dict, x_ami_api_key: Optional[str] = Header(No
         }
     """
     operations = data.get("operations", [])
-    user_id = data.get("user_id", "default_user")
+    user_id = data.get("user_id")
+
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
 
     if not operations:
         raise HTTPException(400, "Missing operations")
@@ -465,7 +560,7 @@ async def analyze_recording(data: dict, x_ami_api_key: Optional[str] = Header(No
         raise HTTPException(500, f"Analysis failed: {str(e)}")
 
 
-@app.post("/api/users/{user_id}/generate_metaflow")
+@app.post("/api/v1/metaflows/generate")
 async def generate_metaflow(
     user_id: str,
     data: dict,
@@ -553,7 +648,7 @@ async def generate_metaflow(
         raise HTTPException(500, f"MetaFlow generation failed: {str(e)}")
 
 
-@app.post("/api/recordings/{recording_id}/generate_metaflow")
+@app.post("/api/v1/recordings/{recording_id}/generate-metaflow")
 async def generate_metaflow_from_recording(
     recording_id: str,
     data: dict,
@@ -688,7 +783,7 @@ async def generate_metaflow_from_recording(
         raise HTTPException(500, f"MetaFlow generation failed: {str(e)}")
 
 
-@app.post("/api/metaflows/{metaflow_id}/generate_workflow")
+@app.post("/api/v1/metaflows/{metaflow_id}/generate-workflow")
 async def generate_workflow_from_metaflow(
     metaflow_id: str,
     data: dict,
@@ -812,7 +907,7 @@ async def generate_workflow_from_metaflow(
 
 # ===== Recordings API (List/Detail) =====
 
-@app.get("/api/recordings")
+@app.get("/api/v1/recordings")
 async def list_recordings(user_id: str):
     """
     List all recordings for user with metadata
@@ -830,7 +925,7 @@ async def list_recordings(user_id: str):
     return recordings
 
 
-@app.get("/api/recordings/{recording_id}")
+@app.get("/api/v1/recordings/{recording_id}")
 async def get_recording(recording_id: str, user_id: str):
     """
     Get recording detail
@@ -861,7 +956,7 @@ async def get_recording(recording_id: str, user_id: str):
 
 # ===== MetaFlows API =====
 
-@app.get("/api/metaflows")
+@app.get("/api/v1/metaflows")
 async def list_metaflows(user_id: str):
     """
     List all MetaFlows for user
@@ -879,7 +974,7 @@ async def list_metaflows(user_id: str):
     return metaflows
 
 
-@app.get("/api/metaflows/{metaflow_id}")
+@app.get("/api/v1/metaflows/{metaflow_id}")
 async def get_metaflow(metaflow_id: str, user_id: str):
     """
     Get MetaFlow detail
@@ -907,7 +1002,7 @@ async def get_metaflow(metaflow_id: str, user_id: str):
     return metaflow
 
 
-@app.put("/api/metaflows/{metaflow_id}")
+@app.put("/api/v1/metaflows/{metaflow_id}")
 async def update_metaflow(metaflow_id: str, data: dict):
     """
     Update MetaFlow YAML content
@@ -942,7 +1037,7 @@ async def update_metaflow(metaflow_id: str, data: dict):
 
 # ===== Workflows API =====
 
-@app.get("/api/workflows")
+@app.get("/api/v1/workflows")
 async def list_workflows(user_id: str):
     """
     List all Workflows for user
@@ -960,7 +1055,7 @@ async def list_workflows(user_id: str):
     return workflows
 
 
-@app.get("/api/users/{user_id}/workflows")
+@app.get("/api/v1/users/{user_id}/workflows")
 async def list_workflows_restful(user_id: str):
     """
     List all Workflows for user (RESTful style)
@@ -1013,7 +1108,7 @@ async def list_workflows_restful(user_id: str):
         raise HTTPException(500, f"Failed to list workflows: {str(e)}")
 
 
-@app.get("/api/workflows/{workflow_id}")
+@app.get("/api/v1/workflows/{workflow_id}")
 async def get_workflow(workflow_id: str, user_id: str):
     """
     Get Workflow detail
@@ -1040,7 +1135,7 @@ async def get_workflow(workflow_id: str, user_id: str):
     return workflow
 
 
-@app.put("/api/workflows/{workflow_id}")
+@app.put("/api/v1/workflows/{workflow_id}")
 async def update_workflow(workflow_id: str, data: dict):
     """
     Update Workflow YAML content
@@ -1073,7 +1168,7 @@ async def update_workflow(workflow_id: str, data: dict):
     return {"success": True}
 
 
-@app.get("/api/workflows/{workflow_id}/download")
+@app.get("/api/v1/workflows/{workflow_id}/download")
 async def download_workflow(workflow_id: str, user_id: str):
     """
     Download Workflow YAML
@@ -1095,7 +1190,7 @@ async def download_workflow(workflow_id: str, user_id: str):
     return {"yaml": workflow.get("workflow_yaml", "")}
 
 
-@app.delete("/api/workflows/{workflow_id}")
+@app.delete("/api/v1/workflows/{workflow_id}")
 async def delete_workflow(workflow_id: str, user_id: str):
     """
     Delete a Workflow from Cloud Backend
@@ -1120,7 +1215,7 @@ async def delete_workflow(workflow_id: str, user_id: str):
 
 # ===== Executions API =====
 
-@app.post("/api/executions/report")
+@app.post("/api/v1/executions/report")
 async def report_execution(data: dict):
     """
     上报执行统计
@@ -1142,13 +1237,177 @@ async def report_execution(data: dict):
     return {"success": True}
 
 
+# ===== Workflow Logs API =====
+
+@app.post("/api/v1/logs/workflow")
+async def upload_workflow_log(data: dict, x_ami_api_key: Optional[str] = Header(None)):
+    """
+    Upload workflow execution log from client.
+
+    This endpoint receives detailed execution logs including step-by-step
+    actions, timing, and results for analysis and debugging.
+
+    Body:
+        {
+            "type": "workflow_run",
+            "run_id": "uuid",
+            "user_id": "user123",
+            "device_id": "device_xxx",
+            "workflow_id": "workflow_name",
+            "workflow_name": "Workflow Display Name",
+            "meta": {
+                "run_id": "uuid",
+                "workflow_id": "...",
+                "workflow_name": "...",
+                "user_id": "...",
+                "device_id": "...",
+                "app_version": "0.0.1",
+                "started_at": "2024-01-01T00:00:00Z",
+                "finished_at": "2024-01-01T00:01:00Z",
+                "status": "completed|failed",
+                "error_summary": null,
+                "steps_total": 5,
+                "steps_completed": 5,
+                "uploaded": false
+            },
+            "logs": [
+                {
+                    "ts": "2024-01-01T00:00:01Z",
+                    "step": 0,
+                    "action": "navigate",
+                    "target": "https://example.com",
+                    "status": "completed",
+                    "duration_ms": 1500,
+                    "message": "Step 1: Navigate to page"
+                }
+            ],
+            "workflow_yaml": "name: ...\nsteps: ...",
+            "device_info": {
+                "os": "Darwin",
+                "os_version": "23.0.0",
+                "app_version": "0.0.1"
+            }
+        }
+
+    Headers:
+        X-Ami-API-Key: User's API key (optional but recommended)
+
+    Returns:
+        {"success": true, "run_id": "uuid"}
+    """
+    run_id = data.get("run_id")
+    user_id = data.get("user_id")
+    workflow_id = data.get("workflow_id")
+    workflow_name = data.get("workflow_name")
+    meta = data.get("meta", {})
+    logs = data.get("logs", [])
+    device_info = data.get("device_info", {})
+
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+    if not run_id:
+        raise HTTPException(400, "Missing run_id")
+    if not workflow_id:
+        raise HTTPException(400, "Missing workflow_id")
+
+    try:
+        # Store the execution log
+        log_path = storage_service.get_user_workflow_logs_path(user_id, workflow_id)
+        log_path.mkdir(parents=True, exist_ok=True)
+
+        # Save log file as {run_id}.json
+        log_file = log_path / f"{run_id}.json"
+        log_file.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+
+        logger.info(
+            f"Workflow log uploaded: {run_id} "
+            f"(workflow={workflow_name}, status={meta.get('status')}, "
+            f"steps={meta.get('steps_completed')}/{meta.get('steps_total')})"
+        )
+
+        return {
+            "success": True,
+            "run_id": run_id,
+            "message": "Workflow log uploaded successfully"
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to save workflow log: {e}")
+        raise HTTPException(500, f"Failed to save log: {str(e)}")
+
+
+@app.post("/api/v1/logs/diagnostic")
+async def upload_diagnostic_log(data: dict, x_ami_api_key: Optional[str] = Header(None)):
+    """
+    Upload diagnostic package from client.
+
+    This endpoint receives diagnostic packages containing system logs,
+    recent workflow executions, and device information for debugging.
+
+    Body:
+        {
+            "type": "diagnostic",
+            "diagnostic_id": "DIAG-20250115-ABC123",
+            "user_id": "user123",
+            "device_id": "device_xxx",
+            "app_version": "0.0.1",
+            "timestamp": "2024-01-15T10:30:00Z",
+            "system_logs": ["line1", "line2", ...],
+            "recent_executions": [...],
+            "device_info": {...},
+            "user_description": "Optional description of the issue"
+        }
+
+    Headers:
+        X-Ami-API-Key: User's API key (optional but recommended)
+
+    Returns:
+        {"success": true, "diagnostic_id": "DIAG-..."}
+    """
+    diagnostic_id = data.get("diagnostic_id")
+    user_id = data.get("user_id")
+    device_id = data.get("device_id")
+    timestamp = data.get("timestamp")
+
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+    if not diagnostic_id:
+        raise HTTPException(400, "Missing diagnostic_id")
+
+    try:
+        # Store the diagnostic package
+        diag_path = storage_service.base_path / "diagnostics" / user_id
+        diag_path.mkdir(parents=True, exist_ok=True)
+
+        # Save diagnostic file
+        diag_file = diag_path / f"{diagnostic_id}.json"
+        diag_file.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+
+        logger.info(
+            f"Diagnostic uploaded: {diagnostic_id} "
+            f"(user={user_id}, device={device_id}, "
+            f"logs={len(data.get('system_logs', []))} lines, "
+            f"executions={len(data.get('recent_executions', []))})"
+        )
+
+        return {
+            "success": True,
+            "diagnostic_id": diagnostic_id,
+            "message": "Diagnostic package received successfully"
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to save diagnostic: {e}")
+        raise HTTPException(500, f"Failed to save diagnostic: {str(e)}")
+
+
 # ===== Intent Builder Agent API (SSE Streaming) =====
 
 # Store active agent sessions
 _agent_sessions: dict = {}
 
 
-@app.post("/api/intent-builder/start")
+@app.post("/api/v1/intent-builder/sessions")
 async def start_intent_builder_session(data: dict, x_ami_api_key: Optional[str] = Header(None)):
     """
     Start a new Intent Builder Agent session
@@ -1176,7 +1435,7 @@ async def start_intent_builder_session(data: dict, x_ami_api_key: Optional[str] 
     if not x_ami_api_key:
         raise HTTPException(400, "Missing X-Ami-API-Key header")
 
-    user_id = data.get("user_id", "default_user")
+    user_id = data.get("user_id")
     user_query = data.get("user_query")
     task_description = data.get("task_description")
     user_operations_path = data.get("user_operations_path")
@@ -1187,6 +1446,8 @@ async def start_intent_builder_session(data: dict, x_ami_api_key: Optional[str] 
     current_workflow_yaml = data.get("current_workflow_yaml")
     phase = data.get("phase", "metaflow")
 
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
     if not user_query:
         raise HTTPException(400, "Missing user_query")
 
@@ -1284,7 +1545,7 @@ Please:
     return {"session_id": session_id}
 
 
-@app.get("/api/intent-builder/{session_id}/stream")
+@app.get("/api/v1/intent-builder/sessions/{session_id}/stream")
 async def stream_intent_builder_start(session_id: str):
     """
     Stream the initial response from Intent Builder Agent (SSE)
@@ -1329,7 +1590,7 @@ async def stream_intent_builder_start(session_id: str):
     )
 
 
-@app.post("/api/intent-builder/{session_id}/chat")
+@app.post("/api/v1/intent-builder/sessions/{session_id}/chat")
 async def stream_intent_builder_chat(session_id: str, data: dict):
     """
     Send a message and stream the response (SSE)
@@ -1371,7 +1632,7 @@ async def stream_intent_builder_chat(session_id: str, data: dict):
     )
 
 
-@app.get("/api/intent-builder/{session_id}/state")
+@app.get("/api/v1/intent-builder/sessions/{session_id}/state")
 async def get_intent_builder_state(session_id: str):
     """
     Get current state of Intent Builder session
@@ -1395,7 +1656,7 @@ async def get_intent_builder_state(session_id: str):
     return agent.get_state()
 
 
-@app.get("/api/intent-builder/sessions/{session_id}/status")
+@app.get("/api/v1/intent-builder/sessions/{session_id}/status")
 async def get_session_status(session_id: str, user_id: str):
     """
     Get session status from filesystem (age, expiry time, etc.)
@@ -1429,7 +1690,7 @@ async def get_session_status(session_id: str, user_id: str):
     return session_info
 
 
-@app.delete("/api/intent-builder/{session_id}")
+@app.delete("/api/v1/intent-builder/sessions/{session_id}")
 async def close_intent_builder_session(session_id: str):
     """
     Close and cleanup Intent Builder session
@@ -1457,7 +1718,7 @@ async def close_intent_builder_session(session_id: str):
 # Workflow Resource Sync APIs (Simple File CRUD)
 # ============================================================================
 
-@app.get("/api/workflows/{workflow_id}/metadata")
+@app.get("/api/v1/workflows/{workflow_id}/metadata")
 async def get_workflow_metadata(workflow_id: str, user_id: str):
     """
     Get workflow metadata from cloud storage
@@ -1475,7 +1736,7 @@ async def get_workflow_metadata(workflow_id: str, user_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.put("/api/workflows/{workflow_id}/metadata")
+@app.put("/api/v1/workflows/{workflow_id}/metadata")
 async def save_workflow_metadata(workflow_id: str, user_id: str, metadata: dict):
     """
     Save workflow metadata to cloud storage
@@ -1493,7 +1754,7 @@ async def save_workflow_metadata(workflow_id: str, user_id: str, metadata: dict)
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/workflows/{workflow_id}/files")
+@app.get("/api/v1/workflows/{workflow_id}/files")
 async def get_workflow_file(workflow_id: str, user_id: str, path: str):
     """
     Get a single file from workflow
@@ -1524,7 +1785,7 @@ async def get_workflow_file(workflow_id: str, user_id: str, path: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.put("/api/workflows/{workflow_id}/files")
+@app.put("/api/v1/workflows/{workflow_id}/files")
 async def save_workflow_file(
     workflow_id: str,
     user_id: str,

@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Icon from '../components/Icons';
 import { api } from '../utils/api';
+import { BACKEND_CONFIG } from '../config/backend';
 import '../styles/IntentBuilderPage.css';
 
-const API_BASE = "http://127.0.0.1:8765";
+const APP_BACKEND_BASE = BACKEND_CONFIG.httpBase; // For EventSource (cannot use api.callAppBackend)
 
 /**
  * Intent Builder Page - Lovable-style real-time AI assistant UI
@@ -51,7 +52,7 @@ function IntentBuilderPage({ session, onNavigate, showStatus, params = {} }) {
       }
       if (sessionId) {
         // Close session
-        fetch(`${API_BASE}/api/intent-builder/${sessionId}`, {
+        api.callAppBackend(`/api/v1/intent-builder/sessions/${sessionId}`, {
           method: 'DELETE'
         }).catch(console.error);
       }
@@ -65,7 +66,7 @@ function IntentBuilderPage({ session, onNavigate, showStatus, params = {} }) {
       showStatus('Starting Intent Builder session...', 'info');
 
       // Create session
-      const result = await api.callAppBackend('/api/intent-builder/start', {
+      const result = await api.callAppBackend('/api/v1/intent-builder/sessions', {
         method: 'POST',
         body: JSON.stringify({
           user_id: userId,
@@ -99,16 +100,11 @@ function IntentBuilderPage({ session, onNavigate, showStatus, params = {} }) {
     setCurrentToolUse(null);
 
     try {
-      const url = isInitial
-        ? `${API_BASE}/api/intent-builder/${sid}/stream`
-        : `${API_BASE}/api/intent-builder/${sid}/chat`;
-
       // For chat, we need to POST with the message
       if (!isInitial) {
-        // Use fetch with POST for chat
-        const response = await fetch(url, {
+        // Use api.callAppBackendRaw with POST for chat
+        const response = await api.callAppBackendRaw(`/api/v1/intent-builder/sessions/${sid}/chat`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ message: inputValue })
         });
 
@@ -155,7 +151,8 @@ function IntentBuilderPage({ session, onNavigate, showStatus, params = {} }) {
 
       } else {
         // For initial stream, use EventSource pattern with GET
-        const eventSource = new EventSource(url);
+        // Note: EventSource doesn't support custom headers, so API key is passed via query param
+        const eventSource = new EventSource(`${APP_BACKEND_BASE}/api/v1/intent-builder/sessions/${sid}/stream`);
         eventSourceRef.current = eventSource;
 
         let accumulatedText = '';

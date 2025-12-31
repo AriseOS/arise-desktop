@@ -3,8 +3,6 @@ import Icon from '../components/Icons';
 import { api } from '../utils/api';
 import '../styles/RecordingPage.css';
 
-const API_BASE = "http://127.0.0.1:8765";
-
 function RecordingPage({ session, onNavigate, showStatus }) {
   const userId = session?.username;
   const [recordUrl, setRecordUrl] = useState("https://www.google.com");
@@ -28,21 +26,16 @@ function RecordingPage({ session, onNavigate, showStatus }) {
     try {
       showStatus("启动录制...", "info");
 
-      const response = await fetch(`${API_BASE}/api/recording/start`, {
+      const result = await api.callAppBackend('/api/v1/recordings/start', {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           url: recordUrl,
-          user_id: userId,  // User ID is required
+          user_id: userId,
           title: recordTitle,
           description: recordDescription,
           task_metadata: { task_description: recordDescription }
         })
       });
-
-      if (!response.ok) throw new Error(`API error: ${response.status}`);
-
-      const result = await response.json();
       setRecording(true);
       setSessionId(result.session_id);
       showStatus("录制已开始！请在浏览器中操作", "success");
@@ -57,14 +50,9 @@ function RecordingPage({ session, onNavigate, showStatus }) {
     try {
       showStatus("停止录制...", "info");
 
-      const response = await fetch(`${API_BASE}/api/recording/stop`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" }
+      const result = await api.callAppBackend('/api/v1/recordings/stop', {
+        method: "POST"
       });
-
-      if (!response.ok) throw new Error(`API error: ${response.status}`);
-
-      const result = await response.json();
       setRecording(false);
       setOperationsCount(result.operations_count);
       showStatus(`录制完成！捕获了 ${result.operations_count} 个操作`, "success");
@@ -86,19 +74,13 @@ function RecordingPage({ session, onNavigate, showStatus }) {
       setUploading(true);
       showStatus("上传录制到云端...", "info");
 
-      const response = await fetch(`${API_BASE}/api/recordings/upload`, {
+      const result = await api.callAppBackend(`/api/v1/recordings/${sessionId}/upload`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          session_id: sessionId,
           task_description: recordDescription,
           user_id: userId
         })
       });
-
-      if (!response.ok) throw new Error("Upload failed");
-
-      const result = await response.json();
       showStatus("上传成功！录制已保存到云端", "success");
 
       // Return to main page after successful upload

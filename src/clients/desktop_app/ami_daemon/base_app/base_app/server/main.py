@@ -111,27 +111,30 @@ def create_app(config_path: str = None) -> FastAPI:
 
 
 def setup_logging(config_service: ConfigService = None, level: str = "INFO"):
-    """设置日志"""
-    # 从配置文件获取日志设置
+    """设置日志
+
+    When running as part of app_backend (daemon.py), logging is already configured
+    with rotating file handlers. This function only configures logging when
+    BaseApp is run standalone (e.g., for testing).
+    """
+    # Check if logging is already configured (by daemon.py)
+    root_logger = logging.getLogger()
+    if root_logger.handlers:
+        # Logging already configured, just log a message
+        logging.info("BaseApp using existing logging configuration")
+        return
+
+    # Standalone mode: configure basic logging
+    log_level = level
     if config_service:
         log_level = config_service.get("logging.level", level)
-        log_file = config_service.get("logging.file", "./logs/baseapp.log")
-    else:
-        log_level = level
-        log_file = "./logs/baseapp.log"
-    
-    # 确保日志目录存在
-    log_path = Path(log_file)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    
+
     logging.basicConfig(
         level=getattr(logging, log_level.upper()),
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            logging.FileHandler(log_file)
-        ]
+        handlers=[logging.StreamHandler(sys.stdout)]
     )
+    logging.info("BaseApp standalone logging configured")
 
 
 def run_server(

@@ -1,6 +1,10 @@
 # Ami Cloud Backend Configuration
 # Server-side AI analysis and data storage
 
+# App Version Control
+app:
+  minimum_version: "0.0.1"  # Minimum required client app version (force upgrade if below)
+
 # Server Configuration
 server:
   host: 127.0.0.1  # Only listen on localhost (Caddy will handle external access)
@@ -46,7 +50,7 @@ llm:
   # All LLM calls route through CRS
   # Migration: Upgraded old API Proxy to CRS (port remains 8080)
   use_proxy: true  # Always use CRS for LLM calls
-  proxy_url: "http://127.0.0.1:8080"  # CRS port (custom configuration)
+  proxy_url: "https://api.ariseos.com/api"  # CRS port (custom configuration)
   # For production, change to: https://crs.ariseos.com
 
   # Anthropic Configuration
@@ -88,10 +92,10 @@ auth:
 # Logging Configuration
 logging:
   level: INFO  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
-  format: "%(asctime)s [%(levelname)8s] %(message)s"
-  file: ~/ami-server/logs/cloud-backend.log
-  max_bytes: 10485760  # 10MB
-  backup_count: 5
+  json_format: true  # JSON format for Loki/Promtail integration
+  file: ~/ami-server/logs/cloud-backend.log  # Log file path (also used by Promtail)
+  max_bytes: 104857600  # 100MB per file
+  backup_count: 5  # Keep 5 backup files
 
 # CORS Configuration
 cors:

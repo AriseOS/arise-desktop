@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import Icon from '../components/Icons'
+import { api } from '../utils/api'
 import '../styles/MyWorkflowsPage.css'
-
-const API_BASE = "http://127.0.0.1:8765";
 
 function MyWorkflowsPage({ session, onNavigate, onLogout }) {
   // Get user_id from session
@@ -23,52 +22,7 @@ function MyWorkflowsPage({ session, onNavigate, onLogout }) {
     setError(null)
 
     try {
-      const response = await fetch(`${API_BASE}/api/workflows?user_id=${userId}`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      })
-
-      if (!response.ok) {
-        // If API doesn't exist, show mock data
-        const mockWorkflows = [
-          {
-            agent_id: "workflow_demo_001",
-            name: "Google搜索自动化",
-            description: "自动打开Google，搜索指定关键词，获取搜索结果",
-            created_at: "2025-01-13T10:30:00Z",
-            is_downloaded: true,
-            source: "local",
-            status: "ready",
-            last_run: "2025-01-13T11:00:00Z"
-          },
-          {
-            agent_id: "workflow_demo_002",
-            name: "表单填写助手",
-            description: "自动填写网页表单，支持多种表单类型",
-            created_at: "2025-01-12T16:45:00Z",
-            is_downloaded: true,
-            source: "local",
-            status: "ready",
-            last_run: "2025-01-12T17:30:00Z"
-          },
-          {
-            agent_id: "workflow_demo_003",
-            name: "数据采集工具",
-            description: "从网页采集结构化数据，支持多种数据格式",
-            created_at: "2025-01-11T09:20:00Z",
-            is_downloaded: false,
-            source: "cloud",
-            status: "draft",
-            last_run: null
-          }
-        ];
-        setWorkflows(mockWorkflows);
-        return;
-      }
-
-      const data = await response.json()
+      const data = await api.callAppBackend(`/api/v1/workflows?user_id=${userId}`)
       setWorkflows(data.workflows || [])
     } catch (err) {
       console.error('Load workflows error:', err)
@@ -132,13 +86,9 @@ function MyWorkflowsPage({ session, onNavigate, onLogout }) {
     setDeleteConfirm(null)
 
     try {
-      const response = await fetch(`${API_BASE}/api/workflows/${workflowId}?user_id=${userId}`, {
+      await api.callAppBackend(`/api/v1/workflows/${workflowId}?user_id=${userId}`, {
         method: 'DELETE'
       })
-
-      if (!response.ok) {
-        throw new Error(`Failed to delete workflow: ${response.status}`)
-      }
 
       setWorkflows(prev => prev.filter(w => w.agent_id !== workflowId))
     } catch (err) {

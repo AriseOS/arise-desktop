@@ -1,5 +1,6 @@
 """Workflow execution engine"""
 
+import logging
 import uuid
 import yaml
 from datetime import datetime
@@ -8,6 +9,10 @@ from typing import Dict, Optional, Callable, Awaitable
 from src.clients.desktop_app.ami_daemon.models.execution import ExecutionTask
 from src.clients.desktop_app.ami_daemon.services.storage_manager import StorageManager
 from src.clients.desktop_app.ami_daemon.services.browser_manager import BrowserManager
+from src.clients.desktop_app.ami_daemon.services.workflow_history import WorkflowHistoryManager
+from src.clients.desktop_app.ami_daemon.services.cloud_client import CloudClient
+
+logger = logging.getLogger(__name__)
 
 
 class WorkflowExecutor:
@@ -16,13 +21,29 @@ class WorkflowExecutor:
     def __init__(
         self,
         storage_manager: StorageManager,
-        browser_manager: BrowserManager
+        browser_manager: BrowserManager,
+        history_manager: Optional[WorkflowHistoryManager] = None,
+        cloud_client: Optional[CloudClient] = None,
+        auto_upload_logs: bool = True,
     ):
-        """Initialize workflow executor"""
+        """Initialize workflow executor
+
+        Args:
+            storage_manager: Storage manager for workflows
+            browser_manager: Browser manager for automation
+            history_manager: Optional history manager for execution logging
+            cloud_client: Optional cloud client for log upload
+            auto_upload_logs: Whether to automatically upload logs after execution
+        """
         self.storage = storage_manager
         self.browser = browser_manager
+        self.history = history_manager
+        self.cloud_client = cloud_client
+        self.auto_upload_logs = auto_upload_logs
         self.tasks: Dict[str, ExecutionTask] = {}
         self.progress_callback: Optional[Callable[[str, dict], Awaitable[None]]] = None
+        # Map task_id to (user_id, workflow_id, execution_id) for history tracking
+        self._task_context: Dict[str, tuple[str, str, str]] = {}
 
     def set_progress_callback(self, callback: Callable[[str, dict], Awaitable[None]]):
         """Set callback for progress updates
@@ -35,7 +56,7 @@ class WorkflowExecutor:
     async def execute_workflow_async(
         self,
         user_id: str,
-        workflow_name: str,
+        workflow_id: str,
         inputs: Optional[dict] = None,
         user_api_key: Optional[str] = None
     ) -> Dict[str, str]:
@@ -43,17 +64,17 @@ class WorkflowExecutor:
 
         Args:
             user_id: User ID
-            workflow_name: Workflow name
+            workflow_id: Workflow ID (currently uses workflow name as identifier)
             inputs: Input parameters (optional)
             user_api_key: User's Ami API key for LLM calls via API Proxy (optional)
 
         Returns:
             Dict with task_id and status
         """
-        task_id = f"task_{workflow_name}_{uuid.uuid4().hex[:8]}"
+        task_id = f"task_{workflow_id}_{uuid.uuid4().hex[:8]}"
 
         # Load workflow YAML early to extract steps info
-        workflow_yaml = self.storage.get_workflow(user_id, workflow_name)
+        workflow_yaml = self.storage.get_workflow(user_id, workflow_id)
 
         # Parse YAML to extract steps info immediately
         workflow_dict = yaml.safe_load(workflow_yaml)
@@ -73,7 +94,7 @@ class WorkflowExecutor:
         # Create task with steps info
         task = ExecutionTask(
             task_id=task_id,
-            workflow_name=workflow_name,
+            workflow_name=workflow_id,
             user_id=user_id,
             status="running",
             progress=0,
@@ -84,6 +105,23 @@ class WorkflowExecutor:
             steps=steps_info
         )
         self.tasks[task_id] = task
+
+        # Create history run if history manager is available
+        execution_id = None
+        if self.history:
+            try:
+                execution_id = self.history.create_run(
+                    user_id=user_id,
+                    workflow_id=workflow_id,
+                    workflow_name=workflow_id,
+                    workflow_yaml=workflow_yaml,
+                    total_steps=total_steps,
+                )
+                # Store context for history tracking: (user_id, workflow_id, execution_id)
+                self._task_context[task_id] = (user_id, workflow_id, execution_id)
+                logger.info(f"Created history run {execution_id} for task {task_id}")
+            except Exception as e:
+                logger.error(f"Failed to create history run: {e}")
 
         # Send initial progress update immediately
         await self._send_progress_update(task_id, {
@@ -210,6 +248,9 @@ class WorkflowExecutor:
             # Set up progress callback to track step execution
             step_start_times = {}
 
+            # Get context for history logging: (user_id, workflow_id, execution_id)
+            history_context = self._task_context.get(task_id)
+
             async def step_progress_callback(step_index: int, step_name: str, step_status: str, step_result=None):
                 """Callback for step progress updates"""
                 task.current_step = step_index
@@ -217,8 +258,10 @@ class WorkflowExecutor:
 
                 # Calculate step duration if completed
                 step_duration = None
+                step_duration_ms = None
                 if step_status == "completed" and step_index in step_start_times:
                     step_duration = (datetime.now() - step_start_times[step_index]).total_seconds()
+                    step_duration_ms = int(step_duration * 1000)
                 elif step_status == "in_progress":
                     step_start_times[step_index] = datetime.now()
 
@@ -232,6 +275,27 @@ class WorkflowExecutor:
                             step["duration"] = step_duration
                     else:
                         step["status"] = "pending"
+
+                # Log to workflow history (not to app.log)
+                if history_context and self.history:
+                    try:
+                        ctx_user_id, ctx_workflow_id, ctx_execution_id = history_context
+                        # Get step type from steps_info
+                        step_type = steps_info[step_index].get("type", "unknown") if step_index < len(steps_info) else "unknown"
+                        self.history.log_step(
+                            user_id=ctx_user_id,
+                            workflow_id=ctx_workflow_id,
+                            execution_id=ctx_execution_id,
+                            step_index=step_index,
+                            action=step_type,
+                            status=step_status,
+                            target=step_name,
+                            duration_ms=step_duration_ms,
+                            message=f"Step {step_index + 1}: {step_name}",
+                            metadata={"result": str(step_result)[:500] if step_result else None},
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to log step to history: {e}")
 
                 await self._send_progress_update(task_id, {
                     "type": "progress_update",
@@ -334,12 +398,56 @@ class WorkflowExecutor:
                 }
             )
 
+            # Update workflow history status
+            if history_context and self.history:
+                try:
+                    ctx_user_id, ctx_workflow_id, ctx_execution_id = history_context
+                    steps_completed = sum(1 for s in steps_info if s.get("status") == "completed")
+                    self.history.update_run_status(
+                        user_id=ctx_user_id,
+                        workflow_id=ctx_workflow_id,
+                        execution_id=ctx_execution_id,
+                        status=task.status,
+                        steps_completed=steps_completed,
+                        error_summary=task.error,
+                    )
+
+                    # Auto-upload execution log to cloud
+                    if self.auto_upload_logs and self.cloud_client:
+                        await self._upload_execution_log(
+                            ctx_user_id, ctx_workflow_id, ctx_execution_id
+                        )
+                except Exception as e:
+                    logger.error(f"Failed to update history run status: {e}")
+
         except Exception as e:
             task.status = "failed"
             task.progress = 0
             task.error = str(e)
             task.message = f"Execution failed: {e}"
             task.completed_at = datetime.now()
+
+            # Update workflow history with failure
+            if history_context and self.history:
+                try:
+                    ctx_user_id, ctx_workflow_id, ctx_execution_id = history_context
+                    steps_completed = sum(1 for s in steps_info if s.get("status") == "completed")
+                    self.history.update_run_status(
+                        user_id=ctx_user_id,
+                        workflow_id=ctx_workflow_id,
+                        execution_id=ctx_execution_id,
+                        status="failed",
+                        steps_completed=steps_completed,
+                        error_summary=str(e),
+                    )
+
+                    # Auto-upload execution log to cloud (even for failures)
+                    if self.auto_upload_logs and self.cloud_client:
+                        await self._upload_execution_log(
+                            ctx_user_id, ctx_workflow_id, ctx_execution_id
+                        )
+                except Exception as he:
+                    logger.error(f"Failed to update history run status: {he}")
 
             # Send error progress update (include workflow_yaml for feedback context)
             await self._send_progress_update(task_id, {
@@ -369,3 +477,37 @@ class WorkflowExecutor:
                 import logging
                 logger = logging.getLogger(__name__)
                 logger.error(f"Failed to send progress update: {e}")
+
+    async def _upload_execution_log(
+        self, user_id: str, workflow_id: str, execution_id: str
+    ):
+        """Upload execution log to cloud (fire-and-forget).
+
+        Args:
+            user_id: User ID
+            workflow_id: Workflow ID
+            execution_id: Execution ID
+        """
+        if not self.history or not self.cloud_client:
+            return
+
+        try:
+            # Get log data for upload
+            log_data = self.history.get_run_for_upload(user_id, workflow_id, execution_id)
+            if not log_data:
+                logger.warning(f"No log data found for execution {execution_id}")
+                return
+
+            # Upload to cloud
+            result = await self.cloud_client.upload_execution_log(log_data, user_id)
+
+            if result.get("success"):
+                # Mark as uploaded in local history
+                self.history.mark_as_uploaded(user_id, workflow_id, execution_id)
+                logger.info(f"Execution log uploaded: {execution_id}")
+            else:
+                logger.warning(f"Failed to upload execution log: {result.get('error')}")
+
+        except Exception as e:
+            # Fire-and-forget: don't fail the workflow execution
+            logger.error(f"Error uploading execution log: {e}")

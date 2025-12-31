@@ -170,6 +170,13 @@ export const Icon = ({ name, size = 24, className = "", ...props }) => {
                 <polyline points="12 6 12 12 16 14" />
             </>
         ),
+        history: (
+            <>
+                <path d="M3 3v5h5" />
+                <path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" />
+                <path d="M12 7v5l4 2" />
+            </>
+        ),
         activity: (
             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
         ),
@@ -226,6 +233,28 @@ export const Icon = ({ name, size = 24, className = "", ...props }) => {
         ),
         send: (
             <line x1="22" y1="2" x2="11" y2="13" />
+        ),
+        inbox: (
+            <>
+                <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
+                <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
+            </>
+        ),
+        loader: (
+            <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+        ),
+        slash: (
+            <>
+                <circle cx="12" cy="12" r="10" />
+                <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
+            </>
+        ),
+        bug: (
+            <>
+                <path d="M8 2l1.88 1.88M14.12 3.88L16 2M9 7.13v-1a3 3 0 1 1 6 0v1" />
+                <path d="M12 20c-3.3 0-6-2.7-6-6v-3a6 6 0 0 1 12 0v3c0 3.3-2.7 6-6 6z" />
+                <path d="M12 20v-9M6.53 9C4.6 8.8 3 7.1 3 5M6 13H3M6 17l-3 1M17.47 9c1.93-.2 3.53-1.9 3.53-4M18 13h3M18 17l3 1" />
+            </>
         ),
     };
 

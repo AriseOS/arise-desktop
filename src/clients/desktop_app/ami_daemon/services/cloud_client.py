@@ -61,6 +61,39 @@ class CloudClient:
         else:
             logger.info("API key cleared")
 
+    async def check_version(self, version: str, platform: str) -> Dict[str, Any]:
+        """Check if app version is compatible with Cloud Backend
+
+        Args:
+            version: App version string (e.g., "0.0.1")
+            platform: Platform identifier (e.g., "macos-arm64", "windows-x64")
+
+        Returns:
+            dict with:
+                - compatible: bool - whether version is allowed
+                - minimum_version: str - minimum required version
+                - update_url: str - download URL if update needed
+                - message: str - user-facing message if update needed
+        """
+        try:
+            response = await self.client.post(
+                "/api/v1/app/version-check",
+                json={"version": version, "platform": platform},
+                timeout=10.0  # Short timeout for version check
+            )
+            response.raise_for_status()
+            result = response.json()
+            logger.info(f"Version check result: {result}")
+            return result
+        except Exception as e:
+            logger.error(f"Version check failed: {e}")
+            # On error, allow startup (fail open) but log warning
+            return {
+                "compatible": True,
+                "minimum_version": "unknown",
+                "error": str(e)
+            }
+
     async def get_recording(
         self,
         recording_id: str,
@@ -78,7 +111,7 @@ class CloudClient:
         logger.info(f"Fetching recording {recording_id} from Cloud")
 
         response = await self.client.get(
-            f"/api/recordings/{recording_id}",
+            f"/api/v1/recordings/{recording_id}",
             params={"user_id": user_id}
         )
         response.raise_for_status()
@@ -105,7 +138,7 @@ class CloudClient:
             recording_id: Cloud Backend recording ID
         """
         response = await self.client.post(
-            "/api/recordings/upload",
+            "/api/v1/recordings",
             json={
                 "user_id": user_id,
                 "user_api_key": self.user_api_key,
@@ -149,8 +182,9 @@ class CloudClient:
             headers["X-Ami-API-Key"] = self.user_api_key
 
         response = await self.client.post(
-            f"/api/users/{user_id}/generate_metaflow",
+            f"/api/v1/metaflows/generate",
             json={
+                "user_id": user_id,
                 "task_description": task_description,
                 "user_query": user_query
             },
@@ -195,7 +229,7 @@ class CloudClient:
             headers["X-Ami-API-Key"] = self.user_api_key
 
         response = await self.client.post(
-            f"/api/recordings/{recording_id}/generate_metaflow",
+            f"/api/v1/recordings/{recording_id}/generate-metaflow",
             json={
                 "user_id": user_id,
                 "task_description": task_description,
@@ -235,7 +269,7 @@ class CloudClient:
             headers["X-Ami-API-Key"] = self.user_api_key
 
         response = await self.client.post(
-            f"/api/metaflows/{metaflow_id}/generate_workflow",
+            f"/api/v1/metaflows/{metaflow_id}/generate-workflow",
             json={"user_id": user_id},
             headers=headers
         )
@@ -261,7 +295,7 @@ class CloudClient:
 
         try:
             response = await self.client.get(
-                "/api/metaflows",
+                "/api/v1/metaflows",
                 params={"user_id": user_id}
             )
             response.raise_for_status()
@@ -287,7 +321,7 @@ class CloudClient:
         logger.info(f"Fetching MetaFlow {metaflow_id} from Cloud")
 
         response = await self.client.get(
-            f"/api/metaflows/{metaflow_id}",
+            f"/api/v1/metaflows/{metaflow_id}",
             params={"user_id": user_id}
         )
         response.raise_for_status()
@@ -312,7 +346,7 @@ class CloudClient:
         logger.info(f"Updating MetaFlow {metaflow_id}")
 
         response = await self.client.put(
-            f"/api/metaflows/{metaflow_id}",
+            f"/api/v1/metaflows/{metaflow_id}",
             json={
                 "user_id": user_id,
                 "metaflow_yaml": metaflow_yaml
@@ -340,7 +374,7 @@ class CloudClient:
         logger.info(f"Updating Workflow {workflow_id}")
 
         response = await self.client.put(
-            f"/api/workflows/{workflow_id}",
+            f"/api/v1/workflows/{workflow_id}",
             json={
                 "user_id": user_id,
                 "workflow_yaml": workflow_yaml
@@ -366,7 +400,7 @@ class CloudClient:
         logger.info(f"Fetching Workflow {workflow_id} from Cloud")
 
         response = await self.client.get(
-            f"/api/workflows/{workflow_id}",
+            f"/api/v1/workflows/{workflow_id}",
             params={"user_id": user_id}
         )
         response.raise_for_status()
@@ -392,7 +426,7 @@ class CloudClient:
 
         try:
             response = await self.client.get(
-                f"/api/users/{user_id}/workflows"
+                f"/api/v1/users/{user_id}/workflows"
             )
             response.raise_for_status()
             result = response.json()
@@ -423,7 +457,7 @@ class CloudClient:
 
         try:
             response = await self.client.delete(
-                f"/api/workflows/{workflow_id}",
+                f"/api/v1/workflows/{workflow_id}",
                 params={"user_id": user_id}
             )
             response.raise_for_status()
@@ -445,7 +479,7 @@ class CloudClient:
         """Report execution statistics to Cloud Backend (async)"""
         try:
             await self.client.post(
-                "/api/executions/report",
+                "/api/v1/executions/report",
                 json={
                     "user_id": user_id,
                     "workflow_name": workflow_name,
@@ -487,7 +521,7 @@ class CloudClient:
                 logger.warning("No user API key set, request will fail")
 
             response = await self.client.post(
-                "/api/analyze_recording",
+                "/api/v1/recordings/analyze",
                 json={
                     "operations": operations,
                     "user_id": user_id
@@ -505,7 +539,7 @@ class CloudClient:
             raise
         except Exception as e:
             logger.error(f"Analysis error: {type(e).__name__}: {e}")
-            logger.error(f"Request URL: {self.client.base_url}/api/analyze_recording")
+            logger.error(f"Request URL: {self.client.base_url}/api/v1/recordings/analyze")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
             raise
@@ -549,7 +583,7 @@ class CloudClient:
             logger.warning("No user API key set, request may fail")
 
         response = await self.client.post(
-            "/api/intent-builder/start",
+            "/api/v1/intent-builder/sessions",
             json={
                 "user_id": user_id,
                 "user_query": user_query,
@@ -578,7 +612,7 @@ class CloudClient:
 
         async with self.client.stream(
             "GET",
-            f"/api/intent-builder/{session_id}/stream"
+            f"/api/v1/intent-builder/sessions/{session_id}/stream"
         ) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
@@ -599,7 +633,7 @@ class CloudClient:
 
         async with self.client.stream(
             "POST",
-            f"/api/intent-builder/{session_id}/chat",
+            f"/api/v1/intent-builder/sessions/{session_id}/chat",
             json={"message": message}
         ) as response:
             response.raise_for_status()
@@ -617,7 +651,7 @@ class CloudClient:
             State dictionary
         """
         response = await self.client.get(
-            f"/api/intent-builder/{session_id}/state"
+            f"/api/v1/intent-builder/sessions/{session_id}/state"
         )
         response.raise_for_status()
         return response.json()
@@ -634,7 +668,7 @@ class CloudClient:
         logger.info(f"Closing Intent Builder session: {session_id}")
 
         response = await self.client.delete(
-            f"/api/intent-builder/{session_id}"
+            f"/api/v1/intent-builder/sessions/{session_id}"
         )
         response.raise_for_status()
         return response.json()
@@ -757,7 +791,7 @@ class CloudClient:
         try:
             logger.info(f"[CloudClient] Getting metadata for workflow {workflow_id}")
             response = await self.client.get(
-                f"/api/workflows/{workflow_id}/metadata",
+                f"/api/v1/workflows/{workflow_id}/metadata",
                 params={"user_id": user_id}
             )
             response.raise_for_status()
@@ -791,7 +825,7 @@ class CloudClient:
         try:
             logger.info(f"[CloudClient] Saving metadata for workflow {workflow_id}")
             response = await self.client.put(
-                f"/api/workflows/{workflow_id}/metadata",
+                f"/api/v1/workflows/{workflow_id}/metadata",
                 params={"user_id": user_id},
                 json=metadata
             )
@@ -821,7 +855,7 @@ class CloudClient:
         try:
             logger.debug(f"[CloudClient] Downloading file {file_path} from workflow {workflow_id}")
             response = await self.client.get(
-                f"/api/workflows/{workflow_id}/files",
+                f"/api/v1/workflows/{workflow_id}/files",
                 params={
                     "user_id": user_id,
                     "path": file_path
@@ -860,7 +894,7 @@ class CloudClient:
             }
 
             response = await self.client.put(
-                f"/api/workflows/{workflow_id}/files",
+                f"/api/v1/workflows/{workflow_id}/files",
                 params={
                     "user_id": user_id,
                     "path": file_path
@@ -877,6 +911,103 @@ class CloudClient:
         except Exception as e:
             logger.error(f"[CloudClient] Failed to upload file {file_path}: {e}")
             raise
+
+    async def upload_execution_log(
+        self,
+        log_data: Dict[str, Any],
+        user_id: str
+    ) -> Dict[str, Any]:
+        """Upload workflow execution log to Cloud Backend.
+
+        Args:
+            log_data: Execution log data from WorkflowHistoryManager.get_run_for_upload()
+                Contains: type, run_id, user_id, device_id, workflow_id, workflow_name,
+                         meta, logs, workflow_yaml, device_info
+            user_id: User ID (required)
+
+        Returns:
+            dict: {"success": True, "run_id": "..."}
+        """
+        try:
+            logger.info(f"Uploading execution log: {log_data.get('run_id')}")
+
+            # Build request headers
+            headers = {}
+            if self.user_api_key:
+                headers["X-Ami-API-Key"] = self.user_api_key
+
+            response = await self.client.post(
+                "/api/v1/logs/workflow",
+                json={
+                    "user_id": user_id,
+                    **log_data
+                },
+                headers=headers,
+                timeout=30.0  # Reasonable timeout for log upload
+            )
+            response.raise_for_status()
+            result = response.json()
+
+            logger.info(f"Execution log uploaded: {result.get('run_id')}")
+            return result
+
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Failed to upload execution log: {e.response.status_code} {e.response.text}")
+            return {"success": False, "error": str(e)}
+        except Exception as e:
+            logger.error(f"Error uploading execution log: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def upload_diagnostic(
+        self,
+        diagnostic_data: Dict[str, Any],
+        user_id: str
+    ) -> Dict[str, Any]:
+        """Upload diagnostic package to Cloud Backend.
+
+        Args:
+            diagnostic_data: Diagnostic data containing:
+                - type: "diagnostic"
+                - device_id: Device identifier
+                - app_version: App version
+                - system_logs: Recent system log entries
+                - recent_executions: Recent workflow execution summaries
+                - device_info: OS, version, etc.
+                - user_description: User's description of the issue (optional)
+            user_id: User ID (required)
+
+        Returns:
+            dict: {"success": True, "diagnostic_id": "DIAG-..."}
+        """
+        try:
+            logger.info("Uploading diagnostic package...")
+
+            # Build request headers
+            headers = {}
+            if self.user_api_key:
+                headers["X-Ami-API-Key"] = self.user_api_key
+
+            response = await self.client.post(
+                "/api/v1/logs/diagnostic",
+                json={
+                    "user_id": user_id,
+                    **diagnostic_data
+                },
+                headers=headers,
+                timeout=60.0  # Longer timeout for diagnostic upload
+            )
+            response.raise_for_status()
+            result = response.json()
+
+            logger.info(f"Diagnostic uploaded: {result.get('diagnostic_id')}")
+            return result
+
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Failed to upload diagnostic: {e.response.status_code} {e.response.text}")
+            return {"success": False, "error": str(e)}
+        except Exception as e:
+            logger.error(f"Error uploading diagnostic: {e}")
+            return {"success": False, "error": str(e)}
 
     async def close(self):
         """Close HTTP client"""

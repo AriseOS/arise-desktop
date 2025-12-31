@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Icon from '../components/Icons';
+import { api } from '../utils/api';
 import '../styles/ExecutionResultPage.css';
-
-const API_BASE = "http://127.0.0.1:8765";
 
 function ExecutionResultPage({
   session,
@@ -28,12 +27,7 @@ function ExecutionResultPage({
       }
 
       try {
-        const response = await fetch(`${API_BASE}/api/execution/${executionId}/results`);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch results: ${response.status}`);
-        }
-
-        const data = await response.json();
+        const data = await api.callAppBackend(`/api/v1/executions/${executionId}/results`);
         setExecutionStats(data.stats);
         setScrapedData(data.results || []);
         setWorkflowName(data.workflow_name || 'Workflow');

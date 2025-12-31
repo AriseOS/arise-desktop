@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Icon from '../components/Icons';
+import { api } from '../utils/api';
 import '../styles/ExecutionMonitorPage.css';
-
-const API_BASE = "http://127.0.0.1:8765";
 
 function ExecutionMonitorPage({
   session,
@@ -38,26 +37,23 @@ function ExecutionMonitorPage({
     // Poll for execution updates
     const pollInterval = setInterval(async () => {
       try {
-        const response = await fetch(`${API_BASE}/api/execution/${workflowId}/status`);
-        if (response.ok) {
-          const data = await response.json();
-          setStatus(data.status);
-          setProgress(data.progress || 0);
-          setCurrentStep(data.current_step || 0);
-          setBrowserUrl(data.browser_url || '');
-          setEstimatedTimeLeft(data.estimated_time_left || 0);
+        const data = await api.callAppBackend(`/api/v1/executions/${workflowId}/status`);
+        setStatus(data.status);
+        setProgress(data.progress || 0);
+        setCurrentStep(data.current_step || 0);
+        setBrowserUrl(data.browser_url || '');
+        setEstimatedTimeLeft(data.estimated_time_left || 0);
 
-          if (data.steps) {
-            setSteps(data.steps);
-          }
+        if (data.steps) {
+          setSteps(data.steps);
+        }
 
-          if (data.new_logs) {
-            setLogs(prev => [...prev, ...data.new_logs]);
-          }
+        if (data.new_logs) {
+          setLogs(prev => [...prev, ...data.new_logs]);
+        }
 
-          if (data.status === 'completed' || data.status === 'failed') {
-            clearInterval(pollInterval);
-          }
+        if (data.status === 'completed' || data.status === 'failed') {
+          clearInterval(pollInterval);
         }
       } catch (error) {
         console.error('Failed to fetch execution status:', error);

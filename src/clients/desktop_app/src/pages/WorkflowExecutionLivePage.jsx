@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Icon from '../components/Icons';
+import { api } from '../utils/api';
+import { BACKEND_CONFIG } from '../config/backend';
 import '../styles/WorkflowExecutionLivePage.css';
 
-const WS_BASE = "ws://127.0.0.1:8765";
+const WS_BASE = BACKEND_CONFIG.wsBase; // WebSocket uses backend config
 
 function WorkflowExecutionLivePage({
   session,
@@ -73,7 +75,7 @@ function WorkflowExecutionLivePage({
 
   const connectWebSocket = () => {
     try {
-      const ws = new WebSocket(`${WS_BASE}/ws/workflow/${taskId}`);
+      const ws = new WebSocket(`${WS_BASE}/ws/v1/executions/${taskId}`);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -312,19 +314,10 @@ function WorkflowExecutionLivePage({
     setFeedbackMessage('');
 
     try {
-      const API_BASE = "http://127.0.0.1:8765";
-      const apiKey = session?.apiKey;  // Get API key from session
-
-      const response = await fetch(`${API_BASE}/api/workflow-feedback`, {
+      const response = await api.callAppBackendRaw(`/api/v1/executions/${taskId}/feedback`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(apiKey && { 'X-Ami-API-Key': apiKey })
-        },
         body: JSON.stringify({
           user_id: userId,
-          workflow_id: workflowName,
-          task_id: taskId,
           message: userMessage,
           workflow_result: workflowResult
         })

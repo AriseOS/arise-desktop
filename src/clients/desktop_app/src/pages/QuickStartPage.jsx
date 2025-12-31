@@ -3,8 +3,6 @@ import Icon from '../components/Icons';
 import { api } from '../utils/api';
 import '../styles/QuickStartPage.css';
 
-const API_BASE = "http://127.0.0.1:8765";
-
 function QuickStartPage({ session, onNavigate, showStatus }) {
   const userId = session?.username;
   const [step, setStep] = useState('tutorial'); // 'tutorial', 'input', 'recording', 'analyzing'
@@ -66,12 +64,11 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
       showStatus("Starting recording...", "info");
 
       // Use about:blank as default URL - user can navigate anywhere in browser
-      const response = await fetch(`${API_BASE}/api/recording/start`, {
+      const result = await api.callAppBackend('/api/v1/recordings/start', {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           url: "about:blank",
-          user_id: userId,  // User ID is required at top level
+          user_id: userId,
           title: "Quick Start Recording",
           description: "Recording from Quick Start",
           task_metadata: {
@@ -79,12 +76,6 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
           }
         })
       });
-
-      if (!response.ok) {
-        throw new Error(`Failed to start recording: ${response.status}`);
-      }
-
-      const result = await response.json();
       setCurrentSessionId(result.session_id);
       setStep('recording');
       showStatus("Recording started! Navigate to any website in the browser", "success");
@@ -99,16 +90,9 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
     try {
       showStatus("Stopping recording...", "info");
 
-      const response = await fetch(`${API_BASE}/api/recording/stop`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" }
+      const result = await api.callAppBackend('/api/v1/recordings/stop', {
+        method: "POST"
       });
-
-      if (!response.ok) {
-        throw new Error(`Failed to stop recording: ${response.status}`);
-      }
-
-      const result = await response.json();
       setOperationsCount(result.operations_count);
       showStatus(`Recording completed! Captured ${result.operations_count} operations`, "success");
 
@@ -148,21 +132,15 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
 
       // Save metadata immediately after analysis
       try {
-        const updateResponse = await fetch(`${API_BASE}/api/recording/update-metadata`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+        await api.callAppBackend(`/api/v1/recordings/${sessionId}`, {
+          method: "PATCH",
           body: JSON.stringify({
-            session_id: sessionId,
             name: analysisResult.name,
             task_description: analysisResult.task_description,
             user_query: analysisResult.user_query,
             user_id: userId
           })
         });
-
-        if (!updateResponse.ok) {
-          throw new Error(`Failed to save metadata: ${updateResponse.status}`);
-        }
       } catch (error) {
         console.error("Failed to save metadata:", error);
         // Continue anyway - metadata save is not critical

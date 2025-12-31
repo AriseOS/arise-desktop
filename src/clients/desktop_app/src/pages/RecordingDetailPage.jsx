@@ -3,8 +3,6 @@ import Icon from '../components/Icons';
 import { api } from '../utils/api';
 import '../styles/RecordingDetailPage.css';
 
-const API_BASE = "http://127.0.0.1:8765";
-
 function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
   const userId = session?.username;
   const [recording, setRecording] = useState(null);
@@ -20,20 +18,14 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
     }
 
     try {
-      const response = await fetch(`${API_BASE}/api/recording/update-metadata`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      await api.callAppBackend(`/api/v1/recordings/${sessionId}`, {
+        method: 'PATCH',
         body: JSON.stringify({
-          session_id: sessionId,
           task_description: recording.task_metadata?.task_description || "",
           user_query: editedQuery,
           user_id: userId
         })
       });
-
-      if (!response.ok) {
-        throw new Error('Failed to update query');
-      }
 
       // Update local state
       setRecording(prev => ({
@@ -62,13 +54,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
       }
 
       try {
-        const response = await fetch(`${API_BASE}/api/recordings/${sessionId}?user_id=${userId}`);
-
-        if (!response.ok) {
-          throw new Error(`Failed to fetch recording details: ${response.status}`);
-        }
-
-        const data = await response.json();
+        const data = await api.callAppBackend(`/api/v1/recordings/${sessionId}?user_id=${userId}`);
         setRecording(data);
       } catch (error) {
         console.error('Error fetching recording details:', error);

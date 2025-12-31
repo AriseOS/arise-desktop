@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Icon from '../components/Icons';
+import { api } from '../utils/api';
 import '../styles/DataManagementPage.css';
-
-const API_BASE = "http://127.0.0.1:8765";
 
 function DataManagementPage({ session, onNavigate, showStatus }) {
   const userId = session?.username;
@@ -18,13 +17,7 @@ function DataManagementPage({ session, onNavigate, showStatus }) {
   const loadCollections = async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/api/data/collections?user_id=${userId}`);
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch collections: ${response.status}`);
-      }
-
-      const data = await response.json();
+      const data = await api.callAppBackend(`/api/v1/data/collections?user_id=${userId}`);
       setCollections(data.collections || []);
     } catch (error) {
       console.error('Error loading collections:', error);

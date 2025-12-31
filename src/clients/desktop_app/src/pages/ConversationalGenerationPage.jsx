@@ -3,8 +3,6 @@ import Icon from '../components/Icons';
 import { api } from '../utils/api';
 import '../styles/ConversationalGenerationPage.css';
 
-const API_BASE = "http://127.0.0.1:8765";
-
 function ConversationalGenerationPage({ session, onNavigate, showStatus }) {
   const userId = session?.username;
   const [taskDescription, setTaskDescription] = useState('');
@@ -21,12 +19,8 @@ function ConversationalGenerationPage({ session, onNavigate, showStatus }) {
 
   const fetchRecordings = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/recordings`);
-
-      if (response.ok) {
-        const data = await response.json();
-        setRecordings(data.recordings || []);
-      }
+      const data = await api.callAppBackend(`/api/v1/recordings?user_id=${userId}`);
+      setRecordings(data.recordings || []);
     } catch (error) {
       console.error('Error fetching recordings:', error);
     }

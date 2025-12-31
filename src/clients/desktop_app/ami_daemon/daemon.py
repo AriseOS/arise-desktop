@@ -13,6 +13,7 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 
 import uvicorn
+import platform
 from fastapi import FastAPI, HTTPException, Header, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -39,47 +40,63 @@ project_root = get_project_root()
 sys.path.insert(0, str(project_root))
 
 from src.clients.desktop_app.ami_daemon.core.config_service import get_config
+from src.clients.desktop_app.ami_daemon.core.logging_config import setup_logging
 from src.clients.desktop_app.ami_daemon.services.storage_manager import StorageManager
 from src.clients.desktop_app.ami_daemon.services.browser_manager import BrowserManager
 from src.clients.desktop_app.ami_daemon.services.workflow_executor import WorkflowExecutor
+from src.clients.desktop_app.ami_daemon.services.workflow_history import WorkflowHistoryManager
 from src.clients.desktop_app.ami_daemon.services.cdp_recorder import CDPRecorder
 from src.clients.desktop_app.ami_daemon.services.cloud_client import CloudClient
 
-# Configure logging with both console and file output
-log_format = '%(asctime)s [%(levelname)s] %(name)s: %(message)s'
-
-# Create formatters and handlers
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO)
-console_handler.setFormatter(logging.Formatter(log_format))
-
-# File handler - log to ~/.ami/logs/app-backend.log
-log_dir = Path.home() / '.ami' / 'logs'
-log_dir.mkdir(parents=True, exist_ok=True)
-log_file = log_dir / 'app-backend.log'
-
-file_handler = logging.FileHandler(log_file, encoding='utf-8')
-file_handler.setLevel(logging.DEBUG)  # File gets DEBUG level
-file_handler.setFormatter(logging.Formatter(log_format))
-
-# Configure root logger
-root_logger = logging.getLogger()
-root_logger.setLevel(logging.DEBUG)  # Capture all levels
-root_logger.addHandler(console_handler)
-root_logger.addHandler(file_handler)
-
-logger = logging.getLogger(__name__)
-logger.info(f"Logging to file: {log_file}")
-
-# Load configuration
+# Load configuration first (needed for logging setup)
 config = get_config()
+
+# Configure logging with rotating file handlers from config
+# - app.log: Main system log (rotates based on config)
+# - error.log: Error-only log (WARNING and above)
+# Note: Workflow execution logs are written separately to workflow_history/
+log_dir = setup_logging(
+    max_bytes=config.get("logging.max_bytes", 10 * 1024 * 1024),
+    backup_count=config.get("logging.backup_count", 5),
+)
+logger = logging.getLogger(__name__)
+logger.info("App Backend daemon starting")
 
 # Global service instances
 storage_manager = StorageManager(config.get("storage.base_path"))
 browser_manager: Optional[BrowserManager] = None
 workflow_executor: Optional[WorkflowExecutor] = None
+history_manager: Optional[WorkflowHistoryManager] = None
 cdp_recorder: Optional[CDPRecorder] = None
 cloud_client: Optional[CloudClient] = None
+
+# Version check result (populated on startup)
+version_check_result: Optional[Dict[str, Any]] = None
+
+# App version from config
+APP_VERSION = config.get("app.version", "0.0.1")
+
+
+def get_platform_identifier() -> str:
+    """Get platform identifier for version check
+
+    Returns:
+        Platform string like "macos-arm64", "windows-x64", etc.
+    """
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+
+    if system == "darwin":
+        if machine == "arm64":
+            return "macos-arm64"
+        else:
+            return "macos-x64"
+    elif system == "windows":
+        return "windows-x64"
+    elif system == "linux":
+        return "linux-x64"
+    else:
+        return f"{system}-{machine}"
 
 # WebSocket connection manager
 class WebSocketConnectionManager:
@@ -151,20 +168,59 @@ async def lifespan(app: FastAPI):
     - On startup: Initialize all services
     - On shutdown: Cleanup all resources (triggered by SIGTERM/SIGINT)
     """
-    global browser_manager, workflow_executor, cdp_recorder, cloud_client
+    global browser_manager, workflow_executor, history_manager, cdp_recorder, cloud_client, version_check_result
 
     # ========== STARTUP ==========
     logger.info("=" * 60)
-    logger.info("Starting App Backend services...")
+    logger.info(f"Starting Ami App Backend v{APP_VERSION}...")
     logger.info("=" * 60)
 
     try:
+        # Initialize cloud client first (needed for version check)
+        cloud_client = CloudClient(
+            api_url=config.get("cloud.api_url", "https://api.ami.com")
+        )
+        logger.info("✓ Cloud client initialized")
+        logger.info(f"  Cloud Backend URL: {config.get('cloud.api_url', 'https://api.ami.com')}")
+
+        # Version check with Cloud Backend
+        platform_id = get_platform_identifier()
+        logger.info(f"✓ Checking version compatibility (v{APP_VERSION} on {platform_id})...")
+        version_check_result = await cloud_client.check_version(APP_VERSION, platform_id)
+
+        if not version_check_result.get("compatible", True):
+            logger.warning("=" * 60)
+            logger.warning("⚠️  VERSION UPDATE REQUIRED")
+            logger.warning(f"   Current version: {APP_VERSION}")
+            logger.warning(f"   Minimum version: {version_check_result.get('minimum_version')}")
+            logger.warning(f"   Update URL: {version_check_result.get('update_url')}")
+            logger.warning("=" * 60)
+            # Store result but continue startup - frontend will handle blocking
+        else:
+            logger.info(f"✓ Version {APP_VERSION} is compatible")
+
         # Initialize browser manager (but do NOT start browser yet - on-demand startup)
         browser_manager = BrowserManager(config_service=config)
         logger.info("✓ Browser manager initialized (browser not started - will start on demand)")
 
-        # Initialize workflow executor
-        workflow_executor = WorkflowExecutor(storage_manager, browser_manager)
+        # Initialize workflow history manager
+        history_manager = WorkflowHistoryManager(
+            base_path=storage_manager.base_path,
+            retention_days=60,
+        )
+        # Clean up old runs on startup
+        cleaned = history_manager.cleanup_old_runs()
+        if cleaned > 0:
+            logger.info(f"✓ Workflow history manager initialized (cleaned {cleaned} old runs)")
+        else:
+            logger.info("✓ Workflow history manager initialized")
+
+        # Initialize workflow executor with history manager and cloud client for auto-upload
+        workflow_executor = WorkflowExecutor(
+            storage_manager, browser_manager, history_manager,
+            cloud_client=cloud_client,
+            auto_upload_logs=True
+        )
 
         # Set up progress callback for WebSocket updates
         workflow_executor.set_progress_callback(ws_manager.send_progress_update)
@@ -174,12 +230,6 @@ async def lifespan(app: FastAPI):
         cdp_recorder = CDPRecorder(storage_manager, browser_manager)
         logger.info("✓ CDP recorder initialized")
 
-        # Initialize cloud client (without user_api_key initially)
-        cloud_client = CloudClient(
-            api_url=config.get("cloud.api_url", "https://api.ami.com")
-        )
-        logger.info("✓ Cloud client initialized")
-        logger.info(f"  Cloud Backend URL: {config.get('cloud.api_url', 'https://api.ami.com')}")
         logger.info(f"  API Proxy URL: {config.get('api_proxy.url', 'http://localhost:8080')}")
 
         logger.info("=" * 60)
@@ -248,7 +298,6 @@ class StopRecordingResponse(BaseModel):
 
 
 class UploadRecordingRequest(BaseModel):
-    session_id: str
     task_description: str
     user_query: Optional[str] = None  # What user wants to do
     user_id: str
@@ -281,8 +330,7 @@ class GenerateMetaflowFromRecordingRequest(BaseModel):
 
 class AnalyzeRecordingRequest(BaseModel):
     """Request model for analyzing recording"""
-    session_id: str
-    user_id: str
+    user_id: str  # session_id is in URL path
 
 
 class AnalyzeRecordingResponse(BaseModel):
@@ -295,11 +343,10 @@ class AnalyzeRecordingResponse(BaseModel):
 
 class UpdateRecordingMetadataRequest(BaseModel):
     """Request model for updating recording metadata"""
-    session_id: str
     task_description: str
     user_query: str
     name: Optional[str] = None
-    user_id: str
+    user_id: str  # session_id is in URL path
 
 
 class GenerateWorkflowRequest(BaseModel):
@@ -321,7 +368,6 @@ class GenerateWorkflowResponse(BaseModel):
 
 
 class ExecuteWorkflowRequest(BaseModel):
-    workflow_name: str
     user_id: str
 
 
@@ -355,6 +401,58 @@ class ListWorkflowsResponse(BaseModel):
     workflows: list[WorkflowInfo]
 
 
+# Workflow History Models
+class WorkflowHistoryEntry(BaseModel):
+    """Entry in the workflow history list"""
+    run_id: str
+    workflow_id: str
+    workflow_name: str
+    started_at: str
+    status: str
+    error_summary: Optional[str] = None
+
+
+class WorkflowHistoryListResponse(BaseModel):
+    """Response for listing workflow history"""
+    runs: List[WorkflowHistoryEntry]
+    total: int
+
+
+class WorkflowRunDetail(BaseModel):
+    """Detailed information about a workflow run"""
+    run_id: str
+    workflow_id: str
+    workflow_name: str
+    user_id: str
+    device_id: str
+    app_version: str
+    started_at: str
+    finished_at: Optional[str] = None
+    status: str
+    error_summary: Optional[str] = None
+    steps_total: int
+    steps_completed: int
+
+
+class WorkflowRunLog(BaseModel):
+    """A single log entry from a workflow run"""
+    ts: str
+    step: int
+    action: str
+    target: Optional[str] = None
+    status: str
+    duration_ms: Optional[int] = None
+    message: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class WorkflowRunDetailResponse(BaseModel):
+    """Response for getting workflow run detail"""
+    meta: WorkflowRunDetail
+    logs: List[WorkflowRunLog]
+    workflow_yaml: Optional[str] = None
+
+
 # ============================================================================
 # Startup/Shutdown Events (REMOVED - now using lifespan)
 # ============================================================================
@@ -379,7 +477,7 @@ def update_cloud_client_api_key(api_key: Optional[str]):
 
 
 # ============================================================================
-# Health Check
+# Health Check & Version Info
 # ============================================================================
 
 @app.get("/health")
@@ -390,11 +488,155 @@ async def health_check():
         "browser_ready": browser_manager.is_ready() if browser_manager else False
     }
 
+
+@app.get("/api/v1/app/version")
+async def get_app_version():
+    """Get app version and update status
+
+    Returns:
+        {
+            "version": "0.0.1",
+            "platform": "macos-arm64",
+            "compatible": true/false,
+            "update_required": true/false,
+            "minimum_version": "0.0.1",
+            "update_url": "http://..." (if update required)
+        }
+    """
+    platform_id = get_platform_identifier()
+
+    response = {
+        "version": APP_VERSION,
+        "platform": platform_id,
+        "compatible": True,
+        "update_required": False
+    }
+
+    if version_check_result:
+        response["compatible"] = version_check_result.get("compatible", True)
+        response["update_required"] = not response["compatible"]
+        response["minimum_version"] = version_check_result.get("minimum_version")
+
+        if not response["compatible"]:
+            response["update_url"] = version_check_result.get("update_url")
+            response["message"] = version_check_result.get("message")
+
+    return response
+
+
+@app.post("/api/v1/app/diagnostic")
+async def upload_diagnostic(data: dict = None):
+    """Collect and upload diagnostic package to Cloud Backend.
+
+    This endpoint collects:
+    - Recent system logs (last 1000 lines)
+    - Recent workflow execution summaries (last 20)
+    - Device and app information
+
+    Body:
+        {
+            "user_id": "required - user identifier",
+            "user_description": "optional - description of the issue..."
+        }
+
+    Returns:
+        {
+            "success": true,
+            "diagnostic_id": "DIAG-20250115-abc123"
+        }
+    """
+    import platform as plat
+    from pathlib import Path
+    from datetime import datetime
+    import uuid
+
+    if not cloud_client:
+        raise HTTPException(status_code=500, detail="Cloud client not initialized")
+
+    # Validate user_id
+    user_id = data.get("user_id") if data else None
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Missing user_id")
+
+    try:
+        user_description = data.get("user_description") if data else None
+
+        # Generate diagnostic ID
+        date_str = datetime.now().strftime("%Y%m%d")
+        random_str = uuid.uuid4().hex[:6].upper()
+        diagnostic_id = f"DIAG-{date_str}-{random_str}"
+
+        # Collect system logs (last 5000 lines)
+        system_logs = []
+        log_path = Path.home() / ".ami" / "logs" / "app.log"
+        if log_path.exists():
+            try:
+                with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+                    lines = f.readlines()
+                    system_logs = lines[-5000:]  # Last 5000 lines
+            except Exception as e:
+                logger.warning(f"Failed to read system logs: {e}")
+
+        # Collect recent workflow executions
+        recent_executions = []
+        if history_manager:
+            try:
+                runs = history_manager.list_runs(limit=20)
+                recent_executions = [run.to_dict() for run in runs]
+            except Exception as e:
+                logger.warning(f"Failed to get recent executions: {e}")
+
+        # Collect device info
+        device_info = {
+            "os": plat.system(),
+            "os_version": plat.release(),
+            "os_full": plat.platform(),
+            "machine": plat.machine(),
+            "python_version": plat.python_version(),
+            "app_version": APP_VERSION,
+            "platform_id": get_platform_identifier(),
+        }
+
+        # Build diagnostic package
+        diagnostic_data = {
+            "type": "diagnostic",
+            "diagnostic_id": diagnostic_id,
+            "device_id": history_manager.device_id if history_manager else "unknown",
+            "app_version": APP_VERSION,
+            "timestamp": datetime.now().isoformat(),
+            "system_logs": system_logs,
+            "recent_executions": recent_executions,
+            "device_info": device_info,
+            "user_description": user_description,
+        }
+
+        # Upload to cloud
+        result = await cloud_client.upload_diagnostic(diagnostic_data, user_id)
+
+        if result.get("success"):
+            return {
+                "success": True,
+                "diagnostic_id": result.get("diagnostic_id", diagnostic_id),
+                "message": "Diagnostic package uploaded successfully"
+            }
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to upload diagnostic: {result.get('error')}"
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to collect/upload diagnostic: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============================================================================
 # Browser Control APIs
 # ============================================================================
 
-@app.post("/api/browser/start")
+@app.post("/api/v1/browser/start")
 async def start_browser(headless: bool = False):
     """Start browser on demand
 
@@ -421,7 +663,7 @@ async def start_browser(headless: bool = False):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/browser/stop")
+@app.post("/api/v1/browser/stop")
 async def stop_browser():
     """Stop browser gracefully
 
@@ -445,7 +687,7 @@ async def stop_browser():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/browser/status")
+@app.get("/api/v1/browser/status")
 async def get_browser_status():
     """Get current browser status
 
@@ -464,7 +706,7 @@ async def get_browser_status():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/browser/window/layout")
+@app.get("/api/v1/browser/window/layout")
 async def get_window_layout():
     """Get current window layout information
 
@@ -483,7 +725,7 @@ async def get_window_layout():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/browser/window/update")
+@app.post("/api/v1/browser/window/update")
 async def update_window_layout(app_width_percent: float):
     """Update window layout with new app width percentage
 
@@ -521,7 +763,7 @@ async def update_window_layout(app_width_percent: float):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/browser/window/arrange")
+@app.post("/api/v1/browser/window/arrange")
 async def arrange_windows():
     """Manually trigger window arrangement (disabled)
 
@@ -538,7 +780,7 @@ async def arrange_windows():
 # Dashboard API
 # ============================================================================
 
-@app.get("/api/dashboard")
+@app.get("/api/v1/dashboard")
 async def get_dashboard(user_id: str):
     """Get dashboard statistics and recent workflows for user"""
     try:
@@ -619,7 +861,7 @@ async def get_dashboard(user_id: str):
 # Recording APIs
 # ============================================================================
 
-@app.post("/api/recording/start", response_model=StartRecordingResponse)
+@app.post("/api/v1/recordings/start", response_model=StartRecordingResponse)
 async def start_recording(request: StartRecordingRequest):
     """Start CDP recording session
 
@@ -659,7 +901,7 @@ async def start_recording(request: StartRecordingRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/recording/stop", response_model=StopRecordingResponse)
+@app.post("/api/v1/recordings/stop", response_model=StopRecordingResponse)
 async def stop_recording():
     """Stop recording and save
 
@@ -686,14 +928,15 @@ async def stop_recording():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/recording/analyze", response_model=AnalyzeRecordingResponse)
+@app.post("/api/v1/recordings/{session_id}/analyze", response_model=AnalyzeRecordingResponse)
 async def analyze_recording(
+    session_id: str,
     request: AnalyzeRecordingRequest,
     x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
 ):
     """Analyze recording and generate suggested task_description and user_query using AI"""
     try:
-        logger.info(f"Analyzing recording: session_id={request.session_id}")
+        logger.info(f"Analyzing recording: session_id={session_id}")
         logger.info(f"X-Ami-API-Key header received: {x_ami_api_key[:10] if x_ami_api_key else 'None'}...")
 
         # Set user API key on cloud client
@@ -705,7 +948,7 @@ async def analyze_recording(
             logger.warning("No X-Ami-API-Key header provided")
 
         # 1. Load recording
-        recording_data = storage_manager.get_recording(request.user_id, request.session_id)
+        recording_data = storage_manager.get_recording(request.user_id, session_id)
         if not recording_data:
             raise HTTPException(status_code=404, detail="Recording not found")
 
@@ -737,20 +980,22 @@ async def analyze_recording(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/recording/update-metadata")
-async def update_recording_metadata(request: UpdateRecordingMetadataRequest):
+@app.patch("/api/v1/recordings/{session_id}")
+async def update_recording_metadata(session_id: str, request: UpdateRecordingMetadataRequest):
     """Update recording metadata with task_description and user_query after user confirmation"""
     try:
-        logger.info(f"Updating metadata for recording: session_id={request.session_id}")
+        logger.info(f"Updating metadata for recording: session_id={session_id}")
         if request.name:
             logger.info(f"  Name: {request.name}")
-        logger.info(f"  Task Description: {request.task_description[:100]}...")
-        logger.info(f"  User Query: {request.user_query[:100]}...")
+        if request.task_description:
+            logger.info(f"  Task Description: {request.task_description[:100]}...")
+        if request.user_query:
+            logger.info(f"  User Query: {request.user_query[:100]}...")
 
         # Update metadata in storage
         storage_manager.update_recording_metadata(
             user_id=request.user_id,
-            session_id=request.session_id,
+            session_id=session_id,
             task_description=request.task_description,
             user_query=request.user_query,
             name=request.name
@@ -764,7 +1009,7 @@ async def update_recording_metadata(request: UpdateRecordingMetadataRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/recordings")
+@app.get("/api/v1/recordings")
 async def list_recordings(user_id: str):
     """List all recordings for a user"""
     try:
@@ -780,13 +1025,7 @@ async def list_recordings(user_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/recordings/list")
-async def list_recordings_legacy(user_id: str):
-    """List all recordings for a user (legacy endpoint)"""
-    return await list_recordings(user_id)
-
-
-@app.get("/api/recordings/{session_id}")
+@app.get("/api/v1/recordings/{session_id}")
 async def get_recording_detail(session_id: str, user_id: str):
     """Get detailed recording information"""
     try:
@@ -820,7 +1059,7 @@ async def get_recording_detail(session_id: str, user_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.delete("/api/recordings/{session_id}")
+@app.delete("/api/v1/recordings/{session_id}")
 async def delete_recording(session_id: str, user_id: str):
     """Delete a recording"""
     try:
@@ -843,8 +1082,9 @@ async def delete_recording(session_id: str, user_id: str):
 # Recording Upload API
 # ============================================================================
 
-@app.post("/api/recordings/upload", response_model=UploadRecordingResponse)
+@app.post("/api/v1/recordings/{session_id}/upload", response_model=UploadRecordingResponse)
 async def upload_recording_to_cloud(
+    session_id: str,
     request: UploadRecordingRequest,
     x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
 ):
@@ -854,14 +1094,14 @@ async def upload_recording_to_cloud(
         X-Ami-API-Key: User's Ami API key (optional, for API Proxy)
     """
     try:
-        logger.info(f"Uploading recording from session: {request.session_id}")
+        logger.info(f"Uploading recording from session: {session_id}")
 
         # Update cloud client with user's API key if provided
         update_cloud_client_api_key(x_ami_api_key)
 
         # Load operations from local storage
         recording_data = storage_manager.get_recording(
-            request.user_id, request.session_id
+            request.user_id, session_id
         )
         operations = recording_data.get("operations", [])
 
@@ -872,7 +1112,7 @@ async def upload_recording_to_cloud(
             task_description=request.task_description,
             user_query=request.user_query,
             user_id=request.user_id,
-            recording_id=request.session_id
+            recording_id=session_id
         )
         logger.info(f"Recording uploaded: {recording_id}")
 
@@ -890,7 +1130,7 @@ async def upload_recording_to_cloud(
 # MetaFlow APIs
 # ============================================================================
 
-@app.post("/api/metaflows/generate", response_model=GenerateMetaflowResponse)
+@app.post("/api/v1/metaflows/generate", response_model=GenerateMetaflowResponse)
 async def generate_metaflow(
     request: GenerateMetaflowRequest,
     x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
@@ -940,7 +1180,7 @@ async def generate_metaflow(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/metaflows/from-recording", response_model=GenerateMetaflowResponse)
+@app.post("/api/v1/metaflows/from-recording", response_model=GenerateMetaflowResponse)
 async def generate_metaflow_from_recording(
     request: GenerateMetaflowFromRecordingRequest,
     x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
@@ -1045,7 +1285,7 @@ async def generate_metaflow_from_recording(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/metaflows")
+@app.get("/api/v1/metaflows")
 async def list_metaflows(user_id: str):
     """List all MetaFlows for user (proxy to Cloud Backend)"""
     try:
@@ -1056,7 +1296,7 @@ async def list_metaflows(user_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/metaflows/{metaflow_id}")
+@app.get("/api/v1/metaflows/{metaflow_id}")
 async def get_metaflow(metaflow_id: str, user_id: str):
     """Get MetaFlow detail (proxy to Cloud Backend)"""
     try:
@@ -1067,7 +1307,7 @@ async def get_metaflow(metaflow_id: str, user_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.put("/api/metaflows/{metaflow_id}")
+@app.put("/api/v1/metaflows/{metaflow_id}")
 async def update_metaflow(metaflow_id: str, data: dict):
     """Update MetaFlow YAML and sync to both Cloud and local storage
 
@@ -1422,7 +1662,7 @@ async def upload_to_cloud(
 # Workflow APIs
 # ============================================================================
 
-@app.post("/api/workflows/from-metaflow")
+@app.post("/api/v1/workflows/from-metaflow")
 async def generate_workflow_from_metaflow_api(
     data: dict,
     x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
@@ -1486,7 +1726,7 @@ async def generate_workflow_from_metaflow_api(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/workflows/generate", response_model=GenerateWorkflowResponse)
+@app.post("/api/v1/workflows/generate", response_model=GenerateWorkflowResponse)
 async def generate_workflow(
     request: GenerateWorkflowRequest,
     x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
@@ -1556,8 +1796,9 @@ async def generate_workflow(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/workflow/execute", response_model=ExecuteWorkflowResponse)
+@app.post("/api/v1/workflows/{workflow_id}/execute", response_model=ExecuteWorkflowResponse)
 async def execute_workflow(
+    workflow_id: str,
     request: ExecuteWorkflowRequest,
     x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
 ):
@@ -1567,7 +1808,7 @@ async def execute_workflow(
         X-Ami-API-Key: User's Ami API key (required for LLM calls via API Proxy)
     """
     try:
-        logger.info(f"Executing workflow: {request.workflow_name}")
+        logger.info(f"Executing workflow: {workflow_id}")
 
         if not x_ami_api_key:
             logger.warning("No X-Ami-API-Key header provided for workflow execution")
@@ -1576,7 +1817,7 @@ async def execute_workflow(
 
         result = await workflow_executor.execute_workflow_async(
             user_id=request.user_id,
-            workflow_name=request.workflow_name,
+            workflow_id=workflow_id,
             user_api_key=x_ami_api_key
         )
         logger.info(f"Workflow execution started: task_id={result['task_id']}")
@@ -1586,7 +1827,7 @@ async def execute_workflow(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/workflow/status/{task_id}", response_model=WorkflowStatusResponse)
+@app.get("/api/v1/executions/{task_id}", response_model=WorkflowStatusResponse)
 async def get_workflow_status(task_id: str):
     """Get workflow execution status"""
     try:
@@ -1601,7 +1842,7 @@ async def get_workflow_status(task_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.websocket("/ws/workflow/{task_id}")
+@app.websocket("/ws/v1/executions/{task_id}")
 async def workflow_progress_websocket(websocket: WebSocket, task_id: str):
     """WebSocket endpoint for real-time workflow execution progress updates
 
@@ -1672,7 +1913,122 @@ async def workflow_progress_websocket(websocket: WebSocket, task_id: str):
         await ws_manager.disconnect(task_id, websocket)
 
 
-@app.get("/api/workflows", response_model=ListWorkflowsResponse)
+# ============================================================================
+# Workflow History API
+# ============================================================================
+
+@app.get("/api/v1/workflows/{workflow_id}/history", response_model=WorkflowHistoryListResponse)
+async def list_workflow_history(
+    workflow_id: str,
+    user_id: str,
+    limit: int = 100,
+    status: Optional[str] = None,
+):
+    """List execution history for a specific workflow
+
+    Args:
+        workflow_id: Workflow identifier
+        user_id: User identifier
+        limit: Maximum number of runs to return (default 100)
+        status: Filter by status (completed, failed, running)
+
+    Returns:
+        List of workflow run entries for this workflow
+    """
+    if not history_manager:
+        raise HTTPException(status_code=503, detail="History manager not initialized")
+
+    try:
+        runs = history_manager.list_workflow_executions(
+            user_id=user_id,
+            workflow_id=workflow_id,
+            limit=limit
+        )
+
+        # Apply status filter if provided
+        if status:
+            runs = [r for r in runs if r.status == status]
+
+        return WorkflowHistoryListResponse(
+            runs=[
+                WorkflowHistoryEntry(
+                    run_id=r.run_id,
+                    workflow_id=r.workflow_id,
+                    workflow_name=r.workflow_name,
+                    started_at=r.started_at,
+                    status=r.status,
+                    error_summary=r.error_summary,
+                )
+                for r in runs
+            ],
+            total=len(runs),
+        )
+    except Exception as e:
+        logger.error(f"Failed to list workflow history: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/workflows/{workflow_id}/history/{run_id}", response_model=WorkflowRunDetailResponse)
+async def get_workflow_run_detail(workflow_id: str, run_id: str, user_id: str):
+    """Get execution logs and details for a specific workflow run
+
+    Args:
+        workflow_id: Workflow identifier
+        run_id: The run identifier
+        user_id: User identifier
+
+    Returns:
+        Run metadata, logs, and workflow YAML
+    """
+    if not history_manager:
+        raise HTTPException(status_code=503, detail="History manager not initialized")
+
+    try:
+        meta = history_manager.get_run_meta(user_id, workflow_id, run_id)
+        if not meta:
+            raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+
+        logs = history_manager.get_run_logs(user_id, workflow_id, run_id)
+        workflow_yaml = history_manager.get_workflow_yaml(user_id, workflow_id)
+
+        return WorkflowRunDetailResponse(
+            meta=WorkflowRunDetail(
+                run_id=meta.run_id,
+                workflow_id=meta.workflow_id,
+                workflow_name=meta.workflow_name,
+                user_id=meta.user_id,
+                device_id=meta.device_id,
+                app_version=meta.app_version,
+                started_at=meta.started_at,
+                finished_at=meta.finished_at,
+                status=meta.status,
+                error_summary=meta.error_summary,
+                steps_total=meta.steps_total,
+                steps_completed=meta.steps_completed,
+            ),
+            logs=[
+                WorkflowRunLog(
+                    ts=log.ts,
+                    step=log.step,
+                    action=log.action,
+                    target=log.target,
+                    status=log.status,
+                    duration_ms=log.duration_ms,
+                    message=log.message,
+                    metadata=log.metadata,
+                )
+                for log in logs
+            ],
+            workflow_yaml=workflow_yaml,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get workflow run logs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/workflows", response_model=ListWorkflowsResponse)
 async def list_workflows(user_id: str):
     """List all workflows for a user (Cloud + Local merged)
 
@@ -1748,7 +2104,7 @@ async def list_workflows(user_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/workflows/{workflow_id}/detail")
+@app.get("/api/v1/workflows/{workflow_id}")
 async def get_workflow_detail(workflow_id: str, user_id: str):
     """Get detailed workflow data for visualization
 
@@ -1851,7 +2207,7 @@ async def get_workflow_detail(workflow_id: str, user_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.put("/api/workflows/{workflow_id}")
+@app.put("/api/v1/workflows/{workflow_id}")
 async def update_workflow(workflow_id: str, data: dict):
     """Update Workflow YAML and sync to both Cloud and local storage
 
@@ -1907,7 +2263,7 @@ async def update_workflow(workflow_id: str, data: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.delete("/api/workflows/{workflow_id}")
+@app.delete("/api/v1/workflows/{workflow_id}")
 async def delete_workflow(workflow_id: str, user_id: str):
     """Delete a workflow from both Cloud and local storage
 
@@ -1960,7 +2316,7 @@ async def delete_workflow(workflow_id: str, user_id: str):
 # Data Management APIs (Collections Only)
 # ============================================================================
 
-@app.get("/api/data/collections")
+@app.get("/api/v1/data/collections")
 async def list_collections(user_id: str):
     """List all data collections with metadata
 
@@ -2034,7 +2390,7 @@ async def list_collections(user_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/data/collections/{collection_name}")
+@app.get("/api/v1/data/collections/{collection_name}")
 async def get_collection_detail(collection_name: str, user_id: str, limit: int = 10):
     """Get collection detail with data preview
 
@@ -2116,7 +2472,7 @@ async def get_collection_detail(collection_name: str, user_id: str, limit: int =
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.delete("/api/data/collections/{collection_name}")
+@app.delete("/api/v1/data/collections/{collection_name}")
 async def delete_collection(collection_name: str, user_id: str):
     """Delete a collection and its related caches
 
@@ -2203,7 +2559,7 @@ async def delete_collection(collection_name: str, user_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/data/collections/{collection_name}/export")
+@app.get("/api/v1/data/collections/{collection_name}/export")
 async def export_collection(collection_name: str, user_id: str, limit: Optional[int] = None):
     """Export collection data as CSV
 
@@ -2307,7 +2663,7 @@ class IntentBuilderChatRequest(BaseModel):
     message: str
 
 
-@app.post("/api/intent-builder/start")
+@app.post("/api/v1/intent-builder/sessions")
 async def start_intent_builder_session(
     request: StartIntentBuilderRequest,
     x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
@@ -2351,7 +2707,7 @@ async def start_intent_builder_session(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/intent-builder/{session_id}/stream")
+@app.get("/api/v1/intent-builder/sessions/{session_id}/stream")
 async def stream_intent_builder_start(session_id: str):
     """
     Stream the initial response from Intent Builder Agent (SSE proxy)
@@ -2380,7 +2736,7 @@ async def stream_intent_builder_start(session_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/intent-builder/{session_id}/chat")
+@app.post("/api/v1/intent-builder/sessions/{session_id}/chat")
 async def stream_intent_builder_chat(session_id: str, request: IntentBuilderChatRequest):
     """
     Send a message and stream the response (SSE proxy)
@@ -2411,7 +2767,7 @@ async def stream_intent_builder_chat(session_id: str, request: IntentBuilderChat
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/intent-builder/{session_id}/state")
+@app.get("/api/v1/intent-builder/sessions/{session_id}/state")
 async def get_intent_builder_state(session_id: str):
     """
     Get current state of Intent Builder session
@@ -2423,7 +2779,7 @@ async def get_intent_builder_state(session_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.delete("/api/intent-builder/{session_id}")
+@app.delete("/api/v1/intent-builder/sessions/{session_id}")
 async def close_intent_builder_session(session_id: str):
     """
     Close and cleanup Intent Builder session
@@ -2473,7 +2829,7 @@ class ChatWithClaudeResponse(BaseModel):
     error: Optional[str] = None
 
 
-@app.post("/api/scraper-optimization/load-workspace", response_model=LoadWorkspaceResponse)
+@app.post("/api/v1/agents/scraper-optimizer/workspace", response_model=LoadWorkspaceResponse)
 async def load_scraper_workspace(request: LoadWorkspaceRequest):
     """Load script workspace context for optimization
 
@@ -2521,7 +2877,7 @@ async def load_scraper_workspace(request: LoadWorkspaceRequest):
         )
 
 
-@app.post("/api/scraper-optimization/chat", response_model=ChatWithClaudeResponse)
+@app.post("/api/v1/agents/scraper-optimizer/chat", response_model=ChatWithClaudeResponse)
 async def chat_with_claude_for_optimization(
     request: ChatWithClaudeRequest,
     x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
@@ -2587,18 +2943,17 @@ async def chat_with_claude_for_optimization(
 # Workflow Feedback & Skill Execution Endpoints
 # ============================================================================
 
-class WorkflowFeedbackRequest(BaseModel):
+class ExecutionFeedbackRequest(BaseModel):
     """Request with user feedback about workflow execution"""
     user_id: str
-    workflow_id: str
-    task_id: Optional[str] = None
     message: str
     workflow_result: Optional[Dict] = None  # Optional workflow execution result for context
 
 
-@app.post("/api/workflow-feedback")
-async def handle_workflow_feedback(
-    request: WorkflowFeedbackRequest,
+@app.post("/api/v1/executions/{run_id}/feedback")
+async def handle_execution_feedback(
+    run_id: str,
+    request: ExecutionFeedbackRequest,
     x_ami_api_key: Optional[str] = Header(None)
 ):
     """
@@ -2613,12 +2968,12 @@ async def handle_workflow_feedback(
         StreamingResponse with Server-Sent Events (SSE) containing skill execution updates
     """
     try:
-        logger.info(f"Received workflow feedback from user {request.user_id}: {request.message}")
+        logger.info(f"Received execution feedback from user {request.user_id} for run {run_id}: {request.message}")
 
         # Get workflow context
         workflow_context = {
             'user_id': request.user_id,
-            'workflow_id': request.workflow_id,
+            'run_id': run_id,
             'workflow_result': request.workflow_result or {}
         }
 

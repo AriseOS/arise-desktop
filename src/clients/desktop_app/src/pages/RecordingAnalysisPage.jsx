@@ -3,8 +3,6 @@ import Icon from '../components/Icons';
 import { api } from '../utils/api';
 import '../styles/RecordingAnalysisPage.css';
 
-const API_BASE = "http://127.0.0.1:8765";
-
 function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
   const userId = session?.username;
   const [taskDescription, setTaskDescription] = useState(pageData?.taskDescription || '');
@@ -28,20 +26,14 @@ function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
 
       // Step 1: Save metadata first
       showStatus("Saving metadata...", "info");
-      const updateResponse = await fetch(`${API_BASE}/api/recording/update-metadata`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      await api.callAppBackend(`/api/v1/recordings/${sessionId}`, {
+        method: "PATCH",
         body: JSON.stringify({
-          session_id: sessionId,
           task_description: taskDescription,
           user_query: userQuery,
           user_id: userId
         })
       });
-
-      if (!updateResponse.ok) {
-        throw new Error(`Failed to save metadata: ${updateResponse.status}`);
-      }
 
       setGenerationProgress(20);
 

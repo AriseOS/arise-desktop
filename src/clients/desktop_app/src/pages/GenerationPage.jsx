@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import Icon from '../components/Icons';
+import { api } from '../utils/api';
 import '../styles/GenerationPage.css';
-
-const API_BASE = "http://127.0.0.1:8765";
 
 function GenerationPage({ session, onNavigate, showStatus, params = {} }) {
   const userId = session?.username;
@@ -28,18 +27,13 @@ function GenerationPage({ session, onNavigate, showStatus, params = {} }) {
       setGeneratingMetaflow(true);
       showStatus("生成 MetaFlow 中... (30-60秒)", "info");
 
-      const response = await fetch(`${API_BASE}/api/metaflows/generate`, {
+      const result = await api.callAppBackend('/api/v1/metaflows/generate', {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           task_description: chatInput,
           user_id: userId
         })
       });
-
-      if (!response.ok) throw new Error("MetaFlow generation failed");
-
-      const result = await response.json();
       setMetaflowId(result.metaflow_id);
 
       // Read the generated metaflow YAML
@@ -75,18 +69,13 @@ function GenerationPage({ session, onNavigate, showStatus, params = {} }) {
       setGeneratingWorkflow(true);
       showStatus("生成 Workflow 中... (30-60秒)", "info");
 
-      const response = await fetch(`${API_BASE}/api/workflows/generate`, {
+      const result = await api.callAppBackend('/api/v1/workflows/generate', {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           metaflow_id: metaflowId,
           user_id: userId
         })
       });
-
-      if (!response.ok) throw new Error("Workflow generation failed");
-
-      const result = await response.json();
       setWorkflowName(result.workflow_name);
 
       // Read the generated workflow YAML

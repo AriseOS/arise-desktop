@@ -3,8 +3,6 @@ import Icon from '../components/Icons';
 import { api } from '../utils/api';
 import '../styles/UserFlowsPage.css';
 
-const API_BASE = "http://127.0.0.1:8765";
-
 function UserFlowsPage({ session, onNavigate, showStatus }) {
   const userId = session?.username;
   const [recordings, setRecordings] = useState([]);
@@ -23,13 +21,7 @@ function UserFlowsPage({ session, onNavigate, showStatus }) {
       setLoading(true);
       showStatus("加载录制流程列表...", "info");
 
-      const response = await fetch(`${API_BASE}/api/recordings/list?user_id=${userId}`);
-
-      if (!response.ok) {
-        throw new Error(`Failed to load recordings: ${response.status}`);
-      }
-
-      const data = await response.json();
+      const data = await api.callAppBackend(`/api/v1/recordings?user_id=${userId}`);
       setRecordings(data.recordings || []);
       showStatus("录制流程列表加载成功", "success");
 
@@ -91,13 +83,9 @@ function UserFlowsPage({ session, onNavigate, showStatus }) {
     try {
       showStatus("Deleting recording...", "info");
 
-      const response = await fetch(`${API_BASE}/api/recordings/${sessionId}?user_id=${userId}`, {
+      await api.callAppBackend(`/api/v1/recordings/${sessionId}?user_id=${userId}`, {
         method: 'DELETE'
       });
-
-      if (!response.ok) {
-        throw new Error(`Failed to delete recording: ${response.status}`);
-      }
 
       setRecordings(prev => prev.filter(r => r.session_id !== sessionId));
       showStatus("Recording deleted successfully", "success");

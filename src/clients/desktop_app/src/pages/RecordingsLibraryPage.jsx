@@ -3,8 +3,6 @@ import Icon from '../components/Icons';
 import { api } from '../utils/api';
 import '../styles/RecordingsLibraryPage.css';
 
-const API_BASE = "http://127.0.0.1:8765";
-
 function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
   const userId = session?.username;
   const [recordings, setRecordings] = useState([]);
@@ -20,28 +18,19 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
 
     const fetchRecordings = async () => {
       try {
-        const response = await fetch(`${API_BASE}/api/recordings?user_id=${userId}`);
-
-        if (!response.ok) {
-          throw new Error(`Failed to fetch recordings: ${response.status}`);
-        }
-
-        const data = await response.json();
+        const data = await api.callAppBackend(`/api/v1/recordings?user_id=${userId}`);
         setRecordings(data.recordings || []);
         setFilteredRecordings(data.recordings || []);
 
         // Asynchronously fetch metaflow_id for each recording
         (data.recordings || []).forEach(async (recording) => {
           try {
-            const detailResponse = await fetch(`${API_BASE}/api/recordings/${recording.session_id}?user_id=${userId}`);
-            if (detailResponse.ok) {
-              const detail = await detailResponse.json();
-              if (detail.metaflow_id) {
-                setMetaflowIds(prev => ({
-                  ...prev,
-                  [recording.session_id]: detail.metaflow_id
-                }));
-              }
+            const detail = await api.callAppBackend(`/api/v1/recordings/${recording.session_id}?user_id=${userId}`);
+            if (detail.metaflow_id) {
+              setMetaflowIds(prev => ({
+                ...prev,
+                [recording.session_id]: detail.metaflow_id
+              }));
             }
           } catch (err) {
             // Silently ignore errors for individual recordings
@@ -135,15 +124,9 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
     try {
       showStatus('Deleting recording...', 'info');
 
-      const url = `${API_BASE}/api/recordings/${sessionId}?user_id=${userId}`;
-      const response = await fetch(url, {
+      await api.callAppBackend(`/api/v1/recordings/${sessionId}?user_id=${userId}`, {
         method: 'DELETE'
       });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || `Failed to delete recording: ${response.status}`);
-      }
 
       // Remove from local state
       setRecordings(prev => prev.filter(r => r.session_id !== sessionId));

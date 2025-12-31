@@ -50,6 +50,18 @@ function RegisterPage({ navigate, showStatus, onRegisterSuccess }) {
       return false;
     }
 
+    // Check for uppercase letter
+    if (!/[A-Z]/.test(password)) {
+      showStatus('Password must contain at least one uppercase letter', 'error');
+      return false;
+    }
+
+    // Check for lowercase letter
+    if (!/[a-z]/.test(password)) {
+      showStatus('Password must contain at least one lowercase letter', 'error');
+      return false;
+    }
+
     // Password confirmation
     if (password !== confirmPassword) {
       showStatus('Passwords do not match', 'error');
@@ -158,7 +170,7 @@ function RegisterPage({ navigate, showStatus, onRegisterSuccess }) {
               onChange={(e) => setPassword(e.target.value)}
               disabled={loading}
             />
-            <div className="form-hint">Minimum 8 characters</div>
+            <div className="form-hint">Minimum 8 characters, with uppercase and lowercase</div>
           </div>
 
           <div className="form-group">

@@ -12,6 +12,7 @@ import 'reactflow/dist/style.css'
 import CustomNode from '../components/CustomNode'
 import { getWorkflow } from '../config/workflows'
 import { DEFAULT_CONFIG_KEY } from '../config/index'
+import { BACKEND_CONFIG } from '../config/backend'
 import Icon from '../components/Icons'
 import '../styles/WorkflowGenerationPage.css'
 
@@ -43,7 +44,7 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
       showStatus("加载快速生成的Workflow...", "info");
 
       // Fetch workflow detail from backend
-      const response = await fetch(`http://127.0.0.1:8765/api/workflows/${workflowName}/detail?user_id=userId`);
+      const response = await fetch(`${BACKEND_CONFIG.httpBase}/api/v1/workflows/${workflowName}?user_id=${userId}`);
 
       if (!response.ok) {
         throw new Error(`Failed to load workflow: ${response.status}`);

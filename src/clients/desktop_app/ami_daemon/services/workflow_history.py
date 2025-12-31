@@ -1,0 +1,594 @@
+"""
+Workflow History Manager
+
+Manages workflow execution history storage within the workflow directory structure:
+
+~/.ami/users/{user_id}/workflows/{workflow_id}/executions/{execution_id}/
+├── result.json     # Execution result (existing, from StorageManager)
+├── meta.json       # Execution metadata (NEW)
+└── log.jsonl       # Step-by-step logs (NEW)
+
+This integrates with the existing storage structure rather than creating a separate
+workflow_history directory.
+
+Cloud upload: Last 5 executions per workflow are uploaded automatically.
+Retention: 60 days by default.
+"""
+
+import json
+import logging
+import platform
+import shutil
+import uuid
+from dataclasses import dataclass, asdict
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
+from typing import List, Optional, Dict, Any
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class WorkflowRunMeta:
+    """Metadata for a single workflow execution run."""
+
+    run_id: str
+    workflow_id: str
+    workflow_name: str
+    user_id: str
+    device_id: str
+    app_version: str
+    started_at: str  # ISO format
+    finished_at: Optional[str] = None  # ISO format
+    status: str = "running"  # running, completed, failed, cancelled
+    error_summary: Optional[str] = None
+    steps_total: int = 0
+    steps_completed: int = 0
+    uploaded: bool = False  # Whether uploaded to cloud
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "WorkflowRunMeta":
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+
+@dataclass
+class StepLogEntry:
+    """A single log entry for a workflow step."""
+
+    ts: str  # ISO timestamp
+    step: int  # Step index (0-based)
+    action: str  # Action type (navigate, click, type, etc.)
+    target: Optional[str] = None  # Target element or URL
+    status: str = "pending"  # pending, in_progress, completed, failed
+    duration_ms: Optional[int] = None
+    message: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+    def to_json_line(self) -> str:
+        data = {k: v for k, v in asdict(self).items() if v is not None}
+        return json.dumps(data, ensure_ascii=False)
+
+    @classmethod
+    def from_json_line(cls, line: str) -> "StepLogEntry":
+        data = json.loads(line)
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+
+class WorkflowHistoryManager:
+    """Manages workflow execution history within the existing storage structure."""
+
+    def __init__(
+        self,
+        base_path: Optional[Path] = None,
+        retention_days: int = 60,
+        max_uploads_per_workflow: int = 5,
+        device_id: Optional[str] = None,
+        app_version: str = "1.0.0",
+    ):
+        """Initialize workflow history manager.
+
+        Args:
+            base_path: Base storage path (default: ~/.ami)
+            retention_days: Number of days to retain history (default: 60)
+            max_uploads_per_workflow: Max executions to upload per workflow (default: 5)
+            device_id: Device identifier (auto-generated if not provided)
+            app_version: Application version
+        """
+        self.base_path = Path(base_path) if base_path else Path.home() / ".ami"
+        self.users_path = self.base_path / "users"
+        self.retention_days = retention_days
+        self.max_uploads_per_workflow = max_uploads_per_workflow
+        self.app_version = app_version
+
+        # Ensure base directory exists
+        self.base_path.mkdir(parents=True, exist_ok=True)
+
+        # Load or generate device ID
+        self.device_id = device_id or self._get_or_create_device_id()
+
+    def _get_or_create_device_id(self) -> str:
+        """Get or create a persistent device ID."""
+        device_id_file = self.base_path / "device_id"
+        if device_id_file.exists():
+            return device_id_file.read_text().strip()
+
+        device_id = f"device_{uuid.uuid4().hex[:12]}"
+        device_id_file.write_text(device_id)
+        logger.info(f"Generated new device ID: {device_id}")
+        return device_id
+
+    def _get_workflow_path(self, user_id: str, workflow_id: str) -> Path:
+        """Get the path to a workflow directory."""
+        return self.users_path / user_id / "workflows" / workflow_id
+
+    def _get_executions_path(self, user_id: str, workflow_id: str) -> Path:
+        """Get the path to executions directory for a workflow."""
+        return self._get_workflow_path(user_id, workflow_id) / "executions"
+
+    def _get_execution_path(
+        self, user_id: str, workflow_id: str, execution_id: str
+    ) -> Path:
+        """Get the path to a specific execution."""
+        return self._get_executions_path(user_id, workflow_id) / execution_id
+
+    def create_run(
+        self,
+        user_id: str,
+        workflow_id: str,
+        workflow_name: str,
+        workflow_yaml: str,
+        total_steps: int,
+    ) -> str:
+        """Create a new workflow run and return the execution_id.
+
+        Args:
+            user_id: User identifier
+            workflow_id: Workflow identifier (directory name)
+            workflow_name: Human-readable workflow name
+            workflow_yaml: Workflow YAML content (for reference, already stored in workflow.yaml)
+            total_steps: Total number of steps in workflow
+
+        Returns:
+            execution_id: Unique identifier for this execution
+        """
+        # Generate execution ID (same format as StorageManager uses)
+        execution_id = str(uuid.uuid4())
+
+        # Get execution path
+        exec_path = self._get_execution_path(user_id, workflow_id, execution_id)
+        exec_path.mkdir(parents=True, exist_ok=True)
+
+        # Create metadata
+        meta = WorkflowRunMeta(
+            run_id=execution_id,
+            workflow_id=workflow_id,
+            workflow_name=workflow_name,
+            user_id=user_id,
+            device_id=self.device_id,
+            app_version=self.app_version,
+            started_at=datetime.now(timezone.utc).isoformat(),
+            status="running",
+            steps_total=total_steps,
+            steps_completed=0,
+        )
+
+        # Save metadata
+        meta_path = exec_path / "meta.json"
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta.to_dict(), f, indent=2, ensure_ascii=False)
+
+        # Create empty log file
+        log_path = exec_path / "log.jsonl"
+        log_path.touch()
+
+        logger.info(f"Created workflow run: {execution_id} for workflow {workflow_id}")
+        return execution_id
+
+    def log_step(
+        self,
+        user_id: str,
+        workflow_id: str,
+        execution_id: str,
+        step_index: int,
+        action: str,
+        status: str,
+        target: Optional[str] = None,
+        duration_ms: Optional[int] = None,
+        message: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ):
+        """Log a step execution event.
+
+        Args:
+            user_id: User identifier
+            workflow_id: Workflow identifier
+            execution_id: Execution identifier
+            step_index: Step index (0-based)
+            action: Action type
+            status: Step status
+            target: Target element or URL
+            duration_ms: Step duration in milliseconds
+            message: Log message
+            metadata: Additional metadata
+        """
+        exec_path = self._get_execution_path(user_id, workflow_id, execution_id)
+        if not exec_path.exists():
+            logger.warning(f"Execution {execution_id} not found, cannot log step")
+            return
+
+        entry = StepLogEntry(
+            ts=datetime.now(timezone.utc).isoformat(),
+            step=step_index,
+            action=action,
+            target=target,
+            status=status,
+            duration_ms=duration_ms,
+            message=message,
+            metadata=metadata,
+        )
+
+        log_path = exec_path / "log.jsonl"
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(entry.to_json_line() + "\n")
+
+    def update_run_status(
+        self,
+        user_id: str,
+        workflow_id: str,
+        execution_id: str,
+        status: str,
+        steps_completed: int,
+        error_summary: Optional[str] = None,
+    ):
+        """Update run status and metadata.
+
+        Args:
+            user_id: User identifier
+            workflow_id: Workflow identifier
+            execution_id: Execution identifier
+            status: New status (completed, failed, cancelled)
+            steps_completed: Number of steps completed
+            error_summary: Error message if failed
+        """
+        exec_path = self._get_execution_path(user_id, workflow_id, execution_id)
+        if not exec_path.exists():
+            logger.warning(f"Execution {execution_id} not found, cannot update status")
+            return
+
+        meta_path = exec_path / "meta.json"
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta_data = json.load(f)
+
+            meta_data["status"] = status
+            meta_data["steps_completed"] = steps_completed
+            meta_data["finished_at"] = datetime.now(timezone.utc).isoformat()
+            if error_summary:
+                meta_data["error_summary"] = error_summary
+
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(meta_data, f, indent=2, ensure_ascii=False)
+
+            logger.info(f"Updated execution {execution_id} status to {status}")
+        except Exception as e:
+            logger.error(f"Failed to update run metadata: {e}")
+
+    def mark_as_uploaded(
+        self, user_id: str, workflow_id: str, execution_id: str
+    ):
+        """Mark an execution as uploaded to cloud."""
+        exec_path = self._get_execution_path(user_id, workflow_id, execution_id)
+        meta_path = exec_path / "meta.json"
+
+        if not meta_path.exists():
+            return
+
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta_data = json.load(f)
+            meta_data["uploaded"] = True
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(meta_data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"Failed to mark as uploaded: {e}")
+
+    def get_run_meta(
+        self, user_id: str, workflow_id: str, execution_id: str
+    ) -> Optional[WorkflowRunMeta]:
+        """Get metadata for a specific run."""
+        meta_path = (
+            self._get_execution_path(user_id, workflow_id, execution_id) / "meta.json"
+        )
+        if not meta_path.exists():
+            return None
+
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                return WorkflowRunMeta.from_dict(json.load(f))
+        except Exception as e:
+            logger.error(f"Failed to read run metadata: {e}")
+            return None
+
+    def get_run_logs(
+        self, user_id: str, workflow_id: str, execution_id: str
+    ) -> List[StepLogEntry]:
+        """Get all log entries for a run."""
+        log_path = (
+            self._get_execution_path(user_id, workflow_id, execution_id) / "log.jsonl"
+        )
+        if not log_path.exists():
+            return []
+
+        entries = []
+        try:
+            with open(log_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        entries.append(StepLogEntry.from_json_line(line))
+        except Exception as e:
+            logger.error(f"Failed to read run logs: {e}")
+
+        return entries
+
+    def get_workflow_yaml(self, user_id: str, workflow_id: str) -> Optional[str]:
+        """Get the workflow YAML definition."""
+        yaml_path = self._get_workflow_path(user_id, workflow_id) / "workflow.yaml"
+        if not yaml_path.exists():
+            return None
+
+        try:
+            return yaml_path.read_text(encoding="utf-8")
+        except Exception as e:
+            logger.error(f"Failed to read workflow YAML: {e}")
+            return None
+
+    def list_workflow_executions(
+        self, user_id: str, workflow_id: str, limit: int = 100
+    ) -> List[WorkflowRunMeta]:
+        """List executions for a specific workflow.
+
+        Args:
+            user_id: User identifier
+            workflow_id: Workflow identifier
+            limit: Maximum number of executions to return
+
+        Returns:
+            List of run metadata, most recent first
+        """
+        executions_path = self._get_executions_path(user_id, workflow_id)
+        if not executions_path.exists():
+            return []
+
+        runs = []
+        for exec_dir in executions_path.iterdir():
+            if not exec_dir.is_dir():
+                continue
+
+            meta_path = exec_dir / "meta.json"
+            if meta_path.exists():
+                try:
+                    with open(meta_path, "r", encoding="utf-8") as f:
+                        runs.append(WorkflowRunMeta.from_dict(json.load(f)))
+                except Exception as e:
+                    logger.warning(f"Failed to read meta for {exec_dir.name}: {e}")
+
+        # Sort by started_at descending
+        runs.sort(key=lambda r: r.started_at, reverse=True)
+        return runs[:limit]
+
+    def list_all_executions(
+        self, user_id: str, limit: int = 100, status_filter: Optional[str] = None
+    ) -> List[WorkflowRunMeta]:
+        """List all executions across all workflows for a user.
+
+        Args:
+            user_id: User identifier
+            limit: Maximum number of executions to return
+            status_filter: Optional status filter
+
+        Returns:
+            List of run metadata, most recent first
+        """
+        user_workflows_path = self.users_path / user_id / "workflows"
+        if not user_workflows_path.exists():
+            return []
+
+        all_runs = []
+        for workflow_dir in user_workflows_path.iterdir():
+            if not workflow_dir.is_dir():
+                continue
+
+            runs = self.list_workflow_executions(user_id, workflow_dir.name, limit=1000)
+            all_runs.extend(runs)
+
+        # Apply status filter
+        if status_filter:
+            all_runs = [r for r in all_runs if r.status == status_filter]
+
+        # Sort by started_at descending and limit
+        all_runs.sort(key=lambda r: r.started_at, reverse=True)
+        return all_runs[:limit]
+
+    def get_run_for_upload(
+        self, user_id: str, workflow_id: str, execution_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get all data for a run, ready for upload to cloud.
+
+        Returns dict with: meta, logs, workflow_yaml
+        """
+        meta = self.get_run_meta(user_id, workflow_id, execution_id)
+        if not meta:
+            return None
+
+        logs = self.get_run_logs(user_id, workflow_id, execution_id)
+        workflow_yaml = self.get_workflow_yaml(user_id, workflow_id)
+
+        return {
+            "type": "workflow_run",
+            "run_id": execution_id,
+            "user_id": user_id,
+            "device_id": self.device_id,
+            "workflow_id": workflow_id,
+            "workflow_name": meta.workflow_name,
+            "meta": meta.to_dict(),
+            "logs": [asdict(log) for log in logs],
+            "workflow_yaml": workflow_yaml,
+            "device_info": {
+                "os": platform.system(),
+                "os_version": platform.release(),
+                "app_version": self.app_version,
+            },
+        }
+
+    def cleanup_old_runs(self) -> int:
+        """Remove runs older than retention period.
+
+        Returns:
+            Number of runs removed
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=self.retention_days)
+        removed = 0
+
+        if not self.users_path.exists():
+            return 0
+
+        for user_dir in self.users_path.iterdir():
+            if not user_dir.is_dir():
+                continue
+
+            workflows_path = user_dir / "workflows"
+            if not workflows_path.exists():
+                continue
+
+            for workflow_dir in workflows_path.iterdir():
+                if not workflow_dir.is_dir():
+                    continue
+
+                executions_path = workflow_dir / "executions"
+                if not executions_path.exists():
+                    continue
+
+                for exec_dir in executions_path.iterdir():
+                    if not exec_dir.is_dir():
+                        continue
+
+                    meta_path = exec_dir / "meta.json"
+                    if not meta_path.exists():
+                        continue
+
+                    try:
+                        with open(meta_path, "r", encoding="utf-8") as f:
+                            meta = json.load(f)
+
+                        started_at = datetime.fromisoformat(
+                            meta.get("started_at", "").replace("Z", "+00:00")
+                        )
+                        if started_at < cutoff:
+                            shutil.rmtree(exec_dir)
+                            removed += 1
+                            logger.debug(f"Removed old execution: {exec_dir.name}")
+                    except Exception as e:
+                        logger.warning(f"Failed to check/remove {exec_dir.name}: {e}")
+
+        if removed > 0:
+            logger.info(f"Cleaned up {removed} old workflow executions")
+
+        return removed
+
+    # ========================================================================
+    # Convenience methods for API endpoints (search by run_id only)
+    # ========================================================================
+
+    def _find_execution_by_run_id(
+        self, run_id: str
+    ) -> Optional[tuple[str, str, Path]]:
+        """Find execution path by run_id, searching all users and workflows.
+
+        Returns:
+            Tuple of (user_id, workflow_id, exec_path) if found, None otherwise
+        """
+        if not self.users_path.exists():
+            return None
+
+        for user_dir in self.users_path.iterdir():
+            if not user_dir.is_dir():
+                continue
+
+            workflows_path = user_dir / "workflows"
+            if not workflows_path.exists():
+                continue
+
+            for workflow_dir in workflows_path.iterdir():
+                if not workflow_dir.is_dir():
+                    continue
+
+                exec_path = workflow_dir / "executions" / run_id
+                if exec_path.exists():
+                    return (user_dir.name, workflow_dir.name, exec_path)
+
+        return None
+
+    def list_runs(
+        self, limit: int = 100, status_filter: Optional[str] = None
+    ) -> List[WorkflowRunMeta]:
+        """List all runs across all users (for API convenience).
+
+        This is a wrapper around list_all_executions that finds runs
+        without requiring a specific user_id (searches all users).
+        """
+        if not self.users_path.exists():
+            return []
+
+        all_runs = []
+        for user_dir in self.users_path.iterdir():
+            if not user_dir.is_dir():
+                continue
+
+            runs = self.list_all_executions(
+                user_id=user_dir.name, limit=1000, status_filter=status_filter
+            )
+            all_runs.extend(runs)
+
+        # Sort by started_at descending and limit
+        all_runs.sort(key=lambda r: r.started_at, reverse=True)
+        return all_runs[:limit]
+
+    def get_run_meta_by_id(self, run_id: str) -> Optional[WorkflowRunMeta]:
+        """Get metadata for a run by run_id only (searches all users/workflows)."""
+        result = self._find_execution_by_run_id(run_id)
+        if not result:
+            return None
+
+        user_id, workflow_id, _ = result
+        return self.get_run_meta(user_id, workflow_id, run_id)
+
+    def get_run_logs_by_id(self, run_id: str) -> List[StepLogEntry]:
+        """Get logs for a run by run_id only (searches all users/workflows)."""
+        result = self._find_execution_by_run_id(run_id)
+        if not result:
+            return []
+
+        user_id, workflow_id, _ = result
+        return self.get_run_logs(user_id, workflow_id, run_id)
+
+    def get_run_workflow_yaml_by_id(self, run_id: str) -> Optional[str]:
+        """Get workflow YAML for a run by run_id only."""
+        result = self._find_execution_by_run_id(run_id)
+        if not result:
+            return None
+
+        user_id, workflow_id, _ = result
+        return self.get_workflow_yaml(user_id, workflow_id)
+
+    def get_run_for_upload_by_id(self, run_id: str) -> Optional[Dict[str, Any]]:
+        """Get run data for upload by run_id only."""
+        result = self._find_execution_by_run_id(run_id)
+        if not result:
+            return None
+
+        user_id, workflow_id, _ = result
+        return self.get_run_for_upload(user_id, workflow_id, run_id)

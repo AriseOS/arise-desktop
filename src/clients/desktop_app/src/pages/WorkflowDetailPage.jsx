@@ -7,8 +7,6 @@ import FlowVisualization from '../components/FlowVisualization'
 import { api } from '../utils/api'
 import '../styles/WorkflowDetailPage.css'
 
-const API_BASE = "http://127.0.0.1:8765"
-
 const nodeTypes = {
   custom: CustomNode,
 }
@@ -20,7 +18,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [isRunning, setIsRunning] = useState(false)
-  const [activeTab, setActiveTab] = useState('visual') // 'visual', 'yaml', or 'chat'
+  const [activeTab, setActiveTab] = useState('visual') // 'visual', 'yaml', 'chat', or 'history'
 
   // Chat/Modification state
   const [chatInput, setChatInput] = useState('')
@@ -29,6 +27,14 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
   const [modificationLog, setModificationLog] = useState([])
   const [currentToolUse, setCurrentToolUse] = useState(null)
   const logEndRef = useRef(null)
+
+  // History state
+  const [executions, setExecutions] = useState([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [selectedExecution, setSelectedExecution] = useState(null)
+  const [executionDetail, setExecutionDetail] = useState(null)
+  const [detailLoading, setDetailLoading] = useState(false)
 
   useEffect(() => {
     if (userId && workflowId) {
@@ -66,18 +72,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
 
     try {
       // Backend will auto-sync workflow resources before returning data
-      const response = await fetch(`${API_BASE}/api/workflows/${workflowId}/detail?user_id=${userId}`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      })
-
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`)
-      }
-
-      const data = await response.json()
+      const data = await api.callAppBackend(`/api/v1/workflows/${workflowId}?user_id=${userId}`)
       console.log('Workflow data received:', data)
       setWorkflowData(data)
     } catch (err) {
@@ -130,7 +125,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
       // Create session if not exists
       let sid = sessionId
       if (!sid) {
-        const result = await api.callAppBackend('/api/intent-builder/start', {
+        const result = await api.callAppBackend('/api/v1/intent-builder/sessions', {
           method: 'POST',
           body: JSON.stringify({
             user_id: userId,
@@ -146,9 +141,8 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
       }
 
       // Stream the modification response
-      const response = await fetch(`${API_BASE}/api/intent-builder/${sid}/chat`, {
+      const response = await api.callAppBackendRaw(`/api/v1/intent-builder/sessions/${sid}/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: userMessage })
       })
 
@@ -201,19 +195,12 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                     setWorkflowData(updatedData)
 
                     // Sync to both Cloud and Local storage
-                    fetch(`${API_BASE}/api/workflows/${workflowId}`, {
+                    api.callAppBackend(`/api/v1/workflows/${workflowId}`, {
                       method: 'PUT',
-                      headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({
                         user_id: userId,
                         workflow_yaml: event.result.updated_yaml
                       })
-                    }).then(response => {
-                      if (response.ok) {
-                        return response.json()
-                      } else {
-                        throw new Error('Failed to save workflow')
-                      }
                     }).then(result => {
                       console.log('✓ Workflow saved:', result)
                       if (result.updated_in_cloud) {
@@ -263,6 +250,98 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleModify()
+    }
+  }
+
+  // History functions
+  const fetchExecutionHistory = async () => {
+    setHistoryLoading(true)
+    try {
+      const status = statusFilter === 'all' ? null : statusFilter
+      const url = `/api/v1/workflows/${workflowId}/history?user_id=${userId}${status ? `&status=${status}` : ''}`
+      const result = await api.callAppBackend(url)
+      setExecutions(result.runs || [])
+    } catch (error) {
+      console.error('Error fetching executions:', error)
+      showStatus(`Failed to load execution history: ${error.message}`, 'error')
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
+  const fetchExecutionDetail = async (runId) => {
+    setDetailLoading(true)
+    try {
+      const url = `/api/v1/workflows/${workflowId}/history/${runId}?user_id=${userId}`
+      const detail = await api.callAppBackend(url)
+      setExecutionDetail(detail)
+    } catch (error) {
+      console.error('Error fetching execution detail:', error)
+      showStatus(`Failed to load execution detail: ${error.message}`, 'error')
+    } finally {
+      setDetailLoading(false)
+    }
+  }
+
+  const handleViewExecution = (execution) => {
+    setSelectedExecution(execution)
+    fetchExecutionDetail(execution.run_id)
+  }
+
+  const handleCloseDetail = () => {
+    setSelectedExecution(null)
+    setExecutionDetail(null)
+  }
+
+  // Load history when tab changes to history
+  useEffect(() => {
+    if (activeTab === 'history' && userId && workflowId) {
+      fetchExecutionHistory()
+    }
+  }, [activeTab, statusFilter, userId, workflowId])
+
+  const formatDuration = (startedAt, finishedAt) => {
+    if (!startedAt || !finishedAt) return 'N/A'
+    const start = new Date(startedAt)
+    const end = new Date(finishedAt)
+    const durationMs = end - start
+
+    if (durationMs < 1000) return `${durationMs}ms`
+    if (durationMs < 60000) return `${(durationMs / 1000).toFixed(1)}s`
+
+    const minutes = Math.floor(durationMs / 60000)
+    const seconds = Math.floor((durationMs % 60000) / 1000)
+    return `${minutes}m ${seconds}s`
+  }
+
+  const formatTime = (isoString) => {
+    if (!isoString) return 'N/A'
+    const date = new Date(isoString)
+    return date.toLocaleString()
+  }
+
+  const getStatusIcon = (status) => {
+    switch (status) {
+      case 'completed':
+        return <Icon icon="checkCircle" size={16} className="status-icon success" />
+      case 'failed':
+        return <Icon icon="xCircle" size={16} className="status-icon error" />
+      case 'running':
+        return <Icon icon="loader" size={16} className="status-icon running" />
+      case 'cancelled':
+        return <Icon icon="slash" size={16} className="status-icon cancelled" />
+      default:
+        return <Icon icon="circle" size={16} className="status-icon" />
+    }
+  }
+
+  const getStatusClass = (status) => {
+    switch (status) {
+      case 'completed': return 'success'
+      case 'failed': return 'error'
+      case 'running': return 'running'
+      case 'cancelled': return 'cancelled'
+      default: return ''
     }
   }
 
@@ -379,6 +458,13 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                 <Icon icon="messageSquare" size={16} />
                 <span>AI 对话</span>
               </button>
+              <button
+                className={`workflow-tab-button ${activeTab === 'history' ? 'active' : ''}`}
+                onClick={() => setActiveTab('history')}
+              >
+                <Icon icon="clock" size={16} />
+                <span>执行历史</span>
+              </button>
             </div>
 
             {/* Tabs Content */}
@@ -395,7 +481,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                     <code>{workflowData.workflow_yaml || 'No YAML data available'}</code>
                   </pre>
                 </div>
-              ) : (
+              ) : activeTab === 'chat' ? (
                 <div className="workflow-chat-container">
                   <div className="chat-instructions">
                     <h3><Icon icon="bot" size={20} /> AI 助手</h3>
@@ -452,8 +538,254 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                     </button>
                   </div>
                 </div>
-              )}
+              ) : activeTab === 'history' ? (
+                <div className="workflow-history-container">
+                  <div className="history-header">
+                    <select
+                      className="status-filter"
+                      value={statusFilter}
+                      onChange={(e) => setStatusFilter(e.target.value)}
+                    >
+                      <option value="all">全部状态</option>
+                      <option value="completed">成功</option>
+                      <option value="failed">失败</option>
+                      <option value="running">运行中</option>
+                    </select>
+                    <button className="btn-refresh" onClick={fetchExecutionHistory}>
+                      <Icon icon="refresh" size={16} />
+                    </button>
+                  </div>
+
+                  {historyLoading ? (
+                    <div className="history-loading">
+                      <div className="spinner"></div>
+                      <p>加载执行历史...</p>
+                    </div>
+                  ) : executions.length === 0 ? (
+                    <div className="history-empty">
+                      <Icon icon="inbox" size={48} />
+                      <p>暂无执行记录</p>
+                    </div>
+                  ) : (
+                    <div className="execution-list">
+                      {executions.map((execution) => (
+                        <div
+                          key={execution.run_id}
+                          className={`execution-item ${getStatusClass(execution.status)}`}
+                          onClick={() => handleViewExecution(execution)}
+                        >
+                          <div className="execution-status">
+                            {getStatusIcon(execution.status)}
+                          </div>
+                          <div className="execution-info">
+                            <div className="execution-time">{formatTime(execution.started_at)}</div>
+                            <div className="execution-meta">
+                              <span className={`status-text ${getStatusClass(execution.status)}`}>
+                                {execution.status}
+                              </span>
+                              {execution.error_summary && (
+                                <span className="error-hint" title={execution.error_summary}>
+                                  {execution.error_summary.substring(0, 50)}...
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="execution-arrow">
+                            <Icon icon="chevronRight" size={16} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : null}
             </div>
+
+            {/* Execution Detail Modal */}
+            {selectedExecution && (
+              <div className="modal-overlay" onClick={handleCloseDetail}>
+                <div className="execution-detail-modal" onClick={e => e.stopPropagation()}>
+                  <div className="modal-header">
+                    <h2>执行详情</h2>
+                    <button className="btn-close" onClick={handleCloseDetail}>
+                      <Icon icon="x" size={20} />
+                    </button>
+                  </div>
+
+                  {detailLoading ? (
+                    <div className="modal-loading">
+                      <div className="spinner"></div>
+                      <p>加载中...</p>
+                    </div>
+                  ) : executionDetail ? (
+                    <div className="modal-content">
+                      {/* Header Stats */}
+                      <div className="detail-header-stats">
+                        <div className="stat-card">
+                          <span className="stat-label">Status</span>
+                          <div className={`stat-value-badge ${getStatusClass(executionDetail.meta?.status)}`}>
+                            {getStatusIcon(executionDetail.meta?.status)}
+                            <span>{executionDetail.meta?.status || 'Unknown'}</span>
+                          </div>
+                        </div>
+                        <div className="stat-card">
+                          <span className="stat-label">Duration</span>
+                          <span className="stat-value">
+                            {formatDuration(executionDetail.meta?.started_at, executionDetail.meta?.finished_at)}
+                          </span>
+                        </div>
+                        <div className="stat-card">
+                          <span className="stat-label">Steps Completed</span>
+                          <span className="stat-value">
+                            {executionDetail.meta?.steps_completed || 0}
+                            <span className="stat-sub"> / {executionDetail.meta?.steps_total || 0}</span>
+                          </span>
+                        </div>
+                        <div className="stat-card">
+                          <span className="stat-label">Started At</span>
+                          <span className="stat-value sm">{formatTime(executionDetail.meta?.started_at)}</span>
+                        </div>
+                      </div>
+
+                      {executionDetail.meta?.error_summary && (
+                        <div className="error-summary-banner">
+                          <div className="error-icon-wrapper">
+                            <Icon icon="alertTriangle" size={20} />
+                          </div>
+                          <div className="error-content">
+                            <h4>Execution Failed</h4>
+                            <pre>{executionDetail.meta.error_summary}</pre>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="detail-timeline-section">
+                        <h3>Execution Timeline</h3>
+                        <div className="timeline-wrapper">
+                          {executionDetail.logs && executionDetail.logs.length > 0 ? (
+                            (() => {
+                              // Group logs by step
+                              const groupedLogs = executionDetail.logs.reduce((acc, log, idx) => {
+                                const stepIdx = log.step !== undefined ? log.step : -1;
+                                if (!acc[stepIdx]) {
+                                  acc[stepIdx] = {
+                                    step: stepIdx,
+                                    logs: [],
+                                    status: 'completed',
+                                    hasError: false
+                                  };
+                                }
+                                // Add original index to log for unique key/expanding
+                                acc[stepIdx].logs.push({ ...log, originalIdx: idx });
+                                if (log.status === 'failed') {
+                                  acc[stepIdx].status = 'failed';
+                                  acc[stepIdx].hasError = true;
+                                }
+                                return acc;
+                              }, {});
+
+                              const sortedGroups = Object.values(groupedLogs).sort((a, b) => a.step - b.step);
+
+                              return sortedGroups.map((group, groupIdx) => (
+                                <div key={groupIdx} className={`timeline-group ${group.status}`}>
+                                  <div className="timeline-group-header">
+                                    <div className={`step-badge ${group.status}`}>
+                                      {group.status === 'failed' ? (
+                                        <Icon icon="x" size={12} />
+                                      ) : (
+                                        <span className="step-num">{group.step + 1}</span>
+                                      )}
+                                    </div>
+                                    <span className="step-title">Step {group.step + 1}</span>
+                                    {group.hasError && <span className="step-error-tag">Failed</span>}
+                                  </div>
+
+                                  <div className="timeline-group-content">
+                                    {group.logs.map((log) => {
+                                      const hasMetadata = log.metadata && Object.keys(log.metadata).length > 0;
+
+                                      return (
+                                        <div key={log.originalIdx} className={`timeline-log-entry ${log.status}`}>
+                                          <div className="log-row-primary">
+                                            <div className="log-time-col">
+                                              {formatTime(log.ts).split(' ')[1] || formatTime(log.ts)}
+                                            </div>
+                                            <div className="log-divider">
+                                              <div className="log-dot"></div>
+                                            </div>
+                                            <div className="log-details">
+                                              <div className="log-main-line">
+                                                <span className="log-action">{log.action}</span>
+                                                {log.target && (
+                                                  <span className="log-target">
+                                                    <Icon icon="arrowRight" size={10} /> {log.target}
+                                                  </span>
+                                                )}
+                                              </div>
+                                              {log.message && <div className="log-sub-message">{log.message}</div>}
+
+                                              {/* Inline Metadata Preview (e.g. error message) */}
+                                              {hasMetadata && log.metadata.error && (
+                                                <div className="log-inline-error">
+                                                  <Icon icon="alertCircle" size={12} />
+                                                  {log.metadata.error}
+                                                </div>
+                                              )}
+                                            </div>
+                                            <div className="log-meta-right">
+                                              {log.duration_ms && (
+                                                <span className="log-duration-badge">{log.duration_ms}ms</span>
+                                              )}
+                                            </div>
+                                          </div>
+
+                                          {/* Full Metadata Block */}
+                                          {hasMetadata && (
+                                            <div className="log-metadata-block">
+                                              <details>
+                                                <summary>View Details</summary>
+                                                <div className="metadata-content">
+                                                  {log.metadata.content_type === 'code' ? (
+                                                    <pre className="code-block">
+                                                      <code>{log.metadata.script_content || JSON.stringify(log.metadata, null, 2)}</code>
+                                                    </pre>
+                                                  ) : (
+                                                    <pre className="json-block">{JSON.stringify(log.metadata, null, 2)}</pre>
+                                                  )}
+                                                </div>
+                                              </details>
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              ));
+                            })()
+                          ) : (
+                            <div className="no-logs-state">
+                              <Icon icon="list" size={32} />
+                              <p>No execution logs available</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="modal-error">
+                      <p>加载执行详情失败</p>
+                    </div>
+                  )}
+
+                  <div className="modal-footer">
+                    <button className="btn btn-primary" onClick={handleCloseDetail}>
+                      关闭
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>
@@ -461,7 +793,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
       <div className="footer">
         <p>Ami v1.0.0</p>
       </div>
-    </div>
+    </div >
   )
 }
 

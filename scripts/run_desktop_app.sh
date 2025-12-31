@@ -1,7 +1,23 @@
 #!/bin/bash
 # Quick start script for Ami Desktop App
 
+# Parse arguments
+USE_LOCAL_CLOUD=false
+for arg in "$@"; do
+    case $arg in
+        --local)
+            USE_LOCAL_CLOUD=true
+            shift
+            ;;
+    esac
+done
+
 echo "🚀 Starting Ami Desktop App..."
+if [ "$USE_LOCAL_CLOUD" = true ]; then
+    echo "   Mode: Using LOCAL Cloud Backend (http://localhost:9000)"
+else
+    echo "   Mode: Using REMOTE Cloud Backend"
+fi
 echo ""
 
 # Check if we're in the right directory
@@ -34,5 +50,12 @@ fi
 # Start the app in development mode
 echo "✅ Starting Tauri app (Development Mode)..."
 echo "   AMI_DEV_MODE=1 → Using Python source code"
-echo ""
-AMI_DEV_MODE=1 npm run tauri dev
+
+if [ "$USE_LOCAL_CLOUD" = true ]; then
+    echo "   APP_BACKEND_CLOUD_API_URL=http://localhost:9000"
+    echo ""
+    AMI_DEV_MODE=1 APP_BACKEND_CLOUD_API_URL=http://localhost:9000 npm run tauri dev
+else
+    echo ""
+    AMI_DEV_MODE=1 npm run tauri dev
+fi

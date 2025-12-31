@@ -81,6 +81,22 @@ class StorageService:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    def get_user_workflow_logs_path(self, user_id: str, workflow_id: str) -> Path:
+        """Get path for storing workflow execution logs.
+
+        Storage structure:
+            {base_path}/users/{user_id}/workflow_logs/{workflow_id}/
+                {run_id}.json
+
+        Args:
+            user_id: User identifier
+            workflow_id: Workflow identifier
+
+        Returns:
+            Path to workflow logs directory
+        """
+        return self._user_path(user_id) / "workflow_logs" / workflow_id
+
     def get_session_info(self, user_id: str, session_id: str, timeout_minutes: int = 30) -> Optional[Dict]:
         """
         Get session information including age and expiry time

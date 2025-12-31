@@ -1,7 +1,11 @@
-server:
-  host: 0.0.0.0
-  port: 8000
-  debug: false
+# App Version
+app:
+  version: "0.0.1"
+
+# Daemon HTTP Server Configuration
+daemon:
+  host: 127.0.0.1
+  port: 8765
 
 # Storage Configuration
 # IMPORTANT: App Backend uses ~/.ami (local client data)
@@ -38,7 +42,11 @@ cloud:
 
 logging:
   level: INFO
-  path: ${storage.base_path}/logs/app-backend.log
+  # Log directory (app.log and error.log will be created here)
+  dir: ${storage.base_path}/logs
+  # Rotation settings
+  max_bytes: 10485760  # 10 MB per file
+  backup_count: 5      # Keep 5 backup files
 
 cors:
   allow_origins:

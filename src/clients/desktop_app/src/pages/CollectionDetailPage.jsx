@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Icon from '../components/Icons';
+import { api } from '../utils/api';
 import '../styles/CollectionDetailPage.css';
-
-const API_BASE = "http://127.0.0.1:8765";
 
 function CollectionDetailPage({ session, onNavigate, showStatus, collectionName }) {
   const userId = session?.username;
@@ -21,15 +20,9 @@ function CollectionDetailPage({ session, onNavigate, showStatus, collectionName 
   const loadCollectionDetail = async () => {
     setLoading(true);
     try {
-      const response = await fetch(
-        `${API_BASE}/api/data/collections/${collectionName}?user_id=${userId}&limit=20`
+      const data = await api.callAppBackend(
+        `/api/v1/data/collections/${collectionName}?user_id=${userId}&limit=20`
       );
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch collection: ${response.status}`);
-      }
-
-      const data = await response.json();
       setCollection(data);
     } catch (error) {
       console.error('Error loading collection:', error);
@@ -45,8 +38,8 @@ function CollectionDetailPage({ session, onNavigate, showStatus, collectionName 
     showStatus(`Exporting ${collectionName}...`, 'info');
 
     try {
-      const response = await fetch(
-        `${API_BASE}/api/data/collections/${collectionName}/export?user_id=${userId}`
+      const response = await api.callAppBackendRaw(
+        `/api/v1/data/collections/${collectionName}/export?user_id=${userId}`
       );
 
       if (!response.ok) {
@@ -77,14 +70,10 @@ function CollectionDetailPage({ session, onNavigate, showStatus, collectionName 
     showStatus(`Deleting ${collectionName}...`, 'info');
 
     try {
-      const response = await fetch(
-        `${API_BASE}/api/data/collections/${collectionName}?user_id=${userId}`,
+      await api.callAppBackend(
+        `/api/v1/data/collections/${collectionName}?user_id=${userId}`,
         { method: 'DELETE' }
       );
-
-      if (!response.ok) {
-        throw new Error(`Delete failed: ${response.status}`);
-      }
 
       showStatus(`Collection deleted successfully!`, 'success');
       setTimeout(() => onNavigate('data-management'), 1000);

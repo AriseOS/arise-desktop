@@ -9,11 +9,12 @@
  */
 
 import { auth } from './auth';
+import { BACKEND_CONFIG } from '../config/backend';
 
 // API endpoints
 // CRS (Claude Relay Service) - User Management and LLM Proxy
 const CRS_BASE = 'https://api.ariseos.com'; // CRS production URL
-const APP_BACKEND_BASE = 'http://127.0.0.1:8765';
+const APP_BACKEND_BASE = BACKEND_CONFIG.httpBase;
 
 /**
  * API client utility
@@ -56,6 +57,65 @@ export const api = {
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
     return false;
+  },
+
+  /**
+   * Get app version and update status
+   * @returns {Promise<object>} Version info with update_required flag
+   */
+  async getVersionInfo() {
+    try {
+      const response = await fetch(`${APP_BACKEND_BASE}/api/v1/app/version`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(5000)
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      return await response.json();
+    } catch (error) {
+      console.error('[API] Failed to get version info:', error);
+      return {
+        version: 'unknown',
+        compatible: true,
+        update_required: false,
+        error: error.message
+      };
+    }
+  },
+
+  /**
+   * Upload diagnostic package to cloud
+   * @param {string} userDescription - Optional description of the issue
+   * @returns {Promise<object>} Result with diagnostic_id
+   */
+  async uploadDiagnostic(userDescription = null) {
+    try {
+      // Get user_id from session - require login
+      const session = await auth.getSession();
+      if (!session?.username) {
+        throw new Error('Please login to upload diagnostic');
+      }
+
+      const body = {
+        user_id: session.username,
+        ...(userDescription && { user_description: userDescription })
+      };
+      const response = await fetch(`${APP_BACKEND_BASE}/api/v1/app/diagnostic`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(60000) // 60s timeout for diagnostic upload
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Upload failed');
+      }
+      return await response.json();
+    } catch (error) {
+      console.error('[API] Failed to upload diagnostic:', error);
+      throw error;
+    }
   },
 
   // ============================================================================
@@ -284,6 +344,31 @@ export const api = {
     }
   },
 
+  /**
+   * Call App Backend and return raw Response (for streaming SSE)
+   *
+   * @param {string} endpoint - API endpoint path
+   * @param {object} options - Fetch options (method, body, headers, etc.)
+   * @returns {Promise<Response>} Raw fetch Response
+   */
+  async callAppBackendRaw(endpoint, options = {}) {
+    const apiKey = await auth.getApiKey();
+
+    const headers = {
+      'Content-Type': 'application/json',
+      ...options.headers
+    };
+
+    if (apiKey) {
+      headers['X-Ami-API-Key'] = apiKey;
+    }
+
+    return await fetch(`${APP_BACKEND_BASE}${endpoint}`, {
+      ...options,
+      headers
+    });
+  },
+
   // ============================================================================
   // Generic HTTP Methods for App Backend
   // ============================================================================
@@ -325,7 +410,7 @@ export const api = {
    * @returns {Promise<object>} Browser status
    */
   async startBrowser(headless = false) {
-    return await this.callAppBackend('/api/browser/start', {
+    return await this.callAppBackend('/api/v1/browser/start', {
       method: 'POST',
       body: JSON.stringify({ headless })
     });
@@ -337,7 +422,7 @@ export const api = {
    * @returns {Promise<object>} Browser status
    */
   async stopBrowser() {
-    return await this.callAppBackend('/api/browser/stop', {
+    return await this.callAppBackend('/api/v1/browser/stop', {
       method: 'POST'
     });
   },
@@ -352,7 +437,7 @@ export const api = {
    * @returns {Promise<object>} Recording session info
    */
   async startRecording(url, userId, title = '', description = '') {
-    return await this.callAppBackend('/api/recording/start', {
+    return await this.callAppBackend('/api/v1/recordings/start', {
       method: 'POST',
       body: JSON.stringify({ url, user_id: userId, title, description })
     });
@@ -365,7 +450,7 @@ export const api = {
    * @returns {Promise<object>} Recording result
    */
   async stopRecording(sessionId) {
-    return await this.callAppBackend('/api/recording/stop', {
+    return await this.callAppBackend('/api/v1/recordings/stop', {
       method: 'POST',
       body: JSON.stringify({ session_id: sessionId })
     });
@@ -381,10 +466,9 @@ export const api = {
    * @returns {Promise<object>} Upload result
    */
   async uploadRecording(sessionId, taskDescription, userQuery = null, userId) {
-    return await this.callAppBackend('/api/recordings/upload', {
+    return await this.callAppBackend(`/api/v1/recordings/${sessionId}/upload`, {
       method: 'POST',
       body: JSON.stringify({
-        session_id: sessionId,
         task_description: taskDescription,
         user_query: userQuery,
         user_id: userId
@@ -401,7 +485,7 @@ export const api = {
    * @returns {Promise<object>} MetaFlow result
    */
   async generateMetaflow(taskDescription, userQuery = null, userId) {
-    return await this.callAppBackend('/api/metaflows/generate', {
+    return await this.callAppBackend('/api/v1/metaflows/generate', {
       method: 'POST',
       body: JSON.stringify({
         task_description: taskDescription,
@@ -421,7 +505,7 @@ export const api = {
    * @returns {Promise<object>} MetaFlow result
    */
   async generateMetaflowFromRecording(sessionId, taskDescription, userQuery = null, userId) {
-    return await this.callAppBackend('/api/metaflows/from-recording', {
+    return await this.callAppBackend('/api/v1/metaflows/from-recording', {
       method: 'POST',
       body: JSON.stringify({
         session_id: sessionId,
@@ -440,7 +524,7 @@ export const api = {
    * @returns {Promise<object>} Workflow result
    */
   async generateWorkflow(metaflowId, userId) {
-    return await this.callAppBackend('/api/workflows/generate', {
+    return await this.callAppBackend('/api/v1/workflows/generate', {
       method: 'POST',
       body: JSON.stringify({
         metaflow_id: metaflowId,
@@ -456,11 +540,10 @@ export const api = {
    * @param {string} userId - User ID
    * @returns {Promise<object>} Execution result with task_id
    */
-  async executeWorkflow(workflowName, userId) {
-    return await this.callAppBackend('/api/workflow/execute', {
+  async executeWorkflow(workflowId, userId) {
+    return await this.callAppBackend(`/api/v1/workflows/${workflowId}/execute`, {
       method: 'POST',
       body: JSON.stringify({
-        workflow_name: workflowName,
         user_id: userId
       })
     });
@@ -473,7 +556,7 @@ export const api = {
    * @returns {Promise<object>} Execution status
    */
   async getWorkflowStatus(taskId) {
-    return await this.callAppBackend(`/api/workflow/status/${taskId}`);
+    return await this.callAppBackend(`/api/v1/executions/${taskId}`);
   },
 
   /**
@@ -483,7 +566,7 @@ export const api = {
    * @returns {Promise<object>} Workflows list
    */
   async listWorkflows(userId) {
-    return await this.callAppBackend(`/api/workflows?user_id=${userId}`);
+    return await this.callAppBackend(`/api/v1/workflows?user_id=${userId}`);
   },
 
   /**
@@ -494,7 +577,7 @@ export const api = {
    * @returns {Promise<object>} Workflow detail
    */
   async getWorkflowDetail(workflowId, userId) {
-    return await this.callAppBackend(`/api/workflows/${workflowId}?user_id=${userId}`);
+    return await this.callAppBackend(`/api/v1/workflows/${workflowId}?user_id=${userId}`);
   },
 
   /**
@@ -504,7 +587,7 @@ export const api = {
    * @returns {Promise<object>} Dashboard data
    */
   async getDashboard(userId) {
-    return await this.callAppBackend(`/api/dashboard?user_id=${userId}`);
+    return await this.callAppBackend(`/api/v1/dashboard?user_id=${userId}`);
   },
 
   /**
@@ -515,12 +598,40 @@ export const api = {
    * @returns {Promise<object>} Analysis result
    */
   async analyzeRecording(sessionId, userId) {
-    return await this.callAppBackend('/api/recording/analyze', {
+    return await this.callAppBackend(`/api/v1/recordings/${sessionId}/analyze`, {
       method: 'POST',
       body: JSON.stringify({
-        session_id: sessionId,
         user_id: userId
       })
     });
+  },
+
+  /**
+   * List workflow execution history for a specific workflow
+   *
+   * @param {string} workflowId - Workflow ID
+   * @param {string} userId - User ID
+   * @param {number} limit - Max results (default 100)
+   * @param {string} status - Filter by status (optional)
+   * @returns {Promise<object>} Execution history list
+   */
+  async listWorkflowHistory(workflowId, userId, limit = 100, status = null) {
+    let url = `/api/v1/workflows/${workflowId}/history?user_id=${userId}&limit=${limit}`;
+    if (status) {
+      url += `&status=${status}`;
+    }
+    return await this.callAppBackend(url);
+  },
+
+  /**
+   * Get execution detail with logs for a specific workflow run
+   *
+   * @param {string} workflowId - Workflow ID
+   * @param {string} runId - Execution run ID
+   * @param {string} userId - User ID
+   * @returns {Promise<object>} Execution detail with logs
+   */
+  async getWorkflowRunDetail(workflowId, runId, userId) {
+    return await this.callAppBackend(`/api/v1/workflows/${workflowId}/history/${runId}?user_id=${userId}`);
   }
 };

@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import Icon from '../components/Icons'
+import { api } from '../utils/api'
 import '../styles/ScraperOptimizationPage.css'
-
-const API_BASE = "http://127.0.0.1:8765"
 
 function ScraperOptimizationPage({ session, pageParams, onNavigate, showStatus }) {
   const { userId, workflowId, stepId, workflowName, stepName } = pageParams || {}
@@ -39,23 +38,14 @@ function ScraperOptimizationPage({ session, pageParams, onNavigate, showStatus }
     setError(null)
 
     try {
-      const response = await fetch(`${API_BASE}/api/scraper-optimization/load-workspace`, {
+      const data = await api.callAppBackend('/api/v1/agents/scraper-optimizer/workspace', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
         body: JSON.stringify({
           user_id: userId,
           workflow_id: workflowId,
           step_id: stepId
         })
       })
-
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`)
-      }
-
-      const data = await response.json()
 
       if (!data.success) {
         throw new Error(data.error || 'Failed to load workspace')
@@ -97,12 +87,8 @@ Just mention the URL you want to optimize, and I'll use the cached DOM data to h
     setIsSending(true)
 
     try {
-      const response = await fetch(`${API_BASE}/api/scraper-optimization/chat`, {
+      const data = await api.callAppBackend('/api/v1/agents/scraper-optimizer/chat', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Ami-API-Key': session?.apiKey  // Add user's API key
-        },
         body: JSON.stringify({
           user_id: userId,
           workflow_id: workflowId,
@@ -111,12 +97,6 @@ Just mention the URL you want to optimize, and I'll use the cached DOM data to h
           conversation_history: updatedConversation
         })
       })
-
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`)
-      }
-
-      const data = await response.json()
 
       if (!data.success) {
         throw new Error(data.error || 'Chat failed')
