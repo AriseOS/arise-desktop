@@ -11,6 +11,19 @@ import yaml
 from typing import Dict, Any, Optional
 from pathlib import Path
 
+# Fix Windows console encoding for Unicode characters (emoji etc.)
+if sys.platform == 'win32':
+    try:
+        import io
+        # Only wrap if not already wrapped and buffer is available
+        if hasattr(sys.stdout, 'buffer') and not isinstance(sys.stdout, io.TextIOWrapper):
+            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+        if hasattr(sys.stderr, 'buffer') and not isinstance(sys.stderr, io.TextIOWrapper):
+            sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+    except Exception:
+        # If wrapping fails, we'll handle encoding errors in print statements
+        pass
+
 
 class ConfigService:
     """Base Configuration Service for all backends"""
@@ -111,7 +124,7 @@ class ConfigService:
         try:
             with open(self.config_path, 'r', encoding='utf-8') as f:
                 self.config_data = yaml.safe_load(f) or {}
-            print(f"✅ Loaded config from: {self.config_path}")
+            print(f"[OK] Loaded config from: {self.config_path}")
 
             # Process configuration (expand variables, set defaults)
             self._process_config()
