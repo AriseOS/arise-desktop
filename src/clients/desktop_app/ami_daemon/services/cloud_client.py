@@ -10,7 +10,7 @@ class CloudClient:
     """Client for calling Cloud Backend APIs
 
     Note: All Cloud Backend APIs are sync (no timeout limit)
-    MetaFlow and Workflow generation may take 30-60s
+    Workflow generation may take 30-60s
 
     Phase 4: Forwards X-Ami-API-Key header to Cloud Backend for API Proxy integration
     """
@@ -106,7 +106,7 @@ class CloudClient:
             user_id: User ID (default: "default_user")
 
         Returns:
-            Recording dict with metaflow_id if linked
+            Recording dict with workflow_id if linked
         """
         logger.info(f"Fetching recording {recording_id} from Cloud")
 
@@ -130,7 +130,7 @@ class CloudClient:
         Args:
             operations: List of operation dictionaries
             task_description: User's description of what they did
-            user_query: User's description of what they want to do (for MetaFlow generation)
+            user_query: User's description of what they want to do
             user_id: User ID (default: "default_user")
             recording_id: Optional recording ID (use App Backend's session_id to keep IDs in sync)
 
@@ -150,210 +150,6 @@ class CloudClient:
         )
         response.raise_for_status()
         return response.json()["recording_id"]
-
-    async def generate_metaflow(
-        self,
-        task_description: str,
-        user_query: Optional[str] = None,
-        user_id: str = "default_user"
-    ) -> Dict[str, Any]:
-        """Generate MetaFlow from user's Intent Memory Graph
-
-        Args:
-            task_description: User's description of what they did
-            user_query: User's description of what they want to do (for MetaFlow generation)
-            user_id: User ID (default: "default_user")
-
-        Returns:
-            dict: {
-                "metaflow_id": str,
-                "metaflow_yaml": str,
-                "task_description": str,
-                "status": str
-            }
-        """
-        logger.info(f"Generating MetaFlow for task: {task_description}")
-        if user_query:
-            logger.info(f"User query: {user_query}")
-
-        # Build request headers
-        headers = {}
-        if self.user_api_key:
-            headers["X-Ami-API-Key"] = self.user_api_key
-
-        response = await self.client.post(
-            f"/api/v1/metaflows/generate",
-            json={
-                "user_id": user_id,
-                "task_description": task_description,
-                "user_query": user_query
-            },
-            headers=headers
-        )
-        response.raise_for_status()
-        result = response.json()
-
-        logger.info(f"MetaFlow generated: {result.get('metaflow_id')}")
-        return result
-
-    async def generate_metaflow_from_recording(
-        self,
-        recording_id: str,
-        task_description: str,
-        user_query: Optional[str] = None,
-        user_id: str = "default_user"
-    ) -> Dict[str, Any]:
-        """Generate MetaFlow from a specific recording (using only that recording's intents)
-
-        Args:
-            recording_id: Recording ID
-            task_description: User's description of what they did
-            user_query: User's description of what they want to do (for MetaFlow generation)
-            user_id: User ID (default: "default_user")
-
-        Returns:
-            dict: {
-                "metaflow_id": str,
-                "metaflow_yaml": str,
-                "task_description": str,
-                "status": str
-            }
-        """
-        logger.info(f"Generating MetaFlow from recording: {recording_id}")
-        if user_query:
-            logger.info(f"User query: {user_query}")
-
-        # Build request headers
-        headers = {}
-        if self.user_api_key:
-            headers["X-Ami-API-Key"] = self.user_api_key
-
-        response = await self.client.post(
-            f"/api/v1/recordings/{recording_id}/generate-metaflow",
-            json={
-                "user_id": user_id,
-                "task_description": task_description,
-                "user_query": user_query
-            },
-            headers=headers
-        )
-        response.raise_for_status()
-        result = response.json()
-
-        logger.info(f"MetaFlow generated from recording: {result.get('metaflow_id')}")
-        return result
-
-    async def generate_workflow(
-        self,
-        metaflow_id: str,
-        user_id: str = "default_user"
-    ) -> Dict[str, Any]:
-        """Generate Workflow from MetaFlow
-
-        Args:
-            metaflow_id: MetaFlow ID
-            user_id: User ID (default: "default_user")
-
-        Returns:
-            dict: {
-                "workflow_name": str,
-                "workflow_yaml": str,
-                "status": str
-            }
-        """
-        logger.info(f"Generating Workflow from MetaFlow: {metaflow_id}")
-
-        # Build request headers
-        headers = {}
-        if self.user_api_key:
-            headers["X-Ami-API-Key"] = self.user_api_key
-
-        response = await self.client.post(
-            f"/api/v1/metaflows/{metaflow_id}/generate-workflow",
-            json={"user_id": user_id},
-            headers=headers
-        )
-        response.raise_for_status()
-        result = response.json()
-
-        logger.info(f"Workflow generated: {result.get('workflow_name')}")
-        return result
-
-    async def list_metaflows(
-        self,
-        user_id: str = "default_user"
-    ) -> List[Dict[str, Any]]:
-        """List all MetaFlows for user from Cloud Backend
-
-        Args:
-            user_id: User ID (default: "default_user")
-
-        Returns:
-            List of MetaFlow dicts
-        """
-        logger.info(f"Fetching MetaFlow list from Cloud for user: {user_id}")
-
-        try:
-            response = await self.client.get(
-                "/api/v1/metaflows",
-                params={"user_id": user_id}
-            )
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            logger.warning(f"Failed to fetch metaflows from Cloud: {e}")
-            return []
-
-    async def get_metaflow(
-        self,
-        metaflow_id: str,
-        user_id: str = "default_user"
-    ) -> Dict[str, Any]:
-        """Get MetaFlow detail from Cloud Backend
-
-        Args:
-            metaflow_id: MetaFlow ID
-            user_id: User ID (default: "default_user")
-
-        Returns:
-            MetaFlow dict with metaflow_yaml, user_query, etc.
-        """
-        logger.info(f"Fetching MetaFlow {metaflow_id} from Cloud")
-
-        response = await self.client.get(
-            f"/api/v1/metaflows/{metaflow_id}",
-            params={"user_id": user_id}
-        )
-        response.raise_for_status()
-        return response.json()
-
-    async def update_metaflow(
-        self,
-        metaflow_id: str,
-        metaflow_yaml: str,
-        user_id: str = "default_user"
-    ) -> Dict[str, Any]:
-        """Update MetaFlow YAML content
-
-        Args:
-            metaflow_id: MetaFlow ID
-            metaflow_yaml: New YAML content
-            user_id: User ID (default: "default_user")
-
-        Returns:
-            {"success": True}
-        """
-        logger.info(f"Updating MetaFlow {metaflow_id}")
-
-        response = await self.client.put(
-            f"/api/v1/metaflows/{metaflow_id}",
-            json={
-                "user_id": user_id,
-                "metaflow_yaml": metaflow_yaml
-            }
-        )
-        response.raise_for_status()
-        return response.json()
 
     async def update_workflow(
         self,
@@ -395,7 +191,7 @@ class CloudClient:
             user_id: User ID (default: "default_user")
 
         Returns:
-            Workflow dict with source_metaflow_id, source_recording_id, etc.
+            Workflow dict with source_recording_id, etc.
         """
         logger.info(f"Fetching Workflow {workflow_id} from Cloud")
 
@@ -551,11 +347,8 @@ class CloudClient:
         user_id: str,
         user_query: str,
         task_description: Optional[str] = None,
-        metaflow_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
-        current_metaflow_yaml: Optional[str] = None,
-        current_workflow_yaml: Optional[str] = None,
-        phase: Optional[str] = None
+        current_workflow_yaml: Optional[str] = None
     ) -> Dict[str, Any]:
         """Start a new Intent Builder Agent session
 
@@ -563,11 +356,8 @@ class CloudClient:
             user_id: User ID
             user_query: User's query/request
             task_description: Optional additional context
-            metaflow_id: Optional MetaFlow ID being modified
             workflow_id: Optional Workflow ID being modified
-            current_metaflow_yaml: Current MetaFlow content for context
             current_workflow_yaml: Current Workflow content for context
-            phase: 'metaflow' or 'workflow'
 
         Returns:
             dict: {"session_id": "..."}
@@ -588,11 +378,8 @@ class CloudClient:
                 "user_id": user_id,
                 "user_query": user_query,
                 "task_description": task_description,
-                "metaflow_id": metaflow_id,
                 "workflow_id": workflow_id,
-                "current_metaflow_yaml": current_metaflow_yaml,
-                "current_workflow_yaml": current_workflow_yaml,
-                "phase": phase
+                "current_workflow_yaml": current_workflow_yaml
             },
             headers=headers
         )

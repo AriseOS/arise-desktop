@@ -26,10 +26,6 @@ Desktop application backend daemon providing REST API for workflow execution, re
         │   └── {session_id}/
         │       └── operations.json
         │
-        ├── metaflows/
-        │   └── {metaflow_id}/
-        │       └── metaflow.yaml
-        │
         └── workflows/
             └── {workflow_id}/
                 ├── workflow.yaml       # Workflow definition
@@ -77,7 +73,6 @@ All endpoints use `/api/v1/` prefix and follow RESTful conventions.
 
 - **Browser**: `/api/v1/browser/*` - Browser lifecycle and window management
 - **Recordings**: `/api/v1/recordings/*` - Recording CRUD and analysis
-- **MetaFlows**: `/api/v1/metaflows/*` - MetaFlow CRUD and generation
 - **Workflows**: `/api/v1/workflows/*` - Workflow CRUD and execution
 - **Executions**: `/api/v1/executions/*` - Execution history, logs, feedback
 - **Data Collections**: `/api/v1/data/collections/*` - Scraped data management

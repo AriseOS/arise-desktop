@@ -151,36 +151,39 @@ function RecordingPage({ session, onNavigate, showStatus }) {
     }
   };
 
-  // Generate MetaFlow from recording
+  // Generate Workflow directly from recording (NEW v2 API - bypasses MetaFlow)
   const handleQuickGenerate = async () => {
     if (!sessionId) {
-      showStatus("没有可生成MetaFlow的录制", "error");
+      showStatus("没有可生成Workflow的录制", "error");
       return;
     }
 
     try {
       setQuickGenerating(true);
 
-      // Generate MetaFlow from recording
-      showStatus("正在生成MetaFlow...", "info");
+      // Generate Workflow directly (NEW v2 API)
+      showStatus("正在生成Workflow...", "info");
 
-      const metaflowResult = await api.generateMetaflowFromRecording(
-        sessionId,
-        recordDescription,
-        null, // user_query
-        userId
-      );
-      showStatus("MetaFlow生成成功！正在跳转预览...", "success");
+      const workflowResult = await api.generateWorkflowDirect({
+        userId: userId,
+        taskDescription: recordDescription,
+        recordingId: sessionId,
+        userQuery: null,
+        enableDialogue: true,
+        enableSemanticValidation: true
+      });
 
-      // Navigate to MetaFlow preview page (user will review and generate workflow from there)
+      showStatus("Workflow生成成功！正在跳转...", "success");
+
+      // Navigate to Workflow detail page directly
       setTimeout(() => {
-        onNavigate("metaflow-preview", {
-          metaflowId: metaflowResult.metaflow_id,
-          metaflowYaml: metaflowResult.metaflow_yaml
+        onNavigate("workflow-detail", {
+          workflowId: workflowResult.workflow_id,
+          sessionId: workflowResult.session_id  // For dialogue support
         });
       }, 500);
     } catch (error) {
-      console.error("Generate MetaFlow error:", error);
+      console.error("Generate Workflow error:", error);
       showStatus(`生成失败: ${error.message}`, "error");
     } finally {
       setQuickGenerating(false);

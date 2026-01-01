@@ -9,7 +9,7 @@ const APP_BACKEND_BASE = BACKEND_CONFIG.httpBase; // For EventSource (cannot use
 /**
  * Intent Builder Page - Lovable-style real-time AI assistant UI
  *
- * This page provides a conversational interface to modify MetaFlow/Workflow
+ * This page provides a conversational interface to modify Workflow
  * with real-time streaming updates showing:
  * - AI thinking process
  * - Tool calls (Read, Write, Edit)
@@ -338,7 +338,7 @@ function IntentBuilderPage({ session, onNavigate, showStatus, params = {} }) {
           {messages.length === 0 && !isStreaming && (
             <div className="empty-state">
               <h3><Icon icon="cpu" size={32} /> Intent Builder Assistant</h3>
-              <p>Describe what modifications you want to make to your MetaFlow or Workflow.</p>
+              <p>Describe what modifications you want to make to your Workflow.</p>
               <div className="example-prompts">
                 <p><strong>Example prompts:</strong></p>
                 <ul>

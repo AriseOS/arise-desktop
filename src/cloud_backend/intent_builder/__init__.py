@@ -1,29 +1,85 @@
 """
-Intent Builder - MetaFlow to Workflow Generator
+Intent Builder - Recording to Workflow Generator
 
-从用户意图（MetaFlow）生成可执行的 BaseAgent Workflow
+Generates executable BaseAgent Workflows from user recordings.
+
+Architecture:
+    Recording → IntentExtractor → WorkflowBuilder (Claude Agent + Skills) → Validator → Workflow
+
+Main entry points:
+- WorkflowService: Unified API for generation and dialogue
+- WorkflowBuilder: One-shot workflow generation
+- WorkflowBuilderSession: Interactive session with dialogue support
 """
 
-__version__ = "0.1.0"
+__version__ = "0.4.0"
 
+# Core types
 from .core.intent import Intent, generate_intent_id
 from .core.intent_memory_graph import IntentMemoryGraph, IntentStorageBackend
-from .core.metaflow import MetaFlow, MetaFlowNode, LoopNode, Operation
-# from .generators.workflow_generator import WorkflowGenerator  # TODO: Fix dependencies
+from .core.operation import Operation
 from .storage.in_memory_storage import InMemoryIntentStorage
 
+# New workflow generation (Claude Agent SDK based)
+from .agents import (
+    WorkflowBuilder,
+    WorkflowBuilderSession,
+    GenerationResult,
+    StreamEvent,
+    DialogueMessage,
+    SessionState,
+)
+
+# Validators
+from .validators import (
+    WorkflowValidator,
+    FullValidationResult,
+    RuleValidator,
+    ValidationResult,
+    SemanticValidator,
+    SemanticValidationResult,
+)
+
+# Service layer
+from .services import (
+    WorkflowService,
+    GenerationRequest,
+    GenerationResponse,
+    ChatRequest,
+    ChatResponse,
+    GenerationStatus,
+)
+
 __all__ = [
-    # Intent layer
+    # Core types
     "Intent",
     "generate_intent_id",
     "IntentMemoryGraph",
     "IntentStorageBackend",
     "InMemoryIntentStorage",
-    # MetaFlow layer
-    "MetaFlow",
-    "MetaFlowNode",
-    "LoopNode",
     "Operation",
-    # Generators
-    # "WorkflowGenerator",  # TODO: Fix dependencies
+
+    # Workflow generation
+    "WorkflowBuilder",
+    "WorkflowBuilderSession",
+    "GenerationResult",
+    "StreamEvent",
+    "DialogueMessage",
+    "SessionState",
+
+    # Validators
+    "WorkflowValidator",
+    "FullValidationResult",
+    "RuleValidator",
+    "ValidationResult",
+    "SemanticValidator",
+    "SemanticValidationResult",
+
+    # Service layer
+    "WorkflowService",
+    "GenerationRequest",
+    "GenerationResponse",
+    "ChatRequest",
+    "ChatResponse",
+    "GenerationStatus",
 ]

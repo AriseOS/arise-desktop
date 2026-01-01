@@ -1,0 +1,67 @@
+# Loki + Grafana Logging Stack for Ami Cloud Backend
+#
+# Usage:
+#   cd deploy/logging
+#   docker-compose up -d
+#
+# Access:
+#   - Grafana: http://localhost:3000 (admin/admin)
+#   - Loki: http://localhost:3100
+
+version: '3.8'
+
+services:
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: ami-loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki-config.yaml:/etc/loki/local-config.yaml
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    restart: unless-stopped
+    networks:
+      - logging
+
+  promtail:
+    image: grafana/promtail:2.9.0
+    container_name: ami-promtail
+    volumes:
+      - ./promtail-config.yaml:/etc/promtail/config.yaml
+      # Mount Cloud Backend logs directory (configured via .env)
+      - ${AMI_LOG_DIR}:/logs/cloud_backend:ro
+    command: -config.file=/etc/promtail/config.yaml
+    restart: unless-stopped
+    depends_on:
+      - loki
+    networks:
+      - logging
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: ami-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml
+      - ./grafana-dashboard-provider.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml
+      - ./grafana-dashboards:/var/lib/grafana/dashboards
+    restart: unless-stopped
+    depends_on:
+      - loki
+    networks:
+      - logging
+
+volumes:
+  loki_data:
+  grafana_data:
+
+networks:
+  logging:
+    driver: bridge

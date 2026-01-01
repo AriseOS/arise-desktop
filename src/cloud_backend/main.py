@@ -1,17 +1,18 @@
 """
-Ami Cloud Backend - 服务器端数据处理和 AI 分析中心
+Ami Cloud Backend - Server-side data processing and AI analysis center
 
-运行在服务器上，使用：
-- 服务器本地文件系统（/var/lib/ami/ 或 ~/ami-server/）
-- 本地 PostgreSQL 数据库
-- LLM API（Anthropic Claude / OpenAI GPT）
+Runs on server, using:
+- Server local filesystem (/var/lib/ami/ or ~/ami-server/)
+- Local PostgreSQL database
+- LLM API (Anthropic Claude / OpenAI GPT)
 
-职责：
-1. 用户管理（注册、登录、Token 管理）
-2. 录制数据处理（接收、存储到服务器文件系统）
-3. AI 分析（Intent 提取、MetaFlow 生成、Workflow 生成）
-4. Workflow 管理（存储到服务器文件系统、提供下载）
-5. 统计分析（执行上报、成功率分析）
+Responsibilities:
+1. User management (registration, login, token management)
+2. Recording data processing (receive, store to server filesystem)
+3. AI analysis (Intent extraction, direct Workflow generation using Claude Agent SDK)
+4. Workflow management (store to server filesystem, provide download)
+5. Workflow dialogue modification (WorkflowBuilderSession for conversational editing)
+6. Statistics (execution reporting, success rate analysis)
 """
 
 import uvicorn
@@ -20,6 +21,7 @@ import sys
 import uuid
 import asyncio
 import json
+from datetime import datetime
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Header, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,7 +42,7 @@ config_service = CloudConfigService()
 
 # Global service instances
 storage_service = None
-workflow_generation_service = None
+workflow_service = None  # New WorkflowService (replaces old WorkflowGenerationService)
 
 # Background task management
 cleanup_task = None
@@ -114,7 +116,7 @@ app.add_middleware(RequestContextMiddleware)
 @app.on_event("startup")
 async def startup_event():
     """Startup initialization"""
-    global storage_service, workflow_generation_service
+    global storage_service, workflow_service
 
     print("\n" + "="*80)
     print("☁️  Ami Cloud Backend Starting...")
@@ -123,7 +125,7 @@ async def startup_event():
 
     try:
         from services.storage_service import StorageService
-        from services.workflow_generation_service import WorkflowGenerationService
+        from src.cloud_backend.intent_builder.services import WorkflowService
 
         # 1. CORS already configured
         print(f"✅ CORS: {len(cors_origins)} allowed origins")
@@ -133,13 +135,12 @@ async def startup_event():
         storage_service = StorageService(base_path=str(storage_base_path))
         print(f"✅ Storage: {storage_service.base_path}")
 
-        # 3. Initialize Workflow Generation Service
-        llm_provider = config_service.get("llm.default_provider", "anthropic")
-        workflow_generation_service = WorkflowGenerationService(
-            llm_provider_name=llm_provider,
-            config_service=config_service
+        # 3. Initialize WorkflowService (new architecture using Claude Agent SDK + Skills)
+        workflow_service = WorkflowService(
+            config_service=config_service,
+            base_url=config_service.get("llm.proxy_url")
         )
-        print(f"✅ Workflow Generation ({llm_provider})")
+        print("✅ Workflow Service (Claude Agent SDK + Skills)")
 
         # 4. Setup structured logging
         log_level = config_service.get("logging.level", "INFO")
@@ -477,12 +478,19 @@ async def add_intents_to_user_graph_background(
         # Get user's Intent Graph file path
         graph_filepath = storage_service.get_user_intent_graph_path(user_id)
 
-        # Extract intents and add to graph (with task_description)
-        new_intents_count = await workflow_generation_service.add_intents_to_graph(
+        # Create a WorkflowService with user's API key for this request
+        from src.cloud_backend.intent_builder.services import WorkflowService
+        service = WorkflowService(
+            config_service=config_service,
+            api_key=user_api_key,
+            base_url=config_service.get("llm.proxy_url")
+        )
+
+        # Extract intents and add to graph
+        new_intents_count = await service.add_intents_to_graph(
             operations=operations,
-            graph_filepath=graph_filepath,
-            task_description=task_description,
-            user_api_key=user_api_key
+            graph_filepath=str(graph_filepath),
+            task_description=task_description
         )
 
         logger.info(f"✅ Background: Added {new_intents_count} intents from recording {recording_id}")
@@ -560,350 +568,6 @@ async def analyze_recording(data: dict, x_ami_api_key: Optional[str] = Header(No
         raise HTTPException(500, f"Analysis failed: {str(e)}")
 
 
-@app.post("/api/v1/metaflows/generate")
-async def generate_metaflow(
-    user_id: str,
-    data: dict,
-    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
-):
-    """
-    Generate MetaFlow from user's Intent Memory Graph
-
-    Headers:
-        X-Ami-API-Key: User's Ami API key (optional, for API Proxy)
-
-    Body:
-        {
-            "task_description": "Search coffee on Google"
-        }
-
-    Returns:
-        {
-            "metaflow_id": "metaflow_xxx",
-            "metaflow_yaml": "...",
-            "status": "success"
-        }
-    """
-    task_description = data.get("task_description")
-    user_query = data.get("user_query")
-
-    if not task_description:
-        raise HTTPException(400, "Missing task_description")
-
-    logger.info(f"🚀 [API] Generating MetaFlow for user {user_id}")
-    logger.info(f"📝 Task Description: {task_description}")
-    if user_query:
-        logger.info(f"🎯 User Query: {user_query}")
-    else:
-        logger.info(f"⚠️  No user_query provided")
-
-    if x_ami_api_key:
-        logger.info(f"🔑 Using API Proxy with user key: {x_ami_api_key[:10]}...")
-
-    try:
-        # Get user's Intent Graph file path
-        graph_filepath = storage_service.get_user_intent_graph_path(user_id)
-
-        # Check if graph exists
-        from pathlib import Path
-        if not Path(graph_filepath).exists():
-            raise HTTPException(404, f"User {user_id} has no Intent Graph yet. Please upload recordings first.")
-
-        # Generate MetaFlow from Intent Graph (use user_query if provided, otherwise fallback to task_description)
-        metaflow_yaml = await workflow_generation_service.generate_metaflow_from_graph_file(
-            graph_filepath=graph_filepath,
-            task_description=task_description,
-            user_query=user_query,
-            user_api_key=x_ami_api_key
-        )
-
-        # Generate metaflow_id
-        metaflow_id = f"metaflow_{uuid.uuid4().hex[:12]}"
-
-        # Save MetaFlow to server filesystem (from Intent Graph, no specific recording)
-        storage_service.save_metaflow(
-            user_id=user_id,
-            metaflow_id=metaflow_id,
-            metaflow_yaml=metaflow_yaml,
-            user_query=user_query or task_description,
-            recording_id=None,  # 从Intent Graph生成，没有特定的recording
-            source_type="from_intent_graph"
-        )
-
-        logger.info(f"✅ MetaFlow generated and saved: {metaflow_id}")
-
-        return {
-            "metaflow_id": metaflow_id,
-            "metaflow_yaml": metaflow_yaml,
-            "user_query": user_query or task_description,
-            "status": "success"
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ MetaFlow generation failed: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(500, f"MetaFlow generation failed: {str(e)}")
-
-
-@app.post("/api/v1/recordings/{recording_id}/generate-metaflow")
-async def generate_metaflow_from_recording(
-    recording_id: str,
-    data: dict,
-    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
-):
-    """
-    Generate MetaFlow from a specific recording (using only that recording's intents)
-
-    This endpoint generates MetaFlow using ONLY the intents extracted from this recording,
-    NOT from the user's global Intent Memory Graph. This is useful when the user wants
-    to create a workflow based on a specific demonstration.
-
-    Overwrite Mode (1 Recording → 1 MetaFlow):
-    - If recording already has a MetaFlow, it will be DELETED and replaced with a new one
-    - This implements the requirement: "1 Recording → 1 MetaFlow (Overwrite on Regeneration)"
-
-    Headers:
-        X-Ami-API-Key: User's Ami API key (optional, for API Proxy)
-
-    Body:
-        {
-            "user_id": "user123",
-            "task_description": "Search coffee on Google"
-        }
-
-    Returns:
-        {
-            "metaflow_id": "metaflow_xxx",
-            "metaflow_yaml": "...",
-            "status": "success",
-            "old_metaflow_id": "metaflow_old" (if overwrite happened)
-        }
-    """
-    user_id = data.get("user_id")
-    task_description = data.get("task_description")
-    user_query = data.get("user_query")
-
-    if not user_id:
-        raise HTTPException(400, "Missing user_id")
-    if not task_description:
-        raise HTTPException(400, "Missing task_description")
-
-    logger.info(f"🚀 [API] Generating MetaFlow from recording {recording_id}")
-    logger.info(f"👤 User: {user_id}")
-
-    if x_ami_api_key:
-        logger.info(f"🔑 Using API Proxy with user key: {x_ami_api_key[:10]}...")
-
-    try:
-        # Load recording data
-        recording_data = storage_service.get_recording(user_id, recording_id)
-        if not recording_data:
-            raise HTTPException(404, f"Recording not found: {recording_id}")
-
-        operations = recording_data.get("operations", [])
-        if not operations:
-            raise HTTPException(400, f"Recording {recording_id} has no operations")
-
-        # Check if recording already has a MetaFlow (for overwrite mode)
-        old_metaflow_id = recording_data.get("metaflow_id")
-        if old_metaflow_id:
-            logger.info(f"⚠️  Recording already has MetaFlow: {old_metaflow_id}")
-            logger.info(f"🗑️  Deleting old MetaFlow (overwrite mode)...")
-            storage_service.delete_metaflow(user_id, old_metaflow_id)
-            logger.info(f"✅ Old MetaFlow deleted: {old_metaflow_id}")
-        else:
-            logger.info(f"✨ First time generating MetaFlow for this recording")
-
-        # Try to get user_query from recording if not provided in request
-        if not user_query:
-            user_query = recording_data.get("user_query")
-            if user_query:
-                logger.info(f"📖 Using user_query from recording data")
-
-        logger.info(f"📹 Recording loaded: {len(operations)} operations")
-        logger.info(f"📝 Task Description: {task_description}")
-        if user_query:
-            logger.info(f"🎯 User Query: {user_query}")
-        else:
-            logger.info(f"⚠️  No user_query available")
-
-        # Generate MetaFlow from recording operations only (use user_query if available)
-        metaflow_yaml = await workflow_generation_service.generate_metaflow_from_recording(
-            operations=operations,
-            task_description=task_description,
-            user_query=user_query,
-            user_api_key=x_ami_api_key
-        )
-
-        # Generate new metaflow_id
-        metaflow_id = f"metaflow_{uuid.uuid4().hex[:12]}"
-
-        # Save MetaFlow to server filesystem with source recording info
-        storage_service.save_metaflow(
-            user_id=user_id,
-            metaflow_id=metaflow_id,
-            metaflow_yaml=metaflow_yaml,
-            user_query=user_query or task_description,
-            recording_id=recording_id,
-            source_type="from_recording"
-        )
-
-        # Establish Recording → MetaFlow relationship (update to new metaflow_id)
-        storage_service.update_recording_metaflow(user_id, recording_id, metaflow_id)
-
-        logger.info(f"✅ MetaFlow generated and saved: {metaflow_id}")
-        logger.info(f"✅ Recording {recording_id} linked to MetaFlow {metaflow_id}")
-
-        result = {
-            "metaflow_id": metaflow_id,
-            "metaflow_yaml": metaflow_yaml,
-            "user_query": user_query or task_description,
-            "source_recording_id": recording_id,
-            "source_type": "from_recording",
-            "status": "success"
-        }
-
-        # Include old_metaflow_id if overwrite happened
-        if old_metaflow_id:
-            result["old_metaflow_id"] = old_metaflow_id
-            result["message"] = "Old MetaFlow deleted, new one generated (overwrite mode)"
-            logger.info(f"📋 Overwrite completed: {old_metaflow_id} → {metaflow_id}")
-
-        return result
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ MetaFlow generation from recording failed: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(500, f"MetaFlow generation failed: {str(e)}")
-
-
-@app.post("/api/v1/metaflows/{metaflow_id}/generate-workflow")
-async def generate_workflow_from_metaflow(
-    metaflow_id: str,
-    data: dict,
-    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
-):
-    """
-    Generate Workflow YAML from MetaFlow
-
-    Note: MetaFlow modifications are now saved in real-time by Intent Builder Agent,
-    so this endpoint only needs to generate Workflow from the current MetaFlow.
-
-    Headers:
-        X-Ami-API-Key: User's Ami API key (optional, for API Proxy)
-
-    Body:
-        {
-            "user_id": "user123",
-            "session_id": "ib_xxx123"  // Optional: Agent session ID for cleanup
-        }
-
-    Returns:
-        {
-            "workflow_name": "workflow_xxx",
-            "status": "success"
-        }
-    """
-    user_id = data.get("user_id")
-    session_id = data.get("session_id")  # Optional: Agent session ID for cleanup
-
-    if not user_id:
-        raise HTTPException(400, "Missing user_id")
-
-    if x_ami_api_key:
-        logger.info(f"🔑 Using API Proxy with user key: {x_ami_api_key[:10]}...")
-
-    # Clean up Agent session directory if provided
-    if session_id:
-        logger.info(f"🗑️  Cleaning up Agent session: {session_id}")
-        working_dir = storage_service.get_user_intent_builder_path(user_id, session_id)
-
-        if working_dir.exists():
-            import shutil
-            try:
-                shutil.rmtree(working_dir)
-                logger.info(f"✅ Agent session directory cleaned up: {session_id}")
-            except Exception as e:
-                logger.warning(f"Failed to cleanup session directory: {e}")
-        else:
-            logger.info(f"⚠️  Session directory does not exist: {working_dir}")
-
-    # Load MetaFlow data (now updated if Agent modified it)
-    metaflow_data = storage_service.get_metaflow(user_id, metaflow_id)
-    if not metaflow_data:
-        raise HTTPException(404, f"MetaFlow not found: {metaflow_id}")
-
-    metaflow_yaml = metaflow_data.get("metaflow_yaml")
-    user_query = metaflow_data.get("user_query", "")
-
-    logger.info(f"🚀 [API] Generating Workflow from MetaFlow: {metaflow_id}")
-    logger.info(f"👤 User: {user_id}")
-    if user_query:
-        logger.info(f"🎯 User Query: {user_query}")
-
-    # Log the MetaFlow that will be used for Workflow generation
-    logger.info(f"📏 MetaFlow length for Workflow generation: {len(metaflow_yaml)} characters")
-    logger.info(f"📄 MetaFlow FULL CONTENT for Workflow generation:\n{metaflow_yaml}")
-
-    try:
-        # Generate Workflow from MetaFlow
-        logger.info(f"⚙️  Calling workflow_generation_service.generate_workflow_from_metaflow()...")
-        workflow_yaml = await workflow_generation_service.generate_workflow_from_metaflow(
-            metaflow_yaml=metaflow_yaml,
-            user_api_key=x_ami_api_key
-        )
-        logger.info(f"✅ Workflow generation completed, length: {len(workflow_yaml)} characters")
-
-        # Extract workflow_name from YAML
-        import yaml
-        workflow_dict = yaml.safe_load(workflow_yaml)
-        workflow_name = workflow_dict.get("name", f"workflow_{uuid.uuid4().hex[:12]}")
-
-        # Get source recording ID from metaflow metadata for reverse traceability
-        source_recording_id = metaflow_data.get("source_recording_id")
-        if source_recording_id:
-            logger.info(f"📋 Source recording for traceability: {source_recording_id}")
-
-        # Generate workflow_id
-        workflow_id = f"workflow_{uuid.uuid4().hex[:12]}"
-
-        # Save Workflow to server filesystem with source metaflow info
-        storage_service.save_workflow(
-            user_id=user_id,
-            workflow_id=workflow_id,
-            workflow_yaml=workflow_yaml,
-            workflow_name=workflow_name,
-            metaflow_id=metaflow_id,
-            source_recording_id=source_recording_id
-        )
-
-        # Establish MetaFlow → Workflow relationship
-        storage_service.update_metaflow_workflow(user_id, metaflow_id, workflow_id)
-
-        logger.info(f"✅ Workflow generated and saved: {workflow_id} ({workflow_name})")
-        logger.info(f"✅ MetaFlow {metaflow_id} linked to Workflow {workflow_id}")
-
-        return {
-            "workflow_id": workflow_id,
-            "workflow_name": workflow_name,
-            "workflow_yaml": workflow_yaml,
-            "source_metaflow_id": metaflow_id,  # 返回来源metaflow信息
-            "source_recording_id": source_recording_id,  # 返回原始recording信息
-            "status": "success"
-        }
-
-    except Exception as e:
-        logger.error(f"❌ Workflow generation failed: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(500, f"Workflow generation failed: {str(e)}")
-
 
 # ===== Recordings API (List/Detail) =====
 
@@ -952,87 +616,6 @@ async def get_recording(recording_id: str, user_id: str):
         raise HTTPException(404, f"Recording not found: {recording_id}")
 
     return recording
-
-
-# ===== MetaFlows API =====
-
-@app.get("/api/v1/metaflows")
-async def list_metaflows(user_id: str):
-    """
-    List all MetaFlows for user
-
-    Query:
-        user_id: User ID
-
-    Returns:
-        [{"metaflow_id": "...", "user_query": "...", "workflow_id": "...", "created_at": "..."}, ...]
-    """
-    if not user_id:
-        raise HTTPException(400, "Missing user_id")
-
-    metaflows = storage_service.list_metaflows(user_id)
-    return metaflows
-
-
-@app.get("/api/v1/metaflows/{metaflow_id}")
-async def get_metaflow(metaflow_id: str, user_id: str):
-    """
-    Get MetaFlow detail
-
-    Query:
-        user_id: User ID
-
-    Returns:
-        {
-            "metaflow_id": "...",
-            "metaflow_yaml": "...",
-            "user_query": "...",
-            "workflow_id": "...",
-            "created_at": "...",
-            "updated_at": "..."
-        }
-    """
-    if not user_id:
-        raise HTTPException(400, "Missing user_id")
-
-    metaflow = storage_service.get_metaflow(user_id, metaflow_id)
-    if not metaflow:
-        raise HTTPException(404, f"MetaFlow not found: {metaflow_id}")
-
-    return metaflow
-
-
-@app.put("/api/v1/metaflows/{metaflow_id}")
-async def update_metaflow(metaflow_id: str, data: dict):
-    """
-    Update MetaFlow YAML content
-
-    Body:
-        {
-            "user_id": "user123",
-            "metaflow_yaml": "..."
-        }
-
-    Returns:
-        {"success": true}
-    """
-    user_id = data.get("user_id")
-    metaflow_yaml = data.get("metaflow_yaml")
-
-    if not user_id:
-        raise HTTPException(400, "Missing user_id")
-    if not metaflow_yaml:
-        raise HTTPException(400, "Missing metaflow_yaml")
-
-    # Check if MetaFlow exists
-    existing = storage_service.get_metaflow(user_id, metaflow_id)
-    if not existing:
-        raise HTTPException(404, f"MetaFlow not found: {metaflow_id}")
-
-    storage_service.update_metaflow_yaml(user_id, metaflow_id, metaflow_yaml)
-    logger.info(f"MetaFlow updated via API: {metaflow_id}")
-
-    return {"success": True}
 
 
 # ===== Workflows API =====
@@ -1212,6 +795,611 @@ async def delete_workflow(workflow_id: str, user_id: str):
 
     logger.info(f"Workflow deleted from Cloud: {workflow_id}")
     return {"success": True, "message": "Workflow deleted"}
+
+
+# ===== NEW: Direct Workflow Generation API (v2) =====
+# These endpoints use the new WorkflowBuilder (Claude Agent SDK) architecture
+# They bypass the MetaFlow intermediate layer
+
+# Store active workflow builder sessions
+_workflow_sessions: dict = {}
+
+
+@app.post("/api/v1/workflows/generate")
+async def generate_workflow_direct(
+    data: dict,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """
+    Generate Workflow directly from Recording or Intent sequence (NEW v2 API)
+
+    This endpoint uses the new WorkflowBuilder architecture which:
+    - Bypasses the MetaFlow intermediate layer
+    - Uses Claude Agent SDK for generation
+    - Includes two-layer validation (rule + semantic)
+    - Supports follow-up dialogue for workflow modification
+
+    Headers:
+        X-Ami-API-Key: User's API key (required)
+
+    Body:
+        {
+            "user_id": "user123",
+            "task_description": "Extract product info from website",
+            "recording_id": "recording_xxx",           // Optional: generate from recording
+            "intent_sequence": [...],                  // Optional: provide Intent sequence directly
+            "enable_semantic_validation": true,        // Enable semantic validation (default: true)
+            "enable_dialogue": true                    // Keep session for follow-up dialogue (default: true)
+        }
+
+    Returns:
+        {
+            "workflow_id": "workflow_xxx",
+            "workflow_name": "extract-products",
+            "workflow_yaml": "...",
+            "session_id": "ws_xxx",                    // If enable_dialogue=true
+            "validation_result": {...},
+            "status": "success"
+        }
+    """
+    if not x_ami_api_key:
+        raise HTTPException(400, "Missing X-Ami-API-Key header")
+
+    user_id = data.get("user_id")
+    task_description = data.get("task_description")
+    recording_id = data.get("recording_id")
+    operations = data.get("operations")  # Direct operations from App Backend
+    source_recording_id = data.get("source_recording_id")  # For traceability
+    intent_sequence = data.get("intent_sequence")
+    enable_semantic_validation = data.get("enable_semantic_validation", True)
+    enable_dialogue = data.get("enable_dialogue", True)
+
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+    if not task_description:
+        raise HTTPException(400, "Missing task_description")
+
+    logger.info(f"🚀 [API v2] Generating Workflow directly for user {user_id}")
+    logger.info(f"📝 Task Description: {task_description}")
+
+    try:
+        # Import the new WorkflowService
+        from src.cloud_backend.intent_builder.services import (
+            WorkflowService,
+            GenerationRequest
+        )
+
+        # Get operations from:
+        # 1. Direct operations parameter (from App Backend proxy)
+        # 2. recording_id (from Cloud Backend storage)
+        if not intent_sequence:
+            # Try direct operations first (from App Backend)
+            if operations:
+                logger.info(f"📹 Using direct operations: {len(operations)} operations")
+                recording_id = source_recording_id  # Use source_recording_id for traceability
+            elif recording_id:
+                # Fallback to loading from Cloud Backend storage
+                recording_data = storage_service.get_recording(user_id, recording_id)
+                if not recording_data:
+                    raise HTTPException(404, f"Recording not found: {recording_id}")
+
+                operations = recording_data.get("operations", [])
+                if not operations:
+                    raise HTTPException(400, f"Recording {recording_id} has no operations")
+
+                logger.info(f"📹 Loaded recording from storage: {len(operations)} operations")
+
+            if operations:
+                # Extract intents from operations
+                from src.cloud_backend.intent_builder.extractors.intent_extractor import IntentExtractor
+                from src.common.llm import AnthropicProvider
+
+                llm = AnthropicProvider(
+                    api_key=x_ami_api_key,
+                    base_url=config_service.get("llm.proxy_url")
+                )
+                extractor = IntentExtractor(llm_provider=llm)
+
+                intents = await extractor.extract_intents(
+                    operations=operations,
+                    task_description=task_description,
+                    source_session_id=recording_id or source_recording_id
+                )
+                intent_sequence = [intent.to_dict() for intent in intents]
+                logger.info(f"✅ Extracted {len(intent_sequence)} intents")
+
+        if not intent_sequence:
+            raise HTTPException(400, "No intent_sequence, operations, or recording_id provided")
+
+        # Create WorkflowService and generate
+        service = WorkflowService(
+            config_service=config_service,
+            api_key=x_ami_api_key,
+            base_url=config_service.get("llm.proxy_url")
+        )
+
+        request = GenerationRequest(
+            recording_id=recording_id,
+            task_description=task_description,
+            intent_sequence=intent_sequence,
+            enable_semantic_validation=enable_semantic_validation
+        )
+
+        response = await service.generate(request, enable_dialogue=enable_dialogue)
+
+        if not response.success:
+            raise HTTPException(500, f"Workflow generation failed: {response.error}")
+
+        # Generate workflow_id and save
+        workflow_id = response.workflow_id or f"workflow_{uuid.uuid4().hex[:12]}"
+
+        # Extract workflow name from YAML
+        import yaml
+        workflow_dict = yaml.safe_load(response.workflow_yaml)
+        workflow_name = workflow_dict.get("metadata", {}).get("name", workflow_id)
+
+        # Save workflow to storage
+        storage_service.save_workflow(
+            user_id=user_id,
+            workflow_id=workflow_id,
+            workflow_yaml=response.workflow_yaml,
+            workflow_name=workflow_name,
+            source_recording_id=recording_id
+        )
+
+        # Link recording to workflow (reverse link)
+        if recording_id:
+            try:
+                storage_service.update_recording_workflow(user_id, recording_id, workflow_id)
+                logger.info(f"✅ Recording {recording_id} linked to Workflow {workflow_id}")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to link recording to workflow: {e}")
+
+        logger.info(f"✅ Workflow generated and saved: {workflow_id}")
+
+        result = {
+            "workflow_id": workflow_id,
+            "workflow_name": workflow_name,
+            "workflow_yaml": response.workflow_yaml,
+            "source_recording_id": recording_id,
+            "status": "success"
+        }
+
+        if response.session_id:
+            result["session_id"] = response.session_id
+            # Store session reference for later dialogue
+            _workflow_sessions[response.session_id] = {
+                "service": service,
+                "user_id": user_id,
+                "workflow_id": workflow_id,
+                "created_at": asyncio.get_event_loop().time()
+            }
+
+        if response.validation_result:
+            result["validation_result"] = response.validation_result.to_dict()
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Workflow generation failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Workflow generation failed: {str(e)}")
+
+
+@app.post("/api/v1/workflows/generate-stream")
+async def generate_workflow_stream(
+    data: dict,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """
+    Generate Workflow with streaming progress updates (SSE)
+
+    Same as POST /api/v1/workflows/generate but returns SSE stream
+    for Lovable-style progress display.
+
+    Returns SSE stream with events:
+        data: {"status": "analyzing", "progress": 10, "message": "分析录制内容..."}
+        data: {"status": "understanding", "progress": 30, "message": "理解用户意图..."}
+        data: {"status": "generating", "progress": 60, "message": "生成 Workflow 步骤..."}
+        data: {"status": "validating", "progress": 90, "message": "校验 Workflow..."}
+        data: {"status": "completed", "progress": 100, "workflow_id": "xxx", "workflow": {...}}
+    """
+    if not x_ami_api_key:
+        raise HTTPException(400, "Missing X-Ami-API-Key header")
+
+    user_id = data.get("user_id")
+    task_description = data.get("task_description")
+    user_query = data.get("user_query")  # User's goal/intent (e.g., "repeat for 10 items")
+    recording_id = data.get("recording_id")
+    operations = data.get("operations")  # Direct operations from App Backend
+    source_recording_id = data.get("source_recording_id")  # For traceability
+    intent_sequence = data.get("intent_sequence")
+    enable_semantic_validation = data.get("enable_semantic_validation", True)
+
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+    if not task_description:
+        raise HTTPException(400, "Missing task_description")
+
+    # Log user_query if provided
+    if user_query:
+        logger.info(f"📝 [Stream] User query: {user_query}")
+
+    async def event_generator():
+        try:
+            logger.info(f"🚀 [Stream] Starting workflow generation for user {user_id}")
+
+            # Import the new WorkflowService
+            from src.cloud_backend.intent_builder.services import (
+                WorkflowService,
+                GenerationRequest,
+                GenerationStatus
+            )
+
+            # Initial progress
+            yield f"data: {json.dumps({'status': 'pending', 'progress': 0, 'message': 'Starting...'})}\n\n"
+
+            # Get intent sequence or operations
+            local_intent_sequence = intent_sequence
+            local_operations = operations
+            local_recording_id = recording_id or source_recording_id
+
+            # If we have direct operations from App Backend, use them
+            if not local_intent_sequence and local_operations:
+                yield f"data: {json.dumps({'status': 'analyzing', 'progress': 10, 'message': f'Processing {len(local_operations)} operations...'})}\n\n"
+
+            # If no operations yet, try to load from recording
+            elif not local_intent_sequence and recording_id:
+                yield f"data: {json.dumps({'status': 'analyzing', 'progress': 10, 'message': 'Loading recording...'})}\n\n"
+
+                recording_data = storage_service.get_recording(user_id, recording_id)
+                if not recording_data:
+                    yield f"data: {json.dumps({'status': 'failed', 'progress': 0, 'message': 'Recording not found'})}\n\n"
+                    return
+
+                local_operations = recording_data.get("operations", [])
+
+            # Extract intents from operations if we have them
+            if local_operations and not local_intent_sequence:
+                yield f"data: {json.dumps({'status': 'analyzing', 'progress': 20, 'message': f'Extracting intents from {len(local_operations)} operations...'})}\n\n"
+
+                from src.cloud_backend.intent_builder.extractors.intent_extractor import IntentExtractor
+                from src.common.llm import AnthropicProvider
+
+                llm = AnthropicProvider(
+                    api_key=x_ami_api_key,
+                    base_url=config_service.get("llm.proxy_url")
+                )
+                extractor = IntentExtractor(llm_provider=llm)
+
+                intents = await extractor.extract_intents(
+                    operations=local_operations,
+                    task_description=task_description,
+                    source_session_id=local_recording_id,
+                    user_query=user_query
+                )
+                local_intent_sequence = [intent.to_dict() for intent in intents]
+
+                yield f"data: {json.dumps({'status': 'understanding', 'progress': 30, 'message': f'Extracted {len(local_intent_sequence)} intents'})}\n\n"
+
+            if not local_intent_sequence:
+                yield f"data: {json.dumps({'status': 'failed', 'progress': 0, 'message': 'No intent sequence'})}\n\n"
+                return
+
+            # Create service and generate with streaming
+            service = WorkflowService(
+                config_service=config_service,
+                api_key=x_ami_api_key,
+                base_url=config_service.get("llm.proxy_url")
+            )
+
+            request = GenerationRequest(
+                recording_id=local_recording_id,
+                task_description=task_description,
+                user_query=user_query,
+                intent_sequence=local_intent_sequence,
+                enable_semantic_validation=enable_semantic_validation
+            )
+
+            # Stream progress and track session_id
+            logger.info(f"📊 [Stream] Starting to stream progress...")
+            session_id = None
+            final_status = None
+            final_message = None
+
+            async for progress in service.generate_stream(request):
+                event_data = {
+                    "status": progress.status.value,
+                    "progress": progress.progress,
+                    "message": progress.message
+                }
+                if progress.details:
+                    event_data["details"] = progress.details
+
+                # Track final status for result retrieval
+                final_status = progress.status.value
+                final_message = progress.message
+
+                # Extract session_id from COMPLETED event details
+                if progress.status.value == "completed" and progress.details:
+                    # Details format: "Session ID: xxx"
+                    if progress.details.startswith("Session ID: "):
+                        session_id = progress.details.replace("Session ID: ", "")
+
+                logger.info(f"📊 [Stream] Progress: {progress.status.value} - {progress.progress}%")
+                yield f"data: {json.dumps(event_data)}\n\n"
+
+            # Get final result from cached stream result (instead of calling generate() again)
+            logger.info(f"🔧 [Stream] Getting cached result for session: {session_id}")
+
+            # If we got a session_id from COMPLETED, retrieve the cached result
+            if session_id:
+                response = service.pop_stream_result(session_id)
+                if response:
+                    logger.info(f"🔧 [Stream] Retrieved cached response: success={response.success}")
+                else:
+                    logger.warning(f"⚠️ [Stream] No cached result for session {session_id}")
+                    response = None
+            else:
+                # No session_id means generation failed during streaming
+                logger.info(f"🔧 [Stream] No session_id, final status was: {final_status}")
+                response = None
+
+            # Handle case where we don't have a cached result
+            if response is None:
+                if final_status == "failed":
+                    logger.error(f"❌ [Stream] Generation failed: {final_message}")
+                    # Already yielded FAILED event during streaming, just return
+                    return
+                else:
+                    logger.error(f"❌ [Stream] Unexpected: No cached result and status was {final_status}")
+                    yield f"data: {json.dumps({'status': 'failed', 'progress': 0, 'message': 'Internal error: no generation result'})}\n\n"
+                    return
+
+            if response.success:
+                # Save workflow
+                workflow_id = f"workflow_{uuid.uuid4().hex[:12]}"
+                import yaml
+                workflow_dict = yaml.safe_load(response.workflow_yaml)
+                workflow_name = workflow_dict.get("metadata", {}).get("name", workflow_id)
+
+                logger.info(f"✅ [Stream] Saving workflow: {workflow_id} - {workflow_name} for user: {user_id}")
+                storage_service.save_workflow(
+                    user_id=user_id,
+                    workflow_id=workflow_id,
+                    workflow_yaml=response.workflow_yaml,
+                    workflow_name=workflow_name,
+                    source_recording_id=local_recording_id
+                )
+                logger.info(f"✅ [Stream] Workflow saved to disk")
+
+                # Link recording to workflow (reverse link)
+                if local_recording_id:
+                    try:
+                        storage_service.update_recording_workflow(user_id, local_recording_id, workflow_id)
+                        logger.info(f"✅ [Stream] Recording {local_recording_id} linked to Workflow {workflow_id}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ [Stream] Failed to link recording to workflow: {e}")
+
+                logger.info(f"✅ [Stream] Workflow saved successfully, sending completion event")
+                yield f"data: {json.dumps({'status': 'completed', 'progress': 100, 'workflow_id': workflow_id, 'workflow_name': workflow_name, 'message': 'Workflow generated successfully'})}\n\n"
+            else:
+                logger.error(f"❌ [Stream] Generation failed: {response.error}")
+                yield f"data: {json.dumps({'status': 'failed', 'progress': 0, 'message': response.error})}\n\n"
+
+        except Exception as e:
+            logger.error(f"❌ [Stream] Exception: {e}")
+            import traceback
+            traceback.print_exc()
+            yield f"data: {json.dumps({'status': 'failed', 'progress': 0, 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+@app.post("/api/v1/workflow-sessions")
+async def create_workflow_session(
+    data: dict,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """
+    Create a dialogue session for modifying an existing Workflow.
+
+    Body:
+        {
+            "user_id": "user123",
+            "workflow_id": "workflow_abc123",
+            "workflow_yaml": "apiVersion: v1\\nkind: Workflow\\n..."
+        }
+
+    Returns:
+        {
+            "session_id": "session_xyz789",
+            "success": true
+        }
+    """
+    if not x_ami_api_key:
+        raise HTTPException(400, "Missing X-Ami-API-Key header")
+
+    user_id = data.get("user_id")
+    workflow_id = data.get("workflow_id")
+    workflow_yaml = data.get("workflow_yaml")
+
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+    if not workflow_id:
+        raise HTTPException(400, "Missing workflow_id")
+    if not workflow_yaml:
+        raise HTTPException(400, "Missing workflow_yaml")
+
+    try:
+        from src.cloud_backend.intent_builder.agents.workflow_builder import WorkflowModificationSession
+        import uuid
+
+        session_id = str(uuid.uuid4())
+
+        # Create WorkflowModificationSession
+        session = WorkflowModificationSession(
+            workflow_yaml=workflow_yaml,
+            config_service=config_service,
+            api_key=x_ami_api_key,
+            base_url=config_service.get("llm.proxy_url"),
+            session_id=session_id
+        )
+
+        # Connect the session
+        await session._connect()
+
+        # Store session reference
+        _workflow_sessions[session_id] = {
+            "session": session,
+            "user_id": user_id,
+            "workflow_id": workflow_id,
+            "created_at": datetime.now().isoformat()
+        }
+
+        logger.info(f"✅ Workflow modification session created: {session_id}")
+
+        return {
+            "session_id": session_id,
+            "success": True
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Failed to create workflow session: {e}")
+        raise HTTPException(500, f"Failed to create session: {str(e)}")
+
+
+@app.post("/api/v1/workflow-sessions/{session_id}/chat")
+async def workflow_session_chat(
+    session_id: str,
+    data: dict,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """
+    Chat with a workflow modification session (SSE stream).
+
+    Body:
+        {"message": "把第3步改成抓取更多字段"}
+
+    Returns SSE stream with events:
+        data: {"type": "text", "content": "..."}
+        data: {"type": "workflow_updated", "workflow_yaml": "..."}
+        data: {"type": "complete", "message": "...", "workflow_yaml": "..."}
+    """
+    logger.info(f"🔄 [chat endpoint] Received chat request for session {session_id}")
+
+    if session_id not in _workflow_sessions:
+        logger.error(f"❌ [chat endpoint] Session not found: {session_id}")
+        raise HTTPException(404, f"Session not found: {session_id}")
+
+    message = data.get("message")
+    if not message:
+        raise HTTPException(400, "Missing message")
+
+    logger.info(f"📝 [chat endpoint] Message: {message[:100]}...")
+
+    session_data = _workflow_sessions[session_id]
+    session = session_data["session"]
+    user_id = session_data["user_id"]
+    workflow_id = session_data["workflow_id"]
+
+    logger.info(f"📋 [chat endpoint] Found session, user={user_id}, workflow={workflow_id}")
+
+    async def event_generator():
+        logger.info(f"🚀 [event_generator] Starting to stream events...")
+        try:
+            workflow_updated = False
+            final_yaml = None
+            event_count = 0
+
+            logger.info(f"🔄 [event_generator] Calling session.chat_stream()...")
+            async for event in session.chat_stream(message):
+                event_count += 1
+                logger.info(f"📨 [event_generator] Received event #{event_count}: type={event.type}")
+
+                event_data = {
+                    "type": event.type,
+                    "message": event.message
+                }
+
+                if event.workflow_yaml:
+                    event_data["workflow_yaml"] = event.workflow_yaml
+                    final_yaml = event.workflow_yaml
+
+                if event.type == "workflow_updated":
+                    workflow_updated = True
+
+                sse_data = f"data: {json.dumps(event_data)}\n\n"
+                logger.info(f"📤 [event_generator] Yielding SSE: {sse_data[:100]}...")
+                yield sse_data
+
+            logger.info(f"✅ [event_generator] Stream complete, {event_count} events sent")
+
+            # If workflow was updated, save it
+            if workflow_updated and final_yaml:
+                try:
+                    storage_service.update_workflow_yaml(
+                        user_id=user_id,
+                        workflow_id=workflow_id,
+                        workflow_yaml=final_yaml
+                    )
+                    logger.info(f"✅ Workflow updated via dialogue: {workflow_id}")
+                except Exception as e:
+                    logger.error(f"Failed to save updated workflow: {e}")
+
+        except Exception as e:
+            logger.error(f"❌ Workflow chat stream error: {e}")
+            import traceback
+            traceback.print_exc()
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    logger.info(f"📤 [chat endpoint] Returning StreamingResponse...")
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+@app.delete("/api/v1/workflow-sessions/{session_id}")
+async def close_workflow_session(
+    session_id: str,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """
+    Close a workflow modification session.
+    """
+    if session_id not in _workflow_sessions:
+        raise HTTPException(404, f"Session not found: {session_id}")
+
+    session_data = _workflow_sessions[session_id]
+    session = session_data["session"]
+
+    try:
+        await session._disconnect()
+    except Exception as e:
+        logger.warning(f"Error disconnecting session: {e}")
+
+    del _workflow_sessions[session_id]
+    logger.info(f"✅ Workflow session closed: {session_id}")
+
+    return {"success": True}
+
 
 # ===== Executions API =====
 
@@ -1410,7 +1598,7 @@ _agent_sessions: dict = {}
 @app.post("/api/v1/intent-builder/sessions")
 async def start_intent_builder_session(data: dict, x_ami_api_key: Optional[str] = Header(None)):
     """
-    Start a new Intent Builder Agent session
+    Start a new Intent Builder Agent session for Workflow modification
 
     Body:
         {
@@ -1419,11 +1607,8 @@ async def start_intent_builder_session(data: dict, x_ami_api_key: Optional[str] 
             "task_description": "Optional additional context",
             "user_operations_path": "Optional path to operations JSON",
             "intent_graph_path": "Optional path to intent graph",
-            "metaflow_id": "Optional MetaFlow ID being modified",
             "workflow_id": "Optional Workflow ID being modified",
-            "current_metaflow_yaml": "Optional current MetaFlow content",
-            "current_workflow_yaml": "Optional current Workflow content",
-            "phase": "metaflow or workflow"
+            "current_workflow_yaml": "Optional current Workflow content"
         }
 
     Headers:
@@ -1440,11 +1625,8 @@ async def start_intent_builder_session(data: dict, x_ami_api_key: Optional[str] 
     task_description = data.get("task_description")
     user_operations_path = data.get("user_operations_path")
     intent_graph_path = data.get("intent_graph_path")
-    metaflow_id = data.get("metaflow_id")  # For modification mode
     workflow_id = data.get("workflow_id")  # For modification mode
-    current_metaflow_yaml = data.get("current_metaflow_yaml")
     current_workflow_yaml = data.get("current_workflow_yaml")
-    phase = data.get("phase", "metaflow")
 
     if not user_id:
         raise HTTPException(400, "Missing user_id")
@@ -1457,14 +1639,11 @@ async def start_intent_builder_session(data: dict, x_ami_api_key: Optional[str] 
     # Get working directory for this session
     working_dir = storage_service.get_user_intent_builder_path(user_id, session_id)
 
-    # Save session metadata (metaflow_id, workflow_id, etc.) for Agent to use
+    # Save session metadata for Agent to use
     session_metadata = {
         "user_id": user_id,
-        "session_id": session_id,
-        "phase": phase
+        "session_id": session_id
     }
-    if metaflow_id:
-        session_metadata["metaflow_id"] = metaflow_id
     if workflow_id:
         session_metadata["workflow_id"] = workflow_id
 
@@ -1473,13 +1652,7 @@ async def start_intent_builder_session(data: dict, x_ami_api_key: Optional[str] 
         json.dump(session_metadata, f, indent=2)
     logger.info(f"Saved session metadata to {metadata_path}")
 
-    # Write current MetaFlow/Workflow to working directory so Agent can read them
-    if current_metaflow_yaml:
-        metaflow_path = working_dir / "metaflow.yaml"
-        with open(metaflow_path, 'w', encoding='utf-8') as f:
-            f.write(current_metaflow_yaml)
-        logger.info(f"Wrote current MetaFlow to {metaflow_path}")
-
+    # Write current Workflow to working directory so Agent can read it
     if current_workflow_yaml:
         workflow_path = working_dir / "workflow.yaml"
         with open(workflow_path, 'w', encoding='utf-8') as f:
@@ -1488,21 +1661,7 @@ async def start_intent_builder_session(data: dict, x_ami_api_key: Optional[str] 
 
     # Build enhanced query with context
     enhanced_query = user_query
-    if current_metaflow_yaml and phase == "metaflow":
-        enhanced_query = f"""You are modifying an existing MetaFlow.
-
-The current MetaFlow is saved at: {working_dir}/metaflow.yaml
-
-User's modification request: {user_query}
-
-Please:
-1. Read the current metaflow.yaml
-2. Understand its structure
-3. Make the requested modifications
-4. Write the updated metaflow.yaml
-5. Explain what you changed"""
-
-    elif current_workflow_yaml and phase == "workflow":
+    if current_workflow_yaml:
         enhanced_query = f"""You are modifying an existing Workflow.
 
 The current Workflow is saved at: {working_dir}/workflow.yaml
@@ -1527,20 +1686,16 @@ Please:
         config_service=config_service
     )
 
-    # Set agent phase
-    agent.phase = phase
-
     # Store session
     _agent_sessions[session_id] = {
         "agent": agent,
         "user_id": user_id,
         "user_query": enhanced_query,
         "task_description": task_description,
-        "phase": phase,
         "created_at": asyncio.get_event_loop().time()
     }
 
-    logger.info(f"Intent Builder session started: {session_id} for user {user_id}, phase: {phase}")
+    logger.info(f"Intent Builder session started: {session_id} for user {user_id}")
 
     return {"session_id": session_id}
 
@@ -1639,10 +1794,6 @@ async def get_intent_builder_state(session_id: str):
 
     Returns:
         {
-            "phase": "metaflow" or "workflow",
-            "metaflow_confirmed": bool,
-            "workflow_confirmed": bool,
-            "metaflow_path": "...",
             "workflow_path": "...",
             "message_count": int
         }

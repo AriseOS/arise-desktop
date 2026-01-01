@@ -7,18 +7,33 @@
     color: var(--text-primary);
 }
 
+/* Main Content Area */
 .record-content {
     flex: 1;
     display: flex;
     justify-content: center;
-    align-items: center;
+    align-items: flex-start;
+    /* Top align for split layout */
     padding: var(--spacing-xl);
     overflow-y: auto;
 }
 
-.record-form {
+/* Container for Split Layout */
+.record-container {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: var(--spacing-xl);
     width: 100%;
-    max-width: 600px;
+    max-width: 1000px;
+    /* Wider to accommodate both panels */
+}
+
+/* Left: Form Panel */
+.record-form {
+    flex: 1;
+    /* Take up remaining space */
+    min-width: 450px;
     background-color: var(--bg-secondary);
     border-radius: var(--radius-lg);
     padding: var(--spacing-2xl);
@@ -26,6 +41,94 @@
     display: flex;
     flex-direction: column;
     gap: var(--spacing-xl);
+}
+
+/* Right: Tips Panel */
+.record-tips-panel {
+    width: 380px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-lg);
+    animation: slideInRight 0.4s ease-out;
+}
+
+.tips-section {
+    background-color: var(--bg-secondary);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-lg);
+    border: 1px solid var(--border-color);
+}
+
+.tips-section h3 {
+    margin: 0 0 var(--spacing-md) 0;
+    font-size: var(--font-size-md);
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.tips-section ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.tips-list {
+    margin: 0;
+    padding-left: var(--spacing-lg);
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    line-height: 1.6;
+}
+
+.tips-list li {
+    margin-bottom: var(--spacing-sm);
+}
+
+.tips-list li:last-child {
+    margin-bottom: 0;
+}
+
+.tips-list strong {
+    color: var(--primary-color);
+    font-weight: 600;
+}
+
+/* Warning list style */
+.tips-list.warning li::marker {
+    color: var(--warning-color);
+}
+
+/* Info list style */
+.tips-list.info li::marker {
+    color: var(--primary-color);
+}
+
+@keyframes slideInRight {
+    from {
+        opacity: 0;
+        transform: translateX(20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes slideInRight {
+    from {
+        opacity: 0;
+        transform: translateX(20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
 }
 
 .form-section {

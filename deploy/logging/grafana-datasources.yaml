@@ -1,0 +1,20 @@
+# Grafana Data Sources Configuration
+#
+# Auto-provisions Loki as a data source
+
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    isDefault: true
+    editable: false
+    jsonData:
+      maxLines: 1000
+      derivedFields:
+        # Link request_id to traces (if using Tempo)
+        - name: request_id
+          matcherRegex: '"request_id":"([^"]+)"'
+          url: ''

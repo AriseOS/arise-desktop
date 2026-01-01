@@ -53,24 +53,10 @@ App Backend (ami_daemon) provides REST API for the desktop application, handling
 
 ---
 
-### MetaFlow
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/metaflows/generate` | Generate MetaFlow from intent |
-| POST | `/api/metaflows/from-recording` | Generate MetaFlow from recording |
-| GET | `/api/metaflows` | List MetaFlows |
-| GET | `/api/metaflows/{metaflow_id}` | Get MetaFlow detail |
-| PUT | `/api/metaflows/{metaflow_id}` | Update MetaFlow |
-
----
-
 ### Workflow
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/workflows/from-metaflow` | Generate Workflow from MetaFlow |
-| POST | `/api/workflows/generate` | Generate Workflow directly |
 | GET | `/api/workflows` | List workflows (cloud + local merged) |
 | GET | `/api/workflows/{workflow_id}/detail` | Get workflow detail |
 | PUT | `/api/workflows/{workflow_id}` | Update workflow |

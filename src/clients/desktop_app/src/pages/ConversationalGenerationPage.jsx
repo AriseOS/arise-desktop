@@ -36,36 +36,30 @@ function ConversationalGenerationPage({ session, onNavigate, showStatus }) {
     setIsGenerating(true);
 
     try {
-      let data;
+      // Generate Workflow directly (NEW v2 API - bypasses MetaFlow)
+      showStatus('Generating Workflow...', 'info');
 
-      // Choose API based on whether a recording is referenced
-      if (referencedRecording?.session_id) {
-        // Generate MetaFlow from recording
-        showStatus('Generating MetaFlow from recording...', 'info');
-        data = await api.generateMetaflowFromRecording(
-          referencedRecording.session_id,
-          description,
-          null,  // user_query
-          userId
-        );
-      } else {
-        // Generate MetaFlow from text description
-        showStatus('Generating MetaFlow from your description...', 'info');
-        data = await api.generateMetaflow(description, null, userId);
-      }
+      const data = await api.generateWorkflowDirect({
+        userId: userId,
+        taskDescription: description,
+        recordingId: referencedRecording?.session_id || null,
+        userQuery: null,
+        enableDialogue: true,
+        enableSemanticValidation: true
+      });
 
-      showStatus('MetaFlow generated! Please review.', 'success');
+      showStatus('Workflow generated! Redirecting...', 'success');
 
-      // Navigate to MetaFlow preview page
+      // Navigate to Workflow detail page directly
       setTimeout(() => {
-        onNavigate('metaflow-preview', {
-          metaflowId: data.metaflow_id,
-          metaflowYaml: data.metaflow_yaml
+        onNavigate('workflow-detail', {
+          workflowId: data.workflow_id,
+          sessionId: data.session_id  // For dialogue support
         });
       }, 500);
     } catch (error) {
-      console.error('Error generating MetaFlow:', error);
-      showStatus(`Failed to generate MetaFlow: ${error.message}`, 'error');
+      console.error('Error generating Workflow:', error);
+      showStatus(`Failed to generate Workflow: ${error.message}`, 'error');
     } finally {
       setIsGenerating(false);
     }

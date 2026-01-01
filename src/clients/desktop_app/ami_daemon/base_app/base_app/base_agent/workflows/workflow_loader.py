@@ -108,12 +108,18 @@ class WorkflowValidator:
         'steps': ['id', 'name', 'agent_type']
     }
     
+    # Agent-specific required fields at step level
+    # Note: text_agent requires 'instruction' inside inputs (not at step level)
+    # The actual check happens in _validate_steps where we check inputs.instruction
     AGENT_SPECIFIC_FIELDS = {
-        'code_agent': ['code'],
-        'text_agent': ['text'],
+        'code_agent': ['code'],  # code field at step level
+        'text_agent': [],  # instruction is inside inputs, checked separately
         'variable': [],  # Variable agent doesn't require specific fields
         'scraper_agent': [],  # Scraper agent doesn't require specific fields
-        'browser_agent': []  # Browser agent doesn't require specific fields
+        'browser_agent': [],  # Browser agent doesn't require specific fields
+        'storage_agent': [],  # Storage agent doesn't require specific fields
+        'tool_agent': [],  # Tool agent doesn't require specific fields
+        'autonomous_browser_agent': [],  # Autonomous browser agent
     }
     
     def validate(self, config: Dict[str, Any]) -> List[str]:
@@ -179,7 +185,12 @@ class WorkflowValidator:
             
             # 验证 agent_type
             agent_type = step.get('agent_type')
-            if agent_type not in ['text_agent', 'code_agent', 'variable', 'scraper_agent', 'browser_agent', 'storage_agent', 'if', 'while', 'foreach']:
+            valid_agent_types = [
+                'text_agent', 'code_agent', 'variable', 'scraper_agent',
+                'browser_agent', 'storage_agent', 'tool_agent',
+                'autonomous_browser_agent', 'if', 'while', 'foreach'
+            ]
+            if agent_type not in valid_agent_types:
                 errors.append(f"{step_prefix}: 不支持的 agent_type '{agent_type}'")
             
             # 验证控制流特定配置
@@ -199,6 +210,11 @@ class WorkflowValidator:
                     errors.append(f"{step_prefix}: foreach类型必须有source字段")
                 if 'steps' not in step:
                     errors.append(f"{step_prefix}: foreach类型必须有steps字段")
+            elif agent_type == 'text_agent':
+                # text_agent requires 'instruction' inside inputs
+                step_inputs = step.get('inputs', {})
+                if 'instruction' not in step_inputs:
+                    errors.append(f"{step_prefix}: text_agent 类型缺少 inputs.instruction 配置")
             elif agent_type in self.AGENT_SPECIFIC_FIELDS:
                 # 验证普通agent类型特定配置
                 required_fields = self.AGENT_SPECIFIC_FIELDS[agent_type]

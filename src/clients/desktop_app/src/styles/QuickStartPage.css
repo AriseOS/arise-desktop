@@ -179,9 +179,46 @@
    =================================== */
 
 .quick-start-container {
-  max-width: 800px;
+  max-width: 1000px;
   margin: 0 auto;
   padding: 30px 20px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.quick-start-container.split-layout .content-wrapper {
+  display: flex;
+  flex-direction: row;
+  gap: 30px;
+  margin-top: 20px;
+  align-items: flex-start;
+}
+
+/* Left Column: Input Card */
+.input-card {
+  flex: 1;
+  /* Takes available space */
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  padding: 40px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 350px;
+  /* Aligns visually with the tips panel */
+}
+
+/* Right Column: Tips Panel */
+.tips-panel {
+  width: 400px;
+  /* Fixed width for reading comfort */
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
 }
 
 .input-card {
@@ -189,8 +226,12 @@
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-xl);
   padding: 40px;
-  margin-bottom: 30px;
-  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  /* Center content */
+  height: 100%;
 }
 
 .card-header {
@@ -199,77 +240,51 @@
 }
 
 .card-header h2 {
-  font-size: 24px;
-  font-weight: 600;
+  font-size: 28px;
+  font-weight: 700;
+  /* Bolder title */
   color: var(--text-primary);
-  margin-bottom: 8px;
+  margin-bottom: 12px;
 }
 
 .card-header p {
-  font-size: 15px;
+  font-size: 16px;
   color: var(--text-secondary);
+  line-height: 1.5;
 }
 
-.form-group {
-  margin-bottom: 20px;
-}
-
-.form-group label {
-  display: block;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  margin-bottom: 6px;
-}
-
-.form-group textarea,
-.form-group input[type="url"] {
-  width: 100%;
-  background: var(--bg-app);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  padding: 12px;
-  color: var(--text-primary);
-  font-size: 14px;
-  font-family: inherit;
-  transition: border-color 0.2s;
-}
-
-.form-group textarea:focus,
-.form-group input[type="url"]:focus {
-  outline: none;
-  border-color: var(--primary-main);
-  box-shadow: 0 0 0 3px var(--color-primary-100);
-}
-
-.form-group textarea {
-  resize: vertical;
-  min-height: 100px;
+.recording-note {
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-tertiary);
+  font-size: 13px;
 }
 
 .start-recording-btn {
   width: 100%;
+  max-width: 320px;
+  /* Limit button width */
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 12px;
-  padding: 12px;
-  min-height: 48px;
+  padding: 16px 24px;
   background: var(--primary-main);
   color: white;
   border: none;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-full);
   font-size: 16px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
-  margin-top: 16px;
   box-shadow: var(--shadow-md);
 }
 
 .start-recording-btn:hover:not(:disabled) {
   background: var(--primary-hover);
-  transform: translateY(-1px);
+  transform: translateY(-2px);
   box-shadow: var(--shadow-lg);
 }
 
@@ -283,17 +298,118 @@
   font-size: 20px;
 }
 
+/* Browser Only Section */
+.browser-only-section {
+  width: 100%;
+  max-width: 320px;
+  margin-top: 16px;
+}
+
+.browser-only-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.browser-only-divider::before,
+.browser-only-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border-subtle);
+}
+
+.browser-only-divider span {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.open-browser-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 20px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.open-browser-btn:hover:not(:disabled) {
+  border-color: var(--primary-main);
+  color: var(--primary-main);
+  background: var(--color-primary-50);
+}
+
+.open-browser-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.browser-only-hint {
+  margin-top: 10px;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.browser-only-hint svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+/* Updated Tips Section Styling */
 .tips-section {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
-  padding: 25px;
+  padding: 24px;
+  box-shadow: var(--shadow-sm);
+}
+
+.tips-section.warning-section {
+  border-color: var(--status-warning-border, #f59e0b);
+  background: var(--status-warning-bg, #fffbeb);
+}
+
+/* Info list style with bullets */
+.tips-list.info li {
+  position: relative;
+  padding-left: 16px;
+}
+
+.tips-list.info li:before {
+  content: "•";
+  color: var(--primary-main);
+  font-weight: bold;
+  position: absolute;
+  left: 0;
 }
 
 .tips-section h3 {
   font-size: 16px;
+  font-weight: 600;
   color: var(--text-primary);
-  margin-bottom: 12px;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tips-section.warning-section h3 {
+  color: var(--status-warning-text, #92400e);
 }
 
 .tips-section ul {
@@ -306,14 +422,29 @@
   font-size: 14px;
   color: var(--text-secondary);
   line-height: 1.6;
-  padding-left: 20px;
-  position: relative;
-  margin-bottom: 8px;
+  padding-left: 0;
+  margin-bottom: 12px;
 }
 
-.tips-section li:before {
-  content: "•";
+.tips-section li:last-child {
+  margin-bottom: 0;
+}
+
+.tips-section li strong {
   color: var(--primary-main);
+  font-weight: 600;
+}
+
+/* Warnings specific styles */
+.tips-section.warning-section li {
+  color: var(--status-warning-text, #92400e);
+  position: relative;
+  padding-left: 16px;
+}
+
+.tips-section.warning-section li:before {
+  content: "•";
+  color: var(--status-warning-text, #92400e);
   font-weight: bold;
   position: absolute;
   left: 0;
@@ -364,10 +495,13 @@
 }
 
 @keyframes pulse {
-  0%, 100% {
+
+  0%,
+  100% {
     opacity: 1;
     transform: scale(1);
   }
+
   50% {
     opacity: 0.5;
     transform: scale(1.2);

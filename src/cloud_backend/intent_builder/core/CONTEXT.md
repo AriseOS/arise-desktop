@@ -8,13 +8,14 @@ Core data structures for the intent-based workflow generation system.
 |------|---------|
 | `intent.py` | Intent data structure - semantic abstraction of user operations |
 | `intent_memory_graph.py` | Graph storage for intents with temporal edges |
-| `metaflow.py` | MetaFlow intermediate representation (between Intent and Workflow) |
 | `operation.py` | Operation data structure - single user action |
 
 ## Data Flow
 
 ```
-User Operations → Intent → IntentMemoryGraph → MetaFlow → Workflow YAML
+User Operations → Intent → IntentMemoryGraph → Workflow YAML
+                                    ↓
+                          WorkflowBuilder (Claude Agent + Skills)
 ```
 
 ## Key Concepts
@@ -56,17 +57,3 @@ Graph of Intent nodes with temporal edges.
 - **Nodes**: Intent instances
 - **Edges**: Temporal ordering (not causal)
 - **Retrieval**: Semantic similarity via embeddings
-
-### MetaFlow
-Intermediate representation with control flow.
-
-```python
-class MetaFlow:
-    task_description: str
-    nodes: List[MetaFlowNode | LoopNode]
-```
-
-**Contains:**
-- Intent nodes with operations
-- Loop nodes (foreach over items)
-- Data flow (variable references)

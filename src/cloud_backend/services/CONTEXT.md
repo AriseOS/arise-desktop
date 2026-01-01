@@ -6,26 +6,17 @@ Business logic services for the cloud backend.
 
 | File | Purpose |
 |------|---------|
-| `learning_service.py` | Learning from user demonstrations |
 | `recording_analysis_service.py` | Analyzes browser recording sessions |
 | `storage_service.py` | Data persistence and retrieval |
-| `workflow_generation_service.py` | Orchestrates workflow generation pipeline |
 
-## WorkflowGenerationService
+## Architecture
 
-Main entry point for workflow generation. Orchestrates:
-1. Intent extraction from recordings
-2. IntentMemoryGraph construction
-3. MetaFlow generation
-4. Workflow YAML generation
+Workflow generation has moved to `intent_builder/services/WorkflowService`.
 
-```python
-service = WorkflowGenerationService(llm_provider)
-workflow = await service.generate_workflow(
-    recording_data=recording,
-    user_query="Collect all products"
-)
-```
+The new architecture uses:
+- Claude Agent SDK for workflow generation
+- Skills for specifications and optimization rules
+- No more MetaFlow intermediate layer
 
 ## RecordingAnalysisService
 
@@ -33,13 +24,6 @@ Processes browser recording sessions:
 - Parses operation sequences
 - Identifies task boundaries
 - Prepares data for intent extraction
-
-## LearningService
-
-Handles learning from user demonstrations:
-- Stores successful workflows
-- Updates IntentMemoryGraph with new intents
-- Manages intent deduplication (future)
 
 ## StorageService
 

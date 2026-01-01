@@ -48,3 +48,15 @@ Used by ScraperAgent, BrowserAgent, StorageAgent:
 - `scraper_agent.py` - Reference implementation of Plan-Generate-Execute
 - `browser_agent.py` - Intelligent DOM-based interaction
 - `storage_agent.py` - LLM-generated SQL for flexible storage
+
+## Skills Synchronization
+
+**IMPORTANT**: When modifying agent behavior (inputs, outputs, capabilities), update the corresponding Skills:
+
+| Agent | Skill to Update |
+|-------|-----------------|
+| `browser_agent.py` | `src/cloud_backend/intent_builder/.claude/skills/agent-specs/references/browser_agent.md` |
+| `scraper_agent.py` | `src/cloud_backend/intent_builder/.claude/skills/agent-specs/references/scraper_agent.md` |
+| `storage_agent.py` | `src/cloud_backend/intent_builder/.claude/skills/agent-specs/references/storage_agent.md` |
+
+Also update `docs/base_app/*_agent_spec.md` (source of truth for specs).

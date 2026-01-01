@@ -752,6 +752,21 @@ Each element in dom_data.json contains:
         try:
             logger.info(f"🎯 Executing intelligent interaction: {task}")
 
+            # Send log to frontend
+            if context and context.log_callback:
+                try:
+                    await context.log_callback(
+                        "info",
+                        f"🎯 Starting interaction: {task}",
+                        {
+                            "task": task,
+                            "xpath_hints": xpath_hints,
+                            "text": text[:50] if text else None
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send log callback: {e}")
+
             # Check if this is a simple scroll operation (doesn't need element finding)
             # vs scroll_to_element which needs Claude Agent to find element first
             task_lower = task.lower()
@@ -809,7 +824,8 @@ Each element in dom_data.json contains:
                 text=text,
                 dom_dict=dom_dict,
                 dom_llm=dom_llm,
-                selector_map=selector_map
+                selector_map=selector_map,
+                context=context
             )
 
             if result.get('success'):
@@ -900,7 +916,8 @@ Each element in dom_data.json contains:
         text: str,
         dom_dict: Dict,
         dom_llm: str,
-        selector_map: Dict = None
+        selector_map: Dict = None,
+        context: AgentContext = None
     ) -> Dict:
         """Generate operation script using Claude Agent SDK with file-based caching
 
@@ -917,6 +934,7 @@ Each element in dom_data.json contains:
             dom_dict: DOM dictionary
             dom_llm: LLM-friendly DOM representation (unused, Claude reads from file)
             selector_map: Maps interactive_index to EnhancedDOMTreeNode (for backend_node_id)
+            context: Agent context for log_callback
 
         Returns:
             Dict with operation info including interactive_index
@@ -956,6 +974,22 @@ Each element in dom_data.json contains:
                 logger.info(f"✅ Found cached script: {script_file}")
                 script_content = script_file.read_text(encoding='utf-8')
 
+                # Send cache hit log to frontend (like ScraperAgent)
+                if context and context.log_callback:
+                    try:
+                        await context.log_callback(
+                            "info",
+                            f"✅ Using cached element finder script ({len(script_content)} chars)",
+                            {
+                                "cache_path": str(script_file),
+                                "script_content": script_content,
+                                "content_type": "code",
+                                "language": "python"
+                            }
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send log callback: {e}")
+
                 # Update DOM for current page
                 (working_dir / "dom_data.json").write_text(
                     json.dumps(dom_dict, indent=2, ensure_ascii=False),
@@ -978,7 +1012,8 @@ Each element in dom_data.json contains:
                             op_result = await self._execute_element_operation(
                                 backend_node_id=backend_node_id,
                                 operation=operation,
-                                text=text
+                                text=text,
+                                context=context
                             )
                             if op_result.get('success'):
                                 logger.info(f"⏳ Waiting 5 seconds for observation...")
@@ -999,6 +1034,26 @@ Each element in dom_data.json contains:
 
                 # Cached script failed (find or execute), regenerate
                 logger.info(f"   Cached script didn't work, regenerating with Claude Agent...")
+                if context and context.log_callback:
+                    try:
+                        await context.log_callback(
+                            "warning",
+                            "⚠️ Cached script didn't work, regenerating with Claude Agent...",
+                            {"reason": "cache_miss_or_failed"}
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send log callback: {e}")
+            else:
+                # No cached script found
+                if context and context.log_callback:
+                    try:
+                        await context.log_callback(
+                            "info",
+                            "📝 No cached script found, generating new element finder script...",
+                            {"script_path": str(script_file)}
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send log callback: {e}")
 
             # 4. Generate new script with multi-round interaction
             logger.info(f"📝 Generating find_element.py with Claude Agent...")
@@ -1009,7 +1064,8 @@ Each element in dom_data.json contains:
                 operation=operation,
                 text=text,
                 selector_map=selector_map,
-                max_attempts=3
+                max_attempts=3,
+                context=context
             )
 
             return result
@@ -1083,7 +1139,8 @@ Each element in dom_data.json contains:
         operation: str,
         text: str,
         selector_map: Dict,
-        max_attempts: int = 3
+        max_attempts: int = 3,
+        context: AgentContext = None
     ) -> Dict:
         """Multi-round interaction: Claude Agent generates script, BrowserAgent executes, feedback loop
 
@@ -1101,6 +1158,7 @@ Each element in dom_data.json contains:
             text: Text for fill operation
             selector_map: Maps interactive_index to backend_node_id
             max_attempts: Maximum retry attempts
+            context: Agent context for log_callback
 
         Returns:
             Dict with success status and details
@@ -1119,7 +1177,8 @@ Each element in dom_data.json contains:
                     task=task,
                     operation=operation,
                     text=text,
-                    feedback=feedback
+                    feedback=feedback,
+                    context=context
                 )
 
                 if not claude_result.get('success'):
@@ -1168,7 +1227,8 @@ Each element in dom_data.json contains:
                 op_result = await self._execute_element_operation(
                     backend_node_id=backend_node_id,
                     operation=operation,
-                    text=text
+                    text=text,
+                    context=context
                 )
 
                 if op_result.get('success'):
@@ -1223,7 +1283,8 @@ Please analyze and fix find_element.py.
         task: str,
         operation: str,
         text: str,
-        feedback: str = ""
+        feedback: str = "",
+        context: AgentContext = None
     ) -> Dict:
         """Call Claude Agent SDK to generate/fix find_element.py for click/fill operations
 
@@ -1233,6 +1294,7 @@ Please analyze and fix find_element.py.
             operation: Operation type
             text: Text for fill operation
             feedback: Feedback from previous attempt (if any)
+            context: Agent context for log_callback
 
         Returns:
             Dict with success status
@@ -1279,8 +1341,26 @@ Start by reading task.json and dom_data.json to understand the requirements and 
                 base_url=base_url
             )
 
-            # Run Claude Agent SDK
+            # Run Claude Agent SDK with streaming
             logger.info(f"Starting Claude Agent for find_element.py...")
+
+            # Progress update ID for dynamic log updates (like ScraperAgent)
+            progress_update_id = f"browser_script_generation_{id(self)}_{task[:20]}"
+
+            # Send initial log to frontend
+            if context and context.log_callback:
+                try:
+                    await context.log_callback(
+                        "info",
+                        f"📝 Generating element finder script for: {task}",
+                        {
+                            "update_id": progress_update_id,
+                            "task": task,
+                            "operation": operation
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send log callback: {e}")
 
             task_completed = False
             task_error = None
@@ -1293,16 +1373,78 @@ Start by reading task.json and dom_data.json to understand the requirements and 
                 if event.turn:
                     final_turn = event.turn
 
+                # Forward streaming events to frontend (like ScraperAgent)
+                if context and context.log_callback:
+                    try:
+                        if event.type == "text":
+                            await context.log_callback(
+                                "info",
+                                f"🔍 Finding element (turn {event.turn})\n{event.content[:150]}...",
+                                {
+                                    "update_id": progress_update_id,
+                                    "turn": event.turn,
+                                    "message": event.content[:150]
+                                }
+                            )
+                        elif event.type == "tool_use":
+                            tool_desc = f"Using {event.tool_name} tool"
+                            await context.log_callback(
+                                "info",
+                                f"🔍 Finding element (turn {event.turn})\n{tool_desc}",
+                                {
+                                    "update_id": progress_update_id,
+                                    "turn": event.turn,
+                                    "message": tool_desc,
+                                    "tool_name": event.tool_name
+                                }
+                            )
+                        elif event.type == "complete":
+                            task_completed = True
+                            logger.info(f"Claude Agent completed in {final_turn} turns")
+                        elif event.type == "error":
+                            task_error = event.content
+                            logger.error(f"Claude Agent error: {event.content}")
+                    except Exception as e:
+                        logger.warning(f"Failed to forward streaming event: {e}")
+
                 if event.type == "text":
                     logger.debug(f"Claude (turn {event.turn}): {event.content[:80]}...")
                 elif event.type == "tool_use":
                     logger.debug(f"Claude using: {event.tool_name}")
                 elif event.type == "complete":
                     task_completed = True
-                    logger.info(f"Claude Agent completed in {final_turn} turns")
                 elif event.type == "error":
                     task_error = event.content
-                    logger.error(f"Claude Agent error: {event.content}")
+
+            # Send completion log with script content
+            if context and context.log_callback:
+                try:
+                    script_file = working_dir / "find_element.py"
+                    if script_file.exists():
+                        script_content = script_file.read_text(encoding='utf-8')
+                        # Update the dynamic progress log to show completion
+                        await context.log_callback(
+                            "success",
+                            f"✅ Element finder script generated ({final_turn} turns)",
+                            {
+                                "update_id": progress_update_id,
+                                "turn": final_turn,
+                                "completed": True
+                            }
+                        )
+                        # Send script content as code
+                        await context.log_callback(
+                            "success",
+                            f"📜 Generated find_element.py ({len(script_content)} chars)",
+                            {
+                                "script_content": script_content,
+                                "content_type": "code",
+                                "language": "python",
+                                "cache_path": str(script_file)
+                            }
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to send completion log: {e}")
 
             if task_error:
                 return {'success': False, 'error': task_error}
@@ -1371,7 +1513,8 @@ Start by reading task.json and dom_data.json to understand the requirements and 
         self,
         backend_node_id: int,
         operation: str,
-        text: str = ''
+        text: str = '',
+        context: AgentContext = None
     ) -> Dict:
         """Execute an operation on an element
 
@@ -1387,12 +1530,28 @@ Start by reading task.json and dom_data.json to understand the requirements and 
             backend_node_id: CDP backend node ID
             operation: Operation type ('click', 'fill', or 'scroll')
             text: Text for fill operation, or scroll direction for scroll ('up'/'down')
+            context: Agent context for log_callback
 
         Returns:
             Dict with success status
         """
         try:
             logger.info(f"🎯 Executing {operation} on element (backend_node_id={backend_node_id})")
+
+            # Send log to frontend
+            if context and context.log_callback:
+                try:
+                    await context.log_callback(
+                        "info",
+                        f"🎯 Executing {operation} operation...",
+                        {
+                            "operation": operation,
+                            "backend_node_id": backend_node_id,
+                            "text": text[:50] if text and operation == 'fill' else None
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send log callback: {e}")
 
             # Get session_id from current page's CDP session
             session_id = None
@@ -1446,8 +1605,30 @@ Start by reading task.json and dom_data.json to understand the requirements and 
             elif operation == 'fill':
                 await element.fill(text, clear=True)
                 logger.info(f"✅ Fill executed successfully with text: {text[:50]}...")
+
+                # Send success log to frontend
+                if context and context.log_callback:
+                    try:
+                        await context.log_callback(
+                            "success",
+                            f"✅ Fill operation completed: '{text[:30]}...'",
+                            {"operation": "fill", "text_length": len(text)}
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send log callback: {e}")
             else:
                 return {'success': False, 'error': f'Unknown operation: {operation}'}
+
+            # Send general success log for click operation
+            if operation == 'click' and context and context.log_callback:
+                try:
+                    await context.log_callback(
+                        "success",
+                        f"✅ Click operation completed",
+                        {"operation": "click", "backend_node_id": backend_node_id}
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send log callback: {e}")
 
             return {'success': True}
 
@@ -1455,6 +1636,18 @@ Start by reading task.json and dom_data.json to understand the requirements and 
             logger.error(f"Failed to execute element operation: {e}")
             import traceback
             traceback.print_exc()
+
+            # Send error log to frontend
+            if context and context.log_callback:
+                try:
+                    await context.log_callback(
+                        "error",
+                        f"❌ Operation failed: {str(e)[:100]}",
+                        {"operation": operation, "error": str(e)}
+                    )
+                except Exception as log_e:
+                    logger.warning(f"Failed to send error log callback: {log_e}")
+
             return {'success': False, 'error': str(e)}
 
     async def _read_clipboard_silent(self) -> str:

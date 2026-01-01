@@ -1,0 +1,380 @@
+/* Main Container */
+.workflow-generation-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  padding: 2rem;
+  background-color: var(--bg-app);
+  font-family: 'Inter', system-ui, sans-serif;
+  box-sizing: border-box;
+}
+
+/* Lovable Card - Unified Container */
+.lovable-card {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  max-width: 920px;
+  height: 580px;
+  background: #ffffff;
+  border-radius: 20px;
+  box-shadow:
+    0 20px 25px -5px rgba(0, 0, 0, 0.05),
+    0 8px 10px -6px rgba(0, 0, 0, 0.01),
+    0 0 0 1px rgba(0, 0, 0, 0.03);
+  overflow: hidden;
+}
+
+/* ================= Left Panel: Stages ================= */
+.stages-panel {
+  width: 320px;
+  flex-shrink: 0;
+  background: #ffffff;
+  padding: 2.5rem;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  z-index: 2;
+}
+
+/* Vertical separator line */
+.stages-panel::after {
+  content: '';
+  position: absolute;
+  top: 2rem;
+  bottom: 2rem;
+  right: 0;
+  width: 1px;
+  background: linear-gradient(to bottom, transparent, #f1f5f9 20%, #f1f5f9 80%, transparent);
+}
+
+.panel-header {
+  margin-bottom: 2.5rem;
+}
+
+.panel-header h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 0 0 0.5rem 0;
+  color: #1e293b;
+  letter-spacing: -0.02em;
+}
+
+.panel-header p {
+  font-size: 0.95rem;
+  color: #64748b;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.stages-list {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.stage-row {
+  display: flex;
+  align-items: flex-start;
+  min-height: 3.5rem;
+  position: relative;
+  opacity: 0.6;
+  transition: all 0.4s ease;
+}
+
+.stage-row.active {
+  opacity: 1;
+}
+
+.stage-row.completed {
+  opacity: 0.9;
+}
+
+.stage-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-right: 1.25rem;
+  width: 24px;
+}
+
+.indicator-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  background: #f1f5f9;
+  color: #94a3b8;
+}
+
+.indicator-dot.active {
+  background: #3b82f6;
+  color: #ffffff;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.15);
+}
+
+.indicator-dot.completed {
+  background: #10b981;
+  color: white;
+}
+
+.stage-connector {
+  width: 2px;
+  background: #f1f5f9;
+  flex: 1;
+  margin: 6px 0;
+  border-radius: 1px;
+}
+
+.stage-row.completed .stage-connector {
+  background: #10b981;
+}
+
+.stage-label {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.stage-row.active .stage-label {
+  color: #0f172a;
+  font-weight: 600;
+}
+
+/* Cancel Button */
+.cancel-section {
+  margin-top: auto;
+  padding-top: 1.5rem;
+}
+
+.cancel-btn {
+  width: 100%;
+  padding: 0.85rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #64748b;
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.cancel-btn:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+  border-color: #cbd5e1;
+}
+
+
+/* ================= Right Panel: Activity Log ================= */
+/* Unified Light Theme Activity Panel */
+.activity-panel {
+  flex: 1;
+  background: #f8fafc;
+  color: #334155;
+  padding: 2.5rem;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* Gradient Mask for fading out top/bottom */
+.log-stream {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding-right: 1rem;
+  margin-right: -1rem;
+
+  /* Clean scrollbar */
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+.log-stream::-webkit-scrollbar {
+  width: 4px;
+}
+
+.log-stream::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.log-stream::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+.activity-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2rem;
+}
+
+.activity-header h3 {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.live-badge {
+  font-size: 0.7rem;
+  background: #ecfdf5;
+  color: #10b981;
+  padding: 4px 10px;
+  border-radius: 100px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  animation: pulse 2s infinite;
+}
+
+.empty-log {
+  color: #94a3b8;
+  font-style: italic;
+  font-size: 0.95rem;
+  margin: auto;
+}
+
+/* Log Entries - Light Theme */
+.log-entry {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  gap: 1.25rem;
+  align-items: flex-start;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  animation: slideUpFade 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  opacity: 0;
+  transform: translateY(8px);
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+/* Log Colors & Icons */
+.log-icon-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.6rem;
+  margin-top: 1px;
+}
+
+.log-message {
+  color: #334155;
+  font-weight: 400;
+}
+
+.log-time {
+  color: #94a3b8;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  padding-top: 2px;
+}
+
+/* Specific Intent Colors - Subtle/Pastel backgrounds if needed, or just icon colors */
+/* We will just use Icon Colors to keep it clean */
+
+.log-entry.thinking .log-icon-wrapper {
+  color: #3b82f6;
+}
+
+.log-entry.thinking .log-message {
+  color: #1e293b;
+}
+
+.log-entry.analyzing .log-icon-wrapper {
+  color: #8b5cf6;
+}
+
+.log-entry.intent .log-icon-wrapper {
+  color: #f59e0b;
+}
+
+.log-entry.success .log-icon-wrapper {
+  color: #10b981;
+}
+
+.log-entry.success .log-message {
+  color: #065f46;
+  font-weight: 500;
+}
+
+.log-entry.error .log-icon-wrapper {
+  color: #ef4444;
+}
+
+.log-entry.error .log-message {
+  color: #991b1b;
+}
+
+
+/* Spinners */
+.spinner-ring {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(59, 130, 246, 0.2);
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: simple-spin 0.8s linear infinite;
+}
+
+@keyframes simple-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pulse {
+  0% {
+    opacity: 0.6;
+  }
+
+  50% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0.6;
+  }
+}
+
+@keyframes slideUpFade {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+/* Time Estimate Hint */
+.time-estimate-hint {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: #f0fdf4; /* Light green tint */
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  color: #166534; /* Dark green text */
+  font-size: 0.8rem;
+  font-weight: 500;
+  width: fit-content;
+}
+
+.time-estimate-hint svg {
+  color: #15803d;
+}

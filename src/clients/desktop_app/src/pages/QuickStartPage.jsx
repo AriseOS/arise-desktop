@@ -11,6 +11,7 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
   const [operationsCount, setOperationsCount] = useState(0);
   const [capturedOperations, setCapturedOperations] = useState([]);
   const [analysisProgress, setAnalysisProgress] = useState(0);
+  const [browserOpening, setBrowserOpening] = useState(false);
   const operationsListRef = useRef(null);
 
   // Check if user has seen tutorial before
@@ -81,21 +82,21 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
 
   const tutorialSteps = [
     {
-      title: "Recording Tutorial",
-      description: "Learn how to record your workflow in 3 simple steps",
-      content: "1. Operate normally in the browser\n2. Select and copy the data you want\n3. Stop recording, AI generates workflow automatically",
+      title: "How Recording Works",
+      description: "AI watches and learns from your browser actions",
+      content: "We capture: Clicks, Text Input, Page Navigation, Copy/Paste\n\nThe AI uses this to build an automated workflow that replays your exact actions.",
       icon: "video"
     },
     {
-      title: "Copy Data Fields",
-      description: "Mark the data you want to extract",
-      content: "When you see important data:\n1. Select the text with your mouse\n2. Press Ctrl+C (or Cmd+C) to copy\n3. System will automatically record this field",
+      title: "Key Tip: Select + Copy",
+      description: "This is how you tell AI what data to extract",
+      content: "When you see data you want:\n1. Select the text with your mouse\n2. Press Ctrl+C (Cmd+C on Mac)\n\nAI knows: 'User wants to extract this field'",
       icon: "clipboard"
     },
     {
-      title: "AI Automation",
-      description: "Let AI handle the repetitive work",
-      content: "After recording:\n• AI analyzes your operations\n• Generates executable workflow\n• Run anytime with one click",
+      title: "Complete Your Path",
+      description: "Start from the beginning, click through each step",
+      content: "Why? The workflow runs on a fresh browser.\n\nIt needs your full click path to:\n• Navigate to the right page\n• Find the same elements\n• Extract the same data",
       icon: "cpu"
     }
   ];
@@ -116,6 +117,28 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
   const handlePrevTutorialPage = () => {
     if (tutorialPage > 0) {
       setTutorialPage(prev => prev - 1);
+    }
+  };
+
+  const handleOpenBrowserOnly = async () => {
+    if (browserOpening) return;
+
+    setBrowserOpening(true);
+    showStatus("Opening browser...", "info");
+
+    try {
+      const result = await api.startBrowser(false);
+
+      if (result.status === "already_running") {
+        showStatus("Browser is already running. You can login to your accounts now.", "success");
+      } else {
+        showStatus("Browser opened! Login to your accounts, then click 'Start Recording' when ready.", "success");
+      }
+    } catch (error) {
+      console.error("Open browser error:", error);
+      showStatus(`Failed to open browser: ${error.message}`, "error");
+    } finally {
+      setBrowserOpening(false);
     }
   };
 
@@ -278,7 +301,8 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
 
   // Render Input Step
   const renderInput = () => (
-    <div className="quick-start-container">
+    <div className="quick-start-container split-layout">
+      {/* HEADER */}
       <div className="page-header">
         <button className="back-button" onClick={() => onNavigate("main")}>
           <Icon icon="arrowLeft" />
@@ -288,35 +312,77 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
         </div>
       </div>
 
-      <div className="input-card">
-        <div className="card-header">
-          <h2>Start Recording</h2>
-          <p>Click to open browser and navigate to any website you want!</p>
-          <div className="recording-warning">
-            <Icon icon="alertTriangle" />
-            <span>When finished, come back here and click "Stop Recording". Do not close the browser directly.</span>
+      <div className="content-wrapper">
+        {/* LEFT COLUMN: START BUTTON card */}
+        <div className="input-card">
+          <div className="card-header">
+            <h2>Start Recording</h2>
+            <p>Click below to open the browser. We'll capture your actions to build the workflow.</p>
+          </div>
+
+          <button
+            className="start-recording-btn"
+            onClick={handleStartRecording}
+          >
+            <span className="btn-icon">
+              <Icon icon="video" />
+            </span>
+            <span>Open Browser & Start Recording</span>
+          </button>
+
+          <div className="browser-only-section">
+            <div className="browser-only-divider">
+              <span>or</span>
+            </div>
+            <button
+              className="open-browser-btn"
+              onClick={handleOpenBrowserOnly}
+              disabled={browserOpening}
+            >
+              <Icon icon="globe" size={16} />
+              <span>{browserOpening ? "Opening..." : "Open Browser Only"}</span>
+            </button>
+            <div className="browser-only-hint">
+              <Icon icon="info" size={14} />
+              <span>Need to login first? Open browser to login, then start recording.</span>
+            </div>
           </div>
         </div>
 
-        <button
-          className="start-recording-btn"
-          onClick={handleStartRecording}
-        >
-          <span className="btn-icon">
-            <Icon icon="video" />
-          </span>
-          <span>Open Browser & Start Recording</span>
-        </button>
-      </div>
+        {/* RIGHT COLUMN: TIPS & RULES */}
+        <div className="tips-panel">
+          <div className="tips-section">
+            <h3><Icon icon="zap" size={18} /> Recording Best Practices</h3>
+            <ul className="tips-list">
+              <li>
+                <strong>Select + Copy = Extract:</strong> To extract data, select text with mouse then press Ctrl+C. AI recognizes this as data to extract.
+              </li>
+              <li>
+                <strong>Complete Path:</strong> Start from the beginning. Every click is recorded. AI needs the full path to automate replay.
+              </li>
+              <li>
+                <strong>Wait for Load:</strong> Ensure pages fully load before clicking. This helps AI identify the correct elements.
+              </li>
+            </ul>
+          </div>
 
-      <div className="tips-section">
-        <h3><Icon icon="info" /> Tips</h3>
-        <ul>
-          <li>Browser will open - navigate to any website in the address bar</li>
-          <li>Perform your task naturally - AI will analyze it automatically</li>
-          <li>Copy important data with Ctrl+C to mark what you want to extract</li>
-          <li>AI will suggest task description and goal after recording</li>
-        </ul>
+          <div className="tips-section">
+            <h3><Icon icon="clipboard" size={18} /> What Gets Recorded</h3>
+            <ul className="tips-list info">
+              <li><strong>Clicks:</strong> Buttons, links, menu items</li>
+              <li><strong>Inputs:</strong> Text fields, search boxes</li>
+              <li><strong>Select+Copy:</strong> Selected and copied text (key for data extraction)</li>
+              <li><strong>Navigation:</strong> URL changes and page transitions</li>
+            </ul>
+          </div>
+
+          <div className="tips-section warning-section">
+            <h3><Icon icon="alertTriangle" size={18} /> Note</h3>
+            <ul className="tips-list warning">
+              <li>Do not close the browser directly. Return here and click "Stop Recording".</li>
+            </ul>
+          </div>
+        </div>
       </div>
     </div>
   );

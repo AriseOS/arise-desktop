@@ -316,26 +316,6 @@ class UploadRecordingResponse(BaseModel):
     status: str
 
 
-class GenerateMetaflowRequest(BaseModel):
-    task_description: str
-    user_query: Optional[str] = None  # What user wants to do
-    user_id: str
-
-
-class GenerateMetaflowResponse(BaseModel):
-    metaflow_id: str
-    metaflow_yaml: str  # Include YAML content for frontend preview
-    local_path: str
-
-
-class GenerateMetaflowFromRecordingRequest(BaseModel):
-    """Request model for generating MetaFlow from recording"""
-    session_id: str
-    task_description: str
-    user_query: Optional[str] = None  # What user wants to do
-    user_id: str
-
-
 class AnalyzeRecordingRequest(BaseModel):
     """Request model for analyzing recording"""
     user_id: str  # session_id is in URL path
@@ -355,16 +335,6 @@ class UpdateRecordingMetadataRequest(BaseModel):
     user_query: str
     name: Optional[str] = None
     user_id: str  # session_id is in URL path
-
-
-class GenerateWorkflowRequest(BaseModel):
-    """Request model for generating Workflow from MetaFlow
-
-    Workflow generation MUST be from MetaFlow.
-    User must review and confirm MetaFlow before generating Workflow.
-    """
-    metaflow_id: str
-    user_id: str
 
 
 class GenerateWorkflowResponse(BaseModel):
@@ -1071,14 +1041,14 @@ async def get_recording_detail(session_id: str, user_id: str):
         if detail is None:
             raise HTTPException(status_code=404, detail=f"Recording not found: {session_id}")
 
-        # Try to get metaflow_id and task_description from Cloud Backend
+        # Try to get workflow_id and task_description from Cloud Backend
         # The recording_id in Cloud Backend is the same as session_id
         try:
             cloud_recording = await cloud_client.get_recording(session_id, user_id)
             if cloud_recording:
-                if cloud_recording.get("metaflow_id"):
-                    detail["metaflow_id"] = cloud_recording["metaflow_id"]
-                    logger.info(f"Found metaflow_id from Cloud: {detail['metaflow_id']}")
+                if cloud_recording.get("workflow_id"):
+                    detail["workflow_id"] = cloud_recording["workflow_id"]
+                    logger.info(f"Found workflow_id from Cloud: {detail['workflow_id']}")
 
                 # Use task_description from Cloud as recording name if available
                 if cloud_recording.get("task_description"):
@@ -1159,243 +1129,6 @@ async def upload_recording_to_cloud(
 
     except Exception as e:
         logger.error(f"Failed to upload recording: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ============================================================================
-# MetaFlow APIs
-# ============================================================================
-
-@app.post("/api/v1/metaflows/generate", response_model=GenerateMetaflowResponse)
-async def generate_metaflow(
-    request: GenerateMetaflowRequest,
-    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
-):
-    """Generate MetaFlow from user's Intent Memory Graph
-
-    Headers:
-        X-Ami-API-Key: User's Ami API key (optional, for API Proxy)
-    """
-    try:
-        logger.info(f"Generating MetaFlow for task: {request.task_description}")
-
-        # Update cloud client with user's API key if provided
-        update_cloud_client_api_key(x_ami_api_key)
-
-        # Call Cloud Backend to generate MetaFlow
-        result = await cloud_client.generate_metaflow(
-            task_description=request.task_description,
-            user_query=request.user_query,
-            user_id=request.user_id
-        )
-
-        metaflow_id = result["metaflow_id"]
-        metaflow_yaml = result["metaflow_yaml"]
-        task_desc = result.get("task_description", "")
-
-        # Save to local storage
-        storage_manager.save_metaflow(
-            request.user_id, metaflow_id, metaflow_yaml, task_desc
-        )
-
-        local_path = str(
-            storage_manager._user_path(request.user_id) / "metaflows" /
-            metaflow_id / "metaflow.yaml"
-        )
-
-        logger.info(f"MetaFlow saved locally: {local_path}")
-
-        return {
-            "metaflow_id": metaflow_id,
-            "metaflow_yaml": metaflow_yaml,
-            "local_path": local_path
-        }
-
-    except Exception as e:
-        logger.error(f"Failed to generate MetaFlow: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/v1/metaflows/from-recording", response_model=GenerateMetaflowResponse)
-async def generate_metaflow_from_recording(
-    request: GenerateMetaflowFromRecordingRequest,
-    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
-):
-    """Generate MetaFlow from recording
-
-    This endpoint:
-    1. Loads the recording data
-    2. Uploads recording to Cloud Backend
-    3. Calls Cloud Backend to generate MetaFlow from recording's intents only
-    4. Saves MetaFlow locally
-    5. Returns metaflow_yaml for frontend preview
-
-    Headers:
-        X-Ami-API-Key: User's Ami API key (required for LLM calls via API Proxy)
-    """
-    try:
-        logger.info(f"Generating MetaFlow from recording: {request.session_id}")
-
-        # Set user API key on cloud client
-        if x_ami_api_key:
-            cloud_client.set_user_api_key(x_ami_api_key)
-            logger.info(f"Set user API key on cloud client: {x_ami_api_key[:10]}...")
-        else:
-            logger.warning("No X-Ami-API-Key header provided")
-
-        # Load recording data
-        recording_data = storage_manager.get_recording(
-            request.user_id, request.session_id
-        )
-        operations = recording_data.get("operations", [])
-
-        if not operations:
-            raise HTTPException(
-                status_code=400,
-                detail=f"No operations found in recording: {request.session_id}"
-            )
-
-        # Extract task_metadata from recording
-        task_metadata = recording_data.get("task_metadata", {})
-
-        # Use task_description and user_query from recording if not provided in request
-        task_description = request.task_description or task_metadata.get("task_description", "")
-        user_query = request.user_query or task_metadata.get("user_query")
-
-        logger.info(f"📝 Task Description: {task_description[:80]}...")
-        if user_query:
-            logger.info(f"🎯 User Query: {user_query[:80]}...")
-        else:
-            logger.info(f"⚠️  No user_query available")
-
-        # Upload recording to Cloud Backend (use session_id as recording_id to keep IDs in sync)
-        logger.info("Uploading recording to Cloud Backend...")
-        recording_id = await cloud_client.upload_recording(
-            operations=operations,
-            task_description=task_description,
-            user_query=user_query,
-            user_id=request.user_id,
-            recording_id=request.session_id  # Use session_id to keep Cloud and Local IDs in sync
-        )
-        logger.info(f"Recording uploaded: {recording_id}")
-
-        # Generate MetaFlow from recording (using only that recording's intents)
-        logger.info("Generating MetaFlow from recording's intents only...")
-        metaflow_result = await cloud_client.generate_metaflow_from_recording(
-            recording_id=recording_id,
-            task_description=task_description,
-            user_query=user_query,
-            user_id=request.user_id
-        )
-
-        metaflow_id = metaflow_result["metaflow_id"]
-        metaflow_yaml = metaflow_result["metaflow_yaml"]
-
-        # Save MetaFlow locally
-        storage_manager.save_metaflow(
-            request.user_id,
-            metaflow_id,
-            metaflow_yaml,
-            request.task_description
-        )
-
-        local_path = str(
-            storage_manager._user_path(request.user_id) / "metaflows" /
-            metaflow_id / "metaflow.yaml"
-        )
-
-        logger.info(f"MetaFlow saved locally: {local_path}")
-
-        return {
-            "metaflow_id": metaflow_id,
-            "metaflow_yaml": metaflow_yaml,
-            "local_path": local_path
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to generate MetaFlow from recording: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/v1/metaflows")
-async def list_metaflows(user_id: str):
-    """List all MetaFlows for user (proxy to Cloud Backend)"""
-    try:
-        metaflows = await cloud_client.list_metaflows(user_id)
-        return metaflows
-    except Exception as e:
-        logger.error(f"Failed to list metaflows: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/v1/metaflows/{metaflow_id}")
-async def get_metaflow(metaflow_id: str, user_id: str):
-    """Get MetaFlow detail (proxy to Cloud Backend)"""
-    try:
-        metaflow = await cloud_client.get_metaflow(metaflow_id, user_id)
-        return metaflow
-    except Exception as e:
-        logger.error(f"Failed to get metaflow: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.put("/api/v1/metaflows/{metaflow_id}")
-async def update_metaflow(metaflow_id: str, data: dict):
-    """Update MetaFlow YAML and sync to both Cloud and local storage
-
-    Sync Strategy:
-    1. Update Cloud Backend first (primary source)
-    2. Update local storage (cache)
-    3. Return success if at least one succeeds
-    """
-    try:
-        user_id = data.get("user_id")
-        metaflow_yaml = data.get("metaflow_yaml")
-
-        if not metaflow_yaml:
-            raise HTTPException(status_code=400, detail="Missing metaflow_yaml")
-
-        logger.info(f"Updating metaflow: metaflow_id={metaflow_id}")
-
-        # Step 1: Update Cloud Backend first (primary source)
-        cloud_updated = False
-        try:
-            result = await cloud_client.update_metaflow(metaflow_id, metaflow_yaml, user_id)
-            cloud_updated = True
-            logger.info(f"✓ MetaFlow updated in Cloud: {metaflow_id}")
-        except Exception as e:
-            logger.warning(f"⚠ Failed to update metaflow in Cloud: {e}")
-
-        # Step 2: Update local storage (cache)
-        local_updated = False
-        try:
-            if storage_manager.metaflow_exists(user_id, metaflow_id):
-                storage_manager.save_metaflow(user_id, metaflow_id, metaflow_yaml)
-                local_updated = True
-                logger.info(f"✓ MetaFlow updated in local storage: {metaflow_id}")
-            else:
-                logger.warning(f"⚠ MetaFlow not found in local storage: {metaflow_id}")
-        except Exception as e:
-            logger.warning(f"⚠ Failed to update metaflow in local storage: {e}")
-
-        # Step 3: Return success if at least one succeeded
-        if not cloud_updated and not local_updated:
-            raise HTTPException(status_code=500, detail="Failed to update metaflow in both Cloud and local storage")
-
-        logger.info(f"✅ MetaFlow update complete: {metaflow_id} (Cloud: {cloud_updated}, Local: {local_updated})")
-        return {
-            "success": True,
-            "updated_in_cloud": cloud_updated,
-            "updated_in_local": local_updated
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to update metaflow: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1615,7 +1348,29 @@ async def upload_to_cloud(
     sync = SimpleSync()  # Use default ignore patterns
 
     try:
-        # Process each resource type
+        # Step 1: Upload workflow.yaml (required)
+        workflow_yaml_path = local_workflow_path / "workflow.yaml"
+        if workflow_yaml_path.exists():
+            try:
+                logger.info(f"[Upload] Uploading workflow.yaml")
+                workflow_yaml_content = workflow_yaml_path.read_bytes()
+                success = await cloud_client.upload_workflow_file(workflow_id, "workflow.yaml", workflow_yaml_content, user_id)
+                if success:
+                    logger.info(f"[Upload] ✓ workflow.yaml ({len(workflow_yaml_content)} bytes)")
+                    files_uploaded += 1
+                else:
+                    error_msg = "Failed to upload workflow.yaml"
+                    logger.error(f"[Upload] ✗ {error_msg}")
+                    errors.append(error_msg)
+            except Exception as e:
+                error_msg = f"Failed to upload workflow.yaml: {e}"
+                logger.error(f"[Upload] ✗ {error_msg}")
+                errors.append(error_msg)
+                # workflow.yaml is critical - if it fails, we should report but continue
+        else:
+            logger.warning(f"[Upload] workflow.yaml not found at {workflow_yaml_path}")
+
+        # Step 2: Process each resource type
         resources = local_metadata.get("resources", {})
 
         for resource_type, resource_list in resources.items():
@@ -1698,137 +1453,310 @@ async def upload_to_cloud(
 # Workflow APIs
 # ============================================================================
 
-@app.post("/api/v1/workflows/from-metaflow")
-async def generate_workflow_from_metaflow_api(
+@app.post("/api/v1/workflows/generate")
+async def generate_workflow_direct(
     data: dict,
     x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
 ):
-    """Generate Workflow from MetaFlow (alternative endpoint used by frontend)
+    """Generate Workflow directly from Recording or task description
 
-    Headers:
-        X-Ami-API-Key: User's Ami API key (required for LLM calls via API Proxy)
+    Proxies to Cloud Backend's /api/v1/workflows/generate endpoint.
+    This bypasses MetaFlow and uses the new WorkflowBuilder architecture.
+
+    If recording_id is provided, this endpoint will:
+    1. Load operations from local storage
+    2. Send operations directly to Cloud Backend (no need for recording to exist in Cloud)
+
+    Request body:
+        user_id: str - User ID (required)
+        task_description: str - Task description (required)
+        recording_id: str - Recording ID (optional, loads from local storage)
+        user_query: str - User query (optional)
+        enable_dialogue: bool - Keep session for follow-up dialogue (default: true)
+        enable_semantic_validation: bool - Enable semantic validation (default: true)
+
+    Returns:
+        workflow_id: str - Generated Workflow ID
+        workflow_yaml: str - Workflow YAML content
+        session_id: str - Dialogue session ID (if enable_dialogue=true)
+        validation_result: dict - Validation result (if enable_semantic_validation=true)
     """
     try:
-        metaflow_id = data.get("metaflow_id")
         user_id = data.get("user_id")
+        recording_id = data.get("recording_id")
 
-        if not metaflow_id:
-            raise HTTPException(status_code=400, detail="Missing metaflow_id")
+        logger.info(f"Generating workflow for user: {user_id}")
 
-        logger.info(f"Generating Workflow from MetaFlow: {metaflow_id}")
+        if not x_ami_api_key:
+            raise HTTPException(status_code=401, detail="X-Ami-API-Key header required")
 
-        # Set user API key on cloud client
-        if x_ami_api_key:
-            cloud_client.set_user_api_key(x_ami_api_key)
-            logger.info(f"Set user API key on cloud client: {x_ami_api_key[:10]}...")
+        # If recording_id is provided, load operations from local storage
+        # and send them directly (Cloud Backend doesn't need the recording)
+        if recording_id:
+            logger.info(f"Loading recording from local storage: {recording_id}")
+            recording_data = storage_manager.get_recording(user_id, recording_id)
+            if not recording_data:
+                raise HTTPException(status_code=404, detail=f"Recording not found locally: {recording_id}")
+
+            operations = recording_data.get("operations", [])
+            if not operations:
+                raise HTTPException(status_code=400, detail=f"Recording {recording_id} has no operations")
+
+            logger.info(f"Loaded {len(operations)} operations from local recording")
+
+            # Build request with operations instead of recording_id
+            cloud_request = {
+                "user_id": user_id,
+                "task_description": data.get("task_description"),
+                "operations": operations,  # Send operations directly
+                "user_query": data.get("user_query"),
+                "enable_dialogue": data.get("enable_dialogue", True),
+                "enable_semantic_validation": data.get("enable_semantic_validation", True),
+                "source_recording_id": recording_id  # For traceability
+            }
         else:
-            logger.warning("No X-Ami-API-Key header provided")
+            # No recording_id, just forward the request as-is
+            cloud_request = data
 
-        # Generate Workflow from MetaFlow via Cloud Backend
-        workflow_result = await cloud_client.generate_workflow(
-            metaflow_id=metaflow_id,
-            user_id=user_id
-        )
+        # Set the API key for cloud client
+        cloud_client.set_user_api_key(x_ami_api_key)
 
-        workflow_id = workflow_result.get("workflow_id")
-        workflow_name = workflow_result["workflow_name"]
-        workflow_yaml = workflow_result["workflow_yaml"]
+        # Call Cloud Backend's generate endpoint
+        import httpx
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            response = await client.post(
+                f"{cloud_client.api_url}/api/v1/workflows/generate",
+                json=cloud_request,
+                headers={"X-Ami-API-Key": x_ami_api_key}
+            )
+            response.raise_for_status()
+            result = response.json()
 
-        logger.info(f"Cloud returned: workflow_id={workflow_id}, workflow_name={workflow_name}")
+        logger.info(f"Workflow generated: {result.get('workflow_id')}")
+        return result
 
-        # Save Workflow locally using workflow_id as directory name
-        save_id = workflow_id or workflow_name
-        storage_manager.save_workflow(
-            user_id,
-            save_id,
-            workflow_yaml
-        )
-
-        logger.info(f"Workflow saved locally with id: {save_id}")
-
-        return {
-            "workflow_id": workflow_id,
-            "workflow_name": workflow_name,
-            "workflow_yaml": workflow_yaml,
-            "status": "success"
-        }
-
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Cloud Backend error: {e.response.status_code} {e.response.text}")
+        raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to generate workflow: {e}")
-        import traceback
-        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/v1/workflows/generate", response_model=GenerateWorkflowResponse)
-async def generate_workflow(
-    request: GenerateWorkflowRequest,
+@app.post("/api/v1/workflows/generate-stream")
+async def generate_workflow_stream(
+    data: dict,
     x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
 ):
-    """Generate Workflow from MetaFlow
+    """Generate Workflow with streaming progress updates (SSE)
 
-    This endpoint only generates workflow from a confirmed MetaFlow.
-    User must review MetaFlow before calling this endpoint.
+    Same as /api/v1/workflows/generate but returns SSE stream for Lovable-style progress display.
 
-    Workflow generation flow:
-    1. User generates MetaFlow (via /api/metaflows/generate or /api/metaflows/from-recording)
-    2. User reviews MetaFlow in UI
-    3. User confirms and calls this endpoint with metaflow_id
-    4. Workflow is generated from the confirmed MetaFlow
+    If recording_id is provided, this endpoint will:
+    1. Load operations from local storage
+    2. Send operations directly to Cloud Backend
 
-    Headers:
-        X-Ami-API-Key: User's Ami API key (optional, for API Proxy)
+    Returns SSE stream with events:
+        data: {"status": "analyzing", "progress": 10, "message": "Analyzing recording..."}
+        data: {"status": "generating", "progress": 50, "message": "Generating workflow..."}
+        data: {"status": "completed", "progress": 100, "workflow_id": "...", "workflow_yaml": "..."}
     """
-    try:
-        logger.info(f"Generating Workflow from MetaFlow: {request.metaflow_id}")
+    from starlette.responses import StreamingResponse
+    import httpx
 
-        # Update cloud client with user's API key if provided
-        update_cloud_client_api_key(x_ami_api_key)
+    user_id = data.get("user_id")
+    recording_id = data.get("recording_id")
 
-        # Generate Workflow from MetaFlow via Cloud Backend
-        workflow_result = await cloud_client.generate_workflow(
-            metaflow_id=request.metaflow_id,
-            user_id=request.user_id
-        )
+    logger.info(f"Generating workflow (stream) for user: {user_id}")
 
-        # Debug: log the full response from Cloud Backend
-        logger.info(f"Cloud Backend response keys: {workflow_result.keys()}")
-        logger.info(f"Cloud Backend workflow_id: {workflow_result.get('workflow_id')}")
-        logger.info(f"Cloud Backend workflow_name: {workflow_result.get('workflow_name')}")
+    if not x_ami_api_key:
+        raise HTTPException(status_code=401, detail="X-Ami-API-Key header required")
 
-        workflow_id = workflow_result.get("workflow_id")
-        workflow_name = workflow_result["workflow_name"]
-        workflow_yaml = workflow_result["workflow_yaml"]
+    # If recording_id is provided, load operations from local storage
+    if recording_id:
+        logger.info(f"Loading recording from local storage: {recording_id}")
+        recording_data = storage_manager.get_recording(user_id, recording_id)
+        if not recording_data:
+            raise HTTPException(status_code=404, detail=f"Recording not found locally: {recording_id}")
 
-        # Save Workflow locally
-        storage_manager.save_workflow(
-            request.user_id,
-            workflow_id or workflow_name,
-            workflow_yaml
-        )
+        operations = recording_data.get("operations", [])
+        if not operations:
+            raise HTTPException(status_code=400, detail=f"Recording {recording_id} has no operations")
 
-        local_path = str(
-            storage_manager._user_path(request.user_id) / "workflows" /
-            (workflow_id or workflow_name) / "workflow.yaml"
-        )
+        logger.info(f"Loaded {len(operations)} operations from local recording")
 
-        logger.info(f"✅ Workflow generated and saved: {workflow_id} ({workflow_name}) at {local_path}")
-
-        return {
-            "workflow_name": workflow_name,
-            "workflow_id": workflow_id,
-            "local_path": local_path,
-            "status": "success"
+        # Build request with operations instead of recording_id
+        cloud_request = {
+            "user_id": user_id,
+            "task_description": data.get("task_description"),
+            "operations": operations,
+            "user_query": data.get("user_query"),
+            "enable_dialogue": data.get("enable_dialogue", True),
+            "enable_semantic_validation": data.get("enable_semantic_validation", True),
+            "source_recording_id": recording_id
         }
+    else:
+        cloud_request = data
 
-    except HTTPException:
-        raise
+    async def stream_generator():
+        try:
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                async with client.stream(
+                    "POST",
+                    f"{cloud_client.api_url}/api/v1/workflows/generate-stream",
+                    json=cloud_request,
+                    headers={"X-Ami-API-Key": x_ami_api_key}
+                ) as response:
+                    if response.status_code != 200:
+                        error_text = await response.aread()
+                        logger.error(f"Cloud Backend error: {response.status_code} {error_text}")
+                        yield f"data: {json.dumps({'status': 'failed', 'message': error_text.decode()})}\n\n"
+                        return
+
+                    async for line in response.aiter_lines():
+                        if line:
+                            # SSE events need double newline to separate
+                            yield line + "\n\n"
+        except Exception as e:
+            logger.error(f"Stream error: {e}")
+            yield f"data: {json.dumps({'status': 'failed', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        stream_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+# ===== Workflow Session APIs (Proxy to Cloud Backend) =====
+
+@app.post("/api/v1/workflow-sessions")
+async def create_workflow_session(
+    data: dict,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """Create a dialogue session for modifying an existing Workflow.
+
+    Proxies to Cloud Backend.
+
+    Body:
+        {
+            "user_id": "...",
+            "workflow_id": "...",
+            "workflow_yaml": "..."
+        }
+    """
+    import httpx
+
+    if not x_ami_api_key:
+        raise HTTPException(status_code=401, detail="X-Ami-API-Key header required")
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{cloud_client.api_url}/api/v1/workflow-sessions",
+                json=data,
+                headers={"X-Ami-API-Key": x_ami_api_key}
+            )
+            if response.status_code != 200:
+                raise HTTPException(status_code=response.status_code, detail=response.text)
+            return response.json()
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
     except Exception as e:
-        logger.error(f"Failed to generate workflow: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Failed to create workflow session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/workflow-sessions/{session_id}/chat")
+async def workflow_session_chat_stream(
+    session_id: str,
+    data: dict,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """Send a message to modify workflow via dialogue (SSE stream).
+
+    Proxies to Cloud Backend with SSE streaming.
+
+    Body:
+        {"message": "把第3步改成抓取更多字段"}
+
+    Returns SSE stream with events:
+        data: {"type": "text", "content": "..."}
+        data: {"type": "complete", "workflow_updated": true, "workflow_yaml": "..."}
+    """
+    from starlette.responses import StreamingResponse
+    import httpx
+
+    if not x_ami_api_key:
+        raise HTTPException(status_code=401, detail="X-Ami-API-Key header required")
+
+    async def stream_generator():
+        try:
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                async with client.stream(
+                    "POST",
+                    f"{cloud_client.api_url}/api/v1/workflow-sessions/{session_id}/chat",
+                    json=data,
+                    headers={"X-Ami-API-Key": x_ami_api_key}
+                ) as response:
+                    if response.status_code != 200:
+                        error_text = await response.aread()
+                        logger.error(f"Cloud Backend error: {response.status_code} {error_text}")
+                        yield f"data: {json.dumps({'type': 'error', 'message': error_text.decode()})}\n\n"
+                        return
+
+                    async for line in response.aiter_lines():
+                        if line:
+                            yield line + "\n\n"
+        except Exception as e:
+            logger.error(f"Workflow session chat stream error: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        stream_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+@app.delete("/api/v1/workflow-sessions/{session_id}")
+async def close_workflow_session(
+    session_id: str,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """Close a workflow modification session.
+
+    Proxies to Cloud Backend.
+    """
+    import httpx
+
+    if not x_ami_api_key:
+        raise HTTPException(status_code=401, detail="X-Ami-API-Key header required")
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.delete(
+                f"{cloud_client.api_url}/api/v1/workflow-sessions/{session_id}",
+                headers={"X-Ami-API-Key": x_ami_api_key}
+            )
+            if response.status_code != 200:
+                raise HTTPException(status_code=response.status_code, detail=response.text)
+            return response.json()
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
+    except Exception as e:
+        logger.error(f"Failed to close workflow session: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -2216,21 +2144,18 @@ async def get_workflow_detail(workflow_id: str, user_id: str):
             'workflow_yaml': workflow_yaml  # Add raw YAML for display
         }
 
-        # 获取追溯信息（反向追溯功能）
+        # Get traceability info (recording association)
         try:
             logger.info(f"Fetching traceability info from Cloud Backend for workflow: {workflow_id}")
             cloud_workflow = await cloud_client.get_workflow(workflow_id, user_id)
             if cloud_workflow:
-                response_data['source_metaflow_id'] = cloud_workflow.get("source_metaflow_id")
                 response_data['source_recording_id'] = cloud_workflow.get("source_recording_id")
-                logger.info(f"Traceability info retrieved: metaflow={response_data.get('source_metaflow_id')}, recording={response_data.get('source_recording_id')}")
+                logger.info(f"Traceability info retrieved: recording={response_data.get('source_recording_id')}")
             else:
                 logger.warning(f"No workflow data found in Cloud Backend for: {workflow_id}")
-                response_data['source_metaflow_id'] = None
                 response_data['source_recording_id'] = None
         except Exception as e:
             logger.warning(f"Could not fetch traceability info from Cloud Backend: {e}")
-            response_data['source_metaflow_id'] = None
             response_data['source_recording_id'] = None
 
         logger.info(f"Loaded workflow detail: {workflow_id}")
@@ -2687,11 +2612,8 @@ class StartIntentBuilderRequest(BaseModel):
     user_query: str
     task_description: Optional[str] = None
     session_id: Optional[str] = None  # For resuming from recording
-    metaflow_id: Optional[str] = None  # MetaFlow ID being modified
     workflow_id: Optional[str] = None  # Workflow ID being modified
-    current_metaflow_yaml: Optional[str] = None  # Current MetaFlow content for context
     current_workflow_yaml: Optional[str] = None  # Current Workflow content for context
-    phase: Optional[str] = None  # 'metaflow' or 'workflow'
 
 
 class IntentBuilderChatRequest(BaseModel):
@@ -2728,11 +2650,8 @@ async def start_intent_builder_session(
             user_id=request.user_id,
             user_query=request.user_query,
             task_description=request.task_description,
-            metaflow_id=request.metaflow_id,
             workflow_id=request.workflow_id,
-            current_metaflow_yaml=request.current_metaflow_yaml,
-            current_workflow_yaml=request.current_workflow_yaml,
-            phase=request.phase
+            current_workflow_yaml=request.current_workflow_yaml
         )
 
         logger.info(f"Intent Builder session started: {result['session_id']}")

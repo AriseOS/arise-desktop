@@ -523,6 +523,27 @@ function WorkflowExecutionLivePage({
           </span>
         </div>
 
+        {/* Cold Start Notice */}
+        {currentStep === 0 && status === 'running' && (
+          <div className="cold-start-notice" style={{
+            marginBottom: '1rem',
+            padding: '0.75rem',
+            background: '#eff6ff',
+            border: '1px solid #bfdbfe',
+            borderRadius: '8px',
+            color: '#1e40af',
+            fontSize: '0.85rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.75rem'
+          }}>
+            <Icon icon="info" size={16} />
+            <span>
+              <strong>First-time optimization:</strong> AI is generating execution scripts. Some specific steps may take a few minutes to complete.
+            </span>
+          </div>
+        )}
+
         {/* Progress Bar */}
         <div className="progress-bar-container">
           <div

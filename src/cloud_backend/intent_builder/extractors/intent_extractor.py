@@ -11,7 +11,7 @@ import json
 import logging
 import re
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from src.cloud_backend.intent_builder.core.intent import Intent, Operation, generate_intent_id
 
@@ -46,7 +46,8 @@ class IntentExtractor:
         self,
         operations: List[Dict[str, Any]],
         task_description: str,
-        source_session_id: str = "unknown"
+        source_session_id: str = "unknown",
+        user_query: Optional[str] = None
     ) -> List[Intent]:
         """Extract intents from user operations
 
@@ -54,6 +55,7 @@ class IntentExtractor:
             operations: List of operation dictionaries from User Operations JSON
             task_description: High-level task description
             source_session_id: Session ID for tracking
+            user_query: User's goal/intent (e.g., "repeat for 10 items", "extract all products")
 
         Returns:
             List of Intent objects with auto-generated descriptions
@@ -64,9 +66,11 @@ class IntentExtractor:
             ...     {"type": "click", "element": {...}, ...},
             ... ]
             >>> intents = await extractor.extract_intents(
-            ...     operations, "Collect product info"
+            ...     operations, "Collect product info",
+            ...     user_query="Extract top 10 products"
             ... )
         """
+        self._user_query = user_query  # Store for use in _extract_from_segment
         # Step 1: URL-based segmentation
         segments = self._split_by_url(operations)
 
@@ -311,9 +315,18 @@ class IntentExtractor:
                 context_section += f"{i}. {intent.description}\n"
             context_section += "\nUse these previous intents to understand the user's workflow and avoid duplicating or misinterpreting the current segment's purpose.\n"
 
+        # Build user query section if available
+        user_query_section = ""
+        if hasattr(self, '_user_query') and self._user_query:
+            user_query_section = f"\n\nUser Query (what the user wants to achieve): {self._user_query}"
+            user_query_section += "\n\nIMPORTANT: Use the User Query to understand the user's ACTUAL goal. If the user mentions:"
+            user_query_section += "\n- 'repeat', 'loop', 'all items', 'top N', 'each' → The user wants to iterate over multiple items"
+            user_query_section += "\n- 'extract', 'get', 'collect' → The user wants to extract specific data"
+            user_query_section += "\n- A specific count (e.g., '10 products') → Use this as the iteration count\n"
+
         prompt = f"""You are an expert at analyzing user browser operations and extracting semantic intents.
 
-Task Description: {task_description}{context_section}
+Task Description: {task_description}{user_query_section}{context_section}
 
 CONTEXT - What is a Segment:
 - A "segment" is a group of consecutive operations within the SAME page context (same URL)

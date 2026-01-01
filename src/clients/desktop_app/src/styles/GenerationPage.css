@@ -161,7 +161,6 @@
     border-bottom: 1px solid #333;
 }
 
-.metaflow-id,
 .workflow-name {
     font-family: monospace;
     opacity: 0.8;
@@ -204,4 +203,51 @@
     color: var(--text-tertiary);
     font-size: var(--font-size-sm);
     border-top: 1px solid var(--border-color);
+}
+
+/* Generation source info (shown when generating from recording) */
+.generation-source-info {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-md) var(--spacing-lg);
+    background-color: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    font-size: var(--font-size-md);
+}
+
+.generation-source-info strong {
+    color: var(--text-primary);
+}
+
+.generation-tips {
+    background-color: var(--bg-secondary);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-lg);
+    border: 1px solid var(--border-color);
+}
+
+.generation-tips h4 {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    margin: 0 0 var(--spacing-md) 0;
+    color: var(--text-primary);
+    font-size: var(--font-size-md);
+}
+
+.generation-tips ul {
+    margin: 0;
+    padding-left: var(--spacing-lg);
+    color: var(--text-secondary);
+}
+
+.generation-tips li {
+    margin-bottom: var(--spacing-sm);
+}
+
+.generation-tips li:last-child {
+    margin-bottom: 0;
 }

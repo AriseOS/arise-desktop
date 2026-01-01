@@ -477,58 +477,216 @@ export const api = {
   },
 
   /**
-   * Generate MetaFlow from Intent Memory Graph
+   * Generate Workflow directly from Recording or task description (NEW v2 API)
    *
-   * @param {string} taskDescription - Task description
-   * @param {string} userQuery - User query (optional)
-   * @param {string} userId - User ID
-   * @returns {Promise<object>} MetaFlow result
+   * This bypasses MetaFlow and uses the new WorkflowBuilder architecture.
+   *
+   * @param {object} options - Generation options
+   * @param {string} options.userId - User ID (required)
+   * @param {string} options.taskDescription - Task description (required)
+   * @param {string} options.recordingId - Recording ID (optional)
+   * @param {string} options.userQuery - User query (optional)
+   * @param {boolean} options.enableDialogue - Keep session for follow-up dialogue (default: true)
+   * @param {boolean} options.enableSemanticValidation - Enable semantic validation (default: true)
+   * @returns {Promise<object>} Workflow result with session_id for dialogue
    */
-  async generateMetaflow(taskDescription, userQuery = null, userId) {
-    return await this.callAppBackend('/api/v1/metaflows/generate', {
-      method: 'POST',
-      body: JSON.stringify({
-        task_description: taskDescription,
-        user_query: userQuery,
-        user_id: userId
-      })
-    });
-  },
+  async generateWorkflowDirect(options) {
+    const {
+      userId,
+      taskDescription,
+      recordingId = null,
+      userQuery = null,
+      enableDialogue = true,
+      enableSemanticValidation = true
+    } = options;
 
-  /**
-   * Generate MetaFlow from a specific recording
-   *
-   * @param {string} sessionId - Recording session ID
-   * @param {string} taskDescription - Task description
-   * @param {string} userQuery - User query (optional)
-   * @param {string} userId - User ID
-   * @returns {Promise<object>} MetaFlow result
-   */
-  async generateMetaflowFromRecording(sessionId, taskDescription, userQuery = null, userId) {
-    return await this.callAppBackend('/api/v1/metaflows/from-recording', {
-      method: 'POST',
-      body: JSON.stringify({
-        session_id: sessionId,
-        task_description: taskDescription,
-        user_query: userQuery,
-        user_id: userId
-      })
-    });
-  },
-
-  /**
-   * Generate Workflow from MetaFlow
-   *
-   * @param {string} metaflowId - MetaFlow ID
-   * @param {string} userId - User ID
-   * @returns {Promise<object>} Workflow result
-   */
-  async generateWorkflow(metaflowId, userId) {
     return await this.callAppBackend('/api/v1/workflows/generate', {
       method: 'POST',
       body: JSON.stringify({
-        metaflow_id: metaflowId,
-        user_id: userId
+        user_id: userId,
+        task_description: taskDescription,
+        recording_id: recordingId,
+        user_query: userQuery,
+        enable_dialogue: enableDialogue,
+        enable_semantic_validation: enableSemanticValidation
+      })
+    });
+  },
+
+  /**
+   * Generate Workflow with streaming progress (SSE)
+   *
+   * @param {object} options - Same as generateWorkflowDirect
+   * @param {function} onProgress - Callback for progress updates
+   * @returns {Promise<object>} Final workflow result
+   */
+  async generateWorkflowStream(options, onProgress) {
+    const {
+      userId,
+      taskDescription,
+      recordingId = null,
+      userQuery = null,
+      enableSemanticValidation = true
+    } = options;
+
+    const response = await this.callAppBackendRaw('/api/v1/workflows/generate-stream', {
+      method: 'POST',
+      body: JSON.stringify({
+        user_id: userId,
+        task_description: taskDescription,
+        recording_id: recordingId,
+        user_query: userQuery,
+        enable_semantic_validation: enableSemanticValidation
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Stream request failed: ${response.statusText}`);
+    }
+
+    // Read SSE stream
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalResult = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // Process complete SSE events
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const jsonStr = line.slice(6);
+          try {
+            const event = JSON.parse(jsonStr);
+            console.log('[SSE] Received event:', event);
+            if (onProgress) {
+              onProgress(event);
+            }
+            if (event.status === 'completed' || event.workflow_id) {
+              console.log('[SSE] Setting finalResult:', event);
+              finalResult = event;
+            }
+          } catch (e) {
+            console.error('[SSE] Failed to parse event:', jsonStr, e);
+          }
+        }
+      }
+    }
+
+    return finalResult;
+  },
+
+  /**
+   * Chat with a Workflow session (SSE streaming)
+   *
+   * @param {string} sessionId - Workflow session ID
+   * @param {string} message - User message
+   * @param {function} onEvent - Callback for each SSE event: {type, message, workflow_yaml?}
+   * @returns {Promise<object>} Final result with workflow_yaml if updated
+   */
+  async workflowChat(sessionId, message, onEvent = null) {
+    const response = await this.callAppBackendRaw(`/api/v1/workflow-sessions/${sessionId}/chat`, {
+      method: 'POST',
+      body: JSON.stringify({ message })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(errorText || `Request failed: ${response.status}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalResult = { workflow_updated: false, workflow_yaml: null, message: '' };
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+
+              if (onEvent) {
+                onEvent(data);
+              }
+
+              if (data.type === 'workflow_updated' || data.type === 'complete') {
+                if (data.workflow_yaml) {
+                  finalResult.workflow_updated = true;
+                  finalResult.workflow_yaml = data.workflow_yaml;
+                }
+              }
+
+              if (data.type === 'complete') {
+                finalResult.message = data.message;
+              }
+
+              if (data.type === 'error') {
+                throw new Error(data.message);
+              }
+            } catch (parseError) {
+              // Only log parse errors, not re-thrown errors
+              if (!(parseError instanceof Error && parseError.message === data?.message)) {
+                console.warn('[API] Failed to parse SSE event:', line, parseError);
+              } else {
+                throw parseError;
+              }
+            }
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    return finalResult;
+  },
+
+  /**
+   * Close a Workflow session
+   *
+   * @param {string} sessionId - Workflow session ID
+   * @returns {Promise<object>} Close result
+   */
+  async closeWorkflowSession(sessionId) {
+    return await this.callAppBackend(`/api/v1/workflow-sessions/${sessionId}`, {
+      method: 'DELETE'
+    });
+  },
+
+  /**
+   * Create a dialogue session for an existing Workflow
+   *
+   * This is used when opening a Workflow that was generated previously
+   * and the user wants to modify it via dialogue.
+   *
+   * @param {string} userId - User ID
+   * @param {string} workflowId - Workflow ID
+   * @param {string} workflowYaml - Current Workflow YAML content
+   * @returns {Promise<object>} Session creation result with session_id
+   */
+  async createWorkflowSession(userId, workflowId, workflowYaml) {
+    return await this.callAppBackend('/api/v1/workflow-sessions', {
+      method: 'POST',
+      body: JSON.stringify({
+        user_id: userId,
+        workflow_id: workflowId,
+        workflow_yaml: workflowYaml
       })
     });
   },

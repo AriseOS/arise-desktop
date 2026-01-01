@@ -56,7 +56,7 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    overflow-y: auto;
     padding: var(--spacing-lg);
     gap: var(--spacing-lg);
 }
@@ -223,7 +223,8 @@
     background-color: var(--bg-secondary);
     border-radius: var(--radius-lg);
     border: 1px solid var(--border-color);
-    min-height: 0;
+    min-height: 750px;
+    /* Increased from 500px for better visibility */
     display: flex;
     flex-direction: column;
 }
@@ -255,25 +256,78 @@
     flex: 1;
     min-height: 0;
     background-color: var(--bg-secondary);
+    position: relative;
 }
 
+/* Chat instructions - collapsed badge (small tag in top-left) */
+.chat-instructions-badge {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    z-index: 10;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.chat-instructions-badge:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+/* Chat instructions - expanded panel */
 .chat-instructions {
-    padding: var(--spacing-lg);
+    padding: var(--spacing-md) var(--spacing-lg);
     border-bottom: 1px solid var(--border-color);
     background-color: var(--bg-primary);
 }
 
+.chat-instructions-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
 .chat-instructions h3 {
-    margin: 0 0 var(--spacing-xs) 0;
-    font-size: var(--font-size-lg);
+    margin: 0;
+    font-size: var(--font-size-md);
     color: var(--text-primary);
     display: flex;
     align-items: center;
     gap: var(--spacing-sm);
 }
 
+.chat-instructions .collapse-btn {
+    background: none;
+    border: none;
+    padding: 4px;
+    cursor: pointer;
+    color: var(--text-tertiary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+    transition: all 0.15s ease;
+}
+
+.chat-instructions .collapse-btn:hover {
+    background-color: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
 .chat-instructions p {
-    margin: 0;
+    margin: var(--spacing-sm) 0 0 0;
     color: var(--text-secondary);
     font-size: var(--font-size-sm);
 }
@@ -422,6 +476,96 @@
 .modify-button svg {
     width: 20px;
     height: 20px;
+}
+
+/* ===================================
+   SSE PROGRESS LOG
+   (Similar to WorkflowExecutionLivePage skill-log)
+   =================================== */
+
+.sse-progress-log {
+    background: var(--bg-tertiary, #f9fafb);
+    border-radius: var(--radius-md);
+    padding: 12px;
+    margin-top: 12px;
+    margin-bottom: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.progress-event {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    margin-bottom: 8px;
+    line-height: 1.5;
+}
+
+.progress-event:last-child {
+    margin-bottom: 0;
+}
+
+/* Tool use - blue theme */
+.progress-event.tool_use {
+    background: #eff6ff;
+    color: #1e40af;
+    border-left: 3px solid #3b82f6;
+}
+
+/* Text - gray theme */
+.progress-event.text {
+    background: #f9fafb;
+    color: #374151;
+    border-left: 3px solid #d1d5db;
+    white-space: pre-wrap;
+}
+
+/* Workflow updated - green theme */
+.progress-event.workflow_updated {
+    background: #d1fae5;
+    color: #065f46;
+    border-left: 3px solid #10b981;
+}
+
+/* Error - red theme */
+.progress-event.error {
+    background: #fee2e2;
+    color: #991b1b;
+    border-left: 3px solid #ef4444;
+}
+
+/* Thinking/Processing - gray with animation */
+.progress-event.thinking {
+    background: #f3f4f6;
+    color: #4b5563;
+    border-left: 3px solid #9ca3af;
+}
+
+/* Spinning icon animation */
+.spinning-icon {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.progress-event svg {
+    flex-shrink: 0;
+}
+
+.progress-event span {
+    flex: 1;
+    word-break: break-word;
 }
 
 /* History Tab Styles */

@@ -277,97 +277,137 @@ function RecordPage({ onNavigate, showStatus, currentUser }) {
       </div>
 
       <div className="record-content">
-        <div className="record-form">
-          {!isRecording ? (
-            <div className="form-section">
-              <div className="input-group">
-                <label>
-                  <span>
-                    标题 <span className="required">*</span>
-                  </span>
-                  <span className="input-hint">{title.length}/50</span>
-                </label>
-                <input
-                  type="text"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="例如：自动填写表单"
-                  disabled={isRecording}
-                  maxLength={50}
-                />
-              </div>
+        <div className="record-container">
+          {/* Left Panel: Form */}
+          <div className="record-form">
+            {!isRecording ? (
+              <div className="form-section">
+                <div className="input-group">
+                  <label>
+                    <span>
+                      标题 <span className="required">*</span>
+                    </span>
+                    <span className="input-hint">{title.length}/50</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="例如：自动填写表单"
+                    disabled={isRecording}
+                    maxLength={50}
+                  />
+                </div>
 
-              <div className="input-group">
-                <label>
-                  <span>功能描述</span>
-                  <span className="input-hint">{description.length}/500</span>
-                </label>
-                <textarea
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="详细描述这个工作流要完成什么任务，包含哪些步骤...&#10;&#10;例如：打开某个网站，填写表单字段，提交数据&#10;&#10;留空则根据录制的操作自动生成描述"
-                  disabled={isRecording}
-                  maxLength={500}
-                />
+                <div className="input-group">
+                  <label>
+                    <span>功能描述</span>
+                    <span className="input-hint">{description.length}/500</span>
+                  </label>
+                  <textarea
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="详细描述这个工作流要完成什么任务，包含哪些步骤...&#10;&#10;例如：打开某个网站，填写表单字段，提交数据&#10;&#10;留空则根据录制的操作自动生成描述"
+                    disabled={isRecording}
+                    maxLength={500}
+                  />
+                </div>
               </div>
-            </div>
-          ) : (
-            <div className="operations-display">
-              <div className="operations-header">
-                <span className="operations-title">已捕获操作</span>
-                <span className="operations-count">{capturedOperations.length} 个操作</span>
-              </div>
-              <div className="operations-list">
-                {capturedOperations.length === 0 ? (
-                  <div className="empty-operations">
-                    <div className="empty-icon"><Icon icon="clipboard" size={48} /></div>
-                    <div className="empty-text">等待捕获操作...</div>
-                  </div>
-                ) : (
-                  capturedOperations.map((op, index) => (
-                    <div key={index} className="operation-item">
-                      <div className="operation-index">{index + 1}</div>
-                      <div className="operation-details">
-                        <div className="operation-type">{getOperationTypeLabel(op.type)}</div>
-                        <div className="operation-info">
-                          {op.element?.textContent && (
-                            <div className="operation-text">
-                              {op.element.textContent.slice(0, 50)}
-                              {op.element.textContent.length > 50 ? '...' : ''}
-                            </div>
-                          )}
-                          <div className="operation-url">{new URL(op.url).hostname}</div>
+            ) : (
+              <div className="operations-display">
+                <div className="operations-header">
+                  <span className="operations-title">已捕获操作</span>
+                  <span className="operations-count">{capturedOperations.length} 个操作</span>
+                </div>
+                <div className="operations-list">
+                  {capturedOperations.length === 0 ? (
+                    <div className="empty-operations">
+                      <div className="empty-icon"><Icon icon="clipboard" size={48} /></div>
+                      <div className="empty-text">等待捕获操作...</div>
+                    </div>
+                  ) : (
+                    capturedOperations.map((op, index) => (
+                      <div key={index} className="operation-item">
+                        <div className="operation-index">{index + 1}</div>
+                        <div className="operation-details">
+                          <div className="operation-type">{getOperationTypeLabel(op.type)}</div>
+                          <div className="operation-info">
+                            {op.element?.textContent && (
+                              <div className="operation-text">
+                                {op.element.textContent.slice(0, 50)}
+                                {op.element.textContent.length > 50 ? '...' : ''}
+                              </div>
+                            )}
+                            <div className="operation-url">{new URL(op.url).hostname}</div>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))
-                )}
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+
+            <button
+              className={`start-record-button ${isRecording ? 'recording' : ''} ${isGenerating ? 'generating' : ''}`}
+              onClick={isRecording ? handleStopRecord : handleStartRecord}
+              disabled={isGenerating}
+            >
+              {isGenerating ? (
+                <>
+                  <div className="btn-spinner"></div>
+                  <span>生成中...</span>
+                </>
+              ) : isRecording ? (
+                <>
+                  <Icon icon="square" size={20} />
+                  <span>停止录制</span>
+                </>
+              ) : (
+                <>
+                  <Icon icon="circle" size={20} fill="currentColor" />
+                  <span>开始录制</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* Right Panel: Tips & Rules */}
+          {!isRecording && (
+            <div className="record-tips-panel">
+              <div className="tips-section">
+                <h3><Icon icon="zap" size={18} /> 录制最佳实践</h3>
+                <ul className="tips-list">
+                  <li>
+                    <strong>选中 + 复制 = 提取：</strong> 要提取数据时，先用鼠标选中文本，再按 Ctrl+C 复制。AI 会识别这是你要提取的数据。
+                  </li>
+                  <li>
+                    <strong>完整操作路径：</strong> 从起始页面开始，每一步点击都会被记录。AI 需要完整路径才能自动化重放。
+                  </li>
+                  <li>
+                    <strong>等待加载：</strong> 确保页面完全加载后再点击下一个元素，这有助于 AI 识别正确的按钮和链接。
+                  </li>
+                </ul>
+              </div>
+
+              <div className="tips-section">
+                <h3><Icon icon="clipboard" size={18} /> 会被记录的操作</h3>
+                <ul className="tips-list info">
+                  <li><strong>点击：</strong> 按钮、链接、菜单项等元素的点击</li>
+                  <li><strong>输入：</strong> 文本框、搜索框中输入的内容</li>
+                  <li><strong>选择+复制：</strong> 选中文本后复制的内容（提取数据的关键）</li>
+                  <li><strong>页面跳转：</strong> URL 变化和页面切换</li>
+                </ul>
+              </div>
+
+              <div className="tips-section">
+                <h3><Icon icon="alertTriangle" size={18} /> 注意</h3>
+                <ul className="tips-list warning">
+                  <li>不要直接关闭浏览器，返回这里点击"停止录制"</li>
+                </ul>
               </div>
             </div>
           )}
-
-          <button
-            className={`start-record-button ${isRecording ? 'recording' : ''} ${isGenerating ? 'generating' : ''}`}
-            onClick={isRecording ? handleStopRecord : handleStartRecord}
-            disabled={isGenerating}
-          >
-            {isGenerating ? (
-              <>
-                <div className="btn-spinner"></div>
-                <span>生成中...</span>
-              </>
-            ) : isRecording ? (
-              <>
-                <Icon icon="square" size={20} />
-                <span>停止录制</span>
-              </>
-            ) : (
-              <>
-                <Icon icon="circle" size={20} fill="currentColor" />
-                <span>开始录制</span>
-              </>
-            )}
-          </button>
         </div>
       </div>
 

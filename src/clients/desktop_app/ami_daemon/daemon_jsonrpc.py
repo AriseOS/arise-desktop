@@ -65,53 +65,6 @@ async def initialize_services():
     sys.stderr.flush()
 
 
-async def _generate_workflow_complete(
-    session_id: str,
-    title: str,
-    description: str,
-    user_id: str
-) -> Dict[str, Any]:
-    """Complete workflow generation flow
-
-    Args:
-        session_id: Local recording session ID
-        title: Workflow title
-        description: User intent description
-        user_id: User ID
-
-    Returns:
-        Dict with workflow_name and local_path
-    """
-    # Step 1: Load operations from local storage
-    recording_data = storage_manager.get_recording(user_id, session_id)
-    operations = recording_data.get("operations", [])
-
-    # Step 2: Upload recording to Cloud Backend
-    recording_id = await cloud_client.upload_recording(operations)
-
-    # Step 3: Generate MetaFlow
-    metaflow_id = await cloud_client.generate_metaflow(
-        recording_id, title, description
-    )
-
-    # Step 4: Generate Workflow YAML
-    workflow_name = await cloud_client.generate_workflow(metaflow_id)
-
-    # Step 5: Download workflow YAML
-    workflow_yaml = await cloud_client.download_workflow(workflow_name)
-
-    # Step 6: Save to local storage
-    storage_manager.save_workflow(user_id, workflow_name, workflow_yaml)
-
-    return {
-        "workflow_name": workflow_name,
-        "local_path": str(
-            storage_manager._user_path(user_id) / "workflows" /
-            workflow_name / "workflow.yaml"
-        )
-    }
-
-
 def handle_request(method: str, params: Dict[str, Any]) -> Dict[str, Any]:
     """Handle JSON-RPC request
 
@@ -155,18 +108,6 @@ def handle_request(method: str, params: Dict[str, Any]) -> Dict[str, Any]:
             user_id = params.get("user_id", "default_user")
             workflows = storage_manager.list_workflows(user_id)
             result = {"workflows": workflows}
-
-        # Cloud API proxy methods - complete workflow generation flow
-        elif method == "generate_workflow_from_recording":
-            # Complete flow: recording → metaflow → workflow → download
-            session_id = params.get("session_id", "")
-            title = params.get("title", "")
-            description = params.get("description", "")
-            user_id = params.get("user_id", "default_user")
-
-            result = loop.run_until_complete(
-                _generate_workflow_complete(session_id, title, description, user_id)
-            )
 
         else:
             return {"error": f"Unknown method: {method}"}

@@ -10,7 +10,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [deleteConfirm, setDeleteConfirm] = useState(null); // { sessionId, recordingName }
-  const [metaflowIds, setMetaflowIds] = useState({}); // { sessionId: metaflowId }
+  const [workflowIds, setWorkflowIds] = useState({}); // { sessionId: workflowId }
 
   // Fetch recordings from API
   useEffect(() => {
@@ -22,19 +22,19 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
         setRecordings(data.recordings || []);
         setFilteredRecordings(data.recordings || []);
 
-        // Asynchronously fetch metaflow_id for each recording
+        // Asynchronously fetch workflow_id for each recording (if any)
         (data.recordings || []).forEach(async (recording) => {
           try {
             const detail = await api.callAppBackend(`/api/v1/recordings/${recording.session_id}?user_id=${userId}`);
-            if (detail.metaflow_id) {
-              setMetaflowIds(prev => ({
+            if (detail.workflow_id) {
+              setWorkflowIds(prev => ({
                 ...prev,
-                [recording.session_id]: detail.metaflow_id
+                [recording.session_id]: detail.workflow_id
               }));
             }
           } catch (err) {
             // Silently ignore errors for individual recordings
-            console.debug(`Could not fetch metaflow_id for ${recording.session_id}`);
+            console.debug(`Could not fetch workflow_id for ${recording.session_id}`);
           }
         });
       } catch (error) {
@@ -72,40 +72,22 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
     onNavigate('recording-detail', { sessionId });
   };
 
-  const handleViewMetaflow = (metaflowId) => {
-    onNavigate('metaflow-preview', { metaflowId });
+  const handleViewWorkflow = (workflowId) => {
+    onNavigate('workflow-detail', { workflowId });
   };
 
-  const handleGenerateWorkflow = async (sessionId) => {
-    showStatus('Generating MetaFlow from recording...', 'info');
+  const handleGenerateWorkflow = (sessionId) => {
+    // Get recording info for the generation page
+    const recording = recordings.find(r => r.session_id === sessionId);
+    const recordingName = recording?.task_metadata?.name || `Recording ${sessionId}`;
 
-    try {
-      const data = await api.generateMetaflowFromRecording(
-        sessionId,
-        "Auto-generated workflow from recording",
-        null, // user_query
-        userId
-      );
-
-      // Update metaflowIds state so the button appears immediately
-      setMetaflowIds(prev => ({
-        ...prev,
-        [sessionId]: data.metaflow_id
-      }));
-
-      showStatus('MetaFlow generated! Please review.', 'success');
-
-      // Navigate to MetaFlow preview page
-      setTimeout(() => {
-        onNavigate('metaflow-preview', {
-          metaflowId: data.metaflow_id,
-          metaflowYaml: data.metaflow_yaml
-        });
-      }, 500);
-    } catch (error) {
-      console.error('Error generating MetaFlow:', error);
-      showStatus(`Failed to generate MetaFlow: ${error.message}`, 'error');
-    }
+    // Navigate to the dedicated generation page with recording info
+    onNavigate('generation', {
+      recordingId: sessionId,
+      recordingName: recordingName,
+      taskDescription: recording?.task_metadata?.task_description || '',
+      userQuery: recording?.task_metadata?.user_query || ''
+    });
   };
 
   const handleDeleteClick = (sessionId) => {
@@ -131,7 +113,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
       // Remove from local state
       setRecordings(prev => prev.filter(r => r.session_id !== sessionId));
       setFilteredRecordings(prev => prev.filter(r => r.session_id !== sessionId));
-      setMetaflowIds(prev => {
+      setWorkflowIds(prev => {
         const updated = { ...prev };
         delete updated[sessionId];
         return updated;
@@ -273,13 +255,13 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
                   <Icon name="eye" />
                   View Details
                 </button>
-                {metaflowIds[recording.session_id] ? (
+                {workflowIds[recording.session_id] ? (
                   <button
                     className="btn btn-primary"
-                    onClick={() => handleViewMetaflow(metaflowIds[recording.session_id])}
+                    onClick={() => handleViewWorkflow(workflowIds[recording.session_id])}
                   >
                     <Icon name="fileText" />
-                    View MetaFlow
+                    View Workflow
                   </button>
                 ) : (
                   <button

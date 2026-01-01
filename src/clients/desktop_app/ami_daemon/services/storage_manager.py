@@ -173,49 +173,6 @@ class StorageManager:
         except Exception as e:
             return None
 
-    # === MetaFlow Management ===
-
-    def save_metaflow(
-        self,
-        user_id: str,
-        metaflow_id: str,
-        metaflow_yaml: str,
-        task_description: Optional[str] = None
-    ):
-        """Save MetaFlow YAML to local file"""
-        metaflow_path = self._user_path(user_id) / "metaflows" / metaflow_id
-        metaflow_path.mkdir(parents=True, exist_ok=True)
-
-        # Save MetaFlow YAML
-        yaml_file = metaflow_path / "metaflow.yaml"
-        with open(yaml_file, 'w', encoding='utf-8') as f:
-            f.write(metaflow_yaml)
-
-        # Save task description if provided
-        if task_description:
-            desc_file = metaflow_path / "task_description.txt"
-            with open(desc_file, 'w', encoding='utf-8') as f:
-                f.write(task_description)
-
-    def get_metaflow(self, user_id: str, metaflow_id: str) -> str:
-        """Read MetaFlow YAML from local file"""
-        file_path = self._user_path(user_id) / "metaflows" / metaflow_id / "metaflow.yaml"
-        with open(file_path, 'r', encoding='utf-8') as f:
-            return f.read()
-
-    def metaflow_exists(self, user_id: str, metaflow_id: str) -> bool:
-        """Check if metaflow exists locally"""
-        file_path = self._user_path(user_id) / "metaflows" / metaflow_id / "metaflow.yaml"
-        return file_path.exists()
-
-    def list_metaflows(self, user_id: str) -> List[str]:
-        """List all MetaFlow IDs for user"""
-        metaflows_path = self._user_path(user_id) / "metaflows"
-        if not metaflows_path.exists():
-            return []
-
-        return [d.name for d in metaflows_path.iterdir() if d.is_dir()]
-
     # === Workflow Management ===
 
     def save_workflow(self, user_id: str, workflow_name: str, yaml_content: str):

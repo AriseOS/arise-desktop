@@ -42,28 +42,31 @@ function UserFlowsPage({ session, onNavigate, showStatus }) {
     try {
       setSelectedRecording(recording.session_id);
 
-      // Generate MetaFlow from recording
-      showStatus("正在生成 MetaFlow...", "info");
+      // Generate Workflow directly (NEW v2 API - bypasses MetaFlow)
+      showStatus("正在生成 Workflow...", "info");
 
-      const metaflowResult = await api.generateMetaflowFromRecording(
-        recording.session_id,
-        recording.description,
-        null,  // user_query
-        userId
-      );
-      showStatus("MetaFlow 生成成功！正在跳转预览...", "success");
+      const workflowResult = await api.generateWorkflowDirect({
+        userId: userId,
+        taskDescription: recording.description,
+        recordingId: recording.session_id,
+        userQuery: null,
+        enableDialogue: true,
+        enableSemanticValidation: true
+      });
 
-      // Navigate to MetaFlow preview page (user will review and generate workflow from there)
+      showStatus("Workflow 生成成功！正在跳转...", "success");
+
+      // Navigate to Workflow detail page directly
       setTimeout(() => {
-        onNavigate("metaflow-preview", {
-          metaflowId: metaflowResult.metaflow_id,
-          metaflowYaml: metaflowResult.metaflow_yaml
+        onNavigate("workflow-detail", {
+          workflowId: workflowResult.workflow_id,
+          sessionId: workflowResult.session_id  // For dialogue support
         });
       }, 500);
 
     } catch (error) {
-      console.error("Generate MetaFlow error:", error);
-      showStatus(`生成 MetaFlow 失败: ${error.message}`, "error");
+      console.error("Generate Workflow error:", error);
+      showStatus(`生成 Workflow 失败: ${error.message}`, "error");
     } finally {
       setSelectedRecording(null);
     }

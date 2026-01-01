@@ -1,21 +1,69 @@
 # src/cloud_backend/intent_builder/
 
-Intent-based workflow generation system. Converts user operations into executable workflows.
+Intent-based workflow generation system. Converts user recordings into executable workflows.
 
-## Pipeline
+## Pipeline (v0.4.0 - Skills-based Architecture)
 
 ```
-User Operations JSON → IntentExtractor → Intent Graph → MetaFlowGenerator → MetaFlow → WorkflowGenerator → Workflow YAML
+Recording → IntentExtractor → WorkflowBuilder (Claude Agent + Skills) → Validator → Workflow
+                                    ↑
+                           User Dialogue (optional)
 ```
 
-## Directories (see each CONTEXT.md for details)
+**Key changes from v0.3:**
+- Skills-based architecture for workflow generation
+- Agent specs and optimization rules as Skills
+- Removed MetaFlow intermediate layer completely
+- Removed deprecated generators directory
 
-- `core/` - Data structures (Intent, IntentMemoryGraph, MetaFlow, Operation)
+## Directories
+
+- `core/` - Data structures (Intent, IntentMemoryGraph, Operation)
 - `extractors/` - Intent extraction from user operations
-- `generators/` - MetaFlow and Workflow generation
-- `agent/` - Intent builder agent (LLM-based)
-- `validators/` - YAML validation
+- `agents/` - Claude Agent SDK based workflow generation
+  - `workflow_builder.py` - WorkflowBuilder and WorkflowBuilderSession
+  - `tools/` - Agent tools (validate)
+- `validators/` - Two-layer validation
+  - `RuleValidator` - Fast deterministic checks
+  - `SemanticValidator` - LLM-based task completeness checks
+  - `WorkflowValidator` - Unified validator combining both
+- `services/` - API service layer
+  - `WorkflowService` - Main entry point for generation and dialogue
+- `.claude/skills/` - Skills for Claude Agent
+  - `workflow-generation/` - Main generation process
+  - `workflow-validation/` - Validation with script
+  - `agent-specs/` - Agent specifications
+  - `workflow-optimizations/` - Optimization rules
 - `storage/` - In-memory storage
+
+## Skills Architecture
+
+```
+.claude/skills/
+├── workflow-generation/          # Main Skill: generation process
+│   ├── SKILL.md                  # Layer 1/Layer 2 workflow
+│   └── references/
+│       ├── workflow_spec.md      # YAML specification
+│       └── loop_detection.md     # Loop pattern detection
+│
+├── workflow-validation/          # Validation Skill
+│   ├── SKILL.md
+│   └── scripts/
+│       └── validate.py           # Validation script
+│
+├── agent-specs/                  # Agent specifications
+│   ├── SKILL.md
+│   └── references/
+│       ├── browser_agent.md
+│       ├── scraper_agent.md
+│       └── storage_agent.md
+│
+└── workflow-optimizations/       # Layer 2 optimizations
+    ├── SKILL.md
+    └── references/
+        ├── click_to_navigate.md
+        └── scroll_optimization.md
+```
 
 ## Key Concepts
 
@@ -24,24 +72,84 @@ User Operations JSON → IntentExtractor → Intent Graph → MetaFlowGenerator 
 Intent(id, description, operations, created_at, source_session_id)
 ```
 
-**IntentMemoryGraph**: Graph of intents with temporal edges
-- Nodes: Intent instances
-- Edges: Temporal ordering (not causal)
-- Retrieval: Semantic similarity via embeddings
+**WorkflowBuilderSession**: Interactive session for workflow generation
+- Maintains Claude Agent context for multi-turn dialogue
+- Users can ask questions and request modifications
+- Workflow updated in real-time based on user feedback
+- Can be created from existing Workflow via `set_existing_workflow()`
 
-**MetaFlow**: Intermediate representation between Intent and Workflow
-- Contains implicit nodes (LLM-inferred)
-- Contains control flow (loops)
-- Contains data flow (variable passing)
+**WorkflowValidator**: Two-layer validation
+- Rule validation: YAML format, required fields, variable references, agent types
+- Semantic validation: Task completeness, data flow correctness
 
-## Generation Strategy
+## API Endpoints
 
-1. **Intent Extraction**: Rule-based URL segmentation + LLM semantic understanding
-2. **MetaFlow Generation**: LLM infers loops, implicit nodes, data flow
-3. **Workflow Generation**: Convert MetaFlow to BaseAgent YAML format
+### Workflow Generation
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/workflows/generate` | POST | Direct Workflow generation |
+| `/api/v1/workflows/generate-stream` | POST | Streaming generation (SSE) |
+
+### Workflow Dialogue
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/workflow-sessions` | POST | Create dialogue session |
+| `/api/v1/workflow-sessions/{id}/chat` | POST | Send dialogue message |
+| `/api/v1/workflow-sessions/{id}` | DELETE | Close session |
+
+## Main Entry Points
+
+```python
+# One-shot generation
+from intent_builder.services import WorkflowService
+
+service = WorkflowService(api_key="...", base_url="...")
+response = await service.generate(
+    task_description="Extract products from website",
+    intent_sequence=[...],
+    enable_semantic_validation=True
+)
+
+# Streaming generation
+async for event in service.generate_stream(...):
+    print(f"Stage: {event.status}, Progress: {event.progress}%")
+
+# Interactive dialogue
+chat_response = await service.chat(
+    session_id=response.session_id,
+    message="Why did you use browser_agent here?"
+)
+
+# Add intents to user's graph
+await service.add_intents_to_graph(
+    operations=[...],
+    graph_filepath="path/to/intent_graph.json",
+    task_description="User's task"
+)
+```
 
 ## Constraints
 
 - MVP: No intent deduplication
 - MVP: Only simple loops (foreach), no conditionals
-- MVP: JSON file storage (not database)
+
+## Skills Maintenance
+
+Skills are located in `.claude/skills/` and must stay in sync with source code.
+
+### Skill Dependencies
+
+| Skill | Source of Truth | When to Update |
+|-------|-----------------|----------------|
+| `agent-specs/references/browser_agent.md` | `docs/base_app/browser_agent_spec.md` | Browser agent behavior changes |
+| `agent-specs/references/scraper_agent.md` | `docs/base_app/scraper_agent_spec.md` | Scraper agent behavior changes |
+| `agent-specs/references/storage_agent.md` | `docs/base_app/storage_agent_spec.md` | Storage agent behavior changes |
+| `workflow-generation/references/workflow_spec.md` | `docs/base_app/workflow_specification.md` | Workflow YAML structure changes |
+| `workflow-validation/scripts/validate.py` | Independent | Validation rules change |
+| `workflow-optimizations/references/*.md` | Independent | New optimization patterns |
+
+### Update Process
+
+1. Update source docs in `docs/base_app/`
+2. Copy updated content to corresponding Skill `references/`
+3. Update `SKILL.md` if the description or usage changes

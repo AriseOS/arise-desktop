@@ -68,32 +68,35 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
   }, [sessionId]);
 
   const handleGenerateWorkflow = async () => {
-    showStatus('Generating MetaFlow from recording...', 'info');
+    showStatus('Generating Workflow from recording...', 'info');
 
     try {
       // Extract task_description and user_query from recording metadata
       const task_description = recording.task_metadata?.task_description || "Auto-generated workflow from recording";
       const user_query = recording.task_metadata?.user_query;
 
-      const data = await api.generateMetaflowFromRecording(
-        sessionId,
-        task_description,
-        user_query,
-        userId
-      );
+      // Generate Workflow directly (NEW v2 API - bypasses MetaFlow)
+      const data = await api.generateWorkflowDirect({
+        userId: userId,
+        taskDescription: task_description,
+        recordingId: sessionId,
+        userQuery: user_query,
+        enableDialogue: true,
+        enableSemanticValidation: true
+      });
 
-      showStatus('MetaFlow generated! Please review.', 'success');
+      showStatus('Workflow generated!', 'success');
 
-      // Navigate to MetaFlow preview page
+      // Navigate to Workflow detail page directly
       setTimeout(() => {
-        onNavigate('metaflow-preview', {
-          metaflowId: data.metaflow_id,
-          metaflowYaml: data.metaflow_yaml
+        onNavigate('workflow-detail', {
+          workflowId: data.workflow_id,
+          sessionId: data.session_id  // For dialogue support
         });
       }, 500);
     } catch (error) {
-      console.error('Error generating MetaFlow:', error);
-      showStatus(`Failed to generate MetaFlow: ${error.message}`, 'error');
+      console.error('Error generating Workflow:', error);
+      showStatus(`Failed to generate Workflow: ${error.message}`, 'error');
     }
   };
 
@@ -427,16 +430,16 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
             </div>
           </div>
 
-          {/* Linked MetaFlow */}
-          {recording.metaflow_id && (
+          {/* Linked Workflow */}
+          {recording.workflow_id && (
             <div className="linked-entity-section">
               <div className="linked-entity-item">
-                <span className="linked-label">Linked MetaFlow:</span>
+                <span className="linked-label">Linked Workflow:</span>
                 <button
                   className="linked-value-button"
-                  onClick={() => onNavigate('metaflow-preview', { metaflowId: recording.metaflow_id })}
+                  onClick={() => onNavigate('workflow-detail', { workflowId: recording.workflow_id })}
                 >
-                  {recording.metaflow_id}
+                  {recording.workflow_id}
                   <Icon icon="externalLink" size={14} />
                 </button>
               </div>

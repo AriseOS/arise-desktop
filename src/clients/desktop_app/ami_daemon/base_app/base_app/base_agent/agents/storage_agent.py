@@ -176,13 +176,9 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
             return True  # filters, limit, order_by are optional
 
         elif operation == 'export':
-            format_type = input_data.get('format')
-            output_path = input_data.get('output_path')
+            format_type = input_data.get('export_format')
             if format_type not in ['csv', 'excel', 'json']:
-                logger.error(f"❌ Input validation failed: invalid format '{format_type}', must be 'csv', 'excel', or 'json'")
-                return False
-            if not isinstance(output_path, str):
-                logger.error(f"❌ Input validation failed: output_path must be a string, got {type(output_path)}")
+                logger.error(f"❌ Input validation failed: invalid export_format '{format_type}', must be 'csv', 'excel', or 'json'")
                 return False
             return True
 
@@ -228,6 +224,7 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
         """Store data to collection"""
         collection = input_data.get('collection')
         data = input_data.get('data')
+        upsert_key = input_data.get('upsert_key')  # Optional: field for upsert
         # Get user_id from MemoryManager (single source of truth)
         user_id = context.memory_manager.user_id if context.memory_manager else 'default_user'
 
@@ -235,30 +232,34 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
         if isinstance(data, list):
             count = 0
             for item in data:
-                await self._store_single(collection, item, user_id, context)
+                await self._store_single(collection, item, user_id, context, upsert_key)
                 count += 1
 
             # Send user-friendly log output via WebSocket
+            action = "upserted" if upsert_key else "stored"
             if context.logger:
-                context.logger.info(f"✅ Successfully stored {count} records to collection '{collection}'")
+                context.logger.info(f"✅ Successfully {action} {count} records to collection '{collection}'")
 
             return {
-                "message": f"Stored {count} records to collection '{collection}'",
+                "message": f"{action.capitalize()} {count} records to collection '{collection}'",
                 "collection": collection,
-                "rows_stored": count
+                "rows_stored": count,
+                "upsert_key": upsert_key
             }
         else:
             # Single data
-            await self._store_single(collection, data, user_id, context)
+            await self._store_single(collection, data, user_id, context, upsert_key)
 
             # Send user-friendly log output via WebSocket
+            action = "upserted" if upsert_key else "stored"
             if context.logger:
-                context.logger.info(f"✅ Successfully stored 1 record to collection '{collection}'")
+                context.logger.info(f"✅ Successfully {action} 1 record to collection '{collection}'")
 
             return {
-                "message": f"Stored 1 record to collection '{collection}'",
+                "message": f"{action.capitalize()} 1 record to collection '{collection}'",
                 "collection": collection,
-                "rows_stored": 1
+                "rows_stored": 1,
+                "upsert_key": upsert_key
             }
 
     async def _store_single(
@@ -266,16 +267,27 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
         collection: str,
         data: dict,
         user_id: str,
-        context: AgentContext
+        context: AgentContext,
+        upsert_key: Optional[str] = None
     ):
-        """Store single data record"""
+        """Store single data record
+
+        Args:
+            collection: Collection name
+            data: Data to store
+            user_id: User ID for table isolation
+            context: Agent context
+            upsert_key: Optional field name for upsert. If specified and record
+                       with same key value exists, update it instead of insert.
+        """
         table_name = f"{collection}_{user_id}"
 
         # Log table and data info for debugging
-        self.logger.info(f"Storing to table: {table_name}, data fields: {list(data.keys())}")
+        self.logger.info(f"Storing to table: {table_name}, data fields: {list(data.keys())}, upsert_key: {upsert_key}")
 
-        # Generate cache key with user_id for easy deletion
-        cache_key = f"storage_insert_{collection}_{user_id}"
+        # Generate cache key - different for upsert vs insert
+        cache_suffix = f"_upsert_{upsert_key}" if upsert_key else ""
+        cache_key = f"storage_insert_{collection}_{user_id}{cache_suffix}"
 
         # Try to load cached script
         cached = await context.memory_manager.get_data(cache_key)
@@ -304,24 +316,35 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
 
             # Generate SQL scripts using LLM
             create_sql = await self._generate_create_table_sql(table_name, data)
-            insert_sql = await self._generate_insert_sql(table_name, field_order, create_sql)
+
+            # Generate INSERT or INSERT OR REPLACE based on upsert_key
+            if upsert_key:
+                insert_sql = self._generate_upsert_sql(table_name, field_order, upsert_key)
+                self.logger.info(f"Generated UPSERT SQL: {insert_sql}")
+            else:
+                insert_sql = await self._generate_insert_sql(table_name, field_order, create_sql)
+                self.logger.info(f"Generated INSERT SQL: {insert_sql}")
 
             self.logger.info(f"Generated CREATE TABLE SQL: {create_sql}")
-            self.logger.info(f"Generated INSERT SQL: {insert_sql}")
 
             # Create table
             await self._execute_sql(create_sql)
+
+            # Create unique index for upsert key if specified
+            if upsert_key:
+                await self._ensure_unique_index(table_name, upsert_key)
 
             # Cache script
             await context.memory_manager.set_data(cache_key, {
                 "table_name": table_name,
                 "create_table_sql": create_sql,
                 "insert_sql": insert_sql,
-                "field_order": field_order
+                "field_order": field_order,
+                "upsert_key": upsert_key
             })
 
             cached = await context.memory_manager.get_data(cache_key)
-            self.logger.info(f"Cached INSERT script for {table_name}, schema fields: {cached['field_order']}")
+            self.logger.info(f"Cached {'UPSERT' if upsert_key else 'INSERT'} script for {table_name}, schema fields: {cached['field_order']}")
         else:
             self.logger.info(f"Using cached schema for {table_name}, schema fields: {cached['field_order']}")
 
@@ -342,20 +365,29 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
                         # Regenerate and create table
                         field_order = list(data.keys())
                         create_sql = await self._generate_create_table_sql(table_name, data)
-                        insert_sql = await self._generate_insert_sql(table_name, field_order, create_sql)
+
+                        if upsert_key:
+                            insert_sql = self._generate_upsert_sql(table_name, field_order, upsert_key)
+                        else:
+                            insert_sql = await self._generate_insert_sql(table_name, field_order, create_sql)
 
                         self.logger.info(f"Regenerated CREATE TABLE SQL: {create_sql}")
-                        self.logger.info(f"Regenerated INSERT SQL: {insert_sql}")
+                        self.logger.info(f"Regenerated {'UPSERT' if upsert_key else 'INSERT'} SQL: {insert_sql}")
 
                         # Create table
                         await self._execute_sql(create_sql)
+
+                        # Create unique index for upsert key if specified
+                        if upsert_key:
+                            await self._ensure_unique_index(table_name, upsert_key)
 
                         # Update cache
                         await context.memory_manager.set_data(cache_key, {
                             "table_name": table_name,
                             "create_table_sql": create_sql,
                             "insert_sql": insert_sql,
-                            "field_order": field_order
+                            "field_order": field_order,
+                            "upsert_key": upsert_key
                         })
 
                         # Reload cached data
@@ -373,6 +405,10 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
                                 self.logger.error(f"Cached schema: {cached['field_order']}")
                                 self.logger.error(f"Actual schema: {existing_fields}")
                                 raise Exception(f"Table schema mismatch. Cached: {cached['field_order']}, Actual: {existing_fields}")
+
+                        # Ensure unique index exists for upsert (in case it was added later)
+                        if upsert_key:
+                            await self._ensure_unique_index(table_name, upsert_key)
 
         # Validate data fields
         self._validate_fields(data, cached["field_order"])
@@ -392,7 +428,7 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
         # Add system field: created_at
         values.append(datetime.now().isoformat())
 
-        # Execute INSERT
+        # Execute INSERT or UPSERT
         await self._execute_sql(cached["insert_sql"], tuple(values))
 
     async def _query(self, input_data: Dict, context: AgentContext) -> Dict:
@@ -455,7 +491,7 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
     async def _export(self, input_data: Dict, context: AgentContext) -> Dict:
         """Export data to file"""
         collection = input_data.get('collection')
-        format_type = input_data.get('format')
+        format_type = input_data.get('export_format')
         output_path = input_data.get('output_path')
         filters = input_data.get('filters', {})
         # Get user_id from MemoryManager (single source of truth)
@@ -607,6 +643,54 @@ Return INSERT SQL with placeholders (?)."""
         insert_sql = self._extract_sql(response)
         self.logger.debug(f"Generated INSERT SQL: {insert_sql}")
         return insert_sql
+
+    def _generate_upsert_sql(
+        self,
+        table_name: str,
+        fields: List[str],
+        upsert_key: str
+    ) -> str:
+        """Generate INSERT OR REPLACE SQL for upsert operation.
+
+        Uses SQLite's INSERT OR REPLACE which will:
+        - Insert if no row with same upsert_key exists
+        - Replace (delete + insert) if row with same upsert_key exists
+
+        Args:
+            table_name: Table name
+            fields: Field names from data
+            upsert_key: Field to use as unique key
+
+        Returns:
+            INSERT OR REPLACE SQL with placeholders
+        """
+        # Validate upsert_key is in fields
+        if upsert_key not in fields:
+            raise ValueError(f"upsert_key '{upsert_key}' not found in data fields: {fields}")
+
+        # Build column list (fields + created_at)
+        all_columns = fields + ["created_at"]
+        columns_str = ", ".join(all_columns)
+        placeholders = ", ".join(["?"] * len(all_columns))
+
+        sql = f"INSERT OR REPLACE INTO {table_name} ({columns_str}) VALUES ({placeholders})"
+        self.logger.debug(f"Generated UPSERT SQL: {sql}")
+        return sql
+
+    async def _ensure_unique_index(self, table_name: str, upsert_key: str):
+        """Ensure unique index exists for upsert key.
+
+        Creates index if not exists. Required for INSERT OR REPLACE to work correctly.
+
+        Args:
+            table_name: Table name
+            upsert_key: Field to create unique index on
+        """
+        index_name = f"idx_{table_name}_{upsert_key}_unique"
+        create_index_sql = f"CREATE UNIQUE INDEX IF NOT EXISTS {index_name} ON {table_name} ({upsert_key})"
+
+        self.logger.info(f"Ensuring unique index: {index_name}")
+        await self._execute_sql(create_index_sql)
 
     async def _generate_query_sql(
         self,

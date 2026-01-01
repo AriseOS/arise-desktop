@@ -1,31 +1,27 @@
 """
-Storage Service - 服务器本地文件系统管理 (Cloud Backend)
+Storage Service - Server local filesystem management (Cloud Backend)
 
-存储路径：
-- 开发环境：~/ami-server
-- 生产环境：/var/lib/ami-server/（或通过环境变量 STORAGE_PATH 配置）
+Storage paths:
+- Development: ~/ami-server
+- Production: /var/lib/ami-server/ (or via STORAGE_PATH env var)
 
-目录结构：
+Directory structure:
 ~/ami-server/
 ├── users/{user_id}/
-│   ├── recordings/              # 录制数据
+│   ├── recordings/              # Recording data
 │   │   └── {recording_id}/
 │   │       ├── operations.json
-│   │       └── metadata.json    # 包含 metaflow_id 关联
-│   ├── metaflows/               # MetaFlows
-│   │   └── {metaflow_id}/
-│   │       ├── metaflow.yaml
-│   │       └── metadata.json    # 包含关联信息
+│   │       └── metadata.json    # Contains workflow_id association
 │   ├── workflows/               # Workflows
 │   │   └── {workflow_id}/
 │   │       ├── workflow.yaml
-│   │       └── metadata.json    # 包含关联信息
-│   └── intent_builder/          # Agent 工作目录
+│   │       └── metadata.json    # Contains association info
+│   └── intent_builder/          # Agent working directory
 │       └── {session_id}/
 └── logs/
 
-关联关系 (1:1:1):
-Recording → MetaFlow → Workflow
+Association:
+Recording → Workflow (direct, no intermediate MetaFlow)
 """
 
 from pathlib import Path
@@ -282,7 +278,7 @@ class StorageService:
             json.dump(data, f, indent=2, ensure_ascii=False)
 
     def get_recording(self, user_id: str, recording_id: str) -> Optional[Dict]:
-        """读取录制数据"""
+        """Read recording data"""
         recording_path = self._user_path(user_id) / "recordings" / recording_id
         file_path = recording_path / "operations.json"
 
@@ -298,12 +294,12 @@ class StorageService:
         if metadata_path.exists():
             with open(metadata_path, 'r') as f:
                 metadata = json.load(f)
-                data["metaflow_id"] = metadata.get("metaflow_id")
+                data["workflow_id"] = metadata.get("workflow_id")
 
         return data
 
-    def update_recording_metaflow(self, user_id: str, recording_id: str, metaflow_id: str):
-        """Update recording with associated metaflow_id"""
+    def update_recording_workflow(self, user_id: str, recording_id: str, workflow_id: str):
+        """Update recording with associated workflow_id"""
         recording_path = self._user_path(user_id) / "recordings" / recording_id
 
         # Ensure recording directory exists
@@ -318,13 +314,13 @@ class StorageService:
             with open(metadata_path, 'r') as f:
                 metadata = json.load(f)
 
-        metadata["metaflow_id"] = metaflow_id
+        metadata["workflow_id"] = workflow_id
         metadata["updated_at"] = get_current_timestamp()
 
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
 
-        logger.info(f"Recording {recording_id} linked to MetaFlow {metaflow_id}")
+        logger.info(f"Recording {recording_id} linked to Workflow {workflow_id}")
 
     def list_recordings(self, user_id: str) -> List[Dict]:
         """List all recordings for user with metadata"""
@@ -344,218 +340,22 @@ class StorageService:
                         "task_description": recording.get("task_description"),
                         "created_at": recording.get("created_at"),
                         "operations_count": recording.get("operations_count"),
-                        "metaflow_id": recording.get("metaflow_id")
+                        "workflow_id": recording.get("workflow_id")
                     })
 
         # Sort by created_at, handling None values
         return sorted(result, key=lambda x: x.get("created_at") or "", reverse=True)
 
-    # ===== MetaFlow 管理 =====
+    # ===== Workflow Management =====
 
-    def save_metaflow(
-        self,
-        user_id: str,
-        metaflow_id: str,
-        metaflow_yaml: str,
-        user_query: str,
-        recording_id: str = None,
-        source_type: str = "from_recording"
-    ) -> str:
-        """
-        Save MetaFlow to server filesystem
-
-        Args:
-            user_id: User ID
-            metaflow_id: MetaFlow ID
-            metaflow_yaml: MetaFlow YAML content
-            user_query: User's query/request
-            recording_id: Source recording ID (for reverse traceability)
-            source_type: How this metaflow was generated (from_recording, from_intent_graph)
-
-        Returns:
-            metaflow.yaml file path
-        """
-        metaflow_path = self._user_path(user_id) / "metaflows" / metaflow_id
-        metaflow_path.mkdir(parents=True, exist_ok=True)
-
-        # Save metaflow.yaml
-        yaml_file = metaflow_path / "metaflow.yaml"
-        with open(yaml_file, 'w', encoding='utf-8') as f:
-            f.write(metaflow_yaml)
-
-        # Save metadata.json with source information for reverse traceability
-        metadata = {
-            "metaflow_id": metaflow_id,
-            "user_query": user_query,
-            "workflow_id": None,
-            "source_recording_id": recording_id,  # 反向追溯：记录来源recording
-            "source_type": source_type,           # 反向追溯：记录生成方式
-            "created_at": get_current_timestamp(),
-            "updated_at": get_current_timestamp()
-        }
-        metadata_file = metaflow_path / "metadata.json"
-        with open(metadata_file, 'w', encoding='utf-8') as f:
-            json.dump(metadata, f, indent=2, ensure_ascii=False)
-
-        logger.info(f"MetaFlow saved: {metaflow_id}")
-        if recording_id:
-            logger.info(f"  Source recording: {recording_id}")
-        return str(yaml_file)
-
-    def get_metaflow(self, user_id: str, metaflow_id: str) -> Optional[Dict]:
-        """Read MetaFlow data with metadata"""
-        metaflow_path = self._user_path(user_id) / "metaflows" / metaflow_id
-        yaml_file = metaflow_path / "metaflow.yaml"
-
-        if not yaml_file.exists():
-            logger.warning(f"MetaFlow not found: {metaflow_id}")
-            return None
-
-        with open(yaml_file, 'r', encoding='utf-8') as f:
-            metaflow_yaml = f.read()
-
-        # Load metadata
-        metadata = {}
-        metadata_file = metaflow_path / "metadata.json"
-        if metadata_file.exists():
-            with open(metadata_file, 'r', encoding='utf-8') as f:
-                metadata = json.load(f)
-
-        return {
-            "metaflow_id": metaflow_id,
-            "metaflow_yaml": metaflow_yaml,
-            "user_query": metadata.get("user_query"),
-            "workflow_id": metadata.get("workflow_id"),
-            "source_recording_id": metadata.get("source_recording_id"),  # 反向追溯信息
-            "source_type": metadata.get("source_type"),                  # 反向追溯信息
-            "created_at": metadata.get("created_at"),
-            "updated_at": metadata.get("updated_at")
-        }
-
-    def update_metaflow_yaml(self, user_id: str, metaflow_id: str, metaflow_yaml: str):
-        """Update MetaFlow YAML content"""
-        metaflow_path = self._user_path(user_id) / "metaflows" / metaflow_id
-        yaml_file = metaflow_path / "metaflow.yaml"
-
-        logger.info(f"📝 Updating MetaFlow: {metaflow_id}")
-        logger.info(f"📍 Target file: {yaml_file}")
-        logger.info(f"📏 New content length: {len(metaflow_yaml)} characters")
-
-        # Read old content for comparison
-        if yaml_file.exists():
-            with open(yaml_file, 'r', encoding='utf-8') as f:
-                old_yaml = f.read()
-            logger.info(f"📏 Old content length: {len(old_yaml)} characters")
-            if old_yaml == metaflow_yaml:
-                logger.warning(f"⚠️  New content is IDENTICAL to old content!")
-            else:
-                logger.info(f"✓ Content has changed")
-        else:
-            logger.info(f"ℹ️  File does not exist yet, creating new file")
-
-        # Write new content
-        with open(yaml_file, 'w', encoding='utf-8') as f:
-            f.write(metaflow_yaml)
-        logger.info(f"✓ File written successfully")
-
-        # Verify write
-        with open(yaml_file, 'r', encoding='utf-8') as f:
-            verified_content = f.read()
-        if verified_content == metaflow_yaml:
-            logger.info(f"✓ File write verified: content matches")
-        else:
-            logger.error(f"❌ File write verification FAILED: content mismatch!")
-            logger.error(f"   Expected length: {len(metaflow_yaml)}, Got: {len(verified_content)}")
-
-        # Update timestamp in metadata
-        metadata_file = metaflow_path / "metadata.json"
-        if metadata_file.exists():
-            with open(metadata_file, 'r') as f:
-                metadata = json.load(f)
-            metadata["updated_at"] = get_current_timestamp()
-            with open(metadata_file, 'w') as f:
-                json.dump(metadata, f, indent=2)
-
-        logger.info(f"✅ MetaFlow updated successfully: {metaflow_id}")
-
-    def update_metaflow_workflow(self, user_id: str, metaflow_id: str, workflow_id: str):
-        """Update MetaFlow with associated workflow_id"""
-        metaflow_path = self._user_path(user_id) / "metaflows" / metaflow_id
-        metadata_file = metaflow_path / "metadata.json"
-
-        if not metadata_file.exists():
-            logger.warning(f"MetaFlow metadata not found: {metaflow_id}")
-            return
-
-        with open(metadata_file, 'r') as f:
-            metadata = json.load(f)
-
-        metadata["workflow_id"] = workflow_id
-        metadata["updated_at"] = get_current_timestamp()
-
-        with open(metadata_file, 'w') as f:
-            json.dump(metadata, f, indent=2)
-
-        logger.info(f"MetaFlow {metaflow_id} linked to Workflow {workflow_id}")
-
-    def list_metaflows(self, user_id: str) -> List[Dict]:
-        """List all MetaFlows for user"""
-        metaflows_path = self._user_path(user_id) / "metaflows"
-
-        if not metaflows_path.exists():
-            return []
-
-        result = []
-        for metaflow_dir in metaflows_path.iterdir():
-            if metaflow_dir.is_dir():
-                metaflow_id = metaflow_dir.name
-                metaflow = self.get_metaflow(user_id, metaflow_id)
-                if metaflow:
-                    result.append({
-                        "metaflow_id": metaflow_id,
-                        "user_query": metaflow.get("user_query"),
-                        "workflow_id": metaflow.get("workflow_id"),
-                        "source_recording_id": metaflow.get("source_recording_id"),  # 反向追溯信息
-                        "source_type": metaflow.get("source_type"),                  # 反向追溯信息
-                        "created_at": metaflow.get("created_at"),
-                        "updated_at": metaflow.get("updated_at")
-                    })
-
-        # Sort by created_at, handling None values
-        return sorted(result, key=lambda x: x.get("created_at") or "", reverse=True)
-
-    def metaflow_exists(self, user_id: str, metaflow_id: str) -> bool:
-        """Check if MetaFlow exists"""
-        metaflow_path = self._user_path(user_id) / "metaflows" / metaflow_id
-        return (metaflow_path / "metaflow.yaml").exists()
-
-    def delete_metaflow(self, user_id: str, metaflow_id: str) -> bool:
-        """Delete MetaFlow directory completely
-
-        Returns:
-            True if deleted, False if not found
-        """
-        import shutil
-        metaflow_path = self._user_path(user_id) / "metaflows" / metaflow_id
-
-        if not metaflow_path.exists():
-            logger.warning(f"MetaFlow not found for deletion: {metaflow_id}")
-            return False
-
-        shutil.rmtree(metaflow_path)
-        logger.info(f"MetaFlow deleted: {metaflow_id}")
-        return True
-
-    # ===== Workflow 管理 =====
-    
     def save_workflow(
         self,
         user_id: str,
         workflow_id: str,
         workflow_yaml: str,
         workflow_name: str,
-        metaflow_id: str = None,
-        source_recording_id: str = None
+        source_recording_id: str = None,
+        metaflow_id: str = None  # Deprecated, kept for backward compatibility
     ) -> str:
         """
         Save Workflow to server filesystem
@@ -565,8 +365,8 @@ class StorageService:
             workflow_id: Workflow ID
             workflow_yaml: Workflow YAML content
             workflow_name: Display name for the workflow
-            metaflow_id: Source metaflow ID (for reverse traceability)
-            source_recording_id: Original recording ID (optional, for convenience)
+            source_recording_id: Original recording ID (for traceability)
+            metaflow_id: Deprecated, ignored
 
         Returns:
             workflow.yaml file path
@@ -579,12 +379,11 @@ class StorageService:
         with open(yaml_file, 'w', encoding='utf-8') as f:
             f.write(workflow_yaml)
 
-        # Save metadata.json with source information for reverse traceability
+        # Save metadata.json with source information for traceability
         metadata = {
             "workflow_id": workflow_id,
             "workflow_name": workflow_name,
-            "source_metaflow_id": metaflow_id,    # 反向追溯：记录来源metaflow
-            "source_recording_id": source_recording_id,  # 反向追溯：记录原始recording（可选）
+            "source_recording_id": source_recording_id,
             "created_at": get_current_timestamp(),
             "updated_at": get_current_timestamp()
         }
@@ -593,8 +392,8 @@ class StorageService:
             json.dump(metadata, f, indent=2, ensure_ascii=False)
 
         logger.info(f"Workflow saved: {workflow_id} ({workflow_name})")
-        if metaflow_id:
-            logger.info(f"  Source metaflow: {metaflow_id}")
+        if source_recording_id:
+            logger.info(f"  Source recording: {source_recording_id}")
         return str(yaml_file)
 
     def get_workflow(self, user_id: str, workflow_id: str) -> Optional[Dict]:
@@ -620,8 +419,7 @@ class StorageService:
             "workflow_id": workflow_id,
             "workflow_name": metadata.get("workflow_name", workflow_id),
             "workflow_yaml": workflow_yaml,
-            "source_metaflow_id": metadata.get("source_metaflow_id"),      # 反向追溯信息
-            "source_recording_id": metadata.get("source_recording_id"),    # 反向追溯信息
+            "source_recording_id": metadata.get("source_recording_id"),
             "created_at": metadata.get("created_at"),
             "updated_at": metadata.get("updated_at")
         }

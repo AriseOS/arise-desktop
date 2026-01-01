@@ -11,22 +11,108 @@ const nodeTypes = {
   custom: CustomNode,
 }
 
-function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStatus, onLogout }) {
+function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStatus, onLogout, pageData }) {
   // Get user_id from session
   const userId = session?.username;
-  const [workflowData, setWorkflowData] = useState(null)
-  const [loading, setLoading] = useState(true)
+
+  // Helper to get cached workflow data from localStorage
+  const getCachedWorkflowData = () => {
+    try {
+      const key = `workflow_data_${workflowId}`
+      const cached = localStorage.getItem(key)
+      if (cached) {
+        const data = JSON.parse(cached)
+        // Check if cache is not too old (e.g., 1 hour)
+        if (data.cachedAt && Date.now() - data.cachedAt < 3600000) {
+          return data.workflowData
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to load cached workflow data:', e)
+    }
+    return null
+  }
+
+  // Initialize workflowData from cache if available
+  const cachedWorkflowData = getCachedWorkflowData()
+  const [workflowData, setWorkflowData] = useState(cachedWorkflowData)
+  const [loading, setLoading] = useState(!cachedWorkflowData) // Don't show loading if we have cached data
   const [error, setError] = useState(null)
   const [isRunning, setIsRunning] = useState(false)
-  const [activeTab, setActiveTab] = useState('visual') // 'visual', 'yaml', 'chat', or 'history'
+
+  // Helper to get saved chat state from localStorage
+  const getSavedChatState = () => {
+    try {
+      const key = `workflow_chat_${workflowId}`
+      const saved = localStorage.getItem(key)
+      if (saved) {
+        return JSON.parse(saved)
+      }
+    } catch (e) {
+      console.warn('Failed to load saved chat state:', e)
+    }
+    return null
+  }
+
+  // Get initial state from pageData or localStorage
+  const savedState = getSavedChatState()
+
+  // Restore activeTab from pageData or localStorage, otherwise default to 'visual'
+  const [activeTab, setActiveTab] = useState(
+    pageData?.activeTab || savedState?.activeTab || 'visual'
+  ) // 'visual', 'yaml', 'chat', or 'history'
 
   // Chat/Modification state
   const [chatInput, setChatInput] = useState('')
   const [isModifying, setIsModifying] = useState(false)
-  const [sessionId, setSessionId] = useState(null)
-  const [modificationLog, setModificationLog] = useState([])
+  // Use sessionId from pageData, localStorage, or null
+  const [dialogueSessionId, setDialogueSessionId] = useState(
+    pageData?.dialogueSessionId || pageData?.sessionId || savedState?.dialogueSessionId || null
+  )
+  // Restore modificationLog from pageData or localStorage
+  const [modificationLog, setModificationLog] = useState(
+    pageData?.modificationLog || savedState?.modificationLog || []
+  )
   const [currentToolUse, setCurrentToolUse] = useState(null)
+  // SSE progress events (similar to WorkflowExecutionLivePage skill-log)
+  const [progressEvents, setProgressEvents] = useState([])
+  // Chat instructions collapsed state (default: collapsed, saved to localStorage)
+  const [chatInstructionsCollapsed, setChatInstructionsCollapsed] = useState(() => {
+    try {
+      const saved = localStorage.getItem('chat_instructions_collapsed')
+      return saved !== null ? JSON.parse(saved) : true // Default collapsed
+    } catch {
+      return true
+    }
+  })
   const logEndRef = useRef(null)
+
+  // Save chat instructions collapsed state
+  useEffect(() => {
+    try {
+      localStorage.setItem('chat_instructions_collapsed', JSON.stringify(chatInstructionsCollapsed))
+    } catch (e) {
+      console.warn('Failed to save chat instructions state:', e)
+    }
+  }, [chatInstructionsCollapsed])
+
+  // Save chat state to localStorage whenever it changes
+  useEffect(() => {
+    if (workflowId && (dialogueSessionId || modificationLog.length > 0)) {
+      try {
+        const key = `workflow_chat_${workflowId}`
+        const state = {
+          activeTab,
+          dialogueSessionId,
+          modificationLog,
+          savedAt: Date.now()
+        }
+        localStorage.setItem(key, JSON.stringify(state))
+      } catch (e) {
+        console.warn('Failed to save chat state:', e)
+      }
+    }
+  }, [workflowId, activeTab, dialogueSessionId, modificationLog])
 
   // History state
   const [executions, setExecutions] = useState([])
@@ -67,7 +153,10 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
   }
 
   const loadWorkflowData = async () => {
-    setLoading(true)
+    // Only show loading spinner if we don't have cached data
+    if (!workflowData) {
+      setLoading(true)
+    }
     setError(null)
 
     try {
@@ -75,9 +164,25 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
       const data = await api.callAppBackend(`/api/v1/workflows/${workflowId}?user_id=${userId}`)
       console.log('Workflow data received:', data)
       setWorkflowData(data)
+
+      // Cache the workflow data to localStorage
+      try {
+        const key = `workflow_data_${workflowId}`
+        localStorage.setItem(key, JSON.stringify({
+          workflowData: data,
+          cachedAt: Date.now()
+        }))
+      } catch (e) {
+        console.warn('Failed to cache workflow data:', e)
+      }
     } catch (err) {
       console.error('Load workflow error:', err)
-      setError('加载工作流数据失败')
+      // Only show error if we don't have cached data to display
+      if (!workflowData) {
+        setError('加载工作流数据失败')
+      } else {
+        showStatus('刷新数据失败，显示缓存数据', 'warning')
+      }
     } finally {
       setLoading(false)
     }
@@ -112,7 +217,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
     }
   }
 
-  // Handle modification request
+  // Handle modification request using new WorkflowService API
   const handleModify = async () => {
     if (!chatInput.trim() || isModifying) return
 
@@ -122,113 +227,90 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
     setModificationLog(prev => [...prev, { type: 'user', content: userMessage }])
 
     try {
+      let sessionId = dialogueSessionId
+
       // Create session if not exists
-      let sid = sessionId
-      if (!sid) {
-        const result = await api.callAppBackend('/api/v1/intent-builder/sessions', {
-          method: 'POST',
-          body: JSON.stringify({
-            user_id: userId,
-            user_query: `Modify the following Workflow based on this request: ${userMessage}`,
-            task_description: `Current Workflow ID: ${workflowId}`,
-            workflow_id: workflowId,  // Pass Workflow ID so Agent can save modifications
-            current_workflow_yaml: workflowData.workflow_yaml,
-            phase: 'workflow'
-          })
-        })
-        sid = result.session_id
-        setSessionId(sid)
+      if (!sessionId) {
+        showStatus('Creating dialogue session...', 'info')
+        const sessionResult = await api.createWorkflowSession(
+          userId,
+          workflowId,
+          workflowData.workflow_yaml
+        )
+        sessionId = sessionResult.session_id
+        setDialogueSessionId(sessionId)
       }
 
-      // Stream the modification response
-      const response = await api.callAppBackendRaw(`/api/v1/intent-builder/sessions/${sid}/chat`, {
-        method: 'POST',
-        body: JSON.stringify({ message: userMessage })
+      // Use the WorkflowService chat API with streaming events
+      // Clear previous progress events and start fresh
+      setProgressEvents([])
+
+      const response = await api.workflowChat(sessionId, userMessage, (event) => {
+        // Handle streaming events - add to progressEvents for display
+        if (event.type === 'text') {
+          // Accumulate text events
+          setProgressEvents(prev => {
+            // Find existing text event to update, or add new one
+            const textIdx = prev.findIndex(e => e.type === 'text')
+            if (textIdx >= 0) {
+              const updated = [...prev]
+              updated[textIdx] = { ...updated[textIdx], content: (updated[textIdx].content || '') + event.message }
+              return updated
+            }
+            return [...prev, { type: 'text', content: event.message }]
+          })
+          setCurrentToolUse(null)
+        } else if (event.type === 'tool_use') {
+          // Add tool_use event
+          setProgressEvents(prev => [...prev, { type: 'tool_use', content: event.message }])
+          setCurrentToolUse(event.message)
+        } else if (event.type === 'workflow_updated') {
+          // Add workflow_updated event
+          setProgressEvents(prev => [...prev, { type: 'workflow_updated', content: 'Workflow updated' }])
+        } else if (event.type === 'error') {
+          // Add error event
+          setProgressEvents(prev => [...prev, { type: 'error', content: event.message }])
+        }
       })
 
-      if (!response.ok) throw new Error(`Request failed: ${response.statusText}`)
+      setCurrentToolUse(null)
+      // Clear progress events after completion
+      setProgressEvents([])
 
-      // Read SSE stream
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let accumulatedText = ''
+      // Add assistant reply to log
+      if (response.message) {
+        setModificationLog(prev => [...prev, { type: 'assistant', content: response.message }])
+      }
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const event = JSON.parse(line.slice(6))
-
-              switch (event.type) {
-                case 'text':
-                  accumulatedText += event.content
-                  break
-                case 'tool_use':
-                  setCurrentToolUse({ name: event.tool_name, input: event.tool_input })
-                  break
-                case 'tool_result':
-                  setCurrentToolUse(null)
-                  break
-                case 'complete':
-                  setCurrentToolUse(null)
-                  if (accumulatedText) {
-                    setModificationLog(prev => [...prev, { type: 'assistant', content: accumulatedText }])
-                  }
-                  // Reload updated Workflow YAML
-                  if (event.result?.updated_yaml) {
-                    const updatedData = { ...workflowData, workflow_yaml: event.result.updated_yaml }
-                    try {
-                      const parsed = yaml.load(event.result.updated_yaml)
-                      updatedData.steps = parsed.steps || []
-                      updatedData.connections = parsed.connections || []
-                    } catch (e) {
-                      console.error('Failed to parse updated YAML:', e)
-                    }
-                    setWorkflowData(updatedData)
-
-                    // Sync to both Cloud and Local storage
-                    api.callAppBackend(`/api/v1/workflows/${workflowId}`, {
-                      method: 'PUT',
-                      body: JSON.stringify({
-                        user_id: userId,
-                        workflow_yaml: event.result.updated_yaml
-                      })
-                    }).then(result => {
-                      console.log('✓ Workflow saved:', result)
-                      if (result.updated_in_cloud) {
-                        console.log('  ✓ Cloud Backend updated')
-                      } else {
-                        console.warn('  ⚠ Cloud Backend update failed')
-                      }
-                      if (result.updated_in_local) {
-                        console.log('  ✓ Local cache updated')
-                      } else {
-                        console.warn('  ⚠ Local cache update failed')
-                      }
-                    }).catch(err => {
-                      console.error('❌ Failed to save workflow:', err)
-                      showStatus('Workflow modified but save failed. Changes may be lost on reload.', 'warning')
-                    })
-                  }
-                  showStatus('Modification complete!', 'success')
-                  break
-                case 'error':
-                  showStatus(`Error: ${event.content}`, 'error')
-                  break
-              }
-            } catch (e) {
-              console.error('Failed to parse event:', e)
-            }
-          }
+      // Update workflow if modified
+      if (response.workflow_updated && response.workflow_yaml) {
+        const updatedData = { ...workflowData, workflow_yaml: response.workflow_yaml }
+        try {
+          const parsed = yaml.load(response.workflow_yaml)
+          updatedData.steps = parsed.steps || []
+          updatedData.connections = parsed.connections || []
+        } catch (e) {
+          console.error('Failed to parse updated YAML:', e)
         }
+        setWorkflowData(updatedData)
+
+        // Sync to storage
+        api.callAppBackend(`/api/v1/workflows/${workflowId}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            user_id: userId,
+            workflow_yaml: response.workflow_yaml
+          })
+        }).then(result => {
+          console.log('Workflow saved:', result)
+        }).catch(err => {
+          console.error('Failed to save workflow:', err)
+          showStatus('Workflow modified but save failed.', 'warning')
+        })
+
+        showStatus('Workflow updated!', 'success')
+      } else {
+        showStatus('Response received', 'success')
       }
 
     } catch (error) {
@@ -236,10 +318,10 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
       showStatus(`Modification failed: ${error.message}`, 'error')
       setModificationLog(prev => [...prev, { type: 'error', content: error.message }])
 
-      // If session not found (404), clear session ID to force recreation next time
+      // If session not found (404), clear session ID to create new one on next try
       if (error.message.includes('404') || error.message.includes('Session not found')) {
         console.log('Session expired or not found, clearing session ID')
-        setSessionId(null)
+        setDialogueSessionId(null)
       }
     } finally {
       setIsModifying(false)
@@ -375,14 +457,16 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
       </div>
 
       <div className="workflow-detail-content">
-        {loading && (
+        {/* Show loading only if we don't have any workflowData yet */}
+        {loading && !workflowData && (
           <div className="empty-state">
             <div className="empty-state-icon"><Icon icon="clock" size={48} /></div>
             <div className="empty-state-title">加载中...</div>
           </div>
         )}
 
-        {error && (
+        {/* Show error only if we don't have workflowData to fall back on */}
+        {error && !workflowData && (
           <div className="empty-state">
             <div className="empty-state-icon"><Icon icon="alertTriangle" size={48} /></div>
             <div className="empty-state-title">错误</div>
@@ -390,47 +474,28 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
           </div>
         )}
 
-        {!loading && !error && workflowData && (
+        {/* Show tabs if we have workflowData (even during refresh/loading) */}
+        {workflowData && (
           <>
-            {/* Workflow Traceability Info */}
-            {(workflowData.source_metaflow_id || workflowData.source_recording_id) && (
+            {/* Workflow Traceability Info - only show source_recording_id (MetaFlow is now internal) */}
+            {workflowData.source_recording_id && (
               <div className="workflow-traceability-card">
                 <div className="traceability-header">
                   <Icon icon="gitBranch" size={16} />
                   <h3>来源信息</h3>
                 </div>
                 <div className="traceability-content">
-                  {workflowData.source_metaflow_id && (
-                    <div className="trace-item">
-                      <span className="trace-label">MetaFlow:</span>
-                      <code className="trace-value">{workflowData.source_metaflow_id}</code>
-                      <button
-                        className="trace-link-button"
-                        onClick={() => onNavigate('metaflow-preview', { metaflowId: workflowData.source_metaflow_id })}
-                        title="查看MetaFlow详情"
-                      >
-                        <Icon icon="externalLink" size={14} />
-                      </button>
-                    </div>
-                  )}
-                  {workflowData.source_recording_id && (
-                    <div className="trace-item">
-                      <span className="trace-label">Recording:</span>
-                      <code className="trace-value">{workflowData.source_recording_id}</code>
-                      <button
-                        className="trace-link-button"
-                        onClick={() => onNavigate('recording-detail', { sessionId: workflowData.source_recording_id })}
-                        title="查看Recording详情"
-                      >
-                        <Icon icon="externalLink" size={14} />
-                      </button>
-                    </div>
-                  )}
-                  {!workflowData.source_metaflow_id && !workflowData.source_recording_id && (
-                    <div className="trace-item no-trace">
-                      <span>暂无来源信息</span>
-                    </div>
-                  )}
+                  <div className="trace-item">
+                    <span className="trace-label">Recording:</span>
+                    <code className="trace-value">{workflowData.source_recording_id}</code>
+                    <button
+                      className="trace-link-button"
+                      onClick={() => onNavigate('recording-detail', { sessionId: workflowData.source_recording_id })}
+                      title="查看Recording详情"
+                    >
+                      <Icon icon="externalLink" size={14} />
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -483,13 +548,35 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                 </div>
               ) : activeTab === 'chat' ? (
                 <div className="workflow-chat-container">
-                  <div className="chat-instructions">
-                    <h3><Icon icon="bot" size={20} /> AI 助手</h3>
-                    <p>使用自然语言描述你想要的修改，AI 会帮你调整 workflow 配置</p>
-                  </div>
+                  {/* Collapsible chat instructions - small badge when collapsed */}
+                  {chatInstructionsCollapsed ? (
+                    <div
+                      className="chat-instructions-badge"
+                      onClick={() => setChatInstructionsCollapsed(false)}
+                      title="点击展开说明"
+                    >
+                      <Icon icon="bot" size={14} />
+                      <span>AI 助手</span>
+                      <Icon icon="chevronDown" size={12} />
+                    </div>
+                  ) : (
+                    <div className="chat-instructions">
+                      <div className="chat-instructions-header">
+                        <h3><Icon icon="bot" size={20} /> AI 助手</h3>
+                        <button
+                          className="collapse-btn"
+                          onClick={() => setChatInstructionsCollapsed(true)}
+                          title="收起"
+                        >
+                          <Icon icon="x" size={14} />
+                        </button>
+                      </div>
+                      <p>使用自然语言描述你想要的修改，AI 会帮你调整 workflow 配置</p>
+                    </div>
+                  )}
 
                   {/* Modification Log */}
-                  {modificationLog.length > 0 && (
+                  {(modificationLog.length > 0 || progressEvents.length > 0) && (
                     <div className="modification-log">
                       {modificationLog.map((msg, index) => (
                         <div key={index} className={`log-message ${msg.type}`}>
@@ -499,18 +586,57 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                           <pre className="log-content">{msg.content}</pre>
                         </div>
                       ))}
-                      {currentToolUse && (
-                        <div className="tool-indicator">
-                          <div className="tool-spinner"></div>
-                          <span className="tool-name">{currentToolUse.name}</span>
-                          <span className="tool-desc">
-                            {currentToolUse.name === 'Edit' && `Editing ${currentToolUse.input?.file_path || 'file'}...`}
-                            {currentToolUse.name === 'Read' && `Reading ${currentToolUse.input?.file_path || 'file'}...`}
-                            {currentToolUse.name === 'Write' && `Writing to ${currentToolUse.input?.file_path || 'file'}...`}
-                            {!['Edit', 'Read', 'Write'].includes(currentToolUse.name) && `Using ${currentToolUse.name}...`}
-                          </span>
+
+                      {/* SSE Progress Events - similar to WorkflowExecutionLivePage skill-log */}
+                      {progressEvents.length > 0 && (
+                        <div className="sse-progress-log">
+                          {progressEvents.map((event, idx) => (
+                            <div key={idx} className={`progress-event ${event.type}`}>
+                              {event.type === 'tool_use' && (
+                                <>
+                                  <Icon icon="tool" size={14} className="spinning-icon" />
+                                  <span>{event.content}</span>
+                                </>
+                              )}
+                              {event.type === 'text' && (
+                                <>
+                                  <Icon icon="messageSquare" size={14} />
+                                  <span>{event.content}</span>
+                                </>
+                              )}
+                              {event.type === 'workflow_updated' && (
+                                <>
+                                  <Icon icon="checkCircle" size={14} />
+                                  <span>Workflow updated successfully</span>
+                                </>
+                              )}
+                              {event.type === 'error' && (
+                                <>
+                                  <Icon icon="alertCircle" size={14} />
+                                  <span>{event.content}</span>
+                                </>
+                              )}
+                            </div>
+                          ))}
+                          {isModifying && (
+                            <div className="progress-event thinking">
+                              <Icon icon="loader" size={14} className="spinning-icon" />
+                              <span>Processing...</span>
+                            </div>
+                          )}
                         </div>
                       )}
+
+                      {/* Show simple spinner if modifying but no events yet */}
+                      {isModifying && progressEvents.length === 0 && (
+                        <div className="sse-progress-log">
+                          <div className="progress-event thinking">
+                            <Icon icon="loader" size={14} className="spinning-icon" />
+                            <span>Connecting to AI assistant...</span>
+                          </div>
+                        </div>
+                      )}
+
                       <div ref={logEndRef} />
                     </div>
                   )}

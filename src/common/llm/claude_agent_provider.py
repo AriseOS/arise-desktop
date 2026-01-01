@@ -135,7 +135,7 @@ class ClaudeAgentProvider:
         self,
         prompt: str,
         working_dir: Path,
-        max_iterations: int = 25,
+        max_iterations: int = 100,
         tools: Optional[List[str]] = None
     ) -> AgentResult:
         """
@@ -152,7 +152,7 @@ class ClaudeAgentProvider:
             prompt: Task description for Claude (should include requirements,
                    context files, expected output format, etc.)
             working_dir: Directory where Claude can read/write files
-            max_iterations: Maximum number of iterations (default: 25)
+            max_iterations: Maximum number of iterations (default: 100)
             tools: List of tools Claude can use. Default: ["Read", "Write", "Edit", "Bash", "Glob"]
 
         Returns:
@@ -373,7 +373,7 @@ class ClaudeAgentProvider:
         self,
         prompt: str,
         working_dir: Path,
-        max_iterations: int = 25,
+        max_iterations: int = 100,
         tools: Optional[List[str]] = None,
         enable_skills: bool = False
     ) -> AsyncIterator[StreamEvent]:

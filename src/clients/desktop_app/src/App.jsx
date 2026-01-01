@@ -28,7 +28,7 @@ import ExecutionResultPage from "./pages/ExecutionResultPage";
 import RecordingsLibraryPage from "./pages/RecordingsLibraryPage";
 import RecordingDetailPage from "./pages/RecordingDetailPage";
 import ConversationalGenerationPage from "./pages/ConversationalGenerationPage";
-import MetaflowPreviewPage from "./pages/MetaflowPreviewPage";
+// MetaflowPreviewPage removed - MetaFlow is now internal, users work with Workflows directly
 import DataManagementPage from "./pages/DataManagementPage";
 import CollectionDetailPage from "./pages/CollectionDetailPage";
 import WorkflowExecutionLivePage from "./pages/WorkflowExecutionLivePage";
@@ -627,6 +627,7 @@ function App() {
             onNavigate={navigate}
             showStatus={showStatus}
             onLogout={() => { }}
+            pageData={pageParams}
           />
         );
 
@@ -723,16 +724,13 @@ function App() {
           />
         );
 
+      // metaflow-preview route removed - redirect to workflow-detail
+      // MetaFlow is now internal, users work with Workflows directly
       case "metaflow-preview":
-        return (
-          <MetaflowPreviewPage
-            session={session}
-            onNavigate={navigate}
-            showStatus={showStatus}
-            metaflowId={pageParams.metaflowId}
-            metaflowYaml={pageParams.metaflowYaml}
-          />
-        );
+        // Legacy route - redirect to workflows list
+        console.warn('[App] metaflow-preview route is deprecated, redirecting to workflows');
+        navigate("workflows");
+        return null;
 
       case "data-management":
         return (
