@@ -33,13 +33,21 @@ a = Analysis(
 
         # JavaScript files for browser behavior tracking
         (str(project_root / 'src/clients/desktop_app/ami_daemon/base_app/base_app/base_agent/tools/browser_use/user_behavior/behavior_tracker.js'),
-         'base_app/base_agent/tools/browser_use/user_behavior'),
+         'src/clients/desktop_app/ami_daemon/base_app/base_app/base_agent/tools/browser_use/user_behavior'),
+
+        # Automation hooks JS
+        (str(project_root / 'src/clients/desktop_app/ami_daemon/base_app/base_app/base_agent/tools/browser_use/automation_hooks.js'),
+         'src/clients/desktop_app/ami_daemon/base_app/base_app/base_agent/tools/browser_use'),
+
+        # Claude skills for scraper and browser agents
+        (str(project_root / 'src/clients/desktop_app/ami_daemon/base_app/.claude/skills'),
+         'src/clients/desktop_app/ami_daemon/base_app/.claude/skills'),
 
         # Workflow YAML files
         (str(project_root / 'src/clients/desktop_app/ami_daemon/base_app/base_app/base_agent/workflows/builtin'),
-         'base_app/base_agent/workflows/builtin'),
+         'src/clients/desktop_app/ami_daemon/base_app/base_app/base_agent/workflows/builtin'),
         (str(project_root / 'src/clients/desktop_app/ami_daemon/base_app/base_app/base_agent/workflows/user'),
-         'base_app/base_agent/workflows/user'),
+         'src/clients/desktop_app/ami_daemon/base_app/base_app/base_agent/workflows/user'),
     ] + playwright_browsers,
     hiddenimports=[
         # Uvicorn and FastAPI
