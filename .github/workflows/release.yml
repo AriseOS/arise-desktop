@@ -1,15 +1,15 @@
 name: Build and Release
 
 on:
-  workflow_dispatch:  # Manual trigger only for testing
+  workflow_dispatch:
     inputs:
       version:
         description: 'Version number (e.g., 1.0.0)'
         required: true
         type: string
-  # push:
-  #   tags:
-  #     - 'v*.*.*'  # Uncomment for automatic tag-based releases
+  push:
+    tags:
+      - 'v*.*.*'
 
 env:
   PYTHON_VERSION: '3.12'
