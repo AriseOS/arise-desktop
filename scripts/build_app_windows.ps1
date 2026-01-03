@@ -36,6 +36,27 @@ if (-not (Test-Path $PortableBinDir)) {
     New-Item -ItemType Directory -Path $PortableBinDir -Force | Out-Null
 }
 
+# Step 0: Prepare Git Bash bundle for Claude Code CLI
+Invoke-Step "Step 0: Preparing Git Bash bundle for Claude Code CLI..." {
+    $gitBashScript = Join-Path $ScriptDir 'prepare_git_bash_windows.ps1'
+    $gitBashOutputDir = Join-Path $ProjectRoot 'src/clients/desktop_app/ami_daemon/resources/git-bash'
+
+    # Check if git-bash bundle already exists
+    $bashExe = Join-Path $gitBashOutputDir 'usr/bin/bash.exe'
+    if (Test-Path $bashExe) {
+        Write-Host "Git Bash bundle already exists at: $gitBashOutputDir" -ForegroundColor Green
+        Write-Host "Skipping download. Delete the directory to force re-download." -ForegroundColor Yellow
+    } else {
+        if (Test-Path $gitBashScript) {
+            Write-Host "Downloading and preparing Git Bash..." -ForegroundColor Yellow
+            & $gitBashScript -OutputDir $gitBashOutputDir
+        } else {
+            Write-Warning "Git Bash preparation script not found: $gitBashScript"
+            Write-Warning "Claude Code CLI may not work without Git Bash on Windows."
+        }
+    }
+}
+
 # Step 1: Build Python daemon bundle (optional)
 if (-not $SkipDaemon) {
     Invoke-Step "Step 1: Building Python daemon bundle (PyInstaller)..." {

@@ -13,6 +13,7 @@ Primary use case: ScraperAgent script generation with iterative refinement
 """
 
 import os
+import sys
 import logging
 from pathlib import Path
 from typing import Optional, List, AsyncIterator, TYPE_CHECKING
@@ -22,6 +23,69 @@ if TYPE_CHECKING:
     from src.common.config_service import ConfigService
 
 logger = logging.getLogger(__name__)
+
+
+def _detect_git_bash_path() -> Optional[str]:
+    """
+    Detect git-bash installation path on Windows.
+
+    Claude Code CLI on Windows requires git-bash to run. This function
+    checks:
+    1. Bundled git-bash in the app resources (for packaged app)
+    2. Common system installation locations
+
+    Returns:
+        Path to bash.exe if found, None otherwise
+    """
+    if sys.platform != "win32":
+        return None
+
+    # First, check for bundled git-bash (PyInstaller packaged app)
+    # When running as frozen app, sys._MEIPASS points to the temp extraction folder
+    if getattr(sys, 'frozen', False):
+        # Running as PyInstaller bundle
+        base_path = sys._MEIPASS
+        bundled_bash = os.path.join(base_path, 'resources', 'git-bash', 'usr', 'bin', 'bash.exe')
+        if os.path.exists(bundled_bash):
+            logger.info(f"Using bundled git-bash: {bundled_bash}")
+            return bundled_bash
+        else:
+            logger.warning(f"Bundled git-bash not found at: {bundled_bash}")
+
+    # Also check relative to the executable (for portable builds)
+    if getattr(sys, 'frozen', False):
+        exe_dir = os.path.dirname(sys.executable)
+        # Try resources/git-bash relative to exe
+        portable_bash = os.path.join(exe_dir, 'resources', 'git-bash', 'usr', 'bin', 'bash.exe')
+        if os.path.exists(portable_bash):
+            logger.info(f"Using portable git-bash: {portable_bash}")
+            return portable_bash
+
+    # Fallback: Common git-bash installation paths on Windows
+    common_paths = [
+        # Standard Git for Windows installation
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files (x86)\Git\bin\bash.exe",
+        # User-specific installation
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\Git\bin\bash.exe"),
+        os.path.expandvars(r"%USERPROFILE%\scoop\apps\git\current\bin\bash.exe"),
+        # Chocolatey installation
+        r"C:\tools\git\bin\bash.exe",
+        # Custom paths
+        r"D:\Program Files\Git\bin\bash.exe",
+        r"D:\Git\bin\bash.exe",
+    ]
+
+    for path in common_paths:
+        if path and os.path.exists(path):
+            logger.info(f"Found system git-bash at: {path}")
+            return path
+
+    logger.warning(
+        "git-bash not found. Claude Code CLI on Windows requires git-bash. "
+        "The bundled git-bash may be missing from the package."
+    )
+    return None
 
 
 @dataclass
@@ -203,6 +267,13 @@ class ClaudeAgentProvider:
             if self.base_url:
                 env_vars["ANTHROPIC_BASE_URL"] = self.base_url
                 logger.info(f"Using API Proxy base URL for Claude SDK: {self.base_url}")
+
+            # On Windows, set git-bash path if not already set
+            if sys.platform == "win32" and "CLAUDE_CODE_GIT_BASH_PATH" not in env_vars:
+                git_bash_path = _detect_git_bash_path()
+                if git_bash_path:
+                    env_vars["CLAUDE_CODE_GIT_BASH_PATH"] = git_bash_path
+                    logger.info(f"Set CLAUDE_CODE_GIT_BASH_PATH={git_bash_path}")
 
             # Log if debug mode is enabled
             if env_vars.get("ANTHROPIC_LOG") == "debug":
@@ -405,6 +476,13 @@ class ClaudeAgentProvider:
             env_vars["ANTHROPIC_API_KEY"] = self.api_key
             if self.base_url:
                 env_vars["ANTHROPIC_BASE_URL"] = self.base_url
+
+            # On Windows, set git-bash path if not already set
+            if sys.platform == "win32" and "CLAUDE_CODE_GIT_BASH_PATH" not in env_vars:
+                git_bash_path = _detect_git_bash_path()
+                if git_bash_path:
+                    env_vars["CLAUDE_CODE_GIT_BASH_PATH"] = git_bash_path
+                    logger.info(f"Set CLAUDE_CODE_GIT_BASH_PATH={git_bash_path}")
 
             # Configure options
             options = ClaudeAgentOptions(

@@ -8,6 +8,7 @@ Following industry best practices for code signing and notarization
 
 import sys
 import os
+import platform
 from pathlib import Path
 
 # Project root (Ami/)
@@ -20,6 +21,17 @@ sys.path.insert(0, str(project_root))
 # Chromium is NOT bundled - will be auto-installed on first launch
 playwright_browsers = []
 print("Skipping Playwright Chromium bundling (will be handled separately)")
+
+# Git Bash bundle for Windows (required by Claude Code CLI)
+git_bash_data = []
+if platform.system() == 'Windows':
+    git_bash_dir = spec_dir / 'resources' / 'git-bash'
+    if git_bash_dir.exists():
+        git_bash_data = [(str(git_bash_dir), 'resources/git-bash')]
+        print(f"Including Git Bash bundle from: {git_bash_dir}")
+    else:
+        print(f"WARNING: Git Bash bundle not found at {git_bash_dir}")
+        print("         Claude Code CLI may not work. Run prepare_git_bash_windows.ps1 first.")
 
 block_cipher = None
 
@@ -48,7 +60,7 @@ a = Analysis(
          'src/clients/desktop_app/ami_daemon/base_app/base_app/base_agent/workflows/builtin'),
         (str(project_root / 'src/clients/desktop_app/ami_daemon/base_app/base_app/base_agent/workflows/user'),
          'src/clients/desktop_app/ami_daemon/base_app/base_app/base_agent/workflows/user'),
-    ] + playwright_browsers,
+    ] + playwright_browsers + git_bash_data,
     hiddenimports=[
         # Uvicorn and FastAPI
         'uvicorn.logging',
