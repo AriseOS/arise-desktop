@@ -133,62 +133,7 @@ class WorkflowBuilder:
         self.steps.append(step)
         logger.debug(f"添加工具步骤: {name}, 工具: {tools}")
         return self
-    
-    def add_code_step(self,
-                     name: str,
-                     instruction: str,
-                     description: str = "",
-                     language: str = "python",
-                     libraries: List[str] = None,
-                     expected_output_format: str = "",
-                     agent_name: str = "code_agent",
-                     user_task: Optional[str] = None,
-                     inputs: Dict[str, Any] = None,
-                     outputs: Dict[str, str] = None,
-                     constraints: List[str] = None,
-                     condition: Optional[str] = None,
-                     timeout: int = 300,
-                     retry_count: int = 0) -> 'WorkflowBuilder':
-        """
-        添加代码执行步骤
-        
-        Args:
-            name: 步骤名称
-            instruction: Agent执行指令
-            description: 步骤描述
-            language: 编程语言
-            libraries: 允许的库列表
-            expected_output_format: 期望的输出格式
-            agent_name: 使用的Agent名称
-            user_task: 用户具体任务内容
-            inputs: 输入映射配置
-            outputs: 输出映射配置
-            constraints: 约束条件
-            condition: 执行条件
-            timeout: 超时时间
-            retry_count: 重试次数
-            
-        Returns:
-            WorkflowBuilder: 返回自身支持链式调用
-        """
-        step = AgentWorkflowStep(
-            name=name,
-            description=description or f"代码执行步骤: {name}",
-            agent_type=agent_name,
-            user_task=user_task,
-            inputs=inputs or {},
-            outputs=outputs or {},
-            constraints=constraints or [],
-            allowed_libraries=libraries or [],
-            expected_output_format=expected_output_format,
-            condition=condition,
-            timeout=timeout,
-            retry_count=retry_count
-        )
-        self.steps.append(step)
-        logger.debug(f"添加代码步骤: {name}, 语言: {language}")
-        return self
-    
+
     def add_custom_step(self,
                        name: str,
                        agent_name: str,
@@ -303,7 +248,7 @@ class WorkflowBuilder:
         
         # 检查Agent是否存在
         if self.agent and self.agent.agent_workflow_engine:
-            available_agents = self.agent.agent_workflow_engine.agent_registry.list_agent_names()
+            available_agents = list(self.agent.agent_workflow_engine.AGENT_TYPES.keys())
             for step in self.steps:
                 if step.agent_type not in available_agents:
                     errors.append(f"步骤 '{step.name}' 使用的Agent '{step.agent_type}' 不存在")

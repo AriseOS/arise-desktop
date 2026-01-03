@@ -198,7 +198,8 @@ class StorageService:
         recording_id: str,
         operations: List[Dict],
         task_description: Optional[str] = None,
-        user_query: Optional[str] = None
+        user_query: Optional[str] = None,
+        dom_snapshots: Optional[Dict[str, Dict]] = None
     ) -> str:
         """
         Save recording data to server filesystem
@@ -206,6 +207,7 @@ class StorageService:
         Args:
             task_description: User's description of what they did
             user_query: User's description of what they want to do
+            dom_snapshots: URL -> DOM dict mapping for pre-generating scripts
 
         Returns:
             File path
@@ -230,6 +232,26 @@ class StorageService:
 
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
+
+        # Save DOM snapshots if provided
+        if dom_snapshots:
+            dom_snapshots_dir = recording_path / "dom_snapshots"
+            dom_snapshots_dir.mkdir(parents=True, exist_ok=True)
+
+            # Save each DOM snapshot as separate file (URL hash as filename)
+            import hashlib
+            for url, dom_dict in dom_snapshots.items():
+                url_hash = hashlib.md5(url.encode()).hexdigest()[:12]
+                dom_file = dom_snapshots_dir / f"{url_hash}.json"
+                dom_data = {
+                    "url": url,
+                    "dom": dom_dict,
+                    "captured_at": get_current_timestamp()
+                }
+                with open(dom_file, 'w', encoding='utf-8') as f:
+                    json.dump(dom_data, f, ensure_ascii=False)
+
+            logger.info(f"  DOM snapshots saved: {len(dom_snapshots)} URLs")
 
         logger.info(f"Recording saved: {recording_id} ({len(operations)} ops)")
         if task_description:
@@ -296,7 +318,46 @@ class StorageService:
                 metadata = json.load(f)
                 data["workflow_id"] = metadata.get("workflow_id")
 
+        # Check if DOM snapshots exist
+        dom_snapshots_dir = recording_path / "dom_snapshots"
+        if dom_snapshots_dir.exists():
+            data["has_dom_snapshots"] = True
+            data["dom_snapshot_count"] = len(list(dom_snapshots_dir.glob("*.json")))
+        else:
+            data["has_dom_snapshots"] = False
+            data["dom_snapshot_count"] = 0
+
         return data
+
+    def get_recording_dom_snapshots(self, user_id: str, recording_id: str) -> Dict[str, Dict]:
+        """Load DOM snapshots for a recording
+
+        Args:
+            user_id: User ID
+            recording_id: Recording ID
+
+        Returns:
+            Dict mapping URLs to DOM dicts
+        """
+        recording_path = self._user_path(user_id) / "recordings" / recording_id
+        dom_snapshots_dir = recording_path / "dom_snapshots"
+
+        if not dom_snapshots_dir.exists():
+            return {}
+
+        dom_snapshots = {}
+        for dom_file in dom_snapshots_dir.glob("*.json"):
+            try:
+                with open(dom_file, 'r', encoding='utf-8') as f:
+                    dom_data = json.load(f)
+                    url = dom_data.get("url")
+                    dom_dict = dom_data.get("dom")
+                    if url and dom_dict:
+                        dom_snapshots[url] = dom_dict
+            except Exception as e:
+                logger.warning(f"Failed to load DOM snapshot {dom_file}: {e}")
+
+        return dom_snapshots
 
     def update_recording_workflow(self, user_id: str, recording_id: str, workflow_id: str):
         """Update recording with associated workflow_id"""

@@ -12,114 +12,105 @@ Browser interactions: navigate, click, fill, scroll. **browser_agent handles nav
 
 ## Input Parameters
 
-### Optional
+### Navigate
 ```yaml
 inputs:
-  target_url: "https://example.com"     # URL to navigate to first
-  interaction_steps:                     # List of interactions to perform
-    - task: "Description of action"      # What to do (Claude Agent finds element)
-      xpath_hints:                       # Hints to help locate element
-        hint_name: "//xpath/expression"
-      text: "input text"                 # For fill operations only
+  operation: navigate              # Optional, inferred if target_url present
+  target_url: "https://example.com"
 ```
 
-**Note**: At least one of `target_url` or `interaction_steps` must be provided.
+### Click
+```yaml
+inputs:
+  operation: click
+  xpath_hints: ["//button[@id='submit']"]
+  # OR
+  task: "Click the submit button"  # Natural language description
+```
+
+### Fill
+```yaml
+inputs:
+  operation: fill
+  xpath_hints: ["//input[@name='email']"]
+  text: "user@example.com"
+```
+
+### Scroll
+```yaml
+inputs:
+  operation: scroll
+  direction: down                  # up | down
+  # OR
+  task: "Scroll to the bottom"
+```
 
 ## Output
 
 ```yaml
 outputs:
-  result: "variable_name"   # Operation result
+  result: variable_name
 ```
 
 **Return Format**:
 ```yaml
 {
   "success": true,
-  "message": "All steps completed",
-  "current_url": "https://...",
-  "steps_executed": 3
+  "message": "Operation completed",
+  "current_url": "https://..."
 }
 ```
 
-## Supported Operations
-
-| Operation | How to Specify | Description |
-|-----------|----------------|-------------|
-| Navigate | `target_url: "url"` | Navigate to URL |
-| Click | `task: "Click the button"` | Click element (task contains "click") |
-| Fill | `task: "Fill the field"` + `text: "value"` | Fill input (task contains "fill/input/enter" + text provided) |
-| Scroll | `action_type: "scroll"` | Scroll page up/down |
-| Scroll to Element | `task: "Scroll to section"` | Scroll to make element visible (task contains "scroll to") |
-
-## Examples
+## Examples (v2 Format)
 
 ### Navigate Only
 ```yaml
-- id: "navigate-to-page"
-  agent_type: "browser_agent"
+- id: navigate-to-page
+  agent: browser_agent
   inputs:
     target_url: "https://example.com/products"
 ```
 
 ### Click Button
 ```yaml
-- id: "click-new-mail"
-  agent_type: "browser_agent"
+- id: click-submit
+  agent: browser_agent
   inputs:
-    interaction_steps:
-      - task: "Click the 'New mail' button"
-        xpath_hints:
-          button: "//button[contains(@aria-label, 'New mail')]"
+    operation: click
+    xpath_hints: ["//button[contains(@aria-label, 'Submit')]"]
 ```
 
-### Fill Form
+### Fill Form Field
 ```yaml
-- id: "fill-email"
-  agent_type: "browser_agent"
+- id: fill-email
+  agent: browser_agent
   inputs:
-    interaction_steps:
-      - task: "Enter email in the recipient field"
-        xpath_hints:
-          to_field: "//input[@aria-label='To']"
-        text: "{{recipient_email}}"
+    operation: fill
+    xpath_hints: ["//input[@aria-label='Email']"]
+    text: "{{user_email}}"
 ```
 
 ### Scroll Page
 ```yaml
-- id: "scroll-down"
-  agent_type: "browser_agent"
+- id: scroll-down
+  agent: browser_agent
   inputs:
-    interaction_steps:
-      - action_type: "scroll"
-        parameters:
-          down: true
-          num_pages: 2
+    operation: scroll
+    direction: down
 ```
 
-### Scroll to Element
+### Multiple Interactions (interaction_steps)
 ```yaml
-- id: "scroll-to-section"
-  agent_type: "browser_agent"
+- id: compose-email
+  agent: browser_agent
   inputs:
+    target_url: "https://mail.example.com"
     interaction_steps:
-      - task: "Scroll to the References section"
-        xpath_hints:
-          section: "//h2[@id='References']"
-```
-
-### Complete Workflow: Navigate + Click + Fill
-```yaml
-- id: "compose-email"
-  agent_type: "browser_agent"
-  inputs:
-    target_url: "https://outlook.live.com/mail/"
-    interaction_steps:
-      - task: "Click the 'New mail' button"
+      - task: "Click the 'New' button"
         xpath_hints:
           button: "//button[contains(@aria-label, 'New')]"
 
-      - task: "Fill in the recipient email"
+      - task: "Fill in the recipient"
         xpath_hints:
           to_field: "//input[@aria-label='To']"
         text: "{{recipient_email}}"
@@ -138,8 +129,8 @@ outputs:
 ```yaml
 steps:
   # Step 1: Navigate and click to reveal data
-  - id: "navigate-and-expand"
-    agent_type: "browser_agent"
+  - id: navigate-and-expand
+    agent: browser_agent
     inputs:
       target_url: "https://example.com/orders"
       interaction_steps:
@@ -148,8 +139,8 @@ steps:
             button: "//button[@class='show-details']"
 
   # Step 2: Extract data from current page
-  - id: "extract-data"
-    agent_type: "scraper_agent"
+  - id: extract-data
+    agent: scraper_agent
     inputs:
       data_requirements:
         user_description: "Extract order details"
@@ -157,7 +148,7 @@ steps:
           order_id: "Order ID"
           status: "Status"
     outputs:
-      extracted_data: "order_info"
+      extracted_data: order_info
 ```
 
 ## XPath Hints Guidelines

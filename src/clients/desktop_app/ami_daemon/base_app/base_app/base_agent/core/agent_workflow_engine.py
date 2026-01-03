@@ -6,16 +6,14 @@ import asyncio
 import logging
 import time
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Type
 
 from .schemas import (
     AgentWorkflowStep, WorkflowResult, StepResult,
     AgentContext, AgentInput, AgentOutput
 )
-from ..agents import (
-    AgentRegistry, AgentRouter, AgentExecutor,
-    TextAgent, ToolAgent, CodeAgent
-)
+from ..agents import TextAgent, ToolAgent
+from ..agents.base_agent import BaseStepAgent
 from ..agents.browser_agent import BrowserAgent
 from ..agents.variable_agent import VariableAgent
 from ..agents.scraper_agent import ScraperAgent
@@ -28,85 +26,68 @@ logger = logging.getLogger(__name__)
 
 class AgentWorkflowEngine:
     """基于Agent的工作流执行引擎"""
-    
+
+    # 预定义 Agent 类型映射
+    AGENT_TYPES: Dict[str, Type[BaseStepAgent]] = {
+        'text_agent': TextAgent,
+        'tool_agent': ToolAgent,
+        'variable': VariableAgent,
+        'scraper_agent': ScraperAgent,
+        'storage_agent': StorageAgent,
+        'browser_agent': BrowserAgent,
+        'autonomous_browser_agent': AutonomousBrowserAgent,
+    }
+
     def __init__(self, agent_instance=None):
         self.agent = agent_instance
-        self.agent_registry = AgentRegistry()
-        self.agent_executor = AgentExecutor(self.agent_registry)
-        self.agent_router = AgentRouter(self.agent_registry)
         self.condition_evaluator = ConditionEvaluator()
-        
-        # 注册内置Agent
-        self._register_builtin_agents()
-    
-    def _register_builtin_agents(self):
-        """注册内置Agent工厂函数"""
-        # 获取config_service
-        config_service = getattr(self.agent, 'config_service', None) if self.agent else None
+        self._config_service = getattr(self.agent, 'config_service', None) if self.agent else None
 
-        # 注册Text Agent工厂
-        self.agent_registry.register_agent_factory(
-            "text_agent",
-            lambda config: TextAgent()
-        )
+    def _create_agent(self, agent_type: str, config: Optional[Dict] = None) -> BaseStepAgent:
+        """创建 Agent 实例"""
+        agent_class = self.AGENT_TYPES.get(agent_type)
+        if not agent_class:
+            raise ValueError(f"Unknown agent type: {agent_type}")
 
-        # 注册Tool Agent工厂
-        self.agent_registry.register_agent_factory(
-            "tool_agent",
-            lambda config: ToolAgent()
-        )
+        config = config or {}
 
-        # 注册Code Agent工厂
-        def create_code_agent(config):
-            agent = CodeAgent("python")
-            agent.metadata.name = "code_agent"
-            return agent
-
-        self.agent_registry.register_agent_factory(
-            "code_agent",
-            create_code_agent
-        )
-
-        # 注册Variable Agent工厂
-        self.agent_registry.register_agent_factory(
-            "variable",
-            lambda config: VariableAgent()
-        )
-
-        # 注册Scraper Agent工厂 - 支持默认配置
-        def create_scraper_agent(config):
-            # 可以从config传递默认值，运行时还能覆盖
+        # ScraperAgent 需要特殊处理
+        if agent_type == 'scraper_agent':
             return ScraperAgent(
-                config_service=config_service,
-                extraction_method=config.get('extraction_method', 'llm'),  # 默认用llm
+                config_service=self._config_service,
+                extraction_method=config.get('extraction_method', 'llm'),
                 dom_scope=config.get('dom_scope', 'partial'),
                 debug_mode=config.get('debug_mode', False)
             )
 
-        self.agent_registry.register_agent_factory(
-            "scraper_agent",
-            create_scraper_agent
-        )
+        return agent_class()
 
-        # 注册 Storage Agent 工厂
-        self.agent_registry.register_agent_factory(
-            "storage_agent",
-            lambda config: StorageAgent()
-        )
+    async def _execute_agent(
+        self,
+        agent_type: str,
+        input_data: Any,
+        context: AgentContext,
+        agent_config: Optional[Dict] = None
+    ) -> Any:
+        """执行指定 Agent"""
+        agent = self._create_agent(agent_type, agent_config)
 
-        # 注册 Browser Agent 工厂
-        self.agent_registry.register_agent_factory(
-            "browser_agent",
-            lambda config: BrowserAgent()
-        )
+        # 初始化 Agent
+        if not agent.is_initialized:
+            success = await agent.initialize(context)
+            if not success:
+                raise RuntimeError(f"Agent {agent_type} 初始化失败")
 
-        # 注册 Autonomous Browser Agent 工厂
-        self.agent_registry.register_agent_factory(
-            "autonomous_browser_agent",
-            lambda config: AutonomousBrowserAgent()
-        )
+        # 验证输入
+        if not await agent.validate_input(input_data):
+            raise ValueError(f"Agent {agent_type} 输入数据验证失败")
 
-        logger.info(f"已注册内置Agent工厂: {self.agent_registry.list_agent_names()}")
+        # 执行 Agent
+        try:
+            return await agent.execute(input_data, context)
+        except Exception as e:
+            await agent.cleanup(context)
+            raise e
     
     async def execute_workflow(
         self,
@@ -254,7 +235,7 @@ class AgentWorkflowEngine:
                     agent_config[key] = resolved_inputs[key]
 
             # 执行Agent
-            result = await self.agent_executor.execute_agent(
+            result = await self._execute_agent(
                 agent_type,
                 agent_input,
                 context,
@@ -300,11 +281,6 @@ class AgentWorkflowEngine:
                 "allowed_tools": getattr(step, 'allowed_tools', []),
                 "fallback_tools": getattr(step, 'fallback_tools', []),
                 "confidence_threshold": getattr(step, 'confidence_threshold', 0.7)
-            })
-        elif agent_type == "code_agent":
-            metadata.update({
-                "expected_output_format": getattr(step, 'expected_output_format', 'any'),
-                "libraries_allowed": getattr(step, 'allowed_libraries', ['json', 'math', 'datetime', 're'])
             })
         elif agent_type == "text_agent":
             metadata.update({
@@ -847,9 +823,131 @@ class AgentWorkflowEngine:
             # 恢复原来的step_id
             context.step_id = original_step_id
     
+    async def execute_step(
+        self,
+        step: AgentWorkflowStep,
+        variables: Dict[str, Any],
+        workflow_id: str = None,
+        log_callback: Optional[Any] = None
+    ) -> StepResult:
+        """Execute a single step with provided variables.
+
+        This is useful for debugging or testing individual steps without
+        running the entire workflow.
+
+        Args:
+            step: The step to execute
+            variables: Variables to inject into context (simulates prior step outputs)
+            workflow_id: Optional workflow ID for context
+            log_callback: Optional callback for execution logs
+
+        Returns:
+            StepResult: Result of the step execution
+        """
+        workflow_id = workflow_id or f"single_step_{int(time.time())}"
+
+        # Create context with provided variables
+        context = AgentContext(
+            workflow_id=workflow_id,
+            step_id=step.id,
+            user_id=getattr(self.agent, 'user_id', 'default_user'),
+            variables=variables,
+            agent_instance=self.agent,
+            tools_registry=getattr(self.agent, 'tools_registry', None),
+            memory_manager=getattr(self.agent, 'memory_manager', None),
+            logger=logger,
+            log_callback=log_callback
+        )
+
+        try:
+            return await self._execute_single_step(step, context)
+        finally:
+            await context.cleanup_browser_session()
+
+    async def execute_workflow_from(
+        self,
+        steps: List[AgentWorkflowStep],
+        start_from: str,
+        variables: Dict[str, Any],
+        workflow_id: str = None,
+        step_callback: Optional[Any] = None,
+        log_callback: Optional[Any] = None
+    ) -> WorkflowResult:
+        """Execute workflow starting from a specific step.
+
+        This is useful for resuming execution or debugging from a specific point.
+        You must provide the variables that would have been set by prior steps.
+
+        Args:
+            steps: List of all workflow steps
+            start_from: Step ID to start execution from
+            variables: Variables to inject (simulates prior step outputs)
+            workflow_id: Optional workflow ID
+            step_callback: Optional step progress callback
+            log_callback: Optional log callback
+
+        Returns:
+            WorkflowResult: Result of the workflow execution
+        """
+        # Find start index
+        start_index = None
+        for i, step in enumerate(steps):
+            if step.id == start_from:
+                start_index = i
+                break
+
+        if start_index is None:
+            return WorkflowResult(
+                success=False,
+                workflow_id=workflow_id or "unknown",
+                error_message=f"Step '{start_from}' not found in workflow",
+                steps=[],
+                total_execution_time=0.0
+            )
+
+        # Execute from start_index
+        return await self.execute_workflow(
+            steps=steps[start_index:],
+            workflow_id=workflow_id,
+            input_data=variables,
+            step_callback=step_callback,
+            log_callback=log_callback
+        )
+
+    def find_step_by_id(self, steps: List[AgentWorkflowStep], step_id: str) -> Optional[AgentWorkflowStep]:
+        """Find a step by ID, including nested steps in control flow.
+
+        Args:
+            steps: List of workflow steps
+            step_id: The step ID to find
+
+        Returns:
+            The step if found, None otherwise
+        """
+        for step in steps:
+            if step.id == step_id:
+                return step
+
+            # Search in nested steps
+            if step.agent_type in ('if', 'while', 'foreach'):
+                if step.then:
+                    found = self.find_step_by_id(step.then, step_id)
+                    if found:
+                        return found
+                if step.else_:
+                    found = self.find_step_by_id(step.else_, step_id)
+                    if found:
+                        return found
+                if step.steps:
+                    found = self.find_step_by_id(step.steps, step_id)
+                    if found:
+                        return found
+
+        return None
+
     def get_agent_stats(self) -> Dict[str, Any]:
-        """获取Agent统计信息"""
+        """Get Agent statistics"""
         return {
-            "registry_stats": self.agent_registry.get_agent_stats(),
-            "available_agents": self.agent_executor.list_available_agents()
+            "total_agents": len(self.AGENT_TYPES),
+            "available_agents": list(self.AGENT_TYPES.keys())
         }

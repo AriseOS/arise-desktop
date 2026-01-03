@@ -45,6 +45,13 @@ from pathlib import Path
 from .base_agent import BaseStepAgent, AgentMetadata
 from ..core.schemas import AgentContext
 
+# Import script templates from common module
+from src.common.script_generation.templates import (
+    BROWSER_TEST_OPERATION,
+    BROWSER_FIND_ELEMENT_TEMPLATE,
+    BROWSER_AGENT_PROMPT,
+)
+
 try:
     from browser_use import Tools
     from browser_use.browser.session import BrowserSession
@@ -90,6 +97,7 @@ class BrowserAgent(BaseStepAgent):
 
     # ==========================================================================
     # Preset Template: test_operation.py - Validates find_element.py
+    # Note: Also available in src.common.script_generation.templates
     # ==========================================================================
     PRESET_TEST_OPERATION = '''#!/usr/bin/env python3
 """Test script - Validates that find_element.py correctly finds the target element.

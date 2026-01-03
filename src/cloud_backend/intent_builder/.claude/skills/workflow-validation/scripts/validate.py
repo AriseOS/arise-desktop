@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Workflow Validation Script for Claude Agent
+Workflow Validation Script for Claude Agent (v2 Format)
 
 Usage:
     python validate.py workflow.yaml
@@ -8,6 +8,7 @@ Usage:
     echo 'yaml content' | python validate.py -
 
 Validates workflow YAML and prints human-readable results.
+Supports both v1 and v2 workflow formats.
 """
 
 import sys
@@ -17,41 +18,29 @@ from typing import Dict, List, Any, Set, Tuple
 from dataclasses import dataclass, field
 
 
-# Valid agent types (must match BaseApp's supported types)
-# See: agent_workflow_engine.py _register_builtin_agents()
+# Valid agent types (must match BaseApp's AGENT_TYPES)
 VALID_AGENT_TYPES = {
     "browser_agent",
     "scraper_agent",
     "storage_agent",
     "variable",
-    "foreach",
-    "if",
-    "while",
     "text_agent",
-    "code_agent",
     "tool_agent",
     "autonomous_browser_agent",
 }
 
-# Required fields at different levels
-REQUIRED_ROOT_FIELDS = ["apiVersion", "kind", "metadata", "steps"]
-REQUIRED_METADATA_FIELDS = ["name", "description"]
+# Control flow keys (v2 syntax)
+CONTROL_FLOW_KEYS = {"foreach", "if", "while"}
 
 # Agent-specific required fields
 # Format: { agent_type: { "step": [...], "inputs": [...] } }
-# - "step": fields required at step level
-# - "inputs": fields required inside step.inputs
 AGENT_SPECIFIC_FIELDS = {
-    "code_agent": {"step": ["code"], "inputs": []},
-    "text_agent": {"step": [], "inputs": ["instruction"]},  # instruction is inside inputs
+    "text_agent": {"step": [], "inputs": ["instruction"]},
     "variable": {"step": [], "inputs": []},
     "scraper_agent": {"step": [], "inputs": []},
     "browser_agent": {"step": [], "inputs": []},
     "storage_agent": {"step": [], "inputs": []},
     "tool_agent": {"step": [], "inputs": []},
-    "foreach": {"step": ["source", "steps"], "inputs": []},
-    "if": {"step": ["condition", "then"], "inputs": []},
-    "while": {"step": ["condition", "steps"], "inputs": []},
 }
 
 
@@ -86,37 +75,36 @@ class ValidationResult:
 
 
 class RuleValidator:
-    """Rule-based workflow validator"""
+    """Rule-based workflow validator supporting v1 and v2 formats"""
 
     def validate(self, workflow: Dict[str, Any]) -> ValidationResult:
         errors = []
         warnings = []
 
+        # Detect format version
+        is_v2 = self._is_v2_format(workflow)
+
         # 1. Check required root fields
-        errors.extend(self._check_required_fields(workflow))
+        errors.extend(self._check_required_fields(workflow, is_v2))
 
-        # 2. Check metadata fields
-        if "metadata" in workflow:
-            errors.extend(self._check_metadata(workflow["metadata"]))
-
-        # 3. Check agent types
+        # 2. Check agent types
         errors.extend(self._check_agent_types(workflow))
 
-        # 4. Check variable references
-        var_errors, var_warnings = self._check_variables(workflow)
+        # 3. Check variable references
+        var_errors, var_warnings = self._check_variables(workflow, is_v2)
         errors.extend(var_errors)
         warnings.extend(var_warnings)
 
-        # 5. Check control flow structures
+        # 4. Check control flow structures
         errors.extend(self._check_control_flow_structure(workflow))
 
-        # 6. Check agent-specific required fields
+        # 5. Check agent-specific required fields
         errors.extend(self._check_agent_specific_fields(workflow))
 
-        # 7. Check step IDs are unique
+        # 6. Check step IDs are unique
         errors.extend(self._check_unique_step_ids(workflow))
 
-        # 8. Check final_response requirement
+        # 7. Check final_response (warning only)
         fr_errors, fr_warnings = self._check_final_response(workflow)
         errors.extend(fr_errors)
         warnings.extend(fr_warnings)
@@ -127,18 +115,46 @@ class RuleValidator:
             warnings=warnings
         )
 
-    def _check_required_fields(self, workflow: Dict) -> List[str]:
-        errors = []
-        for f in REQUIRED_ROOT_FIELDS:
-            if f not in workflow:
-                errors.append(f"Missing required field: '{f}'")
-        return errors
+    def _is_v2_format(self, workflow: Dict) -> bool:
+        """Detect if workflow uses v2 format"""
+        # v2: has 'name' at root, no 'metadata' wrapper
+        # v1: has 'metadata.name'
+        if "name" in workflow and "metadata" not in workflow:
+            return True
+        api_version = workflow.get("apiVersion", "")
+        if "v2" in api_version:
+            return True
+        return False
 
-    def _check_metadata(self, metadata: Dict) -> List[str]:
+    def _check_required_fields(self, workflow: Dict, is_v2: bool) -> List[str]:
         errors = []
-        for f in REQUIRED_METADATA_FIELDS:
-            if f not in metadata:
-                errors.append(f"Missing required field: 'metadata.{f}'")
+
+        # apiVersion is always required
+        if "apiVersion" not in workflow:
+            errors.append("Missing required field: 'apiVersion'")
+        else:
+            api_version = workflow["apiVersion"]
+            if not api_version.startswith("ami.io/v"):
+                errors.append(f"Invalid apiVersion '{api_version}'. Must start with 'ami.io/v'")
+
+        # steps is always required
+        if "steps" not in workflow:
+            errors.append("Missing required field: 'steps'")
+
+        if is_v2:
+            # v2: name at root level
+            if "name" not in workflow:
+                errors.append("Missing required field: 'name'")
+        else:
+            # v1: kind and metadata required
+            if "kind" not in workflow:
+                errors.append("Missing required field: 'kind'")
+            if "metadata" not in workflow:
+                errors.append("Missing required field: 'metadata'")
+            elif isinstance(workflow.get("metadata"), dict):
+                if "name" not in workflow["metadata"]:
+                    errors.append("Missing required field: 'metadata.name'")
+
         return errors
 
     def _check_agent_types(self, workflow: Dict) -> List[str]:
@@ -149,34 +165,65 @@ class RuleValidator:
             for i, step in enumerate(steps):
                 step_path = f"{path}[{i}]"
                 step_id = step.get("id", f"index_{i}")
-                agent_type = step.get("agent_type")
 
-                if agent_type is None:
-                    if "control_type" not in step:
-                        errors.append(f"Step '{step_id}' at {step_path} missing 'agent_type'")
-                elif agent_type not in VALID_AGENT_TYPES:
-                    errors.append(
-                        f"Invalid agent_type '{agent_type}' at step '{step_id}'. "
-                        f"Valid types: {', '.join(sorted(VALID_AGENT_TYPES))}"
-                    )
+                # Check if it's v2 control flow syntax
+                is_control_flow = any(key in step for key in CONTROL_FLOW_KEYS)
 
-                if agent_type == "foreach" and "steps" in step:
-                    check_steps(step["steps"], f"{step_path}.steps")
-                if "then_steps" in step:
-                    check_steps(step["then_steps"], f"{step_path}.then_steps")
-                if "else_steps" in step:
-                    check_steps(step["else_steps"], f"{step_path}.else_steps")
+                if is_control_flow:
+                    # v2 control flow - validate nested steps
+                    if "foreach" in step:
+                        sub_steps = step.get("do") or step.get("steps", [])
+                        check_steps(sub_steps, f"{step_path}.do")
+                    elif "if" in step:
+                        if "then" in step:
+                            check_steps(step["then"], f"{step_path}.then")
+                        if "else" in step:
+                            check_steps(step["else"], f"{step_path}.else")
+                    elif "while" in step:
+                        sub_steps = step.get("do") or step.get("steps", [])
+                        check_steps(sub_steps, f"{step_path}.do")
+                else:
+                    # Agent step - check agent type
+                    agent_type = step.get("agent") or step.get("agent_type")
+
+                    if agent_type is None:
+                        errors.append(f"Step '{step_id}' at {step_path} missing 'agent' field")
+                    elif agent_type not in VALID_AGENT_TYPES:
+                        errors.append(
+                            f"Invalid agent '{agent_type}' at step '{step_id}'. "
+                            f"Valid types: {', '.join(sorted(VALID_AGENT_TYPES))}"
+                        )
+
+                    # Check nested steps for v1 control flow (agent_type: foreach)
+                    if agent_type == "foreach" and "steps" in step:
+                        check_steps(step["steps"], f"{step_path}.steps")
+                    if "then_steps" in step:
+                        check_steps(step["then_steps"], f"{step_path}.then_steps")
+                    if "else_steps" in step:
+                        check_steps(step["else_steps"], f"{step_path}.else_steps")
 
         check_steps(steps)
         return errors
 
-    def _check_variables(self, workflow: Dict) -> Tuple[List[str], List[str]]:
+    def _check_variables(self, workflow: Dict, is_v2: bool) -> Tuple[List[str], List[str]]:
         errors = []
         warnings = []
         defined_vars: Set[str] = set()
 
-        for var_name in workflow.get("inputs", {}).keys():
-            defined_vars.add(var_name)
+        # Collect input variables
+        if is_v2:
+            # v2: input: url or inputs: {url: string}
+            if "input" in workflow:
+                input_name = workflow["input"]
+                if isinstance(input_name, str):
+                    defined_vars.add(input_name)
+            if "inputs" in workflow:
+                for var_name in workflow["inputs"].keys():
+                    defined_vars.add(var_name)
+        else:
+            # v1: inputs: {url: {type: string}}
+            for var_name in workflow.get("inputs", {}).keys():
+                defined_vars.add(var_name)
 
         steps = workflow.get("steps", [])
         self._check_steps_variables(steps, defined_vars, errors, warnings, set())
@@ -193,65 +240,144 @@ class RuleValidator:
     ):
         for step in steps:
             step_id = step.get("id", "unknown")
-            agent_type = step.get("agent_type")
 
-            self._check_var_references(
-                step.get("inputs", {}),
-                defined_vars | loop_vars,
-                errors,
-                f"step '{step_id}' inputs"
-            )
+            # Check if it's v2 control flow
+            is_foreach = "foreach" in step
+            is_if = "if" in step
+            is_while = "while" in step
 
-            if "condition" in step:
-                self._check_var_references(
-                    step["condition"],
-                    defined_vars | loop_vars,
-                    errors,
-                    f"step '{step_id}' condition"
-                )
-
-            for var_name in step.get("outputs", {}).values():
-                if isinstance(var_name, str):
-                    defined_vars.add(var_name)
-
-            if agent_type == "foreach":
-                item_var = step.get("item_var", "item")
+            if is_foreach:
+                # v2 foreach
+                source = step["foreach"]
+                item_var = step.get("as", "item")
                 index_var = step.get("index_var", "index")
-                source = step.get("source", "")
 
                 self._check_var_references(
                     {"source": source},
                     defined_vars | loop_vars,
                     errors,
-                    f"step '{step_id}' foreach source"
+                    f"foreach source"
                 )
 
                 new_loop_vars = loop_vars | {item_var, index_var}
-                if "steps" in step:
+                sub_steps = step.get("do") or step.get("steps", [])
+                self._check_steps_variables(
+                    sub_steps,
+                    defined_vars.copy(),
+                    errors,
+                    warnings,
+                    new_loop_vars
+                )
+
+            elif is_if:
+                # v2 if
+                condition = step["if"]
+                self._check_var_references(
+                    condition,
+                    defined_vars | loop_vars,
+                    errors,
+                    f"if condition"
+                )
+
+                if "then" in step:
                     self._check_steps_variables(
-                        step["steps"],
+                        step["then"],
                         defined_vars.copy(),
                         errors,
                         warnings,
-                        new_loop_vars
+                        loop_vars
+                    )
+                if "else" in step:
+                    self._check_steps_variables(
+                        step["else"],
+                        defined_vars.copy(),
+                        errors,
+                        warnings,
+                        loop_vars
                     )
 
-            if "then_steps" in step:
+            elif is_while:
+                # v2 while
+                condition = step["while"]
+                self._check_var_references(
+                    condition,
+                    defined_vars | loop_vars,
+                    errors,
+                    f"while condition"
+                )
+
+                sub_steps = step.get("do") or step.get("steps", [])
                 self._check_steps_variables(
-                    step["then_steps"],
+                    sub_steps,
                     defined_vars.copy(),
                     errors,
                     warnings,
                     loop_vars
                 )
-            if "else_steps" in step:
-                self._check_steps_variables(
-                    step["else_steps"],
-                    defined_vars.copy(),
+
+            else:
+                # Agent step
+                agent_type = step.get("agent") or step.get("agent_type")
+
+                self._check_var_references(
+                    step.get("inputs", {}),
+                    defined_vars | loop_vars,
                     errors,
-                    warnings,
-                    loop_vars
+                    f"step '{step_id}' inputs"
                 )
+
+                if "condition" in step:
+                    self._check_var_references(
+                        step["condition"],
+                        defined_vars | loop_vars,
+                        errors,
+                        f"step '{step_id}' condition"
+                    )
+
+                # Add outputs to defined vars
+                for var_name in step.get("outputs", {}).values():
+                    if isinstance(var_name, str):
+                        defined_vars.add(var_name)
+
+                # v1 control flow (agent_type: foreach)
+                if agent_type == "foreach":
+                    item_var = step.get("item_var", "item")
+                    index_var = step.get("index_var", "index")
+                    source = step.get("source", "")
+
+                    self._check_var_references(
+                        {"source": source},
+                        defined_vars | loop_vars,
+                        errors,
+                        f"step '{step_id}' foreach source"
+                    )
+
+                    new_loop_vars = loop_vars | {item_var, index_var}
+                    if "steps" in step:
+                        self._check_steps_variables(
+                            step["steps"],
+                            defined_vars.copy(),
+                            errors,
+                            warnings,
+                            new_loop_vars
+                        )
+
+                if "then_steps" in step:
+                    self._check_steps_variables(
+                        step["then_steps"],
+                        defined_vars.copy(),
+                        errors,
+                        warnings,
+                        loop_vars
+                    )
+                if "else_steps" in step:
+                    self._check_steps_variables(
+                        step["else_steps"],
+                        defined_vars.copy(),
+                        errors,
+                        warnings,
+                        loop_vars
+                    )
 
     def _check_var_references(
         self,
@@ -282,49 +408,81 @@ class RuleValidator:
             for i, step in enumerate(steps):
                 step_path = f"{path}[{i}]"
                 step_id = step.get("id", f"index_{i}")
-                agent_type = step.get("agent_type")
 
-                if agent_type == "foreach":
-                    if "source" not in step:
+                # v2 control flow syntax
+                if "foreach" in step:
+                    sub_steps = step.get("do") or step.get("steps")
+                    if not sub_steps:
                         errors.append(
-                            f"foreach step '{step_id}' at {step_path} missing required 'source' field"
-                        )
-                    if "steps" not in step:
-                        errors.append(
-                            f"foreach step '{step_id}' at {step_path} missing required 'steps' field"
+                            f"foreach at {step_path} missing 'do' or 'steps' field"
                         )
                     else:
-                        check_steps(step["steps"], f"{step_path}.steps")
+                        check_steps(sub_steps, f"{step_path}.do")
 
-                elif agent_type == "if":
-                    if "condition" not in step:
+                elif "if" in step:
+                    if "then" not in step:
                         errors.append(
-                            f"if step '{step_id}' at {step_path} missing required 'condition' field"
+                            f"if at {step_path} missing required 'then' field"
                         )
-                    if "then" not in step and "then_steps" not in step:
-                        errors.append(
-                            f"if step '{step_id}' at {step_path} missing required 'then' field"
-                        )
-                    if "then" in step:
+                    else:
                         check_steps(step["then"], f"{step_path}.then")
-                    if "then_steps" in step:
-                        check_steps(step["then_steps"], f"{step_path}.then_steps")
                     if "else" in step:
                         check_steps(step["else"], f"{step_path}.else")
-                    if "else_steps" in step:
-                        check_steps(step["else_steps"], f"{step_path}.else_steps")
 
-                elif agent_type == "while":
-                    if "condition" not in step:
+                elif "while" in step:
+                    sub_steps = step.get("do") or step.get("steps")
+                    if not sub_steps:
                         errors.append(
-                            f"while step '{step_id}' at {step_path} missing required 'condition' field"
-                        )
-                    if "steps" not in step:
-                        errors.append(
-                            f"while step '{step_id}' at {step_path} missing required 'steps' field"
+                            f"while at {step_path} missing 'do' or 'steps' field"
                         )
                     else:
-                        check_steps(step["steps"], f"{step_path}.steps")
+                        check_steps(sub_steps, f"{step_path}.do")
+
+                else:
+                    # v1 control flow (agent_type based)
+                    agent_type = step.get("agent") or step.get("agent_type")
+
+                    if agent_type == "foreach":
+                        if "source" not in step:
+                            errors.append(
+                                f"foreach step '{step_id}' at {step_path} missing 'source' field"
+                            )
+                        if "steps" not in step:
+                            errors.append(
+                                f"foreach step '{step_id}' at {step_path} missing 'steps' field"
+                            )
+                        else:
+                            check_steps(step["steps"], f"{step_path}.steps")
+
+                    elif agent_type == "if":
+                        if "condition" not in step:
+                            errors.append(
+                                f"if step '{step_id}' at {step_path} missing 'condition' field"
+                            )
+                        if "then" not in step and "then_steps" not in step:
+                            errors.append(
+                                f"if step '{step_id}' at {step_path} missing 'then' field"
+                            )
+                        if "then" in step:
+                            check_steps(step["then"], f"{step_path}.then")
+                        if "then_steps" in step:
+                            check_steps(step["then_steps"], f"{step_path}.then_steps")
+                        if "else" in step:
+                            check_steps(step["else"], f"{step_path}.else")
+                        if "else_steps" in step:
+                            check_steps(step["else_steps"], f"{step_path}.else_steps")
+
+                    elif agent_type == "while":
+                        if "condition" not in step:
+                            errors.append(
+                                f"while step '{step_id}' at {step_path} missing 'condition' field"
+                            )
+                        if "steps" not in step:
+                            errors.append(
+                                f"while step '{step_id}' at {step_path} missing 'steps' field"
+                            )
+                        else:
+                            check_steps(step["steps"], f"{step_path}.steps")
 
         check_steps(steps)
         return errors
@@ -337,7 +495,23 @@ class RuleValidator:
             for i, step in enumerate(steps):
                 step_path = f"{path}[{i}]"
                 step_id = step.get("id", f"index_{i}")
-                agent_type = step.get("agent_type")
+
+                # Skip v2 control flow
+                if any(key in step for key in CONTROL_FLOW_KEYS):
+                    if "foreach" in step:
+                        sub_steps = step.get("do") or step.get("steps", [])
+                        check_steps(sub_steps, f"{step_path}.do")
+                    elif "if" in step:
+                        if "then" in step:
+                            check_steps(step["then"], f"{step_path}.then")
+                        if "else" in step:
+                            check_steps(step["else"], f"{step_path}.else")
+                    elif "while" in step:
+                        sub_steps = step.get("do") or step.get("steps", [])
+                        check_steps(sub_steps, f"{step_path}.do")
+                    continue
+
+                agent_type = step.get("agent") or step.get("agent_type")
 
                 if agent_type in AGENT_SPECIFIC_FIELDS:
                     field_config = AGENT_SPECIFIC_FIELDS[agent_type]
@@ -383,22 +557,18 @@ class RuleValidator:
                     if "final_response" in outputs.values():
                         return True
 
-                if "steps" in step and has_final_response(step["steps"]):
-                    return True
-                if "then" in step and has_final_response(step["then"]):
-                    return True
-                if "then_steps" in step and has_final_response(step["then_steps"]):
-                    return True
-                if "else" in step and has_final_response(step["else"]):
-                    return True
-                if "else_steps" in step and has_final_response(step["else_steps"]):
-                    return True
+                # Check nested steps
+                for key in ["steps", "do", "then", "else", "then_steps", "else_steps"]:
+                    if key in step:
+                        nested = step[key]
+                        if isinstance(nested, list) and has_final_response(nested):
+                            return True
 
             return False
 
         if not has_final_response(steps):
             warnings.append(
-                "No step outputs 'final_response'. Workflow may not return a result."
+                "No step outputs 'final_response'. This is OK for data collection workflows."
             )
 
         return errors, warnings
@@ -419,12 +589,10 @@ class RuleValidator:
                     else:
                         seen_ids.add(step_id)
 
-                if "steps" in step:
-                    collect_ids(step["steps"], f"{step_path}.steps")
-                if "then_steps" in step:
-                    collect_ids(step["then_steps"], f"{step_path}.then_steps")
-                if "else_steps" in step:
-                    collect_ids(step["else_steps"], f"{step_path}.else_steps")
+                # Check nested steps
+                for key in ["steps", "do", "then", "else", "then_steps", "else_steps"]:
+                    if key in step and isinstance(step[key], list):
+                        collect_ids(step[key], f"{step_path}.{key}")
 
         collect_ids(steps)
         return errors

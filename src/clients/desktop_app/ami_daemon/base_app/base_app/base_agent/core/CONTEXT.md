@@ -7,7 +7,7 @@ Core framework components for BaseAgent.
 | File | Purpose |
 |------|---------|
 | `base_agent.py` | Main BaseAgent class - the container that executes workflows |
-| `agent_workflow_engine.py` | Workflow execution engine with step routing |
+| `agent_workflow_engine.py` | Workflow execution engine with Agent dispatch |
 | `schemas.py` | Data structures (AgentContext, AgentResult, WorkflowStep, etc.) |
 | `state_manager.py` | State persistence across workflow execution |
 | `workflow_builder.py` | Programmatic workflow construction |
@@ -18,7 +18,6 @@ Core framework components for BaseAgent.
 
 Stateless container that:
 - Loads and executes workflows
-- Manages agent registry
 - Provides memory access (via user_id)
 
 ```python
@@ -28,18 +27,32 @@ result = await agent.run_workflow(workflow, input_data)
 
 ### AgentWorkflowEngine
 
-Executes workflow steps sequentially with:
-- Agent type routing (text_agent, tool_agent, scraper_agent, etc.)
+Executes workflow steps with:
+- Agent type dispatch via `AGENT_TYPES` dict
 - Conditional execution (`if/else`)
 - Loop control (`while`, `foreach`)
 - Variable passing via template syntax `{{variable_name}}`
+- Single-step execution support (`execute_step()`)
+- Resume from step (`execute_workflow_from()`)
+
+```python
+AGENT_TYPES = {
+    'text_agent': TextAgent,
+    'tool_agent': ToolAgent,
+    'variable': VariableAgent,
+    'scraper_agent': ScraperAgent,
+    'storage_agent': StorageAgent,
+    'browser_agent': BrowserAgent,
+    'autonomous_browser_agent': AutonomousBrowserAgent,
+}
+```
 
 ### AgentContext
 
 Carries state through workflow execution:
 - `variables`: Dict of workflow variables
-- `memory`: Reference to MemoryManager
-- `history`: Execution trace
+- `memory_manager`: Reference to MemoryManager
+- `agent_instance`: Reference to BaseAgent
 
 ## Workflow Execution Flow
 
@@ -48,8 +61,29 @@ Carries state through workflow execution:
 2. Initialize AgentContext
 3. For each step:
    a. Resolve templates in parameters
-   b. Route to appropriate agent
+   b. Create Agent instance from AGENT_TYPES
    c. Execute agent
    d. Store outputs in context
 4. Return final result
+```
+
+## Single-Step Execution
+
+For debugging or testing individual steps:
+
+```python
+engine = AgentWorkflowEngine(agent)
+
+# Execute single step with provided variables
+result = await engine.execute_step(
+    step=some_step,
+    variables={"url": "https://example.com"}
+)
+
+# Execute workflow from specific step
+result = await engine.execute_workflow_from(
+    steps=workflow.steps,
+    start_from="scrape",
+    variables={"category_url": "https://example.com/products"}
+)
 ```

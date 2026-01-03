@@ -173,7 +173,7 @@ config:
   item_var: "current_item"        # Optional: Current item variable (default: "item")
   index_var: "item_index"         # Optional: Current index variable (default: "index")
   max_iterations: 100             # Optional: Max iterations (default: 100)
-  loop_timeout: 600               # Optional: Total loop timeout in seconds (default: 600)
+  loop_timeout: 3600              # Optional: Total loop timeout in seconds (default: 3600)
 
   steps:
     - id: "process-item"

@@ -12,6 +12,9 @@ from .base_agent import BaseStepAgent, AgentMetadata
 from ..core.schemas import AgentContext
 from src.common.llm import OpenAIProvider, AnthropicProvider
 
+# Import script templates from common module (for consistency with Cloud Backend)
+from src.common.script_generation.templates import SCRAPER_AGENT_PROMPT
+
 try:
     from browser_use import Tools
     from browser_use.browser.session import BrowserSession

@@ -348,7 +348,11 @@ async def upload_recording(data: dict):
             "user_id": "user123",
             "user_api_key": "ami_xxx...",  # User's Ami API key for LLM calls
             "task_description": "Search for coffee on Google",  # User's description of what they did
-            "operations": [...]
+            "operations": [...],
+            "dom_snapshots": {  # Optional: DOM snapshots captured during recording
+                "https://example.com/page1": {...dom_dict...},
+                "https://example.com/page2": {...dom_dict...}
+            }
         }
 
     Returns:
@@ -361,6 +365,7 @@ async def upload_recording(data: dict):
     task_description = data.get("task_description", "")
     user_query = data.get("user_query")
     operations = data.get("operations", [])
+    dom_snapshots = data.get("dom_snapshots")  # URL -> DOM dict mapping
     # Allow client to provide recording_id (e.g., App Backend's session_id)
     recording_id = data.get("recording_id") or str(uuid.uuid4())
 
@@ -379,10 +384,13 @@ async def upload_recording(data: dict):
         recording_id,
         operations,
         task_description=task_description,
-        user_query=user_query
+        user_query=user_query,
+        dom_snapshots=dom_snapshots
     )
 
     logger.info(f"Recording uploaded: {recording_id} ({len(operations)} ops)")
+    if dom_snapshots:
+        logger.info(f"  DOM snapshots: {len(dom_snapshots)} URLs")
     if task_description:
         logger.info(f"  Task: {task_description}")
     if user_query:
@@ -497,6 +505,81 @@ async def add_intents_to_user_graph_background(
 
     except Exception as e:
         logger.error(f"❌ Background: Failed to add intents from recording {recording_id}: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+async def _pregenerate_scripts_background(
+    user_id: str,
+    workflow_id: str,
+    recording_id: str,
+    workflow_yaml: str,
+    api_key: str
+):
+    """Background task: Pre-generate scripts for workflow steps using DOM snapshots from recording
+
+    This task runs after workflow generation to populate the workflow directory
+    with cached scripts (find_element.py, extraction_script.py), eliminating
+    the need to generate them during first execution.
+    """
+    try:
+        logger.info(f"🔧 Background: Starting script pre-generation for workflow {workflow_id}")
+
+        # Load DOM snapshots from recording
+        dom_snapshots = storage_service.get_recording_dom_snapshots(user_id, recording_id)
+
+        if not dom_snapshots:
+            logger.info(f"ℹ️ Background: No DOM snapshots found for recording {recording_id}, skipping script pre-generation")
+            return
+
+        logger.info(f"📸 Background: Found {len(dom_snapshots)} DOM snapshots for script generation")
+
+        # Get workflow directory
+        workflow_dir = storage_service.get_workflow_path(user_id, workflow_id)
+
+        # Create script pre-generation service
+        from src.cloud_backend.intent_builder.services import ScriptPregenerationService
+
+        service = ScriptPregenerationService(
+            config_service=config_service,
+            api_key=api_key,
+            base_url=config_service.get("llm.proxy_url")
+        )
+
+        # Run script pre-generation
+        result = await service.pregenerate_scripts(
+            workflow_yaml=workflow_yaml,
+            dom_snapshots=dom_snapshots,
+            workflow_dir=workflow_dir
+        )
+
+        if result["success"]:
+            logger.info(f"✅ Background: Script pre-generation complete for workflow {workflow_id}")
+            logger.info(f"   Generated: {result['generated']}, Skipped: {result['skipped']}, Failed: {result['failed']}")
+        else:
+            logger.warning(f"⚠️ Background: Script pre-generation had issues for workflow {workflow_id}")
+            logger.warning(f"   Generated: {result['generated']}, Skipped: {result['skipped']}, Failed: {result['failed']}")
+            if result.get("error"):
+                logger.warning(f"   Error: {result['error']}")
+
+        # Update workflow metadata with script generation status
+        try:
+            metadata = await storage_service.get_workflow_metadata(user_id, workflow_id)
+            if metadata:
+                metadata["script_pregeneration"] = {
+                    "completed": True,
+                    "generated": result["generated"],
+                    "skipped": result["skipped"],
+                    "failed": result["failed"],
+                    "details": result["details"]
+                }
+                await storage_service.save_workflow_metadata(user_id, workflow_id, metadata)
+                logger.info(f"✅ Background: Updated workflow metadata with script generation status")
+        except Exception as e:
+            logger.warning(f"⚠️ Background: Failed to update workflow metadata: {e}")
+
+    except Exception as e:
+        logger.error(f"❌ Background: Script pre-generation failed for workflow {workflow_id}: {e}")
         import traceback
         traceback.print_exc()
 
@@ -1186,6 +1269,18 @@ async def generate_workflow_stream(
 
                 logger.info(f"✅ [Stream] Workflow saved successfully, sending completion event")
                 yield f"data: {json.dumps({'status': 'completed', 'progress': 100, 'workflow_id': workflow_id, 'workflow_name': workflow_name, 'message': 'Workflow generated successfully'})}\n\n"
+
+                # Start background task to pre-generate scripts if DOM snapshots are available
+                if local_recording_id:
+                    asyncio.create_task(
+                        _pregenerate_scripts_background(
+                            user_id=user_id,
+                            workflow_id=workflow_id,
+                            recording_id=local_recording_id,
+                            workflow_yaml=response.workflow_yaml,
+                            api_key=x_ami_api_key
+                        )
+                    )
             else:
                 logger.error(f"❌ [Stream] Generation failed: {response.error}")
                 yield f"data: {json.dumps({'status': 'failed', 'progress': 0, 'message': response.error})}\n\n"

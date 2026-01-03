@@ -3,18 +3,21 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
+from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
 class SimpleUserBehaviorMonitor:
     """Simplified user behavior monitor - monitors, prints, and stores operations"""
-    
+
     def __init__(self, operation_list=None):
         self.session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         self._is_monitoring = False
         self._monitored_tabs = set()  # 跟踪已监控的Tab ID
         self._tab_sessions = {}  # 存储每个Tab的CDP会话
         self.operation_list = operation_list if operation_list is not None else []  # 存储操作的列表
+        self.dom_snapshots: Dict[str, dict] = {}  # URL -> DOM snapshot mapping
+        self._dom_capture_enabled = False  # Whether to capture DOM on navigation
         
     async def setup_monitoring(self, browser_session) -> None:
         """Set up user behavior monitoring"""
@@ -88,18 +91,18 @@ class SimpleUserBehaviorMonitor:
             url = frame.get('url', 'Unknown')
             frame_id = frame.get('id', 'Unknown')
             parent_id = frame.get('parentId', None)
-            
+
             # 只处理主frame导航，忽略iframe和子frame
             if parent_id is not None:
                 # 这是一个子frame/iframe，忽略
                 logger.debug(f"Ignoring child frame navigation: {url} (frame: {frame_id}, parent: {parent_id})")
                 return
-                
+
             # 过滤掉明显的无效导航
             if url in ['about:blank', 'chrome://newtab/', 'chrome://new-tab-page/']:
                 logger.debug(f"Ignoring system navigation: {url}")
                 return
-            
+
             print(f"🔄 Main frame navigation detected: {url}")
             logger.info(f"Main frame navigated: {url} (frame: {frame_id})")
 
@@ -121,13 +124,36 @@ class SimpleUserBehaviorMonitor:
             # Debug: Verify event was added
             print(f"📝 Navigation event added to operation_list (total: {len(self.operation_list)} operations)")
             logger.info(f"Navigation event stored. Total operations: {len(self.operation_list)}")
-            
-            # For now, just log navigation without trying to rebuild
-        
+
+            # Capture DOM snapshot if enabled (runs in background to not block navigation)
+            if self._dom_capture_enabled:
+                asyncio.create_task(self._capture_dom_after_navigation(url))
+
         # Register navigation event listener
         cdp_session.cdp_client.register.Page.frameNavigated(handle_frame_navigated)
         logger.debug("Navigation event listener registered")
         print("🎯 Navigation event listener registered")
+
+    async def _capture_dom_after_navigation(self, url: str) -> None:
+        """Capture DOM after navigation completes (background task)
+
+        Args:
+            url: The URL that was navigated to
+        """
+        try:
+            # Skip if already captured this URL
+            if url in self.dom_snapshots:
+                logger.debug(f"DOM already captured for URL: {url}")
+                return
+
+            # Wait for page to load
+            await asyncio.sleep(1.0)
+
+            # Capture DOM
+            await self.capture_dom_snapshot(url)
+
+        except Exception as e:
+            logger.error(f"Background DOM capture failed for {url}: {e}")
     
     async def _setup_tab_listeners(self, cdp_session):
         """Set up Tab creation and destruction event listeners"""
@@ -707,15 +733,96 @@ class SimpleUserBehaviorMonitor:
     async def stop_monitoring(self) -> None:
         """Stop monitoring and clean up all tabs"""
         self._is_monitoring = False
-        
+
         # 清理所有监控的Tab
         print(f"🧹 Cleaning up {len(self._monitored_tabs)} monitored tabs...")
         for target_id in list(self._monitored_tabs):
             print(f"  🗑️ Cleaning up tab {target_id[-4:]}")
-        
+
         self._monitored_tabs.clear()
         self._tab_sessions.clear()
-        
+
         print(f"\n🛑 Multi-tab user behavior monitoring stopped - Session ID: {self.session_id}")
         print("=" * 60)
         logger.info(f"Multi-tab user behavior monitoring stopped for {self.session_id}")
+
+    def enable_dom_capture(self, enabled: bool = True) -> None:
+        """Enable or disable DOM capture on navigation events
+
+        Args:
+            enabled: Whether to capture DOM snapshots on navigation
+        """
+        self._dom_capture_enabled = enabled
+        status = "enabled" if enabled else "disabled"
+        print(f"📸 DOM capture {status}")
+        logger.info(f"DOM capture {status}")
+
+    async def capture_dom_snapshot(self, url: str) -> Optional[dict]:
+        """Capture current page DOM and store it associated with URL
+
+        Uses the same DOMExtractor as scraper_agent for consistency.
+
+        Args:
+            url: The URL to associate with this DOM snapshot
+
+        Returns:
+            The DOM dictionary if successful, None otherwise
+        """
+        if not hasattr(self, 'browser_session') or not self.browser_session:
+            logger.warning("Cannot capture DOM: no browser session available")
+            return None
+
+        try:
+            from browser_use.dom.dom_events import BrowserStateRequestEvent
+            from ..dom_extractor import DOMExtractor, extract_dom_dict
+
+            # Wait for DOM to stabilize after navigation
+            await asyncio.sleep(0.5)
+
+            # Request browser state update
+            event = BrowserStateRequestEvent(
+                request_type="dom",
+                reason="dom_capture_for_recording"
+            )
+            await self.browser_session.dispatch_event(event)
+            await event.event_result(raise_if_any=True, raise_if_none=False)
+
+            # Get enhanced DOM from cache
+            enhanced_dom = self.browser_session._dom_watchdog.enhanced_dom_tree
+            if enhanced_dom is None:
+                logger.warning(f"DOM tree is None for URL: {url}")
+                return None
+
+            # Extract DOM using DOMExtractor (same as scraper_agent)
+            extractor = DOMExtractor()
+            serialized_dom, _ = extractor.serialize_accessible_elements_custom(
+                enhanced_dom, include_non_visible=True
+            )
+            dom_dict = extractor.extract_dom_dict(serialized_dom)
+
+            # Store snapshot associated with URL
+            self.dom_snapshots[url] = dom_dict
+
+            print(f"📸 DOM snapshot captured for: {url[:60]}...")
+            logger.info(f"DOM snapshot captured for URL: {url}")
+
+            return dom_dict
+
+        except Exception as e:
+            logger.error(f"Failed to capture DOM snapshot: {e}")
+            print(f"⚠️ DOM capture failed: {e}")
+            return None
+
+    def get_dom_snapshots(self) -> Dict[str, dict]:
+        """Get all captured DOM snapshots
+
+        Returns:
+            Dictionary mapping URLs to DOM snapshots
+        """
+        return self.dom_snapshots.copy()
+
+    def clear_dom_snapshots(self) -> None:
+        """Clear all captured DOM snapshots"""
+        self.dom_snapshots.clear()
+        print("🗑️ DOM snapshots cleared")
+        logger.info("DOM snapshots cleared")

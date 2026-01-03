@@ -265,7 +265,7 @@ class AgentWorkflowStep(BaseModel):
     description: str = Field(default="", description="步骤描述")
     
     # Agent配置
-    agent_type: str = Field(..., description="Agent类型: text_agent | tool_agent | code_agent | if | while | foreach")
+    agent_type: str = Field(..., description="Agent类型: text_agent | tool_agent | browser_agent | scraper_agent | storage_agent | variable | if | while | foreach")
     user_task: Optional[str] = Field(default=None, description="用户具体任务内容")
     
     # 输入配置
@@ -274,13 +274,9 @@ class AgentWorkflowStep(BaseModel):
     
     # Tool Agent 特有配置
     allowed_tools: List[str] = Field(default_factory=list, description="允许使用的工具列表")
-    fallback_tools: List[str] = Field(default_factory=list, description="备选工具列表") 
+    fallback_tools: List[str] = Field(default_factory=list, description="备选工具列表")
     confidence_threshold: float = Field(default=0.8, description="工具选择置信度阈值")
-    
-    # Code Agent 特有配置
-    allowed_libraries: List[str] = Field(default_factory=list, description="允许使用的代码库")
-    expected_output_format: str = Field(default="", description="期望的输出格式")
-    
+
     # Text Agent 特有配置
     response_style: str = Field(default="professional", description="回答风格")
     max_length: int = Field(default=500, description="最大回答长度")

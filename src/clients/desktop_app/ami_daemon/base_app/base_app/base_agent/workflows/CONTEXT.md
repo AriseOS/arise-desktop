@@ -6,12 +6,77 @@ YAML workflow definitions and loader.
 
 ```
 workflows/
-├── builtin/     # System-provided workflows
 ├── user/        # User-created workflows
 └── workflow_loader.py  # Loads and parses YAML workflows
 ```
 
-## Workflow Format
+## Workflow Format (v2)
+
+```yaml
+apiVersion: "ami.io/v2"
+name: workflow-name
+description: "What this workflow does"
+
+input: url   # Single input shorthand
+# OR
+inputs:      # Multiple inputs
+  url: string
+  max_items: number
+
+steps:
+  - id: navigate
+    agent: browser_agent
+    inputs:
+      target_url: "{{url}}"
+
+  - id: scrape
+    agent: scraper_agent
+    inputs:
+      extraction_method: llm
+      data_requirements:
+        user_description: "Extract products"
+        output_format:
+          name: string
+          price: number
+    outputs:
+      extracted_data: products
+```
+
+## Control Flow (v2 Syntax)
+
+### Conditional (`if`)
+```yaml
+- if: "{{status}} == 'ok'"
+  then:
+    - agent: text_agent
+      inputs: ...
+  else:
+    - agent: text_agent
+      inputs: ...
+```
+
+### Loop (`foreach`)
+```yaml
+- foreach: "{{products}}"
+  as: product
+  do:
+    - agent: storage_agent
+      inputs:
+        operation: store
+        data: "{{product}}"
+```
+
+### Loop (`while`)
+```yaml
+- while: "{{has_next}}"
+  do:
+    - agent: browser_agent
+      inputs: ...
+```
+
+## Legacy v1 Format
+
+Still supported for compatibility:
 
 ```yaml
 apiVersion: "ami.io/v1"
@@ -19,72 +84,33 @@ kind: "Workflow"
 
 metadata:
   name: "workflow-name"
-  description: "What this workflow does"
-  version: "1.0.0"
-
-inputs:
-  user_input:
-    type: "string"
-    required: true
-
-outputs:
-  result:
-    type: "object"
+  description: "..."
 
 steps:
-  - id: "step-1"
-    agent_type: "text_agent"
-    parameters:
-      prompt: "Process: {{user_input}}"
-    outputs:
-      processed: "result"
-
-  - id: "step-2"
-    agent_type: "if"
-    condition: "{{processed.status}} == 'ok'"
-    then:
-      - id: "success-step"
-        agent_type: "text_agent"
-        ...
-    else:
-      - id: "error-step"
-        ...
-```
-
-## Control Flow
-
-### Conditional (`if`)
-```yaml
-- id: "routing"
-  agent_type: "if"
-  condition: "{{variable}} == 'value'"
-  then: [...]
-  else: [...]
-```
-
-### Loop (`foreach`)
-```yaml
-- id: "process-items"
-  agent_type: "foreach"
-  items: "{{item_list}}"
-  variable: "item"
-  steps:
-    - id: "process-one"
-      agent_type: "scraper_agent"
-      parameters:
-        url: "{{item.url}}"
-```
-
-### Loop (`while`)
-```yaml
-- id: "retry-loop"
-  agent_type: "while"
-  condition: "{{retry_count}} < 3"
-  steps: [...]
+  - id: "loop"
+    agent_type: "foreach"    # v1: agent_type instead of foreach:
+    source: "{{items}}"
+    item_var: "item"
+    steps: [...]
 ```
 
 ## Template Syntax
 
 - `{{variable}}` - Simple variable reference
-- `{{step_id.output_name}}` - Reference previous step output
-- `{{item.field}}` - Access object field in loop
+- `{{item.field}}` - Access object field
+- `{{list.0.field}}` - Access list item by index
+- `{{list.length}}` - Get list length
+
+## ConditionEvaluator
+
+Evaluates condition expressions with operators:
+- Comparison: `==`, `!=`, `>`, `<`, `>=`, `<=`
+- Logical: `and`, `or`, `not`
+- Built-in functions: `len()`, `str()`, `int()`, `float()`, `bool()`
+
+Example conditions:
+```yaml
+condition: "{{count}} > 0"
+condition: "{{status}} == 'done'"
+condition: "{{has_next}} and {{count}} < 100"
+```

@@ -148,51 +148,67 @@ The agent-specs skill contains the authoritative specification. Always verify be
 "{{list.0.field}}"       # First item (scraper returns List[Dict])
 ```
 
-## Workflow Structure (Required Fields)
+## Workflow Structure (v2 Format)
 
-Every workflow must have this structure:
+**Always use v2 format:**
 
 ```yaml
-apiVersion: "ami.io/v1"
-kind: "Workflow"
+apiVersion: "ami.io/v2"
+name: workflow-name
+description: "What this workflow does"
 
-metadata:
-  name: "workflow-name"        # Required
-  description: "What it does"  # Required
-  version: "1.0.0"             # Required
+input: category_url          # Single input (or inputs: {...})
 
 steps:
-  - id: "step-1"               # Required: unique identifier
-    name: "Step Name"          # Required: human-readable name
-    agent_type: "browser_agent" # Required: agent type
-    inputs:                    # Agent-specific inputs
-      ...
-    outputs:                   # Optional: save results to variables
-      result: "variable_name"
+  - id: navigate
+    agent: browser_agent     # Use 'agent:' (preferred over 'agent_type:')
+    inputs:
+      target_url: "{{category_url}}"
+
+  - id: extract
+    agent: scraper_agent
+    inputs:
+      extraction_method: script
+      dom_scope: full
+      data_requirements:
+        user_description: "Extract products"
+        output_format:
+          name: "Product name"
+    outputs:
+      extracted_data: products
 ```
+
+**Key v2 features:**
+- No `kind:` or `metadata:` wrapper
+- Use `agent:` instead of `agent_type:`
+- Control flow as top-level keys: `foreach:`, `if:`, `while:`
+- `final_response` is optional (not required for data collection)
 
 ### Step Required Fields
 
-Every step MUST have these three fields:
+Every step MUST have:
 - `id`: Unique identifier (e.g., "navigate-home", "extract-products")
-- `name`: Human-readable name (e.g., "Navigate to Homepage", "Extract Products")
-- `agent_type`: One of the valid agent types
+- `agent`: One of the valid agent types
 
-### Complete Step Example
+Optional:
+- `name`: Human-readable name
+- `inputs`: Agent-specific inputs
+- `outputs`: Save results to variables
+
+### Complete Step Example (v2)
 
 ```yaml
-- id: "extract-product-urls"
-  name: "Extract Product URLs"
-  agent_type: "scraper_agent"
+- id: extract-product-urls
+  agent: scraper_agent
   inputs:
-    extraction_method: "script"
-    dom_scope: "full"
+    extraction_method: script
+    dom_scope: full
     data_requirements:
       user_description: "Extract all product URLs"
       output_format:
         url: "Product URL"
   outputs:
-    extracted_data: "product_urls"
+    extracted_data: product_urls
 ```
 
 Use 2-space indentation.

@@ -123,7 +123,8 @@ class CloudClient:
         task_description: str,
         user_query: Optional[str] = None,
         user_id: str = "default_user",
-        recording_id: Optional[str] = None
+        recording_id: Optional[str] = None,
+        dom_snapshots: Optional[Dict[str, dict]] = None
     ) -> str:
         """Upload recording data to Cloud Backend
 
@@ -133,20 +134,28 @@ class CloudClient:
             user_query: User's description of what they want to do
             user_id: User ID (default: "default_user")
             recording_id: Optional recording ID (use App Backend's session_id to keep IDs in sync)
+            dom_snapshots: Optional URL -> DOM dict mapping for pre-generating scripts
 
         Returns:
             recording_id: Cloud Backend recording ID
         """
+        payload = {
+            "user_id": user_id,
+            "user_api_key": self.user_api_key,
+            "task_description": task_description,
+            "user_query": user_query,
+            "operations": operations,
+            "recording_id": recording_id
+        }
+
+        # Include DOM snapshots if provided
+        if dom_snapshots:
+            payload["dom_snapshots"] = dom_snapshots
+            logger.info(f"Uploading recording with {len(dom_snapshots)} DOM snapshots")
+
         response = await self.client.post(
             "/api/v1/recordings",
-            json={
-                "user_id": user_id,
-                "user_api_key": self.user_api_key,
-                "task_description": task_description,
-                "user_query": user_query,
-                "operations": operations,
-                "recording_id": recording_id
-            }
+            json=payload
         )
         response.raise_for_status()
         return response.json()["recording_id"]

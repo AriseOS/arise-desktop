@@ -14,13 +14,16 @@ description: Agent specifications for workflow generation. Lists all valid agent
 | `storage_agent` | Store, query, export data |
 | `text_agent` | Generate/transform text with LLM |
 | `variable` | Set/manipulate variables |
-| `foreach` | Loop over a list |
-| `if` | Conditional branching |
-| `while` | Conditional loop |
-| `code_agent` | Execute code |
 | `tool_agent` | Call external tools |
 
-**Note**: Use exactly these names. For example, use `variable` (not `variable_agent`).
+**Control Flow** (use as top-level keys in v2):
+| Syntax | Purpose |
+|--------|---------|
+| `foreach:` | Loop over a list |
+| `if:` | Conditional branching |
+| `while:` | Conditional loop |
+
+**Note**: Use `agent:` (preferred) or `agent_type:` for agent steps.
 
 ## Quick Reference
 
@@ -46,55 +49,78 @@ description: Agent specifications for workflow generation. Lists all valid agent
 - Requires `inputs.instruction` field
 - See `references/text_agent.md`
 ```yaml
-- id: "summarize"
-  name: "Summarize Content"
-  agent_type: "text_agent"
+- id: summarize
+  agent: text_agent
   inputs:
     instruction: "Summarize this content"
     content: "{{extracted_text}}"
   outputs:
-    summary: "summary_result"
+    result: summary
 ```
 
 ### variable
 - Combine, filter, or slice data (no LLM)
 - **Agent type is `variable`** (not `variable_agent`)
 - **Output key is always `result`**
+- **Operations: set, filter, slice**
 - See `references/variable_agent.md`
 ```yaml
-- id: "combine-data"
-  name: "Combine Data"
-  agent_type: "variable"
+- id: combine-data
+  agent: variable
   inputs:
-    operation: "set"
+    operation: set
     data:
       url: "{{product.url}}"
       name: "{{details.0.name}}"
   outputs:
-    result: "complete_product"
+    result: complete_product
 ```
 
-### foreach
-- Loop over items in a list
+### Control Flow (v2 Syntax)
+
+**foreach** - Loop over items:
 ```yaml
-- id: "process-items"
-  name: "Process Items"
-  agent_type: "foreach"
-  source: "{{items}}"
-  item_var: "item"
-  max_iterations: 10
-  steps:
-    - id: "process-one"
-      name: "Process One Item"
+- foreach: "{{items}}"
+  as: item
+  do:
+    - id: process-one
+      agent: scraper_agent
+      ...
+```
+
+**if** - Conditional:
+```yaml
+- if: "{{condition}} == true"
+  then:
+    - id: do-something
+      agent: text_agent
+      ...
+  else:
+    - id: do-other
+      ...
+```
+
+**while** - Conditional loop:
+```yaml
+- while: "{{has_more}}"
+  do:
+    - id: process
+      agent: browser_agent
       ...
 ```
 
 ## Step Required Fields
 
-Every step MUST have these three fields:
+Every agent step MUST have:
 - `id`: Unique identifier
+- `agent` (or `agent_type`): One of the valid types
+
+Optional:
 - `name`: Human-readable name
-- `agent_type`: One of the valid types listed above
+- `inputs`: Agent-specific inputs
+- `outputs`: Output variable mapping
+- `condition`: Skip if false
+- `timeout`: Step timeout
 
 ## Cooperation Pattern
 
@@ -102,22 +128,20 @@ Every step MUST have these three fields:
 
 ```yaml
 # Step 1: Navigate
-- id: "navigate"
-  name: "Navigate to Page"
-  agent_type: "browser_agent"
+- id: navigate
+  agent: browser_agent
   inputs:
     target_url: "https://example.com"
 
 # Step 2: Extract (from current page)
-- id: "extract"
-  name: "Extract Data"
-  agent_type: "scraper_agent"
+- id: extract
+  agent: scraper_agent
   inputs:
     data_requirements:
       output_format:
         title: "Page title"
   outputs:
-    extracted_data: "result"
+    extracted_data: result
 ```
 
 ## When to Read Full Specs

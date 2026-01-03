@@ -843,41 +843,33 @@ class BaseAgent:
         """
         if not self.agent_workflow_engine:
             return []
-        
-        return self.agent_workflow_engine.agent_registry.list_agent_names()
+
+        return list(self.agent_workflow_engine.AGENT_TYPES.keys())
 
     def get_agent_info(self, agent_name: str) -> Optional[Dict[str, Any]]:
         """
         获取Agent信息
-        
+
         Args:
             agent_name: Agent名称
-            
+
         Returns:
             Optional[Dict[str, Any]]: Agent信息字典
-            
+
         Example:
             info = agent.get_agent_info("text_agent")
             print(f"Agent信息: {info}")
         """
         if not self.agent_workflow_engine:
             return None
-        
-        try:
-            agent_instance = self.agent_workflow_engine.agent_registry.get_agent(agent_name)
-            if agent_instance:
-                return {
-                    "name": agent_instance.metadata.name,
-                    "description": agent_instance.metadata.description,
-                    "capabilities": [cap.value for cap in agent_instance.metadata.capabilities],
-                    "input_schema": agent_instance.metadata.input_schema,
-                    "output_schema": agent_instance.metadata.output_schema,
-                    "version": agent_instance.metadata.version,
-                    "author": agent_instance.metadata.author
-                }
-        except Exception as e:
-            logger.error(f"获取Agent信息失败: {e}")
-        
+
+        agent_class = self.agent_workflow_engine.AGENT_TYPES.get(agent_name)
+        if agent_class:
+            return {
+                "name": agent_name,
+                "description": f"{agent_name} agent",
+            }
+
         return None
 
     def create_quick_qa_workflow(self, name: str = "快速问答", system_prompt: str = None) -> 'Workflow':

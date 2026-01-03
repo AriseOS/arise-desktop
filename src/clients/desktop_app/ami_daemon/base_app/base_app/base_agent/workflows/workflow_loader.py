@@ -35,276 +35,203 @@ class WorkflowFormat(str, Enum):
 
 
 class ConditionEvaluator:
-    """条件表达式评估器"""
-    
-    def __init__(self):
-        # 安全的内置函数和变量
-        self.safe_builtins = {
-            "True": True,
-            "False": False,
-            "None": None,
-            "len": len,
-            "str": str,
-            "int": int,
-            "float": float,
-            "bool": bool,
-        }
-    
+    """
+    Condition expression evaluator.
+
+    Supports operators: ==, !=, >, <, >=, <=, and, or, not
+    Supports variable references: {{var}}, {{item.field}}
+    """
+
+    SAFE_BUILTINS = {
+        "True": True,
+        "False": False,
+        "None": None,
+        "len": len,
+        "str": str,
+        "int": int,
+        "float": float,
+        "bool": bool,
+    }
+
     def evaluate(self, expression: str, variables: Dict[str, Any]) -> bool:
         """
-        安全地评估条件表达式
-        
+        Evaluate a condition expression.
+
         Args:
-            expression: 条件表达式，如 "{{intent_type}} == 'tool'"
-            variables: 变量字典
-            
+            expression: Condition like "{{count}} > 0" or "{{status}} == 'done'"
+            variables: Variable dict
+
         Returns:
-            bool: 评估结果
+            bool: Evaluation result
         """
         try:
-            # 替换变量引用 {{variable}} -> variables['variable']
-            print(f"expression {expression}, \t variables {variables}")
-            resolved_expression = self._resolve_variables(expression, variables)
-            print(f"resolved_expression {resolved_expression}")
-            
-            # 构建安全的执行环境
-            safe_dict = {**self.safe_builtins, **variables}
-            
-            # 评估表达式
-            result = eval(resolved_expression, {"__builtins__": {}}, safe_dict)
+            resolved = self._resolve_variables(expression, variables)
+            result = eval(resolved, {"__builtins__": {}}, {**self.SAFE_BUILTINS, **variables})
             return bool(result)
-            
         except Exception as e:
-            logger.warning(f"条件表达式评估失败: {expression}, 错误: {str(e)}")
+            logger.warning(f"Condition evaluation failed: {expression}, error: {e}")
             return False
-    
+
     def _resolve_variables(self, expression: str, variables: Dict[str, Any]) -> str:
-        """解析表达式中的变量引用"""
+        """Resolve {{variable}} and {{item.field}} references in expression."""
         def replace_var(match):
-            var_name = match.group(1).strip()
-            if var_name in variables:
-                value = variables[var_name]
-                if isinstance(value, str):
-                    # 对字符串进行转义处理，避免引号冲突
-                    escaped_value = value.replace("'", "\\'").replace('"', '\\"')
-                    return f"'{escaped_value}'"
-                elif value is None:
-                    return "None"
-                else:
-                    return str(value)
-            else:
-                logger.warning(f"变量 {var_name} 未找到，使用 None")
+            var_path = match.group(1).strip()
+            parts = var_path.split('.')
+
+            # Get root variable
+            value = variables.get(parts[0])
+            if value is None:
                 return "None"
-        
-        # 替换 {{variable}} 格式的变量引用
+
+            # Traverse nested properties
+            for part in parts[1:]:
+                if isinstance(value, dict):
+                    value = value.get(part)
+                elif hasattr(value, part):
+                    value = getattr(value, part)
+                else:
+                    value = None
+                if value is None:
+                    return "None"
+
+            # Convert to Python literal
+            if isinstance(value, str):
+                escaped = value.replace("\\", "\\\\").replace("'", "\\'")
+                return f"'{escaped}'"
+            elif isinstance(value, bool):
+                return "True" if value else "False"
+            elif value is None:
+                return "None"
+            elif isinstance(value, (list, dict)):
+                return repr(value)
+            else:
+                return str(value)
+
         return re.sub(r'\{\{([^}]+)\}\}', replace_var, expression)
 
 
 class WorkflowValidator:
-    """工作流配置验证器"""
-    
-    REQUIRED_FIELDS = {
-        'metadata': ['name'],
-        'steps': ['id', 'name', 'agent_type']
-    }
-    
-    # Agent-specific required fields at step level
-    # Note: text_agent requires 'instruction' inside inputs (not at step level)
-    # The actual check happens in _validate_steps where we check inputs.instruction
-    AGENT_SPECIFIC_FIELDS = {
-        'code_agent': ['code'],  # code field at step level
-        'text_agent': [],  # instruction is inside inputs, checked separately
-        'variable': [],  # Variable agent doesn't require specific fields
-        'scraper_agent': [],  # Scraper agent doesn't require specific fields
-        'browser_agent': [],  # Browser agent doesn't require specific fields
-        'storage_agent': [],  # Storage agent doesn't require specific fields
-        'tool_agent': [],  # Tool agent doesn't require specific fields
-        'autonomous_browser_agent': [],  # Autonomous browser agent
-    }
-    
+    """工作流配置验证器 (v2 简化格式)"""
+
+    VALID_AGENT_TYPES = [
+        'text_agent', 'variable', 'scraper_agent',
+        'browser_agent', 'storage_agent', 'tool_agent',
+        'autonomous_browser_agent'
+    ]
+
+    CONTROL_FLOW_KEYS = ['if', 'while', 'foreach']
+
     def validate(self, config: Dict[str, Any]) -> List[str]:
         """验证配置文件，返回错误列表"""
         errors = []
-        
-        # 验证 API 版本和类型
-        if config.get('apiVersion') != 'ami.io/v1':
-            errors.append("apiVersion 必须是 'ami.io/v1'")
-        
-        if config.get('kind') != 'Workflow':
-            errors.append("kind 必须是 'Workflow'")
-        
+
+        # 验证 API 版本 (v2 格式)
+        api_version = config.get('apiVersion', '')
+        if not api_version.startswith('ami.io/v'):
+            errors.append("apiVersion 必须以 'ami.io/v' 开头")
+
         # 验证必填字段
-        errors.extend(self._validate_required_fields(config))
-        
-        # 验证步骤配置
-        errors.extend(self._validate_steps(config.get('steps', [])))
-        
-        # 验证输入输出定义
-        errors.extend(self._validate_inputs_outputs(config))
-        
-        # 验证final_response要求
-        errors.extend(self._validate_final_response_requirement(config))
-        
+        if 'name' not in config:
+            errors.append("缺少必填字段: name")
+
+        if 'steps' not in config:
+            errors.append("缺少必填字段: steps")
+        elif not isinstance(config['steps'], list) or len(config['steps']) == 0:
+            errors.append("steps 必须是非空列表")
+        else:
+            errors.extend(self._validate_steps(config['steps']))
+
         return errors
-    
-    def _validate_required_fields(self, config: Dict[str, Any]) -> List[str]:
-        """验证必填字段"""
-        errors = []
-        
-        for section, fields in self.REQUIRED_FIELDS.items():
-            if section not in config:
-                errors.append(f"缺少必填部分: {section}")
-                continue
-            
-            section_data = config[section]
-            if section == 'steps':
-                # steps 是列表，需要特殊处理
-                if not isinstance(section_data, list) or len(section_data) == 0:
-                    errors.append("steps 必须是非空列表")
-            else:
-                # 其他部分验证必填字段
-                for field in fields:
-                    if field not in section_data:
-                        errors.append(f"{section}.{field} 是必填字段")
-        
-        return errors
-    
-    def _validate_steps(self, steps: List[Dict]) -> List[str]:
+
+    def _validate_steps(self, steps: List[Dict], prefix: str = "steps") -> List[str]:
         """验证步骤配置"""
         errors = []
         step_ids = set()
-        
-        for i, step in enumerate(steps):
-            step_prefix = f"steps[{i}]"
-            
-            # 检查重复ID
-            step_id = step.get('id')
-            if step_id in step_ids:
-                errors.append(f"{step_prefix}: 重复的步骤ID '{step_id}'")
-            step_ids.add(step_id)
-            
-            # 验证 agent_type
-            agent_type = step.get('agent_type')
-            valid_agent_types = [
-                'text_agent', 'code_agent', 'variable', 'scraper_agent',
-                'browser_agent', 'storage_agent', 'tool_agent',
-                'autonomous_browser_agent', 'if', 'while', 'foreach'
-            ]
-            if agent_type not in valid_agent_types:
-                errors.append(f"{step_prefix}: 不支持的 agent_type '{agent_type}'")
-            
-            # 验证控制流特定配置
-            if agent_type == 'if':
-                if 'condition' not in step:
-                    errors.append(f"{step_prefix}: if类型必须有condition字段")
-                if 'then' not in step:
-                    errors.append(f"{step_prefix}: if类型必须有then字段")
-                # else字段是可选的
-            elif agent_type == 'while':
-                if 'condition' not in step:
-                    errors.append(f"{step_prefix}: while类型必须有condition字段")
-                if 'steps' not in step:
-                    errors.append(f"{step_prefix}: while类型必须有steps字段")
-            elif agent_type == 'foreach':
-                if 'source' not in step:
-                    errors.append(f"{step_prefix}: foreach类型必须有source字段")
-                if 'steps' not in step:
-                    errors.append(f"{step_prefix}: foreach类型必须有steps字段")
-            elif agent_type == 'text_agent':
-                # text_agent requires 'instruction' inside inputs
-                step_inputs = step.get('inputs', {})
-                if 'instruction' not in step_inputs:
-                    errors.append(f"{step_prefix}: text_agent 类型缺少 inputs.instruction 配置")
-            elif agent_type in self.AGENT_SPECIFIC_FIELDS:
-                # 验证普通agent类型特定配置
-                required_fields = self.AGENT_SPECIFIC_FIELDS[agent_type]
-                if required_fields:  # Only check if there are required fields
-                    required_field = required_fields[0]
-                    if required_field not in step:
-                        errors.append(f"{step_prefix}: {agent_type} 类型缺少 {required_field} 配置")
-            
-            # 验证条件表达式格式（如果存在）
-            if 'condition' in step:
-                condition = step['condition']
-                if isinstance(condition, dict) and 'expression' in condition:
-                    # 基本的表达式格式检查
-                    expr = condition['expression']
-                    if not isinstance(expr, str) or len(expr.strip()) == 0:
-                        errors.append(f"{step_prefix}: condition.expression 必须是非空字符串")
-        
-        return errors
-    
-    def _validate_inputs_outputs(self, config: Dict[str, Any]) -> List[str]:
-        """验证输入输出定义"""
-        errors = []
-        
-        # 验证工作流输入定义
-        inputs = config.get('inputs', {})
-        for input_name, input_def in inputs.items():
-            if not isinstance(input_def, dict):
-                errors.append(f"inputs.{input_name} 必须是字典格式")
-                continue
-            
-            if 'type' not in input_def:
-                errors.append(f"inputs.{input_name}.type 是必填字段")
-        
-        # 验证工作流输出定义
-        outputs = config.get('outputs', {})
-        for output_name, output_def in outputs.items():
-            if not isinstance(output_def, dict):
-                errors.append(f"outputs.{output_name} 必须是字典格式")
-                continue
-            
-            if 'type' not in output_def:
-                errors.append(f"outputs.{output_name}.type 是必填字段")
-        
-        return errors
-    
-    def _validate_final_response_requirement(self, config: Dict[str, Any]) -> List[str]:
-        """验证workflow必须有步骤输出final_response"""
-        errors = []
-        
-        def check_steps_for_final_response(step_list):
-            for step in step_list:
-                step_outputs = step.get('outputs', {})
-                if 'final_response' in step_outputs.values():
-                    return True
 
-                # 递归检查控制流中的步骤
-                if step.get('agent_type') == 'if':
-                    if 'then' in step and check_steps_for_final_response(step['then']):
-                        return True
-                    if 'else' in step and check_steps_for_final_response(step['else']):
-                        return True
-                elif step.get('agent_type') in ['while', 'foreach']:
-                    if 'steps' in step and check_steps_for_final_response(step['steps']):
-                        return True
-            return False
-        
-        steps = config.get('steps', [])
-        if not check_steps_for_final_response(steps):
-            errors.append("workflow中必须有至少一个步骤的outputs映射到final_response变量")
-        
+        for i, step in enumerate(steps):
+            step_prefix = f"{prefix}[{i}]"
+
+            # 检查是否是控制流
+            is_control_flow = any(key in step for key in self.CONTROL_FLOW_KEYS)
+
+            if is_control_flow:
+                errors.extend(self._validate_control_flow_step(step, step_prefix))
+            else:
+                errors.extend(self._validate_agent_step(step, step_prefix, step_ids))
+
+        return errors
+
+    def _validate_agent_step(self, step: Dict, prefix: str, step_ids: set) -> List[str]:
+        """验证 Agent 步骤"""
+        errors = []
+
+        # 检查 id (必须唯一)
+        step_id = step.get('id')
+        if step_id:
+            if step_id in step_ids:
+                errors.append(f"{prefix}: 重复的步骤ID '{step_id}'")
+            step_ids.add(step_id)
+
+        # 检查 agent_type (兼容旧格式) 或 agent (新格式)
+        agent_type = step.get('agent_type') or step.get('agent')
+        if not agent_type:
+            errors.append(f"{prefix}: 缺少 agent_type 或 agent 字段")
+        elif agent_type not in self.VALID_AGENT_TYPES:
+            errors.append(f"{prefix}: 不支持的 agent 类型 '{agent_type}'")
+
+        return errors
+
+    def _validate_control_flow_step(self, step: Dict, prefix: str) -> List[str]:
+        """验证控制流步骤"""
+        errors = []
+
+        if 'foreach' in step:
+            # foreach 需要 do 或 steps
+            if 'do' not in step and 'steps' not in step:
+                errors.append(f"{prefix}: foreach 需要 do 或 steps 字段")
+            else:
+                sub_steps = step.get('do') or step.get('steps', [])
+                errors.extend(self._validate_steps(sub_steps, f"{prefix}.do"))
+
+        elif 'if' in step:
+            # if 需要 then
+            if 'then' not in step:
+                errors.append(f"{prefix}: if 需要 then 字段")
+            else:
+                errors.extend(self._validate_steps(step['then'], f"{prefix}.then"))
+
+            # else 是可选的
+            if 'else' in step:
+                errors.extend(self._validate_steps(step['else'], f"{prefix}.else"))
+
+        elif 'while' in step:
+            # while 需要 do 或 steps
+            if 'do' not in step and 'steps' not in step:
+                errors.append(f"{prefix}: while 需要 do 或 steps 字段")
+            else:
+                sub_steps = step.get('do') or step.get('steps', [])
+                errors.extend(self._validate_steps(sub_steps, f"{prefix}.do"))
+
         return errors
 
 
 class WorkflowConfigLoader:
     """工作流配置加载器"""
-    
+
     def __init__(self):
         self.validator = WorkflowValidator()
         self.condition_evaluator = ConditionEvaluator()
-    
+
     def load_from_file(self, file_path: Union[str, Path]) -> Workflow:
         """
         从配置文件加载工作流
-        
+
         Args:
             file_path: 配置文件路径
-            
+
         Returns:
             Workflow: 工作流对象
-            
+
         Raises:
             ValueError: 配置文件验证失败
             FileNotFoundError: 文件不存在
@@ -312,19 +239,19 @@ class WorkflowConfigLoader:
         path = Path(file_path)
         if not path.exists():
             raise FileNotFoundError(f"工作流配置文件不存在: {file_path}")
-        
+
         # 解析配置文件
         config = self._parse_file(path)
-        
+
         # 验证配置
         errors = self.validator.validate(config)
         if errors:
             error_msg = "配置文件验证失败:\n" + "\n".join(f"- {error}" for error in errors)
             raise ValueError(error_msg)
-        
+
         # 转换为工作流对象
         return self._create_workflow_from_config(config)
-    
+
     def load_builtin_workflow(self, workflow_name: str) -> Workflow:
         """
         加载内置工作流
@@ -376,14 +303,14 @@ class WorkflowConfigLoader:
                 raise FileNotFoundError(f"用户工作流 '{workflow_name}' 不存在 (searched: {user_dir})")
 
         return self.load_from_file(workflow_file)
-    
+
     def list_builtin_workflows(self) -> List[str]:
         """列出所有内置工作流"""
         workflows_dir = get_workflows_base_dir()
         builtin_dir = workflows_dir / "builtin"
         if not builtin_dir.exists():
             return []
-        
+
         workflows = []
         for file_path in builtin_dir.glob("*.yaml"):
             workflows.append(file_path.stem)
@@ -391,25 +318,25 @@ class WorkflowConfigLoader:
             workflows.append(file_path.stem)
         for file_path in builtin_dir.glob("*.json"):
             workflows.append(file_path.stem)
-        
+
         return sorted(set(workflows))
-    
+
     def _parse_file(self, file_path: Path) -> Dict[str, Any]:
         """解析配置文件"""
         format = self._detect_format(file_path)
         content = file_path.read_text(encoding='utf-8')
-        
+
         if format == WorkflowFormat.YAML:
             return yaml.safe_load(content)
         elif format == WorkflowFormat.JSON:
             return json.loads(content)
         else:
             raise ValueError(f"不支持的文件格式: {file_path.suffix}")
-    
+
     def _detect_format(self, file_path: Path) -> WorkflowFormat:
         """检测文件格式"""
         suffix = file_path.suffix.lower()
-        
+
         if suffix in ['.yaml', '.yml']:
             return WorkflowFormat.YAML
         elif suffix in ['.json']:
@@ -421,49 +348,93 @@ class WorkflowConfigLoader:
                 return WorkflowFormat.JSON
             else:
                 return WorkflowFormat.YAML
-    
+
     def _create_workflow_from_config(self, config: Dict[str, Any]) -> Workflow:
-        """从配置创建工作流对象"""
-        metadata = config['metadata']
-        
+        """从配置创建工作流对象 (支持 v1 和 v2 格式)"""
+        # v2 格式: name 在顶层
+        # v1 格式: name 在 metadata 中
+        if 'metadata' in config:
+            # v1 格式兼容
+            metadata = config['metadata']
+            name = metadata['name']
+            description = metadata.get('description', '')
+            version = metadata.get('version', '1.0.0')
+            tags = metadata.get('tags', [])
+            author = metadata.get('author', 'Ami')
+        else:
+            # v2 格式
+            name = config['name']
+            description = config.get('description', '')
+            version = '1.0.0'
+            tags = []
+            author = 'Ami'
+
         # 创建工作流步骤
         steps = []
         for step_config in config['steps']:
             step = self._create_workflow_step(step_config)
             steps.append(step)
-        
+
+        # 处理 inputs (v2 简化格式支持 input: url 或 inputs: {url: string})
+        input_schema = {}
+        if 'input' in config:
+            # 单个 input 简写
+            input_name = config['input']
+            input_schema = {input_name: {'type': 'string', 'required': True}}
+        elif 'inputs' in config:
+            raw_inputs = config['inputs']
+            if isinstance(raw_inputs, dict):
+                for k, v in raw_inputs.items():
+                    if isinstance(v, str):
+                        # 简化格式: url: string
+                        input_schema[k] = {'type': v, 'required': True}
+                    else:
+                        # 完整格式
+                        input_schema[k] = v
+
         # 创建工作流对象
         workflow = Workflow(
-            name=metadata['name'],
-            description=metadata.get('description', ''),
-            version=metadata.get('version', '1.0.0'),
+            name=name,
+            description=description,
+            version=version,
             steps=steps,
-            input_schema=config.get('inputs', {}),
+            input_schema=input_schema,
             output_schema=config.get('outputs', {}),
             max_execution_time=config.get('config', {}).get('max_execution_time', 3600),
             enable_parallel=config.get('config', {}).get('enable_parallel', False),
             enable_cache=config.get('config', {}).get('enable_cache', True),
-            tags=metadata.get('tags', []),
-            author=metadata.get('author', 'Ami')
+            tags=tags,
+            author=author
         )
-        
+
         return workflow
-    
+
     def _create_workflow_step(self, step_config: Dict[str, Any]) -> AgentWorkflowStep:
-        """创建工作流步骤对象"""
-        # 基础配置
+        """创建工作流步骤对象 (支持 v1 和 v2 格式)"""
+        # 检测是否是控制流语法 (v2 新格式)
+        if 'foreach' in step_config:
+            return self._create_foreach_step(step_config)
+        elif 'if' in step_config:
+            return self._create_if_step(step_config)
+        elif 'while' in step_config:
+            return self._create_while_step(step_config)
+
+        # Agent 步骤
+        # 支持 agent_type (v1) 和 agent (v2)
+        agent_type = step_config.get('agent_type') or step_config.get('agent')
+
         step = AgentWorkflowStep(
-            id=step_config['id'],
-            name=step_config['name'],
+            id=step_config.get('id', ''),
+            name=step_config.get('name', ''),
             description=step_config.get('description', ''),
-            agent_type=step_config['agent_type'],
+            agent_type=agent_type,
             user_task=step_config.get('user_task')
         )
-        
+
         # 输入输出配置
         step.inputs = step_config.get('inputs', {})
         step.outputs = step_config.get('outputs', {})
-        
+
         # 条件配置
         if 'condition' in step_config:
             condition = step_config['condition']
@@ -471,40 +442,31 @@ class WorkflowConfigLoader:
                 step.condition = condition['expression']
             elif isinstance(condition, str):
                 step.condition = condition
-        
-        # 控制流配置
-        if step_config['agent_type'] == 'if':
-            # 处理then分支
-            if 'then' in step_config:
-                step.then = [self._create_workflow_step(sub_step) for sub_step in step_config['then']]
-            
-            # 处理else分支（可选）
-            if 'else' in step_config:
-                step.else_ = [self._create_workflow_step(sub_step) for sub_step in step_config['else']]
-        
-        elif step_config['agent_type'] == 'while':
-            # 处理循环体
-            if 'steps' in step_config:
-                step.steps = [self._create_workflow_step(sub_step) for sub_step in step_config['steps']]
 
-            # 处理循环限制配置
-            step.max_iterations = step_config.get('max_iterations')  # None means no limit
+        # v1 格式控制流 (agent_type == 'if'/'while'/'foreach')
+        if agent_type == 'if':
+            if 'then' in step_config:
+                step.then = [self._create_workflow_step(s) for s in step_config['then']]
+            if 'else' in step_config:
+                step.else_ = [self._create_workflow_step(s) for s in step_config['else']]
+
+        elif agent_type == 'while':
+            if 'steps' in step_config:
+                step.steps = [self._create_workflow_step(s) for s in step_config['steps']]
+            step.max_iterations = step_config.get('max_iterations')
             step.loop_timeout = step_config.get('timeout', 3600)
 
-        elif step_config['agent_type'] == 'foreach':
-            # 处理foreach循环体
+        elif agent_type == 'foreach':
             if 'steps' in step_config:
-                step.steps = [self._create_workflow_step(sub_step) for sub_step in step_config['steps']]
+                step.steps = [self._create_workflow_step(s) for s in step_config['steps']]
+            step.source = step_config.get('source')
+            step.item_var = step_config.get('item_var', 'item')
+            step.index_var = step_config.get('index_var', 'index')
+            step.max_iterations = step_config.get('max_iterations')
+            step.loop_timeout = step_config.get('loop_timeout', 3600)
 
-            # 处理foreach配置
-            step.source = step_config.get('source')  # 源列表变量
-            step.item_var = step_config.get('item_var', 'item')  # 当前项变量名
-            step.index_var = step_config.get('index_var', 'index')  # 当前索引变量名
-            step.max_iterations = step_config.get('max_iterations')  # None means no limit
-            step.loop_timeout = step_config.get('loop_timeout', 3600)  # 超时时间
-
-        elif step_config['agent_type'] == 'variable':
-            # 处理Variable Agent特有配置 - 从inputs中获取
+        elif agent_type == 'variable':
+            # Variable Agent 特有配置
             inputs = step_config.get('inputs', {})
             step.operation = inputs.get('operation')
             step.data = inputs.get('data')
@@ -517,6 +479,58 @@ class WorkflowConfigLoader:
             step.max_pages = inputs.get('max_pages')
             step.items_found = inputs.get('items_found')
 
+        return step
+
+    def _create_foreach_step(self, step_config: Dict[str, Any]) -> AgentWorkflowStep:
+        """创建 foreach 控制流步骤 (v2 格式)"""
+        source = step_config['foreach']  # foreach: "{{items}}"
+        item_var = step_config.get('as', 'item')
+        sub_steps = step_config.get('do') or step_config.get('steps', [])
+
+        step = AgentWorkflowStep(
+            id=step_config.get('id', ''),
+            name=step_config.get('name', f'foreach_{item_var}'),
+            description=step_config.get('description', ''),
+            agent_type='foreach',
+            source=source,
+            item_var=item_var,
+            index_var=step_config.get('index_var', 'index'),
+            max_iterations=step_config.get('max_iterations'),
+            loop_timeout=step_config.get('loop_timeout', 3600),
+            steps=[self._create_workflow_step(s) for s in sub_steps]
+        )
+        return step
+
+    def _create_if_step(self, step_config: Dict[str, Any]) -> AgentWorkflowStep:
+        """创建 if 控制流步骤 (v2 格式)"""
+        condition = step_config['if']  # if: "{{count}} > 0"
+
+        step = AgentWorkflowStep(
+            id=step_config.get('id', ''),
+            name=step_config.get('name', 'if_condition'),
+            description=step_config.get('description', ''),
+            agent_type='if',
+            condition=condition,
+            then=[self._create_workflow_step(s) for s in step_config.get('then', [])],
+            else_=[self._create_workflow_step(s) for s in step_config.get('else', [])]
+        )
+        return step
+
+    def _create_while_step(self, step_config: Dict[str, Any]) -> AgentWorkflowStep:
+        """创建 while 控制流步骤 (v2 格式)"""
+        condition = step_config['while']  # while: "{{has_next}}"
+        sub_steps = step_config.get('do') or step_config.get('steps', [])
+
+        step = AgentWorkflowStep(
+            id=step_config.get('id', ''),
+            name=step_config.get('name', 'while_loop'),
+            description=step_config.get('description', ''),
+            agent_type='while',
+            condition=condition,
+            max_iterations=step_config.get('max_iterations'),
+            loop_timeout=step_config.get('timeout', 3600),
+            steps=[self._create_workflow_step(s) for s in sub_steps]
+        )
         return step
 
 
@@ -550,15 +564,15 @@ def load_workflow(workflow_name_or_path: str) -> Workflow:
 def list_workflows() -> Dict[str, List[str]]:
     """
     列出所有可用的工作流
-    
+
     Returns:
         Dict: {'builtin': [...], 'user': [...]}
     """
     loader = WorkflowConfigLoader()
-    
+
     # 内置工作流
     builtin_workflows = loader.list_builtin_workflows()
-    
+
     # 用户工作流
     user_workflows = []
     user_dir = Path(__file__).parent / "user"
@@ -569,7 +583,7 @@ def list_workflows() -> Dict[str, List[str]]:
             user_workflows.append(file_path.stem)
         for file_path in user_dir.glob("*.json"):
             user_workflows.append(file_path.stem)
-    
+
     return {
         'builtin': builtin_workflows,
         'user': sorted(set(user_workflows))

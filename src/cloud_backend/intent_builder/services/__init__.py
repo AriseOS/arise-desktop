@@ -6,6 +6,7 @@ Replaces the old MetaFlowGenerator + WorkflowGenerator flow.
 
 Main entry points:
 - WorkflowService: Unified service for workflow generation and dialogue
+- ScriptPregenerationService: Pre-generates scripts for workflow steps
 """
 
 from .workflow_service import (
@@ -16,6 +17,7 @@ from .workflow_service import (
     ChatResponse,
     GenerationStatus,
 )
+from .script_pregeneration_service import ScriptPregenerationService
 
 __all__ = [
     "WorkflowService",
@@ -24,4 +26,5 @@ __all__ = [
     "ChatRequest",
     "ChatResponse",
     "GenerationStatus",
+    "ScriptPregenerationService",
 ]

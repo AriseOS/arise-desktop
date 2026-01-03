@@ -79,8 +79,43 @@ See `deploy/logging/` for Loki + Grafana deployment configuration.
 ## Data Flow
 
 ```
-User Recording → intent_builder/extractors → Intent Graph
+User Recording (with DOM snapshots) → Cloud Backend Storage
+    ↓
+intent_builder/extractors → Intent Graph
+    ↓
 User Query → intent_builder/generators → Workflow YAML
+    ↓
+[Background] Script Pre-generation → Workflow Directory
+```
+
+### Recording with DOM Snapshots
+
+Recordings can include DOM snapshots captured during navigation:
+```
+recordings/{recording_id}/
+├── operations.json      # User operations
+├── metadata.json        # Workflow association
+└── dom_snapshots/       # DOM captured at each URL
+    ├── {url_hash_1}.json
+    └── {url_hash_2}.json
+```
+
+### Script Pre-generation
+
+After workflow generation, scripts are pre-generated in the background:
+```
+workflows/{workflow_id}/
+├── workflow.yaml
+├── metadata.json        # Includes script_pregeneration status
+└── {step_id}/
+    ├── browser_script_{hash}/
+    │   ├── dom_data.json
+    │   ├── find_element.py
+    │   └── task.json
+    └── scraper_script_{hash}/
+        ├── dom_data.json
+        ├── extraction_script.py
+        └── requirement.json
 ```
 
 ## See Also

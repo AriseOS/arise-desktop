@@ -9,8 +9,7 @@ Agent implementations for the BaseAgent framework.
 | File | Agent | Purpose |
 |------|-------|---------|
 | `text_agent.py` | TextAgent | LLM-based text generation, structured JSON output |
-| `tool_agent.py` | ToolAgent | Tool calling with two-phase decision (select tool → select API) |
-| `code_agent.py` | CodeAgent | Python code generation with AST safety checks |
+| `tool_agent.py` | ToolAgent | Tool calling with two-phase decision (select tool -> select API) |
 | `browser_agent.py` | BrowserAgent | Page navigation + intelligent interaction (click/input/scroll) |
 | `scraper_agent.py` | ScraperAgent | Data extraction with Claude Agent SDK |
 | `storage_agent.py` | StorageAgent | SQLite storage with LLM-generated SQL |
@@ -22,9 +21,6 @@ Agent implementations for the BaseAgent framework.
 | File | Purpose |
 |------|---------|
 | `base_agent.py` | BaseStepAgent abstract class |
-| `agent_registry.py` | Agent type registration and discovery |
-| `agent_executor.py` | Agent execution orchestration |
-| `agent_router.py` | Inter-agent routing and communication |
 
 ## ScraperAgent Architecture
 
@@ -120,6 +116,17 @@ When `auto_fix_missing_fields: true`:
 - **Claude Agent SDK** - Iterative refinement with tool use, not single-shot generation
 - **Skills system** - SKILL.md files guide Claude through complex tasks
 - **Virtual containers** - Handle DOM structures where containers are filtered out
+- **Simple dispatch** - Agents are created via `AGENT_TYPES` dict in engine
+
+## Variable Agent Operations
+
+| Operation | Purpose |
+|-----------|---------|
+| `set` | Initialize/combine variables |
+| `filter` | Filter list by condition |
+| `slice` | Slice list by index |
+
+**Note**: Variable agent simplified to 3 operations. Output key is always `result`.
 
 ## See Also
 

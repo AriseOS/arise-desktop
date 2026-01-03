@@ -21,9 +21,9 @@ echo 'your yaml content' | python scripts/validate.py -
 
 ## What It Checks
 
-### Structure Validation
-- Required root fields: `apiVersion`, `kind`, `metadata`, `steps`
-- Required metadata: `name`, `description`
+### Structure Validation (v2 Format)
+- Required root fields: `apiVersion`, `name`, `steps`
+- `apiVersion` must start with `ami.io/v`
 - Step IDs are unique
 
 ### Agent Type Validation
@@ -32,33 +32,29 @@ Valid agent types:
 - `scraper_agent`
 - `storage_agent`
 - `variable`
-- `foreach`
-- `if`
-- `while`
 - `text_agent`
-- `code_agent`
 - `tool_agent`
 - `autonomous_browser_agent`
+
+### Control Flow (v2 Syntax)
+Control flow uses top-level keys:
+- `foreach:` with `as:` and `do:` (or `steps:`)
+- `if:` with `then:` and optional `else:`
+- `while:` with `do:` (or `steps:`)
 
 ### Variable Validation
 - Variables must be defined before use
 - Check `{{variable}}` references have prior definitions
 - Workflow inputs count as defined variables
 
-### Control Flow Validation
-- `foreach`: requires `source` and `steps`
-- `if`: requires `condition` and `then`/`then_steps`
-- `while`: requires `condition` and `steps`
-
 ### Agent-Specific Validation
-- `foreach`: must have `source` and `steps`
-- `if`: must have `condition` and `then`
-- `code_agent`: must have `code` at step level
-- `text_agent`: must have `instruction` inside `inputs` (i.e., `inputs.instruction`)
+- `text_agent`: must have `inputs.instruction`
+- `storage_agent`: must have `inputs.operation`
+- `scraper_agent`: must have `inputs.data_requirements`
 
 ### Final Response Check
 - Warning if no step outputs `final_response`
-- Workflow should return a result to user
+- This is optional for data collection workflows
 
 ## Output Format
 
@@ -71,7 +67,7 @@ or
 ```
 VALIDATION FAILED
 Errors (N):
-  1. Missing required field: 'metadata.name'
+  1. Missing required field: 'name'
   2. Undefined variable '{{product}}' referenced in step 'extract' inputs
 Warnings (M):
   1. No step outputs 'final_response'
@@ -84,17 +80,27 @@ Add the required field to your YAML.
 
 ### "Undefined variable"
 Ensure the variable is either:
-1. Defined in workflow `inputs`
+1. Defined in workflow `input:` or `inputs:`
 2. Output by a previous step
+3. A loop variable (like `item` in foreach)
 
-### "Invalid agent_type"
-Use one of the valid agent types listed above.
+### "Invalid agent type"
+Use one of the valid agent types listed above. Use `agent:` instead of `agent_type:`.
 
 ### "Duplicate step id"
 Make each step ID unique within the workflow.
 
-### "foreach missing 'source'"
-Add `source: "{{list_variable}}"` to the foreach step.
+### "foreach missing source"
+Use v2 syntax: `foreach: "{{list_variable}}"` instead of `source: ...`
+
+## v2 Format Notes
+
+v2 format differences from v1:
+- No `kind:` or `metadata:` wrapper needed
+- Use `name:` at root level (not `metadata.name`)
+- Use `agent:` instead of `agent_type:` (both work)
+- Control flow as top-level keys (`foreach:`, `if:`, `while:`)
+- `final_response` is optional
 
 ## Validation Loop
 

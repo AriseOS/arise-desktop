@@ -41,6 +41,22 @@ Built on the browser-use library. Key components:
 | `dom_extractor.py` | DOM serialization for LLM |
 | `controller.py` | Browser action execution |
 | `element.py` | DOM element abstraction |
+| `user_behavior/monitor.py` | User behavior recording with DOM capture |
+
+### User Behavior Monitor (user_behavior/)
+
+Records user actions during browser sessions:
+- Tracks clicks, navigation, input events
+- **DOM Capture**: Captures DOM snapshots on navigation for script pre-generation
+
+```python
+monitor = SimpleUserBehaviorMonitor()
+monitor.enable_dom_capture(True)  # Enable DOM capture on navigation
+
+# After recording...
+dom_snapshots = monitor.get_dom_snapshots()
+# Returns: Dict[str, dict]  # URL -> DOM dict
+```
 
 ## Browser Session Manager
 

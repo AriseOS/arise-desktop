@@ -8,12 +8,14 @@ Provides the main entry points for:
 1. Generating workflows from recordings/intents
 2. Interactive dialogue for workflow understanding and modification
 3. Streaming progress updates for frontend display
+4. **Script pre-generation** from recorded DOM snapshots
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `workflow_service.py` | WorkflowService - unified API |
+| `workflow_service.py` | WorkflowService - unified API for workflow generation |
+| `script_pregeneration_service.py` | Pre-generates scripts using DOM snapshots from recording |
 
 ## WorkflowService
 
@@ -90,4 +92,56 @@ class ChatResponse:
     workflow_updated: bool
     workflow: Optional[Dict]
     workflow_yaml: Optional[str]
+```
+
+## ScriptPregenerationService
+
+Pre-generates scripts for workflow steps using DOM snapshots captured during recording.
+
+### Purpose
+
+When users record browser actions, DOM snapshots are captured at each navigation.
+After workflow generation, this service uses those snapshots to pre-generate:
+- `find_element.py` for browser_agent click/fill operations
+- `extraction_script.py` for scraper_agent data extraction
+
+This eliminates the need to generate scripts during first execution.
+
+### Usage
+
+```python
+from src.cloud_backend.intent_builder.services import ScriptPregenerationService
+
+service = ScriptPregenerationService(
+    config_service=config_service,
+    api_key="sk-...",
+    base_url="https://api.anthropic.com"
+)
+
+result = await service.pregenerate_scripts(
+    workflow_yaml=workflow_yaml,
+    dom_snapshots={"https://example.com": {...dom_dict...}},
+    workflow_dir=Path("/path/to/workflow")
+)
+
+# Result:
+# {
+#     "success": True,
+#     "total_steps": 3,
+#     "generated": 2,
+#     "skipped": 1,
+#     "failed": 0,
+#     "details": [...]
+# }
+```
+
+### Integration
+
+Called automatically as a background task after workflow generation in `main.py`:
+```python
+asyncio.create_task(
+    _pregenerate_scripts_background(
+        user_id, workflow_id, recording_id, workflow_yaml, api_key
+    )
+)
 ```
