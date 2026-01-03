@@ -40,7 +40,13 @@ $ExtractDir = Join-Path $TempDir "PortableGit"
 & $DownloadPath -y -o"$ExtractDir" | Out-Null
 
 # Create output directory
-$OutputPath = Join-Path (Get-Location) $OutputDir
+# Handle both absolute and relative paths
+if ([System.IO.Path]::IsPathRooted($OutputDir)) {
+    $OutputPath = $OutputDir
+} else {
+    $OutputPath = Join-Path (Get-Location) $OutputDir
+}
+
 if (Test-Path $OutputPath) {
     Remove-Item -Recurse -Force $OutputPath
 }

@@ -39,10 +39,13 @@ if (-not (Test-Path $PortableBinDir)) {
 # Step 0: Prepare Git Bash bundle for Claude Code CLI
 Invoke-Step "Step 0: Preparing Git Bash bundle for Claude Code CLI..." {
     $gitBashScript = Join-Path $ScriptDir 'prepare_git_bash_windows.ps1'
-    $gitBashOutputDir = Join-Path $ProjectRoot 'src/clients/desktop_app/ami_daemon/resources/git-bash'
+    # Use explicit path separators for Windows
+    $gitBashOutputDir = Join-Path $ProjectRoot 'src' | Join-Path -ChildPath 'clients' | Join-Path -ChildPath 'desktop_app' | Join-Path -ChildPath 'ami_daemon' | Join-Path -ChildPath 'resources' | Join-Path -ChildPath 'git-bash'
+
+    Write-Host "Git Bash output directory: $gitBashOutputDir" -ForegroundColor Cyan
 
     # Check if git-bash bundle already exists
-    $bashExe = Join-Path $gitBashOutputDir 'usr/bin/bash.exe'
+    $bashExe = Join-Path $gitBashOutputDir 'usr' | Join-Path -ChildPath 'bin' | Join-Path -ChildPath 'bash.exe'
     if (Test-Path $bashExe) {
         Write-Host "Git Bash bundle already exists at: $gitBashOutputDir" -ForegroundColor Green
         Write-Host "Skipping download. Delete the directory to force re-download." -ForegroundColor Yellow
