@@ -3031,7 +3031,7 @@ async def handle_execution_feedback(
         if x_ami_api_key:
             logger.info("Using API key from X-Ami-API-Key header for conversation")
 
-        from src.app_backend.services.conversation_skill_handler import ConversationSkillHandler
+        from src.clients.desktop_app.ami_daemon.services.conversation_skill_handler import ConversationSkillHandler
 
         conversation_handler = ConversationSkillHandler(config_service=config)
 
