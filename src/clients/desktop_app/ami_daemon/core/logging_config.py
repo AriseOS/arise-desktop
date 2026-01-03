@@ -144,6 +144,22 @@ def setup_logging(
 
     _logging_configured = True
 
+    # Reduce noise from third-party libraries
+    # These libraries produce excessive DEBUG logs that clutter the log files
+    noisy_loggers = [
+        "cdp_use",           # Chrome DevTools Protocol - WebSocket events
+        "cdp_use.client",    # CDP client WebSocket frames
+        "websockets",        # WebSocket library
+        "httpcore",          # HTTP client internals
+        "httpx",             # HTTP client
+        "hpack",             # HTTP/2 header compression
+        "urllib3",           # URL library
+        "asyncio",           # Async I/O internals
+        "playwright",        # Playwright browser automation
+    ]
+    for logger_name in noisy_loggers:
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
+
     # Log startup message
     logger = logging.getLogger(__name__)
     logger.info(
