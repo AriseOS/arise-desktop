@@ -549,9 +549,14 @@ async def upload_diagnostic(data: dict = None):
         log_path = Path.home() / ".ami" / "logs" / "app.log"
         if log_path.exists():
             try:
-                with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+                # Cross-platform encoding handling:
+                # - utf-8-sig: Auto-removes BOM if present (Windows), acts as utf-8 if not (macOS/Linux)
+                # - errors="replace": Replaces invalid bytes with � instead of raising exceptions
+                # - This ensures JSON serialization works regardless of file encoding issues
+                with open(log_path, "r", encoding="utf-8-sig", errors="replace") as f:
                     lines = f.readlines()
-                    system_logs = lines[-5000:]  # Last 5000 lines
+                    # Strip each line to remove platform-specific line endings and control chars
+                    system_logs = [line.strip() for line in lines[-5000:]]  # Last 5000 lines
             except Exception as e:
                 logger.warning(f"Failed to read system logs: {e}")
 
@@ -1171,7 +1176,7 @@ async def sync_workflow_resources(workflow_id: str, user_id: str) -> Dict[str, A
         local_updated_at = None
 
         if local_metadata_path.exists():
-            with open(local_metadata_path, 'r') as f:
+            with open(local_metadata_path, 'r', encoding='utf-8') as f:
                 local_metadata = json.load(f)
                 local_updated_at = local_metadata.get("updated_at")
 
@@ -1294,8 +1299,8 @@ async def download_from_cloud(
         # Save local metadata with cloud timestamp (CRITICAL: preserve timestamp)
         local_metadata_path = local_workflow_path / "metadata.json"
         local_metadata_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(local_metadata_path, 'w') as f:
-            json.dump(cloud_metadata, f, indent=2)
+        with open(local_metadata_path, 'w', encoding='utf-8') as f:
+            json.dump(cloud_metadata, f, indent=2, ensure_ascii=False)
 
         logger.info(f"[Download] Saved metadata.json (timestamp: {cloud_metadata.get('updated_at')})")
 
