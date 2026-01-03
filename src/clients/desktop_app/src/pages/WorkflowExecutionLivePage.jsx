@@ -528,7 +528,7 @@ function WorkflowExecutionLivePage({
         </div>
 
         {/* Cold Start Notice */}
-        {currentStep === 0 && status === 'running' && (
+        {status === 'running' && (
           <div className="cold-start-notice" style={{
             marginBottom: '1rem',
             padding: '0.75rem',
