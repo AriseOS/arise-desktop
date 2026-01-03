@@ -32,9 +32,17 @@ function GenerationPage({ session, onNavigate, showStatus, params = {} }) {
   // Simulation Refs
   const simulatedIntervalRef = useRef(null);
 
+  // Ref to track current stage for callback (avoids closure stale value issue)
+  const currentStageRef = useRef(currentStage);
+  currentStageRef.current = currentStage;
+
+  // Ref to prevent double invocation (React Strict Mode calls effects twice)
+  const generationStartedRef = useRef(false);
+
   // Auto-start generation if we have a recordingId
   React.useEffect(() => {
-    if (recordingId && !isGenerating && !workflowResult) {
+    if (recordingId && !generationStartedRef.current) {
+      generationStartedRef.current = true;
       handleGenerateWorkflow();
     }
   }, [recordingId]);
@@ -54,69 +62,185 @@ function GenerationPage({ session, onNavigate, showStatus, params = {} }) {
   };
 
   // --- Simulation Logic ---
-  // Generates organic "micro-steps" based on the current stage
+
+  // Ref to track detailed simulation state
+  const simulationStateRef = useRef({
+    stage: 'analyzing',
+    stepIndex: 0,
+    active: false
+  });
+
+  const microSteps = {
+    analyzing: [
+      "Connecting to neural synthesis engine...",
+      "Allocating context window for task analysis...",
+      "Parsing natural language intent to extracting semantic markers...",
+      "Identifying key operational parameters from input...",
+      "Accessing global knowledge graph for context relevance...",
+      "Analyzing DOM structure patterns for target validation...",
+      "Cross-referencing intent with available tool definitions...",
+      "Detecting ambiguous instructions and resolving scope...",
+      "Evaluating potential execution paths for efficiency...",
+      "Calibrating selector reliability indices...",
+      "Loading historical interaction models for optimization...",
+      "Synthesizing initial execution strategy...",
+      "Verifying structural integrity of the request...",
+      "Mapping dependency graph for operation sequences...",
+      "Analyzing potential permission boundaries...",
+      "Calculating computational interactions complexity...",
+      "Optimizing token usage for downstream generation...",
+      "Finalizing intent extraction layer...",
+      "Preparing context handshake for generation phase..."
+    ],
+    understanding: [
+      "Initiating deep semantic understanding protocol...",
+      "Decomposing complex instructions into atomic units...",
+      "Mapping user intent to concrete browser actions...",
+      "Validating action feasibility against current DOM state...",
+      "Constructing logical flow dependency matrix...",
+      "Identifying potential dynamic content loading states...",
+      "Analyzing pagination and infinite scroll patterns...",
+      "Detecting data extraction fields and attribute types...",
+      "Resolving conditional logic branches from description...",
+      "Understanding error handling requirements...",
+      "Mapping form input fields to data sources...",
+      "Identifying navigation breakpoints and triggers...",
+      "Correlating visual elements with semantic purpose...",
+      "Building internal representation of user goal...",
+      "Verifying instruction completeness against heuristics...",
+      "Transitioning conceptual model to executable logic..."
+    ],
+    generating: [
+      "Bootstrapping workflow architecture...",
+      "Compiling abstract syntax tree for workflow engine...",
+      "Generating robust CSS selectors for target elements...",
+      "Implementing loop structures for list processing...",
+      "Injecting wait conditions for dynamic stability...",
+      "Configuring exception handling wrappers...",
+      "Optimizing navigation sequence for minimal latency...",
+      "Linking data flow between extraction steps...",
+      "Adding auto-recovery hooks for network jitters...",
+      "Implementing scroll monitoring logic...",
+      "Generating JavaScript bridging code for complex interactions...",
+      "Configuring viewport emulation parameters...",
+      "Setting up data structure definitions for output...",
+      "Validating step connectivity and data typing...",
+      "Refining control flow for conditional operations...",
+      "Finalizing node configuration for execution engine..."
+    ],
+    validating: [
+      "Initializing virtual sandbox for logic verification...",
+      "Running static analysis on generated control flow...",
+      "Simulating execution path against shadow DOM...",
+      "Checking for cyclic dependencies in graph...",
+      "Validating selector specificity and robustness...",
+      "Verifying data transformation pipeline integrity...",
+      "Testing error propagation simulation...",
+      "Checking resource consumption estimates...",
+      "Ensuring compliance with security sandboxing...",
+      "Final structural validation of workflow schema...",
+      "Packing executable binary representation...",
+      "Signing workflow integrity checksum...",
+      "Finalizing output serialization...",
+      "Ready for deployment."
+    ]
+  };
+
+  // Helper to run a fast-forward sequence for a specific stage
+  const fastForwardStage = async (stage) => {
+    return new Promise((resolve) => {
+      const steps = microSteps[stage] || [];
+      const currentIdx = simulationStateRef.current.stage === stage
+        ? simulationStateRef.current.stepIndex
+        : 0;
+
+      if (currentIdx >= steps.length) {
+        resolve();
+        return;
+      }
+
+      let i = currentIdx;
+
+      const next = () => {
+        if (i >= steps.length) {
+          resolve();
+          return;
+        }
+
+        // Fast log addition
+        addLog(Math.random() > 0.5 ? 'thinking' : 'analyzing', steps[i]);
+        i++;
+
+        // Very fast timeout for "Matrix" effect
+        setTimeout(next, 50);
+      };
+
+      next();
+    });
+  };
+
+  // Helper to "finish up" everything from current state to the end
+  const runFastForwardCompletion = async () => {
+    // 1. Finish current stage
+    const currentStage = simulationStateRef.current.stage;
+    await fastForwardStage(currentStage);
+    updateStage(currentStage, 'completed');
+
+    // 2. Run any remaining stages
+    const stages = ['analyzing', 'understanding', 'generating', 'validating'];
+    const startIdx = stages.indexOf(currentStage) + 1;
+
+    for (let i = startIdx; i < stages.length; i++) {
+      const stage = stages[i];
+      setCurrentStage(stage);
+      updateStage(stage, 'active');
+
+      // Flash through this stage
+      await fastForwardStage(stage);
+
+      updateStage(stage, 'completed');
+    }
+  };
+
+
   const startSimulation = (stage) => {
-    // Clear existing interval
+    // Stop any existing normal simulation
     if (simulatedIntervalRef.current) clearInterval(simulatedIntervalRef.current);
 
-    const microSteps = {
-      analyzing: [
-        "Reading the page content to understand the context...",
-        "I see a list of items here, let me figure out the structure...",
-        "Looking for the best way to extract this information...",
-        "Identifying the interactive elements like buttons and links...",
-        "Checking how the data is organized on the screen...",
-        "Found some potential patterns, verifying them now..."
-      ],
-      understanding: [
-        "I think I understand what you want to do...",
-        "Mapping your request to the available actions...",
-        "Double-checking if any specific filters are needed...",
-        "Ensuring I capture all the relevant details for you...",
-        "This looks like a data extraction task, setting up the parser..."
-      ],
-      generating: [
-        "Designing the workflow steps now...",
-        "Adding a loop to go through each item one by one...",
-        "Making sure the selectors are robust against page changes...",
-        "Optimizing the navigation path for efficiency...",
-        "Almost there, just polishing the logic..."
-      ],
-      validating: [
-        "Running a quick simulation to ensure it works...",
-        "Verifying that the data flows correctly between steps...",
-        "Checking for any potential edge cases...",
-        "Everything looks good, finalizing the workflow..."
-      ]
-    };
+    // Reset index if entering new stage
+    if (simulationStateRef.current.stage !== stage) {
+      simulationStateRef.current = {
+        stage: stage,
+        stepIndex: 0,
+        active: true
+      };
+    } else {
+      simulationStateRef.current.active = true;
+    }
 
     const steps = microSteps[stage] || [];
-    if (steps.length === 0) return;
-
-    let stepIndex = 0;
 
     const runStep = () => {
-      if (stepIndex >= steps.length) {
+      // If we're done with this stage's messages, just sit there and wait for backend
+      // or loop the last message 'waiting...'
+      if (simulationStateRef.current.stepIndex >= steps.length) {
         if (simulatedIntervalRef.current) clearInterval(simulatedIntervalRef.current);
         return;
       }
 
-      // Add a simulated log
-      const msg = steps[stepIndex];
-      // 50% chance to show 'thinking' vs 'analyzing'
+      // Add log
+      const msg = steps[simulationStateRef.current.stepIndex];
       const type = Math.random() > 0.5 ? 'thinking' : 'analyzing';
-
-      // Only add if we represent the current stage roughly
-      // (Actual state is controlled by backend, this is just decoration)
       addLog(type, msg);
-      stepIndex++;
 
-      // Randomize next interval for organic feel - SLOWER now (2s - 4.5s)
-      const nextDelay = 2000 + Math.random() * 2500;
+      simulationStateRef.current.stepIndex++;
+
+      // Schedule next - SLOWER now (3s - 6s) to fill time
+      const nextDelay = 3000 + Math.random() * 3000;
       simulatedIntervalRef.current = setTimeout(runStep, nextDelay);
     };
 
-    // Start first step
+    // Kick off
     runStep();
   };
 
@@ -125,6 +249,7 @@ function GenerationPage({ session, onNavigate, showStatus, params = {} }) {
       clearTimeout(simulatedIntervalRef.current);
       simulatedIntervalRef.current = null;
     }
+    simulationStateRef.current.active = false;
   };
 
 
@@ -136,6 +261,9 @@ function GenerationPage({ session, onNavigate, showStatus, params = {} }) {
       return;
     }
 
+    // Local flag to prevent race conditions/double completion
+    let isGenerationComplete = false;
+
     try {
       setIsGenerating(true);
       setCurrentStage('analyzing');
@@ -143,6 +271,9 @@ function GenerationPage({ session, onNavigate, showStatus, params = {} }) {
       setGenerationLogs([]); // Clear logs
       setGenerationError(null);
       setWorkflowResult(null);
+
+      // Reset Ref
+      simulationStateRef.current = { stage: 'analyzing', stepIndex: 0, active: true };
 
       // Initial Logs
       addLog('info', 'Initializing workflow generation engine...');
@@ -153,6 +284,7 @@ function GenerationPage({ session, onNavigate, showStatus, params = {} }) {
       startSimulation('analyzing');
 
       // Use streaming API
+      // We will interact with result via "complete" event or final return
       const result = await api.generateWorkflowStream(
         {
           userId: userId,
@@ -162,7 +294,7 @@ function GenerationPage({ session, onNavigate, showStatus, params = {} }) {
           enableDialogue: true,
           enableSemanticValidation: true
         },
-        (event) => {
+        async (event) => {
           // Status Map
           const statusToStageId = {
             'pending': 'analyzing',
@@ -177,51 +309,67 @@ function GenerationPage({ session, onNavigate, showStatus, params = {} }) {
           if (event.status) {
             const mappedStageId = statusToStageId[event.status] || 'generating';
 
-            // Stage Transition Logic
-            if (mappedStageId !== currentStage && mappedStageId !== 'failed') {
-              // Stop prev simulation and start new one
-              stopSimulation();
-              startSimulation(mappedStageId);
-
-              setCurrentStage(mappedStageId);
-
-              // Mark prev stage complete
-              updateStage(currentStage, 'completed');
-            }
-
+            // If completely failed, stop everything
             if (event.status === 'failed') {
               stopSimulation();
               setGenerationError(event.message || 'Generation failed');
-              updateStage(currentStage, 'failed');
+              updateStage(simulationStateRef.current.stage, 'failed');
               addLog('error', `Generation Failed: ${event.message}`);
-            } else {
-              // Update active status
+              return;
+            }
+
+            // Backend says it's done -> Trigger Fast Forward Completion
+            if (event.status === 'completed') {
+              if (isGenerationComplete) return;
+              isGenerationComplete = true;
+
+              // Stop the "slow" simulation
+              stopSimulation();
+
+              // Run the matrix effect
+              await runFastForwardCompletion();
+
+              addLog('success', 'Workflow generated successfully!');
+              return;
+            }
+
+            // Normal stage transition (Backend moved faster than simulation)
+            // e.g. we were 'analyzing' but backend says 'generating'
+            // We should fast-forward the current stage, then start the new one.
+            if (mappedStageId !== simulationStateRef.current.stage && mappedStageId !== 'complete') {
+              stopSimulation();
+
+              // Fast forward the PREVIOUS stage to completion visual
+              await fastForwardStage(simulationStateRef.current.stage);
+              updateStage(simulationStateRef.current.stage, 'completed');
+
+              // Start the NEW stage
+              setCurrentStage(mappedStageId);
               updateStage(mappedStageId, 'active');
+              startSimulation(mappedStageId);
+            }
 
-              // Backend Message Logging
-              const msg = event.details || event.message;
-              if (msg) {
-                // Avoid duplicates if simulation happens to say same thing (rare)
-                addLog('info', msg);
-              }
-
-              // Success Case
-              if (event.status === 'completed') {
-                stopSimulation();
-                updateStage('complete', 'completed');
-                addLog('success', 'Workflow generated successfully!');
-              }
+            // Backend Message Logging (Real info from backend)
+            const msg = event.details || event.message;
+            if (msg && !msg.includes('progress')) {
+              addLog('info', `[Backend] ${msg}`);
             }
           }
         }
       );
 
-      // Final Success Handling (Fallbacks)
-      stopSimulation();
-      setCurrentStage('complete');
-      updateStage('complete', 'completed');
+      // --- FINISHED ---
 
-      // Ensure we have a success log if not added yet
+      // Just in case stream didn't trigger 'completed' event logic above
+      stopSimulation();
+
+      // Ensure we are visually at the end
+      if (!isGenerationComplete) {
+        isGenerationComplete = true;
+        await runFastForwardCompletion();
+      }
+
+      updateStage('complete', 'completed');
       addLog('success', 'Workflow generation finalized.');
 
       setWorkflowResult(result);
@@ -238,7 +386,7 @@ function GenerationPage({ session, onNavigate, showStatus, params = {} }) {
           console.error("No workflow result returned", result);
           showStatus("Error: No workflow ID returned", "error");
         }
-      }, 500);
+      }, 1000); // Give a moment to see the 'Ready' state
 
     } catch (error) {
       console.error("Generate Workflow error:", error);

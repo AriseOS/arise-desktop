@@ -489,7 +489,7 @@ class WorkflowConfigLoader:
 
             # 处理循环限制配置
             step.max_iterations = step_config.get('max_iterations')  # None means no limit
-            step.loop_timeout = step_config.get('timeout', 300)
+            step.loop_timeout = step_config.get('timeout', 3600)
 
         elif step_config['agent_type'] == 'foreach':
             # 处理foreach循环体
@@ -501,7 +501,7 @@ class WorkflowConfigLoader:
             step.item_var = step_config.get('item_var', 'item')  # 当前项变量名
             step.index_var = step_config.get('index_var', 'index')  # 当前索引变量名
             step.max_iterations = step_config.get('max_iterations')  # None means no limit
-            step.loop_timeout = step_config.get('loop_timeout', 600)  # 超时时间
+            step.loop_timeout = step_config.get('loop_timeout', 3600)  # 超时时间
 
         elif step_config['agent_type'] == 'variable':
             # 处理Variable Agent特有配置 - 从inputs中获取

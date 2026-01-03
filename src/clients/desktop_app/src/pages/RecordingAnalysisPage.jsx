@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import Icon from '../components/Icons';
-import WorkflowGenerationProgress from '../components/WorkflowGenerationProgress';
 import { api } from '../utils/api';
 import '../styles/RecordingAnalysisPage.css';
 
@@ -8,11 +7,7 @@ function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
   const userId = session?.username;
   const [taskDescription, setTaskDescription] = useState(pageData?.taskDescription || '');
   const [userQuery, setUserQuery] = useState(pageData?.userQuery || '');
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [generationProgress, setGenerationProgress] = useState(0);
-  const [generationStage, setGenerationStage] = useState('preparing');
-  const [generationMessage, setGenerationMessage] = useState('');
-  const [generationError, setGenerationError] = useState(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   const detectedPatterns = pageData?.detectedPatterns || {};
   const sessionId = pageData?.sessionId;
@@ -25,13 +20,9 @@ function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
     }
 
     try {
-      setIsGenerating(true);
-      setGenerationProgress(0);
-      setGenerationStage('preparing');
-      setGenerationMessage('Saving metadata...');
-      setGenerationError(null);
+      setIsSaving(true);
 
-      // Step 1: Save metadata first
+      // Save metadata first
       showStatus("Saving metadata...", "info");
       await api.callAppBackend(`/api/v1/recordings/${sessionId}`, {
         method: "PATCH",
@@ -42,92 +33,19 @@ function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
         })
       });
 
-      setGenerationProgress(15);
-      setGenerationStage('analyzing');
-      setGenerationMessage('Analyzing recording operations...');
-
-      // Step 2: Generate Workflow directly (NEW v2 API - bypasses MetaFlow)
-      showStatus("Generating Workflow...", "info");
-
-      // Use streaming API for progress updates
-      const workflowResult = await api.generateWorkflowStream(
-        {
-          userId: userId,
-          taskDescription: taskDescription,
-          recordingId: sessionId,
-          userQuery: userQuery,
-          enableSemanticValidation: true
-        },
-        (event) => {
-          // Map backend status to frontend stage
-          // Backend: pending, analyzing, understanding, generating, validating, completed, failed
-          // Frontend: preparing, analyzing, generating, validating, complete, error
-          const statusToStage = {
-            'pending': 'preparing',
-            'analyzing': 'analyzing',
-            'understanding': 'analyzing',  // Merge into analyzing
-            'generating': 'generating',
-            'validating': 'validating',
-            'completed': 'complete',
-            'failed': 'error'
-          };
-
-          // Update stage from backend status
-          if (event.status) {
-            const mappedStage = statusToStage[event.status] || 'generating';
-            setGenerationStage(mappedStage);
-
-            if (event.status === 'failed') {
-              setGenerationError(event.message || 'Generation failed');
-            }
-          }
-
-          // Update progress from backend
-          if (event.progress !== undefined) {
-            setGenerationProgress(event.progress);
-          }
-
-          // Update message
-          if (event.message) {
-            setGenerationMessage(event.message);
-            showStatus(event.message, "info");
-          }
-        }
-      );
-
-      setGenerationProgress(100);
-      setGenerationStage('complete');
-      setGenerationMessage('Workflow generated successfully!');
-
-      if (workflowResult && workflowResult.workflow_id) {
-        showStatus("Workflow generated! Redirecting to details...", "success");
-
-        // Navigate to Workflow detail page directly after a short delay
-        setTimeout(() => {
-          onNavigate('workflow-detail', {
-            workflowId: workflowResult.workflow_id,
-            sessionId: workflowResult.session_id  // For dialogue support
-          });
-        }, 1000);
-      } else {
-        throw new Error("Workflow generation failed - no workflow_id returned");
-      }
+      // Navigate to GenerationPage with all params - it will auto-start generation
+      onNavigate('generation', {
+        recordingId: sessionId,
+        recordingName: recordingName,
+        taskDescription: taskDescription,
+        userQuery: userQuery
+      });
 
     } catch (error) {
-      console.error("Generate Workflow error:", error);
-      setGenerationStage('error');
-      setGenerationError(error.message);
-      showStatus(`Failed to generate Workflow: ${error.message}`, "error");
+      console.error("Save metadata error:", error);
+      setIsSaving(false);
+      showStatus(`Failed to save metadata: ${error.message}`, "error");
     }
-  };
-
-  const handleCancelGeneration = () => {
-    setIsGenerating(false);
-    setGenerationProgress(0);
-    setGenerationStage('preparing');
-    setGenerationMessage('');
-    setGenerationError(null);
-    showStatus("Generation cancelled", "info");
   };
 
   const renderPatternBadges = () => {
@@ -169,20 +87,6 @@ function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
 
     return badges;
   };
-
-  if (isGenerating) {
-    return (
-      <div className="recording-analysis-page">
-        <WorkflowGenerationProgress
-          stage={generationStage}
-          progress={generationProgress}
-          message={generationMessage}
-          error={generationError}
-          onCancel={generationStage !== 'complete' && generationStage !== 'error' ? handleCancelGeneration : null}
-        />
-      </div>
-    );
-  }
 
   return (
     <div className="recording-analysis-page">
@@ -257,10 +161,10 @@ function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
           <button
             className="btn-primary"
             onClick={handleConfirmAndGenerate}
-            disabled={!taskDescription.trim() || !userQuery.trim()}
+            disabled={isSaving || !taskDescription.trim() || !userQuery.trim()}
           >
             <span className="btn-icon"><Icon icon="zap" /></span>
-            <span>Confirm & Generate Workflow</span>
+            <span>{isSaving ? 'Saving...' : 'Confirm & Generate Workflow'}</span>
           </button>
         </div>
 

@@ -320,43 +320,63 @@ You are working in: `{working_dir}`
 ## Your Task
 Create `find_element.py` that finds the target element described in task.json.
 
-## Instructions
+**CRITICAL**: Only elements with `interactive_index` can be clicked or filled.
+
+## Element Finder Tools
+
+Use these tools to quickly find interactive elements:
+
+```bash
+# Analyze xpath hint from recording (RECOMMENDED FIRST STEP)
+python .claude/skills/element-finder/tools/element_tools.py hint "<xpath_from_task.json>"
+
+# Search by text keyword (searches text, aria-label, placeholder)
+python .claude/skills/element-finder/tools/element_tools.py search "New mail"
+
+# Find element by xpath and check if interactive
+python .claude/skills/element-finder/tools/element_tools.py find "<xpath>"
+
+# List all interactive elements in a container
+python .claude/skills/element-finder/tools/element_tools.py list "//*[@id='app']/nav"
+
+# Search by specific attribute
+python .claude/skills/element-finder/tools/element_tools.py attr "aria-label" "Send"
+python .claude/skills/element-finder/tools/element_tools.py attr "class" "btn-primary"
+```
+
+## Workflow
 
 ### Step 1: Read task.json
 ```bash
 cat task.json
 ```
-Understand what element to find and the xpath hints provided.
+Identify the task, xpath_hints, and text (for fill operations).
 
-### Step 2: Explore DOM
-Search dom_data.json to find the target element:
+### Step 2: Use hint tool to analyze xpath
 ```bash
-# Search by text
-grep -i "new mail" dom_data.json | head -20
+python .claude/skills/element-finder/tools/element_tools.py hint "<xpath_from_hints>"
+```
+This shows exact match and alternatives with `interactive_index`.
 
-# Search by class
-grep -i "editorclass" dom_data.json | head -20
-
-# Search by aria-label
-grep -i "aria-label" dom_data.json | head -20
+### Step 3: If hint fails, search by keyword
+```bash
+# Extract keywords from task description
+python .claude/skills/element-finder/tools/element_tools.py search "<keyword>"
 ```
 
-### Step 3: Create find_element.py
-Copy the template and implement the search logic:
+### Step 4: Create find_element.py
 ```bash
 cp find_element_template.py find_element.py
 ```
-Then edit find_element.py to implement the actual search.
+Edit to implement search logic based on what tools found.
 
-### Step 4: Test
-Run the test script to verify your implementation:
+### Step 5: Test
 ```bash
 python test_operation.py
 ```
-If it fails, read the error and fix find_element.py.
+Must print "SUCCESS" and exit with code 0. If it fails, fix and retry.
 
 ## DOM Element Structure
-Each element in dom_data.json contains:
 - `tag`: HTML tag (button, input, div, etc.)
 - `text`: Text content
 - `xpath`: XPath location
@@ -370,8 +390,12 @@ Each element in dom_data.json contains:
 3. Handle multi-language: "新邮件" = "New mail", "添加主题" = "Add subject"
 4. Return `interactive_index` as an integer
 
-## Success Criteria
-`python test_operation.py` must print "SUCCESS" and exit with code 0.
+## Fallback: grep search
+If tools don't find what you need:
+```bash
+grep -i "keyword" dom_data.json | head -20
+grep -i "interactive_index" dom_data.json | head -20
+```
 """
 
     def __init__(self,
@@ -1130,6 +1154,20 @@ Each element in dom_data.json contains:
             encoding='utf-8'
         )
 
+        # 4. Link .claude/skills directory for element finder tools
+        skills_source = Path(__file__).parent.parent.parent.parent / ".claude" / "skills"
+        skills_target = working_dir / ".claude" / "skills"
+        if skills_source.exists() and not skills_target.exists():
+            skills_target.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                skills_target.symlink_to(skills_source)
+                logger.debug(f"Linked skills directory: {skills_target} -> {skills_source}")
+            except OSError as e:
+                # If symlink fails (e.g., on Windows), copy instead
+                import shutil
+                shutil.copytree(skills_source, skills_target)
+                logger.debug(f"Copied skills directory to: {skills_target}")
+
         logger.info(f"Workspace prepared: task.json, dom_data.json ({dom_file.stat().st_size} bytes)")
 
     async def _generate_and_execute_with_retry(
@@ -1373,29 +1411,17 @@ Start by reading task.json and dom_data.json to understand the requirements and 
                 if event.turn:
                     final_turn = event.turn
 
-                # Forward streaming events to frontend (like ScraperAgent)
+                # Forward status updates to frontend (but not detailed content like scripts)
                 if context and context.log_callback:
                     try:
                         if event.type == "text":
+                            # Send progress status without detailed content
                             await context.log_callback(
                                 "info",
-                                f"🔍 Finding element (turn {event.turn})\n{event.content[:150]}...",
+                                f"🔍 Finding element (turn {event.turn})",
                                 {
                                     "update_id": progress_update_id,
-                                    "turn": event.turn,
-                                    "message": event.content[:150]
-                                }
-                            )
-                        elif event.type == "tool_use":
-                            tool_desc = f"Using {event.tool_name} tool"
-                            await context.log_callback(
-                                "info",
-                                f"🔍 Finding element (turn {event.turn})\n{tool_desc}",
-                                {
-                                    "update_id": progress_update_id,
-                                    "turn": event.turn,
-                                    "message": tool_desc,
-                                    "tool_name": event.tool_name
+                                    "turn": event.turn
                                 }
                             )
                         elif event.type == "complete":
@@ -1416,13 +1442,11 @@ Start by reading task.json and dom_data.json to understand the requirements and 
                 elif event.type == "error":
                     task_error = event.content
 
-            # Send completion log with script content
+            # Send completion status (without script content details)
             if context and context.log_callback:
                 try:
                     script_file = working_dir / "find_element.py"
                     if script_file.exists():
-                        script_content = script_file.read_text(encoding='utf-8')
-                        # Update the dynamic progress log to show completion
                         await context.log_callback(
                             "success",
                             f"✅ Element finder script generated ({final_turn} turns)",
@@ -1430,17 +1454,6 @@ Start by reading task.json and dom_data.json to understand the requirements and 
                                 "update_id": progress_update_id,
                                 "turn": final_turn,
                                 "completed": True
-                            }
-                        )
-                        # Send script content as code
-                        await context.log_callback(
-                            "success",
-                            f"📜 Generated find_element.py ({len(script_content)} chars)",
-                            {
-                                "script_content": script_content,
-                                "content_type": "code",
-                                "language": "python",
-                                "cache_path": str(script_file)
                             }
                         )
                 except Exception as e:

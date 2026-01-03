@@ -637,7 +637,7 @@ class AgentWorkflowEngine:
             resolved_dict = self._resolve_step_variables(step, context)
 
             max_iterations = step.max_iterations  # None means no limit
-            loop_timeout = step.loop_timeout or 300
+            loop_timeout = step.loop_timeout or 3600
             iterations_executed = 0
             sub_step_results = []
             exit_reason = "condition_false"

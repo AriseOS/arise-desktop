@@ -25,6 +25,14 @@ export const api = {
   // ============================================================================
 
   /**
+   * Get the backend base URL
+   * @returns {string} Backend base URL
+   */
+  getBackendUrl() {
+    return APP_BACKEND_BASE;
+  },
+
+  /**
    * Check backend health
    * @returns {Promise<boolean>} True if backend is ready
    */
@@ -552,15 +560,21 @@ export const api = {
 
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
 
-      buffer += decoder.decode(value, { stream: true });
+      if (value) {
+        buffer += decoder.decode(value, { stream: !done });
+      }
 
       // Process complete SSE events
       const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+
+      // If done, we process all lines including the last one
+      // If not done, we keep the last line in buffer as it might be incomplete
+      buffer = done ? '' : (lines.pop() || '');
 
       for (const line of lines) {
+        if (line.trim() === '') continue; // Skip empty lines
+
         if (line.startsWith('data: ')) {
           const jsonStr = line.slice(6);
           try {
@@ -578,6 +592,8 @@ export const api = {
           }
         }
       }
+
+      if (done) break;
     }
 
     return finalResult;

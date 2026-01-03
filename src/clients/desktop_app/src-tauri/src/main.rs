@@ -1,7 +1,5 @@
 // Prevents additional console window on Windows in release mode
-// TEMPORARILY DISABLED for debugging - enable console to see error messages
-// Uncomment the line below after debugging is complete
-// #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod python_daemon;
 

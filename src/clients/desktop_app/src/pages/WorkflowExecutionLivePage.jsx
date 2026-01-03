@@ -94,6 +94,10 @@ function WorkflowExecutionLivePage({
       };
 
       ws.onmessage = (event) => {
+        // Ignore heartbeat responses
+        if (event.data === 'pong') {
+          return;
+        }
         try {
           const data = JSON.parse(event.data);
           handleProgressUpdate(data);

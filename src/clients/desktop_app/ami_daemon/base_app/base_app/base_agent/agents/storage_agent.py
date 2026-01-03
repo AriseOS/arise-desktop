@@ -227,12 +227,14 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
         upsert_key = input_data.get('upsert_key')  # Optional: field for upsert
         # Get user_id from MemoryManager (single source of truth)
         user_id = context.memory_manager.user_id if context.memory_manager else 'default_user'
+        # Get workflow_id from context for data isolation
+        workflow_id = context.workflow_id if context.workflow_id else 'default_workflow'
 
         # Handle list of data
         if isinstance(data, list):
             count = 0
             for item in data:
-                await self._store_single(collection, item, user_id, context, upsert_key)
+                await self._store_single(collection, item, user_id, workflow_id, context, upsert_key)
                 count += 1
 
             # Send user-friendly log output via WebSocket
@@ -248,7 +250,7 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
             }
         else:
             # Single data
-            await self._store_single(collection, data, user_id, context, upsert_key)
+            await self._store_single(collection, data, user_id, workflow_id, context, upsert_key)
 
             # Send user-friendly log output via WebSocket
             action = "upserted" if upsert_key else "stored"
@@ -267,6 +269,7 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
         collection: str,
         data: dict,
         user_id: str,
+        workflow_id: str,
         context: AgentContext,
         upsert_key: Optional[str] = None
     ):
@@ -276,18 +279,19 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
             collection: Collection name
             data: Data to store
             user_id: User ID for table isolation
+            workflow_id: Workflow ID for data isolation per workflow
             context: Agent context
             upsert_key: Optional field name for upsert. If specified and record
                        with same key value exists, update it instead of insert.
         """
-        table_name = f"{collection}_{user_id}"
+        table_name = f"{collection}_{user_id}_{workflow_id}"
 
         # Log table and data info for debugging
         self.logger.info(f"Storing to table: {table_name}, data fields: {list(data.keys())}, upsert_key: {upsert_key}")
 
         # Generate cache key - different for upsert vs insert
         cache_suffix = f"_upsert_{upsert_key}" if upsert_key else ""
-        cache_key = f"storage_insert_{collection}_{user_id}{cache_suffix}"
+        cache_key = f"storage_insert_{collection}_{user_id}_{workflow_id}{cache_suffix}"
 
         # Try to load cached script
         cached = await context.memory_manager.get_data(cache_key)
@@ -309,6 +313,22 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
                             existing_fields = [col[1] for col in columns if col[1] not in ('id', 'created_at')]
                             self.logger.warning(f"Existing table schema: {existing_fields}")
                             self.logger.warning(f"New data fields: {list(data.keys())}")
+
+                            # Check for missing columns and add them
+                            new_fields = list(data.keys())
+                            missing_fields = [f for f in new_fields if f not in existing_fields]
+                            if missing_fields:
+                                self.logger.info(f"Adding missing columns to existing table: {missing_fields}")
+                                for field in missing_fields:
+                                    # Add column with TEXT type and allow NULL for existing rows
+                                    alter_sql = f"ALTER TABLE {table_name} ADD COLUMN {field} TEXT"
+                                    self.logger.info(f"Executing SQL: {alter_sql}")
+                                    try:
+                                        await db.execute(alter_sql)
+                                        await db.commit()
+                                        self.logger.info(f"Added column {field} to {table_name}")
+                                    except Exception as e:
+                                        self.logger.warning(f"Failed to add column {field}: {e}")
 
             # Use data.keys() directly as field order (no flattening)
             field_order = list(data.keys())
@@ -439,17 +459,19 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
         order_by = input_data.get('order_by')
         # Get user_id from MemoryManager (single source of truth)
         user_id = context.memory_manager.user_id if context.memory_manager else 'default_user'
+        # Get workflow_id from context for data isolation
+        workflow_id = context.workflow_id if context.workflow_id else 'default_workflow'
 
-        table_name = f"{collection}_{user_id}"
+        table_name = f"{collection}_{user_id}_{workflow_id}"
 
-        # Generate cache key (include query config hash, no user_id - MemoryManager handles isolation)
+        # Generate cache key (include query config hash)
         query_config = {
             "filters": filters,
             "order_by": order_by,
             "limit": limit
         }
         config_hash = self._hash_config(query_config)
-        cache_key = f"storage_query_{collection}_{user_id}_{config_hash}"
+        cache_key = f"storage_query_{collection}_{user_id}_{workflow_id}_{config_hash}"
 
         # Try to load cached script
         cached = await context.memory_manager.get_data(cache_key)
@@ -496,16 +518,18 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
         filters = input_data.get('filters', {})
         # Get user_id from MemoryManager (single source of truth)
         user_id = context.memory_manager.user_id if context.memory_manager else 'default_user'
+        # Get workflow_id from context for data isolation
+        workflow_id = context.workflow_id if context.workflow_id else 'default_workflow'
 
-        table_name = f"{collection}_{user_id}"
+        table_name = f"{collection}_{user_id}_{workflow_id}"
 
-        # Generate cache key (no user_id - MemoryManager handles isolation)
+        # Generate cache key
         export_config = {
             "filters": filters,
             "format": format_type
         }
         config_hash = self._hash_config(export_config)
-        cache_key = f"storage_export_{collection}_{user_id}_{config_hash}"
+        cache_key = f"storage_export_{collection}_{user_id}_{workflow_id}_{config_hash}"
 
         # Try to load cached script
         cached = await context.memory_manager.get_data(cache_key)

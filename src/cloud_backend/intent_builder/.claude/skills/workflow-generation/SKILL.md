@@ -120,7 +120,25 @@ Use the workflow-validation skill to check your YAML before outputting.
 | storage_agent | Save data to database |
 | text_agent | Transform/summarize text |
 
-See agent-specs skill for details.
+## CRITICAL: Agent Specs Lookup Required
+
+**Before writing ANY agent step, you MUST call the `agent-specs` skill to get the exact input format.**
+
+Each agent has strictly defined parameters. Do NOT guess parameter names or values.
+
+| When using... | You MUST first run |
+|---------------|-------------------|
+| browser_agent | `/agent-specs` to check browser_agent inputs |
+| scraper_agent | `/agent-specs` to check scraper_agent inputs |
+| storage_agent | `/agent-specs` to check storage_agent inputs |
+| text_agent | `/agent-specs` to check text_agent inputs |
+
+**Common mistakes to avoid:**
+- Using `insert` instead of `store` for storage_agent
+- Missing required fields like `operation` or `collection`
+- Wrong parameter names or structures
+
+The agent-specs skill contains the authoritative specification. Always verify before generating.
 
 ## Variable Syntax
 
@@ -177,4 +195,15 @@ Every step MUST have these three fields:
     extracted_data: "product_urls"
 ```
 
-Use 2-space indentation. At least one step should output `final_response`.
+Use 2-space indentation.
+
+## Workflow Goal
+
+The workflow's goal is to **complete the user's task**, not to produce output.
+
+Common goals:
+- Store extracted data to database (data is accessible later via UI)
+- Export data to a file
+- Complete a series of browser actions
+
+End the workflow when the goal is achieved. Don't add extra steps just to "return" or "display" data.

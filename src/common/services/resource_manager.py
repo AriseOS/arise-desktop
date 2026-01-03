@@ -192,6 +192,10 @@ class ResourceManager:
                 metadata["updated_at"] = get_current_timestamp()
                 logger.debug(f"Using wall-clock timestamp: {metadata['updated_at']}")
 
+            # Ensure resources dict exists
+            if "resources" not in metadata:
+                metadata["resources"] = {}
+
             # Update resource info
             resource_type_key = resource_type.value
             if resource_type_key not in metadata["resources"]:

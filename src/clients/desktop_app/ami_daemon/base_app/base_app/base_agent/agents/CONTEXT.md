@@ -12,7 +12,7 @@ Agent implementations for the BaseAgent framework.
 | `tool_agent.py` | ToolAgent | Tool calling with two-phase decision (select tool → select API) |
 | `code_agent.py` | CodeAgent | Python code generation with AST safety checks |
 | `browser_agent.py` | BrowserAgent | Page navigation + intelligent interaction (click/input/scroll) |
-| `scraper_agent.py` | ScraperAgent | Data extraction with Plan-Generate-Execute pattern |
+| `scraper_agent.py` | ScraperAgent | Data extraction with Claude Agent SDK |
 | `storage_agent.py` | StorageAgent | SQLite storage with LLM-generated SQL |
 | `variable_agent.py` | VariableAgent | Variable manipulation and transformation |
 | `autonomous_browser_agent.py` | AutonomousBrowserAgent | Self-directed browser automation |
@@ -26,26 +26,106 @@ Agent implementations for the BaseAgent framework.
 | `agent_executor.py` | Agent execution orchestration |
 | `agent_router.py` | Inter-agent routing and communication |
 
-## Common Pattern: Plan-Generate-Execute
+## ScraperAgent Architecture
 
-Used by ScraperAgent, BrowserAgent, StorageAgent:
+### Overview
+
+ScraperAgent uses **Claude Agent SDK** to generate Python extraction scripts that parse DOM data. The key insight is that Claude Agent can iteratively analyze DOM structure using tools, write scripts, test them, and fix issues autonomously.
+
+### Workflow
 
 ```
-1. Plan: Analyze target (DOM/data structure)
-2. Generate: LLM creates script (Python/SQL)
-3. Execute: Run script with caching
-4. Verify: Validate results
+┌─────────────────────────────────────────────────────────────────────┐
+│                        ScraperAgent.execute()                        │
+└─────────────────────────────────────────────────────────────────────┘
+                                   │
+                    ┌──────────────┴──────────────┐
+                    ▼                             ▼
+            [Script Cached?]                [No Cache]
+                    │                             │
+                    ▼                             ▼
+           Load & Execute              ┌──────────────────┐
+                                       │ 1. Setup Workspace│
+                                       │    - Create dir   │
+                                       │    - Copy skills  │
+                                       │    - Save DOM     │
+                                       └────────┬─────────┘
+                                                │
+                                       ┌────────▼─────────┐
+                                       │ 2. Claude Agent   │
+                                       │    - Read files   │
+                                       │    - Use dom_tools│
+                                       │    - Write script │
+                                       │    - Test & fix   │
+                                       └────────┬─────────┘
+                                                │
+                                       ┌────────▼─────────┐
+                                       │ 3. Execute Script │
+                                       │    - Load script  │
+                                       │    - Run on DOM   │
+                                       │    - Return data  │
+                                       └──────────────────┘
 ```
+
+### Key Components
+
+1. **Workspace Setup** (`_generate_extraction_script_with_llm`)
+   - Creates script directory: `~/.ami/users/{user}/workflows/{workflow}/{step}/scraper_script_{hash}/`
+   - Copies skills from `base_app/.claude/skills/` to workspace
+   - Saves `requirement.json` (user requirements) and `dom_data.json` (page DOM)
+
+2. **Claude Agent SDK** (`ClaudeAgentProvider.run_task_stream`)
+   - Uses `dom-extraction` skill for guidance
+   - Tools available: `find`, `container`, `analyze`, `children`, `print`
+   - Generates `extraction_script.py` with `extract_data_from_page(dom_dict)` function
+
+3. **Script Execution** (`_execute_generated_script_direct`)
+   - Wraps script in `execute_extraction()` function
+   - Passes DOM dict (not HTML) to extraction function
+   - Applies `max_items` limit if specified
+
+### DOM Tools (`.claude/skills/dom-extraction/tools/dom_tools.py`)
+
+Claude Agent uses these tools to analyze DOM structure:
+
+| Command | Purpose | Virtual Container Support |
+|---------|---------|---------------------------|
+| `find <xpath>` | Find element by exact xpath match | No |
+| `container <xpath>` | Build virtual container from children | Yes |
+| `analyze <xpath>` | Analyze container structure (children count, tags) | Yes |
+| `children <xpath> [tag]` | List children of container | Yes |
+| `print <xpath> [depth]` | Print element structure | No |
+| `fields <xpath>` | List available fields (text, href, src) count | Yes |
+| `extract <xpath> <field>` | Extract all values of a field | Yes |
+
+**Virtual Containers**: Container elements often don't have their own `xpath` attribute (filtered out during DOM serialization). The `container`, `analyze`, and `children` commands can build "virtual containers" by finding all child elements whose xpath starts with the given prefix.
+
+### Script Caching
+
+- Scripts cached by hash of `user_description` + `output_format`
+- Path: `~/.ami/users/{user}/workflows/{workflow}/{step}/scraper_script_{hash}/extraction_script.py`
+- Cached scripts reused across executions with same requirements
+
+### Auto-Fix Feature
+
+When `auto_fix_missing_fields: true`:
+1. Check extraction result for missing/null fields
+2. If missing, call Claude Agent to analyze why (data not in DOM vs script bug)
+3. If script bug, Claude Agent fixes and re-executes
 
 ## Key Design Decisions
 
 - **LLM generates scripts** - Adapts to actual page/data structure, not hardcoded
-- **Script caching** - KV storage for reuse across similar pages
-- **Verification** - Post-execution validation with retry/repair
+- **Script caching** - File-based cache for reuse across similar pages
+- **Claude Agent SDK** - Iterative refinement with tool use, not single-shot generation
+- **Skills system** - SKILL.md files guide Claude through complex tasks
+- **Virtual containers** - Handle DOM structures where containers are filtered out
 
 ## See Also
 
-- `scraper_agent.py` - Reference implementation of Plan-Generate-Execute
+- `scraper_agent.py` - Main implementation
+- `base_app/.claude/skills/dom-extraction/` - DOM extraction skill
+- `tools/browser_use/dom_extractor.py` - DOM serialization logic
 - `browser_agent.py` - Intelligent DOM-based interaction
 - `storage_agent.py` - LLM-generated SQL for flexible storage
 

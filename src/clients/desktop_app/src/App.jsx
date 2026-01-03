@@ -29,8 +29,7 @@ import RecordingsLibraryPage from "./pages/RecordingsLibraryPage";
 import RecordingDetailPage from "./pages/RecordingDetailPage";
 import ConversationalGenerationPage from "./pages/ConversationalGenerationPage";
 // MetaflowPreviewPage removed - MetaFlow is now internal, users work with Workflows directly
-import DataManagementPage from "./pages/DataManagementPage";
-import CollectionDetailPage from "./pages/CollectionDetailPage";
+// DataManagementPage removed - Data is now per-workflow, see WorkflowDetailPage "Data" tab
 import WorkflowExecutionLivePage from "./pages/WorkflowExecutionLivePage";
 import ScraperOptimizationPage from "./pages/ScraperOptimizationPage";
 import DocsPage from "./pages/DocsPage";
@@ -50,6 +49,36 @@ function App() {
 
   // Diagnostic upload state
   const [diagnosticUploading, setDiagnosticUploading] = useState(false);
+  const [diagnosticModalOpen, setDiagnosticModalOpen] = useState(false);
+  const [diagnosticDescription, setDiagnosticDescription] = useState("");
+
+  // Upload diagnostic package - Step 1: Open Modal
+  const handleUploadDiagnostic = () => {
+    if (diagnosticUploading) return;
+    setDiagnosticDescription("");
+    setDiagnosticModalOpen(true);
+  };
+
+  // Upload diagnostic package - Step 2: Confirm Upload
+  const confirmUploadDiagnostic = async () => {
+    setDiagnosticModalOpen(false);
+    setDiagnosticUploading(true);
+    showStatus("Collecting diagnostic data...", "info");
+
+    try {
+      const result = await api.uploadDiagnostic(diagnosticDescription);
+      if (result.success) {
+        showStatus(`Diagnostic uploaded: ${result.diagnostic_id}`, "success");
+      } else {
+        showStatus("Failed to upload diagnostic", "error");
+      }
+    } catch (error) {
+      console.error("[App] Diagnostic upload failed:", error);
+      showStatus(`Diagnostic upload failed: ${error.message}`, "error");
+    } finally {
+      setDiagnosticUploading(false);
+    }
+  };
 
   // Auth state
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -78,28 +107,6 @@ function App() {
   const navigate = (page, params = {}) => {
     setCurrentPage(page);
     setPageParams(params);
-  };
-
-  // Upload diagnostic package
-  const handleUploadDiagnostic = async () => {
-    if (diagnosticUploading) return;
-
-    setDiagnosticUploading(true);
-    showStatus("Collecting diagnostic data...", "info");
-
-    try {
-      const result = await api.uploadDiagnostic();
-      if (result.success) {
-        showStatus(`Diagnostic uploaded: ${result.diagnostic_id}`, "success");
-      } else {
-        showStatus("Failed to upload diagnostic", "error");
-      }
-    } catch (error) {
-      console.error("[App] Diagnostic upload failed:", error);
-      showStatus(`Diagnostic upload failed: ${error.message}`, "error");
-    } finally {
-      setDiagnosticUploading(false);
-    }
   };
 
   // Check setup status on mount
@@ -732,24 +739,8 @@ function App() {
         navigate("workflows");
         return null;
 
-      case "data-management":
-        return (
-          <DataManagementPage
-            session={session}
-            onNavigate={navigate}
-            showStatus={showStatus}
-          />
-        );
-
-      case "collection-detail":
-        return (
-          <CollectionDetailPage
-            session={session}
-            onNavigate={navigate}
-            showStatus={showStatus}
-            collectionName={pageParams.collectionName}
-          />
-        );
+      // data-management and collection-detail removed
+      // Data is now per-workflow, see WorkflowDetailPage "Data" tab
 
       case "scraper-optimization":
         return (
@@ -789,7 +780,6 @@ function App() {
       { id: "quick-start", icon: "record", label: "Record" },
       { id: "workflows", icon: "workflows", label: "Workflows" },
       { id: "recordings-library", icon: "library", label: "Library" },
-      { id: "data-management", icon: "data", label: "Data" },
     ];
 
     return (
@@ -839,6 +829,67 @@ function App() {
 
       {/* Bottom Navigation */}
       {renderBottomNav()}
+
+      {/* Diagnostic Upload Modal */}
+      {diagnosticModalOpen && (
+        <div className="modal-overlay" onClick={() => setDiagnosticModalOpen(false)}>
+          <div className="modal-content log-upload-modal" onClick={(e) => e.stopPropagation()} style={{
+            background: 'var(--bg-surface)',
+            padding: '24px',
+            borderRadius: '16px',
+            width: '90%',
+            maxWidth: '500px',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)'
+          }}>
+            <div className="modal-header" style={{ marginBottom: '16px' }}>
+              <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 600 }}>Upload Diagnostic Logs</h3>
+            </div>
+            <div className="modal-body">
+              <p style={{ marginBottom: '12px' }}>Please describe the issue you encountered (optional). This helps us improve the product.</p>
+              <textarea
+                className="log-description-input"
+                placeholder="Describe what happened..."
+                value={diagnosticDescription}
+                onChange={(e) => setDiagnosticDescription(e.target.value)}
+                rows={4}
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  borderRadius: '8px',
+                  border: '1px solid var(--border-subtle)',
+                  backgroundColor: 'var(--bg-app)',
+                  color: 'var(--text-primary)',
+                  fontSize: '14px',
+                  lineHeight: '1.5',
+                  resize: 'vertical',
+                  minHeight: '100px',
+                  marginBottom: '16px',
+                  fontFamily: 'inherit'
+                }}
+              />
+              <p className="modal-hint" style={{ fontSize: '13px', color: 'var(--text-tertiary)', margin: 0 }}>
+                We will upload recent logs to our support server.
+              </p>
+            </div>
+            <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px' }}>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setDiagnosticModalOpen(false)}
+                style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--border-subtle)', background: 'transparent', cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={confirmUploadDiagnostic}
+                style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', background: 'var(--primary-main)', color: 'white', cursor: 'pointer' }}
+              >
+                Confirm Upload
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

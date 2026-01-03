@@ -123,7 +123,13 @@ When `upsert_key` is specified:
 - Tracking items by unique identifier (URL, product_id, etc.)
 - Re-running workflow should update existing data, not create duplicates
 
-**How to choose `upsert_key`**:
-- Look for fields that uniquely identify a record (URL, ID, SKU)
-- Consider the semantic meaning: "same product" = same URL/ID
-- If scraping from a list page, the detail page URL is often a good key
+**How to choose `upsert_key`** (priority order):
+1. `url` - Best choice, page URL is always unique
+2. `id`, `product_id`, `sku` - Explicit ID fields
+3. `name` - Names are usually unique within a collection
+4. **If none of the above exist, or unsure → DO NOT add upsert_key**
+
+**NEVER use as upsert_key**:
+- `handle`, `author`, `creator` - Multiple items can have same author
+- `category`, `tag`, `type` - Definitely not unique
+- Any field you're not 100% sure is unique

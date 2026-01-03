@@ -8,12 +8,24 @@ Extracts data from the current web page. It reads what's on screen and pulls out
 
 **Key point**: scraper_agent doesn't navigate. It works on whatever page the browser is currently showing. Use `browser_agent` to get to the page first.
 
+## Required Parameters
+
+**ALWAYS specify these two parameters:**
+
+```yaml
+inputs:
+  extraction_method: "script"   # REQUIRED: Always use "script"
+  dom_scope: "full"             # REQUIRED: "full" for lists, "partial" for single items
+```
+
 ## Basic Usage
 
 ```yaml
 - id: "extract-products"
   agent_type: "scraper_agent"
   inputs:
+    extraction_method: "script"
+    dom_scope: "full"
     data_requirements:
       user_description: "Extract product names and prices"
       output_format:
@@ -55,6 +67,10 @@ To access fields from a single-item result:
 ```yaml
 "{{result.0.title}}"   # First item's title field
 ```
+
+## Note: Page URL
+
+The current page's URL is not in the DOM - it's browser metadata. In foreach loops, the URL is already available in the item variable (e.g., `{{product.url}}`) from the list extraction step.
 
 ## When to Use "full" vs "partial" DOM
 

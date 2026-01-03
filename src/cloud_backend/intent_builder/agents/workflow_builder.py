@@ -73,6 +73,7 @@ When the workflow runs, it starts from scratch. If the user clicked through 3 pa
 |-------|---------|
 | workflow-generation | Workflow structure and generation process |
 | agent-specs | Agent capabilities (browser_agent, scraper_agent, etc.) |
+| workflow-optimizations | Optimization patterns (click-to-navigate, scroll, etc.) |
 | workflow-validation | Validate your YAML before output |
 
 ## Output
@@ -102,6 +103,7 @@ The user's current workflow is provided below. Make changes based on their reque
 |-------|---------|
 | workflow-generation | Workflow structure reference |
 | agent-specs | Agent capabilities (browser_agent, scraper_agent, etc.) |
+| workflow-optimizations | Optimization patterns |
 | workflow-validation | Validate your changes |
 
 ## Process
@@ -297,9 +299,9 @@ This is what the user actually did in their browser. Your workflow needs to repr
 
 ## Generate Workflow
 
-1. Read the workflow-generation skill for YAML structure
-2. Read agent-specs to understand what each agent can do
-3. Generate a workflow that replays the user's actions
+1. Read workflow-generation and agent-specs skills
+2. Read workflow-optimizations skill, check if any patterns apply
+3. Generate the workflow (apply optimizations where appropriate)
 4. Validate with workflow-validation skill
 5. Output the final YAML
 
@@ -919,9 +921,9 @@ This is what the user actually did in their browser. Your workflow needs to repr
 
 ## Generate Workflow
 
-1. Read the workflow-generation skill for YAML structure
-2. Read agent-specs to understand what each agent can do
-3. Generate a workflow that replays the user's actions
+1. Read workflow-generation and agent-specs skills
+2. Read workflow-optimizations skill, check if any patterns apply
+3. Generate the workflow (apply optimizations where appropriate)
 4. Validate with workflow-validation skill
 5. Output the final YAML
 

@@ -189,7 +189,7 @@ config:
   control_type: "while"
   condition: "{{continue_chat}} == true"
   max_iterations: 10
-  loop_timeout: 300
+  loop_timeout: 3600
   then_steps:
     - id: "chat-turn"
       agent_type: "interactive_agent"

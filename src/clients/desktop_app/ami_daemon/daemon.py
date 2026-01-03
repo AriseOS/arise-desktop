@@ -1602,25 +1602,35 @@ async def generate_workflow_stream(
 
     async def stream_generator():
         try:
+            logger.info(f"[Stream Debug] Starting stream to Cloud Backend: {cloud_client.api_url}/api/v1/workflows/generate-stream")
             async with httpx.AsyncClient(timeout=300.0) as client:
+                logger.info(f"[Stream Debug] httpx client created, sending POST request...")
                 async with client.stream(
                     "POST",
                     f"{cloud_client.api_url}/api/v1/workflows/generate-stream",
                     json=cloud_request,
                     headers={"X-Ami-API-Key": x_ami_api_key}
                 ) as response:
+                    logger.info(f"[Stream Debug] Got response status: {response.status_code}")
                     if response.status_code != 200:
                         error_text = await response.aread()
                         logger.error(f"Cloud Backend error: {response.status_code} {error_text}")
                         yield f"data: {json.dumps({'status': 'failed', 'message': error_text.decode()})}\n\n"
                         return
 
+                    logger.info(f"[Stream Debug] Starting to iterate over response lines...")
+                    line_count = 0
                     async for line in response.aiter_lines():
+                        line_count += 1
+                        logger.info(f"[Stream Debug] Received line #{line_count}: {line[:100]}..." if len(line) > 100 else f"[Stream Debug] Received line #{line_count}: {line}")
                         if line:
                             # SSE events need double newline to separate
                             yield line + "\n\n"
+                    logger.info(f"[Stream Debug] Stream ended, total lines received: {line_count}")
         except Exception as e:
             logger.error(f"Stream error: {e}")
+            import traceback
+            logger.error(f"[Stream Debug] Traceback: {traceback.format_exc()}")
             yield f"data: {json.dumps({'status': 'failed', 'message': str(e)})}\n\n"
 
     return StreamingResponse(
@@ -2255,16 +2265,63 @@ async def delete_workflow(workflow_id: str, user_id: str):
         else:
             logger.warning(f"⚠ Workflow not found in local storage: {workflow_id}")
 
-        # Step 3: Determine success
+        # Step 3: Delete workflow data (collections in storage.db and related caches)
+        data_deleted_count = 0
+        try:
+            import aiosqlite
+
+            storage_db_path = Path(config.get("data.databases.storage"))
+            kv_db_path = Path(config.get("data.databases.kv"))
+
+            if storage_db_path.exists():
+                suffix = f"_{user_id}_{workflow_id}"
+
+                async with aiosqlite.connect(str(storage_db_path)) as db:
+                    # Find all tables belonging to this workflow
+                    cursor = await db.execute("""
+                        SELECT name FROM sqlite_master
+                        WHERE type='table' AND name LIKE ?
+                    """, (f"%{suffix}",))
+                    tables = await cursor.fetchall()
+
+                    # Drop each table
+                    for (table_name,) in tables:
+                        if table_name.endswith(suffix):
+                            await db.execute(f"DROP TABLE IF EXISTS {table_name}")
+                            data_deleted_count += 1
+                            logger.info(f"  Dropped data table: {table_name}")
+
+                    await db.commit()
+
+                # Clean up related caches from kv.db
+                if kv_db_path.exists() and data_deleted_count > 0:
+                    async with aiosqlite.connect(str(kv_db_path)) as db:
+                        # Delete all cache entries for this workflow
+                        cursor = await db.execute(
+                            "DELETE FROM kv_storage WHERE key LIKE ?",
+                            (f"%_{user_id}_{workflow_id}%",)
+                        )
+                        cache_deleted = cursor.rowcount
+                        await db.commit()
+                        if cache_deleted > 0:
+                            logger.info(f"  Deleted {cache_deleted} cache entries for workflow")
+
+            if data_deleted_count > 0:
+                logger.info(f"✓ Deleted {data_deleted_count} data collections for workflow: {workflow_id}")
+        except Exception as e:
+            logger.warning(f"⚠ Failed to delete workflow data: {e}")
+
+        # Step 4: Determine success
         if not cloud_deleted and not local_deleted:
             raise HTTPException(status_code=404, detail=f"Workflow not found: {workflow_id}")
 
-        logger.info(f"✅ Workflow deletion complete: {workflow_id} (Cloud: {cloud_deleted}, Local: {local_deleted})")
+        logger.info(f"✅ Workflow deletion complete: {workflow_id} (Cloud: {cloud_deleted}, Local: {local_deleted}, Data collections: {data_deleted_count})")
         return {
             "status": "success",
             "message": "Workflow deleted",
             "deleted_from_cloud": cloud_deleted,
-            "deleted_from_local": local_deleted
+            "deleted_from_local": local_deleted,
+            "deleted_data_collections": data_deleted_count
         }
     except HTTPException:
         raise
@@ -2274,12 +2331,15 @@ async def delete_workflow(workflow_id: str, user_id: str):
 
 
 # ============================================================================
-# Data Management APIs (Collections Only)
+# Workflow Data APIs (per-workflow data isolation)
+# Table naming: {collection}_{user_id}_{workflow_id}
 # ============================================================================
 
-@app.get("/api/v1/data/collections")
-async def list_collections(user_id: str):
-    """List all data collections with metadata
+@app.get("/api/v1/workflows/{workflow_id}/data/collections")
+async def list_workflow_collections(workflow_id: str, user_id: str):
+    """List all data collections for a specific workflow
+
+    Table naming convention: {collection}_{user_id}_{workflow_id}
 
     Returns collections from storage.db with:
     - Collection name
@@ -2288,10 +2348,9 @@ async def list_collections(user_id: str):
     - Field names
     """
     try:
-        logger.info(f"Listing collections for user: {user_id}")
+        logger.info(f"Listing collections for workflow: {workflow_id}, user: {user_id}")
 
         import aiosqlite
-        from datetime import datetime
 
         collections = []
         storage_db_path = Path(config.get("data.databases.storage"))
@@ -2300,19 +2359,21 @@ async def list_collections(user_id: str):
             logger.info("Storage database does not exist yet")
             return {"collections": collections}
 
+        # Table name pattern: {collection}_{user_id}_{workflow_id}
+        suffix = f"_{user_id}_{workflow_id}"
+
         async with aiosqlite.connect(str(storage_db_path)) as db:
-            # Get all tables for this user
+            # Get all tables for this user + workflow
             cursor = await db.execute("""
                 SELECT name FROM sqlite_master
                 WHERE type='table' AND name LIKE ?
                 ORDER BY name
-            """, (f"%_{user_id}",))
+            """, (f"%{suffix}",))
             tables = await cursor.fetchall()
 
             for (table_name,) in tables:
-                # Parse collection name from table name (format: {collection}_{user_id})
-                # Remove the "_{user_id}" suffix to get the collection name
-                suffix = f"_{user_id}"
+                # Parse collection name from table name
+                # Format: {collection}_{user_id}_{workflow_id}
                 if table_name.endswith(suffix):
                     collection_name = table_name[:-len(suffix)]
                 else:
@@ -2329,9 +2390,13 @@ async def list_collections(user_id: str):
                 field_names = [col[1] for col in columns if col[1] not in ['id', 'created_at', 'updated_at']]
 
                 # Get table size estimate (number of pages * page size)
-                cursor = await db.execute(f"SELECT COUNT(*) FROM dbstat WHERE name=?", (table_name,))
-                page_count = (await cursor.fetchone())[0]
-                size_bytes = page_count * 4096  # SQLite default page size
+                try:
+                    cursor = await db.execute(f"SELECT COUNT(*) FROM dbstat WHERE name=?", (table_name,))
+                    page_count = (await cursor.fetchone())[0]
+                    size_bytes = page_count * 4096  # SQLite default page size
+                except Exception:
+                    # dbstat may not be available in all SQLite builds
+                    size_bytes = 0
 
                 collections.append({
                     "collection_name": collection_name,
@@ -2341,7 +2406,7 @@ async def list_collections(user_id: str):
                     "fields": field_names
                 })
 
-        logger.info(f"Found {len(collections)} collections")
+        logger.info(f"Found {len(collections)} collections for workflow {workflow_id}")
         return {"collections": collections}
 
     except Exception as e:
@@ -2351,20 +2416,21 @@ async def list_collections(user_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/v1/data/collections/{collection_name}")
-async def get_collection_detail(collection_name: str, user_id: str, limit: int = 10):
-    """Get collection detail with data preview
+@app.get("/api/v1/workflows/{workflow_id}/data/collections/{collection_name}")
+async def get_workflow_collection_detail(workflow_id: str, collection_name: str, user_id: str, limit: int = 100):
+    """Get collection detail with data preview for a specific workflow
 
     Args:
+        workflow_id: Workflow ID
         collection_name: Name of the collection
-        user_id: User ID (default: default_user)
-        limit: Number of records to preview (default: 10)
+        user_id: User ID
+        limit: Number of records to return (default: 100)
 
     Returns:
-        Collection metadata and preview data
+        Collection metadata and data
     """
     try:
-        logger.info(f"Getting collection detail: {collection_name} (limit: {limit})")
+        logger.info(f"Getting collection detail: {collection_name} for workflow {workflow_id} (limit: {limit})")
 
         import aiosqlite
 
@@ -2373,7 +2439,7 @@ async def get_collection_detail(collection_name: str, user_id: str, limit: int =
         if not storage_db_path.exists():
             raise HTTPException(status_code=404, detail="Storage database not found")
 
-        table_name = f"{collection_name}_{user_id}"
+        table_name = f"{collection_name}_{user_id}_{workflow_id}"
 
         async with aiosqlite.connect(str(storage_db_path)) as db:
             # Check if table exists
@@ -2396,11 +2462,14 @@ async def get_collection_detail(collection_name: str, user_id: str, limit: int =
             data_fields = [col[1] for col in columns if col[1] not in ['id', 'created_at', 'updated_at']]
 
             # Get table size
-            cursor = await db.execute(f"SELECT COUNT(*) FROM dbstat WHERE name=?", (table_name,))
-            page_count = (await cursor.fetchone())[0]
-            size_bytes = page_count * 4096
+            try:
+                cursor = await db.execute(f"SELECT COUNT(*) FROM dbstat WHERE name=?", (table_name,))
+                page_count = (await cursor.fetchone())[0]
+                size_bytes = page_count * 4096
+            except Exception:
+                size_bytes = 0
 
-            # Get preview data
+            # Get data
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
                 f"SELECT * FROM {table_name} ORDER BY created_at DESC LIMIT ?",
@@ -2409,9 +2478,9 @@ async def get_collection_detail(collection_name: str, user_id: str, limit: int =
             rows = await cursor.fetchall()
 
             # Convert to list of dicts
-            preview_data = [dict(row) for row in rows]
+            data = [dict(row) for row in rows]
 
-            logger.info(f"Collection detail loaded: {total_count} records, previewing {len(preview_data)}")
+            logger.info(f"Collection detail loaded: {total_count} records, returning {len(data)}")
 
             return {
                 "collection_name": collection_name,
@@ -2420,8 +2489,8 @@ async def get_collection_detail(collection_name: str, user_id: str, limit: int =
                 "size_bytes": size_bytes,
                 "fields": data_fields,
                 "all_fields": all_fields,
-                "preview_data": preview_data,
-                "preview_count": len(preview_data)
+                "data": data,
+                "returned_count": len(data)
             }
 
     except HTTPException:
@@ -2433,19 +2502,20 @@ async def get_collection_detail(collection_name: str, user_id: str, limit: int =
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.delete("/api/v1/data/collections/{collection_name}")
-async def delete_collection(collection_name: str, user_id: str):
-    """Delete a collection and its related caches
+@app.delete("/api/v1/workflows/{workflow_id}/data/collections/{collection_name}")
+async def delete_workflow_collection(workflow_id: str, collection_name: str, user_id: str):
+    """Delete a collection and its related caches for a specific workflow
 
     Args:
+        workflow_id: Workflow ID
         collection_name: Name of the collection to delete
-        user_id: User ID (default: default_user)
+        user_id: User ID
 
     Returns:
         Success message
     """
     try:
-        logger.info(f"Deleting collection: {collection_name}")
+        logger.info(f"Deleting collection: {collection_name} for workflow {workflow_id}")
 
         import aiosqlite
 
@@ -2455,7 +2525,7 @@ async def delete_collection(collection_name: str, user_id: str):
         if not storage_db_path.exists():
             raise HTTPException(status_code=404, detail="Storage database not found")
 
-        table_name = f"{collection_name}_{user_id}"
+        table_name = f"{collection_name}_{user_id}_{workflow_id}"
 
         # Step 1: Drop the table from storage.db
         async with aiosqlite.connect(str(storage_db_path)) as db:
@@ -2472,23 +2542,22 @@ async def delete_collection(collection_name: str, user_id: str):
             await db.execute(f"DROP TABLE {table_name}")
             await db.commit()
 
-            logger.info(f"✓ Dropped table: {table_name}")
+            logger.info(f"Dropped table: {table_name}")
 
         # Step 2: Delete related caches from kv.db
-        # Cache key patterns for StorageAgent (updated format with user_id):
-        # - storage_insert_{collection}_{user_id}
-        # - storage_query_{collection}_{user_id}_{config_hash}
-        # - storage_export_{collection}_{user_id}_{config_hash}
+        # Cache key patterns for StorageAgent:
+        # - storage_insert_{collection}_{user_id}_{workflow_id}
+        # - storage_query_{collection}_{user_id}_{workflow_id}_{config_hash}
+        # - storage_export_{collection}_{user_id}_{workflow_id}_{config_hash}
         cache_deleted_count = 0
 
         if kv_db_path.exists():
             async with aiosqlite.connect(str(kv_db_path)) as db:
                 # Delete all cache entries related to this collection
-                # Use exact prefix matching: storage_{operation}_{collection}_{user_id}
                 patterns = [
-                    f"storage_insert_{collection_name}_{user_id}",     # Exact match
-                    f"storage_query_{collection_name}_{user_id}%",     # With hash suffix
-                    f"storage_export_{collection_name}_{user_id}%",    # With hash suffix
+                    f"storage_insert_{collection_name}_{user_id}_{workflow_id}%",
+                    f"storage_query_{collection_name}_{user_id}_{workflow_id}%",
+                    f"storage_export_{collection_name}_{user_id}_{workflow_id}%",
                 ]
 
                 for pattern in patterns:
@@ -2499,11 +2568,11 @@ async def delete_collection(collection_name: str, user_id: str):
                     deleted = cursor.rowcount
                     if deleted > 0:
                         cache_deleted_count += deleted
-                        logger.info(f"✓ Deleted {deleted} cache entries matching: {pattern}")
+                        logger.info(f"Deleted {deleted} cache entries matching: {pattern}")
 
                 await db.commit()
 
-        logger.info(f"✅ Collection deleted: {collection_name} (table + {cache_deleted_count} cache entries)")
+        logger.info(f"Collection deleted: {collection_name} (table + {cache_deleted_count} cache entries)")
 
         return {
             "status": "success",
@@ -2520,20 +2589,21 @@ async def delete_collection(collection_name: str, user_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/v1/data/collections/{collection_name}/export")
-async def export_collection(collection_name: str, user_id: str, limit: Optional[int] = None):
-    """Export collection data as CSV
+@app.get("/api/v1/workflows/{workflow_id}/data/collections/{collection_name}/export")
+async def export_workflow_collection(workflow_id: str, collection_name: str, user_id: str, limit: Optional[int] = None):
+    """Export collection data as CSV for a specific workflow
 
     Args:
+        workflow_id: Workflow ID
         collection_name: Name of the collection
-        user_id: User ID (default: default_user)
+        user_id: User ID
         limit: Optional limit on number of rows to export
 
     Returns:
         CSV file as downloadable attachment
     """
     try:
-        logger.info(f"Exporting collection: {collection_name} (limit: {limit})")
+        logger.info(f"Exporting collection: {collection_name} for workflow {workflow_id} (limit: {limit})")
 
         import aiosqlite
         import csv
@@ -2544,7 +2614,7 @@ async def export_collection(collection_name: str, user_id: str, limit: Optional[
         if not storage_db_path.exists():
             raise HTTPException(status_code=404, detail="Storage database not found")
 
-        table_name = f"{collection_name}_{user_id}"
+        table_name = f"{collection_name}_{user_id}_{workflow_id}"
 
         async with aiosqlite.connect(str(storage_db_path)) as db:
             # Check if table exists
@@ -2589,7 +2659,7 @@ async def export_collection(collection_name: str, user_id: str, limit: Optional[
                 iter([output.getvalue()]),
                 media_type="text/csv",
                 headers={
-                    "Content-Disposition": f"attachment; filename={collection_name}_{user_id}.csv"
+                    "Content-Disposition": f"attachment; filename={collection_name}_{workflow_id}.csv"
                 }
             )
 

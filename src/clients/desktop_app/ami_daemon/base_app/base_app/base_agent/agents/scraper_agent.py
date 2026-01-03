@@ -748,20 +748,13 @@ class ScraperAgent(BaseStepAgent):
                 logger.info(f"✅ Loaded cached script from {script_file}")
                 logger.info(f"   Script size: {len(script_content)} chars")
 
-                # Send log to frontend with script content
+                # Send status to frontend (without script content)
                 if context and context.log_callback:
                     try:
-                        metadata = {
-                            "cache_path": str(script_file),
-                            "script_content": script_content,
-                            "content_type": "code",
-                            "language": "python"
-                        }
-                        logger.info(f"Sending script content to frontend: {len(script_content)} chars, metadata keys: {list(metadata.keys())}")
                         await context.log_callback(
                             "info",
-                            f"✅ Using cached extraction script ({len(script_content)} chars)",
-                            metadata
+                            f"✅ Using cached extraction script",
+                            {"cache_path": str(script_file)}
                         )
                     except Exception as e:
                         logger.warning(f"Failed to send log callback: {e}", exc_info=True)
@@ -785,6 +778,15 @@ class ScraperAgent(BaseStepAgent):
                     except Exception as e:
                         logger.warning(f"Failed to send log callback: {e}")
 
+                # Get current page URL for script generation
+                page_url = None
+                if self.browser_session:
+                    try:
+                        page_url = await self.browser_session.get_current_page_url()
+                        logger.info(f"📍 Page URL for script generation: {page_url}")
+                    except Exception as e:
+                        logger.warning(f"⚠️  Could not get page URL: {e}")
+
                 # Force full DOM for script generation to capture all page content
                 # This ensures the script can extract fields even if they're below the fold
                 original_scope = self.dom_scope
@@ -803,7 +805,8 @@ class ScraperAgent(BaseStepAgent):
                     'llm_view': generation_llm_view,
                     'dom_config': {
                         'dom_scope': 'full'  # Always full for generation
-                    }
+                    },
+                    'page_url': page_url  # Include page URL for base URL inference
                 }
 
                 # Generate script using Claude SDK
@@ -830,7 +833,7 @@ class ScraperAgent(BaseStepAgent):
                 execution_dict = dom_dict
 
             result = await self._execute_generated_script_direct(
-                generated_script, execution_dom, execution_dict, max_items
+                generated_script, execution_dict, max_items
             )
 
             # Save DOM snapshot after successful execution
@@ -881,7 +884,7 @@ class ScraperAgent(BaseStepAgent):
                         fixed_script = script_file.read_text(encoding='utf-8')
                         wrapped_script = self._extract_and_wrap_code(fixed_script)
                         result = await self._execute_generated_script_direct(
-                            wrapped_script, target_dom, dom_dict, max_items
+                            wrapped_script, dom_dict, max_items
                         )
                         logger.info("✅ Re-execution completed with fixed script")
                     elif not analysis["should_fix"]:
@@ -1311,11 +1314,10 @@ Extract data now:"""
     async def _execute_generated_script_direct(
         self,
         script_content: str,
-        serialized_dom,
         dom_dict: Dict,
         max_items: int
     ) -> Dict[str, Any]:
-        """直接执行生成的脚本，使用提供的DOM数据"""
+        """直接执行生成的脚本，使用提供的DOM数据（dom_dict 是嵌套字典，不是 HTML）"""
         
         try:
             # 准备脚本执行环境
@@ -1338,8 +1340,8 @@ Extract data now:"""
             if not execute_func:
                 return self._create_error_result("脚本缺少 execute_extraction 函数")
             
-            # 使用提供的DOM数据执行提取
-            result = execute_func(serialized_dom, dom_dict, max_items)
+            # 使用提供的DOM数据执行提取 (只传 dom_dict，不需要 serialized_dom)
+            result = execute_func(dom_dict, max_items)
             return result
             
         except Exception as e:
@@ -1386,6 +1388,23 @@ Extract data now:"""
 
             logger.info(f"Claude SDK workspace created: {working_dir}")
 
+            # Copy skills to working_dir for Claude Agent SDK to use
+            # Path: scraper_agent.py -> agents -> base_agent -> base_app -> base_app (with .claude)
+            skills_src = Path(__file__).parent.parent.parent.parent / ".claude" / "skills"
+            skills_dest = working_dir / ".claude" / "skills"
+            logger.info(f"Skills source: {skills_src}, exists: {skills_src.exists()}")
+            logger.info(f"Skills dest: {skills_dest}, exists: {skills_dest.exists()}")
+            if skills_src.exists():
+                import shutil
+                # Always copy/update skills (remove old if exists)
+                if skills_dest.exists():
+                    shutil.rmtree(skills_dest)
+                skills_dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(skills_src, skills_dest)
+                logger.info(f"Copied skills to {skills_dest}")
+            else:
+                logger.warning(f"Skills source not found: {skills_src}")
+
             # 2. Save input files for Claude to read
             # Save data requirements
             requirement_file = working_dir / "requirement.json"
@@ -1425,85 +1444,44 @@ Extract data now:"""
                 hints_list = "\n".join([f"- {name}: {xpath}" for name, xpath in xpath_hints.items()])
                 xpath_hints_description = f"\n\nXPath hints from user demo (reference only):\n{hints_list}"
 
-            # Build Claude SDK prompt
-            prompt = f"""# Web Scraping Script Generation Task
+            # Get page URL from dom_analysis
+            page_url = dom_analysis.get('page_url', '')
 
-## Working Directory
+            # Build Claude SDK prompt - simplified since SKILL.md has detailed guidance
+            prompt = f"""# Data Extraction Script Generation
 
-You are working in: `{working_dir}`
+Generate `extraction_script.py` to extract data from the webpage DOM.
 
-**Input files:**
-- `requirement.json` - What data to extract
-- `dom_data.json` - Webpage DOM structure (nested JSON)
+## Task Context
 
-**Your task:**
-Create `extraction_script.py` that extracts data according to requirements.
+- **Working Directory**: `{working_dir}`
+- **Page URL**: `{page_url}`
+
+## Input Files
+
+- `requirement.json` - User requirements, output format, xpath hints
+- `dom_data.json` - Page DOM as nested JSON dictionary
 
 ## Instructions
 
-1. **Read the files** to understand requirements and DOM structure
-2. **Explore the DOM** using Grep/Read to find target elements
-3. **Write extraction script** that returns `List[Dict[str, Any]]`
+Use the `dom-extraction` skill for detailed workflow. Key steps:
 
-## Dual Anchor Strategy (CRITICAL)
-You MUST use a "Dual Anchor" strategy for robust extraction:
+1. Read `requirement.json` to understand what to extract
+2. Use DOM tools to locate elements: `python .claude/skills/dom-extraction/tools/dom_tools.py find "<xpath>"`
+3. Analyze container structure if extracting a list
+4. Write `extraction_script.py` with function `extract_data_from_page(dom_dict) -> List[Dict]`
+5. Test and validate the script
 
-1.  **Anchor 1: XPath Hints (Ground Truth Verification)**
-    *   Use the provided `xpath_hints` in `requirement.json` to locate the *exact* sample element in the DOM.
-    *   Verify that this element matches the data type you need.
-    *   Use this to understand the *structure* of the data (e.g., "Oh, the price is in a span with class 'price'").
+## Quick Reference
 
-2.  **Anchor 2: Semantic Description (Navigation Logic)**
-    *   Use the `user_description` to identify the *parent container* or *section header* that semantically bounds the data.
-    *   **DO NOT** rely solely on absolute XPaths (e.g., `div[2]/div[4]`) to find the container, as these break easily.
-    *   **INSTEAD**, write code that:
-        a.  Finds the Semantic Anchor first (e.g., `find_element_by_text('Reputation Skyrockets')`).
-        b.  Navigates to the parent container relative to that anchor.
-        c.  Extracts items *within* that container using the structure learned from Anchor 1.
+- DOM tools are at `.claude/skills/dom-extraction/tools/dom_tools.py`
+- Commands: `find`, `parent`, `analyze`, `children`, `print`
+- See skill documentation for full workflow
 
-## Critical DOM Understanding
-1.  **Text Nodes**: Text is often split across multiple child nodes (e.g., `<span>$</span><span>99</span>`). You MUST use a helper to join all text within an element.
-    *   *Bad*: `element.text` (might miss children)
-    *   *Good*: `"".join(element.itertext())` or similar logic.
-2.  **Fragmented DOM**: Modern frameworks (React/Vue) often create deep, nested `div` structures. Do not rely on exact depth (e.g., `div/div/div`). Use relative searches (descendants) or class-based lookups where possible, *scoped* to your Semantic Anchor.
+## CRITICAL: URLs Must Be Absolute
 
-## Requirements
-1.  **Read `requirement.json`**: Understand what fields to extract and the `user_description`.
-2.  **Explore `dom_data.json`**: Analyze the DOM structure to find the best selectors that match the Dual Anchor strategy.
-3.  **Write `extraction_script.py`**:
-    *   Must be a standalone Python script.
-    *   Must implement `extract_data_from_page(serialized_dom, dom_dict) -> List[Dict]`.
-    *   Must handle missing fields gracefully (return `None` or empty string).
-    *   **MUST** implement the "Find Header -> Find Container -> Extract" logic if a semantic anchor is described.
-
-**Make it generic:**
-- Work on similar pages with different content
-- Use structural patterns (classes, tags), not hardcoded values
-- Handle missing elements gracefully
-
-## Data Requirements
-
-**User Description:** {user_description}
-
-**Fields to extract:**
-{fields_description}{sample_description}{xpath_hints_description}
-
-## Important Notes
-
-- **sample_data is just ONE example** - script must work for other pages with different content
-- **xpath_hints are reference only** - use them to understand structure, then adapt to actual DOM
-- **Text may be split** across child nodes - combine when needed
-- **Avoid hardcoding** - no magic numbers, specific text values, or assumptions from sample
-- **Preserve DOM order** - DO NOT sort results. DOM order is meaningful (rankings, chronological, relevance)
-- **URL fields MUST be complete URLs** - If field name contains "url" or "link" and you extract from `href` attribute:
-  - Check if it's a relative path (starts with `/` but no `http://` or `https://`)
-  - If relative, prepend the base URL to make it absolute
-  - The base URL can be inferred from xpath_hints or user_description context
-  - Example: `/leaderboard/daily` from producthunt.com → `https://www.producthunt.com/leaderboard/daily`
-
-## Testing
-
-Create and run a test to validate your extraction_script.py works correctly.
+All URLs in extracted data MUST be absolute. Use `urljoin(PAGE_URL, relative_url)` to convert.
+Relative URLs like `/products/xxx` will cause navigation failures!
 """
 
             # 4. Initialize Claude Agent Provider with user's API key and base URL
@@ -1536,44 +1514,20 @@ Create and run a test to validate your extraction_script.py works correctly.
             try:
                 async for event in claude_provider.run_task_stream(
                     prompt=prompt,
-                    working_dir=working_dir
+                    working_dir=working_dir,
+                    enable_skills=True
                 ):
-                    # Forward streaming events to frontend
+                    # Forward status updates to frontend (but not detailed content like scripts)
                     if context and context.log_callback:
                         try:
                             if event.type == "text":
-                                # Claude's thinking text
+                                # Send progress status without detailed content
                                 await context.log_callback(
                                     "info",
-                                    f"Generating script (turn {event.turn})\n{event.content[:150]}...",
+                                    f"Generating script (turn {event.turn})",
                                     {
                                         "update_id": progress_update_id,
-                                        "turn": event.turn,
-                                        "message": event.content[:150]
-                                    }
-                                )
-                            elif event.type == "tool_use":
-                                # Tool usage
-                                tool_desc = f"Using {event.tool_name} tool"
-                                await context.log_callback(
-                                    "info",
-                                    f"Generating script (turn {event.turn})\n{tool_desc}",
-                                    {
-                                        "update_id": progress_update_id,
-                                        "turn": event.turn,
-                                        "message": tool_desc,
-                                        "tool_name": event.tool_name
-                                    }
-                                )
-                            elif event.type == "thinking":
-                                # System messages
-                                await context.log_callback(
-                                    "info",
-                                    f"Generating script\n{event.content}",
-                                    {
-                                        "update_id": progress_update_id,
-                                        "turn": event.turn or 0,
-                                        "message": event.content
+                                        "turn": event.turn
                                     }
                                 )
                             elif event.type == "complete":
@@ -1636,19 +1590,7 @@ Create and run a test to validate your extraction_script.py works correctly.
                         }
                     )
 
-                    # Then send a new log with the script content
-                    await context.log_callback(
-                        "success",
-                        f"✅ Script generated successfully ({len(script_content)} chars)",
-                        {
-                            "cache_path": str(script_file),
-                            "script_content": script_content,
-                            "content_type": "code",
-                            "language": "python",
-                            "iterations": final_turn
-                        }
-                    )
-                    logger.info(f"Sent script generation completion to frontend")
+                    logger.info(f"Script generation completed, not sending content to frontend")
                 except Exception as e:
                     logger.warning(f"Failed to send completion log: {e}", exc_info=True)
 
@@ -1704,14 +1646,14 @@ from typing import List, Dict, Any
 
 {code}
 
-def execute_extraction(serialized_dom, dom_dict, max_items: int = 100):
+def execute_extraction(dom_dict, max_items: int = 100):
     """Execute data extraction wrapper function"""
     import logging
     logger = logging.getLogger(__name__)
-    
+
     try:
-        # Extract all available data
-        all_data = extract_data_from_page(serialized_dom, dom_dict)
+        # Extract all available data (dom_dict is a nested dictionary, NOT HTML)
+        all_data = extract_data_from_page(dom_dict)
         
         # Apply quantity limit at wrapper level
         if isinstance(all_data, list):

@@ -32,6 +32,7 @@ description: Agent specifications for workflow generation. Lists all valid agent
 ### scraper_agent
 - Extract data from current page
 - Does NOT navigate (use browser_agent first)
+- **ALWAYS use `extraction_method: "script"`**
 - Output is always `List[Dict]`
 - See `references/scraper_agent.md`
 
@@ -43,6 +44,7 @@ description: Agent specifications for workflow generation. Lists all valid agent
 ### text_agent
 - Generate or transform text using LLM
 - Requires `inputs.instruction` field
+- See `references/text_agent.md`
 ```yaml
 - id: "summarize"
   name: "Summarize Content"
@@ -51,22 +53,25 @@ description: Agent specifications for workflow generation. Lists all valid agent
     instruction: "Summarize this content"
     content: "{{extracted_text}}"
   outputs:
-    result: "summary"
+    summary: "summary_result"
 ```
 
 ### variable
-- Set or manipulate workflow variables
+- Combine, filter, or slice data (no LLM)
 - **Agent type is `variable`** (not `variable_agent`)
+- **Output key is always `result`**
+- See `references/variable_agent.md`
 ```yaml
-- id: "init-list"
-  name: "Initialize List"
+- id: "combine-data"
+  name: "Combine Data"
   agent_type: "variable"
   inputs:
     operation: "set"
     data:
-      my_list: []
+      url: "{{product.url}}"
+      name: "{{details.0.name}}"
   outputs:
-    my_list: "my_list"
+    result: "complete_product"
 ```
 
 ### foreach

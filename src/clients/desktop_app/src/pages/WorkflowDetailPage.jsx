@@ -60,7 +60,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
   // Restore activeTab from pageData or localStorage, otherwise default to 'visual'
   const [activeTab, setActiveTab] = useState(
     pageData?.activeTab || savedState?.activeTab || 'visual'
-  ) // 'visual', 'yaml', 'chat', or 'history'
+  ) // 'visual', 'yaml', 'chat', 'data', or 'history'
 
   // Chat/Modification state
   const [chatInput, setChatInput] = useState('')
@@ -86,7 +86,6 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
     }
   })
   const logEndRef = useRef(null)
-
   // Save chat instructions collapsed state
   useEffect(() => {
     try {
@@ -121,6 +120,14 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
   const [selectedExecution, setSelectedExecution] = useState(null)
   const [executionDetail, setExecutionDetail] = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
+
+  // Data tab state
+  const [collections, setCollections] = useState([])
+  const [dataLoading, setDataLoading] = useState(false)
+  const [selectedCollection, setSelectedCollection] = useState(null)
+  const [collectionData, setCollectionData] = useState(null)
+  const [collectionLoading, setCollectionLoading] = useState(false)
+  const [deleteConfirm, setDeleteConfirm] = useState(null) // { collectionName: string }
 
   useEffect(() => {
     if (userId && workflowId) {
@@ -382,6 +389,120 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
     }
   }, [activeTab, statusFilter, userId, workflowId])
 
+  // Data tab functions
+  const fetchCollections = async () => {
+    setDataLoading(true)
+    try {
+      const url = `/api/v1/workflows/${workflowId}/data/collections?user_id=${userId}`
+      const result = await api.callAppBackend(url)
+      setCollections(result.collections || [])
+    } catch (error) {
+      console.error('Error fetching collections:', error)
+      showStatus(`Failed to load collections: ${error.message}`, 'error')
+    } finally {
+      setDataLoading(false)
+    }
+  }
+
+  const fetchCollectionData = async (collectionName) => {
+    setCollectionLoading(true)
+    try {
+      const url = `/api/v1/workflows/${workflowId}/data/collections/${collectionName}?user_id=${userId}`
+      const result = await api.callAppBackend(url)
+      setCollectionData(result)
+    } catch (error) {
+      console.error('Error fetching collection data:', error)
+      showStatus(`Failed to load collection data: ${error.message}`, 'error')
+    } finally {
+      setCollectionLoading(false)
+    }
+  }
+
+  const handleSelectCollection = (collection) => {
+    // Always refresh data when clicking a collection, even if it's already selected
+    setSelectedCollection(collection)
+    fetchCollectionData(collection.collection_name)
+  }
+
+  const handleDeleteClick = (collectionName) => {
+    setDeleteConfirm({ collectionName })
+  }
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteConfirm) return
+
+    const { collectionName } = deleteConfirm
+    setDeleteConfirm(null)
+
+    try {
+      showStatus('Deleting...', 'info')
+      const url = `/api/v1/workflows/${workflowId}/data/collections/${collectionName}?user_id=${userId}`
+      await api.callAppBackend(url, { method: 'DELETE' })
+      showStatus(`Collection "${collectionName}" deleted`, 'success')
+      setSelectedCollection(null)
+      setCollectionData(null)
+      fetchCollections()
+    } catch (error) {
+      console.error('Error deleting collection:', error)
+      showStatus(`Failed to delete collection: ${error.message}`, 'error')
+    }
+  }
+
+  const handleDeleteCancel = () => {
+    setDeleteConfirm(null)
+  }
+
+  const handleExportCollection = async (collectionName) => {
+    try {
+      showStatus('Exporting...', 'info')
+      const response = await api.callAppBackendRaw(
+        `/api/v1/workflows/${workflowId}/data/collections/${collectionName}/export?user_id=${userId}`
+      )
+
+      if (!response.ok) {
+        throw new Error(`Export failed: ${response.status}`)
+      }
+
+      // Get the CSV content
+      const csvContent = await response.text()
+
+      // Create blob and download
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `${collectionName}_${workflowId}.csv`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+
+      showStatus('Export completed', 'success')
+    } catch (error) {
+      console.error('Export error:', error)
+      showStatus(`Export failed: ${error.message}`, 'error')
+    }
+  }
+
+  // Refresh all data: collections list and selected collection data
+  const handleRefreshData = async () => {
+    await fetchCollections()
+    if (selectedCollection) {
+      fetchCollectionData(selectedCollection.collection_name)
+    }
+  }
+
+  // Load data when tab changes to data
+  useEffect(() => {
+    if (activeTab === 'data' && userId && workflowId) {
+      fetchCollections()
+      // Also refresh selected collection data if one is selected
+      if (selectedCollection) {
+        fetchCollectionData(selectedCollection.collection_name)
+      }
+    }
+  }, [activeTab, userId, workflowId])
+
   const formatDuration = (startedAt, finishedAt) => {
     if (!startedAt || !finishedAt) return 'N/A'
     const start = new Date(startedAt)
@@ -478,24 +599,42 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
         {workflowData && (
           <>
             {/* Workflow Traceability Info - only show source_recording_id (MetaFlow is now internal) */}
-            {workflowData.source_recording_id && (
+            {/* Workflow Metadata Card */}
+            {workflowData && (
               <div className="workflow-traceability-card">
                 <div className="traceability-header">
-                  <Icon icon="gitBranch" size={16} />
-                  <h3>来源信息</h3>
+                  <Icon icon="info" size={16} />
+                  <h3>Metadata</h3>
                 </div>
-                <div className="traceability-content">
+                <div className="traceability-content" style={{ flexDirection: 'column', gap: '8px', alignItems: 'flex-start' }}>
                   <div className="trace-item">
-                    <span className="trace-label">Recording:</span>
-                    <code className="trace-value">{workflowData.source_recording_id}</code>
-                    <button
-                      className="trace-link-button"
-                      onClick={() => onNavigate('recording-detail', { sessionId: workflowData.source_recording_id })}
-                      title="查看Recording详情"
-                    >
-                      <Icon icon="externalLink" size={14} />
-                    </button>
+                    <span className="trace-label">Name:</span>
+                    <code className="trace-value" style={{ width: 'auto' }}>{workflowData.name || workflowId}</code>
                   </div>
+                  <div className="trace-item">
+                    <span className="trace-label">ID:</span>
+                    <code className="trace-value" style={{ width: 'auto' }}>{workflowData.agent_id || workflowData.id || workflowData.workflow_id || workflowId}</code>
+                  </div>
+                  {workflowData.source_recording_id && (
+                    <div className="trace-item">
+                      <span className="trace-label">Source:</span>
+                      <code className="trace-value" style={{ width: 'auto' }}>{workflowData.source_recording_id}</code>
+                      <button
+                        className="trace-link-button"
+                        onClick={() => onNavigate('recording-detail', { sessionId: workflowData.source_recording_id })}
+                        title="View Recording"
+                      >
+                        <Icon icon="externalLink" size={14} />
+                      </button>
+                    </div>
+                  )}
+                  {/* Custom Metadata */}
+                  {workflowData.metadata && Object.entries(workflowData.metadata).map(([key, value]) => (
+                    <div className="trace-item" key={key}>
+                      <span className="trace-label">{key}:</span>
+                      <code className="trace-value" style={{ width: 'auto' }}>{String(value)}</code>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
@@ -522,6 +661,13 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
               >
                 <Icon icon="messageSquare" size={16} />
                 <span>AI 对话</span>
+              </button>
+              <button
+                className={`workflow-tab-button ${activeTab === 'data' ? 'active' : ''}`}
+                onClick={() => setActiveTab('data')}
+              >
+                <Icon icon="database" size={16} />
+                <span>数据</span>
               </button>
               <button
                 className={`workflow-tab-button ${activeTab === 'history' ? 'active' : ''}`}
@@ -663,6 +809,139 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                       )}
                     </button>
                   </div>
+                </div>
+              ) : activeTab === 'data' ? (
+                <div className="workflow-data-container">
+                  {dataLoading ? (
+                    <div className="data-loading">
+                      <div className="spinner"></div>
+                      <p>Loading collections...</p>
+                    </div>
+                  ) : collections.length === 0 ? (
+                    <div className="data-empty">
+                      <Icon icon="database" size={48} />
+                      <p>No collections found</p>
+                      <span className="data-empty-hint">
+                        This workflow may not store data, or it hasn't been executed yet.
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="data-layout-container">
+                      {/* Left Sidebar */}
+                      <div className="data-sidebar">
+                        <div className="sidebar-header">
+                          <span className="sidebar-title">Data Collections</span>
+                          <button className="btn-icon-ghost" onClick={handleRefreshData} title="Refresh">
+                            <Icon icon="refresh" size={14} />
+                          </button>
+                        </div>
+                        <div className="sidebar-list">
+                          {collections.map((col) => (
+                            <div
+                              key={col.collection_name}
+                              className={`sidebar-item ${selectedCollection?.collection_name === col.collection_name ? 'active' : ''}`}
+                              onClick={() => handleSelectCollection(col)}
+                            >
+                              <div className="item-icon">
+                                <Icon icon="database" size={16} />
+                              </div>
+                              <div className="item-content">
+                                <span className="item-name">{col.collection_name}</span>
+                                <span className="item-meta">{col.records_count} records</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Main Content Area */}
+                      <div className="data-main-view">
+                        {!selectedCollection ? (
+                          <div className="empty-selection-state">
+                            <div className="empty-icon-circle">
+                              <Icon icon="mousePointer" size={24} />
+                            </div>
+                            <h3>Select a Collection</h3>
+                            <p>Choose a data collection from the left to view and manage its records.</p>
+                          </div>
+                        ) : collectionLoading ? (
+                          <div className="main-loading-state">
+                            <div className="spinner"></div>
+                            <p>Loading records...</p>
+                          </div>
+                        ) : collectionData ? (
+                          <>
+                            {/* View Header */}
+                            <div className="data-view-header">
+                              <div className="header-title-group">
+                                <h1>{selectedCollection.collection_name}</h1>
+                                <div className="header-badges">
+                                  <span className="badge-pill">
+                                    <Icon icon="list" size={12} />
+                                    {collectionData.total_records} Records
+                                  </span>
+                                  <span className="badge-pill">
+                                    <Icon icon="columns" size={12} />
+                                    {collectionData.fields?.length || 0} Fields
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="header-actions">
+                                <button
+                                  className="btn-secondary"
+                                  onClick={() => handleExportCollection(selectedCollection.collection_name)}
+                                >
+                                  <Icon icon="download" size={16} />
+                                  <span>Export CSV</span>
+                                </button>
+                                <button
+                                  className="btn-danger-secondary"
+                                  onClick={() => handleDeleteClick(selectedCollection.collection_name)}
+                                >
+                                  <Icon icon="trash2" size={16} />
+                                  <span>Delete</span>
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Data Table */}
+                            <div className="data-table-card">
+                              <div className="table-scroll-container">
+                                <table className="modern-data-table">
+                                  <thead>
+                                    <tr>
+                                      {collectionData.fields?.map((field) => (
+                                        <th key={field}>{field}</th>
+                                      ))}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {collectionData.data?.map((row, idx) => (
+                                      <tr key={idx}>
+                                        {collectionData.fields?.map((field) => (
+                                          <td key={field}>
+                                            <div className="cell-content">
+                                              {typeof row[field] === 'object'
+                                                ? JSON.stringify(row[field])
+                                                : String(row[field] ?? '')}
+                                            </div>
+                                          </td>
+                                        ))}
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                              <div className="table-footer">
+                                <span>Showing {collectionData.data?.length} of {collectionData.total_records} records</span>
+                              </div>
+                            </div>
+                          </>
+                        ) : null}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : activeTab === 'history' ? (
                 <div className="workflow-history-container">
@@ -916,9 +1195,38 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
         )}
       </div>
 
+
+
       <div className="footer">
         <p>Ami v1.0.0</p>
       </div>
+
+      {/* Delete Collection Confirmation Modal */}
+      {
+        deleteConfirm && (
+          <div className="modal-overlay" onClick={handleDeleteCancel}>
+            <div className="delete-confirm-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <h3>Confirm Delete</h3>
+              </div>
+              <div className="modal-body">
+                <p>Are you sure you want to delete collection <strong>"{deleteConfirm.collectionName}"</strong>?</p>
+                <p className="warning-text">This action cannot be undone.</p>
+              </div>
+              <div className="modal-footer">
+                <button className="btn-cancel" onClick={handleDeleteCancel}>
+                  Cancel
+                </button>
+                <button className="btn-confirm-delete" onClick={handleDeleteConfirm}>
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      }
+
+
     </div >
   )
 }
