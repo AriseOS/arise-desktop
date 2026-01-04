@@ -2,9 +2,12 @@
 Variable Agent for handling simple variable operations without LLM
 
 Supported operations:
-- set: Initialize/combine variables
-- filter: Filter list by field condition
-- slice: Slice list by index or matching value
+- set: Initialize/combine variables (uses 'data' field)
+- filter: Filter list by field condition (uses 'data' field)
+- slice: Slice list by start/end index (uses 'data' field)
+- append: Append item to list (uses 'data' for list, 'item' for new element)
+
+All operations use 'data' as the unified input field.
 """
 import re
 import logging
@@ -63,8 +66,10 @@ class VariableAgent(BaseStepAgent):
                 result = await self._handle_filter(step_config, context)
             elif operation == 'slice':
                 result = await self._handle_slice(step_config, context)
+            elif operation == 'append':
+                result = await self._handle_append(step_config, context)
             else:
-                raise ValueError(f"Unsupported operation: {operation}. Supported: set, filter, slice")
+                raise ValueError(f"Unsupported operation: {operation}. Supported: set, filter, slice, append")
 
             # ALWAYS wrap result in {"result": ...} for consistent output mapping
             return AgentOutput(
@@ -107,17 +112,21 @@ class VariableAgent(BaseStepAgent):
 
         Usage:
             operation: "filter"
-            source: "{{all_items}}"
+            data: "{{all_items}}"
             field: "url"
             contains: "product"    # OR
             equals: "specific_value"
 
         Output: Filtered list
         """
-        source = self._resolve_variable(step_config.get('source'), context)
+        data = step_config.get('data')
+        if data is None:
+            raise ValueError("'data' field is required for filter operation")
 
-        if not isinstance(source, list):
-            raise TypeError(f"Cannot filter non-list: {type(source)}")
+        resolved_data = self._resolve_variable(data, context)
+
+        if not isinstance(resolved_data, list):
+            raise TypeError(f"Cannot filter non-list: {type(resolved_data)}")
 
         field = step_config.get('field')
         contains = step_config.get('contains')
@@ -127,7 +136,7 @@ class VariableAgent(BaseStepAgent):
             raise ValueError("Field is required for filter operation")
 
         result = []
-        for item in source:
+        for item in resolved_data:
             if isinstance(item, dict):
                 field_value = item.get(field)
             else:
@@ -147,30 +156,39 @@ class VariableAgent(BaseStepAgent):
 
     async def _handle_slice(self, step_config: Dict, context: Any) -> List:
         """
-        Slice operation - slice list from index or matching value.
+        Slice operation - slice list by start/end index or matching value.
 
         Usage (by index):
             operation: "slice"
-            source: "{{all_items}}"
-            start: 10
+            data: "{{all_items}}"
+            start: 0
+            end: 10
 
         Usage (by matching value):
             operation: "slice"
-            source: "{{all_items}}"
+            data: "{{all_items}}"
             start_value: "https://example.com/item"
             match_field: "url"
 
         Output: Sliced list
         """
-        source = self._resolve_variable(step_config.get('source'), context)
+        data = step_config.get('data')
+        if data is None:
+            raise ValueError("'data' field is required for slice operation")
 
-        if not isinstance(source, list):
-            raise TypeError(f"Cannot slice non-list: {type(source)}")
+        resolved_data = self._resolve_variable(data, context)
 
-        # Method 1: Direct index
+        if not isinstance(resolved_data, list):
+            raise TypeError(f"Cannot slice non-list: {type(resolved_data)}")
+
+        # Method 1: Direct index slicing with start and/or end
         start = step_config.get('start')
-        if start is not None:
-            return source[int(start):]
+        end = step_config.get('end')
+
+        if start is not None or end is not None:
+            start_idx = int(start) if start is not None else None
+            end_idx = int(end) if end is not None else None
+            return resolved_data[start_idx:end_idx]
 
         # Method 2: Find index by matching field value
         start_value = step_config.get('start_value')
@@ -180,19 +198,51 @@ class VariableAgent(BaseStepAgent):
             if not match_field:
                 raise ValueError("match_field is required when using start_value")
 
-            for idx, item in enumerate(source):
+            for idx, item in enumerate(resolved_data):
                 if isinstance(item, dict):
                     field_value = item.get(match_field)
                 else:
                     field_value = getattr(item, match_field, None)
 
                 if str(field_value) == str(start_value):
-                    return source[idx:]
+                    return resolved_data[idx:]
 
             self.logger.warning(f"Could not find item with {match_field}={start_value}, returning original list")
-            return source
+            return resolved_data
 
-        return source
+        return resolved_data
+
+    async def _handle_append(self, step_config: Dict, context: Any) -> List:
+        """
+        Append operation - append item to a list.
+
+        Usage:
+            operation: "append"
+            data: "{{all_items}}"
+            item: "{{new_item}}"
+
+        Output: List with appended item
+        """
+        data = step_config.get('data')
+        if data is None:
+            raise ValueError("'data' field is required for append operation")
+
+        resolved_data = self._resolve_variable(data, context)
+
+        if not isinstance(resolved_data, list):
+            raise TypeError(f"Cannot append to non-list: {type(resolved_data)}")
+
+        item = step_config.get('item')
+        if item is None:
+            raise ValueError("'item' field is required for append operation")
+
+        resolved_item = self._resolve_variable(item, context)
+
+        # Create new list with appended item (don't mutate original)
+        result = list(resolved_data)
+        result.append(resolved_item)
+
+        return result
 
     def _resolve_variable(self, value: Any, context: Any) -> Any:
         """Resolve variable references like {{var}} or {{var.field}}"""

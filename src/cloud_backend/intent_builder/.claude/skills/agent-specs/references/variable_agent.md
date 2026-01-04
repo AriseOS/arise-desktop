@@ -6,6 +6,8 @@
 
 Combines, filters, or slices data without LLM. Use for data transformation between steps.
 
+**IMPORTANT**: All operations use `data` as the unified input field.
+
 ## Operations
 
 ### set - Combine Data
@@ -30,7 +32,7 @@ Combines, filters, or slices data without LLM. Use for data transformation betwe
   agent_type: "variable"
   inputs:
     operation: "filter"
-    source: "{{all_products}}"
+    data: "{{all_products}}"
     field: "category"
     contains: "electronics"   # OR equals: "exact_value"
   outputs:
@@ -40,12 +42,23 @@ Combines, filters, or slices data without LLM. Use for data transformation betwe
 ### slice - Slice List
 
 ```yaml
-# By index
+# Get first N items (start=0, end=N)
+- id: "get-first-10"
+  agent_type: "variable"
+  inputs:
+    operation: "slice"
+    data: "{{all_items}}"
+    start: 0
+    end: 10
+  outputs:
+    result: "first_10_items"
+
+# Skip first N items (start=N)
 - id: "skip-first-10"
   agent_type: "variable"
   inputs:
     operation: "slice"
-    source: "{{all_items}}"
+    data: "{{all_items}}"
     start: 10
   outputs:
     result: "remaining_items"
@@ -55,7 +68,7 @@ Combines, filters, or slices data without LLM. Use for data transformation betwe
   agent_type: "variable"
   inputs:
     operation: "slice"
-    source: "{{all_items}}"
+    data: "{{all_items}}"
     start_value: "https://example.com/target"
     match_field: "url"
   outputs:
@@ -97,7 +110,7 @@ outputs:
   agent_type: "variable"
   inputs:
     operation: "filter"
-    source: "{{all_items}}"
+    data: "{{all_items}}"
     field: "status"
     equals: "active"
   outputs:

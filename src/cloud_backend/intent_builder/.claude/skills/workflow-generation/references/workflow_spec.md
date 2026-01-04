@@ -323,8 +323,8 @@ steps:
 
         inputs:
           operation: "append"
-          source: "{{all_products}}"
-          data: "{{product_detail}}"
+          data: "{{all_products}}"
+          item: "{{product_detail}}"
 
         outputs:
           result: "all_products"

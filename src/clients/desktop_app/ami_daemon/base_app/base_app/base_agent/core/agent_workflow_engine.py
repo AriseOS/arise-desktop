@@ -313,7 +313,7 @@ class AgentWorkflowEngine:
             })
         elif agent_type == "variable":
             # Variable agent uses step_config for operation details
-            # Use resolved_input instead of step attributes to get parsed values
+            # All operations use 'data' as the unified input field
             resolved_data = resolved_input.get('data', {})
             logger.info(f"🔍 [VariableAgent] step_id={step.id}, resolved_data type: {type(resolved_data)}, preview: {str(resolved_data)[:200]}")
 
@@ -321,21 +321,20 @@ class AgentWorkflowEngine:
                 "step_config": {
                     "operation": resolved_input.get('operation', 'set'),
                     "data": resolved_data,
-                    "source": resolved_input.get('source', None),
                     "field": resolved_input.get('field', None),
                     "value": resolved_input.get('value', None),
                     "expression": resolved_input.get('expression', None),
                     "updates": resolved_input.get('updates', None),
-                    "current_page": resolved_input.get('current_page', None),
-                    "max_pages": resolved_input.get('max_pages', None),
-                    "items_found": resolved_input.get('items_found', None),
                     # slice operation parameters
                     "start": resolved_input.get('start', None),
+                    "end": resolved_input.get('end', None),
                     "start_value": resolved_input.get('start_value', None),
                     "match_field": resolved_input.get('match_field', None),
                     # filter operation parameters
                     "contains": resolved_input.get('contains', None),
-                    "equals": resolved_input.get('equals', None)
+                    "equals": resolved_input.get('equals', None),
+                    # append operation parameters
+                    "item": resolved_input.get('item', None)
                 },
                 "context": context
             })
