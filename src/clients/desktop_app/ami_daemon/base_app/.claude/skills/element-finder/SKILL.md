@@ -128,13 +128,17 @@ def find_target_element(dom_dict: dict) -> dict:
     }
 ```
 
-### Step 5: Test
+### Step 5: Test (MANDATORY)
+
+**You MUST run the test and verify success before completing the task.**
 
 ```bash
 python test_operation.py
 ```
 
 Must print "SUCCESS" and exit with code 0.
+
+**DO NOT mark task as complete if test fails. Fix the script first.**
 
 ## Search Strategies
 
@@ -184,9 +188,15 @@ def condition(n):
 - Use: `python element_tools.py list "<parent_xpath>"`
 
 ### xpath hint doesn't match
-- Page structure may have changed
-- Solution: Use `search` or `attr` to find by content instead of xpath
+- Page structure may have changed, or quote mismatch (single vs double quotes)
+- xpath_hints may use `@id='x'`, dom_data.json uses `@id="x"`
+- Solution: Use `normalize_xpath()` for comparison, or use `search`/`attr` to find by content
 - Use: `python element_tools.py search "<button_text>"`
+
+```python
+def normalize_xpath(xpath: str) -> str:
+    return xpath.replace("'", '"')
+```
 
 ### Multiple matches
 - Multiple elements match the criteria

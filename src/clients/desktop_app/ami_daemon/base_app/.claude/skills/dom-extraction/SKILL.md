@@ -162,16 +162,25 @@ def extract_data_from_page(dom_dict: Dict) -> List[Dict]:
     return results
 ```
 
-### Step 6: Test and Validate
+### Step 6: Test and Validate (MANDATORY)
+
+**You MUST run the script and verify the output before completing the task.**
 
 ```bash
 python extraction_script.py
 ```
 
-Verify:
-- For lists: Count matches expected from container analysis
-- For single: Values are not empty
-- URLs are absolute (prepend base URL if needed)
+**Validation:**
+- Script runs without errors
+- If data exists in DOM → it must be extracted
+- If data doesn't exist in DOM → empty result is acceptable
+
+**If extraction returns empty but data exists in DOM:**
+1. Verify with grep: `grep -i "expected_text" dom_data.json`
+2. If found → xpath matching is failing, likely quote mismatch (see Troubleshooting)
+3. Fix and re-test until extraction captures the data
+
+**DO NOT mark task as complete if data exists in DOM but script fails to extract it.**
 
 ## DOM Dictionary Format
 
@@ -237,6 +246,26 @@ Fields: `tag`, `class`, `href`, `src`, `text`, `xpath`, `children`
    ```
 
 5. **Respect container boundaries** - Only extract from the specific container identified by xpath, not the entire DOM tree.
+
+## Troubleshooting
+
+### XPath matching fails (data exists but not extracted)
+
+**Common cause**: Quote mismatch between xpath_hints and dom_data.json.
+- xpath_hints may use: `@id='root-container'` (single quotes)
+- dom_data.json uses: `@id="root-container"` (double quotes)
+
+**Solution**: Use `normalize_xpath()` when comparing xpath values:
+
+```python
+def normalize_xpath(xpath: str) -> str:
+    """Normalize xpath quotes for comparison."""
+    return xpath.replace("'", '"')
+
+# When matching xpath:
+if normalize_xpath(node.get('xpath', '')) == normalize_xpath(target_xpath):
+    return node
+```
 
 ## Example
 

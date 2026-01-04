@@ -1470,7 +1470,12 @@ Use the `dom-extraction` skill for detailed workflow. Key steps:
 2. Use DOM tools to locate elements: `python .claude/skills/dom-extraction/tools/dom_tools.py find "<xpath>"`
 3. Analyze container structure if extracting a list
 4. Write `extraction_script.py` with function `extract_data_from_page(dom_dict) -> List[Dict]`
-5. Test and validate the script
+5. **MUST run and test the script** - verify data is extracted correctly
+
+## CRITICAL: Test Before Completing
+
+You MUST run `python extraction_script.py` and verify the output.
+If data exists in DOM but extraction returns empty, check xpath quote mismatch (see skill docs).
 
 ## Quick Reference
 
