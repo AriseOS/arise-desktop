@@ -81,13 +81,23 @@ class WorkflowExecutor:
         steps_config = workflow_dict.get('steps', [])
         total_steps = len(steps_config)
 
-        # Build steps info for timeline
+        # Build steps info for timeline (支持 v2 格式)
         steps_info = []
         for i, step in enumerate(steps_config):
+            # v2 格式使用 'agent'，v1 使用 'agent_type'
+            # v2 控制流使用专用键 (foreach, if, while)
+            step_type = step.get('agent') or step.get('agent_type', 'unknown')
+            if 'foreach' in step:
+                step_type = 'foreach'
+            elif 'if' in step:
+                step_type = 'if'
+            elif 'while' in step:
+                step_type = 'while'
+
             steps_info.append({
                 "id": i,
                 "name": step.get('name', f'Step {i+1}'),
-                "type": step.get('agent_type', 'unknown'),
+                "type": step_type,
                 "status": "pending"
             })
 
@@ -182,20 +192,19 @@ class WorkflowExecutor:
         """Internal execution logic (runs in background)"""
         task = self.tasks[task_id]
 
+        # Initialize history_context before try block to avoid UnboundLocalError in except
+        history_context = self._task_context.get(task_id)
+        steps_info = task.steps  # Also initialize steps_info for exception handler
+
         try:
-            # Parse YAML
-            workflow_dict = yaml.safe_load(workflow_yaml)
+            # Use WorkflowConfigLoader to parse and validate YAML
+            from src.clients.desktop_app.ami_daemon.base_agent.workflows.workflow_loader import WorkflowConfigLoader
 
-            # Use the actual workflow name for script organization
-            if 'name' not in workflow_dict:
-                workflow_dict['name'] = task.workflow_name
-
-            # Use steps_info from task (already built in execute_workflow_async)
-            steps_info = task.steps
+            loader = WorkflowConfigLoader()
+            workflow = loader.load_from_string(workflow_yaml, workflow_name=task.workflow_name)
 
             # Create BaseAgent
-            from src.clients.desktop_app.ami_daemon.base_app.base_app.base_agent.core.base_agent import BaseAgent
-            from src.clients.desktop_app.ami_daemon.base_app.base_app.base_agent.core.schemas import Workflow
+            from src.clients.desktop_app.ami_daemon.base_agent.core.base_agent import BaseAgent
             from src.clients.desktop_app.ami_daemon.core.config_service import get_config
             import logging
             logger = logging.getLogger(__name__)
@@ -242,14 +251,10 @@ class WorkflowExecutor:
                 browser_session_id=f"workflow_{task_id}"  # Specify session ID
             )
 
-            # Convert to Workflow object
-            workflow = Workflow(**workflow_dict)
+            # workflow is already loaded by WorkflowConfigLoader above
 
             # Set up progress callback to track step execution
             step_start_times = {}
-
-            # Get context for history logging: (user_id, workflow_id, execution_id)
-            history_context = self._task_context.get(task_id)
 
             async def step_progress_callback(step_index: int, step_name: str, step_status: str, step_result=None):
                 """Callback for step progress updates"""

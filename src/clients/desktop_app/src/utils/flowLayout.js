@@ -1,8 +1,13 @@
-
 /**
  * Layout utility for FlowVisualization
  * Handles both flat (Workflow) and nested (Metaflow) structures
  * Layout: Horizontal (Left-to-Right)
+ *
+ * Supports Workflow v2 format:
+ * - 'agent' field for step type (not 'agent_type')
+ * - Control flow as keys: 'foreach', 'if', 'while'
+ * - Loop body in 'do' field (not 'steps')
+ * - Loop variable in 'as' field (not 'item_var')
  */
 
 const NODE_WIDTH = 280;
@@ -33,18 +38,21 @@ const processStepsRecursive = (steps, startX, startY, parentId = null, nodes = [
     const NESTED_INDENT = 80;        // Slight indentation for visual hierarchy
 
     steps.forEach((step, index) => {
-        const nodeId = step.id || `step-${Math.random().toString(36).substr(2, 9)}`;
+        // Use stable id: prefer step.id, fallback to index-based id (not random!)
+        // Random ids break expand/collapse because they change on every render
+        const nodeId = step.id || `step-${index}`;
 
         // Determine Labels
         let label = step.intent_name || step.name || step.type || 'Step';
         let description = step.intent_description || step.description || '';
-        const isLoop = step.type === 'loop' || step.agent_type === 'foreach';
+        // v2 format: 'foreach' in step (control flow as key)
+        const isLoop = step.type === 'loop' || 'foreach' in step;
         const isBranchStart = step.type === 'branch_start';
         const isBranchEnd = step.type === 'branch_end';
 
         const isExpanded = expandedNodeIds.has(nodeId);
 
-        if (isLoop) label = `Loop: ${step.item_var || 'Items'}`;
+        if (isLoop) label = `Loop: ${step.as || step.item_var || 'Items'}`;
         else if (isBranchStart) label = 'Branch Start';
         else if (isBranchEnd) label = 'Branch End';
 
@@ -56,7 +64,7 @@ const processStepsRecursive = (steps, startX, startY, parentId = null, nodes = [
                 ...step,
                 label,
                 description,
-                type: step.type || step.agent_type || 'step',
+                type: step.type || step.agent || 'step',  // v2: use 'agent' instead of 'agent_type'
                 isLoop,
                 isBranchStart,
                 isBranchEnd,
@@ -97,7 +105,8 @@ const processStepsRecursive = (steps, startX, startY, parentId = null, nodes = [
         }
 
         // 3. Handle Children (Recursion)
-        const children = step.children || step.steps;
+        // v2 format: 'do' for loop body, fallback to 'steps' or 'children'
+        const children = step.do || step.children || step.steps;
         let stepWidth = NODE_WIDTH; // Width of this step block (including its children)
 
         // CONDITIONAL RECURSION: Only render children if Expanded!
@@ -200,8 +209,10 @@ export const transformWorkflowData = (workflowData, expandedNodeIds = new Set(),
         return { nodes: [], edges: [] };
     }
 
-    // Check nesting
+    // Check nesting (v2 format: 'do' for loop body)
     const hasChildren = workflowData.steps.some(s =>
+        (s.do && s.do.length > 0) ||
+        (s.then && s.then.length > 0) ||
         (s.children && s.children.length > 0) ||
         (s.steps && s.steps.length > 0)
     );
@@ -264,7 +275,7 @@ export const transformWorkflowData = (workflowData, expandedNodeIds = new Set(),
             currentX += HORIZONTAL_GAP;
         }
 
-        // Add Node
+        // Add Node (v2 format: use 'agent' instead of 'agent_type')
         nodes.push({
             id: step.id || `step-${index}`,
             type: 'custom',
@@ -272,7 +283,7 @@ export const transformWorkflowData = (workflowData, expandedNodeIds = new Set(),
                 ...step,
                 label: step.name || step.intent_name || step.type,
                 description: step.description || step.intent_description,
-                isLoop: step.type === 'loop' || step.agent_type === 'foreach',
+                isLoop: step.type === 'loop' || 'foreach' in step,
                 isBranchStart: step.type === 'branch_start',
                 isBranchEnd: step.type === 'branch_end'
             },

@@ -1,225 +1,198 @@
 ---
 name: workflow-generation
-description: How to generate workflows that automate user's recorded browser actions.
+description: Generate workflows from user's recorded browser actions.
 ---
 
 # Workflow Generation
 
-## What We're Building
+## Goal
 
-Users record their browser actions - clicks, navigation, data extraction. We're creating a Workflow YAML that can **replay those actions automatically**.
+Convert user's recorded browser actions (intent operations) into a replayable Workflow YAML.
 
-Think about it:
-- User recorded: Open site → Click "Products" → Click "Electronics" → Extract product list
-- Workflow runs on a fresh browser, starting from nothing
-- It needs to follow the exact same path to reach the same page state
+## Input: Intent Operations
 
-## The Recording Data
+Each intent contains operations. Each operation has:
+- `type`: click, scroll, extract, navigate, input, select
+- `url`: Page URL when action occurred
+- `dom_id`: Hash ID (12 chars) linking to DOM snapshot file, null if no DOM captured
+- `element`: Contains `xpath`, `href`, `tagName`, `textContent`
 
-The Intent sequence contains everything the user did:
+### Using DOM Snapshots
 
-```yaml
-- description: "Navigate to product category"
-  operations:
-    - type: "click"
-      url: "https://shop.com"
-      xpath: "//*[@id='nav']/a[2]"
-      text: "Products"
-    - type: "click"
-      url: "https://shop.com/products"
-      xpath: "//*[@id='categories']/div[3]"
-      text: "Electronics"
-```
+Each operation has a `dom_id` field pointing to the DOM snapshot captured at that URL.
+The DOM file is located at `dom_snapshots/{dom_id}.json`.
 
-Each operation is meaningful:
-- **xpath**: The exact element the user clicked
-- **url**: The page they were on
-- **text**: What the element displayed
+To generate accurate scripts:
+1. Check if operation has `dom_id` (not null)
+2. Read the DOM file at `dom_snapshots/{dom_id}.json`
+3. Match `element.xpath` in the DOM to find `interactive_index`
+4. If element not found in DOM (hover/popup), use fallback strategy
 
-## Generating the Workflow
+See: `references/recording_format.md` for full format specification.
 
-### 1. Reproduce the User's Path
-
-Map each recorded operation to workflow steps:
-
-```yaml
-steps:
-  - id: "open-site"
-    name: "Open Website"
-    agent_type: "browser_agent"
-    inputs:
-      target_url: "https://shop.com"
-
-  - id: "click-products"
-    name: "Click Products Menu"
-    agent_type: "browser_agent"
-    inputs:
-      action: "click"
-      element_description: "Products navigation link"
-
-  - id: "click-electronics"
-    name: "Click Electronics Category"
-    agent_type: "browser_agent"
-    inputs:
-      action: "click"
-      element_description: "Electronics category"
-```
-
-Don't skip steps - the workflow runs from scratch.
-
-### 2. Use XPath for Extraction
-
-When the user extracted data, the xpath shows which elements they selected. Pass this to scraper_agent:
-
-```yaml
-- id: "extract-products"
-  name: "Extract Product List"
-  agent_type: "scraper_agent"
-  inputs:
-    data_requirements:
-      user_description: "Extract product list"
-      output_format:
-        name: "Product name"
-        price: "Price"
-      xpath_hints:
-        name: "//*[@class='product-card']/h3"
-        price: "//*[@class='product-card']/span[@class='price']"
-```
-
-The `xpath_hints` help locate the same elements the user interacted with.
-
-### 3. Handle Loops
-
-If the user query mentions "all items", "repeat", or a count like "10 products" → use foreach:
-
-```yaml
-- id: "process-each"
-  name: "Process Each Product"
-  agent_type: "foreach"
-  source: "{{product_list}}"
-  item_var: "product"
-  max_iterations: 10
-  steps:
-    - id: "visit-product"
-      name: "Visit Product Page"
-      agent_type: "browser_agent"
-      inputs:
-        target_url: "{{product.url}}"
-```
-
-### 4. Validate
-
-Use the workflow-validation skill to check your YAML before outputting.
-
-## Agent Roles
-
-| Agent | What it does |
-|-------|--------------|
-| browser_agent | Navigate, click, interact with pages |
-| scraper_agent | Extract data from the current page (doesn't navigate) |
-| storage_agent | Save data to database |
-| text_agent | Transform/summarize text |
-
-## CRITICAL: Agent Specs Lookup Required
-
-**Before writing ANY agent step, you MUST call the `agent-specs` skill to get the exact input format.**
-
-Each agent has strictly defined parameters. Do NOT guess parameter names or values.
-
-| When using... | You MUST first run |
-|---------------|-------------------|
-| browser_agent | `/agent-specs` to check browser_agent inputs |
-| scraper_agent | `/agent-specs` to check scraper_agent inputs |
-| storage_agent | `/agent-specs` to check storage_agent inputs |
-| text_agent | `/agent-specs` to check text_agent inputs |
-
-**Common mistakes to avoid:**
-- Using `insert` instead of `store` for storage_agent
-- Missing required fields like `operation` or `collection`
-- Wrong parameter names or structures
-
-The agent-specs skill contains the authoritative specification. Always verify before generating.
-
-## Variable Syntax
-
-```yaml
-"{{variable}}"           # Simple reference
-"{{object.field}}"       # Object field
-"{{list.0.field}}"       # First item (scraper returns List[Dict])
-```
-
-## Workflow Structure (v2 Format)
-
-**Always use v2 format:**
+## Output: Workflow YAML (v2)
 
 ```yaml
 apiVersion: "ami.io/v2"
 name: workflow-name
 description: "What this workflow does"
 
-input: category_url          # Single input (or inputs: {...})
-
 steps:
-  - id: navigate
-    agent: browser_agent     # Use 'agent:' (preferred over 'agent_type:')
-    inputs:
-      target_url: "{{category_url}}"
-
-  - id: extract
-    agent: scraper_agent
-    inputs:
-      extraction_method: script
-      dom_scope: full
-      data_requirements:
-        user_description: "Extract products"
-        output_format:
-          name: "Product name"
-    outputs:
-      extracted_data: products
+  - id: step-id
+    name: "Human-readable step name"  # REQUIRED - every step must have a name
+    agent: agent_type
+    inputs: {...}
+    outputs: {...}
 ```
 
-**Key v2 features:**
-- No `kind:` or `metadata:` wrapper
-- Use `agent:` instead of `agent_type:`
-- Control flow as top-level keys: `foreach:`, `if:`, `while:`
-- `final_response` is optional (not required for data collection)
+**Required step fields**: `id`, `name`, `agent`
 
-### Step Required Fields
+## Mapping Rules
 
-Every step MUST have:
-- `id`: Unique identifier (e.g., "navigate-home", "extract-products")
-- `agent`: One of the valid agent types
+| Operation | Workflow Step |
+|-----------|---------------|
+| click (no href) | `browser_agent` + `interaction_steps` |
+| click (with href) | `scraper_agent` extract URL + `browser_agent` navigate |
+| extract | `scraper_agent` |
+| scroll | `browser_agent` + `interaction_steps` |
+| navigate | `browser_agent` + `target_url` |
 
-Optional:
-- `name`: Human-readable name
-- `inputs`: Agent-specific inputs
-- `outputs`: Save results to variables
+## Key Rule: Click with href
 
-### Complete Step Example (v2)
+When click element has href, use **two steps**:
 
 ```yaml
-- id: extract-product-urls
+# Step 1: Extract link URL
+- id: extract-link-url
   agent: scraper_agent
   inputs:
     extraction_method: script
     dom_scope: full
     data_requirements:
-      user_description: "Extract all product URLs"
+      user_description: "Extract the link URL"
       output_format:
-        url: "Product URL"
+        url: "Link href"
+      xpath_hints:
+        url: "//a[contains(text(), 'Products')]"
   outputs:
-    extracted_data: product_urls
+    extracted_data: link_info
+
+# Step 2: Navigate
+- id: navigate-to-link
+  agent: browser_agent
+  inputs:
+    target_url: "{{link_info.0.url}}"
 ```
 
-Use 2-space indentation.
+**Do NOT** use `browser_agent` `interaction_steps` for click + navigate.
 
-## Workflow Goal
+## Script Generation Integration
 
-The workflow's goal is to **complete the user's task**, not to produce output.
+After workflow generation, scripts are automatically generated for:
+- `browser_agent` with `interaction_steps`: generates `find_element.py`
+- `scraper_agent` with `extraction_method: script`: generates `extraction_script.py`
 
-Common goals:
-- Store extracted data to database (data is accessible later via UI)
-- Export data to a file
-- Complete a series of browser actions
+### When Script Generation May Fail
 
-End the workflow when the goal is achieved. Don't add extra steps just to "return" or "display" data.
+Script generation uses DOM snapshots captured during recording. It may fail when:
+1. **Hover/dropdown elements**: The element is inside a hover menu (not visible in initial DOM)
+2. **Dynamic content**: The element is loaded after JavaScript execution
+3. **Incorrect selectors**: The xpath doesn't match any element in the DOM
+
+### Fallback Strategy
+
+If script generation fails for a step, modify the workflow:
+
+**For hover menu clicks** → Use scraper_agent to extract URL, then browser_agent to navigate:
+```yaml
+# Instead of: browser_agent click on hover menu item
+# Use:
+- id: extract-menu-link
+  agent: scraper_agent
+  inputs:
+    extraction_method: script
+    data_requirements:
+      user_description: "Extract the menu item link URL"
+      output_format:
+        url: "Menu item href"
+      xpath_hints:
+        url: "//nav//a[contains(text(), 'Target')]"
+  outputs:
+    extracted_data: menu_link
+
+- id: navigate-to-target
+  agent: browser_agent
+  inputs:
+    target_url: "{{menu_link.0.url}}"
+```
+
+**For dynamic content** → Add explicit navigation or wait steps before extraction.
+
+## Constraints
+
+- `xpath_hints` must be **dict**: `{key: "//xpath"}`, NOT list
+- Workflow runs from blank browser - include full path
+- Use original URL/href from operation, never simplify
+- For loops ("all items", "each product"), use `foreach`
+- **No separate data saving step** - do NOT add `storage_agent` steps to save/export data unless user explicitly requests it. Extracted data is usually saved in previous steps; users view and download it themselves.
+
+## Variable Syntax
+
+```yaml
+"{{variable}}"           # Simple reference
+"{{object.field}}"       # Object field
+"{{list.0.field}}"       # First item of list
+```
+
+## Example
+
+**Intent operations**:
+```yaml
+- type: click
+  url: "https://shop.com"
+  element:
+    href: "https://shop.com/products"
+    textContent: "Products"
+- type: extract
+  url: "https://shop.com/products"
+```
+
+**Generated workflow**:
+```yaml
+apiVersion: "ami.io/v2"
+name: extract-products
+description: "Extract products from shop"
+
+steps:
+  - id: extract-products-link
+    agent: scraper_agent
+    inputs:
+      extraction_method: script
+      dom_scope: full
+      data_requirements:
+        user_description: "Extract Products link URL"
+        output_format:
+          url: "Link href"
+        xpath_hints:
+          url: "//a[contains(text(), 'Products')]"
+    outputs:
+      extracted_data: products_link
+
+  - id: navigate-to-products
+    agent: browser_agent
+    inputs:
+      target_url: "{{products_link.0.url}}"
+
+  - id: extract-products
+    agent: scraper_agent
+    inputs:
+      extraction_method: script
+      dom_scope: full
+      data_requirements:
+        user_description: "Extract product list"
+        output_format:
+          name: "Product name"
+          url: "Product URL"
+    outputs:
+      extracted_data: product_list
+```

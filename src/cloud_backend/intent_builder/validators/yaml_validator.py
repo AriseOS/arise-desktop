@@ -1,9 +1,9 @@
 """
-Workflow YAML Validator - Validate generated workflow YAML
+Workflow YAML Validator - Validate generated workflow YAML (v2 format)
 
 Validates:
 1. YAML syntax
-2. Workflow structure (apiVersion, kind, metadata, steps)
+2. Workflow structure (apiVersion, name, steps)
 3. Required fields
 4. Variable references
 """
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 # Try to import Workflow schema, but don't fail if not available
 try:
-    from src.base_app.base_app.base_agent.core.schemas import Workflow
+    from src.clients.desktop_app.ami_daemon.base_agent.core.schemas import Workflow
     WORKFLOW_SCHEMA_AVAILABLE = True
 except (ImportError, ModuleNotFoundError):
     WORKFLOW_SCHEMA_AVAILABLE = False
@@ -50,37 +50,31 @@ class WorkflowYAMLValidator:
             if not isinstance(data, dict):
                 return False, "YAML root must be a dictionary"
 
-            # 3. Check required top-level fields
-            required_fields = ["apiVersion", "kind", "metadata", "steps"]
+            # 3. Check required top-level fields (v2 format)
+            required_fields = ["apiVersion", "name", "steps"]
             for field in required_fields:
                 if field not in data:
                     return False, f"Missing required field: {field}"
 
-            # 4. Validate kind
-            if data["kind"] != "Workflow":
-                return False, f"Invalid kind: {data['kind']}, must be 'Workflow'"
+            # 4. Validate apiVersion (v2 format)
+            api_version = data.get("apiVersion", "")
+            if not api_version.startswith("ami.io/v"):
+                return False, f"Invalid apiVersion: {api_version}, must start with 'ami.io/v'"
 
-            # 5. Validate metadata
-            metadata = data.get("metadata", {})
-            if not isinstance(metadata, dict):
-                return False, "metadata must be a dictionary"
-            if "name" not in metadata:
-                return False, "metadata.name is required"
-
-            # 6. Validate steps
+            # 5. Validate steps
             steps = data.get("steps", [])
             if not isinstance(steps, list):
                 return False, "steps must be a list"
             if len(steps) == 0:
                 return False, "steps cannot be empty"
 
-            # 7. Validate each step
+            # 6. Validate each step
             for i, step in enumerate(steps):
                 error = self._validate_step(step, i)
                 if error:
                     return False, f"Step {i}: {error}"
 
-            # 8. Validate with Pydantic model (optional, more strict)
+            # 7. Validate with Pydantic model (optional, more strict)
             if WORKFLOW_SCHEMA_AVAILABLE:
                 try:
                     Workflow(**data)
@@ -88,13 +82,6 @@ class WorkflowYAMLValidator:
                     logger.warning(f"Pydantic validation failed: {str(e)}")
                     # Don't fail on Pydantic errors, they might be too strict
                     # return False, f"Pydantic validation failed: {str(e)}"
-
-            # 9. Check for final_response output
-            has_final_response = self._check_final_response(data)
-            if not has_final_response:
-                logger.warning("Workflow does not output 'final_response' variable")
-                # Warning only, not a hard failure
-                # return False, "Workflow must output 'final_response' variable"
 
             logger.info("Workflow validation passed")
             return True, ""
@@ -106,7 +93,7 @@ class WorkflowYAMLValidator:
 
     def _validate_step(self, step: dict, step_index: int) -> str:
         """
-        Validate a single step
+        Validate a single step (v2 format)
 
         Args:
             step: Step dictionary
@@ -118,13 +105,20 @@ class WorkflowYAMLValidator:
         if not isinstance(step, dict):
             return "step must be a dictionary"
 
-        # Required fields
-        required = ["id", "name", "agent_type"]
+        # Check for control flow syntax (v2 format)
+        is_control_flow = any(key in step for key in ['foreach', 'if', 'while'])
+
+        if is_control_flow:
+            return self._validate_control_flow_step(step)
+
+        # Agent step - Required fields (v2 format uses 'agent' instead of 'agent_type')
+        # 'name' is required - every step must have a human-readable name
+        required = ["id", "name", "agent"]
         for field in required:
             if field not in step:
                 return f"missing required field: {field}"
 
-        # Validate agent_type
+        # Validate agent type
         valid_agent_types = [
             "variable",
             "browser_agent",
@@ -132,24 +126,56 @@ class WorkflowYAMLValidator:
             "storage_agent",
             "code_agent",
             "text_agent",
-            "autonomous_browser_agent",
-            "foreach"
+            "autonomous_browser_agent"
         ]
-        agent_type = step.get("agent_type")
-        if agent_type not in valid_agent_types:
-            return f"invalid agent_type: {agent_type}"
+        agent = step.get("agent")
+        if agent not in valid_agent_types:
+            return f"invalid agent: {agent}"
 
-        # Validate foreach specific fields
-        if agent_type == "foreach":
-            if "source" not in step:
-                return "foreach step must have 'source' field"
-            if "item_var" not in step:
-                return "foreach step must have 'item_var' field"
-            if "steps" not in step:
-                return "foreach step must have 'steps' field"
+        return ""
 
+    def _validate_control_flow_step(self, step: dict) -> str:
+        """
+        Validate a control flow step (v2 format: foreach, if, while)
+
+        Args:
+            step: Step dictionary
+
+        Returns:
+            Error message if invalid, empty string if valid
+        """
+        if 'foreach' in step:
+            # foreach requires 'do' (v2) or 'steps' (fallback) field
+            if 'do' not in step and 'steps' not in step:
+                return "foreach step must have 'do' field"
             # Recursively validate nested steps
-            nested_steps = step.get("steps", [])
+            nested_steps = step.get('do') or step.get('steps', [])
+            for i, nested_step in enumerate(nested_steps):
+                error = self._validate_step(nested_step, i)
+                if error:
+                    return f"nested step {i}: {error}"
+
+        elif 'if' in step:
+            # if requires 'then' field
+            if 'then' not in step:
+                return "if step must have 'then' field"
+            # Validate then branch
+            for i, nested_step in enumerate(step.get('then', [])):
+                error = self._validate_step(nested_step, i)
+                if error:
+                    return f"then step {i}: {error}"
+            # Validate else branch if present
+            for i, nested_step in enumerate(step.get('else', [])):
+                error = self._validate_step(nested_step, i)
+                if error:
+                    return f"else step {i}: {error}"
+
+        elif 'while' in step:
+            # while requires 'do' (v2) or 'steps' (fallback) field
+            if 'do' not in step and 'steps' not in step:
+                return "while step must have 'do' field"
+            # Recursively validate nested steps
+            nested_steps = step.get('do') or step.get('steps', [])
             for i, nested_step in enumerate(nested_steps):
                 error = self._validate_step(nested_step, i)
                 if error:
@@ -157,26 +183,3 @@ class WorkflowYAMLValidator:
 
         return ""
 
-    def _check_final_response(self, workflow_data: dict) -> bool:
-        """
-        Check if workflow outputs 'final_response' variable
-
-        Args:
-            workflow_data: Workflow dictionary
-
-        Returns:
-            True if final_response is found in outputs
-        """
-        # Check top-level outputs
-        outputs = workflow_data.get("outputs", {})
-        if "final_response" in outputs:
-            return True
-
-        # Check steps for final_response output
-        steps = workflow_data.get("steps", [])
-        for step in steps:
-            step_outputs = step.get("outputs", {})
-            if "final_response" in step_outputs:
-                return True
-
-        return False

@@ -1,6 +1,6 @@
 # Ami - AI-Powered Workflow Automation
 
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **Building AI agents that learn from your actions and automate complex workflows.**
@@ -94,7 +94,7 @@ Ami uses a **Desktop-First + Cloud-Enhanced** architecture:
 
 ### Prerequisites
 
-- **Python 3.9+**
+- **Python 3.11+** (required by the desktop daemon and `browser-use>=0.1.0`)
 - **Node.js 16+** (for desktop app frontend)
 - **Rust** (for Tauri desktop app)
 
@@ -119,14 +119,33 @@ echo 'export ANTHROPIC_API_KEY=your_anthropic_key' >> ~/.bashrc
 
 ⚠️ **Important**: Make sure API keys are configured before starting services.
 
-3. **Install dependencies**
+3. **Install dependencies (use Python 3.11 virtualenv)**
 ```bash
+# Ensure Python 3.11 is active before creating the env
+python3.11 --version
+python3.11 -m venv .venv
+source .venv/bin/activate
+
 # Install Python dependencies
 pip install -r requirements.txt
+
+# Install desktop daemon dependencies (browser-use needs 3.11+)
+pip install -r src/clients/desktop_app/ami_daemon/requirements.txt
 
 # Install browser automation dependencies
 playwright install chromium --with-deps
 ```
+
+### Python Environment & Debugging
+
+`browser-use>=0.1.0` only ships wheels for Python ≥3.11. Use one of the following flows to install and debug consistently:
+
+| Option | Steps |
+| --- | --- |
+| **Homebrew** | `brew install python@3.11` → `python3.11 -m venv .venv` → `source .venv/bin/activate` → reinstall `requirements.txt` and `src/clients/desktop_app/ami_daemon/requirements.txt` |
+| **pyenv** | `brew install pyenv` → `pyenv install 3.11.8` → `pyenv local 3.11.8` → recreate `.venv` with `python -m venv .venv` and reinstall requirements |
+
+Verify with `python --version` (should report 3.11.x). When debugging the desktop daemon, always activate the 3.11 venv before running `npm run tauri dev` so the daemon loads the correct interpreter.
 
 ### Start the System
 

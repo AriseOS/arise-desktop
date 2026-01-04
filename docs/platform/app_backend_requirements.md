@@ -273,7 +273,7 @@ def list_workflows(user_id: str = "default") -> List[Dict[str, str]]
 
 ### 4.1 技术约束
 
-- Python 3.9+
+- Python 3.11+
 - 作为常驻进程运行（daemon mode）
 - 通过 stdin/stdout 与 Rust 进程通信（JSON-RPC）
 - 维护全局浏览器会话和异步任务状态

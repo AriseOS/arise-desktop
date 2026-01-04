@@ -287,6 +287,20 @@ Each element in dom_data.json contains:
 3. Handle multi-language: "新邮件" = "New mail", "添加主题" = "Add subject"
 4. Return `interactive_index` as an integer
 
+## XPath Quote Normalization
+
+**IMPORTANT**: xpath_hints may use single quotes (`'`), but dom_data.json uses double quotes (`"`).
+
+When matching xpath, always normalize quotes:
+```python
+def normalize_xpath(xpath: str) -> str:
+    return xpath.replace("'", '"')
+
+# When comparing:
+if normalize_xpath(node.get('xpath', '')) == normalize_xpath(target_xpath):
+    return node
+```
+
 ## Success Criteria
 `python test_operation.py` must print "SUCCESS" and exit with code 0.
 """
@@ -366,6 +380,20 @@ You MUST use a "Dual Anchor" strategy for robust extraction:
   - If relative, prepend the base URL to make it absolute
   - The base URL can be inferred from xpath_hints or user_description context
   - Example: `/leaderboard/daily` from producthunt.com → `https://www.producthunt.com/leaderboard/daily`
+
+## XPath Quote Normalization
+
+**IMPORTANT**: xpath_hints may use single quotes (`'`), but dom_data.json uses double quotes (`"`).
+
+When matching xpath, always normalize quotes:
+```python
+def normalize_xpath(xpath: str) -> str:
+    return xpath.replace("'", '"')
+
+# When comparing:
+if normalize_xpath(node.get('xpath', '')) == normalize_xpath(target_xpath):
+    return node
+```
 
 ## Testing
 

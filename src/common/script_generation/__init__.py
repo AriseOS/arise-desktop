@@ -13,11 +13,13 @@ Key components:
 
 from .browser_script_generator import BrowserScriptGenerator
 from .scraper_script_generator import ScraperScriptGenerator
-from .types import ScriptGenerationResult, ScriptType
+from .types import ScriptGenerationResult, ScriptType, BrowserTask, ScraperRequirement
 
 __all__ = [
     "BrowserScriptGenerator",
     "ScraperScriptGenerator",
     "ScriptGenerationResult",
     "ScriptType",
+    "BrowserTask",
+    "ScraperRequirement",
 ]

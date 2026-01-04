@@ -1,8 +1,11 @@
 """CDP-based recording service"""
 
+import hashlib
+import json
 import logging
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Any, Optional
 
 from src.clients.desktop_app.ami_daemon.services.storage_manager import StorageManager
@@ -98,7 +101,7 @@ class CDPRecorder:
             raise RuntimeError("Global browser session not initialized")
 
         # Initialize SimpleUserBehaviorMonitor
-        from src.clients.desktop_app.ami_daemon.base_app.base_app.base_agent.tools.browser_use.user_behavior.monitor import (
+        from src.clients.desktop_app.ami_daemon.base_agent.tools.browser_use.user_behavior.monitor import (
             SimpleUserBehaviorMonitor
         )
 
@@ -114,6 +117,10 @@ class CDPRecorder:
         # Setup monitoring (CDP Binding + script injection)
         # Pass the actual BrowserSession object, not BrowserSessionInfo
         await self.monitor.setup_monitoring(browser_session_info.session)
+
+        # Enable DOM capture for script pre-generation
+        self.monitor.enable_dom_capture(True)
+        logger.info("DOM capture enabled for recording")
 
         # Mark as recording
         self._is_recording = True
@@ -133,9 +140,23 @@ class CDPRecorder:
         if not self.current_session_id:
             raise RuntimeError("No active recording session")
 
-        # Stop monitoring
+        # Get DOM snapshots BEFORE stopping monitoring
+        dom_snapshots = {}
         if self.monitor:
+            dom_snapshots = self.monitor.get_dom_snapshots()
+            logger.info(f"Captured {len(dom_snapshots)} DOM snapshots during recording")
             self.monitor._is_monitoring = False
+
+        # Build URL to dom_id mapping
+        url_to_dom_id = {}
+        for url in dom_snapshots.keys():
+            url_hash = hashlib.md5(url.encode()).hexdigest()[:12]
+            url_to_dom_id[url] = url_hash
+
+        # Add dom_id to each operation
+        for op in self.operations:
+            op_url = op.get("url", "")
+            op["dom_id"] = url_to_dom_id.get(op_url)  # None if no DOM for this URL
 
         # Prepare recording data
         recording_data = {
@@ -157,13 +178,16 @@ class CDPRecorder:
             recording_data=recording_data
         )
 
+        # Save DOM snapshots to separate files (for script pre-generation)
+        recording_path = self.storage._user_path(self.current_user_id) / "recordings" / self.current_session_id
+        if dom_snapshots:
+            self._save_dom_snapshots(recording_path, dom_snapshots)
+
         result = {
             "session_id": self.current_session_id,
             "operations_count": len(self.operations),
-            "local_file_path": str(
-                self.storage._user_path(self.current_user_id) / "recordings" /
-                self.current_session_id / "operations.json"
-            )
+            "local_file_path": str(recording_path / "operations.json"),
+            "dom_snapshots_count": len(dom_snapshots)
         }
 
         # Cleanup
@@ -179,6 +203,64 @@ class CDPRecorder:
         # Note: Browser session remains open (persistent)
 
         return result
+
+    def _save_dom_snapshots(self, recording_path: Path, dom_snapshots: Dict[str, dict]) -> None:
+        """Save DOM snapshots to recording directory
+
+        Format matches cloud backend storage:
+        recording_path/dom_snapshots/{url_hash}.json
+        recording_path/dom_snapshots/url_index.json (URL -> file mapping)
+
+        Each DOM file contains: {"url": "...", "dom": {...}}
+        url_index.json contains: [{"url": "...", "file": "xxx.json", "captured_at": "..."}]
+
+        Args:
+            recording_path: Path to recording directory
+            dom_snapshots: URL -> DOM dict mapping
+        """
+        dom_dir = recording_path / "dom_snapshots"
+        dom_dir.mkdir(parents=True, exist_ok=True)
+
+        # Build URL index for easy lookup
+        url_index = []
+
+        for url, dom_dict in dom_snapshots.items():
+            # Use MD5 hash of URL for filename (same as cloud backend)
+            url_hash = hashlib.md5(url.encode()).hexdigest()[:12]
+            dom_filename = f"{url_hash}.json"
+            dom_file = dom_dir / dom_filename
+            captured_at = datetime.now().isoformat()
+
+            dom_data = {
+                "url": url,
+                "dom": dom_dict,
+                "captured_at": captured_at
+            }
+
+            try:
+                with open(dom_file, 'w', encoding='utf-8') as f:
+                    json.dump(dom_data, f, ensure_ascii=False)
+                logger.debug(f"Saved DOM snapshot for {url} -> {dom_filename}")
+
+                # Add to URL index
+                url_index.append({
+                    "url": url,
+                    "file": dom_filename,
+                    "captured_at": captured_at
+                })
+            except Exception as e:
+                logger.warning(f"Failed to save DOM snapshot for {url}: {e}")
+
+        # Save URL index file
+        index_file = dom_dir / "url_index.json"
+        try:
+            with open(index_file, 'w', encoding='utf-8') as f:
+                json.dump(url_index, f, indent=2, ensure_ascii=False)
+            logger.debug(f"Saved URL index with {len(url_index)} entries")
+        except Exception as e:
+            logger.warning(f"Failed to save URL index: {e}")
+
+        logger.info(f"Saved {len(dom_snapshots)} DOM snapshots to {dom_dir}")
 
     def get_operations_count(self) -> int:
         """Get current operations count"""

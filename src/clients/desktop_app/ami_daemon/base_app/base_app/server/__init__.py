@@ -1,3 +1,0 @@
-"""
-BaseApp Server Package
-"""

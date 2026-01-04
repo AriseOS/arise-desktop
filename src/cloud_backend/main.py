@@ -26,7 +26,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Header, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
-from typing import Optional
+from typing import Optional, Dict, Any
 
 # 添加项目根目录到 Python 路径
 # 当前文件: src/cloud-backend/main.py
@@ -509,6 +509,57 @@ async def add_intents_to_user_graph_background(
         traceback.print_exc()
 
 
+async def _generate_scripts_sync(
+    workflow_yaml: str,
+    dom_snapshots: Dict[str, Dict],
+    workflow_dir: Path,
+    api_key: str,
+    base_url: Optional[str] = None
+) -> Dict[str, Any]:
+    """Synchronously generate scripts for workflow steps using DOM snapshots.
+
+    This is called during workflow generation to populate the workflow directory
+    with cached scripts (find_element.py, extraction_script.py) before returning
+    the completed workflow to the user.
+
+    Args:
+        workflow_yaml: Workflow YAML content
+        dom_snapshots: URL -> DOM dict mapping
+        workflow_dir: Directory to save scripts
+        api_key: Anthropic API key
+        base_url: Optional API proxy URL
+
+    Returns:
+        Script generation result dict with success, generated, skipped, failed counts
+    """
+    try:
+        from src.cloud_backend.intent_builder.services import ScriptPregenerationService
+
+        service = ScriptPregenerationService(
+            config_service=config_service,
+            api_key=api_key,
+            base_url=base_url
+        )
+
+        result = await service.pregenerate_scripts(
+            workflow_yaml=workflow_yaml,
+            dom_snapshots=dom_snapshots,
+            workflow_dir=workflow_dir
+        )
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Script generation error: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "generated": 0,
+            "skipped": 0,
+            "failed": 0
+        }
+
+
 async def _pregenerate_scripts_background(
     user_id: str,
     workflow_id: str,
@@ -517,6 +568,9 @@ async def _pregenerate_scripts_background(
     api_key: str
 ):
     """Background task: Pre-generate scripts for workflow steps using DOM snapshots from recording
+
+    NOTE: This function is deprecated. Script generation is now done synchronously
+    during workflow generation. Keeping for backwards compatibility.
 
     This task runs after workflow generation to populate the workflow directory
     with cached scripts (find_element.py, extraction_script.py), eliminating
@@ -1016,10 +1070,10 @@ async def generate_workflow_direct(
         # Generate workflow_id and save
         workflow_id = response.workflow_id or f"workflow_{uuid.uuid4().hex[:12]}"
 
-        # Extract workflow name from YAML
+        # Extract workflow name from YAML (v2 format: name at top level)
         import yaml
         workflow_dict = yaml.safe_load(response.workflow_yaml)
-        workflow_name = workflow_dict.get("metadata", {}).get("name", workflow_id)
+        workflow_name = workflow_dict.get("name", workflow_id)
 
         # Save workflow to storage
         storage_service.save_workflow(
@@ -1179,12 +1233,21 @@ async def generate_workflow_stream(
                 base_url=config_service.get("llm.proxy_url")
             )
 
+            # Load DOM snapshots for script generation
+            dom_snapshots = None
+            if local_recording_id:
+                dom_snapshots = storage_service.get_recording_dom_snapshots(user_id, local_recording_id)
+                if dom_snapshots:
+                    logger.info(f"📸 [Stream] Loaded {len(dom_snapshots)} DOM snapshots for script generation")
+
             request = GenerationRequest(
                 recording_id=local_recording_id,
                 task_description=task_description,
                 user_query=user_query,
                 intent_sequence=local_intent_sequence,
-                enable_semantic_validation=enable_semantic_validation
+                enable_semantic_validation=enable_semantic_validation,
+                dom_snapshots=dom_snapshots
+                # Note: workflow_dir will be set after workflow is saved
             )
 
             # Stream progress and track session_id
@@ -1247,7 +1310,8 @@ async def generate_workflow_stream(
                 workflow_id = f"workflow_{uuid.uuid4().hex[:12]}"
                 import yaml
                 workflow_dict = yaml.safe_load(response.workflow_yaml)
-                workflow_name = workflow_dict.get("metadata", {}).get("name", workflow_id)
+                # v2 format: name at top level
+                workflow_name = workflow_dict.get("name", workflow_id)
 
                 logger.info(f"✅ [Stream] Saving workflow: {workflow_id} - {workflow_name} for user: {user_id}")
                 storage_service.save_workflow(
@@ -1267,20 +1331,42 @@ async def generate_workflow_stream(
                     except Exception as e:
                         logger.warning(f"⚠️ [Stream] Failed to link recording to workflow: {e}")
 
-                logger.info(f"✅ [Stream] Workflow saved successfully, sending completion event")
-                yield f"data: {json.dumps({'status': 'completed', 'progress': 100, 'workflow_id': workflow_id, 'workflow_name': workflow_name, 'message': 'Workflow generated successfully'})}\n\n"
+                # Generate scripts synchronously (before sending completion)
+                script_gen_result = None
+                if dom_snapshots and local_recording_id:
+                    yield f"data: {json.dumps({'status': 'generating_scripts', 'progress': 90, 'message': 'Generating scripts for workflow steps...'})}\n\n"
 
-                # Start background task to pre-generate scripts if DOM snapshots are available
-                if local_recording_id:
-                    asyncio.create_task(
-                        _pregenerate_scripts_background(
-                            user_id=user_id,
-                            workflow_id=workflow_id,
-                            recording_id=local_recording_id,
+                    try:
+                        workflow_dir = storage_service.get_workflow_path(user_id, workflow_id)
+                        script_gen_result = await _generate_scripts_sync(
                             workflow_yaml=response.workflow_yaml,
-                            api_key=x_ami_api_key
+                            dom_snapshots=dom_snapshots,
+                            workflow_dir=workflow_dir,
+                            api_key=x_ami_api_key,
+                            base_url=config_service.get("llm.proxy_url")
                         )
-                    )
+                        if script_gen_result:
+                            logger.info(f"🔧 [Stream] Script generation: generated={script_gen_result.get('generated', 0)}, "
+                                       f"skipped={script_gen_result.get('skipped', 0)}, failed={script_gen_result.get('failed', 0)}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ [Stream] Script generation failed: {e}")
+
+                logger.info(f"✅ [Stream] Workflow saved successfully, sending completion event")
+                completion_data = {
+                    'status': 'completed',
+                    'progress': 100,
+                    'workflow_id': workflow_id,
+                    'workflow_name': workflow_name,
+                    'message': 'Workflow generated successfully'
+                }
+                if script_gen_result:
+                    completion_data['script_generation'] = {
+                        'generated': script_gen_result.get('generated', 0),
+                        'skipped': script_gen_result.get('skipped', 0),
+                        'failed': script_gen_result.get('failed', 0)
+                    }
+                yield f"data: {json.dumps(completion_data)}\n\n"
+
             else:
                 logger.error(f"❌ [Stream] Generation failed: {response.error}")
                 yield f"data: {json.dumps({'status': 'failed', 'progress': 0, 'message': response.error})}\n\n"

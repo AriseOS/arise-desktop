@@ -137,11 +137,16 @@ result = await service.pregenerate_scripts(
 
 ### Integration
 
-Called automatically as a background task after workflow generation in `main.py`:
+Called **synchronously** after workflow is saved in `main.py`:
 ```python
-asyncio.create_task(
-    _pregenerate_scripts_background(
-        user_id, workflow_id, recording_id, workflow_yaml, api_key
-    )
+# Scripts are generated before returning completion to user
+script_gen_result = await _generate_scripts_sync(
+    workflow_yaml=response.workflow_yaml,
+    dom_snapshots=dom_snapshots,
+    workflow_dir=workflow_dir,
+    api_key=x_ami_api_key
 )
 ```
+
+This ensures scripts are ready immediately after workflow generation, rather than
+being generated in the background or on first execution.

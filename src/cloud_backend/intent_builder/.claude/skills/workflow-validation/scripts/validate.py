@@ -25,7 +25,6 @@ VALID_AGENT_TYPES = {
     "storage_agent",
     "variable",
     "text_agent",
-    "tool_agent",
     "autonomous_browser_agent",
 }
 
@@ -40,7 +39,6 @@ AGENT_SPECIFIC_FIELDS = {
     "scraper_agent": {"step": [], "inputs": []},
     "browser_agent": {"step": [], "inputs": []},
     "storage_agent": {"step": [], "inputs": []},
-    "tool_agent": {"step": [], "inputs": []},
 }
 
 
@@ -103,11 +101,6 @@ class RuleValidator:
 
         # 6. Check step IDs are unique
         errors.extend(self._check_unique_step_ids(workflow))
-
-        # 7. Check final_response (warning only)
-        fr_errors, fr_warnings = self._check_final_response(workflow)
-        errors.extend(fr_errors)
-        warnings.extend(fr_warnings)
 
         return ValidationResult(
             valid=len(errors) == 0,
@@ -544,34 +537,6 @@ class RuleValidator:
 
         check_steps(steps)
         return errors
-
-    def _check_final_response(self, workflow: Dict) -> Tuple[List[str], List[str]]:
-        errors = []
-        warnings = []
-        steps = workflow.get("steps", [])
-
-        def has_final_response(steps: List[Dict]) -> bool:
-            for step in steps:
-                outputs = step.get("outputs", {})
-                if isinstance(outputs, dict):
-                    if "final_response" in outputs.values():
-                        return True
-
-                # Check nested steps
-                for key in ["steps", "do", "then", "else", "then_steps", "else_steps"]:
-                    if key in step:
-                        nested = step[key]
-                        if isinstance(nested, list) and has_final_response(nested):
-                            return True
-
-            return False
-
-        if not has_final_response(steps):
-            warnings.append(
-                "No step outputs 'final_response'. This is OK for data collection workflows."
-            )
-
-        return errors, warnings
 
     def _check_unique_step_ids(self, workflow: Dict) -> List[str]:
         errors = []

@@ -44,6 +44,11 @@ const FlowVisualization = ({ data, type = 'workflow' }) => {
         if (data?.workflow_yaml) {
             try {
                 const parsed = yaml.load(data.workflow_yaml);
+                // Version check: reject v1 format
+                if (parsed.apiVersion === 'ami.io/v1' || parsed.kind === 'Workflow') {
+                    console.error("v1 格式已不再支持，请将 workflow 升级到 v2 格式");
+                    return { nodes: [], edges: [] };
+                }
                 return transformWorkflowData(parsed, expandedNodeIds, onToggleExpand);
             } catch (e) {
                 console.error("YAML Parse Error", e);
@@ -52,6 +57,11 @@ const FlowVisualization = ({ data, type = 'workflow' }) => {
         } else if (data?.metaflow_yaml) {
             try {
                 const parsed = yaml.load(data.metaflow_yaml);
+                // Version check: reject v1 format
+                if (parsed.apiVersion === 'ami.io/v1' || parsed.kind === 'Workflow') {
+                    console.error("v1 格式已不再支持，请将 workflow 升级到 v2 格式");
+                    return { nodes: [], edges: [] };
+                }
                 return transformMetaflowData(parsed, expandedNodeIds, onToggleExpand);
             } catch (e) {
                 console.error("Metaflow YAML Parse Error", e);

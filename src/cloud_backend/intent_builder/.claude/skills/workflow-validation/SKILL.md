@@ -33,7 +33,6 @@ Valid agent types:
 - `storage_agent`
 - `variable`
 - `text_agent`
-- `tool_agent`
 - `autonomous_browser_agent`
 
 ### Control Flow (v2 Syntax)
@@ -52,10 +51,6 @@ Control flow uses top-level keys:
 - `storage_agent`: must have `inputs.operation`
 - `scraper_agent`: must have `inputs.data_requirements`
 
-### Final Response Check
-- Warning if no step outputs `final_response`
-- This is optional for data collection workflows
-
 ## Output Format
 
 ```
@@ -69,8 +64,6 @@ VALIDATION FAILED
 Errors (N):
   1. Missing required field: 'name'
   2. Undefined variable '{{product}}' referenced in step 'extract' inputs
-Warnings (M):
-  1. No step outputs 'final_response'
 ```
 
 ## Fixing Common Errors
@@ -100,7 +93,6 @@ v2 format differences from v1:
 - Use `name:` at root level (not `metadata.name`)
 - Use `agent:` instead of `agent_type:` (both work)
 - Control flow as top-level keys (`foreach:`, `if:`, `while:`)
-- `final_response` is optional
 
 ## Validation Loop
 

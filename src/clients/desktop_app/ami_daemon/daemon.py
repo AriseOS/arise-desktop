@@ -549,9 +549,14 @@ async def upload_diagnostic(data: dict = None):
         log_path = Path.home() / ".ami" / "logs" / "app.log"
         if log_path.exists():
             try:
-                with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+                # Cross-platform encoding handling:
+                # - utf-8-sig: Auto-removes BOM if present (Windows), acts as utf-8 if not (macOS/Linux)
+                # - errors="replace": Replaces invalid bytes with � instead of raising exceptions
+                # - This ensures JSON serialization works regardless of file encoding issues
+                with open(log_path, "r", encoding="utf-8-sig", errors="replace") as f:
                     lines = f.readlines()
-                    system_logs = lines[-5000:]  # Last 5000 lines
+                    # Strip each line to remove platform-specific line endings and control chars
+                    system_logs = [line.strip() for line in lines[-5000:]]  # Last 5000 lines
             except Exception as e:
                 logger.warning(f"Failed to read system logs: {e}")
 
@@ -1105,20 +1110,22 @@ async def upload_recording_to_cloud(
         # Update cloud client with user's API key if provided
         update_cloud_client_api_key(x_ami_api_key)
 
-        # Load operations from local storage
+        # Load operations from local storage (includes dom_snapshots if available)
         recording_data = storage_manager.get_recording(
             request.user_id, session_id
         )
         operations = recording_data.get("operations", [])
+        dom_snapshots = recording_data.get("dom_snapshots", {})
 
-        # Upload recording to Cloud Backend (with task_description and user_query)
+        # Upload recording to Cloud Backend (with task_description, user_query, and DOM snapshots)
         # Use session_id as recording_id to keep IDs in sync between local and cloud
         recording_id = await cloud_client.upload_recording(
             operations=operations,
             task_description=request.task_description,
             user_query=request.user_query,
             user_id=request.user_id,
-            recording_id=session_id
+            recording_id=session_id,
+            dom_snapshots=dom_snapshots
         )
         logger.info(f"Recording uploaded: {recording_id}")
 
@@ -1171,7 +1178,7 @@ async def sync_workflow_resources(workflow_id: str, user_id: str) -> Dict[str, A
         local_updated_at = None
 
         if local_metadata_path.exists():
-            with open(local_metadata_path, 'r') as f:
+            with open(local_metadata_path, 'r', encoding='utf-8') as f:
                 local_metadata = json.load(f)
                 local_updated_at = local_metadata.get("updated_at")
 
@@ -1294,8 +1301,8 @@ async def download_from_cloud(
         # Save local metadata with cloud timestamp (CRITICAL: preserve timestamp)
         local_metadata_path = local_workflow_path / "metadata.json"
         local_metadata_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(local_metadata_path, 'w') as f:
-            json.dump(cloud_metadata, f, indent=2)
+        with open(local_metadata_path, 'w', encoding='utf-8') as f:
+            json.dump(cloud_metadata, f, indent=2, ensure_ascii=False)
 
         logger.info(f"[Download] Saved metadata.json (timestamp: {cloud_metadata.get('updated_at')})")
 
@@ -1574,7 +1581,7 @@ async def generate_workflow_stream(
     if not x_ami_api_key:
         raise HTTPException(status_code=401, detail="X-Ami-API-Key header required")
 
-    # If recording_id is provided, load operations from local storage
+    # If recording_id is provided, load operations from local storage and upload to cloud first
     if recording_id:
         logger.info(f"Loading recording from local storage: {recording_id}")
         recording_data = storage_manager.get_recording(user_id, recording_id)
@@ -1586,6 +1593,30 @@ async def generate_workflow_stream(
             raise HTTPException(status_code=400, detail=f"Recording {recording_id} has no operations")
 
         logger.info(f"Loaded {len(operations)} operations from local recording")
+
+        # Get dom_snapshots for script pre-generation
+        dom_snapshots = recording_data.get("dom_snapshots", {})
+        logger.info(f"[Upload] DOM snapshots in recording_data: {len(dom_snapshots)} URLs")
+        if dom_snapshots:
+            logger.info(f"[Upload] DOM snapshot URLs: {list(dom_snapshots.keys())}")
+
+        # Upload recording to cloud first (so cloud can access dom_snapshots)
+        logger.info(f"[Upload] Uploading recording {recording_id} to cloud...")
+        try:
+            update_cloud_client_api_key(x_ami_api_key)
+            await cloud_client.upload_recording(
+                operations=operations,
+                task_description=data.get("task_description", ""),
+                user_query=data.get("user_query"),
+                user_id=user_id,
+                recording_id=recording_id,
+                dom_snapshots=dom_snapshots
+            )
+            logger.info(f"[Upload] SUCCESS: Recording {recording_id} uploaded with {len(dom_snapshots)} DOM snapshots")
+        except Exception as e:
+            logger.error(f"[Upload] FAILED: {e}")
+            import traceback
+            logger.error(f"[Upload] Traceback: {traceback.format_exc()}")
 
         # Build request with operations instead of recording_id
         cloud_request = {
@@ -3031,7 +3062,7 @@ async def handle_execution_feedback(
         if x_ami_api_key:
             logger.info("Using API key from X-Ami-API-Key header for conversation")
 
-        from src.app_backend.services.conversation_skill_handler import ConversationSkillHandler
+        from src.clients.desktop_app.ami_daemon.services.conversation_skill_handler import ConversationSkillHandler
 
         conversation_handler = ConversationSkillHandler(config_service=config)
 

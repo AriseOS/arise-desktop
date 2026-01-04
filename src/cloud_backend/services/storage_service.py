@@ -235,23 +235,38 @@ class StorageService:
 
         # Save DOM snapshots if provided
         if dom_snapshots:
+            import hashlib
             dom_snapshots_dir = recording_path / "dom_snapshots"
             dom_snapshots_dir.mkdir(parents=True, exist_ok=True)
 
             # Save each DOM snapshot as separate file (URL hash as filename)
-            import hashlib
+            url_index = []
+            captured_at = get_current_timestamp()
+
             for url, dom_dict in dom_snapshots.items():
                 url_hash = hashlib.md5(url.encode()).hexdigest()[:12]
-                dom_file = dom_snapshots_dir / f"{url_hash}.json"
+                dom_filename = f"{url_hash}.json"
+                dom_file = dom_snapshots_dir / dom_filename
                 dom_data = {
                     "url": url,
                     "dom": dom_dict,
-                    "captured_at": get_current_timestamp()
+                    "captured_at": captured_at
                 }
                 with open(dom_file, 'w', encoding='utf-8') as f:
                     json.dump(dom_data, f, ensure_ascii=False)
 
-            logger.info(f"  DOM snapshots saved: {len(dom_snapshots)} URLs")
+                url_index.append({
+                    "url": url,
+                    "file": dom_filename,
+                    "captured_at": captured_at
+                })
+
+            # Save URL index file
+            index_file = dom_snapshots_dir / "url_index.json"
+            with open(index_file, 'w', encoding='utf-8') as f:
+                json.dump(url_index, f, indent=2, ensure_ascii=False)
+
+            logger.info(f"  DOM snapshots saved: {len(dom_snapshots)} URLs (with url_index.json)")
 
         logger.info(f"Recording saved: {recording_id} ({len(operations)} ops)")
         if task_description:

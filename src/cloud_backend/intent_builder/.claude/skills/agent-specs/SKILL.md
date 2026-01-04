@@ -1,53 +1,105 @@
 ---
 name: agent-specs
-description: Agent specifications for workflow generation. Lists all valid agent types and their purposes.
+description: Agent specifications for workflow generation.
 ---
 
 # Agent Specifications
 
-## All Valid Agent Types
+## browser_agent
 
-| Agent Type | Purpose |
-|------------|---------|
-| `browser_agent` | Navigate, click, fill forms, scroll |
-| `scraper_agent` | Extract data from current page |
-| `storage_agent` | Store, query, export data |
-| `text_agent` | Generate/transform text with LLM |
-| `variable` | Set/manipulate variables |
-| `tool_agent` | Call external tools |
+Navigate and interact with pages. Does NOT extract data.
 
-**Control Flow** (use as top-level keys in v2):
-| Syntax | Purpose |
-|--------|---------|
-| `foreach:` | Loop over a list |
-| `if:` | Conditional branching |
-| `while:` | Conditional loop |
+```yaml
+# Navigate only
+- id: go-to-page
+  agent: browser_agent
+  inputs:
+    target_url: "https://example.com"
 
-**Note**: Use `agent:` (preferred) or `agent_type:` for agent steps.
+# Interactions (click, fill, scroll)
+- id: click-button
+  agent: browser_agent
+  inputs:
+    interaction_steps:
+      - task: "Click the submit button"
+        xpath_hints:
+          button: "//button[@id='submit']"  # MUST be dict!
+      - task: "Fill email field"
+        xpath_hints:
+          email: "//input[@name='email']"
+        text: "user@example.com"
+```
 
-## Quick Reference
+**Critical**: `xpath_hints` must be **dict** `{key: "//xpath"}`, NOT list.
 
-### browser_agent
-- Navigate, click, fill forms, scroll
-- Does NOT extract data (use scraper_agent)
-- See `references/browser_agent.md`
+## scraper_agent
 
-### scraper_agent
-- Extract data from current page
-- Does NOT navigate (use browser_agent first)
-- **ALWAYS use `extraction_method: "script"`**
-- Output is always `List[Dict]`
-- See `references/scraper_agent.md`
+Extract data from current page. Does NOT navigate.
 
-### storage_agent
-- Store, query, export data
-- Use `upsert_key` to update existing records
-- See `references/storage_agent.md`
+```yaml
+- id: extract-products
+  agent: scraper_agent
+  inputs:
+    extraction_method: script    # Always use "script"
+    dom_scope: full              # "full" for lists, "partial" for single item
+    data_requirements:
+      user_description: "Extract product list"
+      output_format:
+        name: "Product name"
+        url: "Product URL"
+      xpath_hints:               # Optional hints from recording
+        name: "//*[@class='product']/h3"
+        url: "//*[@class='product']/a"
+  outputs:
+    extracted_data: product_list  # Always returns List[Dict]
+```
 
-### text_agent
-- Generate or transform text using LLM
-- Requires `inputs.instruction` field
-- See `references/text_agent.md`
+Access first item: `{{product_list.0.name}}`
+
+## storage_agent
+
+Store, query, or export data.
+
+```yaml
+# Store
+- id: store-data
+  agent: storage_agent
+  inputs:
+    operation: store
+    collection: products
+    data: "{{product}}"
+    upsert_key: url              # Optional: update if exists
+
+# Export
+- id: export-csv
+  agent: storage_agent
+  inputs:
+    operation: export
+    collection: products
+    format: csv
+    filename: products.csv
+```
+
+## variable
+
+Combine or transform data (no LLM).
+
+```yaml
+- id: combine-data
+  agent: variable                 # NOT "variable_agent"
+  inputs:
+    operation: set
+    data:
+      url: "{{product.url}}"
+      name: "{{details.0.name}}"
+  outputs:
+    result: complete_product      # Output key is always "result"
+```
+
+## text_agent
+
+Generate or transform text using LLM.
+
 ```yaml
 - id: summarize
   agent: text_agent
@@ -58,98 +110,41 @@ description: Agent specifications for workflow generation. Lists all valid agent
     result: summary
 ```
 
-### variable
-- Combine, filter, or slice data (no LLM)
-- **Agent type is `variable`** (not `variable_agent`)
-- **Output key is always `result`**
-- **Operations: set, filter, slice**
-- See `references/variable_agent.md`
-```yaml
-- id: combine-data
-  agent: variable
-  inputs:
-    operation: set
-    data:
-      url: "{{product.url}}"
-      name: "{{details.0.name}}"
-  outputs:
-    result: complete_product
-```
+## Control Flow
 
-### Control Flow (v2 Syntax)
-
-**foreach** - Loop over items:
+### foreach
 ```yaml
-- foreach: "{{items}}"
-  as: item
+- foreach: "{{product_list}}"
+  as: product
   do:
-    - id: process-one
-      agent: scraper_agent
-      ...
+    - id: process-product
+      agent: browser_agent
+      inputs:
+        target_url: "{{product.url}}"
 ```
 
-**if** - Conditional:
+### if
 ```yaml
-- if: "{{condition}} == true"
+- if: "{{has_next}}"
   then:
-    - id: do-something
-      agent: text_agent
-      ...
-  else:
-    - id: do-other
-      ...
+    - id: click-next
+      agent: browser_agent
+      inputs:
+        interaction_steps:
+          - task: "Click next page"
+            xpath_hints:
+              next: "//a[contains(text(), 'Next')]"
 ```
 
-**while** - Conditional loop:
+### while
 ```yaml
 - while: "{{has_more}}"
   do:
-    - id: process
+    - id: load-more
       agent: browser_agent
-      ...
+      inputs:
+        interaction_steps:
+          - task: "Click load more"
+            xpath_hints:
+              button: "//button[contains(text(), 'Load')]"
 ```
-
-## Step Required Fields
-
-Every agent step MUST have:
-- `id`: Unique identifier
-- `agent` (or `agent_type`): One of the valid types
-
-Optional:
-- `name`: Human-readable name
-- `inputs`: Agent-specific inputs
-- `outputs`: Output variable mapping
-- `condition`: Skip if false
-- `timeout`: Step timeout
-
-## Cooperation Pattern
-
-**browser_agent handles navigation → scraper_agent extracts data**
-
-```yaml
-# Step 1: Navigate
-- id: navigate
-  agent: browser_agent
-  inputs:
-    target_url: "https://example.com"
-
-# Step 2: Extract (from current page)
-- id: extract
-  agent: scraper_agent
-  inputs:
-    data_requirements:
-      output_format:
-        title: "Page title"
-  outputs:
-    extracted_data: result
-```
-
-## When to Read Full Specs
-
-Read the full specification when you need:
-- Complete input parameter options
-- Output format details
-- Advanced usage patterns
-- Specific examples
-
-Use: `Read references/<agent>_agent.md`

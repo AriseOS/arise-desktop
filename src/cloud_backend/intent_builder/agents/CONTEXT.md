@@ -62,14 +62,13 @@ Reads specification files from `docs/base_app/`:
 
 Validates workflow structure:
 - Required fields (apiVersion, kind, metadata, steps)
-- Valid agent types (browser_agent, scraper_agent, storage_agent, variable, foreach, if, while, text_agent, code_agent, tool_agent, autonomous_browser_agent)
+- Valid agent types (browser_agent, scraper_agent, storage_agent, variable, foreach, if, while, text_agent, code_agent, autonomous_browser_agent)
 - Agent-specific fields:
   - `code_agent`: requires `code` at step level
   - `text_agent`: requires `instruction` inside `inputs`
   - Control flow (foreach/if/while): requires appropriate structure fields
 - Variable references have definitions
 - Unique step IDs
-- final_response output requirement (warning if missing)
 
 **Important**: Both `agents/tools/validate.py` and `.claude/skills/workflow-validation/scripts/validate.py` must be kept in sync. These validators mirror the actual BaseApp `workflow_loader.py` validation.
 

@@ -1,105 +1,76 @@
 ---
 name: workflow-optimizations
-description: Layer 2 workflow optimizations. Use AFTER generating base workflow to apply optimization patterns. Includes click-to-navigate and scroll optimization.
+description: Optimize generated workflow by reviewing patterns.
 ---
 
-# Workflow Optimizations (Layer 2)
+# Workflow Optimizations
 
-## Overview
+## Goal
 
-After generating a base workflow (Layer 1), apply these optimizations to improve reliability.
+Review generated workflow and apply optimizations where appropriate.
 
-## Optimization Process
+## Optimization Directions
 
-1. Review the generated base workflow
-2. Check each optimization pattern below
-3. Apply all matching patterns
-4. Document what optimizations were applied
+### 1. Static URL Simplification
 
-## Available Optimizations
+If scraper+navigate extracts a static URL (no dates, IDs, or dynamic parts):
+- **Can simplify** to direct `target_url` navigation
+- Examples of static: `/about`, `/products`, `/contact`
+- Examples of dynamic: `/leaderboard/weekly/2026/1`, `/product/12345`
 
-| Pattern | When to Apply | Reference |
-|---------|---------------|-----------|
-| Click-to-Navigate | Click action leads to page change | `references/click_to_navigate.md` |
-| Scroll Optimization | Multiple scroll operations | `references/scroll_optimization.md` |
-
-## Quick Patterns
-
-### 1. Click-to-Navigate
-
-**Before** (from recording):
 ```yaml
-- id: "click-product"
-  agent_type: "browser_agent"
+# Before (scraper + navigate)
+- id: extract-about-url
+  agent: scraper_agent
+  ...
+- id: navigate-to-about
+  agent: browser_agent
   inputs:
-    interaction_steps:
-      - task: "Click product link"
+    target_url: "{{about_link.0.url}}"
+
+# After (simplified - only for static URLs!)
+- id: navigate-to-about
+  agent: browser_agent
+  inputs:
+    target_url: "https://example.com/about"
 ```
 
-**After** (optimized):
+### 2. Scroll Consolidation
+
+Multiple consecutive scrolls on same page → combine into one.
+
 ```yaml
-- id: "navigate-product"
-  agent_type: "browser_agent"
-  inputs:
-    target_url: "{{product.url}}"  # Direct navigation
-```
-
-**When to apply**: Click on links/buttons that navigate to a new page.
-
-### 2. Scroll Optimization
-
-**Before** (from recording):
-```yaml
-- id: "scroll-1"
-  agent_type: "browser_agent"
+# Before
+- id: scroll-1
+  agent: browser_agent
   inputs:
     interaction_steps:
-      - action_type: "scroll"
-        parameters: {down: true}
-- id: "scroll-2"
-  agent_type: "browser_agent"
+      - task: "Scroll down"
+- id: scroll-2
+  agent: browser_agent
   inputs:
     interaction_steps:
-      - action_type: "scroll"
-        parameters: {down: true}
-```
+      - task: "Scroll down"
 
-**After** (optimized):
-```yaml
-- id: "scroll-page"
-  agent_type: "browser_agent"
+# After
+- id: scroll-page
+  agent: browser_agent
   inputs:
     interaction_steps:
-      - action_type: "scroll"
-        parameters:
-          down: true
-          num_pages: 2  # Combine into one
-```
-
-Or for scroll-to-element:
-```yaml
-- id: "scroll-to-content"
-  agent_type: "browser_agent"
-  inputs:
-    interaction_steps:
-      - task: "Scroll to the content section"
+      - task: "Scroll down to load content"
         xpath_hints:
-          section: "//div[@id='content']"
+          body: "//body"
 ```
 
-## Applying Optimizations
+### 3. Scroll Before Extract
 
-For each optimization:
-1. Check if the pattern matches
-2. Read the full reference if needed
-3. Transform the workflow accordingly
-4. Ensure variables are properly connected
+Scroll followed by extract → usually can remove scroll.
+`scraper_agent` gets full DOM, doesn't need element in viewport.
 
-## Output
+## Critical Rule
 
-After applying optimizations, note what was changed:
-```
-Applied optimizations:
-- Click-to-Navigate: Converted 2 click actions to direct navigation
-- Scroll Optimization: Consolidated 3 scrolls into one
-```
+**Always use original URL/href from intent operations. Never simplify or guess URLs.**
+
+If operation has `href: "/leaderboard/weekly/2026/1"`:
+- Use exactly `/leaderboard/weekly/2026/1`
+- Do NOT simplify to `/leaderboard/weekly`

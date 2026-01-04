@@ -1,3 +1,0 @@
-"""
-BaseApp CLI Package
-"""

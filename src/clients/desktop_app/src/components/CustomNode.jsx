@@ -17,11 +17,10 @@ const AGENT_COLORS = {
 
 const getAgentStyle = (type) => AGENT_COLORS[type] || AGENT_COLORS['default'];
 
-const CustomNode = ({ data }) => {
-  const { label, description, type, isLoop, agent_type, isExpanded, onToggleExpand, id } = data;
-  // Map internal types to our color keys
-  // 'type' might be 'custom', we rely on data.agent_type usually
-  const styleKey = agent_type || (isLoop ? 'loop' : 'default');
+const CustomNode = ({ id, data }) => {
+  const { label, description, type, isLoop, agent, isExpanded, onToggleExpand } = data;
+  // Map internal types to our color keys (v2 format uses 'agent' instead of 'agent_type')
+  const styleKey = agent || (isLoop ? 'loop' : 'default');
   const style = getAgentStyle(styleKey);
 
   return (
@@ -68,7 +67,7 @@ const CustomNode = ({ data }) => {
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                onToggleExpand(id || data.id);
+                onToggleExpand(id);
               }}
               style={{
                 background: 'transparent',

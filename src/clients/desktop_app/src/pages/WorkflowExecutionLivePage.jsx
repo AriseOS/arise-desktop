@@ -478,6 +478,53 @@ function WorkflowExecutionLivePage({
     }
   };
 
+  // Recursive step renderer
+  const renderSteps = (stepList, depth = 0) => {
+    return stepList.map((step, idx) => {
+      // Check for nested children (v2 'do', or generic 'steps'/'children')
+      const children = step.do || step.steps || step.children;
+      const hasChildren = children && children.length > 0;
+      const isLoop = step.type === 'loop' || 'foreach' in step; // Identify loop intent
+
+      // Indentation style
+      const indentStyle = {
+        marginLeft: `${depth * 20}px`,
+        borderLeft: depth > 0 ? '2px solid var(--border-color)' : 'none',
+        paddingLeft: depth > 0 ? '12px' : '0'
+      };
+
+      return (
+        <div key={step.id || `step-${idx}-${depth}`} style={indentStyle}>
+          <div
+            className={`timeline-step ${step.status}`}
+            ref={step.status === 'in_progress' ? currentStepRef : null}
+          >
+            <div className="timeline-node">
+              {step.status === 'in_progress' && <div className="node-pulse" />}
+              {/* Optional: Show icon for loops */}
+              {isLoop && <Icon icon="repeat" size={12} style={{ marginBottom: 2 }} />}
+            </div>
+            <div className="timeline-content">
+              <div className="step-name">
+                {step.name || step.intent_name || (isLoop ? `Loop: ${step.as || 'Items'}` : `Step ${idx + 1}`)}
+              </div>
+              {step.duration && (
+                <div className="step-duration">{step.duration.toFixed(1)}s</div>
+              )}
+            </div>
+          </div>
+
+          {/* Render Children Recursively */}
+          {hasChildren && (
+            <div className="step-children" style={{ marginTop: '8px' }}>
+              {renderSteps(children, depth + 1)}
+            </div>
+          )}
+        </div>
+      );
+    });
+  };
+
 
   return (
     <div className="workflow-execution-live-page">
@@ -528,7 +575,7 @@ function WorkflowExecutionLivePage({
         </div>
 
         {/* Cold Start Notice */}
-        {currentStep === 0 && status === 'running' && (
+        {status === 'running' && (
           <div className="cold-start-notice" style={{
             marginBottom: '1rem',
             padding: '0.75rem',
@@ -574,23 +621,7 @@ function WorkflowExecutionLivePage({
                 Waiting for workflow steps...
               </div>
             ) : (
-              steps.map((step, idx) => (
-                <div
-                  key={step.id}
-                  className={`timeline-step ${step.status}`}
-                  ref={step.status === 'in_progress' ? currentStepRef : null}
-                >
-                  <div className="timeline-node">
-                    {step.status === 'in_progress' && <div className="node-pulse" />}
-                  </div>
-                  <div className="timeline-content">
-                    <div className="step-name">{step.name}</div>
-                    {step.duration && (
-                      <div className="step-duration">{step.duration.toFixed(1)}s</div>
-                    )}
-                  </div>
-                </div>
-              ))
+              renderSteps(steps)
             )}
           </div>
         </div>

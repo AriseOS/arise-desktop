@@ -1,30 +1,76 @@
-# Intent-Based AgentBuilder
+# Intent Builder
 
-这是基于意图记忆的新一代 AgentBuilder 系统。
+将用户的浏览器录制转换为可执行的 Workflow YAML。
 
-## 核心设计思想
+## 当前架构 (v0.4.0)
 
-**意图 + 记忆图 → MetaFlow → Workflow**
+**Skills-based Architecture**: 使用 Claude Agent SDK + Skills 替代了之前的 MetaFlow 中间层。
 
-用户的操作被抽象为意图，意图之间形成记忆图。新任务通过检索记忆图生成 MetaFlow，最终转换为可执行的 Workflow。
+```
+Recording → IntentExtractor → WorkflowBuilder (Claude Agent + Skills) → Validator → Workflow
+                                    ↑
+                           User Dialogue (optional)
+```
 
-## 文档结构
+## 核心组件
 
-- `design_overview.md` - 系统整体设计
-- `metaflow_design.md` - MetaFlow 格式设计（待讨论）
-- `data_structures.md` - 数据结构设计
-- `component_design.md` - 各组件详细设计
-- `implementation_plan.md` - 实施计划
+| 组件 | 位置 | 职责 |
+|------|------|------|
+| IntentExtractor | `extractors/` | 从操作序列提取语义 Intent |
+| WorkflowBuilder | `agents/workflow_builder.py` | Claude Agent 生成 Workflow |
+| WorkflowValidator | `validators/` | 规则验证 + 语义验证 |
+| WorkflowService | `services/workflow_service.py` | 统一 API 入口 |
+| Skills | `.claude/skills/` | Agent 的知识库 |
 
-## 与旧版 AgentBuilder 的区别
+## Skills 架构
 
-| 维度 | 旧版 (agent_builder/) | 新版 (intent_builder/) |
-|-----|---------------------|----------------------|
-| 核心概念 | 直接生成 workflow | 意图 + 记忆图 |
-| 学习能力 | 无 | 持续学习和积累 |
-| 复用能力 | 低 | 高（意图可复用） |
-| 状态 | 已过期 | 当前开发中 |
+```
+.claude/skills/
+├── workflow-generation/     # 主要生成流程
+├── workflow-validation/     # 验证规则和脚本
+├── agent-specs/             # Agent 规格说明
+└── workflow-optimizations/  # 优化模式
+```
 
-## 当前状态
+详细说明见 `src/cloud_backend/intent_builder/CONTEXT.md`
 
-🚧 **设计阶段** - 正在讨论 MetaFlow 格式
+## API 使用
+
+### 一次性生成
+
+```python
+from intent_builder.services import WorkflowService
+
+service = WorkflowService(api_key="...", base_url="...")
+response = await service.generate(
+    task_description="Extract products from website",
+    intent_sequence=[...]
+)
+```
+
+### 流式生成
+
+```python
+async for event in service.generate_stream(request):
+    print(f"Stage: {event.status}, Progress: {event.progress}%")
+```
+
+### 交互式对话
+
+```python
+chat_response = await service.chat(
+    session_id=response.session_id,
+    message="Why did you use browser_agent here?"
+)
+```
+
+## 文档
+
+- `architecture.md` - 系统架构设计
+- `examples/` - 示例文件
+
+## 历史变更
+
+- **v0.4.0** (2025-01): Skills-based 架构，移除 MetaFlow
+- **v0.3.0**: MetaFlow 中间层（已废弃）
+- **v0.2.0**: 基于规则的生成器（已废弃）

@@ -52,18 +52,23 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
 
       const workflowDetail = await response.json();
 
-      // Transform to workflow visualization format
+      // Version check: reject v1 format
+      if (workflowDetail.apiVersion === 'ami.io/v1' || workflowDetail.kind === 'Workflow') {
+        throw new Error('v1 格式已不再支持，请将 workflow 升级到 v2 格式');
+      }
+
+      // Transform to workflow visualization format (v2 format)
       const steps = [
         {
           id: 'step-start',
           type: 'start',
           name: 'Start',
           description: workflowDetail.description,
-          agent_type: 'start'
+          agent: 'start'
         }
       ];
 
-      // Convert workflow steps
+      // Convert workflow steps (v2 format: 'agent' instead of 'agent_type', 'foreach' as key, 'do' for body, 'as' for variable)
       workflowDetail.steps.forEach(step => {
         if (step.type === 'branch_start') {
           // Add branch start node
@@ -72,7 +77,7 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
             type: 'branch_start',
             name: step.name,
             description: step.description,
-            agent_type: 'branch_start',
+            agent: 'branch_start',
             branches: step.branches
           });
         } else if (step.type === 'branch_end') {
@@ -82,30 +87,30 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
             type: 'branch_end',
             name: step.name,
             description: step.description,
-            agent_type: 'branch_end'
+            agent: 'branch_end'
           });
-        } else if (step.agent_type === 'foreach') {
-          // Add foreach loop node
+        } else if ('foreach' in step) {
+          // v2 format: foreach as a key
           steps.push({
             id: step.id,
             type: 'foreach',
-            name: step.name,
-            description: step.description,
-            agent_type: step.agent_type,
+            name: step.name || step.intent_name,
+            description: step.description || step.intent_description,
+            agent: 'foreach',
             branch: step.branch,
-            source: step.source,
-            item_var: step.item_var
+            foreach: step.foreach,
+            as: step.as
           });
 
-          // Add child steps
-          if (step.steps) {
-            step.steps.forEach(childStep => {
+          // Add child steps (v2: 'do' instead of 'steps')
+          if (step.do) {
+            step.do.forEach(childStep => {
               steps.push({
                 id: childStep.id,
-                type: childStep.agent_type,
-                name: childStep.name,
-                description: childStep.description,
-                agent_type: childStep.agent_type,
+                type: childStep.agent,
+                name: childStep.name || childStep.intent_name,
+                description: childStep.description || childStep.intent_description,
+                agent: childStep.agent,
                 branch: step.branch,
                 parent: step.id
               });
@@ -114,10 +119,10 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
         } else {
           steps.push({
             id: step.id,
-            type: step.agent_type || step.type,
-            name: step.name,
-            description: step.description,
-            agent_type: step.agent_type || step.type,
+            type: step.agent || step.type,
+            name: step.name || step.intent_name,
+            description: step.description || step.intent_description,
+            agent: step.agent || step.type,
             branch: step.branch
           });
         }
@@ -128,7 +133,7 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
         type: 'end',
         name: 'End',
         description: 'Workflow completed successfully',
-        agent_type: 'end'
+        agent: 'end'
       });
 
       // Generate connections with parallel support
@@ -199,22 +204,29 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
   const generateWorkflowData = () => {
     setLoading(true)
 
-    // Load workflow from config
+    // Load workflow from config (v2 format)
     setTimeout(() => {
       const workflowYaml = getWorkflow(currentWorkflowKey);
 
-      // Transform to workflow visualization format
+      // Version check: reject v1 format
+      if (workflowYaml.apiVersion === 'ami.io/v1' || workflowYaml.kind === 'Workflow') {
+        showStatus('v1 格式已不再支持，请将 workflow 升级到 v2 格式', 'error');
+        setLoading(false);
+        return;
+      }
+
+      // Transform to workflow visualization format (v2 format)
       const steps = [
         {
           id: 'step-start',
           type: 'start',
           name: 'Start',
-          description: workflowYaml.metadata.description,
-          agent_type: 'start'
+          description: workflowYaml.description,
+          agent: 'start'
         }
       ];
 
-      // Convert workflow steps
+      // Convert workflow steps (v2 format)
       workflowYaml.steps.forEach(step => {
         if (step.type === 'branch_start') {
           // Add branch start node
@@ -223,7 +235,7 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
             type: 'branch_start',
             name: step.name,
             description: step.description,
-            agent_type: 'branch_start',
+            agent: 'branch_start',
             branches: step.branches
           });
         } else if (step.type === 'branch_end') {
@@ -233,30 +245,30 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
             type: 'branch_end',
             name: step.name,
             description: step.description,
-            agent_type: 'branch_end'
+            agent: 'branch_end'
           });
-        } else if (step.agent_type === 'foreach') {
-          // Add foreach loop node
+        } else if ('foreach' in step) {
+          // v2 format: foreach as a key
           steps.push({
             id: step.id,
             type: 'foreach',
-            name: step.name,
-            description: step.description,
-            agent_type: step.agent_type,
+            name: step.name || step.intent_name,
+            description: step.description || step.intent_description,
+            agent: 'foreach',
             branch: step.branch,
-            source: step.source,
-            item_var: step.item_var
+            foreach: step.foreach,
+            as: step.as
           });
 
-          // Add child steps
-          if (step.steps) {
-            step.steps.forEach(childStep => {
+          // Add child steps (v2: 'do' instead of 'steps')
+          if (step.do) {
+            step.do.forEach(childStep => {
               steps.push({
                 id: childStep.id,
-                type: childStep.agent_type,
-                name: childStep.name,
-                description: childStep.description,
-                agent_type: childStep.agent_type,
+                type: childStep.agent,
+                name: childStep.name || childStep.intent_name,
+                description: childStep.description || childStep.intent_description,
+                agent: childStep.agent,
                 branch: step.branch,
                 parent: step.id
               });
@@ -265,10 +277,10 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
         } else {
           steps.push({
             id: step.id,
-            type: step.agent_type || step.type,
-            name: step.name,
-            description: step.description,
-            agent_type: step.agent_type || step.type,
+            type: step.agent || step.type,
+            name: step.name || step.intent_name,
+            description: step.description || step.intent_description,
+            agent: step.agent || step.type,
             branch: step.branch
           });
         }
@@ -279,7 +291,7 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
         type: 'end',
         name: 'End',
         description: 'Workflow completed successfully',
-        agent_type: 'end'
+        agent: 'end'
       });
 
       // Generate connections with parallel support
@@ -329,8 +341,8 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
       }
 
       const workflow = {
-        name: workflowYaml.metadata.name,
-        description: workflowYaml.metadata.description,
+        name: workflowYaml.name,
+        description: workflowYaml.description,
         steps: steps,
         connections: connections
       };
@@ -600,8 +612,6 @@ const nodeColor = (node) => {
       return '#8b5cf6'
     case 'storage_agent':
       return '#f59e0b'
-    case 'tool_agent':
-      return '#3b82f6'
     case 'text_agent':
       return '#10b981'
     default:

@@ -44,22 +44,16 @@ a = Analysis(
         ('config/app-backend.yaml', 'config'),
 
         # JavaScript files for browser behavior tracking
-        (str(project_root / 'src/clients/desktop_app/ami_daemon/base_app/base_app/base_agent/tools/browser_use/user_behavior/behavior_tracker.js'),
-         'src/clients/desktop_app/ami_daemon/base_app/base_app/base_agent/tools/browser_use/user_behavior'),
+        (str(project_root / 'src/clients/desktop_app/ami_daemon/base_agent/tools/browser_use/user_behavior/behavior_tracker.js'),
+         'src/clients/desktop_app/ami_daemon/base_agent/tools/browser_use/user_behavior'),
 
         # Automation hooks JS
-        (str(project_root / 'src/clients/desktop_app/ami_daemon/base_app/base_app/base_agent/tools/browser_use/automation_hooks.js'),
-         'src/clients/desktop_app/ami_daemon/base_app/base_app/base_agent/tools/browser_use'),
+        (str(project_root / 'src/clients/desktop_app/ami_daemon/base_agent/tools/browser_use/automation_hooks.js'),
+         'src/clients/desktop_app/ami_daemon/base_agent/tools/browser_use'),
 
-        # Claude skills for scraper and browser agents
-        (str(project_root / 'src/clients/desktop_app/ami_daemon/base_app/.claude/skills'),
-         'src/clients/desktop_app/ami_daemon/base_app/.claude/skills'),
-
-        # Workflow YAML files
-        (str(project_root / 'src/clients/desktop_app/ami_daemon/base_app/base_app/base_agent/workflows/builtin'),
-         'src/clients/desktop_app/ami_daemon/base_app/base_app/base_agent/workflows/builtin'),
-        (str(project_root / 'src/clients/desktop_app/ami_daemon/base_app/base_app/base_agent/workflows/user'),
-         'src/clients/desktop_app/ami_daemon/base_app/base_app/base_agent/workflows/user'),
+        # Workflow YAML files (user workflows)
+        (str(project_root / 'src/clients/desktop_app/ami_daemon/base_agent/workflows/user'),
+         'src/clients/desktop_app/ami_daemon/base_agent/workflows/user'),
     ] + playwright_browsers + git_bash_data,
     hiddenimports=[
         # Uvicorn and FastAPI
@@ -103,16 +97,15 @@ a = Analysis(
         'src.common.services.metadata_generator',
         'src.common.services.resource_manager',
 
-        # Base app components
-        'src.clients.desktop_app.ami_daemon.base_app.base_app.base_agent.core.base_agent',
-        'src.clients.desktop_app.ami_daemon.base_app.base_app.base_agent.core.schemas',
-        'src.clients.desktop_app.ami_daemon.base_app.base_app.base_agent.agents.text_agent',
-        'src.clients.desktop_app.ami_daemon.base_app.base_app.base_agent.agents.tool_agent',
-        'src.clients.desktop_app.ami_daemon.base_app.base_app.base_agent.agents.browser_agent',
-        'src.clients.desktop_app.ami_daemon.base_app.base_app.base_agent.agents.storage_agent',
-        'src.clients.desktop_app.ami_daemon.base_app.base_app.base_agent.agents.variable_agent',
-        'src.clients.desktop_app.ami_daemon.base_app.base_app.base_agent.tools.browser_session_manager',
-        'src.clients.desktop_app.ami_daemon.base_app.base_app.base_agent.memory.kv_storage',
+        # Base agent components
+        'src.clients.desktop_app.ami_daemon.base_agent.core.base_agent',
+        'src.clients.desktop_app.ami_daemon.base_agent.core.schemas',
+        'src.clients.desktop_app.ami_daemon.base_agent.agents.text_agent',
+        'src.clients.desktop_app.ami_daemon.base_agent.agents.browser_agent',
+        'src.clients.desktop_app.ami_daemon.base_agent.agents.storage_agent',
+        'src.clients.desktop_app.ami_daemon.base_agent.agents.variable_agent',
+        'src.clients.desktop_app.ami_daemon.base_agent.tools.browser_session_manager',
+        'src.clients.desktop_app.ami_daemon.base_agent.memory.kv_storage',
 
         # Database
         'aiosqlite',

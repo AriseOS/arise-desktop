@@ -153,7 +153,7 @@ class BrowserManager:
 
         try:
             # Import here to avoid circular dependency
-            from src.clients.desktop_app.ami_daemon.base_app.base_app.base_agent.tools.browser_session_manager import (
+            from src.clients.desktop_app.ami_daemon.base_agent.tools.browser_session_manager import (
                 BrowserSessionManager
             )
 

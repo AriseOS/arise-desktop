@@ -132,6 +132,7 @@ class GenerationResult:
     error: Optional[str] = None
     iterations: int = 0
     session_id: Optional[str] = None  # For continuing dialogue
+    script_generation: Optional[Dict[str, Any]] = None  # Script generation results
 
 
 @dataclass
@@ -289,23 +290,34 @@ class WorkflowBuilder:
 ## Task Description
 {task_description}
 {user_query_section}
-## User's Recorded Actions
+## User's Recorded Actions (Intent Operations)
 
-This is what the user actually did in their browser. Your workflow needs to reproduce this:
+Each operation contains details you need for optimization decisions (especially `href` for click-to-navigate):
 
 ```yaml
 {intents_yaml}
 ```
 
-## Generate Workflow
+## Your Task Checklist
 
-1. Read workflow-generation and agent-specs skills
-2. Read workflow-optimizations skill, check if any patterns apply
-3. Generate the workflow (apply optimizations where appropriate)
-4. Validate with workflow-validation skill
-5. Output the final YAML
+Use TodoWrite to track these steps:
 
-Remember: The xpath values show exactly which elements the user clicked/extracted from. Use them as `xpath_hints` in scraper_agent to help locate the same elements.
+1. [ ] Read `workflow-generation` skill - understand workflow structure
+2. [ ] Read `agent-specs` skill - understand agent input formats (especially browser_agent's interaction_steps)
+3. [ ] Read `workflow-optimizations` skill - understand optimization patterns
+4. [ ] Analyze each intent operation for optimization opportunities:
+   - Click with `href` → Can optimize to `target_url`
+   - Click without `href` → Must use `interaction_steps`
+   - Consecutive scrolls → Combine or remove
+5. [ ] Generate the optimized workflow YAML
+6. [ ] Validate with `workflow-validation` skill
+7. [ ] Output final YAML and list optimizations applied
+
+## Key Reminders
+
+- `xpath_hints` must be **dict format**: `xpath_hints: {{key: "//xpath"}}` (NOT a list!)
+- All click/fill/scroll MUST use `interaction_steps` (unless optimized to `target_url`)
+- Document which operations were optimized and why
 """
 
     def _prepare_working_directory(self) -> Path:
@@ -911,23 +923,34 @@ When modifying the workflow:
 ## Task Description
 {task_description}
 {user_query_section}
-## User's Recorded Actions
+## User's Recorded Actions (Intent Operations)
 
-This is what the user actually did in their browser. Your workflow needs to reproduce this:
+Each operation contains details you need for optimization decisions (especially `href` for click-to-navigate):
 
 ```yaml
 {intents_yaml}
 ```
 
-## Generate Workflow
+## Your Task Checklist
 
-1. Read workflow-generation and agent-specs skills
-2. Read workflow-optimizations skill, check if any patterns apply
-3. Generate the workflow (apply optimizations where appropriate)
-4. Validate with workflow-validation skill
-5. Output the final YAML
+Use TodoWrite to track these steps:
 
-Remember: The xpath values show exactly which elements the user clicked/extracted from. Use them as `xpath_hints` in scraper_agent to help locate the same elements.
+1. [ ] Read `workflow-generation` skill - understand workflow structure
+2. [ ] Read `agent-specs` skill - understand agent input formats (especially browser_agent's interaction_steps)
+3. [ ] Read `workflow-optimizations` skill - understand optimization patterns
+4. [ ] Analyze each intent operation for optimization opportunities:
+   - Click with `href` → Can optimize to `target_url`
+   - Click without `href` → Must use `interaction_steps`
+   - Consecutive scrolls → Combine or remove
+5. [ ] Generate the optimized workflow YAML
+6. [ ] Validate with `workflow-validation` skill
+7. [ ] Output final YAML and list optimizations applied
+
+## Key Reminders
+
+- `xpath_hints` must be **dict format**: `xpath_hints: {{key: "//xpath"}}` (NOT a list!)
+- All click/fill/scroll MUST use `interaction_steps` (unless optimized to `target_url`)
+- Document which operations were optimized and why
 """
 
     def _prepare_working_directory(self) -> Path:
@@ -1074,7 +1097,9 @@ Remember: The xpath values show exactly which elements the user clicked/extracte
         task_description: str,
         intent_sequence: List[Dict[str, Any]],
         on_progress: Optional[Callable[[StreamEvent], None]] = None,
-        user_query: Optional[str] = None
+        user_query: Optional[str] = None,
+        dom_snapshots: Optional[Dict[str, Dict]] = None,
+        workflow_dir: Optional[Path] = None
     ) -> GenerationResult:
         """
         Generate initial workflow from intents.
@@ -1084,6 +1109,8 @@ Remember: The xpath values show exactly which elements the user clicked/extracte
             intent_sequence: List of Intent dictionaries
             on_progress: Optional callback for progress events
             user_query: User's goal/intent (e.g., "repeat for 10 items")
+            dom_snapshots: Optional DOM snapshots for script generation
+            workflow_dir: Optional directory to save scripts
 
         Returns:
             GenerationResult with workflow or error
@@ -1098,6 +1125,8 @@ Remember: The xpath values show exactly which elements the user clicked/extracte
         self._task_description = task_description
         self._intent_sequence = intent_sequence
         self._user_query = user_query
+        self._dom_snapshots = dom_snapshots
+        self._workflow_dir = workflow_dir
 
         # Log inputs for debugging
         logger.info(f"🤖 [Session.generate] Starting workflow generation")
@@ -1105,6 +1134,8 @@ Remember: The xpath values show exactly which elements the user clicked/extracte
         logger.info(f"  🎯 User query: {user_query or '(not provided)'}")
         logger.info(f"  📊 Intent count: {len(intent_sequence)}")
         logger.info(f"  📁 Work dir: {self._work_dir}")
+        logger.info(f"  📸 DOM snapshots: {len(dom_snapshots) if dom_snapshots else 0} URLs")
+        logger.info(f"  📂 Workflow dir: {workflow_dir or '(not provided)'}")
 
         try:
             from claude_agent_sdk import (
@@ -1244,6 +1275,11 @@ Remember: The xpath values show exactly which elements the user clicked/extracte
             logger.info(f"  📝 YAML size: {len(yaml_content)} chars")
             logger.info(f"  🔄 Iterations: {turn_count}")
 
+            # Note: Script generation is now handled in main.py after workflow is saved
+            # The dom_snapshots and workflow_dir parameters are kept for future use
+            # or for cases where script generation needs to happen during generation
+            script_generation_result = None
+
             if on_progress:
                 on_progress(StreamEvent(
                     type="complete",
@@ -1256,7 +1292,8 @@ Remember: The xpath values show exactly which elements the user clicked/extracte
                 workflow=workflow,
                 workflow_yaml=yaml_content,
                 iterations=turn_count,
-                session_id=self.session_id
+                session_id=self.session_id,
+                script_generation=script_generation_result
             )
 
         except Exception as e:
@@ -1461,6 +1498,98 @@ I'm ready to help with questions or modifications to this workflow."""
         except Exception as e:
             logger.error(f"Failed to set existing workflow: {e}")
             return False
+
+    async def _generate_scripts_for_workflow(
+        self,
+        workflow: Dict[str, Any],
+        workflow_yaml: str,
+        on_progress: Optional[Callable[[StreamEvent], None]] = None
+    ) -> Dict[str, Any]:
+        """Generate scripts for workflow steps that need them.
+
+        Uses ScriptPregenerationService to generate find_element.py and
+        extraction_script.py for browser_agent and scraper_agent steps.
+
+        Args:
+            workflow: Parsed workflow dictionary
+            workflow_yaml: Workflow YAML string
+            on_progress: Optional progress callback
+
+        Returns:
+            Script generation result dict with success, generated, skipped, failed counts
+        """
+        if not self._dom_snapshots or not self._workflow_dir:
+            logger.info("[Session] Skipping script generation - no DOM snapshots or workflow_dir")
+            return {"success": True, "skipped": True, "message": "No DOM snapshots provided"}
+
+        try:
+            from src.cloud_backend.intent_builder.services import ScriptPregenerationService
+
+            service = ScriptPregenerationService(
+                api_key=self.api_key,
+                base_url=self.base_url
+            )
+
+            logger.info(f"🔧 [Session] Starting script generation with {len(self._dom_snapshots)} DOM snapshots")
+
+            result = await service.pregenerate_scripts(
+                workflow_yaml=workflow_yaml,
+                dom_snapshots=self._dom_snapshots,
+                workflow_dir=self._workflow_dir
+            )
+
+            logger.info(f"🔧 [Session] Script generation complete: "
+                       f"generated={result.get('generated', 0)}, "
+                       f"skipped={result.get('skipped', 0)}, "
+                       f"failed={result.get('failed', 0)}")
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Script generation error: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "generated": 0,
+                "skipped": 0,
+                "failed": 0,
+                "details": []
+            }
+
+    def _build_script_failure_feedback(self, failed_steps: List[Dict[str, Any]]) -> str:
+        """Build feedback message for Claude when script generation fails.
+
+        Args:
+            failed_steps: List of step details that failed script generation
+
+        Returns:
+            Feedback message for Claude to fix the workflow
+        """
+        feedback_parts = ["Script generation failed for the following steps:\n"]
+
+        for step in failed_steps:
+            step_id = step.get("step_id", "unknown")
+            error = step.get("error", "Unknown error")
+            feedback_parts.append(f"\n## Step: {step_id}")
+            feedback_parts.append(f"Error: {error}")
+
+        feedback_parts.append("""
+
+The script generator could not find the target element in the DOM snapshot.
+This usually means:
+1. The element is inside a hover/dropdown menu (not visible in initial DOM)
+2. The element is dynamically loaded after user interaction
+3. The xpath or selector is incorrect
+
+**Suggested solutions:**
+- For hover menus: Use scraper_agent to extract the target URL first, then use browser_agent with operation=navigate
+- For dynamic content: Add a preceding step to trigger the content load
+- For incorrect selectors: Check the xpath_hints in the step inputs
+
+Please modify the workflow to handle this case. Output the complete updated YAML.
+""")
+
+        return "\n".join(feedback_parts)
 
 
 class WorkflowModificationSession:

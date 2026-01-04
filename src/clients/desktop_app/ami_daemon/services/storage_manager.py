@@ -41,10 +41,39 @@ class StorageManager:
             json.dump(recording_data, f, indent=2, ensure_ascii=False)
 
     def get_recording(self, user_id: str, session_id: str) -> dict:
-        """Read recording data from local file"""
-        file_path = self._user_path(user_id) / "recordings" / session_id / "operations.json"
+        """Read recording data from local file
+
+        Also loads DOM snapshots if available (for script pre-generation).
+
+        Returns:
+            Recording dict with optional 'dom_snapshots' field containing
+            URL -> DOM dict mapping
+        """
+        recording_path = self._user_path(user_id) / "recordings" / session_id
+        file_path = recording_path / "operations.json"
         with open(file_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            data = json.load(f)
+
+        # Load DOM snapshots if available
+        dom_dir = recording_path / "dom_snapshots"
+        if dom_dir.exists():
+            dom_snapshots = {}
+            for dom_file in dom_dir.glob("*.json"):
+                try:
+                    with open(dom_file, 'r', encoding='utf-8') as f:
+                        dom_data = json.load(f)
+                        url = dom_data.get("url")
+                        dom_dict = dom_data.get("dom")
+                        if url and dom_dict:
+                            dom_snapshots[url] = dom_dict
+                except Exception:
+                    # Skip corrupted DOM snapshot files
+                    continue
+
+            if dom_snapshots:
+                data["dom_snapshots"] = dom_snapshots
+
+        return data
 
     def update_recording_metadata(self, user_id: str, session_id: str, task_description: str, user_query: str, name: str = None):
         """Update recording metadata with task_description, user_query and name
@@ -68,8 +97,9 @@ class StorageManager:
         if name:
             recording_data["task_metadata"]["name"] = name
 
-        # Save back
-        self.save_recording(user_id, session_id, recording_data)
+        # Save back (exclude dom_snapshots - they are stored separately)
+        save_data = {k: v for k, v in recording_data.items() if k != 'dom_snapshots'}
+        self.save_recording(user_id, session_id, save_data)
 
     def list_recordings(self, user_id: str) -> List[Dict[str, Any]]:
         """List all recordings for user with metadata

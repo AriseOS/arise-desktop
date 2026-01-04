@@ -22,7 +22,7 @@
     "reactflow": "^11.11.4"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.9.3",
+    "@tauri-apps/cli": "^2.9.6",
     "@types/react": "^18.2.15",
     "@types/react-dom": "^18.2.7",
     "@vitejs/plugin-react": "^4.0.3",

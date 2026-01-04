@@ -56,6 +56,8 @@ class GenerationRequest:
     intent_sequence: Optional[List[Dict[str, Any]]] = None
     operations: Optional[List[Dict[str, Any]]] = None  # Raw operations from recording
     enable_semantic_validation: bool = True
+    dom_snapshots: Optional[Dict[str, Dict]] = None  # URL -> DOM dict for script generation
+    workflow_dir: Optional[str] = None  # Directory to save workflow and scripts
 
 
 @dataclass
@@ -471,11 +473,17 @@ class WorkflowService:
             def on_progress(event: StreamEvent):
                 progress_updates.append(event)
 
+            # Convert workflow_dir to Path if provided
+            from pathlib import Path
+            workflow_dir = Path(request.workflow_dir) if request.workflow_dir else None
+
             result = await session.generate(
                 request.task_description,
                 intent_sequence,
                 user_query=request.user_query,
-                on_progress=on_progress
+                on_progress=on_progress,
+                dom_snapshots=request.dom_snapshots,
+                workflow_dir=workflow_dir
             )
 
             # If initial generation failed (e.g., rule validation failed), try to fix via dialogue

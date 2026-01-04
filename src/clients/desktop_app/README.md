@@ -46,13 +46,18 @@ Desktop App (Tauri)
    npm --version
    ```
 
-3. **Python** (3.9+) with dependencies
+3. **Python** (3.11+) with dependencies
    ```bash
    # Already installed if you set up app_backend
    pip install -r ../../requirements.txt
+pip install -r ./ami_daemon/requirements.txt
    ```
 
 ## Setup
+
+### Python Environment (3.11+)
+
+`browser-use>=0.1.0` that powers the daemon only publishes wheels for Python ≥3.11. Install Python 3.11 via **Homebrew** (`brew install python@3.11`) or **pyenv** (`pyenv install 3.11.8`), then recreate your `.venv` with that interpreter before installing `requirements.txt` and `ami_daemon/requirements.txt`.
 
 ### 1. Install Frontend Dependencies
 

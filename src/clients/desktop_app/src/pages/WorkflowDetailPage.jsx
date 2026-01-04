@@ -557,7 +557,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
         >
           <Icon icon="arrowLeft" />
         </button>
-        <div className="page-title">Workflow 详情</div>
+        <div className="page-title">{workflowData?.metadata?.workflow_name || workflowData?.workflow_name || 'Workflow 详情'}</div>
         <button
           className="run-button"
           onClick={handleRunWorkflow}
@@ -609,7 +609,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                 <div className="traceability-content" style={{ flexDirection: 'column', gap: '8px', alignItems: 'flex-start' }}>
                   <div className="trace-item">
                     <span className="trace-label">Name:</span>
-                    <code className="trace-value" style={{ width: 'auto' }}>{workflowData.name || workflowId}</code>
+                    <code className="trace-value" style={{ width: 'auto' }}>{workflowData.metadata?.workflow_name || workflowData.workflow_name || workflowId}</code>
                   </div>
                   <div className="trace-item">
                     <span className="trace-label">ID:</span>
