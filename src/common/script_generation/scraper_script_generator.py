@@ -49,6 +49,7 @@ class ScraperScriptGenerator:
         working_dir: Path,
         api_key: str,
         base_url: Optional[str] = None,
+        page_url: Optional[str] = None,
         progress_callback: Optional[Callable[[str, str, Dict], Awaitable[None]]] = None
     ) -> ScriptGenerationResult:
         """Generate extraction_script.py script
@@ -59,6 +60,7 @@ class ScraperScriptGenerator:
             working_dir: Working directory for script generation
             api_key: API key for Claude Agent SDK
             base_url: Optional base URL for API
+            page_url: Optional page URL for absolute URL conversion in generated scripts
             progress_callback: Optional async callback for progress updates
                 Signature: async def callback(level: str, message: str, data: dict)
 
@@ -66,17 +68,30 @@ class ScraperScriptGenerator:
             ScriptGenerationResult with generated script
         """
         from src.common.llm import ClaudeAgentProvider
+        import shutil
 
         try:
             # Ensure working directory exists
             working_dir = Path(working_dir)
             working_dir.mkdir(parents=True, exist_ok=True)
 
+            # Copy skills to working directory for Claude Agent to use
+            skills_src = Path(__file__).parent / ".claude" / "skills"
+            skills_dest = working_dir / ".claude" / "skills"
+            if skills_src.exists():
+                if skills_dest.exists():
+                    shutil.rmtree(skills_dest)
+                skills_dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(skills_src, skills_dest)
+                logger.info(f"Copied skills to {skills_dest}")
+            else:
+                logger.warning(f"Skills not found at {skills_src}")
+
             # Save input files
             await self._save_input_files(working_dir, requirement, dom_dict)
 
             # Build prompt
-            prompt = self._build_prompt(working_dir, requirement)
+            prompt = self._build_prompt(working_dir, requirement, page_url)
 
             # Initialize Claude Agent Provider
             claude_provider = ClaudeAgentProvider(
@@ -212,7 +227,8 @@ class ScraperScriptGenerator:
     def _build_prompt(
         self,
         working_dir: Path,
-        requirement: ScraperRequirement
+        requirement: ScraperRequirement,
+        page_url: Optional[str] = None
     ) -> str:
         """Build Claude Agent prompt"""
         # Build field descriptions
@@ -238,6 +254,7 @@ class ScraperScriptGenerator:
         # Format prompt
         prompt = SCRAPER_AGENT_PROMPT.format(
             working_dir=working_dir,
+            page_url=page_url or "unknown",
             user_description=requirement.user_description,
             fields_description=fields_description,
             sample_description=sample_description,

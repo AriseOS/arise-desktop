@@ -3,7 +3,7 @@ import Icon from '../components/Icons'
 import { api } from '../utils/api'
 import '../styles/MyWorkflowsPage.css'
 
-function MyWorkflowsPage({ session, onNavigate, onLogout }) {
+function MyWorkflowsPage({ session, onNavigate, onLogout, version }) {
   // Get user_id from session
   const userId = session?.username;
   const [workflows, setWorkflows] = useState([])
@@ -308,7 +308,7 @@ function MyWorkflowsPage({ session, onNavigate, onLogout }) {
       </div>
 
       <div className="footer">
-        <p>Ami v1.0.0</p>
+        <p>Ami v{version || '1.0.0'} • {session?.username && `Logged in as ${session.username}`}</p>
       </div>
 
       {/* Delete Confirmation Modal */}

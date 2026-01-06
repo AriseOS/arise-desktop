@@ -241,7 +241,8 @@ class BaseAgent:
         workflow: Union[Workflow, List[AgentWorkflowStep]],
         input_data: Dict[str, Any] = None,
         step_callback: Optional[Any] = None,
-        log_callback: Optional[Any] = None
+        log_callback: Optional[Any] = None,
+        workflow_id: Optional[str] = None
     ) -> WorkflowResult:
         """Execute workflow with optional step progress and log callbacks
 
@@ -252,6 +253,8 @@ class BaseAgent:
                           Called when step starts and completes for real-time progress updates
             log_callback: Optional async callback function(level, message, metadata)
                          Called for detailed execution logs from agents
+            workflow_id: Optional workflow ID for resource path organization.
+                        If not provided, uses workflow.name or generates one.
 
         Returns:
             WorkflowResult: Workflow execution result
@@ -293,6 +296,7 @@ class BaseAgent:
             if self.agent_workflow_engine:
                 return await self.agent_workflow_engine.execute_workflow(
                     workflow,
+                    workflow_id=workflow_id,
                     input_data=input_data or {},
                     step_callback=step_callback,
                     log_callback=log_callback
@@ -302,9 +306,11 @@ class BaseAgent:
         else:
             # All workflows use AgentWorkflowStep, use Agent workflow engine
             if self.agent_workflow_engine:
+                # Priority: explicit workflow_id > workflow.workflow_id > workflow.name
+                effective_workflow_id = workflow_id or workflow.workflow_id or workflow.name
                 return await self.agent_workflow_engine.execute_workflow(
                     workflow.steps,
-                    workflow_id=workflow.name,
+                    workflow_id=effective_workflow_id,
                     input_data=input_data or {},
                     step_callback=step_callback,
                     log_callback=log_callback

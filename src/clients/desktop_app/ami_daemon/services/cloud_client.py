@@ -160,6 +160,48 @@ class CloudClient:
         response.raise_for_status()
         return response.json()["recording_id"]
 
+    async def update_recording_metadata(
+        self,
+        recording_id: str,
+        user_id: str,
+        workflow_id: Optional[str] = None,
+        task_description: Optional[str] = None,
+        user_query: Optional[str] = None,
+        updated_at: Optional[str] = None
+    ) -> bool:
+        """Update recording metadata in Cloud Backend (for sync)
+
+        Args:
+            recording_id: Recording ID
+            user_id: User ID
+            workflow_id: Workflow ID (None to clear)
+            task_description: Task description
+            user_query: User query
+            updated_at: Timestamp for sync
+
+        Returns:
+            True if successful
+        """
+        payload = {}
+        if workflow_id is not None or workflow_id == "":
+            # Include workflow_id even if None (to clear it)
+            payload["workflow_id"] = workflow_id if workflow_id != "" else None
+        if task_description is not None:
+            payload["task_description"] = task_description
+        if user_query is not None:
+            payload["user_query"] = user_query
+        if updated_at is not None:
+            payload["updated_at"] = updated_at
+
+        logger.info(f"Updating recording metadata in Cloud: {recording_id}")
+        response = await self.client.patch(
+            f"/api/v1/recordings/{recording_id}",
+            params={"user_id": user_id},
+            json=payload
+        )
+        response.raise_for_status()
+        return True
+
     async def update_workflow(
         self,
         workflow_id: str,
@@ -752,6 +794,80 @@ class CloudClient:
             return {"success": False, "error": str(e)}
         except Exception as e:
             logger.error(f"Error uploading execution log: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def generate_script(
+        self,
+        workflow_id: str,
+        step_id: str,
+        script_type: str,
+        page_url: str,
+        user_id: str = "default_user",
+        dom_data: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Request cloud to generate script for workflow step
+
+        This is used when a script doesn't exist locally. The cloud:
+        - Reads step config (data_requirements/task) from workflow YAML
+        - For scraper: uses dom_snapshots from recording (no upload needed)
+        - For browser: uses dom_data uploaded by client (runtime DOM)
+
+        Args:
+            workflow_id: Workflow ID
+            step_id: Step ID (e.g., "extract-product-list")
+            script_type: "scraper" or "browser"
+            page_url: Current page URL (for DOM matching / absolute URL conversion)
+            user_id: User ID
+            dom_data: DOM dictionary - only needed for browser scripts
+
+        Returns:
+            dict with:
+                - success: bool
+                - script_path: relative path in workflow (e.g., "step-id/scraper_script_xxx/extraction_script.py")
+                - script_content: the generated script content
+                - script_key: script key for caching (e.g., "scraper_script_xxx")
+                - turns: number of LLM turns used
+                - error: error message if failed
+        """
+        try:
+            logger.info(f"[CloudClient] Requesting script generation: workflow={workflow_id}, step={step_id}, type={script_type}")
+
+            # Build request headers
+            headers = {"X-User-Id": user_id}
+            if self.user_api_key:
+                headers["X-Ami-API-Key"] = self.user_api_key
+
+            # Build request payload - minimal data, cloud has the rest
+            payload = {
+                "step_id": step_id,
+                "script_type": script_type,
+                "page_url": page_url
+            }
+            # Only include dom_data for browser scripts (runtime DOM)
+            if dom_data and script_type == "browser":
+                payload["dom_data"] = dom_data
+
+            response = await self.client.post(
+                f"/api/v1/workflows/{workflow_id}/generate-script",
+                json=payload,
+                headers=headers
+            )
+            response.raise_for_status()
+            result = response.json()
+
+            if result.get("success"):
+                logger.info(f"[CloudClient] Script generated: {result.get('script_path')} (turns={result.get('turns')})")
+            else:
+                logger.warning(f"[CloudClient] Script generation failed: {result.get('error')}")
+
+            return result
+
+        except httpx.HTTPStatusError as e:
+            error_msg = f"HTTP {e.response.status_code}: {e.response.text}"
+            logger.error(f"[CloudClient] Script generation failed: {error_msg}")
+            return {"success": False, "error": error_msg}
+        except Exception as e:
+            logger.error(f"[CloudClient] Script generation error: {e}")
             return {"success": False, "error": str(e)}
 
     async def upload_diagnostic(

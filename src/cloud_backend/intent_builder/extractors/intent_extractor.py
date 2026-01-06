@@ -234,6 +234,7 @@ class IntentExtractor:
                             type=op_dict.get("type", ""),
                             timestamp=op_dict.get("timestamp"),
                             url=op_dict.get("url"),
+                            dom_id=op_dict.get("dom_id"),
                             page_title=op_dict.get("page_title"),
                             element=element if element else None,
                             data=op_dict.get("data", {})

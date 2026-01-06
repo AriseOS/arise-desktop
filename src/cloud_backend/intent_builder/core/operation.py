@@ -40,6 +40,7 @@ class Operation(BaseModel):
         type: Operation type (navigate, click, input, select, copy_action, extract, wait, scroll, etc.)
         timestamp: Human-readable timestamp string (e.g., "2025-10-10 17:52:57")
         url: Page URL
+        dom_id: 12-char hash ID linking to DOM snapshot file (e.g., "39a7f9d42289")
         page_title: Page title
         element: DOM element information
         data: Operation-specific data (e.g., click coordinates, selected text, etc.)
@@ -53,6 +54,7 @@ class Operation(BaseModel):
     type: str  # Accept any operation type as string
     timestamp: Optional[str] = None  # Human-readable timestamp
     url: Optional[str] = None
+    dom_id: Optional[str] = None  # 12-char hash linking to DOM snapshot file
     page_title: Optional[str] = Field(None, alias="page_title")
 
     # DOM element information

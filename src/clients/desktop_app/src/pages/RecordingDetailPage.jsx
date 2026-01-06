@@ -7,7 +7,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
   const userId = session?.username;
   const [recording, setRecording] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('timeline'); // 'timeline' or 'yaml'
+  const [activeTab, setActiveTab] = useState('timeline'); // 'timeline', 'doms', or 'yaml'
   const [isEditingQuery, setIsEditingQuery] = useState(false);
   const [editedQuery, setEditedQuery] = useState('');
 
@@ -67,37 +67,14 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
     fetchRecordingDetails();
   }, [sessionId]);
 
-  const handleGenerateWorkflow = async () => {
-    showStatus('Generating Workflow from recording...', 'info');
-
-    try {
-      // Extract task_description and user_query from recording metadata
-      const task_description = recording.task_metadata?.task_description || "Auto-generated workflow from recording";
-      const user_query = recording.task_metadata?.user_query;
-
-      // Generate Workflow directly (NEW v2 API - bypasses MetaFlow)
-      const data = await api.generateWorkflowDirect({
-        userId: userId,
-        taskDescription: task_description,
-        recordingId: sessionId,
-        userQuery: user_query,
-        enableDialogue: true,
-        enableSemanticValidation: true
-      });
-
-      showStatus('Workflow generated!', 'success');
-
-      // Navigate to Workflow detail page directly
-      setTimeout(() => {
-        onNavigate('workflow-detail', {
-          workflowId: data.workflow_id,
-          sessionId: data.session_id  // For dialogue support
-        });
-      }, 500);
-    } catch (error) {
-      console.error('Error generating Workflow:', error);
-      showStatus(`Failed to generate Workflow: ${error.message}`, 'error');
-    }
+  const handleGenerateWorkflow = () => {
+    // Navigate to generation page with recording info
+    onNavigate('generation', {
+      recordingId: sessionId,
+      recordingName: recording?.task_metadata?.task_description || recording?.session_id,
+      taskDescription: recording?.task_metadata?.task_description || '',
+      userQuery: recording?.task_metadata?.user_query || ''
+    });
   };
 
   const formatTimestamp = (timestamp) => {
@@ -459,17 +436,24 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
               <span>Timeline</span>
             </button>
             <button
+              className={`tab-button ${activeTab === 'doms' ? 'active' : ''}`}
+              onClick={() => setActiveTab('doms')}
+            >
+              <Icon icon="code" />
+              <span>DOMs</span>
+            </button>
+            <button
               className={`tab-button ${activeTab === 'yaml' ? 'active' : ''}`}
               onClick={() => setActiveTab('yaml')}
             >
-              <Icon icon="code" />
+              <Icon icon="fileText" />
               <span>YAML</span>
             </button>
           </div>
 
           {/* Tab Content */}
           <div className="tab-content">
-            {activeTab === 'timeline' ? (
+            {activeTab === 'timeline' && (
               <div className="timeline-section">
                 <h2 className="section-title">Operations Timeline</h2>
 
@@ -513,7 +497,31 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
                   </div>
                 )}
               </div>
-            ) : (
+            )}
+
+            {activeTab === 'doms' && (
+              <div className="doms-section">
+                <h2 className="section-title">DOM Snapshots ({recording.dom_snapshots ? Object.keys(recording.dom_snapshots).length : 0})</h2>
+                {!recording.dom_snapshots || Object.keys(recording.dom_snapshots).length === 0 ? (
+                  <div className="empty-message">
+                    <p>No DOM snapshots available.</p>
+                  </div>
+                ) : (
+                  <div className="dom-list">
+                    {Object.keys(recording.dom_snapshots).map((url, index) => (
+                      <div key={index} className="dom-item">
+                        <div className="dom-header">
+                          <span className="dom-index">#{index + 1}</span>
+                          <span className="dom-url">{url}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeTab === 'yaml' && (
               <div className="yaml-section">
                 <h2 className="section-title">Recording Data (JSON)</h2>
                 <div className="yaml-container">

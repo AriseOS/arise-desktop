@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
+from src.common.timestamp_utils import get_current_timestamp
+
 
 class StorageManager:
     """Manage local file storage for recordings, workflows, and execution results"""
@@ -27,14 +29,19 @@ class StorageManager:
 
     # === Recording Management ===
 
-    def save_recording(self, user_id: str, session_id: str, recording_data: dict):
+    def save_recording(self, user_id: str, session_id: str, recording_data: dict, update_timestamp: bool = True):
         """Save recording data to local file
 
         Args:
             recording_data: Output from RecordingSession.to_file_format()
+            update_timestamp: Whether to update the updated_at timestamp (default True)
         """
         recording_path = self._user_path(user_id) / "recordings" / session_id
         recording_path.mkdir(parents=True, exist_ok=True)
+
+        # Update timestamp on save
+        if update_timestamp:
+            recording_data["updated_at"] = get_current_timestamp()
 
         file_path = recording_path / "operations.json"
         with open(file_path, 'w', encoding='utf-8') as f:
@@ -75,8 +82,8 @@ class StorageManager:
 
         return data
 
-    def update_recording_metadata(self, user_id: str, session_id: str, task_description: str, user_query: str, name: str = None):
-        """Update recording metadata with task_description, user_query and name
+    def update_recording_metadata(self, user_id: str, session_id: str, task_description: str = None, user_query: str = None, name: str = None, workflow_id: str = None):
+        """Update recording metadata with task_description, user_query, name and workflow_id
 
         Args:
             user_id: User ID
@@ -84,6 +91,7 @@ class StorageManager:
             task_description: Task description (what user did)
             user_query: User query (what user wants to achieve)
             name: Short name/title (optional)
+            workflow_id: Associated workflow ID (optional, can be None to clear)
         """
         # Read existing recording
         recording_data = self.get_recording(user_id, session_id)
@@ -92,14 +100,69 @@ class StorageManager:
         if "task_metadata" not in recording_data:
             recording_data["task_metadata"] = {}
 
-        recording_data["task_metadata"]["task_description"] = task_description
-        recording_data["task_metadata"]["user_query"] = user_query
-        if name:
+        if task_description is not None:
+            recording_data["task_metadata"]["task_description"] = task_description
+        if user_query is not None:
+            recording_data["task_metadata"]["user_query"] = user_query
+        if name is not None:
             recording_data["task_metadata"]["name"] = name
+
+        # Update workflow_id at root level (can be set to None to clear)
+        if workflow_id is not None:
+            recording_data["workflow_id"] = workflow_id
+        elif "workflow_id" in recording_data and workflow_id is None:
+            # Explicitly clear workflow_id when passed as None
+            pass  # Keep existing behavior, only clear when explicitly requested via clear_workflow_id
 
         # Save back (exclude dom_snapshots - they are stored separately)
         save_data = {k: v for k, v in recording_data.items() if k != 'dom_snapshots'}
         self.save_recording(user_id, session_id, save_data)
+
+    def clear_recording_workflow_id(self, user_id: str, session_id: str):
+        """Clear the workflow_id from a recording (when workflow is deleted)"""
+        recording_data = self.get_recording(user_id, session_id)
+        if "workflow_id" in recording_data:
+            del recording_data["workflow_id"]
+            save_data = {k: v for k, v in recording_data.items() if k != 'dom_snapshots'}
+            self.save_recording(user_id, session_id, save_data)
+
+    def update_recording_from_cloud(self, user_id: str, session_id: str, cloud_data: dict):
+        """Update local recording with cloud data (for sync)
+
+        Only updates metadata fields, not operations.
+        Preserves local operations and DOM snapshots.
+
+        Args:
+            user_id: User ID
+            session_id: Session ID
+            cloud_data: Recording data from cloud with updated_at, workflow_id, task_description, etc.
+        """
+        recording_data = self.get_recording(user_id, session_id)
+
+        # Update metadata fields from cloud
+        if cloud_data.get("workflow_id"):
+            recording_data["workflow_id"] = cloud_data["workflow_id"]
+        elif "workflow_id" in cloud_data and cloud_data["workflow_id"] is None:
+            # Explicitly cleared on cloud
+            recording_data.pop("workflow_id", None)
+
+        if cloud_data.get("task_description"):
+            if "task_metadata" not in recording_data:
+                recording_data["task_metadata"] = {}
+            recording_data["task_metadata"]["task_description"] = cloud_data["task_description"]
+
+        if cloud_data.get("user_query"):
+            if "task_metadata" not in recording_data:
+                recording_data["task_metadata"] = {}
+            recording_data["task_metadata"]["user_query"] = cloud_data["user_query"]
+
+        # Use cloud's updated_at to keep them in sync
+        if cloud_data.get("updated_at"):
+            recording_data["updated_at"] = cloud_data["updated_at"]
+
+        # Save without auto-updating timestamp (use cloud's timestamp)
+        save_data = {k: v for k, v in recording_data.items() if k != 'dom_snapshots'}
+        self.save_recording(user_id, session_id, save_data, update_timestamp=False)
 
     def list_recordings(self, user_id: str) -> List[Dict[str, Any]]:
         """List all recordings for user with metadata
@@ -134,11 +197,18 @@ class StorageManager:
                 # Count actions (click, input, etc.)
                 action_count = sum(1 for op in operations if op.get("type") in ["click", "input", "type", "navigate"])
 
+                # Count DOM snapshots
+                dom_count = 0
+                dom_dir = session_dir / "dom_snapshots"
+                if dom_dir.exists():
+                    dom_count = sum(1 for f in dom_dir.glob("*.json") if f.name != "url_index.json")
+
                 recordings.append({
                     "session_id": session_dir.name,
                     "task_metadata": task_metadata,
                     "created_at": created_at,
-                    "action_count": action_count
+                    "action_count": action_count,
+                    "dom_count": dom_count
                 })
             except Exception as e:
                 # Skip corrupted recordings
@@ -198,7 +268,8 @@ class StorageManager:
                 "created_at": created_at,
                 "action_count": action_count,
                 "task_metadata": task_metadata,
-                "operations": operations
+                "operations": operations,
+                "dom_snapshots": recording_data.get("dom_snapshots", {})
             }
         except Exception as e:
             return None

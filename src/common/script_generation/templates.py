@@ -237,6 +237,31 @@ You are working in: `{working_dir}`
 ## Your Task
 Create `find_element.py` that finds the target element described in task.json.
 
+## Available Skills
+
+**IMPORTANT**: Read the skill SKILL.md file first for detailed guidance:
+```bash
+cat .claude/skills/element-finder/SKILL.md
+```
+
+**Element Tools** - Use these to find elements BEFORE writing script:
+```bash
+# Analyze xpath hint from recording (RECOMMENDED FIRST STEP)
+python .claude/skills/element-finder/tools/element_tools.py hint "<xpath_from_task.json>"
+
+# Search by text keyword (searches text, aria-label, placeholder)
+python .claude/skills/element-finder/tools/element_tools.py search "Submit"
+
+# Find element by xpath, check if it has interactive_index
+python .claude/skills/element-finder/tools/element_tools.py find "<xpath>"
+
+# List all interactive elements in a container
+python .claude/skills/element-finder/tools/element_tools.py list "<container_xpath>"
+
+# Search by specific attribute
+python .claude/skills/element-finder/tools/element_tools.py attr "aria-label" "Send message"
+```
+
 ## Instructions
 
 ### Step 1: Read task.json
@@ -245,21 +270,18 @@ cat task.json
 ```
 Understand what element to find and the xpath hints provided.
 
-### Step 2: Explore DOM
-Search dom_data.json to find the target element:
+### Step 2: Use Element Tools
+Use the element tools to find the target element:
 ```bash
-# Search by text
-grep -i "new mail" dom_data.json | head -20
+# First, try the hint command with xpath from task.json
+python .claude/skills/element-finder/tools/element_tools.py hint "<xpath_hint>"
 
-# Search by class
-grep -i "editorclass" dom_data.json | head -20
-
-# Search by aria-label
-grep -i "aria-label" dom_data.json | head -20
+# If hint fails, search by text keywords
+python .claude/skills/element-finder/tools/element_tools.py search "<keyword>"
 ```
 
 ### Step 3: Create find_element.py
-Copy the template and implement the search logic:
+Copy the template and implement the search logic based on what tools found:
 ```bash
 cp find_element_template.py find_element.py
 ```
@@ -306,96 +328,36 @@ if normalize_xpath(node.get('xpath', '')) == normalize_xpath(target_xpath):
 """
 
 
-SCRAPER_AGENT_PROMPT = """# Web Scraping Script Generation Task
+SCRAPER_AGENT_PROMPT = """# Data Extraction Script Generation
 
-## Working Directory
+Generate `extraction_script.py` to extract data from the webpage DOM.
 
-You are working in: `{working_dir}`
+## Task Context
 
-**Input files:**
-- `requirement.json` - What data to extract
-- `dom_data.json` - Webpage DOM structure (nested JSON)
+- **Working Directory**: `{working_dir}`
+- **Page URL**: `{page_url}`
 
-**Your task:**
-Create `extraction_script.py` that extracts data according to requirements.
+## Input Files
 
-## Instructions
+- `requirement.json` - User requirements, output format, xpath hints
+- `dom_data.json` - Page DOM as nested JSON dictionary
 
-1. **Read the files** to understand requirements and DOM structure
-2. **Explore the DOM** using Grep/Read to find target elements
-3. **Write extraction script** that returns `List[Dict[str, Any]]`
+## DOM Tools
 
-## Dual Anchor Strategy (CRITICAL)
-You MUST use a "Dual Anchor" strategy for robust extraction:
+DOM analysis tools are available at `.claude/skills/dom-extraction/tools/dom_tools.py`.
 
-1.  **Anchor 1: XPath Hints (Ground Truth Verification)**
-    *   Use the provided `xpath_hints` in `requirement.json` to locate the *exact* sample element in the DOM.
-    *   Verify that this element matches the data type you need.
-    *   Use this to understand the *structure* of the data (e.g., "Oh, the price is in a span with class 'price'").
+**IMPORTANT**: Read `.claude/skills/dom-extraction/SKILL.md` first for supported commands, syntax, and detailed workflow. Do not guess parameters.
 
-2.  **Anchor 2: Semantic Description (Navigation Logic)**
-    *   Use the `user_description` to identify the *parent container* or *section header* that semantically bounds the data.
-    *   **DO NOT** rely solely on absolute XPaths (e.g., `div[2]/div[4]`) to find the container, as these break easily.
-    *   **INSTEAD**, write code that:
-        a.  Finds the Semantic Anchor first (e.g., `find_element_by_text('Reputation Skyrockets')`).
-        b.  Navigates to the parent container relative to that anchor.
-        c.  Extracts items *within* that container using the structure learned from Anchor 1.
+## Workflow
 
-## Critical DOM Understanding
-1.  **Text Nodes**: Text is often split across multiple child nodes (e.g., `<span>$</span><span>99</span>`). You MUST use a helper to join all text within an element.
-    *   *Bad*: `element.text` (might miss children)
-    *   *Good*: `"".join(element.itertext())` or similar logic.
-2.  **Fragmented DOM**: Modern frameworks (React/Vue) often create deep, nested `div` structures. Do not rely on exact depth (e.g., `div/div/div`). Use relative searches (descendants) or class-based lookups where possible, *scoped* to your Semantic Anchor.
+1. Read `requirement.json` to understand what to extract
+2. Use `find` with the xpath_hint to locate the element
+3. Remove index suffix `[1]` to get container xpath, then use `analyze`
+4. Write `extraction_script.py` with function `extract_data_from_page(dom_dict) -> List[Dict]`
+5. Test: `python extraction_script.py`
 
-## Requirements
-1.  **Read `requirement.json`**: Understand what fields to extract and the `user_description`.
-2.  **Explore `dom_data.json`**: Analyze the DOM structure to find the best selectors that match the Dual Anchor strategy.
-3.  **Write `extraction_script.py`**:
-    *   Must be a standalone Python script.
-    *   Must implement `extract_data_from_page(serialized_dom, dom_dict) -> List[Dict]`.
-    *   Must handle missing fields gracefully (return `None` or empty string).
-    *   **MUST** implement the "Find Header -> Find Container -> Extract" logic if a semantic anchor is described.
+## CRITICAL: URLs Must Be Absolute
 
-**Make it generic:**
-- Work on similar pages with different content
-- Use structural patterns (classes, tags), not hardcoded values
-- Handle missing elements gracefully
-
-## Data Requirements
-
-**User Description:** {user_description}
-
-**Fields to extract:**
-{fields_description}{sample_description}{xpath_hints_description}
-
-## Important Notes
-
-- **sample_data is just ONE example** - script must work for other pages with different content
-- **xpath_hints are reference only** - use them to understand structure, then adapt to actual DOM
-- **Text may be split** across child nodes - combine when needed
-- **Avoid hardcoding** - no magic numbers, specific text values, or assumptions from sample
-- **Preserve DOM order** - DO NOT sort results. DOM order is meaningful (rankings, chronological, relevance)
-- **URL fields MUST be complete URLs** - If field name contains "url" or "link" and you extract from `href` attribute:
-  - Check if it's a relative path (starts with `/` but no `http://` or `https://`)
-  - If relative, prepend the base URL to make it absolute
-  - The base URL can be inferred from xpath_hints or user_description context
-  - Example: `/leaderboard/daily` from producthunt.com → `https://www.producthunt.com/leaderboard/daily`
-
-## XPath Quote Normalization
-
-**IMPORTANT**: xpath_hints may use single quotes (`'`), but dom_data.json uses double quotes (`"`).
-
-When matching xpath, always normalize quotes:
-```python
-def normalize_xpath(xpath: str) -> str:
-    return xpath.replace("'", '"')
-
-# When comparing:
-if normalize_xpath(node.get('xpath', '')) == normalize_xpath(target_xpath):
-    return node
-```
-
-## Testing
-
-Create and run a test to validate your extraction_script.py works correctly.
+All URLs in extracted data MUST be absolute. Use `urljoin("{page_url}", relative_url)` to convert.
+Relative URLs like `/products/xxx` will cause navigation failures!
 """

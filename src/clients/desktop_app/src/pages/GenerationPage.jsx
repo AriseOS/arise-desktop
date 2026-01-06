@@ -10,7 +10,7 @@ import '../styles/GenerationPage.css';
  * Uses the new WorkflowBuilder architecture to generate Workflow directly
  * without the intermediate MetaFlow step.
  */
-function GenerationPage({ session, onNavigate, showStatus, params = {} }) {
+function GenerationPage({ session, onNavigate, showStatus, params = {}, version }) {
   const userId = session?.username;
 
   // Extract params
@@ -479,7 +479,7 @@ function GenerationPage({ session, onNavigate, showStatus, params = {} }) {
       </div>
 
       <div className="footer">
-        <p>Ami v1.0.0</p>
+        <p>Ami v{version || '1.0.0'} • {session?.username && `Logged in as ${session.username}`}</p>
       </div>
     </div>
   );

@@ -101,10 +101,14 @@ class WorkflowExecutor:
                 "status": "pending"
             })
 
+        # Extract workflow name from YAML (human-readable name)
+        workflow_name = workflow_dict.get('name', workflow_id)
+
         # Create task with steps info
         task = ExecutionTask(
             task_id=task_id,
-            workflow_name=workflow_id,
+            workflow_id=workflow_id,  # System identifier like "workflow_75a80ae0a48f"
+            workflow_name=workflow_name,  # Human-readable name like "watcha-extract-all-products"
             user_id=user_id,
             status="running",
             progress=0,
@@ -123,7 +127,7 @@ class WorkflowExecutor:
                 execution_id = self.history.create_run(
                     user_id=user_id,
                     workflow_id=workflow_id,
-                    workflow_name=workflow_id,
+                    workflow_name=workflow_name,
                     workflow_yaml=workflow_yaml,
                     total_steps=total_steps,
                 )
@@ -171,6 +175,8 @@ class WorkflowExecutor:
 
         return {
             "task_id": task.task_id,
+            "workflow_id": task.workflow_id,  # System identifier
+            "workflow_name": task.workflow_name,  # Human-readable name
             "status": task.status,
             "progress": task.progress,
             "current_step": task.current_step,
@@ -201,7 +207,12 @@ class WorkflowExecutor:
             from src.clients.desktop_app.ami_daemon.base_agent.workflows.workflow_loader import WorkflowConfigLoader
 
             loader = WorkflowConfigLoader()
-            workflow = loader.load_from_string(workflow_yaml, workflow_name=task.workflow_name)
+            # Pass workflow_id for file path organization (e.g., "workflow_75a80ae0a48f")
+            workflow = loader.load_from_string(
+                workflow_yaml,
+                workflow_name=task.workflow_name,
+                workflow_id=task.workflow_id
+            )
 
             # Create BaseAgent
             from src.clients.desktop_app.ami_daemon.base_agent.core.base_agent import BaseAgent
@@ -339,11 +350,14 @@ class WorkflowExecutor:
                 })
 
             # Execute workflow with real-time callbacks
+            # workflow.workflow_id is already set by WorkflowConfigLoader, so we don't need to pass it again
+            # But we pass it explicitly for clarity and to ensure consistency
             result = await agent.run_workflow(
                 workflow,
                 input_data=inputs or {},
                 step_callback=step_progress_callback,
-                log_callback=log_callback
+                log_callback=log_callback,
+                workflow_id=task.workflow_id  # System identifier like "workflow_75a80ae0a48f"
             )
 
             # Update task
@@ -366,7 +380,8 @@ class WorkflowExecutor:
                 "result": {
                     **(task.result if isinstance(task.result, dict) else {"value": task.result}),
                     "workflow_yaml": workflow_yaml,  # Include workflow YAML for feedback system
-                    "workflow_name": task.workflow_name,
+                    "workflow_id": task.workflow_id,  # System identifier
+                    "workflow_name": task.workflow_name,  # Human-readable name
                     "steps": task.steps  # Include steps info for scraper step lookup
                 },
                 "error": task.error,
@@ -391,7 +406,7 @@ class WorkflowExecutor:
             execution_id = str(uuid.uuid4())
             self.storage.save_execution_result(
                 user_id,
-                task.workflow_name,
+                task.workflow_id,  # Use workflow_id for file path
                 execution_id,
                 {
                     "task_id": task_id,
@@ -465,7 +480,8 @@ class WorkflowExecutor:
                 "message": task.message,
                 "result": {
                     "workflow_yaml": workflow_yaml,  # Include workflow YAML for feedback system
-                    "workflow_name": task.workflow_name,
+                    "workflow_id": task.workflow_id,  # System identifier
+                    "workflow_name": task.workflow_name,  # Human-readable name
                     "steps": task.steps  # Include steps info for scraper step lookup
                 },
                 "error": task.error,

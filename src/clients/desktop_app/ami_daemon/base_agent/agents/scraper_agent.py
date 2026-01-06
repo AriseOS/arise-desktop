@@ -839,21 +839,8 @@ class ScraperAgent(BaseStepAgent):
                 generated_script, execution_dict, max_items
             )
 
-            # Save DOM snapshot after successful execution
-            # Get current page URL for snapshot
-            current_url = None
-            if self.browser_session:
-                try:
-                    current_url = await self.browser_session.get_current_page_url()
-                    logger.info(f"📍 Current page URL: {current_url}")
-                except Exception as e:
-                    logger.warning(f"⚠️  Could not get URL from browser session: {e}")
-
-            if current_url:
-                # Save full DOM snapshot (use execution_dict which is always full DOM in script mode)
-                await self._save_dom_snapshot(current_url, execution_dict)
-            else:
-                logger.warning("⚠️  No URL available, skipping DOM snapshot save")
+            # Note: DOM snapshot is now stored in cloud during script generation
+            # No need to save locally
 
             # Check if result has missing fields (None values or empty strings)
             # Only do auto-fix if enabled in workflow inputs
@@ -1359,273 +1346,130 @@ Extract data now:"""
                                                  example_data: Optional[str] = None,
                                                  max_dom_chars: int = 250000,
                                                  context: Optional[AgentContext] = None) -> str:
-        """Generate data extraction script using Claude Agent SDK with iterative refinement
+        """Generate data extraction script using Cloud API
+
+        Script generation is delegated to the cloud backend, which:
+        1. Stores DOM snapshot in workflow directory
+        2. Generates script using Claude Agent SDK
+        3. Returns script content
 
         Args:
-            dom_analysis: DOM analysis data containing dom_dict and llm_view
+            dom_analysis: DOM analysis data containing dom_dict and page_url
             data_requirements: Data requirements dictionary
-            interaction_steps: Interaction steps (unused in Claude SDK mode)
-            example_data: Example data (unused in Claude SDK mode)
-            max_dom_chars: Maximum DOM characters (unused - Claude can grep the file)
+            interaction_steps: Interaction steps (unused)
+            example_data: Example data (unused)
+            max_dom_chars: Maximum DOM characters (unused)
             context: Agent context for progress reporting
 
         Returns:
             Generated script content as string
 
         Raises:
-            RuntimeError: If Claude SDK script generation fails
+            RuntimeError: If cloud script generation fails
         """
-        from src.common.llm import ClaudeAgentProvider
         from pathlib import Path
 
         try:
-            # 1. Create working directory for this script
-            script_key = self._generate_script_key(data_requirements)
+            # 1. Get context info
+            if not hasattr(self, '_context') or not self._context:
+                raise RuntimeError("Agent context not available")
 
-            if not self.config_service:
-                raise RuntimeError("ConfigService not available - required for Claude SDK integration")
+            user_id = getattr(self._context, 'user_id', 'default_user')
+            workflow_id = getattr(self._context, 'workflow_id', None)
+            step_id = getattr(self._context, 'step_id', None)
 
-            scripts_root = self.config_service.get_path("data.scripts")
-            working_dir = scripts_root / script_key
-            working_dir.mkdir(parents=True, exist_ok=True)
+            if not workflow_id or not step_id:
+                raise RuntimeError(f"workflow_id ({workflow_id}) and step_id ({step_id}) required for cloud script generation")
 
-            logger.info(f"Claude SDK workspace created: {working_dir}")
+            # 2. Get cloud client from context
+            cloud_client = None
+            if self._context.agent_instance and hasattr(self._context.agent_instance, 'cloud_client'):
+                cloud_client = self._context.agent_instance.cloud_client
 
-            # Copy skills to working_dir for Claude Agent SDK to use
-            # Path: scraper_agent.py -> agents -> base_agent -> base_app -> base_app (with .claude)
-            skills_src = Path(__file__).parent.parent.parent.parent / ".claude" / "skills"
-            skills_dest = working_dir / ".claude" / "skills"
-            logger.info(f"Skills source: {skills_src}, exists: {skills_src.exists()}")
-            logger.info(f"Skills dest: {skills_dest}, exists: {skills_dest.exists()}")
-            if skills_src.exists():
-                import shutil
-                # Always copy/update skills (remove old if exists)
-                if skills_dest.exists():
-                    shutil.rmtree(skills_dest)
-                skills_dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copytree(skills_src, skills_dest)
-                logger.info(f"Copied skills to {skills_dest}")
-            else:
-                logger.warning(f"Skills source not found: {skills_src}")
+            if not cloud_client:
+                raise RuntimeError("CloudClient not available in agent context")
 
-            # 2. Save input files for Claude to read
-            # Save data requirements
-            requirement_file = working_dir / "requirement.json"
-            requirement_file.write_text(
-                json.dumps(data_requirements, indent=2, ensure_ascii=False),
-                encoding='utf-8'
-            )
-
-            # Save DOM data (dom_dict, not llm_view - Claude can grep it)
-            dom_file = working_dir / "dom_data.json"
-            dom_dict = dom_analysis.get('dom_dict', {})
-            dom_file.write_text(
-                json.dumps(dom_dict, indent=2, ensure_ascii=False),
-                encoding='utf-8'
-            )
-
-            logger.info(f"Input files saved: requirement.json ({requirement_file.stat().st_size} bytes), "
-                       f"dom_data.json ({dom_file.stat().st_size} bytes)")
-
-            # 3. Build Claude SDK prompt
-            user_description = data_requirements.get('user_description', '')
-            output_format = data_requirements.get('output_format', {})
-            sample_data = data_requirements.get('sample_data', [])
-            xpath_hints = data_requirements.get('xpath_hints', {})
-
-            # Build field descriptions
-            fields_description = "\n".join([f"- {name}: {desc}" for name, desc in output_format.items()])
-
-            # Build sample data description
-            sample_description = ""
-            if sample_data:
-                sample_description = f"\n\nExpected output example:\n{json.dumps(sample_data, indent=2, ensure_ascii=False)}"
-
-            # Build xpath hints
-            xpath_hints_description = ""
-            if xpath_hints:
-                hints_list = "\n".join([f"- {name}: {xpath}" for name, xpath in xpath_hints.items()])
-                xpath_hints_description = f"\n\nXPath hints from user demo (reference only):\n{hints_list}"
-
-            # Get page URL from dom_analysis
+            # 3. Get page URL (cloud has DOM from recording, no need to upload)
             page_url = dom_analysis.get('page_url', '')
 
-            # Build Claude SDK prompt - simplified since SKILL.md has detailed guidance
-            prompt = f"""# Data Extraction Script Generation
+            logger.info(f"Requesting cloud script generation: workflow={workflow_id}, step={step_id}")
+            logger.info(f"  Page URL: {page_url}")
+            logger.info(f"  Note: Cloud uses DOM from recording (no upload needed)")
 
-Generate `extraction_script.py` to extract data from the webpage DOM.
-
-## Task Context
-
-- **Working Directory**: `{working_dir}`
-- **Page URL**: `{page_url}`
-
-## Input Files
-
-- `requirement.json` - User requirements, output format, xpath hints
-- `dom_data.json` - Page DOM as nested JSON dictionary
-
-## Instructions
-
-Use the `dom-extraction` skill for detailed workflow. Key steps:
-
-1. Read `requirement.json` to understand what to extract
-2. Use DOM tools to locate elements: `python .claude/skills/dom-extraction/tools/dom_tools.py find "<xpath>"`
-3. Analyze container structure if extracting a list
-4. Write `extraction_script.py` with function `extract_data_from_page(dom_dict) -> List[Dict]`
-5. Test and validate the script
-
-## Quick Reference
-
-- DOM tools are at `.claude/skills/dom-extraction/tools/dom_tools.py`
-- Commands: `find`, `parent`, `analyze`, `children`, `print`
-- See skill documentation for full workflow
-
-## CRITICAL: URLs Must Be Absolute
-
-All URLs in extracted data MUST be absolute. Use `urljoin(PAGE_URL, relative_url)` to convert.
-Relative URLs like `/products/xxx` will cause navigation failures!
-"""
-
-            # 4. Initialize Claude Agent Provider with user's API key and base URL
-            # Get API key and base_url from BaseAgent's provider (which has user's API key)
-            api_key = None
-            base_url = None
-            if self.provider and hasattr(self.provider, 'api_key'):
-                api_key = self.provider.api_key
-                base_url = getattr(self.provider, 'base_url', None)
-                logger.info(f"Using API key from BaseAgent provider for Claude Agent (base_url: {base_url})")
-
-            claude_provider = ClaudeAgentProvider(
-                config_service=self.config_service,
-                api_key=api_key,
-                base_url=base_url
-            )
-            logger.info("Claude Agent Provider initialized")
-
-            # 5. Run Claude SDK to generate and test script with streaming
-            # Progress update ID for dynamic log updates
-            progress_update_id = f"script_generation_{id(self)}"
-
-            logger.info(f"Starting Claude SDK streaming task...")
-
-            # Use streaming version to get real-time progress
-            final_turn = 0
-            task_completed = False
-            task_error = None
-
-            try:
-                async for event in claude_provider.run_task_stream(
-                    prompt=prompt,
-                    working_dir=working_dir,
-                    enable_skills=True
-                ):
-                    # Forward status updates to frontend (but not detailed content like scripts)
-                    if context and context.log_callback:
-                        try:
-                            if event.type == "text":
-                                # Send progress status without detailed content
-                                await context.log_callback(
-                                    "info",
-                                    f"Generating script (turn {event.turn})",
-                                    {
-                                        "update_id": progress_update_id,
-                                        "turn": event.turn
-                                    }
-                                )
-                            elif event.type == "complete":
-                                # Task completed successfully
-                                task_completed = True
-                                final_turn = event.turn or 0
-                                logger.info(f"✅ Streaming task completed: {event.content}")
-                            elif event.type == "error":
-                                # Task failed
-                                task_error = event.content
-                                final_turn = event.turn or 0
-                                logger.error(f"❌ Streaming task error: {event.content}")
-                        except Exception as e:
-                            logger.warning(f"Failed to forward streaming event: {e}")
-
-                    # Track final turn for all events
-                    if event.turn:
-                        final_turn = event.turn
-
-            except Exception as e:
-                task_error = str(e)
-                logger.error(f"Error during streaming task: {e}", exc_info=True)
-
-            # 6. Check result
-            if task_error:
-                error_msg = f"Claude SDK script generation failed after {final_turn} iterations: {task_error}"
-                logger.error(error_msg)
-                raise RuntimeError(error_msg)
-
-            if not task_completed:
-                error_msg = f"Claude SDK script generation did not complete (got {final_turn} turns)"
-                logger.error(error_msg)
-                raise RuntimeError(error_msg)
-
-            logger.info(f"Claude SDK completed successfully in {final_turn} iterations")
-
-            # 7. Read generated script
-            script_file = working_dir / "extraction_script.py"
-            if not script_file.exists():
-                raise FileNotFoundError(
-                    f"extraction_script.py not found in {working_dir}. "
-                    f"Claude SDK completed but did not create the expected file."
-                )
-
-            script_content = script_file.read_text(encoding='utf-8')
-            logger.info(f"Script loaded from {script_file} ({len(script_content)} chars)")
-
-            # Send final update to mark the dynamic progress as completed
+            # Send progress update to frontend
             if context and context.log_callback:
                 try:
-                    # First, update the dynamic progress log to show completion
                     await context.log_callback(
-                        "success",
-                        f"Script generation completed in {final_turn} turns",
-                        {
-                            "update_id": progress_update_id,
-                            "turn": final_turn,
-                            "message": "Completed",
-                            "completed": True
-                        }
+                        "info",
+                        "📡 Requesting script generation from cloud...",
+                        {"workflow_id": workflow_id, "step_id": step_id}
                     )
-
-                    logger.info(f"Script generation completed, not sending content to frontend")
                 except Exception as e:
-                    logger.warning(f"Failed to send completion log: {e}", exc_info=True)
+                    logger.warning(f"Failed to send log callback: {e}")
 
-            # 8. Update workflow metadata with ResourceManager
-            if self.resource_manager and hasattr(self, '_context') and self._context:
-                from src.common.resource_types import ResourceType
+            # 4. Call cloud API to generate script
+            # For scraper: cloud has workflow YAML (data_requirements) and dom_snapshots
+            # Only need to send step_id and page_url
+            result = await cloud_client.generate_script(
+                workflow_id=workflow_id,
+                step_id=step_id,
+                script_type="scraper",
+                page_url=page_url,
+                user_id=user_id
+                # dom_data not needed - cloud uses dom_snapshots from recording
+            )
 
-                user_id = getattr(self._context, 'user_id', 'default_user')
-                workflow_id = getattr(self._context, 'workflow_id', 'default_workflow')
-                step_id = getattr(self._context, 'step_id', 'default_step')
+            if not result.get('success'):
+                error_msg = result.get('error', 'Unknown error')
+                raise RuntimeError(f"Cloud script generation failed: {error_msg}")
 
-                # Extract resource_id from script_key (last component)
-                script_key = self._current_script_key if hasattr(self, '_current_script_key') else ''
-                resource_id = script_key.split('/')[-1] if script_key else 'unknown_resource'
+            script_content = result.get('script_content', '')
+            script_path = result.get('script_path', '')
+            script_key = result.get('script_key', '')
+            turns = result.get('turns', 0)
 
-                logger.info(f"Updating workflow metadata for resource: {resource_id}")
+            logger.info(f"✅ Cloud script generation completed in {turns} turns")
+            logger.info(f"   Script path: {script_path}")
+            logger.info(f"   Script key: {script_key}")
+            logger.info(f"   Script size: {len(script_content)} chars")
 
-                self.resource_manager.update_workflow_metadata(
-                    user_id=user_id,
-                    workflow_id=workflow_id,
-                    step_id=step_id,
-                    resource_type=ResourceType.SCRAPER_SCRIPT,
-                    resource_id=resource_id,
-                    files=["extraction_script.py", "requirement.json", "test_extraction.py"]
+            # 5. Save script to local cache
+            if self.config_service and script_key:
+                scripts_root = self.config_service.get_path("data.scripts")
+                # Build local cache path matching cloud structure
+                local_script_dir = scripts_root / f"users/{user_id}/workflows/{workflow_id}/{step_id}/{script_key}"
+                local_script_dir.mkdir(parents=True, exist_ok=True)
+
+                local_script_file = local_script_dir / "extraction_script.py"
+                local_script_file.write_text(script_content, encoding='utf-8')
+                logger.info(f"   Saved to local cache: {local_script_file}")
+
+                # Also save requirement.json for reference
+                requirement_file = local_script_dir / "requirement.json"
+                requirement_file.write_text(
+                    json.dumps(data_requirements, indent=2, ensure_ascii=False),
+                    encoding='utf-8'
                 )
 
-            # 9. Wrap script with execution wrapper (same as before)
+            # Send completion update to frontend
+            if context and context.log_callback:
+                try:
+                    await context.log_callback(
+                        "success",
+                        f"✅ Script generated by cloud in {turns} turns",
+                        {"script_path": script_path, "turns": turns}
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send log callback: {e}")
+
+            # 6. Wrap script with execution wrapper
             return self._extract_and_wrap_code(script_content)
-            
+
         except Exception as e:
-            logger.error(f"LLM script generation failed: {e}")
-            raise Exception(f"LLM script generation failed: {e}")
+            logger.error(f"Cloud script generation failed: {e}")
+            import traceback
+            traceback.print_exc()
+            raise RuntimeError(f"Cloud script generation failed: {e}")
     
     def _extract_and_wrap_code(self, response: str) -> str:
         """提取并包装数据提取代码"""
@@ -1716,9 +1560,10 @@ def execute_extraction(dom_dict, max_items: int = 100):
             logger.warning("ScraperAgent: No context available, using default values for script path")
 
         # Generate hash-based key using data requirements
+        # IMPORTANT: Must match cloud_backend/intent_builder/services/script_pregeneration_service.py
         user_desc = data_requirements.get('user_description', '')
-        fields = list(data_requirements.get('output_format', {}).keys())
-        content = f"script_{user_desc}_{','.join(fields)}"
+        output_format = data_requirements.get('output_format', {})
+        content = f"scraper:{user_desc}:{json.dumps(output_format, sort_keys=True)}"
         hash_suffix = hashlib.md5(content.encode()).hexdigest()[:8]
         script_key = f"scraper_script_{hash_suffix}"
 

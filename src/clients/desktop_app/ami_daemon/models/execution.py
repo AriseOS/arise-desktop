@@ -10,7 +10,8 @@ class ExecutionTask:
     """Workflow execution task"""
 
     task_id: str
-    workflow_name: str
+    workflow_id: str  # System identifier like "workflow_75a80ae0a48f"
+    workflow_name: str  # Human-readable name like "watcha-extract-all-products"
     user_id: str
     status: str  # running, completed, failed
     progress: int  # 0-100

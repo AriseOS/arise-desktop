@@ -3,7 +3,7 @@ import { DEFAULT_CONFIG_KEY } from '../config/index'
 import Icon from '../components/Icons'
 import '../styles/RecordPage.css'
 
-function RecordPage({ onNavigate, showStatus, currentUser }) {
+function RecordPage({ onNavigate, showStatus, currentUser, version }) {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [isRecording, setIsRecording] = useState(false)
@@ -412,7 +412,7 @@ function RecordPage({ onNavigate, showStatus, currentUser }) {
       </div>
 
       <div className="footer">
-        <p>Ami v1.0.0</p>
+        <p>Ami v{version || '1.0.0'}</p>
       </div>
     </div>
   )

@@ -26,7 +26,8 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Header, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
-from typing import Optional, Dict, Any
+from pydantic import BaseModel
+from typing import Optional, Dict, Any, List
 
 # 添加项目根目录到 Python 路径
 # 当前文件: src/cloud-backend/main.py
@@ -514,7 +515,8 @@ async def _generate_scripts_sync(
     dom_snapshots: Dict[str, Dict],
     workflow_dir: Path,
     api_key: str,
-    base_url: Optional[str] = None
+    base_url: Optional[str] = None,
+    intents: Optional[List] = None
 ) -> Dict[str, Any]:
     """Synchronously generate scripts for workflow steps using DOM snapshots.
 
@@ -524,10 +526,11 @@ async def _generate_scripts_sync(
 
     Args:
         workflow_yaml: Workflow YAML content
-        dom_snapshots: URL -> DOM dict mapping
+        dom_snapshots: dom_id -> DOM dict mapping
         workflow_dir: Directory to save scripts
         api_key: Anthropic API key
         base_url: Optional API proxy URL
+        intents: List of Intent objects for xpath_hints -> dom_id matching
 
     Returns:
         Script generation result dict with success, generated, skipped, failed counts
@@ -544,7 +547,8 @@ async def _generate_scripts_sync(
         result = await service.pregenerate_scripts(
             workflow_yaml=workflow_yaml,
             dom_snapshots=dom_snapshots,
-            workflow_dir=workflow_dir
+            workflow_dir=workflow_dir,
+            intents=intents
         )
 
         return result
@@ -753,6 +757,67 @@ async def get_recording(recording_id: str, user_id: str):
         raise HTTPException(404, f"Recording not found: {recording_id}")
 
     return recording
+
+
+@app.patch("/api/v1/recordings/{recording_id}")
+async def update_recording_metadata(recording_id: str, user_id: str, data: dict):
+    """
+    Update recording metadata (for sync from local)
+
+    Query:
+        user_id: User ID
+
+    Body:
+        {
+            "workflow_id": "..." or null,  # Optional
+            "task_description": "...",     # Optional
+            "user_query": "...",           # Optional
+            "updated_at": "..."            # Required for sync
+        }
+    """
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+
+    recording_path = storage_service._user_path(user_id) / "recordings" / recording_id
+    if not recording_path.exists():
+        raise HTTPException(404, f"Recording not found: {recording_id}")
+
+    # Update operations.json
+    operations_path = recording_path / "operations.json"
+    if operations_path.exists():
+        with open(operations_path, 'r') as f:
+            ops_data = json.load(f)
+
+        if "task_description" in data:
+            ops_data["task_description"] = data["task_description"]
+        if "user_query" in data:
+            ops_data["user_query"] = data["user_query"]
+        if "updated_at" in data:
+            ops_data["updated_at"] = data["updated_at"]
+
+        with open(operations_path, 'w') as f:
+            json.dump(ops_data, f, indent=2, ensure_ascii=False)
+
+    # Update metadata.json for workflow_id
+    metadata_path = recording_path / "metadata.json"
+    metadata = {}
+    if metadata_path.exists():
+        with open(metadata_path, 'r') as f:
+            metadata = json.load(f)
+
+    if "workflow_id" in data:
+        if data["workflow_id"] is None:
+            metadata.pop("workflow_id", None)
+        else:
+            metadata["workflow_id"] = data["workflow_id"]
+    if "updated_at" in data:
+        metadata["updated_at"] = data["updated_at"]
+
+    with open(metadata_path, 'w') as f:
+        json.dump(metadata, f, indent=2)
+
+    logger.info(f"Recording {recording_id} metadata updated via sync")
+    return {"success": True, "message": "Recording metadata updated"}
 
 
 # ===== Workflows API =====
@@ -1137,6 +1202,8 @@ async def generate_workflow_stream(
     Same as POST /api/v1/workflows/generate but returns SSE stream
     for Lovable-style progress display.
 
+    The generation task runs in background and continues even if client disconnects.
+
     Returns SSE stream with events:
         data: {"status": "analyzing", "progress": 10, "message": "分析录制内容..."}
         data: {"status": "understanding", "progress": 30, "message": "理解用户意图..."}
@@ -1165,9 +1232,17 @@ async def generate_workflow_stream(
     if user_query:
         logger.info(f"📝 [Stream] User query: {user_query}")
 
-    async def event_generator():
+    # Create a queue for communication between background task and SSE stream
+    progress_queue: asyncio.Queue = asyncio.Queue()
+
+    async def background_generation_task():
+        """
+        Background task that performs the actual generation.
+        Communicates progress via the queue.
+        This task continues even if client disconnects.
+        """
         try:
-            logger.info(f"🚀 [Stream] Starting workflow generation for user {user_id}")
+            logger.info(f"🚀 [Background] Starting workflow generation for user {user_id}")
 
             # Import the new WorkflowService
             from src.cloud_backend.intent_builder.services import (
@@ -1177,7 +1252,7 @@ async def generate_workflow_stream(
             )
 
             # Initial progress
-            yield f"data: {json.dumps({'status': 'pending', 'progress': 0, 'message': 'Starting...'})}\n\n"
+            await progress_queue.put({'status': 'pending', 'progress': 0, 'message': 'Starting...'})
 
             # Get intent sequence or operations
             local_intent_sequence = intent_sequence
@@ -1186,22 +1261,23 @@ async def generate_workflow_stream(
 
             # If we have direct operations from App Backend, use them
             if not local_intent_sequence and local_operations:
-                yield f"data: {json.dumps({'status': 'analyzing', 'progress': 10, 'message': f'Processing {len(local_operations)} operations...'})}\n\n"
+                await progress_queue.put({'status': 'analyzing', 'progress': 10, 'message': f'Processing {len(local_operations)} operations...'})
 
             # If no operations yet, try to load from recording
             elif not local_intent_sequence and recording_id:
-                yield f"data: {json.dumps({'status': 'analyzing', 'progress': 10, 'message': 'Loading recording...'})}\n\n"
+                await progress_queue.put({'status': 'analyzing', 'progress': 10, 'message': 'Loading recording...'})
 
                 recording_data = storage_service.get_recording(user_id, recording_id)
                 if not recording_data:
-                    yield f"data: {json.dumps({'status': 'failed', 'progress': 0, 'message': 'Recording not found'})}\n\n"
+                    await progress_queue.put({'status': 'failed', 'progress': 0, 'message': 'Recording not found', '_done': True})
                     return
 
                 local_operations = recording_data.get("operations", [])
 
             # Extract intents from operations if we have them
+            intents = None
             if local_operations and not local_intent_sequence:
-                yield f"data: {json.dumps({'status': 'analyzing', 'progress': 20, 'message': f'Extracting intents from {len(local_operations)} operations...'})}\n\n"
+                await progress_queue.put({'status': 'analyzing', 'progress': 20, 'message': f'Extracting intents from {len(local_operations)} operations...'})
 
                 from src.cloud_backend.intent_builder.extractors.intent_extractor import IntentExtractor
                 from src.common.llm import AnthropicProvider
@@ -1220,10 +1296,10 @@ async def generate_workflow_stream(
                 )
                 local_intent_sequence = [intent.to_dict() for intent in intents]
 
-                yield f"data: {json.dumps({'status': 'understanding', 'progress': 30, 'message': f'Extracted {len(local_intent_sequence)} intents'})}\n\n"
+                await progress_queue.put({'status': 'understanding', 'progress': 30, 'message': f'Extracted {len(local_intent_sequence)} intents'})
 
             if not local_intent_sequence:
-                yield f"data: {json.dumps({'status': 'failed', 'progress': 0, 'message': 'No intent sequence'})}\n\n"
+                await progress_queue.put({'status': 'failed', 'progress': 0, 'message': 'No intent sequence', '_done': True})
                 return
 
             # Create service and generate with streaming
@@ -1238,7 +1314,7 @@ async def generate_workflow_stream(
             if local_recording_id:
                 dom_snapshots = storage_service.get_recording_dom_snapshots(user_id, local_recording_id)
                 if dom_snapshots:
-                    logger.info(f"📸 [Stream] Loaded {len(dom_snapshots)} DOM snapshots for script generation")
+                    logger.info(f"📸 [Background] Loaded {len(dom_snapshots)} DOM snapshots for script generation")
 
             request = GenerationRequest(
                 recording_id=local_recording_id,
@@ -1247,11 +1323,10 @@ async def generate_workflow_stream(
                 intent_sequence=local_intent_sequence,
                 enable_semantic_validation=enable_semantic_validation,
                 dom_snapshots=dom_snapshots
-                # Note: workflow_dir will be set after workflow is saved
             )
 
             # Stream progress and track session_id
-            logger.info(f"📊 [Stream] Starting to stream progress...")
+            logger.info(f"📊 [Background] Starting to stream progress...")
             session_id = None
             final_status = None
             final_message = None
@@ -1271,38 +1346,35 @@ async def generate_workflow_stream(
 
                 # Extract session_id from COMPLETED event details
                 if progress.status.value == "completed" and progress.details:
-                    # Details format: "Session ID: xxx"
                     if progress.details.startswith("Session ID: "):
                         session_id = progress.details.replace("Session ID: ", "")
 
-                logger.info(f"📊 [Stream] Progress: {progress.status.value} - {progress.progress}%")
-                yield f"data: {json.dumps(event_data)}\n\n"
+                logger.info(f"📊 [Background] Progress: {progress.status.value} - {progress.progress}%")
+                await progress_queue.put(event_data)
 
-            # Get final result from cached stream result (instead of calling generate() again)
-            logger.info(f"🔧 [Stream] Getting cached result for session: {session_id}")
+            # Get final result from cached stream result
+            logger.info(f"🔧 [Background] Getting cached result for session: {session_id}")
 
-            # If we got a session_id from COMPLETED, retrieve the cached result
             if session_id:
                 response = service.pop_stream_result(session_id)
                 if response:
-                    logger.info(f"🔧 [Stream] Retrieved cached response: success={response.success}")
+                    logger.info(f"🔧 [Background] Retrieved cached response: success={response.success}")
                 else:
-                    logger.warning(f"⚠️ [Stream] No cached result for session {session_id}")
+                    logger.warning(f"⚠️ [Background] No cached result for session {session_id}")
                     response = None
             else:
-                # No session_id means generation failed during streaming
-                logger.info(f"🔧 [Stream] No session_id, final status was: {final_status}")
+                logger.info(f"🔧 [Background] No session_id, final status was: {final_status}")
                 response = None
 
             # Handle case where we don't have a cached result
             if response is None:
                 if final_status == "failed":
-                    logger.error(f"❌ [Stream] Generation failed: {final_message}")
-                    # Already yielded FAILED event during streaming, just return
+                    logger.error(f"❌ [Background] Generation failed: {final_message}")
+                    await progress_queue.put({'status': 'failed', 'progress': 0, 'message': final_message or 'Generation failed', '_done': True})
                     return
                 else:
-                    logger.error(f"❌ [Stream] Unexpected: No cached result and status was {final_status}")
-                    yield f"data: {json.dumps({'status': 'failed', 'progress': 0, 'message': 'Internal error: no generation result'})}\n\n"
+                    logger.error(f"❌ [Background] Unexpected: No cached result and status was {final_status}")
+                    await progress_queue.put({'status': 'failed', 'progress': 0, 'message': 'Internal error: no generation result', '_done': True})
                     return
 
             if response.success:
@@ -1310,10 +1382,9 @@ async def generate_workflow_stream(
                 workflow_id = f"workflow_{uuid.uuid4().hex[:12]}"
                 import yaml
                 workflow_dict = yaml.safe_load(response.workflow_yaml)
-                # v2 format: name at top level
                 workflow_name = workflow_dict.get("name", workflow_id)
 
-                logger.info(f"✅ [Stream] Saving workflow: {workflow_id} - {workflow_name} for user: {user_id}")
+                logger.info(f"✅ [Background] Saving workflow: {workflow_id} - {workflow_name} for user: {user_id}")
                 storage_service.save_workflow(
                     user_id=user_id,
                     workflow_id=workflow_id,
@@ -1321,43 +1392,51 @@ async def generate_workflow_stream(
                     workflow_name=workflow_name,
                     source_recording_id=local_recording_id
                 )
-                logger.info(f"✅ [Stream] Workflow saved to disk")
+                logger.info(f"✅ [Background] Workflow saved to disk")
 
-                # Link recording to workflow (reverse link)
+                # Link recording to workflow
                 if local_recording_id:
                     try:
                         storage_service.update_recording_workflow(user_id, local_recording_id, workflow_id)
-                        logger.info(f"✅ [Stream] Recording {local_recording_id} linked to Workflow {workflow_id}")
+                        logger.info(f"✅ [Background] Recording {local_recording_id} linked to Workflow {workflow_id}")
                     except Exception as e:
-                        logger.warning(f"⚠️ [Stream] Failed to link recording to workflow: {e}")
+                        logger.warning(f"⚠️ [Background] Failed to link recording to workflow: {e}")
 
-                # Generate scripts synchronously (before sending completion)
+                # Generate scripts
                 script_gen_result = None
                 if dom_snapshots and local_recording_id:
-                    yield f"data: {json.dumps({'status': 'generating_scripts', 'progress': 90, 'message': 'Generating scripts for workflow steps...'})}\n\n"
+                    await progress_queue.put({'status': 'generating_scripts', 'progress': 90, 'message': 'Generating scripts for workflow steps...'})
 
                     try:
                         workflow_dir = storage_service.get_workflow_path(user_id, workflow_id)
+                        local_intents = intents if intents else None
                         script_gen_result = await _generate_scripts_sync(
                             workflow_yaml=response.workflow_yaml,
                             dom_snapshots=dom_snapshots,
                             workflow_dir=workflow_dir,
                             api_key=x_ami_api_key,
-                            base_url=config_service.get("llm.proxy_url")
+                            base_url=config_service.get("llm.proxy_url"),
+                            intents=local_intents
                         )
                         if script_gen_result:
-                            logger.info(f"🔧 [Stream] Script generation: generated={script_gen_result.get('generated', 0)}, "
+                            logger.info(f"🔧 [Background] Script generation: generated={script_gen_result.get('generated', 0)}, "
                                        f"skipped={script_gen_result.get('skipped', 0)}, failed={script_gen_result.get('failed', 0)}")
-                    except Exception as e:
-                        logger.warning(f"⚠️ [Stream] Script generation failed: {e}")
 
-                logger.info(f"✅ [Stream] Workflow saved successfully, sending completion event")
+                            # Update metadata.json with resources info for client sync
+                            if script_gen_result.get('generated', 0) > 0:
+                                await storage_service.update_workflow_resources(user_id, workflow_id)
+                                logger.info(f"🔧 [Background] Updated metadata with generated scripts")
+                    except Exception as e:
+                        logger.warning(f"⚠️ [Background] Script generation failed: {e}")
+
+                logger.info(f"✅ [Background] Workflow saved successfully")
                 completion_data = {
                     'status': 'completed',
                     'progress': 100,
                     'workflow_id': workflow_id,
                     'workflow_name': workflow_name,
-                    'message': 'Workflow generated successfully'
+                    'message': 'Workflow generated successfully',
+                    '_done': True
                 }
                 if script_gen_result:
                     completion_data['script_generation'] = {
@@ -1365,17 +1444,57 @@ async def generate_workflow_stream(
                         'skipped': script_gen_result.get('skipped', 0),
                         'failed': script_gen_result.get('failed', 0)
                     }
-                yield f"data: {json.dumps(completion_data)}\n\n"
+                await progress_queue.put(completion_data)
 
             else:
-                logger.error(f"❌ [Stream] Generation failed: {response.error}")
-                yield f"data: {json.dumps({'status': 'failed', 'progress': 0, 'message': response.error})}\n\n"
+                logger.error(f"❌ [Background] Generation failed: {response.error}")
+                await progress_queue.put({'status': 'failed', 'progress': 0, 'message': response.error, '_done': True})
 
         except Exception as e:
-            logger.error(f"❌ [Stream] Exception: {e}")
+            logger.error(f"❌ [Background] Exception: {e}")
             import traceback
             traceback.print_exc()
-            yield f"data: {json.dumps({'status': 'failed', 'progress': 0, 'message': str(e)})}\n\n"
+            await progress_queue.put({'status': 'failed', 'progress': 0, 'message': str(e), '_done': True})
+
+    # Start the background task - it will continue even if client disconnects
+    background_task = asyncio.create_task(background_generation_task())
+    logger.info(f"🚀 [Stream] Background generation task started for user {user_id}")
+
+    async def event_generator():
+        """
+        SSE event generator that reads from the progress queue.
+        If client disconnects, the background task continues running.
+        Sends keepalive every 15 seconds to prevent client timeout.
+        """
+        try:
+            while True:
+                try:
+                    # Wait for next progress event with short timeout for keepalive
+                    event_data = await asyncio.wait_for(progress_queue.get(), timeout=15.0)
+
+                    # Check if this is the final event
+                    is_done = event_data.pop('_done', False)
+
+                    yield f"data: {json.dumps(event_data)}\n\n"
+
+                    if is_done:
+                        logger.info(f"📊 [Stream] Generation completed, closing stream")
+                        break
+
+                except asyncio.TimeoutError:
+                    # Check if background task is still running
+                    if background_task.done():
+                        logger.warning(f"⚠️ [Stream] Background task ended without sending completion")
+                        yield f"data: {json.dumps({'status': 'failed', 'progress': 0, 'message': 'Generation task ended unexpectedly'})}\n\n"
+                        break
+                    # Send keepalive to prevent client timeout (SSE comment format)
+                    yield f": keepalive\n\n"
+                    continue
+
+        except asyncio.CancelledError:
+            # Client disconnected - background task continues
+            logger.info(f"🔄 [Stream] Client disconnected, background task continues running")
+            raise
 
     return StreamingResponse(
         event_generator(),
@@ -2158,6 +2277,326 @@ async def save_workflow_file(
     except Exception as e:
         logger.error(f"Failed to save file {path} for {workflow_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class GenerateScriptRequest(BaseModel):
+    """Request body for script generation API
+
+    Design principles:
+    - Minimize data transfer by reusing cloud-stored data
+    - For scraper: cloud has workflow (data_requirements) + dom_snapshots from recording
+    - For browser: need current DOM since page may have changed
+
+    Fields:
+        step_id: Step identifier to locate step config in workflow YAML
+        script_type: "scraper" or "browser"
+        page_url: Current page URL (for DOM matching / absolute URL conversion)
+        dom_data: Optional - only needed for browser scripts (runtime DOM)
+                 For scraper, cloud uses dom_snapshots from recording
+    """
+    step_id: str
+    script_type: str  # "scraper" or "browser"
+    page_url: str
+    dom_data: Optional[Dict[str, Any]] = None  # Only for browser scripts
+
+
+@app.post("/api/v1/workflows/{workflow_id}/generate-script")
+async def generate_script(
+    workflow_id: str,
+    request: GenerateScriptRequest,
+    x_user_id: str = Header(..., alias="X-User-Id"),
+    x_api_key: str = Header(None, alias="X-Api-Key"),
+    authorization: str = Header(None)
+):
+    """
+    Generate script (extraction_script.py or find_element.py) using Claude Agent SDK
+
+    This endpoint reuses cloud-stored data to minimize transfer:
+    - Workflow YAML: contains step config (data_requirements, task info)
+    - dom_snapshots: DOM captured during recording (for scraper scripts)
+
+    For scraper scripts:
+    - Cloud reads data_requirements from workflow YAML
+    - Cloud uses dom_snapshots from recording (matched by xpath_hints)
+    - Client only needs: step_id + page_url
+
+    For browser scripts:
+    - Cloud reads task info from workflow YAML
+    - Client uploads current DOM (page may have changed since recording)
+    - Client needs: step_id + page_url + dom_data
+
+    Returns:
+        {
+            "success": true,
+            "script_path": "step_id/scraper_script_xxx/extraction_script.py",
+            "script_content": "...",
+            "script_key": "scraper_script_xxx",
+            "turns": int
+        }
+    """
+    import yaml
+
+    request_id = f"req_{uuid.uuid4().hex[:12]}"
+    logger.info(f"[{request_id}] Generate script request: workflow={workflow_id}, step={request.step_id}, type={request.script_type}")
+
+    try:
+        # Get API key from header
+        api_key = x_api_key
+        if not api_key and authorization:
+            if authorization.startswith("Bearer "):
+                api_key = authorization[7:]
+
+        if not api_key:
+            raise HTTPException(status_code=401, detail="API key required")
+
+        # Validate script_type
+        if request.script_type not in ["scraper", "browser"]:
+            raise HTTPException(status_code=400, detail="script_type must be 'scraper' or 'browser'")
+
+        # Get workflow directory
+        workflow_dir = storage_service.get_workflow_path(x_user_id, workflow_id)
+        if not workflow_dir.exists():
+            raise HTTPException(status_code=404, detail=f"Workflow not found: {workflow_id}")
+
+        # Load workflow YAML to get step config
+        workflow_yaml_path = workflow_dir / "workflow.yaml"
+        if not workflow_yaml_path.exists():
+            raise HTTPException(status_code=404, detail="workflow.yaml not found")
+
+        workflow_yaml = workflow_yaml_path.read_text(encoding='utf-8')
+        workflow = yaml.safe_load(workflow_yaml)
+
+        # Find the step in workflow
+        step_config = _find_step_in_workflow(workflow, request.step_id)
+        if not step_config:
+            raise HTTPException(status_code=404, detail=f"Step not found: {request.step_id}")
+
+        step_inputs = step_config.get("inputs", {})
+        logger.info(f"[{request_id}] Found step config: {list(step_inputs.keys())}")
+
+        # Import and create ScriptPregenerationService
+        from src.cloud_backend.intent_builder.services import ScriptPregenerationService
+
+        service = ScriptPregenerationService(
+            config_service=config_service,
+            api_key=api_key,
+            base_url=config_service.get("llm.base_url")
+        )
+
+        # Generate script based on type
+        if request.script_type == "scraper":
+            # Get data_requirements from step config
+            data_requirements = step_inputs.get("data_requirements", {})
+            if not data_requirements:
+                raise HTTPException(status_code=400, detail="Step has no data_requirements")
+
+            # Find DOM from dom_snapshots (stored during recording)
+            dom_dict = _find_dom_for_step(
+                workflow_dir=workflow_dir,
+                step_inputs=step_inputs,
+                page_url=request.page_url
+            )
+            if not dom_dict:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"No DOM snapshot found for step {request.step_id}. "
+                           f"DOM may not have been captured during recording."
+                )
+
+            logger.info(f"[{request_id}] Found DOM snapshot for scraper ({len(json.dumps(dom_dict))} chars)")
+
+            result = await service._generate_scraper_script(
+                step_id=request.step_id,
+                inputs=step_inputs,
+                dom_dict=dom_dict,
+                workflow_dir=workflow_dir,
+                page_url=request.page_url
+            )
+
+            script_name = "extraction_script.py"
+
+        else:  # browser
+            # Browser scripts need current DOM (page may have changed)
+            if not request.dom_data:
+                raise HTTPException(
+                    status_code=400,
+                    detail="dom_data is required for browser script generation"
+                )
+
+            result = await service._generate_browser_script(
+                step_id=request.step_id,
+                inputs=step_inputs,
+                dom_dict=request.dom_data,
+                workflow_dir=workflow_dir
+            )
+
+            script_name = "find_element.py"
+
+        if not result.success:
+            logger.error(f"[{request_id}] Script generation failed: {result.error}")
+            raise HTTPException(status_code=500, detail=f"Script generation failed: {result.error}")
+
+        # Read generated script content
+        script_content = ""
+        if result.script_path and result.script_path.exists():
+            script_content = result.script_path.read_text(encoding='utf-8')
+
+        # Extract script_key from path (e.g., scraper_script_abc123)
+        script_key = result.script_path.parent.name if result.script_path else ""
+
+        # Build relative path
+        script_path = f"{request.step_id}/{script_key}/{script_name}"
+
+        logger.info(f"[{request_id}] Script generated successfully: {script_path} ({len(script_content)} bytes, {result.turns} turns)")
+
+        # Update workflow metadata
+        try:
+            metadata = storage_service.load_workflow_metadata(x_user_id, workflow_id) or {}
+            if "generated_scripts" not in metadata:
+                metadata["generated_scripts"] = {}
+            metadata["generated_scripts"][request.step_id] = {
+                "script_type": request.script_type,
+                "script_key": script_key,
+                "script_path": script_path,
+                "generated_at": datetime.utcnow().isoformat(),
+                "turns": result.turns
+            }
+            storage_service.save_workflow_metadata(x_user_id, workflow_id, metadata)
+        except Exception as e:
+            logger.warning(f"[{request_id}] Failed to update metadata: {e}")
+
+        return {
+            "success": True,
+            "script_path": script_path,
+            "script_content": script_content,
+            "script_key": script_key,
+            "turns": result.turns
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[{request_id}] Generate script error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _find_step_in_workflow(workflow: Dict, step_id: str) -> Optional[Dict]:
+    """Recursively find step by ID in workflow
+
+    Handles nested steps in foreach, if/then/else, while loops
+    """
+    def search_steps(steps: List[Dict]) -> Optional[Dict]:
+        for step in steps:
+            # Check if this is the step we're looking for
+            if step.get("id") == step_id:
+                return step
+
+            # Check nested steps
+            for key in ["do", "then", "else", "steps"]:
+                if key in step:
+                    nested = step[key]
+                    if isinstance(nested, list):
+                        result = search_steps(nested)
+                        if result:
+                            return result
+
+        return None
+
+    return search_steps(workflow.get("steps", []))
+
+
+def _find_dom_for_step(
+    workflow_dir: Path,
+    step_inputs: Dict,
+    page_url: str
+) -> Optional[Dict]:
+    """Find DOM snapshot for a step
+
+    Strategy:
+    1. Load dom_snapshots.json from workflow directory
+    2. Match by xpath_hints -> find operation with matching xpath -> get dom_id
+    3. Fallback: match by URL
+
+    Args:
+        workflow_dir: Workflow directory containing dom_snapshots.json
+        step_inputs: Step inputs containing xpath_hints
+        page_url: Current page URL for matching
+
+    Returns:
+        DOM dict if found, None otherwise
+    """
+    # Load dom_snapshots
+    dom_snapshots_file = workflow_dir / "dom_snapshots.json"
+    if not dom_snapshots_file.exists():
+        logger.warning(f"dom_snapshots.json not found in {workflow_dir}")
+        return None
+
+    try:
+        dom_snapshots = json.loads(dom_snapshots_file.read_text(encoding='utf-8'))
+    except Exception as e:
+        logger.error(f"Failed to load dom_snapshots.json: {e}")
+        return None
+
+    if not dom_snapshots:
+        logger.warning("dom_snapshots.json is empty")
+        return None
+
+    logger.info(f"Loaded {len(dom_snapshots)} DOM snapshots")
+
+    # Extract xpath_hints from step inputs
+    data_req = step_inputs.get("data_requirements", {})
+    xpath_hints = data_req.get("xpath_hints", {})
+
+    # Load intents for xpath -> dom_id mapping
+    intents_file = workflow_dir / "intents.json"
+    intents = []
+    if intents_file.exists():
+        try:
+            intents = json.loads(intents_file.read_text(encoding='utf-8'))
+            logger.info(f"Loaded {len(intents)} intents")
+        except Exception as e:
+            logger.warning(f"Failed to load intents.json: {e}")
+
+    # Strategy 1: Match xpath_hints against intent operations
+    if xpath_hints and intents:
+        for hint_xpath in xpath_hints.values():
+            # Normalize xpath for comparison
+            hint_normalized = hint_xpath.replace("'", '"')
+
+            for intent in intents:
+                operations = intent.get("operations", [])
+                for op in operations:
+                    element = op.get("element", {})
+                    op_xpath = element.get("xpath", "")
+                    dom_id = op.get("dom_id")
+
+                    if dom_id and op_xpath:
+                        op_normalized = op_xpath.replace("'", '"')
+                        if op_normalized == hint_normalized:
+                            if dom_id in dom_snapshots:
+                                dom_data = dom_snapshots[dom_id]
+                                # dom_data is {"url": ..., "dom": ...}
+                                dom_dict = dom_data.get("dom") if isinstance(dom_data, dict) else dom_data
+                                logger.info(f"Matched DOM via xpath_hints -> dom_id={dom_id}")
+                                return dom_dict
+
+    # Strategy 2: Match by URL
+    for dom_id, dom_data in dom_snapshots.items():
+        dom_url = dom_data.get("url") if isinstance(dom_data, dict) else None
+        if dom_url == page_url:
+            dom_dict = dom_data.get("dom") if isinstance(dom_data, dict) else dom_data
+            logger.info(f"Matched DOM via URL={page_url}")
+            return dom_dict
+
+    # Strategy 3: Return first available DOM (fallback)
+    if dom_snapshots:
+        first_id = list(dom_snapshots.keys())[0]
+        first_data = dom_snapshots[first_id]
+        dom_dict = first_data.get("dom") if isinstance(first_data, dict) else first_data
+        logger.warning(f"No exact match, using first DOM snapshot (dom_id={first_id})")
+        return dom_dict
+
+    return None
 
 
 if __name__ == "__main__":

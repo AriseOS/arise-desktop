@@ -3,7 +3,7 @@ import Icon from '../components/Icons';
 import { api } from '../utils/api';
 import '../styles/QuickStartPage.css';
 
-function QuickStartPage({ session, onNavigate, showStatus }) {
+function QuickStartPage({ session, onNavigate, showStatus, version }) {
   const userId = session?.username;
   const [step, setStep] = useState('tutorial'); // 'tutorial', 'input', 'recording', 'analyzing'
   const [tutorialPage, setTutorialPage] = useState(0);
@@ -528,7 +528,7 @@ function QuickStartPage({ session, onNavigate, showStatus }) {
       {step === 'analyzing' && renderAnalyzing()}
 
       <div className="footer">
-        <p>Ami v1.0.0</p>
+        <p>Ami v{version || '1.0.0'} • {session?.username && `Logged in as ${session.username}`}</p>
       </div>
     </div>
   );

@@ -266,13 +266,19 @@ class WorkflowConfigLoader:
         # 默认按 v1 处理 (向后兼容)
         return WorkflowVersion.V1
 
-    def load_from_string(self, yaml_content: str, workflow_name: Optional[str] = None) -> Workflow:
+    def load_from_string(
+        self,
+        yaml_content: str,
+        workflow_name: Optional[str] = None,
+        workflow_id: Optional[str] = None
+    ) -> Workflow:
         """
         从 YAML 字符串加载工作流
 
         Args:
             yaml_content: YAML 格式的工作流配置
             workflow_name: 可选的工作流名称 (用于 v1 格式缺少 name 时的回退)
+            workflow_id: 系统标识符 (如 workflow_75a80ae0a48f)，用于文件路径和API
 
         Returns:
             Workflow: 工作流对象
@@ -284,7 +290,7 @@ class WorkflowConfigLoader:
         if not config:
             raise ValueError("空的 YAML 配置")
 
-        return self._load_from_config(config, workflow_name)
+        return self._load_from_config(config, workflow_name, workflow_id)
 
     def load_from_file(self, file_path: Union[str, Path]) -> Workflow:
         """
@@ -309,13 +315,19 @@ class WorkflowConfigLoader:
 
         return self._load_from_config(config)
 
-    def _load_from_config(self, config: Dict[str, Any], fallback_name: Optional[str] = None) -> Workflow:
+    def _load_from_config(
+        self,
+        config: Dict[str, Any],
+        fallback_name: Optional[str] = None,
+        workflow_id: Optional[str] = None
+    ) -> Workflow:
         """
         从配置字典加载工作流 (内部方法)
 
         Args:
             config: 解析后的配置字典
             fallback_name: 可选的回退名称
+            workflow_id: 系统标识符 (如 workflow_75a80ae0a48f)
 
         Returns:
             Workflow: 工作流对象
@@ -341,7 +353,7 @@ class WorkflowConfigLoader:
                 "详见文档: docs/workflow-v2-migration.md"
             )
         else:
-            return self._create_workflow_from_v2(config)
+            return self._create_workflow_from_v2(config, workflow_id)
 
     def load_builtin_workflow(self, workflow_name: str) -> Workflow:
         """
@@ -442,8 +454,17 @@ class WorkflowConfigLoader:
 
     # ==================== V2 格式转换 ====================
 
-    def _create_workflow_from_v2(self, config: Dict[str, Any]) -> Workflow:
-        """从 v2 格式配置创建工作流对象"""
+    def _create_workflow_from_v2(
+        self,
+        config: Dict[str, Any],
+        workflow_id: Optional[str] = None
+    ) -> Workflow:
+        """从 v2 格式配置创建工作流对象
+
+        Args:
+            config: v2 格式的配置字典
+            workflow_id: 系统标识符 (如 workflow_75a80ae0a48f)
+        """
         name = config['name']
         description = config.get('description', '')
         version = '1.0.0'
@@ -473,6 +494,7 @@ class WorkflowConfigLoader:
         # 创建工作流对象
         workflow = Workflow(
             name=name,
+            workflow_id=workflow_id,  # 系统标识符，用于文件路径
             description=description,
             version=version,
             steps=steps,

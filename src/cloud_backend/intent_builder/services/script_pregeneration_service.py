@@ -24,6 +24,7 @@ from src.common.script_generation import (
     ScraperRequirement,
     ScriptGenerationResult,
 )
+from ..core.intent import Intent
 
 if TYPE_CHECKING:
     from src.common.config_service import ConfigService
@@ -80,14 +81,16 @@ class ScriptPregenerationService:
         workflow_yaml: str,
         dom_snapshots: Dict[str, Dict],
         workflow_dir: Path,
+        intents: Optional[List[Intent]] = None,
         progress_callback: Optional[callable] = None
     ) -> Dict[str, Any]:
         """Pre-generate scripts for all applicable workflow steps
 
         Args:
             workflow_yaml: Workflow YAML content
-            dom_snapshots: URL -> DOM dict mapping from recording
+            dom_snapshots: dom_id -> DOM dict mapping from recording
             workflow_dir: Directory to save scripts
+            intents: List of Intents for xpath_hints -> dom_id matching
             progress_callback: Optional callback for progress updates
 
         Returns:
@@ -102,7 +105,8 @@ class ScriptPregenerationService:
             }
         """
         logger.info(f"Starting script pre-generation for workflow")
-        logger.info(f"  DOM snapshots: {len(dom_snapshots)} URLs")
+        logger.info(f"  DOM snapshots: {len(dom_snapshots)} dom_ids")
+        logger.info(f"  Intents: {len(intents) if intents else 0}")
         logger.info(f"  Workflow dir: {workflow_dir}")
 
         # Parse workflow
@@ -157,9 +161,9 @@ class ScriptPregenerationService:
                 )
 
             # Find matching DOM snapshot
-            dom_dict = self._find_matching_dom(step_info, dom_snapshots)
+            dom_data = self._find_matching_dom(step_info, dom_snapshots, intents)
 
-            if not dom_dict:
+            if not dom_data:
                 logger.warning(f"No DOM snapshot found for step {step_id}")
                 results["skipped"] += 1
                 results["details"].append({
@@ -169,6 +173,14 @@ class ScriptPregenerationService:
                 })
                 continue
 
+            # Extract dom_dict and page_url from dom_data
+            if isinstance(dom_data, dict) and "dom" in dom_data:
+                dom_dict = dom_data["dom"]
+                page_url = dom_data.get("url")
+            else:
+                dom_dict = dom_data
+                page_url = None
+
             # Generate script based on step type
             try:
                 if step_type == "browser_agent":
@@ -177,7 +189,7 @@ class ScriptPregenerationService:
                     )
                 elif step_type == "scraper_agent":
                     result = await self._generate_scraper_script(
-                        step_id, step_inputs, dom_dict, workflow_dir
+                        step_id, step_inputs, dom_dict, workflow_dir, page_url
                     )
                 else:
                     results["skipped"] += 1
@@ -295,50 +307,143 @@ class ScriptPregenerationService:
     def _find_matching_dom(
         self,
         step_info: Dict,
-        dom_snapshots: Dict[str, Dict]
+        dom_snapshots: Dict[str, Dict],
+        intents: Optional[List[Intent]] = None
     ) -> Optional[Dict]:
-        """Find DOM snapshot that matches the step's URL
+        """Find DOM snapshot that matches the step
 
-        Matching strategy:
-        1. Exact URL match
-        2. URL without query params match
-        3. Same domain match (fallback)
+        Matching strategy (in order):
+        1. Match xpath_hints against Intent operations' element.xpath to find dom_id
+        2. Match step URL against dom_snapshots keys (if URL is not a variable)
+
+        Args:
+            step_info: Step information with inputs, url, etc.
+            dom_snapshots: dom_id -> DOM dict mapping
+            intents: List of Intents for xpath_hints -> dom_id matching
+
+        Returns:
+            DOM dict if found, None otherwise
         """
+        step_id = step_info.get("id", "unknown")
+        inputs = step_info.get("inputs", {})
+
+        # Strategy 1: Match via xpath_hints -> Intent operations -> dom_id
+        xpath_hints = self._extract_xpath_hints(inputs)
+        if xpath_hints and intents:
+            logger.debug(f"  Step {step_id}: Trying to match xpath_hints: {list(xpath_hints.values())[:2]}...")
+            dom_id = self._find_dom_id_by_xpath_hints(xpath_hints, intents)
+            if dom_id:
+                if dom_id in dom_snapshots:
+                    dom_data = dom_snapshots[dom_id]
+                    dom_url = dom_data.get("url") if isinstance(dom_data, dict) else None
+                    logger.info(f"  Step {step_id}: Matched dom_id={dom_id} via xpath_hints (url={dom_url})")
+                    # Return full dom_data {url, dom} for script generation to use page_url
+                    return dom_data
+                else:
+                    logger.warning(f"  Step {step_id}: Matched dom_id={dom_id} but not in dom_snapshots (keys: {list(dom_snapshots.keys())})")
+
+        # Strategy 2: Match via URL (only for fixed URLs, not variables)
         step_url = step_info.get("url")
+        if step_url and "{{" not in step_url:
+            # Try exact URL match against dom_snapshots
+            for key, dom_data in dom_snapshots.items():
+                # dom_data is {"url": ..., "dom": ...}
+                dom_url = dom_data.get("url") if isinstance(dom_data, dict) else None
+                if dom_url == step_url:
+                    logger.info(f"  Step {step_id}: Matched via URL={step_url}")
+                    return dom_data
 
-        if not step_url:
-            # If no URL in step, use the first/latest DOM snapshot
-            if dom_snapshots:
-                return list(dom_snapshots.values())[-1]
-            return None
+        logger.warning(f"  Step {step_id}: No matching DOM found (xpath_hints={list(xpath_hints.keys()) if xpath_hints else None}, url={step_url})")
+        return None
 
-        # Remove variable references for matching
-        if "{{" in step_url:
-            # Can't match variable URLs directly
-            # Fall back to first available snapshot
-            if dom_snapshots:
-                return list(dom_snapshots.values())[0]
-            return None
+    def _extract_xpath_hints(self, inputs: Dict) -> Dict[str, str]:
+        """Extract xpath_hints from step inputs
 
-        # Exact match
-        if step_url in dom_snapshots:
-            return dom_snapshots[step_url]
+        Handles both scraper_agent (data_requirements.xpath_hints)
+        and browser_agent (xpath_hints) formats.
+        """
+        # scraper_agent format
+        data_req = inputs.get("data_requirements", {})
+        if data_req and "xpath_hints" in data_req:
+            hints = data_req["xpath_hints"]
+            if isinstance(hints, dict):
+                return hints
 
-        # URL without query params
-        from urllib.parse import urlparse, urlunparse
-        parsed = urlparse(step_url)
-        base_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+        # browser_agent format
+        hints = inputs.get("xpath_hints", {})
+        if isinstance(hints, dict):
+            return hints
+        elif isinstance(hints, list) and hints:
+            return {"target": hints[0]}
 
-        for url, dom in dom_snapshots.items():
-            parsed_snap = urlparse(url)
-            snap_base = urlunparse((parsed_snap.scheme, parsed_snap.netloc, parsed_snap.path, "", "", ""))
-            if base_url == snap_base:
-                return dom
+        return {}
 
-        # Same domain fallback
-        for url, dom in dom_snapshots.items():
-            if urlparse(url).netloc == parsed.netloc:
-                return dom
+    def _normalize_xpath(self, xpath: str) -> str:
+        """Normalize xpath for comparison
+
+        Handles differences like:
+        - Quote style: 'app' vs "app"
+        - Index notation: a[1] vs a
+
+        Args:
+            xpath: XPath string
+
+        Returns:
+            Normalized xpath string
+        """
+        import re
+        # Normalize quotes: replace single quotes with double quotes
+        normalized = xpath.replace("'", '"')
+        # Remove [1] index (first element selector) as it's often omitted
+        normalized = re.sub(r'\[1\]', '', normalized)
+        return normalized
+
+    def _find_dom_id_by_xpath_hints(
+        self,
+        xpath_hints: Dict[str, str],
+        intents: List
+    ) -> Optional[str]:
+        """Find dom_id by matching xpath_hints against Intent operations
+
+        The xpath_hints in workflow steps come from Recording operations' element.xpath.
+        We find the matching operation and return its dom_id.
+
+        Args:
+            xpath_hints: Field name -> xpath mapping from step
+            intents: List of Intent objects or dicts
+
+        Returns:
+            dom_id if found, None otherwise
+        """
+        # Normalize hint xpaths for comparison
+        hint_xpaths_normalized = {self._normalize_xpath(x) for x in xpath_hints.values()}
+        logger.debug(f"    Looking for normalized xpaths: {list(hint_xpaths_normalized)[:2]}...")
+
+        for intent in intents:
+            # Support both Intent objects and dicts
+            if isinstance(intent, Intent):
+                operations = intent.operations
+            elif isinstance(intent, dict):
+                operations = intent.get("operations", [])
+            else:
+                continue
+
+            for op in operations:
+                # Support both Operation objects and dicts
+                if isinstance(op, dict):
+                    element = op.get("element", {})
+                    xpath = element.get("xpath") if element else None
+                    dom_id = op.get("dom_id")
+                else:
+                    # Operation object
+                    xpath = op.element.xpath if op.element else None
+                    dom_id = op.dom_id
+
+                if xpath and dom_id:
+                    normalized_xpath = self._normalize_xpath(xpath)
+                    if normalized_xpath in hint_xpaths_normalized:
+                        logger.debug(f"    Matched xpath={xpath} -> dom_id={dom_id}")
+                        return dom_id
 
         return None
 
@@ -393,9 +498,18 @@ class ScriptPregenerationService:
         step_id: str,
         inputs: Dict,
         dom_dict: Dict,
-        workflow_dir: Path
+        workflow_dir: Path,
+        page_url: Optional[str] = None
     ) -> ScriptGenerationResult:
-        """Generate extraction_script.py for scraper_agent step"""
+        """Generate extraction_script.py for scraper_agent step
+
+        Args:
+            step_id: Step identifier
+            inputs: Step inputs from workflow
+            dom_dict: DOM dictionary for script generation
+            workflow_dir: Workflow directory to save script
+            page_url: Page URL for absolute URL conversion in scripts
+        """
 
         # Build requirement from inputs
         data_req = inputs.get("data_requirements", {})
@@ -425,7 +539,8 @@ class ScriptPregenerationService:
             dom_dict=dom_dict,
             working_dir=working_dir,
             api_key=self.api_key,
-            base_url=self.base_url
+            base_url=self.base_url,
+            page_url=page_url
         )
 
         return result

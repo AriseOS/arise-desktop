@@ -366,8 +366,9 @@ class ExecutionContext(BaseModel):
 class Workflow(BaseModel):
     """完整工作流定义"""
     # 基础信息
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="工作流ID")
-    name: str = Field(..., description="工作流名称")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="内部UUID")
+    workflow_id: Optional[str] = Field(default=None, description="系统标识符 (如 workflow_75a80ae0a48f)，用于文件路径和API")
+    name: str = Field(..., description="人类可读名称 (如 watcha-extract-all-products)")
     description: str = Field(default="", description="工作流描述")
     version: str = Field(default="1.0.0", description="版本号")
     

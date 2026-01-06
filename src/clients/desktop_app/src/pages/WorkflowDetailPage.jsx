@@ -11,7 +11,7 @@ const nodeTypes = {
   custom: CustomNode,
 }
 
-function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStatus, onLogout, pageData }) {
+function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStatus, onLogout, pageData, version }) {
   // Get user_id from session
   const userId = session?.username;
 
@@ -1198,7 +1198,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
 
 
       <div className="footer">
-        <p>Ami v1.0.0</p>
+        <p>Ami v{version || '1.0.0'} • {session?.username && `Logged in as ${session.username}`}</p>
       </div>
 
       {/* Delete Collection Confirmation Modal */}

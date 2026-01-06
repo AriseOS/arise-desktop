@@ -3,7 +3,7 @@ import Icon from '../components/Icons';
 import { api } from '../utils/api';
 import '../styles/RecordingPage.css';
 
-function RecordingPage({ session, onNavigate, showStatus }) {
+function RecordingPage({ session, onNavigate, showStatus, version }) {
   const userId = session?.username;
   const [recordUrl, setRecordUrl] = useState("https://www.google.com");
   const [recordTitle, setRecordTitle] = useState("");
@@ -16,7 +16,6 @@ function RecordingPage({ session, onNavigate, showStatus }) {
   const operationsListRef = useRef(null);
 
   const [uploading, setUploading] = useState(false);
-  const [quickGenerating, setQuickGenerating] = useState(false);
 
   // Poll for operations while recording
   useEffect(() => {
@@ -151,43 +150,19 @@ function RecordingPage({ session, onNavigate, showStatus }) {
     }
   };
 
-  // Generate Workflow directly from recording (NEW v2 API - bypasses MetaFlow)
-  const handleQuickGenerate = async () => {
+  // Navigate to generation page with recording info
+  const handleQuickGenerate = () => {
     if (!sessionId) {
       showStatus("没有可生成Workflow的录制", "error");
       return;
     }
 
-    try {
-      setQuickGenerating(true);
-
-      // Generate Workflow directly (NEW v2 API)
-      showStatus("正在生成Workflow...", "info");
-
-      const workflowResult = await api.generateWorkflowDirect({
-        userId: userId,
-        taskDescription: recordDescription,
-        recordingId: sessionId,
-        userQuery: null,
-        enableDialogue: true,
-        enableSemanticValidation: true
-      });
-
-      showStatus("Workflow生成成功！正在跳转...", "success");
-
-      // Navigate to Workflow detail page directly
-      setTimeout(() => {
-        onNavigate("workflow-detail", {
-          workflowId: workflowResult.workflow_id,
-          sessionId: workflowResult.session_id  // For dialogue support
-        });
-      }, 500);
-    } catch (error) {
-      console.error("Generate Workflow error:", error);
-      showStatus(`生成失败: ${error.message}`, "error");
-    } finally {
-      setQuickGenerating(false);
-    }
+    onNavigate('generation', {
+      recordingId: sessionId,
+      recordingName: recordDescription || sessionId,
+      taskDescription: recordDescription || '',
+      userQuery: ''
+    });
   };
 
   return (
@@ -354,25 +329,16 @@ function RecordingPage({ session, onNavigate, showStatus }) {
                 <button
                   className="btn btn-primary"
                   onClick={handleQuickGenerate}
-                  disabled={quickGenerating || uploading}
+                  disabled={uploading}
                 >
-                  {quickGenerating ? (
-                    <>
-                      <div className="btn-spinner"></div>
-                      <span>生成中...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Icon icon="zap" size={16} />
-                      <span>快速生成 Workflow</span>
-                    </>
-                  )}
+                  <Icon icon="zap" size={16} />
+                  <span>快速生成 Workflow</span>
                 </button>
 
                 <button
                   className="btn btn-secondary"
                   onClick={handleUpload}
-                  disabled={uploading || quickGenerating}
+                  disabled={uploading}
                 >
                   {uploading ? (
                     <>
@@ -395,7 +361,7 @@ function RecordingPage({ session, onNavigate, showStatus }) {
                     setRecordTitle("");
                     setRecordDescription("");
                   }}
-                  disabled={uploading || quickGenerating}
+                  disabled={uploading}
                 >
                   <Icon icon="refreshCw" size={16} />
                   <span>重新录制</span>
@@ -412,7 +378,7 @@ function RecordingPage({ session, onNavigate, showStatus }) {
       </div>
 
       <div className="footer">
-        <p>Ami v1.0.0</p>
+        <p>Ami v{version || '1.0.0'} • {session?.username && `Logged in as ${session.username}`}</p>
       </div>
     </div>
   );

@@ -27,7 +27,6 @@ import ExecutionMonitorPage from "./pages/ExecutionMonitorPage";
 import ExecutionResultPage from "./pages/ExecutionResultPage";
 import RecordingsLibraryPage from "./pages/RecordingsLibraryPage";
 import RecordingDetailPage from "./pages/RecordingDetailPage";
-import ConversationalGenerationPage from "./pages/ConversationalGenerationPage";
 // MetaflowPreviewPage removed - MetaFlow is now internal, users work with Workflows directly
 // DataManagementPage removed - Data is now per-workflow, see WorkflowDetailPage "Data" tab
 import WorkflowExecutionLivePage from "./pages/WorkflowExecutionLivePage";
@@ -348,7 +347,7 @@ function App() {
       </button>
 
       <div className="footer" style={{ textAlign: 'center', marginTop: '40px', color: 'var(--text-tertiary)', fontSize: '12px' }}>
-        <p>Ami v1.0.0 • {session?.username && `Logged in as ${session.username}`}</p>
+        <p>Ami v{versionInfo?.version || '1.0.0'} • {session?.username && `Logged in as ${session.username}`}</p>
       </div>
     </div>
   );
@@ -585,6 +584,7 @@ function App() {
             session={session}
             onNavigate={navigate}
             showStatus={showStatus}
+            version={versionInfo?.version || '1.0.0'}
           />
         );
 
@@ -594,6 +594,7 @@ function App() {
             session={session}
             onNavigate={navigate}
             showStatus={showStatus}
+            version={versionInfo?.version || '1.0.0'}
           />
         );
 
@@ -603,6 +604,7 @@ function App() {
             session={session}
             onNavigate={navigate}
             showStatus={showStatus}
+            version={versionInfo?.version || '1.0.0'}
           />
         );
 
@@ -613,6 +615,7 @@ function App() {
             onNavigate={navigate}
             showStatus={showStatus}
             params={pageParams}
+            version={versionInfo?.version || '1.0.0'}
           />
         );
 
@@ -622,6 +625,7 @@ function App() {
             session={session}
             onNavigate={navigate}
             onLogout={() => { }}
+            version={versionInfo?.version || '1.0.0'}
           />
         );
 
@@ -635,6 +639,7 @@ function App() {
             showStatus={showStatus}
             onLogout={() => { }}
             pageData={pageParams}
+            version={versionInfo?.version || '1.0.0'}
           />
         );
 
@@ -645,6 +650,7 @@ function App() {
             onNavigate={navigate}
             showStatus={showStatus}
             recordingData={pageParams.recordingData}
+            version={versionInfo?.version || '1.0.0'}
           />
         );
 
@@ -655,6 +661,7 @@ function App() {
             onNavigate={navigate}
             showStatus={showStatus}
             recordingData={pageParams}
+            version={versionInfo?.version || '1.0.0'}
           />
         );
 
@@ -699,6 +706,7 @@ function App() {
             session={session}
             onNavigate={navigate}
             showStatus={showStatus}
+            version={versionInfo?.version || '1.0.0'}
           />
         );
 
@@ -709,17 +717,10 @@ function App() {
             onNavigate={navigate}
             showStatus={showStatus}
             sessionId={pageParams.sessionId}
+            version={versionInfo?.version || '1.0.0'}
           />
         );
 
-      case "conversational-generation":
-        return (
-          <ConversationalGenerationPage
-            session={session}
-            onNavigate={navigate}
-            showStatus={showStatus}
-          />
-        );
 
       case "recording-analysis":
         return (
@@ -728,6 +729,7 @@ function App() {
             onNavigate={navigate}
             showStatus={showStatus}
             pageData={pageParams}
+            version={versionInfo?.version || '1.0.0'}
           />
         );
 
@@ -749,6 +751,7 @@ function App() {
             pageParams={pageParams}
             onNavigate={navigate}
             showStatus={showStatus}
+            version={versionInfo?.version || '1.0.0'}
           />
         );
 
@@ -760,6 +763,7 @@ function App() {
             onNavigate={navigate}
             showStatus={showStatus}
             topicId={pageParams.topicId}
+            version={versionInfo?.version || '1.0.0'}
           />
         );
 

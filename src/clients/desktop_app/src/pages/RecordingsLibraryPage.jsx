@@ -72,8 +72,30 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
     onNavigate('recording-detail', { sessionId });
   };
 
-  const handleViewWorkflow = (workflowId) => {
-    onNavigate('workflow-detail', { workflowId });
+  const handleViewWorkflow = async (workflowId, sessionId) => {
+    try {
+      // Verify workflow still exists before navigating
+      await api.callAppBackend(`/api/v1/workflows/${workflowId}?user_id=${userId}`);
+      onNavigate('workflow-detail', { workflowId });
+    } catch (error) {
+      // Workflow was deleted, clear the cached workflow_id
+      setWorkflowIds(prev => {
+        const updated = { ...prev };
+        delete updated[sessionId];
+        return updated;
+      });
+
+      // Clear workflow_id from local recording via daemon API
+      try {
+        await api.callDaemon(`/api/v1/recordings/${sessionId}/workflow?user_id=${userId}`, {
+          method: 'DELETE'
+        });
+      } catch (updateError) {
+        console.error('Failed to clear workflow_id from recording:', updateError);
+      }
+
+      showStatus('Workflow has been deleted. You can generate a new one.', 'info');
+    }
   };
 
   const handleGenerateWorkflow = (sessionId) => {
@@ -243,6 +265,10 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
                       <Icon name="activity" />
                       {recording.action_count || 0} operations
                     </span>
+                    <span className="meta-item">
+                      <Icon name="code" />
+                      {recording.dom_count || 0} DOMs
+                    </span>
                   </div>
                 </div>
               </div>
@@ -258,7 +284,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
                 {workflowIds[recording.session_id] ? (
                   <button
                     className="btn btn-primary"
-                    onClick={() => handleViewWorkflow(workflowIds[recording.session_id])}
+                    onClick={() => handleViewWorkflow(workflowIds[recording.session_id], recording.session_id)}
                   >
                     <Icon name="fileText" />
                     View Workflow

@@ -1020,6 +1020,36 @@ async def update_recording_metadata(session_id: str, request: UpdateRecordingMet
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.delete("/api/v1/recordings/{session_id}/workflow")
+async def clear_recording_workflow(session_id: str, user_id: str):
+    """Clear the workflow_id from a recording (when workflow is deleted)"""
+    try:
+        logger.info(f"Clearing workflow_id for recording: session_id={session_id}")
+        storage_manager.clear_recording_workflow_id(user_id, session_id)
+
+        # Get updated recording to sync to cloud
+        recording = storage_manager.get_recording(user_id, session_id)
+        updated_at = recording.get("updated_at")
+
+        # Sync to cloud (background, don't block response)
+        try:
+            await cloud_client.update_recording_metadata(
+                recording_id=session_id,
+                user_id=user_id,
+                workflow_id="",  # Empty string signals "clear"
+                updated_at=updated_at
+            )
+            logger.info("Synced workflow_id clear to Cloud")
+        except Exception as sync_error:
+            logger.warning(f"Failed to sync to Cloud (will retry on next access): {sync_error}")
+
+        logger.info("Workflow ID cleared successfully")
+        return {"success": True, "message": "Workflow ID cleared"}
+    except Exception as e:
+        logger.error(f"Failed to clear workflow_id: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/v1/recordings")
 async def list_recordings(user_id: str):
     """List all recordings for a user"""
@@ -1038,7 +1068,7 @@ async def list_recordings(user_id: str):
 
 @app.get("/api/v1/recordings/{session_id}")
 async def get_recording_detail(session_id: str, user_id: str):
-    """Get detailed recording information"""
+    """Get detailed recording information with cloud sync"""
     try:
         logger.info(f"Getting recording detail: session_id={session_id}")
         detail = storage_manager.get_recording_detail(user_id, session_id)
@@ -1046,21 +1076,54 @@ async def get_recording_detail(session_id: str, user_id: str):
         if detail is None:
             raise HTTPException(status_code=404, detail=f"Recording not found: {session_id}")
 
-        # Try to get workflow_id and task_description from Cloud Backend
-        # The recording_id in Cloud Backend is the same as session_id
+        # Try to sync with Cloud Backend based on updated_at timestamp
         try:
             cloud_recording = await cloud_client.get_recording(session_id, user_id)
             if cloud_recording:
-                if cloud_recording.get("workflow_id"):
-                    detail["workflow_id"] = cloud_recording["workflow_id"]
-                    logger.info(f"Found workflow_id from Cloud: {detail['workflow_id']}")
+                local_updated_at = detail.get("updated_at")
+                cloud_updated_at = cloud_recording.get("updated_at")
 
-                # Use task_description from Cloud as recording name if available
-                if cloud_recording.get("task_description"):
+                logger.info(f"Recording sync check: local={local_updated_at}, cloud={cloud_updated_at}")
+
+                # Compare timestamps to determine sync direction
+                from src.common.timestamp_utils import parse_timestamp
+                local_dt = parse_timestamp(local_updated_at) if local_updated_at else None
+                cloud_dt = parse_timestamp(cloud_updated_at) if cloud_updated_at else None
+
+                if cloud_dt and (not local_dt or cloud_dt > local_dt):
+                    # Cloud is newer - update local with cloud data
+                    logger.info(f"Cloud is newer, updating local recording")
+                    storage_manager.update_recording_from_cloud(user_id, session_id, cloud_recording)
+                    # Refresh detail with updated data
+                    detail = storage_manager.get_recording_detail(user_id, session_id)
+                elif local_dt and (not cloud_dt or local_dt > cloud_dt):
+                    # Local is newer - upload to cloud
+                    logger.info(f"Local is newer, syncing to cloud")
+                    local_recording = storage_manager.get_recording(user_id, session_id)
+                    task_metadata = local_recording.get("task_metadata", {})
+                    try:
+                        await cloud_client.update_recording_metadata(
+                            recording_id=session_id,
+                            user_id=user_id,
+                            workflow_id=local_recording.get("workflow_id", ""),
+                            task_description=task_metadata.get("task_description"),
+                            user_query=task_metadata.get("user_query"),
+                            updated_at=local_updated_at
+                        )
+                        logger.info("Synced local recording to Cloud")
+                    except Exception as sync_error:
+                        logger.warning(f"Failed to sync to Cloud: {sync_error}")
+
+                # After sync, use local data (it's now authoritative)
+                if detail.get("workflow_id"):
+                    pass  # Keep local workflow_id
+                elif cloud_recording.get("workflow_id"):
+                    detail["workflow_id"] = cloud_recording["workflow_id"]
+                if cloud_recording.get("task_description") and not detail.get("name"):
                     detail["name"] = cloud_recording["task_description"]
-                    logger.info(f"Using task_description as name: {detail['name'][:50]}...")
+
         except Exception as e:
-            logger.warning(f"Could not fetch data from Cloud: {e}")
+            logger.warning(f"Could not sync with Cloud: {e}")
 
         return detail
     except HTTPException:

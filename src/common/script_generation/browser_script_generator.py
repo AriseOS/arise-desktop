@@ -69,11 +69,24 @@ class BrowserScriptGenerator:
             ScriptGenerationResult with generated script
         """
         from src.common.llm import ClaudeAgentProvider
+        import shutil
 
         try:
             # Ensure working directory exists
             working_dir = Path(working_dir)
             working_dir.mkdir(parents=True, exist_ok=True)
+
+            # Copy skills to working directory for Claude Agent to use
+            skills_src = Path(__file__).parent / ".claude" / "skills"
+            skills_dest = working_dir / ".claude" / "skills"
+            if skills_src.exists():
+                if skills_dest.exists():
+                    shutil.rmtree(skills_dest)
+                skills_dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(skills_src, skills_dest)
+                logger.info(f"Copied skills to {skills_dest}")
+            else:
+                logger.warning(f"Skills not found at {skills_src}")
 
             # Save input files
             await self._save_input_files(working_dir, task, dom_dict)

@@ -20,7 +20,7 @@ const nodeTypes = {
   custom: CustomNode,
 }
 
-function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData }) {
+function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData, version }) {
   const userId = session?.username;
   const [workflowData, setWorkflowData] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -539,7 +539,7 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
       )}
 
       <div className="footer">
-        <p>Ami v1.0.0</p>
+        <p>Ami v{version || '1.0.0'} • {session?.username && `Logged in as ${session.username}`}</p>
       </div>
     </div>
   )

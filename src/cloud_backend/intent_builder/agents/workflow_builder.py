@@ -1535,7 +1535,8 @@ I'm ready to help with questions or modifications to this workflow."""
             result = await service.pregenerate_scripts(
                 workflow_yaml=workflow_yaml,
                 dom_snapshots=self._dom_snapshots,
-                workflow_dir=self._workflow_dir
+                workflow_dir=self._workflow_dir,
+                intents=self._intent_sequence
             )
 
             logger.info(f"🔧 [Session] Script generation complete: "

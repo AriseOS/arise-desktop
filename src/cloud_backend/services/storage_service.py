@@ -216,10 +216,12 @@ class StorageService:
         recording_path.mkdir(parents=True, exist_ok=True)
 
         file_path = recording_path / "operations.json"
+        current_time = get_current_timestamp()
         data = {
             "recording_id": recording_id,
             "user_id": user_id,
-            "created_at": get_current_timestamp(),
+            "created_at": current_time,
+            "updated_at": current_time,  # Track updates for sync
             "operations_count": len(operations),
             "operations": operations
         }
@@ -310,6 +312,9 @@ class StorageService:
             data["user_query"] = user_query
             logger.info(f"Updated user_query for {recording_id}")
 
+        # Update timestamp
+        data["updated_at"] = get_current_timestamp()
+
         # Save back
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
@@ -352,7 +357,7 @@ class StorageService:
             recording_id: Recording ID
 
         Returns:
-            Dict mapping URLs to DOM dicts
+            Dict mapping dom_id to DOM data (includes url and dom dict)
         """
         recording_path = self._user_path(user_id) / "recordings" / recording_id
         dom_snapshots_dir = recording_path / "dom_snapshots"
@@ -362,13 +367,14 @@ class StorageService:
 
         dom_snapshots = {}
         for dom_file in dom_snapshots_dir.glob("*.json"):
+            if dom_file.name == "url_index.json":
+                continue
             try:
+                dom_id = dom_file.stem  # filename without extension
                 with open(dom_file, 'r', encoding='utf-8') as f:
                     dom_data = json.load(f)
-                    url = dom_data.get("url")
-                    dom_dict = dom_data.get("dom")
-                    if url and dom_dict:
-                        dom_snapshots[url] = dom_dict
+                    # Return full data including url for matching
+                    dom_snapshots[dom_id] = dom_data
             except Exception as e:
                 logger.warning(f"Failed to load DOM snapshot {dom_file}: {e}")
 
@@ -383,18 +389,29 @@ class StorageService:
             logger.warning(f"Recording directory not found: {recording_path}")
             recording_path.mkdir(parents=True, exist_ok=True)
 
-        metadata_path = recording_path / "metadata.json"
+        current_time = get_current_timestamp()
 
+        # Update metadata.json
+        metadata_path = recording_path / "metadata.json"
         metadata = {}
         if metadata_path.exists():
             with open(metadata_path, 'r') as f:
                 metadata = json.load(f)
 
         metadata["workflow_id"] = workflow_id
-        metadata["updated_at"] = get_current_timestamp()
+        metadata["updated_at"] = current_time
 
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
+
+        # Also update operations.json updated_at for sync
+        operations_path = recording_path / "operations.json"
+        if operations_path.exists():
+            with open(operations_path, 'r') as f:
+                data = json.load(f)
+            data["updated_at"] = current_time
+            with open(operations_path, 'w') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
 
         logger.info(f"Recording {recording_id} linked to Workflow {workflow_id}")
 
@@ -693,3 +710,82 @@ class StorageService:
         except Exception as e:
             logger.error(f"Failed to load resource from cloud: {e}")
             return None
+
+    async def update_workflow_resources(
+        self,
+        user_id: str,
+        workflow_id: str
+    ) -> bool:
+        """
+        Scan workflow directory and update metadata.json with resources info.
+
+        This method scans the workflow directory for generated scripts and other
+        resources, then updates the metadata.json to include them in the resources
+        field. This is essential for client sync to download the generated files.
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            workflow_path = self.get_workflow_path(user_id, workflow_id)
+            metadata_path = workflow_path / "metadata.json"
+
+            if not metadata_path.exists():
+                logger.warning(f"Metadata not found for workflow {workflow_id}")
+                return False
+
+            # Load existing metadata
+            with open(metadata_path, 'r', encoding='utf-8') as f:
+                metadata = json.load(f)
+
+            # Scan for resources
+            resources = {"scraper_scripts": []}
+
+            # Scan each step directory for scraper_script_* folders
+            for step_dir in workflow_path.iterdir():
+                if not step_dir.is_dir():
+                    continue
+                if step_dir.name in ["executions", ".claude"]:
+                    continue
+
+                step_id = step_dir.name
+
+                # Look for scraper_script_* directories
+                for resource_dir in step_dir.iterdir():
+                    if not resource_dir.is_dir():
+                        continue
+
+                    if resource_dir.name.startswith("scraper_script_"):
+                        resource_id = resource_dir.name
+
+                        # Get list of files to sync (only extraction_script.py for now)
+                        files = []
+                        extraction_script = resource_dir / "extraction_script.py"
+                        if extraction_script.exists():
+                            files.append("extraction_script.py")
+
+                        if files:
+                            resources["scraper_scripts"].append({
+                                "step_id": step_id,
+                                "resource_id": resource_id,
+                                "files": files
+                            })
+                            logger.info(f"Found resource: {step_id}/{resource_id} with {len(files)} files")
+
+            # Update metadata with resources
+            metadata["resources"] = resources
+
+            # Update updated_at timestamp
+            from datetime import datetime, timezone
+            metadata["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+            # Save updated metadata
+            with open(metadata_path, 'w', encoding='utf-8') as f:
+                json.dump(metadata, f, indent=2, ensure_ascii=False)
+
+            logger.info(f"Updated metadata with {len(resources.get('scraper_scripts', []))} scraper_scripts")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to update workflow resources: {e}")
+            return False

@@ -3,7 +3,7 @@ import Icon from '../components/Icons';
 import { api } from '../utils/api';
 import '../styles/UserFlowsPage.css';
 
-function UserFlowsPage({ session, onNavigate, showStatus }) {
+function UserFlowsPage({ session, onNavigate, showStatus, version }) {
   const userId = session?.username;
   const [recordings, setRecordings] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -38,38 +38,14 @@ function UserFlowsPage({ session, onNavigate, showStatus }) {
     onNavigate("recording");
   };
 
-  const handleQuickGenerate = async (recording) => {
-    try {
-      setSelectedRecording(recording.session_id);
-
-      // Generate Workflow directly (NEW v2 API - bypasses MetaFlow)
-      showStatus("正在生成 Workflow...", "info");
-
-      const workflowResult = await api.generateWorkflowDirect({
-        userId: userId,
-        taskDescription: recording.description,
-        recordingId: recording.session_id,
-        userQuery: null,
-        enableDialogue: true,
-        enableSemanticValidation: true
-      });
-
-      showStatus("Workflow 生成成功！正在跳转...", "success");
-
-      // Navigate to Workflow detail page directly
-      setTimeout(() => {
-        onNavigate("workflow-detail", {
-          workflowId: workflowResult.workflow_id,
-          sessionId: workflowResult.session_id  // For dialogue support
-        });
-      }, 500);
-
-    } catch (error) {
-      console.error("Generate Workflow error:", error);
-      showStatus(`生成 Workflow 失败: ${error.message}`, "error");
-    } finally {
-      setSelectedRecording(null);
-    }
+  const handleQuickGenerate = (recording) => {
+    // Navigate to generation page with recording info
+    onNavigate('generation', {
+      recordingId: recording.session_id,
+      recordingName: recording.title || recording.description || recording.session_id,
+      taskDescription: recording.description || '',
+      userQuery: ''
+    });
   };
 
   const handleDeleteClick = (recording) => {
@@ -280,7 +256,7 @@ function UserFlowsPage({ session, onNavigate, showStatus }) {
       </div>
 
       <div className="footer">
-        <p>Ami v1.0.0</p>
+        <p>Ami v{version || '1.0.0'} • {session?.username && `Logged in as ${session.username}`}</p>
       </div>
 
       {/* Delete Confirmation Modal */}
