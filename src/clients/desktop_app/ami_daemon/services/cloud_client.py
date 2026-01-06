@@ -1,7 +1,7 @@
 """Cloud Backend API client"""
 import logging
 import httpx
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Callable, Awaitable
 
 logger = logging.getLogger(__name__)
 
@@ -810,16 +810,15 @@ class CloudClient:
 
         This is used when a script doesn't exist locally. The cloud:
         - Reads step config (data_requirements/task) from workflow YAML
-        - For scraper: uses dom_snapshots from recording (no upload needed)
-        - For browser: uses dom_data uploaded by client (runtime DOM)
+        - Uses dom_data uploaded by client (current page DOM)
 
         Args:
             workflow_id: Workflow ID
             step_id: Step ID (e.g., "extract-product-list")
             script_type: "scraper" or "browser"
-            page_url: Current page URL (for DOM matching / absolute URL conversion)
+            page_url: Current page URL (for absolute URL conversion)
             user_id: User ID
-            dom_data: DOM dictionary - only needed for browser scripts
+            dom_data: DOM dictionary - required for both scraper and browser scripts
             api_key: API key for Claude Agent SDK (script generation)
 
         Returns:
@@ -848,8 +847,8 @@ class CloudClient:
                 "script_type": script_type,
                 "page_url": page_url
             }
-            # Only include dom_data for browser scripts (runtime DOM)
-            if dom_data and script_type == "browser":
+            # Include dom_data for both scraper and browser scripts
+            if dom_data:
                 payload["dom_data"] = dom_data
 
             response = await self.client.post(
@@ -866,6 +865,121 @@ class CloudClient:
                 logger.warning(f"[CloudClient] Script generation failed: {result.get('error')}")
 
             return result
+
+        except httpx.HTTPStatusError as e:
+            error_msg = f"HTTP {e.response.status_code}: {e.response.text}"
+            logger.error(f"[CloudClient] Script generation failed: {error_msg}")
+            return {"success": False, "error": error_msg}
+        except Exception as e:
+            logger.error(f"[CloudClient] Script generation error: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def generate_script_stream(
+        self,
+        workflow_id: str,
+        step_id: str,
+        script_type: str,
+        page_url: str,
+        user_id: str = "default_user",
+        dom_data: Optional[Dict[str, Any]] = None,
+        api_key: Optional[str] = None,
+        progress_callback: Optional[Callable[[str, str, Dict[str, Any]], Awaitable[None]]] = None
+    ) -> Dict[str, Any]:
+        """Request cloud to generate script with SSE streaming progress
+
+        Args:
+            workflow_id: Workflow ID
+            step_id: Step ID
+            script_type: "scraper" or "browser"
+            page_url: Current page URL
+            user_id: User ID
+            dom_data: DOM dictionary
+            api_key: API key for Claude Agent SDK
+            progress_callback: Async callback for progress updates
+                Signature: async def callback(level: str, message: str, data: dict)
+
+        Returns:
+            dict with script_path, script_content, script_key, turns
+        """
+        import json
+
+        try:
+            logger.info(f"[CloudClient] Requesting script generation (stream): workflow={workflow_id}, step={step_id}, type={script_type}")
+
+            headers = {"X-User-Id": user_id}
+            effective_api_key = api_key or self.user_api_key
+            if effective_api_key:
+                headers["X-Api-Key"] = effective_api_key
+
+            payload = {
+                "step_id": step_id,
+                "script_type": script_type,
+                "page_url": page_url
+            }
+            if dom_data:
+                payload["dom_data"] = dom_data
+
+            # Use streaming request
+            async with self.client.stream(
+                "POST",
+                f"/api/v1/workflows/{workflow_id}/generate-script-stream",
+                json=payload,
+                headers=headers,
+                timeout=300.0  # 5 minutes timeout for script generation
+            ) as response:
+                response.raise_for_status()
+
+                result = None
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
+
+                    # Parse SSE event
+                    if line.startswith("data: "):
+                        data_str = line[6:]
+                        try:
+                            event = json.loads(data_str)
+                            event_type = event.get("type")
+
+                            if event_type == "progress":
+                                # Forward progress to callback
+                                if progress_callback:
+                                    await progress_callback(
+                                        event.get("level", "info"),
+                                        event.get("message", ""),
+                                        {
+                                            "turn": event.get("turn", 0),
+                                            "tool_name": event.get("tool_name")
+                                        }
+                                    )
+                                logger.debug(f"[CloudClient] Progress: {event.get('message')}")
+
+                            elif event_type == "complete":
+                                result = {
+                                    "success": True,
+                                    "script_path": event.get("script_path"),
+                                    "script_content": event.get("script_content"),
+                                    "script_key": event.get("script_key"),
+                                    "turns": event.get("turns", 0)
+                                }
+                                logger.info(f"[CloudClient] Script generated: {result.get('script_path')} (turns={result.get('turns')})")
+
+                            elif event_type == "error":
+                                error_msg = event.get("message", "Unknown error")
+                                logger.error(f"[CloudClient] Script generation error: {error_msg}")
+                                return {"success": False, "error": error_msg}
+
+                        except json.JSONDecodeError:
+                            logger.warning(f"[CloudClient] Failed to parse SSE event: {data_str}")
+
+                    elif line.startswith(": keepalive"):
+                        # Ignore keepalive comments
+                        pass
+
+                if result:
+                    return result
+                else:
+                    return {"success": False, "error": "No completion event received"}
 
         except httpx.HTTPStatusError as e:
             error_msg = f"HTTP {e.response.status_code}: {e.response.text}"

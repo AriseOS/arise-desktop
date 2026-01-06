@@ -8,83 +8,40 @@ Usage:
     python dom_tools.py <command> [args...]
 
 Commands:
-    find <xpath>              - Find element by exact xpath match
-    container <xpath>         - Build virtual container from children's xpath prefix
-    analyze <xpath>           - Analyze container structure (supports virtual containers)
-    children <xpath> [tag]    - List children of container (supports virtual containers)
-    print <xpath> [depth]     - Print element structure (default depth: 2)
-    fields <xpath>            - List available fields (text, href, src) in container
-    extract <xpath> <field>   - Extract all values of a field (text, href, src) from container
+    find <xpath> [--field text]           - Find element and extract field value
+    find <json_xpaths> [--field text]     - Find multiple elements by xpath dict
+    container <xpath> [--fields ...] [--parent N]  - Extract list data from container
+    search --text "..." [--tag ...] [--class ...]  - Search elements by content
+    analyze <xpath>                       - Analyze container structure
+    children <xpath> [tag]                - List children of container
 """
 
 import json
 import sys
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 
 
-def parse_xpath_to_path(xpath: str) -> List[tuple]:
-    """
-    Parse xpath string to a list of (tag, index) tuples.
-
-    Example:
-        "//*[@id='app']/div[4]/div/a[1]" -> [('*', 'app'), ('div', 4), ('div', None), ('a', 1)]
-    """
-    # Handle //*[@id='xxx'] prefix
-    id_match = re.match(r"^//\*\[@id=['\"]([^'\"]+)['\"]\](.*)$", xpath)
-    if id_match:
-        root_id = id_match.group(1)
-        rest = id_match.group(2)
-        path = [('*', root_id)]  # Special marker for id-based root
-    else:
-        # Handle simple //tag or /tag prefix
-        rest = re.sub(r'^/+', '', xpath)
-        path = []
-
-    # Parse remaining path segments
-    if rest:
-        segments = rest.strip('/').split('/')
-        for seg in segments:
-            if not seg:
-                continue
-            # Parse tag[index] format
-            match = re.match(r'^(\w+)(?:\[(\d+)\])?$', seg)
-            if match:
-                tag = match.group(1)
-                index = int(match.group(2)) if match.group(2) else None
-                path.append((tag, index))
-
-    return path
-
-
-def find_element_by_id(dom: Dict, element_id: str) -> Optional[Dict]:
-    """Find element by id attribute (recursive)."""
-    if dom.get('id') == element_id:
-        return dom
-
-    for child in dom.get('children', []):
-        result = find_element_by_id(child, element_id)
-        if result:
-            return result
-
-    return None
-
+# =============================================================================
+# Core Functions (can be imported by extraction scripts)
+# =============================================================================
 
 def normalize_xpath(xpath: str) -> str:
-    """
-    Normalize xpath for comparison (handle single vs double quotes).
-    """
-    # Normalize quotes: convert single quotes to double quotes
+    """Normalize xpath for comparison (handle single vs double quotes)."""
     return xpath.replace("'", '"')
 
 
-def find_by_xpath_attr(dom: Dict, xpath: str) -> Optional[Dict]:
+def find_by_xpath(dom: Dict, xpath: str) -> Optional[Dict]:
     """
-    Find element by searching for matching xpath attribute (recursive).
+    Find element by exact xpath match.
 
-    This handles DOM structures where xpath is stored as an attribute
-    rather than being derived from the tree structure.
+    Args:
+        dom: Root DOM dictionary
+        xpath: XPath string like "//*[@id='app']/div[4]/div/a[1]"
+
+    Returns:
+        Matching element dict or None
     """
     normalized_target = normalize_xpath(xpath)
 
@@ -105,16 +62,6 @@ def find_children_by_xpath_prefix(dom: Dict, xpath_prefix: str) -> List[Dict]:
     """
     Find all elements whose xpath starts with the given prefix and are
     direct children (one level deeper in xpath hierarchy).
-
-    This is useful for containers that don't have their own xpath attribute
-    but have children with xpath attributes.
-
-    Args:
-        dom: Root DOM dictionary
-        xpath_prefix: The xpath prefix to match (e.g., "//*[@id='app']/div[4]/div")
-
-    Returns:
-        List of direct child elements (one xpath level deeper than prefix)
     """
     normalized_prefix = normalize_xpath(xpath_prefix)
     results = []
@@ -124,10 +71,8 @@ def find_children_by_xpath_prefix(dom: Dict, xpath_prefix: str) -> List[Dict]:
         node_xpath = node.get('xpath', '')
         if node_xpath:
             normalized = normalize_xpath(node_xpath)
-            # Check if this is a direct child of the prefix
             if normalized.startswith(normalized_prefix + '/'):
                 rest = normalized[len(normalized_prefix) + 1:]
-                # Direct child has no more slashes (e.g., "a[1]" not "a[1]/div")
                 if '/' not in rest and normalized not in seen_xpaths:
                     seen_xpaths.add(normalized)
                     results.append(node)
@@ -138,92 +83,11 @@ def find_children_by_xpath_prefix(dom: Dict, xpath_prefix: str) -> List[Dict]:
     return results
 
 
-def build_virtual_container(dom: Dict, xpath: str) -> Optional[Dict]:
-    """
-    Build a virtual container element for containers that don't have their
-    own xpath attribute but have children with matching xpath prefixes.
-
-    This allows analyzing container structure even when the container itself
-    was filtered out during DOM serialization (only content elements keep xpath).
-
-    Args:
-        dom: Root DOM dictionary
-        xpath: The xpath of the container to build
-
-    Returns:
-        Virtual container dict with children, or None if no children found
-    """
-    children = find_children_by_xpath_prefix(dom, xpath)
-    if not children:
-        return None
-
-    # Infer tag from the container xpath
-    parts = xpath.rstrip('/').split('/')
-    last_part = parts[-1] if parts else 'div'
-    # Remove index like div[4] -> div
-    tag = re.sub(r'\[\d+\]$', '', last_part)
-
-    return {
-        'tag': tag,
-        'class': '',
-        'xpath': xpath,
-        'children': children,
-        '_virtual': True  # Mark as virtual container
-    }
-
-
-def find_by_xpath(dom: Dict, xpath: str) -> Optional[Dict]:
-    """
-    Find element by exact xpath match.
-
-    Args:
-        dom: Root DOM dictionary
-        xpath: XPath string like "//*[@id='app']/div[4]/div/a[1]"
-
-    Returns:
-        Matching element dict or None
-
-    Note: This only finds elements that have the exact xpath attribute.
-    Container elements (without xpath) won't be found - use build_virtual_container() instead.
-    """
-    return find_by_xpath_attr(dom, xpath)
-
-
-def find_or_build_container(dom: Dict, xpath: str) -> Optional[Dict]:
-    """
-    Find element by xpath, or build a virtual container if not found.
-
-    This is useful for container elements that don't have their own xpath
-    attribute but have children with xpath attributes.
-
-    Args:
-        dom: Root DOM dictionary
-        xpath: XPath string
-
-    Returns:
-        Element dict (real or virtual) or None
-    """
-    # First try exact match
-    result = find_by_xpath_attr(dom, xpath)
-    if result:
-        return result
-
-    # Try building virtual container from children
-    return build_virtual_container(dom, xpath)
-
-
 def get_parent_xpath(xpath: str, levels: int = 1) -> str:
-    """
-    Get parent xpath by removing last N segments.
+    """Get parent xpath by removing last N segments."""
+    # Remove trailing index like [1] first
+    xpath = re.sub(r'\[\d+\]$', '', xpath)
 
-    Args:
-        xpath: Original xpath
-        levels: How many levels to go up
-
-    Returns:
-        Parent xpath string
-    """
-    # Split by / but preserve the //*[@id='xxx'] prefix
     id_match = re.match(r"^(//\*\[@id=['\"][^'\"]+['\"]\])(.*)$", xpath)
     if id_match:
         prefix = id_match.group(1)
@@ -240,100 +104,279 @@ def get_parent_xpath(xpath: str, levels: int = 1) -> str:
     return prefix + '/' + '/'.join(parent_segments)
 
 
-def find_parent(dom: Dict, xpath: str, levels: int = 1) -> Optional[Dict]:
+def build_virtual_container(dom: Dict, xpath: str) -> Optional[Dict]:
     """
-    Find parent container of an element.
-
-    Args:
-        dom: Root DOM dictionary
-        xpath: XPath of child element
-        levels: How many levels up (default: 1)
-
-    Returns:
-        Parent element dict or None
+    Build a virtual container element for containers that don't have their
+    own xpath attribute but have children with matching xpath prefixes.
     """
-    parent_xpath = get_parent_xpath(xpath, levels)
-    return find_by_xpath(dom, parent_xpath)
+    children = find_children_by_xpath_prefix(dom, xpath)
+    if not children:
+        return None
 
-
-def analyze_container(container: Dict) -> Dict:
-    """
-    Analyze container structure.
-
-    Args:
-        container: Container element dict
-
-    Returns:
-        {
-            "xpath": container's xpath,
-            "tag": container's tag,
-            "class": container's class,
-            "total_children": count,
-            "by_tag": {"a": 20, "div": 5},
-            "by_class": {"product-item": 20},
-            "sample_child": first child structure (truncated)
-        }
-    """
-    children = container.get('children', [])
-
-    by_tag = {}
-    by_class = {}
-
-    for child in children:
-        # Count by tag
-        tag = child.get('tag', 'unknown')
-        by_tag[tag] = by_tag.get(tag, 0) + 1
-
-        # Count by class
-        class_str = child.get('class', '')
-        if class_str:
-            # Split multiple classes
-            for cls in class_str.split():
-                by_class[cls] = by_class.get(cls, 0) + 1
-
-    # Get sample child (first one, truncated)
-    sample_child = None
-    if children:
-        sample_child = truncate_element(children[0], max_depth=2)
+    parts = xpath.rstrip('/').split('/')
+    last_part = parts[-1] if parts else 'div'
+    tag = re.sub(r'\[\d+\]$', '', last_part)
 
     return {
-        "xpath": container.get('xpath', ''),
-        "tag": container.get('tag', ''),
-        "class": container.get('class', ''),
-        "total_children": len(children),
-        "by_tag": by_tag,
-        "by_class": by_class,
-        "sample_child": sample_child
+        'tag': tag,
+        'class': '',
+        'xpath': xpath,
+        'children': children,
+        '_virtual': True
     }
 
 
-def get_children(container: Dict, tag: str = None, class_contains: str = None) -> List[Dict]:
+def find_or_build_container(dom: Dict, xpath: str) -> Optional[Dict]:
+    """Find element by xpath, or build a virtual container if not found."""
+    result = find_by_xpath(dom, xpath)
+    if result:
+        return result
+    return build_virtual_container(dom, xpath)
+
+
+def extract_field(element: Dict, field: str) -> Optional[str]:
+    """Extract a single field value from element."""
+    if field == 'text':
+        return element.get('text', '')
+    elif field == 'href':
+        return element.get('href', '')
+    elif field == 'src':
+        return element.get('src', '')
+    elif field == 'class':
+        return element.get('class', '')
+    elif field == 'tag':
+        return element.get('tag', '')
+    else:
+        return element.get(field, '')
+
+
+def extract_from_element(element: Dict, fields: List[str]) -> Dict[str, str]:
+    """Extract multiple fields from a single element."""
+    result = {}
+    for field in fields:
+        result[field] = extract_field(element, field) or ''
+    return result
+
+
+def find_field_in_children(children: List[Dict], field: str, selector: str = None) -> Optional[str]:
     """
-    Get children of container, optionally filtered.
+    Find a field value in children tree (DFS), optionally filtered by selector.
 
     Args:
-        container: Container element dict
-        tag: Filter by tag name (optional)
-        class_contains: Filter by class substring (optional)
+        children: List of child elements
+        field: Field to extract (text, href, src)
+        selector: Optional CSS-like selector (tag or .class)
+    """
+    for child in children:
+        # Check if current node matches selector
+        matches = False
+        if selector:
+            if selector.startswith('.'):
+                class_name = selector[1:]
+                matches = class_name in (child.get('class') or '')
+            else:
+                matches = child.get('tag') == selector
+        else:
+            matches = True
+
+        # If matches, try to extract field
+        if matches:
+            value = extract_field(child, field)
+            if value:
+                return value
+
+        # Always recurse into children (DFS)
+        if child.get('children'):
+            value = find_field_in_children(child['children'], field, selector)
+            if value:
+                return value
+
+    return None
+
+
+def extract_list_item(item: Dict, field_mapping: Dict[str, str]) -> Dict[str, str]:
+    """
+    Extract fields from a list item based on field mapping.
+
+    Args:
+        item: List item element
+        field_mapping: Dict of {output_name: "field:selector"} or {output_name: "field"}
+            Examples:
+            - {"name": "text"}  - get text from item
+            - {"url": "href"}   - get href from item
+            - {"name": "text:h4"} - get text from h4 child
+            - {"name": "text:.title"} - get text from child with .title class
+    """
+    result = {}
+    children = item.get('children', [])
+
+    for output_name, spec in field_mapping.items():
+        if ':' in spec:
+            field, selector = spec.split(':', 1)
+        else:
+            field = spec
+            selector = None
+
+        # No selector: extract from item itself, then search children
+        if not selector:
+            value = extract_field(item, field)
+            if not value:
+                # If item has no value, search in children
+                value = find_field_in_children(children, field, None)
+            result[output_name] = value or ''
+            continue
+
+        # With selector: first check if item itself matches the selector
+        item_tag = item.get('tag', '')
+        if selector.startswith('.'):
+            # Class selector - check if item has this class
+            class_name = selector[1:]
+            if class_name in (item.get('class') or ''):
+                value = extract_field(item, field)
+                if value:
+                    result[output_name] = value
+                    continue
+        else:
+            # Tag selector - check if item is this tag
+            if item_tag == selector:
+                value = extract_field(item, field)
+                if value:
+                    result[output_name] = value
+                    continue
+
+        # Search in children (recursive)
+        value = find_field_in_children(children, field, selector)
+        result[output_name] = value or ''
+
+    return result
+
+
+def extract_list(dom: Dict, container_xpath: str, field_mapping: Dict[str, str]) -> List[Dict]:
+    """
+    Extract list data from a container.
+
+    Args:
+        dom: Root DOM dictionary
+        container_xpath: XPath of the container
+        field_mapping: Dict of {output_name: "field:selector"}
 
     Returns:
-        List of matching child elements
+        List of extracted data dicts
     """
-    children = container.get('children', [])
+    container = find_or_build_container(dom, container_xpath)
+    if not container:
+        return []
 
-    if tag:
-        children = [c for c in children if c.get('tag') == tag]
+    results = []
+    for child in container.get('children', []):
+        item_data = extract_list_item(child, field_mapping)
+        if any(item_data.values()):  # Only add if at least one field has value
+            results.append(item_data)
 
-    if class_contains:
-        children = [c for c in children if class_contains in c.get('class', '')]
+    return results
 
-    return children
 
+def extract_single(dom: Dict, xpath: str, field: str = 'text') -> Optional[str]:
+    """Extract a single field from an element by xpath."""
+    element = find_by_xpath(dom, xpath)
+    if element:
+        return extract_field(element, field)
+    return None
+
+
+def extract_multi(dom: Dict, xpath_mapping: Dict[str, str], field: str = 'text') -> Dict[str, Optional[str]]:
+    """
+    Extract multiple fields from different xpaths.
+
+    Args:
+        dom: Root DOM dictionary
+        xpath_mapping: Dict of {output_name: xpath}
+        field: Field to extract from each element (default: text)
+
+    Returns:
+        Dict of {output_name: value}
+    """
+    result = {}
+    for name, xpath in xpath_mapping.items():
+        result[name] = extract_single(dom, xpath, field)
+    return result
+
+
+def search_by_text(dom: Dict, text: str, tag: str = None, class_contains: str = None) -> List[Dict]:
+    """
+    Search elements containing text.
+
+    Args:
+        dom: Root DOM dictionary
+        text: Text to search for (case-insensitive)
+        tag: Optional tag filter
+        class_contains: Optional class substring filter
+
+    Returns:
+        List of matching elements with xpath
+    """
+    text_lower = text.lower()
+    results = []
+
+    def search(node: Dict):
+        # Check if node matches
+        node_text = (node.get('text') or '').lower()
+        if text_lower in node_text:
+            # Apply filters
+            if tag and node.get('tag') != tag:
+                pass
+            elif class_contains and class_contains not in (node.get('class') or ''):
+                pass
+            elif node.get('xpath'):  # Only return elements with xpath
+                results.append(node)
+
+        # Recurse
+        for child in node.get('children', []):
+            search(child)
+
+    search(dom)
+    return results
+
+
+def search_by_class(dom: Dict, class_contains: str, tag: str = None) -> List[Dict]:
+    """Search elements by class substring."""
+    results = []
+
+    def search(node: Dict):
+        node_class = node.get('class') or ''
+        if class_contains in node_class:
+            if tag and node.get('tag') != tag:
+                pass
+            elif node.get('xpath'):
+                results.append(node)
+
+        for child in node.get('children', []):
+            search(child)
+
+    search(dom)
+    return results
+
+
+def search_by_tag(dom: Dict, tag: str) -> List[Dict]:
+    """Search elements by tag name."""
+    results = []
+
+    def search(node: Dict):
+        if node.get('tag') == tag and node.get('xpath'):
+            results.append(node)
+        for child in node.get('children', []):
+            search(child)
+
+    search(dom)
+    return results
+
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
 
 def truncate_element(element: Dict, max_depth: int = 2, current_depth: int = 0) -> Dict:
-    """
-    Truncate element tree to max depth for readable output.
-    """
+    """Truncate element tree to max depth for readable output."""
     if current_depth >= max_depth:
         children = element.get('children', [])
         if children:
@@ -355,16 +398,7 @@ def truncate_element(element: Dict, max_depth: int = 2, current_depth: int = 0) 
 
 
 def print_element(element: Dict, max_depth: int = 2) -> str:
-    """
-    Format element for readable output.
-
-    Args:
-        element: Element dict
-        max_depth: Max depth to display (default: 2)
-
-    Returns:
-        Formatted JSON string
-    """
+    """Format element for readable output."""
     truncated = truncate_element(element, max_depth)
     return json.dumps(truncated, indent=2, ensure_ascii=False)
 
@@ -375,52 +409,354 @@ def load_dom(file_path: str = "dom_data.json") -> Dict:
         return json.load(f)
 
 
-def collect_fields_from_container(dom: Dict, xpath_prefix: str) -> Dict[str, List[Dict]]:
+def analyze_container(container: Dict) -> Dict:
+    """Analyze container structure."""
+    children = container.get('children', [])
+
+    by_tag = {}
+    by_class = {}
+
+    for child in children:
+        tag = child.get('tag', 'unknown')
+        by_tag[tag] = by_tag.get(tag, 0) + 1
+
+        class_str = child.get('class', '')
+        if class_str:
+            for cls in class_str.split():
+                by_class[cls] = by_class.get(cls, 0) + 1
+
+    sample_child = None
+    if children:
+        sample_child = truncate_element(children[0], max_depth=2)
+
+    return {
+        "xpath": container.get('xpath', ''),
+        "tag": container.get('tag', ''),
+        "class": container.get('class', ''),
+        "total_children": len(children),
+        "by_tag": by_tag,
+        "by_class": by_class,
+        "sample_child": sample_child
+    }
+
+
+def parse_fields_arg(fields_str: str) -> Dict[str, str]:
     """
-    Collect all field values (text, href, src) from elements under the given xpath prefix.
+    Parse --fields argument like "name:text,url:href,title:text:h4"
+
+    Returns:
+        Dict of {output_name: "field:selector" or "field"}
+    """
+    result = {}
+    for item in fields_str.split(','):
+        item = item.strip()
+        if not item:
+            continue
+        parts = item.split(':', 2)
+        if len(parts) == 1:
+            # Just field name, use as both output name and field
+            result[parts[0]] = parts[0]
+        elif len(parts) == 2:
+            # name:field
+            result[parts[0]] = parts[1]
+        else:
+            # name:field:selector
+            result[parts[0]] = f"{parts[1]}:{parts[2]}"
+    return result
+
+
+# =============================================================================
+# CLI Interface
+# =============================================================================
+
+def cmd_find(dom: Dict, args: List[str]):
+    """Handle find command."""
+    if not args:
+        print("Usage: python dom_tools.py find <xpath> [--field text]")
+        print("       python dom_tools.py find '<json_xpaths>' [--field text]")
+        sys.exit(1)
+
+    xpath_arg = args[0]
+    field = 'text'
+
+    # Parse --field argument
+    if '--field' in args:
+        idx = args.index('--field')
+        if idx + 1 < len(args):
+            field = args[idx + 1]
+
+    # Check if it's JSON (multiple xpaths)
+    if xpath_arg.startswith('{'):
+        try:
+            xpath_mapping = json.loads(xpath_arg)
+        except json.JSONDecodeError:
+            print(f"✗ Invalid JSON: {xpath_arg}")
+            sys.exit(1)
+
+        results = extract_multi(dom, xpath_mapping, field)
+
+        # Check results
+        all_found = all(v is not None for v in results.values())
+        found_count = sum(1 for v in results.values() if v is not None)
+
+        if all_found:
+            print(f"✓ Found all {len(results)} elements")
+        else:
+            print(f"⚠ Found {found_count}/{len(results)} elements")
+
+        print("\nResults:")
+        print(json.dumps(results, indent=2, ensure_ascii=False))
+
+        # Output code snippet
+        print("\n# Code snippet:")
+        print(f"from dom_tools import extract_multi")
+        print(f"result = extract_multi(dom_dict, {json.dumps(xpath_mapping, ensure_ascii=False)}, '{field}')")
+
+    else:
+        # Single xpath
+        element = find_by_xpath(dom, xpath_arg)
+        if element:
+            value = extract_field(element, field)
+            print(f"✓ Found element at {xpath_arg}")
+            print(f"  {field}: {value}")
+            print(f"  tag: {element.get('tag')}")
+            if element.get('class'):
+                print(f"  class: {element.get('class')}")
+
+            # Output code snippet
+            print("\n# Code snippet:")
+            print(f"from dom_tools import extract_single")
+            print(f"result = extract_single(dom_dict, \"{xpath_arg}\", '{field}')")
+        else:
+            print(f"✗ Element not found: {xpath_arg}")
+            print("  Hint: Use 'search --text \"...\"' to find elements by content")
+
+
+def find_container_with_siblings(dom: Dict, xpath: str, min_siblings: int = 2, max_levels: int = 5) -> tuple:
+    """
+    Find a container by starting from xpath and going up until we find one with multiple children.
 
     Args:
         dom: Root DOM dictionary
-        xpath_prefix: Container xpath prefix
+        xpath: Starting xpath (typically a list item)
+        min_siblings: Minimum number of siblings to consider it a valid container
+        max_levels: Maximum levels to go up
 
     Returns:
-        Dict with field names as keys and lists of {value, xpath} as values
+        (container, container_xpath, levels_up) or (None, None, 0) if not found
     """
-    normalized_prefix = normalize_xpath(xpath_prefix)
-    fields = {'text': [], 'href': [], 'src': []}
+    current_xpath = xpath
 
-    def collect(node: Dict):
-        node_xpath = node.get('xpath', '')
-        if node_xpath:
-            normalized = normalize_xpath(node_xpath)
-            if normalized.startswith(normalized_prefix + '/'):
-                # Collect fields
-                if node.get('text'):
-                    fields['text'].append({
-                        'value': node['text'],
-                        'xpath': node_xpath,
-                        'tag': node.get('tag', '')
-                    })
-                if node.get('href'):
-                    fields['href'].append({
-                        'value': node['href'],
-                        'xpath': node_xpath,
-                        'tag': node.get('tag', '')
-                    })
-                if node.get('src'):
-                    fields['src'].append({
-                        'value': node['src'],
-                        'xpath': node_xpath,
-                        'tag': node.get('tag', '')
-                    })
-        for child in node.get('children', []):
-            collect(child)
+    for level in range(max_levels + 1):
+        if level > 0:
+            current_xpath = get_parent_xpath(current_xpath, 1)
+            if not current_xpath or current_xpath == xpath:
+                break
 
-    collect(dom)
-    return fields
+        container = find_or_build_container(dom, current_xpath)
+        if container:
+            children_count = len(container.get('children', []))
+            if children_count >= min_siblings:
+                return container, current_xpath, level
+
+    return None, None, 0
 
 
-# === CLI Interface ===
+def cmd_container(dom: Dict, args: List[str]):
+    """Handle container command."""
+    if not args:
+        print("Usage: python dom_tools.py container <xpath> [--fields name:text,url:href] [--parent N]")
+        sys.exit(1)
+
+    xpath = args[0]
+    fields_str = None
+    parent_levels = 0
+
+    # Parse arguments
+    i = 1
+    while i < len(args):
+        if args[i] == '--fields' and i + 1 < len(args):
+            fields_str = args[i + 1]
+            i += 2
+        elif args[i] == '--parent' and i + 1 < len(args):
+            parent_levels = int(args[i + 1])
+            i += 2
+        else:
+            i += 1
+
+    # Adjust xpath for explicit parent levels
+    if parent_levels > 0:
+        xpath = get_parent_xpath(xpath, parent_levels)
+        print(f"  (Adjusted to parent: {xpath})")
+
+    # Auto-find container by going up until we find one with multiple children
+    container, container_xpath, levels_up = find_container_with_siblings(dom, xpath)
+
+    if not container:
+        print(f"✗ Container not found starting from: {xpath}")
+        print("  Hint: Use 'search --text \"...\"' to find elements by content")
+        return
+
+    if levels_up > 0:
+        print(f"  (Auto-adjusted {levels_up} level(s) up: {xpath} → {container_xpath})")
+        xpath = container_xpath
+
+    is_virtual = container.get('_virtual', False)
+    children_count = len(container.get('children', []))
+
+    if is_virtual:
+        print(f"✓ Built virtual container: {xpath}")
+        print(f"  (Found {children_count} child elements)")
+    else:
+        print(f"✓ Found container: {xpath}")
+        print(f"  ({children_count} children)")
+
+    if fields_str:
+        # Extract data
+        field_mapping = parse_fields_arg(fields_str)
+        results = extract_list(dom, xpath, field_mapping)
+
+        print(f"\nExtracted {len(results)} items:")
+        for i, item in enumerate(results[:5]):
+            print(f"  [{i+1}] {json.dumps(item, ensure_ascii=False)}")
+        if len(results) > 5:
+            print(f"  ... and {len(results) - 5} more")
+
+        # Output code snippet
+        print("\n# Code snippet:")
+        print(f"from dom_tools import extract_list")
+        print(f"results = extract_list(dom_dict, \"{xpath}\", {json.dumps(field_mapping, ensure_ascii=False)})")
+    else:
+        # Just show container info
+        stats = analyze_container(container)
+        print(f"  Tag: {stats['tag']}")
+        print(f"  By tag: {json.dumps(stats['by_tag'])}")
+        if stats['by_class']:
+            top_classes = dict(sorted(stats['by_class'].items(), key=lambda x: -x[1])[:5])
+            print(f"  Top classes: {json.dumps(top_classes)}")
+
+        if stats['sample_child']:
+            print(f"\n  Sample child:")
+            print(json.dumps(stats['sample_child'], indent=4, ensure_ascii=False))
+
+
+def cmd_search(dom: Dict, args: List[str]):
+    """Handle search command."""
+    if not args:
+        print("Usage: python dom_tools.py search --text \"...\" [--tag ...] [--class ...]")
+        sys.exit(1)
+
+    text = None
+    tag = None
+    class_contains = None
+
+    # Parse arguments
+    i = 0
+    while i < len(args):
+        if args[i] == '--text' and i + 1 < len(args):
+            text = args[i + 1]
+            i += 2
+        elif args[i] == '--tag' and i + 1 < len(args):
+            tag = args[i + 1]
+            i += 2
+        elif args[i] == '--class' and i + 1 < len(args):
+            class_contains = args[i + 1]
+            i += 2
+        else:
+            i += 1
+
+    results = []
+
+    if text:
+        results = search_by_text(dom, text, tag, class_contains)
+        print(f"✓ Found {len(results)} elements containing \"{text}\":")
+    elif class_contains:
+        results = search_by_class(dom, class_contains, tag)
+        print(f"✓ Found {len(results)} elements with class containing \"{class_contains}\":")
+    elif tag:
+        results = search_by_tag(dom, tag)
+        print(f"✓ Found {len(results)} <{tag}> elements:")
+    else:
+        print("✗ Please specify --text, --class, or --tag")
+        return
+
+    for i, elem in enumerate(results[:10]):
+        print(f"\n  [{i+1}] {elem.get('xpath')}")
+        print(f"      tag: {elem.get('tag')}, class: \"{elem.get('class', '')}\"")
+        if elem.get('text'):
+            text_preview = elem['text'][:60] + '...' if len(elem['text']) > 60 else elem['text']
+            print(f"      text: \"{text_preview}\"")
+        if elem.get('href'):
+            print(f"      href: {elem.get('href')}")
+
+    if len(results) > 10:
+        print(f"\n  ... and {len(results) - 10} more")
+
+
+def cmd_analyze(dom: Dict, args: List[str]):
+    """Handle analyze command."""
+    if not args:
+        print("Usage: python dom_tools.py analyze <xpath>")
+        sys.exit(1)
+
+    xpath = args[0]
+    container = find_or_build_container(dom, xpath)
+
+    if not container:
+        print(f"✗ Container not found: {xpath}")
+        return
+
+    is_virtual = container.get('_virtual', False)
+    stats = analyze_container(container)
+
+    print(f"✓ Container Analysis: {xpath}")
+    if is_virtual:
+        print(f"  (Virtual container built from children)")
+    print(f"  Tag: {stats['tag']}")
+    print(f"  Class: {stats['class']}")
+    print(f"  Total children: {stats['total_children']}")
+    print(f"  By tag: {json.dumps(stats['by_tag'])}")
+    print(f"  By class: {json.dumps(stats['by_class'])}")
+
+    if stats['sample_child']:
+        print(f"\n  Sample child:")
+        print(json.dumps(stats['sample_child'], indent=4, ensure_ascii=False))
+
+
+def cmd_children(dom: Dict, args: List[str]):
+    """Handle children command."""
+    if not args:
+        print("Usage: python dom_tools.py children <xpath> [tag]")
+        sys.exit(1)
+
+    xpath = args[0]
+    tag = args[1] if len(args) > 1 else None
+
+    container = find_or_build_container(dom, xpath)
+    if not container:
+        print(f"✗ Container not found: {xpath}")
+        return
+
+    is_virtual = container.get('_virtual', False)
+    children = container.get('children', [])
+
+    if tag:
+        children = [c for c in children if c.get('tag') == tag]
+
+    print(f"✓ Found {len(children)} children" + (f" (tag={tag})" if tag else ""))
+    if is_virtual:
+        print(f"  (From virtual container)")
+
+    for i, child in enumerate(children[:5]):
+        print(f"\n  [{i+1}] {child.get('tag')} class=\"{child.get('class', '')}\"")
+        print(f"      xpath: {child.get('xpath', 'N/A')}")
+        if child.get('text'):
+            text = child['text'][:50] + '...' if len(child['text']) > 50 else child['text']
+            print(f"      text: {text}")
+
+    if len(children) > 5:
+        print(f"\n  ... and {len(children) - 5} more")
+
 
 def main():
     if len(sys.argv) < 2:
@@ -428,6 +764,7 @@ def main():
         sys.exit(1)
 
     command = sys.argv[1]
+    args = sys.argv[2:]
 
     # Load DOM
     dom_file = "dom_data.json"
@@ -438,132 +775,15 @@ def main():
     dom = load_dom(dom_file)
 
     if command == "find":
-        if len(sys.argv) < 3:
-            print("Usage: python dom_tools.py find <xpath>")
-            sys.exit(1)
-        xpath = sys.argv[2]
-        element = find_by_xpath(dom, xpath)
-        if element:
-            print(f"✓ Found element at {xpath}")
-            print(print_element(element, max_depth=2))
-        else:
-            print(f"✗ Element not found: {xpath}")
-            print("  Hint: This xpath may be a container without its own xpath attribute.")
-            print("  Try 'container' command to build a virtual container from children.")
-
+        cmd_find(dom, args)
     elif command == "container":
-        if len(sys.argv) < 3:
-            print("Usage: python dom_tools.py container <xpath>")
-            sys.exit(1)
-        xpath = sys.argv[2]
-        container = find_or_build_container(dom, xpath)
-        if container:
-            is_virtual = container.get('_virtual', False)
-            if is_virtual:
-                print(f"✓ Built virtual container for: {xpath}")
-                print(f"  (Container itself has no xpath, built from {len(container.get('children', []))} children)")
-            else:
-                print(f"✓ Found container at {xpath}")
-            print(print_element(container, max_depth=1))
-        else:
-            print(f"✗ Cannot build container: {xpath}")
-            print("  No elements found with this xpath prefix.")
-
+        cmd_container(dom, args)
+    elif command == "search":
+        cmd_search(dom, args)
     elif command == "analyze":
-        if len(sys.argv) < 3:
-            print("Usage: python dom_tools.py analyze <xpath>")
-            sys.exit(1)
-        xpath = sys.argv[2]
-        # Use find_or_build_container to support virtual containers
-        container = find_or_build_container(dom, xpath)
-        if container:
-            is_virtual = container.get('_virtual', False)
-            stats = analyze_container(container)
-            print(f"✓ Container Analysis: {xpath}")
-            if is_virtual:
-                print(f"  (Virtual container built from children)")
-            print(f"  Tag: {stats['tag']}")
-            print(f"  Class: {stats['class']}")
-            print(f"  Total children: {stats['total_children']}")
-            print(f"  By tag: {json.dumps(stats['by_tag'])}")
-            print(f"  By class: {json.dumps(stats['by_class'])}")
-            if stats['sample_child']:
-                print(f"\n  Sample child:")
-                print(json.dumps(stats['sample_child'], indent=4, ensure_ascii=False))
-        else:
-            print(f"✗ Container not found: {xpath}")
-
+        cmd_analyze(dom, args)
     elif command == "children":
-        if len(sys.argv) < 3:
-            print("Usage: python dom_tools.py children <xpath> [tag] [class_contains]")
-            sys.exit(1)
-        xpath = sys.argv[2]
-        tag = sys.argv[3] if len(sys.argv) > 3 else None
-        class_contains = sys.argv[4] if len(sys.argv) > 4 else None
-
-        # Use find_or_build_container to support virtual containers
-        container = find_or_build_container(dom, xpath)
-        if container:
-            is_virtual = container.get('_virtual', False)
-            children = get_children(container, tag, class_contains)
-            print(f"✓ Found {len(children)} children")
-            if is_virtual:
-                print(f"  (From virtual container)")
-            for i, child in enumerate(children[:5]):  # Show first 5
-                print(f"\n  [{i+1}] {child.get('tag')} class=\"{child.get('class', '')}\"")
-                print(f"      xpath: {child.get('xpath', 'N/A')}")
-                if child.get('text'):
-                    text = child['text'][:50] + '...' if len(child.get('text', '')) > 50 else child.get('text', '')
-                    print(f"      text: {text}")
-            if len(children) > 5:
-                print(f"\n  ... and {len(children) - 5} more")
-        else:
-            print(f"✗ Container not found: {xpath}")
-
-    elif command == "print":
-        if len(sys.argv) < 3:
-            print("Usage: python dom_tools.py print <xpath> [depth]")
-            sys.exit(1)
-        xpath = sys.argv[2]
-        depth = int(sys.argv[3]) if len(sys.argv) > 3 else 2
-        element = find_by_xpath(dom, xpath)
-        if element:
-            print(print_element(element, max_depth=depth))
-        else:
-            print(f"✗ Element not found: {xpath}")
-
-    elif command == "fields":
-        if len(sys.argv) < 3:
-            print("Usage: python dom_tools.py fields <xpath>")
-            sys.exit(1)
-        xpath = sys.argv[2]
-        fields = collect_fields_from_container(dom, xpath)
-        print(f"✓ Fields in container: {xpath}")
-        print(f"  text: {len(fields['text'])} values")
-        print(f"  href: {len(fields['href'])} values")
-        print(f"  src:  {len(fields['src'])} values")
-
-    elif command == "extract":
-        if len(sys.argv) < 4:
-            print("Usage: python dom_tools.py extract <xpath> <field>")
-            print("  field: text, href, or src")
-            sys.exit(1)
-        xpath = sys.argv[2]
-        field = sys.argv[3]
-        if field not in ('text', 'href', 'src'):
-            print(f"✗ Unknown field: {field}")
-            print("  Valid fields: text, href, src")
-            sys.exit(1)
-        fields = collect_fields_from_container(dom, xpath)
-        values = fields[field]
-        print(f"✓ Found {len(values)} '{field}' values in container")
-        for i, item in enumerate(values[:10]):  # Show first 10
-            value = item['value'][:60] + '...' if len(item['value']) > 60 else item['value']
-            print(f"  [{i+1}] {value}")
-            print(f"      tag: {item['tag']}, xpath: ...{item['xpath'][-40:]}")
-        if len(values) > 10:
-            print(f"\n  ... and {len(values) - 10} more")
-
+        cmd_children(dom, args)
     else:
         print(f"Unknown command: {command}")
         print(__doc__)

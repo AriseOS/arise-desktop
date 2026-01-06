@@ -167,6 +167,9 @@ class ScraperScriptGenerator:
 
             script_content = script_file.read_text(encoding='utf-8')
 
+            # Note: dom_tools.py is NOT copied here.
+            # Desktop daemon injects the path to ami_daemon/lib/dom_tools.py at runtime.
+
             # Wrap script with execution wrapper
             wrapped_script = self._extract_and_wrap_code(script_content)
 

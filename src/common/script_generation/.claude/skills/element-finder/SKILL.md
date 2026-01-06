@@ -18,29 +18,27 @@ Generate `find_element.py` that finds the target element and returns its `intera
 
 ## Element Tools
 
-Use the provided tools in `tools/element_tools.py` to find elements:
+Use the provided tools in `tools/element_tools.py`:
 
 ```bash
-# Find element by xpath, check if it has interactive_index
-python .claude/skills/element-finder/tools/element_tools.py find "//*[@id='app']/button[1]"
+# Analyze xpath hint - auto-searches up if not found
+python element_tools.py hint "<xpath_from_hints>"
 
-# Search by text keyword (also searches aria-label, placeholder)
-python .claude/skills/element-finder/tools/element_tools.py search "New mail"
-python .claude/skills/element-finder/tools/element_tools.py search "Submit"
+# Find element by xpath
+python element_tools.py find "<xpath>"
 
-# List all interactive elements in a container
-python .claude/skills/element-finder/tools/element_tools.py list "//*[@id='app']/div[2]"
+# Search by text (also searches aria-label, placeholder)
+python element_tools.py search "Submit"
 
-# Search by specific attribute
-python .claude/skills/element-finder/tools/element_tools.py attr "aria-label" "Send message"
-python .claude/skills/element-finder/tools/element_tools.py attr "class" "btn-primary"
-python .claude/skills/element-finder/tools/element_tools.py attr "placeholder" "Enter email"
+# List interactive elements in container
+python element_tools.py list "<container_xpath>"
 
-# Analyze xpath hint from recording, find best match
-python .claude/skills/element-finder/tools/element_tools.py hint "//*[@id='root']/header/button[2]"
+# Search by attribute
+python element_tools.py attr "class" "btn-primary"
+python element_tools.py attr "aria-label" "Send"
 
 # Print element structure
-python .claude/skills/element-finder/tools/element_tools.py print "//*[@id='app']/div[1]" 2
+python element_tools.py print "<xpath>" 2
 ```
 
 ## Workflow
@@ -52,33 +50,62 @@ cat task.json
 ```
 
 Identify:
-- `task` - What action to perform ("Click the New mail button")
+- `task` - What action to perform ("Click the login button")
 - `xpath_hints` - Reference xpath from user's recording
 - `text` - Text to input (for fill operations)
 
-### Step 2: Analyze xpath hint
+### Step 2: Use hint command
 
-If xpath_hints is provided, use the hint command:
+Always start with the `hint` command using xpath_hints:
 
 ```bash
-python .claude/skills/element-finder/tools/element_tools.py hint "<xpath_from_hints>"
+python element_tools.py hint "<xpath_from_hints>"
 ```
 
-This will:
+The hint command will:
 1. Check if exact xpath exists and is interactive
-2. Find alternatives if not
+2. Auto-search up parent levels if not found
 3. Return best matching `interactive_index`
+
+Example output:
+```
+ANALYZING xpath hint: //*[@id='app']/div/button[1]
+
+  Exact match found:
+    interactive_index: 300
+    tag: button
+    text: Submit
+
+  ✓ Element is interactive, use index 300
+```
+
+Or if exact match not found:
+```
+ANALYZING xpath hint: //*[@id='app']/div/span/nonexistent
+
+  No exact match found
+
+  (Auto-searched 2 level(s) up)
+
+  BEST INTERACTIVE MATCH:
+    interactive_index: 150
+    tag: button
+    text: Submit
+    xpath: //*[@id='app']/div/button
+```
 
 ### Step 3: Search if hint fails
 
-If hint doesn't find the element, search by keywords from the task:
+If hint doesn't find the element:
 
 ```bash
-# Extract keywords from task description
-# e.g., task = "Click the 'New mail' button"
+# Search by keywords from task description
+python element_tools.py search "login"
+python element_tools.py search "submit"
 
-python .claude/skills/element-finder/tools/element_tools.py search "New mail"
-python .claude/skills/element-finder/tools/element_tools.py search "mail"
+# Search by attribute
+python element_tools.py attr "aria-label" "Login"
+python element_tools.py attr "class" "login-btn"
 ```
 
 ### Step 4: Write find_element.py
@@ -105,8 +132,7 @@ def find_target_element(dom_dict: dict) -> dict:
     def condition(n):
         text = (n.get('text', '') or '').lower()
         has_index = n.get('interactive_index') is not None
-        # Match by text content
-        return 'new mail' in text and has_index
+        return 'submit' in text and has_index
 
     element = search_recursive(dom_dict, condition)
 
@@ -149,14 +175,14 @@ def condition(n):
 ```python
 def condition(n):
     aria = (n.get('aria-label', '') or '').lower()
-    return 'new message' in aria and n.get('interactive_index') is not None
+    return 'send' in aria and n.get('interactive_index') is not None
 ```
 
 ### By Class
 ```python
 def condition(n):
     cls = (n.get('class', '') or '').lower()
-    return 'editorclass' in cls and n.get('interactive_index') is not None
+    return 'btn-primary' in cls and n.get('interactive_index') is not None
 ```
 
 ### By Placeholder (for input fields)
@@ -170,7 +196,7 @@ def condition(n):
 
 Handle both Chinese and English:
 ```python
-keywords = ['new mail', '新邮件', 'compose', '写邮件']
+keywords = ['submit', '提交', 'send', '发送']
 def condition(n):
     text = (n.get('text', '') or '').lower()
     return any(kw in text for kw in keywords) and n.get('interactive_index') is not None
@@ -185,8 +211,8 @@ def condition(n):
 
 ### xpath hint doesn't match
 - Page structure may have changed
-- Solution: Use `search` or `attr` to find by content instead of xpath
-- Use: `python element_tools.py search "<button_text>"`
+- The `hint` command auto-searches up parent levels
+- If still not found, use `search` or `attr` to find by content
 
 ### Multiple matches
 - Multiple elements match the criteria
@@ -194,15 +220,18 @@ def condition(n):
 
 ## Fallback: grep search
 
-If tools don't find what you need:
+If tools don't find what you need, use grep to explore the DOM:
 
 ```bash
 # Search by text content
-grep -i "new mail" dom_data.json | head -20
+grep -i "login" dom_data.json | head -20
 
 # Search by aria-label
 grep -i "aria-label" dom_data.json | head -20
 
 # Search for interactive elements
 grep -i "interactive_index" dom_data.json | head -20
+
+# Search by class
+grep -i "btn-primary" dom_data.json | head -20
 ```

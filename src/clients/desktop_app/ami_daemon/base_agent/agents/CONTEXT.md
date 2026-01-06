@@ -25,7 +25,7 @@ Agent implementations for the BaseAgent framework.
 
 ### Overview
 
-ScraperAgent uses **Claude Agent SDK** to generate Python extraction scripts that parse DOM data. The key insight is that Claude Agent can iteratively analyze DOM structure using tools, write scripts, test them, and fix issues autonomously.
+ScraperAgent calls **cloud API** to generate Python extraction scripts that parse DOM data. Script generation runs on the cloud backend using Claude Agent SDK.
 
 ### Workflow
 
@@ -40,23 +40,22 @@ ScraperAgent uses **Claude Agent SDK** to generate Python extraction scripts tha
                     │                             │
                     ▼                             ▼
            Load & Execute              ┌──────────────────┐
-                                       │ 1. Setup Workspace│
-                                       │    - Create dir   │
-                                       │    - Copy skills  │
-                                       │    - Save DOM     │
+                                       │ 1. Call Cloud API │
+                                       │    - POST /generate-script
+                                       │    - Send step_id, page_url
+                                       │    - Cloud uses DOM from recording
                                        └────────┬─────────┘
                                                 │
                                        ┌────────▼─────────┐
-                                       │ 2. Claude Agent   │
-                                       │    - Read files   │
-                                       │    - Use dom_tools│
-                                       │    - Write script │
-                                       │    - Test & fix   │
+                                       │ 2. Cloud Backend  │
+                                       │    - Claude Agent │
+                                       │    - Generate script
+                                       │    - Return content
                                        └────────┬─────────┘
                                                 │
                                        ┌────────▼─────────┐
                                        │ 3. Execute Script │
-                                       │    - Load script  │
+                                       │    - Save locally │
                                        │    - Run on DOM   │
                                        │    - Return data  │
                                        └──────────────────┘
@@ -64,14 +63,13 @@ ScraperAgent uses **Claude Agent SDK** to generate Python extraction scripts tha
 
 ### Key Components
 
-1. **Workspace Setup** (`_generate_extraction_script_with_llm`)
-   - Creates script directory: `~/.ami/users/{user}/workflows/{workflow}/{step}/scraper_script_{hash}/`
-   - Copies skills from `base_app/.claude/skills/` to workspace
-   - Saves `requirement.json` (user requirements) and `dom_data.json` (page DOM)
+1. **Cloud API Call** (`cloud_client.generate_script`)
+   - Sends `workflow_id`, `step_id`, `script_type`, `page_url`
+   - Cloud has DOM snapshots from recording, no need to upload
+   - Returns generated script content
 
-2. **Claude Agent SDK** (`ClaudeAgentProvider.run_task_stream`)
+2. **Cloud Backend** (runs Claude Agent SDK)
    - Uses `dom-extraction` skill for guidance
-   - Tools available: `find`, `container`, `analyze`, `children`, `print`
    - Generates `extraction_script.py` with `extract_data_from_page(dom_dict)` function
 
 3. **Script Execution** (`_execute_generated_script_direct`)
@@ -79,42 +77,17 @@ ScraperAgent uses **Claude Agent SDK** to generate Python extraction scripts tha
    - Passes DOM dict (not HTML) to extraction function
    - Applies `max_items` limit if specified
 
-### DOM Tools (`.claude/skills/dom-extraction/tools/dom_tools.py`)
-
-Claude Agent uses these tools to analyze DOM structure:
-
-| Command | Purpose | Virtual Container Support |
-|---------|---------|---------------------------|
-| `find <xpath>` | Find element by exact xpath match | No |
-| `container <xpath>` | Build virtual container from children | Yes |
-| `analyze <xpath>` | Analyze container structure (children count, tags) | Yes |
-| `children <xpath> [tag]` | List children of container | Yes |
-| `print <xpath> [depth]` | Print element structure | No |
-| `fields <xpath>` | List available fields (text, href, src) count | Yes |
-| `extract <xpath> <field>` | Extract all values of a field | Yes |
-
-**Virtual Containers**: Container elements often don't have their own `xpath` attribute (filtered out during DOM serialization). The `container`, `analyze`, and `children` commands can build "virtual containers" by finding all child elements whose xpath starts with the given prefix.
-
 ### Script Caching
 
-- Scripts cached by hash of `user_description` + `output_format`
+- Scripts cached locally after first cloud generation
 - Path: `~/.ami/users/{user}/workflows/{workflow}/{step}/scraper_script_{hash}/extraction_script.py`
 - Cached scripts reused across executions with same requirements
 
-### Auto-Fix Feature
-
-When `auto_fix_missing_fields: true`:
-1. Check extraction result for missing/null fields
-2. If missing, call Claude Agent to analyze why (data not in DOM vs script bug)
-3. If script bug, Claude Agent fixes and re-executes
-
 ## Key Design Decisions
 
-- **LLM generates scripts** - Adapts to actual page/data structure, not hardcoded
+- **Cloud-based script generation** - Claude Agent SDK runs on cloud, desktop app only executes scripts
 - **Script caching** - File-based cache for reuse across similar pages
-- **Claude Agent SDK** - Iterative refinement with tool use, not single-shot generation
-- **Skills system** - SKILL.md files guide Claude through complex tasks
-- **Virtual containers** - Handle DOM structures where containers are filtered out
+- **Skills system** - SKILL.md files guide Claude through complex tasks (on cloud)
 - **Simple dispatch** - Agents are created via `AGENT_TYPES` dict in engine
 
 ## Variable Agent Operations

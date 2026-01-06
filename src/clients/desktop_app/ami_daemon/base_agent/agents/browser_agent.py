@@ -971,8 +971,6 @@ grep -i "interactive_index" dom_data.json | head -20
         Returns:
             Dict with operation info including interactive_index
         """
-        from src.common.llm import ClaudeAgentProvider
-
         try:
             # Determine operation type from task
             # Note: scroll_to_element is handled separately in _execute_intelligent_interaction
@@ -1209,8 +1207,6 @@ grep -i "interactive_index" dom_data.json | head -20
         Returns:
             Dict with success status and details
         """
-        from src.common.llm import ClaudeAgentProvider
-
         feedback = ""  # Feedback from previous round
 
         for attempt in range(max_attempts):
@@ -1332,7 +1328,7 @@ Please analyze and fix find_element.py.
         feedback: str = "",
         context: AgentContext = None
     ) -> Dict:
-        """Call Claude Agent SDK to generate/fix find_element.py for click/fill operations
+        """Call cloud API to generate find_element.py for click/fill operations
 
         Args:
             working_dir: Working directory
@@ -1345,52 +1341,47 @@ Please analyze and fix find_element.py.
         Returns:
             Dict with success status
         """
-        from src.common.llm import ClaudeAgentProvider
-
         try:
-            # Build prompt
-            prompt = self.CLAUDE_AGENT_PROMPT.format(working_dir=working_dir)
+            # 1. Get context info
+            if not hasattr(self, '_context') or not self._context:
+                raise RuntimeError("Agent context not available")
 
-            # Add task-specific context
-            prompt += f"""
+            user_id = getattr(self._context, 'user_id', 'default_user')
+            workflow_id = getattr(self._context, 'workflow_id', None)
+            step_id = getattr(self._context, 'step_id', None)
 
-## Current Task Details
-- **Task:** {task}
-- **Operation:** {operation}
-- **Text (for fill):** {text if text else "N/A"}
-"""
+            if not workflow_id or not step_id:
+                raise RuntimeError(f"workflow_id ({workflow_id}) and step_id ({step_id}) required for cloud script generation")
 
-            # Add feedback if this is a retry
-            if feedback:
-                prompt += f"""
+            # 2. Get cloud client from context
+            cloud_client = None
+            if self._context.agent_instance and hasattr(self._context.agent_instance, 'cloud_client'):
+                cloud_client = self._context.agent_instance.cloud_client
 
-## IMPORTANT: Previous Attempt Failed
-{feedback}
+            if not cloud_client:
+                raise RuntimeError("CloudClient not available in agent context")
 
-Please fix find_element.py based on the error above.
-"""
-
-            prompt += """
-Start by reading task.json and dom_data.json to understand the requirements and DOM structure.
-"""
-
-            # Initialize Claude Agent Provider
+            # 3. Get API key from provider
             api_key = None
-            base_url = None
-            if self.provider and hasattr(self.provider, 'api_key'):
+            if self.provider and hasattr(self.provider, 'api_key') and self.provider.api_key:
                 api_key = self.provider.api_key
-                base_url = getattr(self.provider, 'base_url', None)
+                logger.info(f"Got API key from provider for cloud script generation")
 
-            claude_provider = ClaudeAgentProvider(
-                config_service=self.config_service,
-                api_key=api_key,
-                base_url=base_url
-            )
+            # 4. Read DOM data from working directory
+            dom_file = working_dir / "dom_data.json"
+            if not dom_file.exists():
+                raise RuntimeError(f"dom_data.json not found in {working_dir}")
 
-            # Run Claude Agent SDK with streaming
-            logger.info(f"Starting Claude Agent for find_element.py...")
+            dom_data = json.loads(dom_file.read_text(encoding='utf-8'))
 
-            # Progress update ID for dynamic log updates (like ScraperAgent)
+            # 5. Get page URL from context or DOM
+            page_url = dom_data.get('page_url', '')
+
+            logger.info(f"Requesting cloud browser script generation: workflow={workflow_id}, step={step_id}")
+            logger.info(f"  Task: {task}")
+            logger.info(f"  Operation: {operation}")
+
+            # Progress update ID for dynamic log updates
             progress_update_id = f"browser_script_generation_{id(self)}_{task[:20]}"
 
             # Send initial log to frontend
@@ -1398,85 +1389,63 @@ Start by reading task.json and dom_data.json to understand the requirements and 
                 try:
                     await context.log_callback(
                         "info",
-                        f"📝 Generating element finder script for: {task}",
+                        f"📡 Requesting element finder script from cloud...",
                         {
                             "update_id": progress_update_id,
                             "task": task,
-                            "operation": operation
+                            "operation": operation,
+                            "workflow_id": workflow_id,
+                            "step_id": step_id
                         }
                     )
                 except Exception as e:
                     logger.warning(f"Failed to send log callback: {e}")
 
-            task_completed = False
-            task_error = None
-            final_turn = 0
+            # 6. Call cloud API to generate script
+            result = await cloud_client.generate_script(
+                workflow_id=workflow_id,
+                step_id=step_id,
+                script_type="browser",
+                page_url=page_url,
+                user_id=user_id,
+                api_key=api_key,
+                dom_data=dom_data  # Browser scripts need runtime DOM
+            )
 
-            async for event in claude_provider.run_task_stream(
-                prompt=prompt,
-                working_dir=working_dir
-            ):
-                if event.turn:
-                    final_turn = event.turn
+            if not result.get('success'):
+                error_msg = result.get('error', 'Unknown error')
+                raise RuntimeError(f"Cloud script generation failed: {error_msg}")
 
-                # Forward status updates to frontend (but not detailed content like scripts)
-                if context and context.log_callback:
-                    try:
-                        if event.type == "text":
-                            # Send progress status without detailed content
-                            await context.log_callback(
-                                "info",
-                                f"🔍 Finding element (turn {event.turn})",
-                                {
-                                    "update_id": progress_update_id,
-                                    "turn": event.turn
-                                }
-                            )
-                        elif event.type == "complete":
-                            task_completed = True
-                            logger.info(f"Claude Agent completed in {final_turn} turns")
-                        elif event.type == "error":
-                            task_error = event.content
-                            logger.error(f"Claude Agent error: {event.content}")
-                    except Exception as e:
-                        logger.warning(f"Failed to forward streaming event: {e}")
+            script_content = result.get('script_content', '')
+            turns = result.get('turns', 0)
 
-                if event.type == "text":
-                    logger.debug(f"Claude (turn {event.turn}): {event.content[:80]}...")
-                elif event.type == "tool_use":
-                    logger.debug(f"Claude using: {event.tool_name}")
-                elif event.type == "complete":
-                    task_completed = True
-                elif event.type == "error":
-                    task_error = event.content
+            logger.info(f"✅ Cloud browser script generation completed in {turns} turns")
+            logger.info(f"   Script size: {len(script_content)} chars")
 
-            # Send completion status (without script content details)
+            # 7. Save script to working directory
+            script_file = working_dir / "find_element.py"
+            script_file.write_text(script_content, encoding='utf-8')
+            logger.info(f"   Saved to: {script_file}")
+
+            # Send completion status
             if context and context.log_callback:
                 try:
-                    script_file = working_dir / "find_element.py"
-                    if script_file.exists():
-                        await context.log_callback(
-                            "success",
-                            f"✅ Element finder script generated ({final_turn} turns)",
-                            {
-                                "update_id": progress_update_id,
-                                "turn": final_turn,
-                                "completed": True
-                            }
-                        )
+                    await context.log_callback(
+                        "success",
+                        f"✅ Element finder script generated ({turns} turns)",
+                        {
+                            "update_id": progress_update_id,
+                            "turn": turns,
+                            "completed": True
+                        }
+                    )
                 except Exception as e:
                     logger.warning(f"Failed to send completion log: {e}")
-
-            if task_error:
-                return {'success': False, 'error': task_error}
-
-            if not task_completed:
-                return {'success': False, 'error': f'Claude Agent did not complete ({final_turn} turns)'}
 
             return {'success': True}
 
         except Exception as e:
-            logger.error(f"Claude Agent call failed: {e}")
+            logger.error(f"Cloud script generation failed: {e}")
             return {'success': False, 'error': str(e)}
 
     async def _refresh_dom_file(self, working_dir: Path) -> Dict:
@@ -1884,8 +1853,6 @@ if __name__ == "__main__":
         Returns:
             Dict with success status
         """
-        from src.common.llm import ClaudeAgentProvider
-
         try:
             # Step 1: Get DOM with xpath
             dom_dict, dom_llm, _ = await self._get_current_page_dom()
@@ -1991,55 +1958,61 @@ Create find_xpath_element.py that prints:
 SUCCESS: Found xpath: /html/body/...
 """
 
-            # Step 6: Call Claude Agent using run_task_stream
-            logger.info(f"Calling Claude Agent to generate find_xpath_element.py...")
+            # Step 6: Call cloud API to generate script
+            logger.info(f"Requesting cloud script generation for scroll_to_element...")
 
-            # Get API credentials from provider if available
+            # Get context info
+            if not hasattr(self, '_context') or not self._context:
+                raise RuntimeError("Agent context not available")
+
+            user_id = getattr(self._context, 'user_id', 'default_user')
+            workflow_id = getattr(self._context, 'workflow_id', None)
+            step_id = getattr(self._context, 'step_id', None)
+
+            if not workflow_id or not step_id:
+                raise RuntimeError(f"workflow_id ({workflow_id}) and step_id ({step_id}) required for cloud script generation")
+
+            # Get cloud client from context
+            cloud_client = None
+            if self._context.agent_instance and hasattr(self._context.agent_instance, 'cloud_client'):
+                cloud_client = self._context.agent_instance.cloud_client
+
+            if not cloud_client:
+                raise RuntimeError("CloudClient not available in agent context")
+
+            # Get API key from provider
             api_key = None
-            base_url = None
-            if self.provider and hasattr(self.provider, 'api_key'):
+            if self.provider and hasattr(self.provider, 'api_key') and self.provider.api_key:
                 api_key = self.provider.api_key
-                base_url = getattr(self.provider, 'base_url', None)
 
-            claude_provider = ClaudeAgentProvider(
-                config_service=self.config_service,
+            # Get page URL
+            page_url = dom_dict.get('page_url', '')
+
+            # Call cloud API
+            result = await cloud_client.generate_script(
+                workflow_id=workflow_id,
+                step_id=step_id,
+                script_type="browser",
+                page_url=page_url,
+                user_id=user_id,
                 api_key=api_key,
-                base_url=base_url
+                dom_data=dom_dict
             )
 
-            task_completed = False
-            task_error = None
-            final_turn = 0
+            if not result.get('success'):
+                error_msg = result.get('error', 'Unknown error')
+                return {'success': False, 'error': f"Cloud script generation failed: {error_msg}"}
 
-            async for event in claude_provider.run_task_stream(
-                prompt=prompt,
-                working_dir=working_dir
-            ):
-                if event.turn:
-                    final_turn = event.turn
+            script_content = result.get('script_content', '')
+            turns = result.get('turns', 0)
 
-                if event.type == "text":
-                    logger.debug(f"Claude (turn {event.turn}): {event.content[:80]}...")
-                elif event.type == "tool_use":
-                    logger.debug(f"Claude using: {event.tool_name}")
-                elif event.type == "complete":
-                    task_completed = True
-                    logger.info(f"Claude Agent completed in {final_turn} turns")
-                elif event.type == "error":
-                    task_error = event.content
-                    logger.error(f"Claude Agent error: {event.content}")
+            logger.info(f"✅ Cloud script generation completed in {turns} turns")
 
-            if task_error:
-                return {'success': False, 'error': task_error}
-
-            if not task_completed:
-                return {'success': False, 'error': f'Claude Agent did not complete ({final_turn} turns)'}
+            # Save script to working directory
+            script_file.write_text(script_content, encoding='utf-8')
+            logger.info(f"   Saved to: {script_file}")
 
             # Step 7: Execute generated script
-            if not script_file.exists():
-                return {'success': False, 'error': 'Claude Agent did not generate find_xpath_element.py'}
-
-            script_content = script_file.read_text(encoding='utf-8')
 
             # Update DOM (may have changed)
             dom_dict, _, _ = await self._get_current_page_dom()

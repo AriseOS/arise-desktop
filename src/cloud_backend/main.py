@@ -2297,11 +2297,11 @@ class GenerateScriptRequest(BaseModel):
     step_id: str
     script_type: str  # "scraper" or "browser"
     page_url: str
-    dom_data: Optional[Dict[str, Any]] = None  # Only for browser scripts
+    dom_data: Optional[Dict[str, Any]] = None  # DOM data from client
 
 
-@app.post("/api/v1/workflows/{workflow_id}/generate-script")
-async def generate_script(
+@app.post("/api/v1/workflows/{workflow_id}/generate-script-stream")
+async def generate_script_stream(
     workflow_id: str,
     request: GenerateScriptRequest,
     x_user_id: str = Header(..., alias="X-User-Id"),
@@ -2309,175 +2309,228 @@ async def generate_script(
     authorization: str = Header(None)
 ):
     """
-    Generate script (extraction_script.py or find_element.py) using Claude Agent SDK
+    Generate script with SSE streaming progress updates.
 
-    This endpoint reuses cloud-stored data to minimize transfer:
-    - Workflow YAML: contains step config (data_requirements, task info)
-    - dom_snapshots: DOM captured during recording (for scraper scripts)
-
-    For scraper scripts:
-    - Cloud reads data_requirements from workflow YAML
-    - Cloud uses dom_snapshots from recording (matched by xpath_hints)
-    - Client only needs: step_id + page_url
-
-    For browser scripts:
-    - Cloud reads task info from workflow YAML
-    - Client uploads current DOM (page may have changed since recording)
-    - Client needs: step_id + page_url + dom_data
-
-    Returns:
-        {
-            "success": true,
-            "script_path": "step_id/scraper_script_xxx/extraction_script.py",
-            "script_content": "...",
-            "script_key": "scraper_script_xxx",
-            "turns": int
-        }
+    SSE Events:
+    - {"type": "progress", "message": "...", "turn": N}
+    - {"type": "complete", "success": true, "script_path": "...", "script_content": "...", "script_key": "...", "turns": N}
+    - {"type": "error", "message": "..."}
     """
     import yaml
 
     request_id = f"req_{uuid.uuid4().hex[:12]}"
-    logger.info(f"[{request_id}] Generate script request: workflow={workflow_id}, step={request.step_id}, type={request.script_type}")
+    logger.info(f"[{request_id}] Generate script stream request: workflow={workflow_id}, step={request.step_id}, type={request.script_type}")
 
-    try:
-        # Get API key from header
-        api_key = x_api_key
-        if not api_key and authorization:
-            if authorization.startswith("Bearer "):
-                api_key = authorization[7:]
+    # Validate inputs before starting stream
+    api_key = x_api_key
+    if not api_key and authorization:
+        if authorization.startswith("Bearer "):
+            api_key = authorization[7:]
 
-        if not api_key:
-            raise HTTPException(status_code=401, detail="API key required")
+    if not api_key:
+        raise HTTPException(status_code=401, detail="API key required")
 
-        # Validate script_type
-        if request.script_type not in ["scraper", "browser"]:
-            raise HTTPException(status_code=400, detail="script_type must be 'scraper' or 'browser'")
+    if request.script_type not in ["scraper", "browser"]:
+        raise HTTPException(status_code=400, detail="script_type must be 'scraper' or 'browser'")
 
-        # Get workflow directory
-        workflow_dir = storage_service.get_workflow_path(x_user_id, workflow_id)
-        if not workflow_dir.exists():
-            raise HTTPException(status_code=404, detail=f"Workflow not found: {workflow_id}")
+    workflow_dir = storage_service.get_workflow_path(x_user_id, workflow_id)
+    if not workflow_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Workflow not found: {workflow_id}")
 
-        # Load workflow YAML to get step config
-        workflow_yaml_path = workflow_dir / "workflow.yaml"
-        if not workflow_yaml_path.exists():
-            raise HTTPException(status_code=404, detail="workflow.yaml not found")
+    workflow_yaml_path = workflow_dir / "workflow.yaml"
+    if not workflow_yaml_path.exists():
+        raise HTTPException(status_code=404, detail="workflow.yaml not found")
 
-        workflow_yaml = workflow_yaml_path.read_text(encoding='utf-8')
-        workflow = yaml.safe_load(workflow_yaml)
+    async def event_generator():
+        """Generate SSE events for script generation progress"""
+        progress_queue = asyncio.Queue()
 
-        # Find the step in workflow
-        step_config = _find_step_in_workflow(workflow, request.step_id)
-        if not step_config:
-            raise HTTPException(status_code=404, detail=f"Step not found: {request.step_id}")
+        async def progress_callback(level: str, message: str, data: dict):
+            """Callback to receive progress updates from script generator"""
+            await progress_queue.put({
+                "type": "progress",
+                "level": level,
+                "message": message,
+                "turn": data.get("turn", 0),
+                "tool_name": data.get("tool_name")
+            })
 
-        step_inputs = step_config.get("inputs", {})
-        logger.info(f"[{request_id}] Found step config: {list(step_inputs.keys())}")
-
-        # Import and create ScriptPregenerationService
-        from src.cloud_backend.intent_builder.services import ScriptPregenerationService
-
-        service = ScriptPregenerationService(
-            config_service=config_service,
-            api_key=api_key,
-            base_url=config_service.get("llm.base_url")
-        )
-
-        # Generate script based on type
-        if request.script_type == "scraper":
-            # Get data_requirements from step config
-            data_requirements = step_inputs.get("data_requirements", {})
-            if not data_requirements:
-                raise HTTPException(status_code=400, detail="Step has no data_requirements")
-
-            # Find DOM from dom_snapshots (stored during recording)
-            dom_dict = _find_dom_for_step(
-                workflow_dir=workflow_dir,
-                step_inputs=step_inputs,
-                page_url=request.page_url
-            )
-            if not dom_dict:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"No DOM snapshot found for step {request.step_id}. "
-                           f"DOM may not have been captured during recording."
-                )
-
-            logger.info(f"[{request_id}] Found DOM snapshot for scraper ({len(json.dumps(dom_dict))} chars)")
-
-            result = await service._generate_scraper_script(
-                step_id=request.step_id,
-                inputs=step_inputs,
-                dom_dict=dom_dict,
-                workflow_dir=workflow_dir,
-                page_url=request.page_url
-            )
-
-            script_name = "extraction_script.py"
-
-        else:  # browser
-            # Browser scripts need current DOM (page may have changed)
-            if not request.dom_data:
-                raise HTTPException(
-                    status_code=400,
-                    detail="dom_data is required for browser script generation"
-                )
-
-            result = await service._generate_browser_script(
-                step_id=request.step_id,
-                inputs=step_inputs,
-                dom_dict=request.dom_data,
-                workflow_dir=workflow_dir
-            )
-
-            script_name = "find_element.py"
-
-        if not result.success:
-            logger.error(f"[{request_id}] Script generation failed: {result.error}")
-            raise HTTPException(status_code=500, detail=f"Script generation failed: {result.error}")
-
-        # Read generated script content
-        script_content = ""
-        if result.script_path and result.script_path.exists():
-            script_content = result.script_path.read_text(encoding='utf-8')
-
-        # Extract script_key from path (e.g., scraper_script_abc123)
-        script_key = result.script_path.parent.name if result.script_path else ""
-
-        # Build relative path
-        script_path = f"{request.step_id}/{script_key}/{script_name}"
-
-        logger.info(f"[{request_id}] Script generated successfully: {script_path} ({len(script_content)} bytes, {result.turns} turns)")
-
-        # Update workflow metadata
         try:
-            metadata = storage_service.load_workflow_metadata(x_user_id, workflow_id) or {}
-            if "generated_scripts" not in metadata:
-                metadata["generated_scripts"] = {}
-            metadata["generated_scripts"][request.step_id] = {
-                "script_type": request.script_type,
-                "script_key": script_key,
-                "script_path": script_path,
-                "generated_at": datetime.utcnow().isoformat(),
-                "turns": result.turns
-            }
-            storage_service.save_workflow_metadata(x_user_id, workflow_id, metadata)
+            # Load workflow
+            workflow_yaml = workflow_yaml_path.read_text(encoding='utf-8')
+            workflow = yaml.safe_load(workflow_yaml)
+
+            step_config = _find_step_in_workflow(workflow, request.step_id)
+            if not step_config:
+                yield f"data: {json.dumps({'type': 'error', 'message': f'Step not found: {request.step_id}'})}\n\n"
+                return
+
+            step_inputs = step_config.get("inputs", {})
+
+            # Send initial progress
+            yield f"data: {json.dumps({'type': 'progress', 'message': 'Starting script generation...', 'turn': 0})}\n\n"
+
+            # Import generators
+            from src.common.script_generation import ScraperScriptGenerator, BrowserScriptGenerator, ScraperRequirement, BrowserTask
+            import hashlib
+
+            if request.script_type == "scraper":
+                data_requirements = step_inputs.get("data_requirements", {})
+                if not data_requirements:
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'Step has no data_requirements'})}\n\n"
+                    return
+
+                # Use client-uploaded DOM
+                if request.dom_data:
+                    dom_dict = request.dom_data
+                    yield f"data: {json.dumps({'type': 'progress', 'message': 'Using client-uploaded DOM', 'turn': 0})}\n\n"
+                else:
+                    dom_dict = _find_dom_for_step(workflow_dir, step_inputs, request.page_url)
+                    if not dom_dict:
+                        yield f"data: {json.dumps({'type': 'error', 'message': 'No DOM data provided'})}\n\n"
+                        return
+                    yield f"data: {json.dumps({'type': 'progress', 'message': 'Using recorded DOM snapshot', 'turn': 0})}\n\n"
+
+                # Build requirement
+                requirement = ScraperRequirement(
+                    user_description=data_requirements.get("user_description", "Extract data"),
+                    output_format=data_requirements.get("output_format", {}),
+                    xpath_hints=data_requirements.get("xpath_hints", {}),
+                    sample_data=data_requirements.get("sample_data", [])
+                )
+
+                # Generate script key
+                content = f"scraper:{requirement.user_description}:{json.dumps(requirement.output_format, sort_keys=True)}"
+                script_key = f"scraper_script_{hashlib.md5(content.encode()).hexdigest()[:8]}"
+                working_dir = workflow_dir / request.step_id / script_key
+                working_dir.mkdir(parents=True, exist_ok=True)
+
+                # Create generator and run with streaming
+                generator = ScraperScriptGenerator(config_service)
+
+                # Run generation in background task
+                async def run_generation():
+                    return await generator.generate(
+                        requirement=requirement,
+                        dom_dict=dom_dict,
+                        working_dir=working_dir,
+                        api_key=api_key,
+                        base_url=config_service.get("llm.base_url"),
+                        page_url=request.page_url,
+                        progress_callback=progress_callback
+                    )
+
+                generation_task = asyncio.create_task(run_generation())
+                script_name = "extraction_script.py"
+
+            else:  # browser
+                if not request.dom_data:
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'dom_data is required for browser script'})}\n\n"
+                    return
+
+                # Build task
+                operation = step_inputs.get("operation", "click")
+                task_desc = step_inputs.get("task") or step_inputs.get("description") or f"{operation} element"
+                xpath_hints = step_inputs.get("xpath_hints", {})
+                if isinstance(xpath_hints, list):
+                    xpath_hints = {"target": xpath_hints[0]} if xpath_hints else {}
+                text = step_inputs.get("text") or step_inputs.get("value")
+
+                task = BrowserTask(
+                    task=task_desc,
+                    operation=operation,
+                    xpath_hints=xpath_hints,
+                    text=text
+                )
+
+                # Generate script key
+                content = f"browser:{task_desc}:{json.dumps(xpath_hints, sort_keys=True)}"
+                script_key = f"browser_script_{hashlib.md5(content.encode()).hexdigest()[:8]}"
+                working_dir = workflow_dir / request.step_id / script_key
+                working_dir.mkdir(parents=True, exist_ok=True)
+
+                # Create generator and run with streaming
+                generator = BrowserScriptGenerator(config_service)
+
+                async def run_generation():
+                    return await generator.generate(
+                        task=task,
+                        dom_dict=request.dom_data,
+                        working_dir=working_dir,
+                        api_key=api_key,
+                        base_url=config_service.get("llm.base_url"),
+                        progress_callback=progress_callback
+                    )
+
+                generation_task = asyncio.create_task(run_generation())
+                script_name = "find_element.py"
+
+            # Stream progress events while generation runs
+            while not generation_task.done():
+                try:
+                    # Wait for progress update with timeout
+                    progress = await asyncio.wait_for(progress_queue.get(), timeout=5.0)
+                    yield f"data: {json.dumps(progress)}\n\n"
+                except asyncio.TimeoutError:
+                    # Send keepalive
+                    yield f": keepalive\n\n"
+
+            # Drain remaining progress events
+            while not progress_queue.empty():
+                try:
+                    progress = progress_queue.get_nowait()
+                    yield f"data: {json.dumps(progress)}\n\n"
+                except asyncio.QueueEmpty:
+                    break
+
+            # Get result
+            result = await generation_task
+
+            if not result.success:
+                yield f"data: {json.dumps({'type': 'error', 'message': result.error})}\n\n"
+                return
+
+            # Read script content
+            script_content = ""
+            if result.script_path and result.script_path.exists():
+                script_content = result.script_path.read_text(encoding='utf-8')
+
+            script_path = f"{request.step_id}/{script_key}/{script_name}"
+
+            # Update workflow metadata
+            try:
+                metadata = storage_service.load_workflow_metadata(x_user_id, workflow_id) or {}
+                if "generated_scripts" not in metadata:
+                    metadata["generated_scripts"] = {}
+                metadata["generated_scripts"][request.step_id] = {
+                    "script_type": request.script_type,
+                    "script_key": script_key,
+                    "script_path": script_path,
+                    "generated_at": datetime.utcnow().isoformat(),
+                    "turns": result.turns
+                }
+                storage_service.save_workflow_metadata(x_user_id, workflow_id, metadata)
+            except Exception as e:
+                logger.warning(f"[{request_id}] Failed to update metadata: {e}")
+
+            # Send completion event
+            yield f"data: {json.dumps({'type': 'complete', 'success': True, 'script_path': script_path, 'script_content': script_content, 'script_key': script_key, 'turns': result.turns})}\n\n"
+
+            logger.info(f"[{request_id}] Script generated: {script_path} ({result.turns} turns)")
+
         except Exception as e:
-            logger.warning(f"[{request_id}] Failed to update metadata: {e}")
+            logger.error(f"[{request_id}] Script generation error: {e}", exc_info=True)
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
-        return {
-            "success": True,
-            "script_path": script_path,
-            "script_content": script_content,
-            "script_key": script_key,
-            "turns": result.turns
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
         }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"[{request_id}] Generate script error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    )
 
 
 def _find_step_in_workflow(workflow: Dict, step_id: str) -> Optional[Dict]:

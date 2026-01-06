@@ -16,48 +16,24 @@ Generate a Python script (`extraction_script.py`) that extracts data from a nest
 
 ## DOM Tools
 
-Use the provided tools in `tools/dom_tools.py` to analyze DOM structure:
+Tools are available at `tools/dom_tools.py`. All commands output reusable code snippets.
+
+### Quick Reference
 
 ```bash
-# Find element by exact xpath match (content elements only)
-python .claude/skills/dom-extraction/tools/dom_tools.py find "//*[@id='app']/div[4]/div/a[1]"
+# Extract list data - directly use xpath_hint, auto-finds container
+python dom_tools.py container "<xpath_hint>" --fields "name:text,url:href"
 
-# Build virtual container from children's xpath prefix
-python .claude/skills/dom-extraction/tools/dom_tools.py container "//*[@id='app']/div[4]/div"
+# Find single/multiple elements by xpath
+python dom_tools.py find "<xpath>" --field text
+python dom_tools.py find '{"name": "<xpath1>", "price": "<xpath2>"}' --field text
 
-# Analyze container structure (supports virtual containers)
-python .claude/skills/dom-extraction/tools/dom_tools.py analyze "//*[@id='app']/div[4]/div"
+# Search when xpath hints fail
+python dom_tools.py search --text "Product" --tag a
+python dom_tools.py search --class "product-item"
 
-# List children with optional tag filter (supports virtual containers)
-python .claude/skills/dom-extraction/tools/dom_tools.py children "//*[@id='app']/div[4]/div" a
-
-# Print element structure with depth limit
-python .claude/skills/dom-extraction/tools/dom_tools.py print "//*[@id='app']/div[4]/div/a[1]" 3
-
-# List available fields (text, href, src) in container
-python .claude/skills/dom-extraction/tools/dom_tools.py fields "//*[@id='app']/div[4]/div"
-
-# Extract all values of a specific field from container
-python .claude/skills/dom-extraction/tools/dom_tools.py extract "//*[@id='app']/div[4]/div" href
-python .claude/skills/dom-extraction/tools/dom_tools.py extract "//*[@id='app']/div[4]/div" text
-```
-
-### Virtual Containers
-
-Container elements (like `div` wrappers) often don't have their own `xpath` attribute in the DOM data - only content elements (with text, href, etc.) keep their xpath.
-
-When `find` returns "not found", use `container`, `analyze`, or `children` commands which can build a **virtual container** by finding all child elements whose xpath starts with the given prefix.
-
-### Fallback Strategy
-
-If DOM tools don't find what you need, fallback to grep search:
-
-```bash
-# Search for text/class patterns
-grep -n "product-name\|product-item" dom_data.json | head -20
-
-# Find xpaths containing a pattern
-grep -n '"xpath".*div\[4\]' dom_data.json | head -10
+# Analyze container structure
+python dom_tools.py analyze "<xpath>"
 ```
 
 ## Workflow
@@ -69,109 +45,138 @@ cat requirement.json
 ```
 
 Identify:
-- `user_description` - What user wants to extract ("all products", "the title", etc.)
-- `output_format` - Expected fields (`name`, `url`, `price`, etc.)
-- `xpath_hints` - Reference xpath from user's demo click
+- `user_description` - What user wants ("all products", "the title")
+- `output_format` - Expected fields
+- `xpath_hints` - Reference xpaths from user's demo
 
 ### Step 2: Determine Extraction Type
 
-**Scenario A: Extract List** - User says "all", "every", "list", "each"
-**Scenario B: Extract Single** - User says "the title", "get price"
+**List Extraction** - "all", "every", "list", "each" → Use `container` command
+**Multi-field Extraction** - Multiple single fields → Use `find` with JSON
+**Single-field Extraction** - One field → Use `find` with xpath
 
-### Step 3: Locate Elements
+### Step 3: Verify and Extract
 
-#### 3a. Try xpath hint first
+#### 3a. List Extraction
 
-```bash
-python .claude/skills/dom-extraction/tools/dom_tools.py find "<xpath_from_hints>"
-```
-
-If found, continue to Step 4.
-
-#### 3b. Fallback: Search with grep
-
-If xpath hint fails (element not found), search dom_data.json manually:
+When extracting a list (products, links, items), use the xpath_hint directly:
 
 ```bash
-# Search by text content or class names from output_format
-grep -n "product-name\|product-item\|title" dom_data.json | head -20
+# xpath_hint points to ONE item like: //*[@id='app']/div[4]/div/a[1]
+# container command AUTO-FINDS the parent container with multiple children
 
-# Look for patterns that match expected data
-grep -n "xpath.*div\[" dom_data.json | head -20
+python dom_tools.py container "//*[@id='app']/div[4]/div/a[1]" --fields "name:text,url:href"
 ```
 
-Find candidate xpaths, then verify each with the tool:
+Output:
+```
+  (Auto-adjusted 1 level(s) up: .../a[1] → .../div)
+✓ Built virtual container: //*[@id='app']/div[4]/div
+  (Found 20 child elements)
+
+Extracted 20 items:
+  [1] {"name": "Product A", "url": "/products/1"}
+  ...
+
+# Code snippet:
+from dom_utils import extract_list
+results = extract_list(dom_dict, "//*[@id='app']/div[4]/div", {"name": "text", "url": "href"})
+```
+
+**Field Mapping Syntax:**
+- `name:text` - Extract text from item (searches recursively)
+- `url:href` - Extract href from item
+- `title:text:h4` - Extract text from `<h4>` descendant
+- `title:text:.title` - Extract text from descendant with class "title"
+
+#### 3b. Multi-field Extraction
+
+When extracting multiple single fields (product details page):
 
 ```bash
-python .claude/skills/dom-extraction/tools/dom_tools.py find "<candidate_xpath>"
-python .claude/skills/dom-extraction/tools/dom_tools.py print "<candidate_xpath>" 2
+python dom_tools.py find '{"product_name": "//*[@id=\"app\"]/h1", "price": "//*[@id=\"app\"]/span"}' --field text
 ```
 
-Repeat until you find the correct element.
+#### 3c. Single-field Extraction
 
-### Step 4: Analyze Container (List Scenario)
-
-For list extraction, find and analyze the container. Remove the index suffix `[1]` from the element xpath to get the container xpath:
+When extracting just one field:
 
 ```bash
-# Element xpath: //*[@id='app']/div[4]/div/a[1]
-# Container xpath: //*[@id='app']/div[4]/div
-
-# Analyze container structure (automatically builds virtual container if needed)
-python .claude/skills/dom-extraction/tools/dom_tools.py analyze "//*[@id='app']/div[4]/div"
+python dom_tools.py find "//*[@id='app']/h1" --field text
 ```
 
-If `analyze` returns "Container not found", use `container` command explicitly:
+### Step 4: Handle Failures with Search
+
+If xpath hints don't find elements, use `search`:
 
 ```bash
-python .claude/skills/dom-extraction/tools/dom_tools.py container "//*[@id='app']/div[4]/div"
+# Search by visible text
+python dom_tools.py search --text "Product Name"
+
+# Search by class pattern
+python dom_tools.py search --class "product-item"
+
+# Combine filters
+python dom_tools.py search --text "Buy" --tag button
 ```
-
-Check the output:
-- `total_children` - Expected count of items
-- `by_tag` - Which tag has the most items (usually `a` or `div`)
-- `by_class` - Common class patterns
-- `sample_child` - Structure of items to extract
-
-**CRITICAL**: The xpath index (e.g., `div[4]`) specifies the EXACT container. Pages may have multiple similar sections. Extract ONLY from the specific container indicated.
 
 ### Step 5: Write Extraction Script
 
-Create `extraction_script.py`:
+Use the code snippets from tool output:
 
 ```python
+import json
 from typing import Dict, List
+from urllib.parse import urljoin
+
+from dom_tools import extract_list, extract_single, extract_multi
+
+PAGE_URL = "https://example.com/page"
+
+def make_absolute(url: str) -> str:
+    if not url or url.startswith(('http://', 'https://')):
+        return url
+    return urljoin(PAGE_URL, url)
 
 def extract_data_from_page(dom_dict: Dict) -> List[Dict]:
-    """
-    Extract data from DOM dictionary.
+    # Use code snippet from container command
+    results = extract_list(dom_dict, "<container_xpath>", {"name": "text", "url": "href"})
 
-    Args:
-        dom_dict: Page DOM as nested dictionary
-
-    Returns:
-        List of extracted data dictionaries
-    """
-    results = []
-
-    # Your extraction logic here
-    # - Navigate to container
-    # - Iterate over children
-    # - Extract fields from each item
+    # Make URLs absolute
+    for item in results:
+        if 'url' in item:
+            item['url'] = make_absolute(item['url'])
 
     return results
 ```
 
-### Step 6: Test and Validate
+**IMPORTANT**: Use simple `from dom_tools import ...`. Do NOT use `__file__` or `sys.path` manipulation.
+
+### Step 6: Test
 
 ```bash
 python extraction_script.py
 ```
 
 Verify:
-- For lists: Count matches expected from container analysis
-- For single: Values are not empty
-- URLs are absolute (prepend base URL if needed)
+- For lists: Item count matches container analysis
+- For single/multi: Values are not empty
+- URLs are absolute
+
+## Container Auto-Find
+
+The `container` command automatically searches UP the DOM tree to find a container with multiple children:
+
+```bash
+# Given xpath_hint pointing to a single item:
+python dom_tools.py container "//*[@id='app']/div/a[1]"
+
+# Output shows it auto-adjusted:
+#   (Auto-adjusted 1 level(s) up: .../a[1] → .../div)
+# ✓ Built virtual container with 20 children
+```
+
+This means you can directly use xpath_hints without manually removing the `[1]` index.
 
 ## DOM Dictionary Format
 
@@ -182,13 +187,7 @@ Verify:
   "href": "/products/123",
   "xpath": "//*[@id='app']/div[2]/a[1]",
   "text": "Product Name",
-  "children": [
-    {
-      "tag": "div",
-      "class": "info",
-      "children": [...]
-    }
-  ]
+  "children": [...]
 }
 ```
 
@@ -196,67 +195,67 @@ Fields: `tag`, `class`, `href`, `src`, `text`, `xpath`, `children`
 
 ## Rules
 
-1. **Parse dom_dict directly** - DO NOT convert to HTML or use lxml/BeautifulSoup
+1. **Use dom_utils functions** - Import and use `extract_list`, `extract_single`, `extract_multi`. Don't write custom xpath search functions.
 
-2. **URLs MUST be absolute** - This is CRITICAL! Relative URLs will cause navigation failures.
+2. **URLs MUST be absolute** - Always convert relative URLs using `urljoin(PAGE_URL, url)`.
 
-   Always convert relative URLs to absolute using the page URL:
-   ```python
-   from urllib.parse import urljoin
+3. **Respect container boundaries** - Only extract from the specific container indicated by xpath, not the entire DOM.
 
-   PAGE_URL = "https://example.com/category/page"  # From task context
+4. **Handle missing fields gracefully** - The extract functions already handle missing fields.
 
-   def make_absolute(url: str) -> str:
-       if not url:
-           return ""
-       if url.startswith(('http://', 'https://')):
-           return url
-       return urljoin(PAGE_URL, url)
+## Example: List Extraction
 
-   # Usage in extraction:
-   data = {
-       "url": make_absolute(node.get('href', '')),
-       "image": make_absolute(node.get('src', '')),
-   }
-   ```
-
-   **NEVER return relative URLs like `/products/xxx` - always prepend the base URL!**
-
-3. **Be robust** - Use partial class matching:
-   ```python
-   # Good
-   if 'product-item' in node.get('class', ''):
-
-   # Bad - exact match fails
-   if node.get('class') == 'product-item':
-   ```
-
-4. **Handle missing fields gracefully**:
-   ```python
-   name = node.get('text', '') or ''
-   ```
-
-5. **Respect container boundaries** - Only extract from the specific container identified by xpath, not the entire DOM tree.
-
-## Example
-
-Given xpath hint `//*[@id='app']/main/div[4]/div/a[1]`:
+Given requirement with xpath_hint `//*[@id='app']/main/div[4]/div/a[1]`:
 
 ```bash
-# 1. Find the element (verify xpath hint works)
-python .claude/skills/dom-extraction/tools/dom_tools.py find "//*[@id='app']/main/div[4]/div/a[1]"
-# ✓ Found element at ...
+# Use xpath_hint directly - container auto-finds the parent
+python dom_tools.py container "//*[@id='app']/main/div[4]/div/a[1]" --fields "name:text,url:href"
 
-# 2. Get container xpath by removing the [1] index
-# Element: //*[@id='app']/main/div[4]/div/a[1]
-# Container: //*[@id='app']/main/div[4]/div
+# Output:
+#   (Auto-adjusted 1 level(s) up)
+# ✓ Built virtual container: //*[@id='app']/main/div[4]/div
+# Extracted 20 items:
+#   [1] {"name": "Product A", "url": "/products/1"}
+#   ...
+# Code snippet:
+# results = extract_list(dom_dict, "...", {...})
 
-# 3. Analyze container (builds virtual container automatically)
-python .claude/skills/dom-extraction/tools/dom_tools.py analyze "//*[@id='app']/main/div[4]/div"
-# Result: total_children: 20, by_tag: {"a": 20}
+# Use the snippet in extraction_script.py
+```
 
-# 4. List children to see their structure
-python .claude/skills/dom-extraction/tools/dom_tools.py children "//*[@id='app']/main/div[4]/div" a
+## Example: Selector Syntax
 
-# 5. Write script targeting this exact container
+When list items have nested structure, use selectors to extract from specific descendants:
+
+```bash
+# Item structure: <a href="..."><div><h4>Name</h4><p>Desc</p></div></a>
+# Extract name from h4, url from the a itself
+
+python dom_tools.py container "//*[@id='app']/div/a[1]" --fields "name:text:h4,url:href:a"
+
+# Extracted 20 items:
+#   [1] {"name": "DeepSeek", "url": "/products/deepseek"}
+```
+
+Selector syntax: `output_name:field:selector`
+- `name:text:h4` - Find `<h4>` in item tree, extract its text
+- `url:href:a` - If item is `<a>`, extract href from it
+- `title:text:.title` - Find element with class "title", extract text
+
+## Fallback: grep search
+
+If tools don't find what you need, use grep to explore the DOM:
+
+```bash
+# Search by text content
+grep -i "product" dom_data.json | head -20
+
+# Search by class
+grep -i "product-item" dom_data.json | head -20
+
+# Search by href
+grep -i "href" dom_data.json | head -20
+
+# Search for specific xpath pattern
+grep -i "div\[4\]/div/a" dom_data.json | head -20
 ```

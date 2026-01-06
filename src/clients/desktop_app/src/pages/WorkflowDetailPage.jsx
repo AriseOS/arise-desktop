@@ -147,18 +147,6 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [modificationLog, currentToolUse])
 
-  // Handle optimize script button click
-  const handleOptimizeScript = (stepData) => {
-    console.log('Optimize script clicked for step:', stepData)
-    onNavigate('scraper-optimization', {
-      userId: userId,
-      workflowId: workflowId,
-      stepId: stepData.id,
-      workflowName: workflowData?.workflow_id || workflowId,
-      stepName: stepData.label || stepData.id
-    })
-  }
-
   const loadWorkflowData = async () => {
     // Only show loading spinner if we don't have cached data
     if (!workflowData) {
@@ -699,7 +687,6 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                 <FlowVisualization
                   data={workflowData}
                   type="workflow"
-                  onOptimizeScript={handleOptimizeScript}
                 />
               ) : activeTab === 'yaml' ? (
                 <div className="workflow-yaml-container">

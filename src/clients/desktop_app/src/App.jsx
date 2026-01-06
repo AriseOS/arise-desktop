@@ -30,7 +30,6 @@ import RecordingDetailPage from "./pages/RecordingDetailPage";
 // MetaflowPreviewPage removed - MetaFlow is now internal, users work with Workflows directly
 // DataManagementPage removed - Data is now per-workflow, see WorkflowDetailPage "Data" tab
 import WorkflowExecutionLivePage from "./pages/WorkflowExecutionLivePage";
-import ScraperOptimizationPage from "./pages/ScraperOptimizationPage";
 import DocsPage from "./pages/DocsPage";
 
 // Import setup styles
@@ -743,17 +742,6 @@ function App() {
 
       // data-management and collection-detail removed
       // Data is now per-workflow, see WorkflowDetailPage "Data" tab
-
-      case "scraper-optimization":
-        return (
-          <ScraperOptimizationPage
-            session={session}
-            pageParams={pageParams}
-            onNavigate={navigate}
-            showStatus={showStatus}
-            version={versionInfo?.version || '1.0.0'}
-          />
-        );
 
       case "docs":
         return (

@@ -15,6 +15,9 @@ from src.common.llm import OpenAIProvider, AnthropicProvider
 # Import script templates from common module (for consistency with Cloud Backend)
 from src.common.script_generation.templates import SCRAPER_AGENT_PROMPT
 
+# Import dom_tools for script execution (PyInstaller will auto-detect this)
+from lib import dom_tools
+
 try:
     from browser_use import Tools
     from browser_use.browser.session import BrowserSession
@@ -59,8 +62,7 @@ class ScraperAgent(BaseStepAgent):
                  metadata: Optional[AgentMetadata] = None,
                  extraction_method: str = 'llm',  # 默认值
                  dom_scope: str = 'partial',      # 默认值
-                 debug_mode: bool = False,        # 默认值
-                 auto_fix_missing_fields: bool = False  # 默认值
+                 debug_mode: bool = False         # 默认值
 ):
         """初始化，保留默认配置，运行时可覆盖
 
@@ -70,7 +72,6 @@ class ScraperAgent(BaseStepAgent):
             extraction_method: 默认提取方法 ('script' or 'llm')
             dom_scope: 默认DOM范围 ('partial' or 'full')
             debug_mode: 默认调试模式
-            auto_fix_missing_fields: 默认是否自动修复缺失字段（使用Claude Agent分析）
         """
         if not BROWSER_USE_AVAILABLE:
             raise ImportError("browser-use 库未安装，请先安装: pip install browser-use")
@@ -278,7 +279,6 @@ class ScraperAgent(BaseStepAgent):
         target_path = input_data.get('target_path')  # 可选，如果为空则使用当前页面
         data_requirements = input_data['data_requirements']
         interaction_steps = input_data.get('interaction_steps', [])
-        auto_fix_missing_fields = input_data.get('auto_fix_missing_fields', False)
 
         if target_path:
             logger.info(f"📄 Starting scrape with target_path: {target_path}")
@@ -326,8 +326,7 @@ class ScraperAgent(BaseStepAgent):
                 max_items,
                 timeout,
                 context=context,
-                config=config,
-                auto_fix_missing_fields=auto_fix_missing_fields
+                config=config
             )
 
             # Anti-bot random behavior after extraction
@@ -666,8 +665,7 @@ class ScraperAgent(BaseStepAgent):
         max_items: int,
         timeout: int,
         context: Optional[AgentContext] = None,
-        config: Optional[Dict] = None,
-        auto_fix_missing_fields: bool = False
+        config: Optional[Dict] = None
     ) -> Dict[str, Any]:
         """Extract data from current page
 
@@ -677,7 +675,6 @@ class ScraperAgent(BaseStepAgent):
             timeout: Timeout in seconds
             context: Agent context
             config: Configuration dict
-            auto_fix_missing_fields: Whether to auto-fix missing fields
         """
 
         try:
@@ -706,7 +703,7 @@ class ScraperAgent(BaseStepAgent):
             # 根据配置的提取方法调用对应函数
             if self.extraction_method == 'script':
                 return await self._extract_with_script(
-                    target_dom, dom_dict, llm_view, data_requirements, max_items, timeout, context, auto_fix_missing_fields
+                    target_dom, dom_dict, llm_view, data_requirements, max_items, timeout, context
                 )
             else:
                 return await self._extract_with_llm(
@@ -725,8 +722,7 @@ class ScraperAgent(BaseStepAgent):
         data_requirements: Dict,
         max_items: int,
         timeout: int,
-        context: Optional[AgentContext] = None,
-        auto_fix_missing_fields: bool = False
+        context: Optional[AgentContext] = None
     ) -> Dict[str, Any]:
         """Extract data using script mode - file-based caching with Claude SDK"""
         from pathlib import Path
@@ -842,278 +838,12 @@ class ScraperAgent(BaseStepAgent):
             # Note: DOM snapshot is now stored in cloud during script generation
             # No need to save locally
 
-            # Check if result has missing fields (None values or empty strings)
-            # Only do auto-fix if enabled in workflow inputs
-            if auto_fix_missing_fields and result.get("success") and result.get("data"):
-                missing_info = self._check_missing_fields(result["data"], data_requirements)
-
-                if missing_info["has_missing"]:
-                    logger.warning(f"⚠️  Detected {len(missing_info['missing_fields'])} missing/null fields in extraction result")
-                    logger.info("🔍 Calling Claude Agent to analyze the issue...")
-
-                    # Save current DOM to workspace (may be different from generation time)
-                    dom_failed_file = script_workspace / "dom_data_failed.json"
-                    dom_failed_file.write_text(
-                        json.dumps(dom_dict, indent=2, ensure_ascii=False),
-                        encoding='utf-8'
-                    )
-                    logger.info(f"📄 Saved current page DOM to dom_data_failed.json ({dom_failed_file.stat().st_size} bytes)")
-
-                    # Call Claude Agent to analyze and potentially fix
-                    analysis = await self._analyze_and_fix_with_claude(
-                        script_workspace=script_workspace,
-                        script_file=script_file,
-                        extraction_result=result,
-                        data_requirements=data_requirements,
-                        missing_fields=missing_info['missing_fields']
-                    )
-
-                    if analysis["should_fix"] and analysis["fixed"]:
-                        logger.info("✅ Claude Agent fixed the script! Re-executing...")
-                        # Re-execute with fixed script
-                        fixed_script = script_file.read_text(encoding='utf-8')
-                        wrapped_script = self._extract_and_wrap_code(fixed_script)
-                        result = await self._execute_generated_script_direct(
-                            wrapped_script, dom_dict, max_items
-                        )
-                        logger.info("✅ Re-execution completed with fixed script")
-                    elif not analysis["should_fix"]:
-                        logger.info(f"✅ Analysis complete: {analysis['reason']}")
-                        logger.info("   Accepting missing fields as expected (data not in page)")
-                else:
-                    logger.warning(f"⚠️  Claude Agent could not fix the script: {analysis['reason']}")
-            elif result.get("success") and result.get("data"):
-                # Auto-fix disabled, just log if there are missing fields
-                missing_info = self._check_missing_fields(result["data"], data_requirements)
-                if missing_info["has_missing"]:
-                    logger.info(f"ℹ️  Detected {len(missing_info['missing_fields'])} missing/null fields: {missing_info['missing_fields']}")
-                    logger.info("   Auto-fix is disabled. Set 'auto_fix_missing_fields: true' to enable automatic script fixing.")
-
             return result
 
         except Exception as e:
             logger.error(f"脚本模式提取失败: {e}")
             return self._create_error_result(str(e))
     
-    def _check_missing_fields(self, data: List[Dict], data_requirements: Dict) -> Dict:
-        """Check if extraction result has missing/null fields
-
-        Args:
-            data: Extracted data list
-            data_requirements: Data requirements with output_format
-
-        Returns:
-            Dict with:
-                - has_missing: bool
-                - missing_fields: List[str] - field names that are missing
-                - sample_items: List[Dict] - sample items showing missing values
-        """
-        if not data or not isinstance(data, list):
-            return {"has_missing": False, "missing_fields": [], "sample_items": []}
-
-        output_format = data_requirements.get('output_format', {})
-        if not output_format:
-            return {"has_missing": False, "missing_fields": [], "sample_items": []}
-
-        required_fields = set(output_format.keys())
-        missing_fields = set()
-        sample_items = []
-
-        # Check first few items for missing fields
-        for item in data[:3]:  # Check first 3 items
-            if not isinstance(item, dict):
-                continue
-
-            item_missing = {}
-            for field in required_fields:
-                value = item.get(field)
-                # Consider None, empty string, or missing field as "missing"
-                if value is None or value == "":
-                    missing_fields.add(field)
-                    item_missing[field] = value
-
-            if item_missing:
-                sample_items.append({"item": item, "missing": item_missing})
-
-        return {
-            "has_missing": len(missing_fields) > 0,
-            "missing_fields": list(missing_fields),
-            "sample_items": sample_items
-        }
-
-    async def _analyze_and_fix_with_claude(
-        self,
-        script_workspace: Path,
-        script_file: Path,
-        extraction_result: Dict,
-        data_requirements: Dict,
-        missing_fields: List[str]
-    ) -> Dict:
-        """Ask Claude Agent to analyze missing fields and potentially fix script
-
-        Args:
-            script_workspace: Script working directory
-            script_file: Path to extraction_script.py
-            extraction_result: Current extraction result with missing fields
-            data_requirements: Data requirements
-            missing_fields: List of missing field names
-
-        Returns:
-            Dict with:
-                - should_fix: bool - whether script needs fixing
-                - fixed: bool - whether script was successfully fixed
-                - reason: str - explanation
-        """
-        from src.common.llm import ClaudeAgentProvider
-
-        try:
-            # Build missing fields description with their meanings
-            output_format = data_requirements.get('output_format', {})
-            missing_fields_desc = []
-            for field in missing_fields:
-                desc = output_format.get(field, field)
-                missing_fields_desc.append(f"  - {field}: {desc}")
-
-            missing_fields_str = "\n".join(missing_fields_desc)
-
-            # Create analysis file with extraction result
-            analysis_file = script_workspace / "extraction_result.json"
-            analysis_file.write_text(
-                json.dumps({
-                    "extraction_result": extraction_result["data"][:5],  # First 5 items
-                    "missing_fields": missing_fields,
-                    "total_items": extraction_result.get("total_count", 0)
-                }, indent=2, ensure_ascii=False),
-                encoding='utf-8'
-            )
-            logger.info(f"📄 Saved extraction result to extraction_result.json")
-
-            # Build analysis prompt
-            prompt = f"""# Missing Fields Analysis and Fix Task
-
-## Problem
-The extraction script returned some fields as None or empty string.
-
-## Missing Fields
-{missing_fields_str}
-
-## Files Available
-- `extraction_script.py` - Current extraction script (may need fixing)
-- `dom_data_failed.json` - **DOM of the failed page** (use this for analysis)
-- `requirement.json` - Data extraction requirements
-- `extraction_result.json` - Current extraction result with missing fields
-
-## Your Task
-
-### Step 1: Analyze - Does the data exist in the page?
-
-Search for missing fields in `dom_data_failed.json`:
-```bash
-# Example: Search for reviews_count
-grep -i "review" dom_data_failed.json | head -20
-```
-
-Ask yourself:
-- Is the data present in the DOM?
-- Is it in a different format/location than expected?
-- Is it missing for all items or just some?
-
-### Step 2: Decide and Act
-
-**If data NOT in DOM:**
-- The page simply doesn't have this information
-- This is NOT a script problem
-- Report this by returning an error message like: "Field 'reviews_count' not found in DOM after thorough search"
-- DO NOT modify the script
-
-**If data EXISTS in DOM:**
-- The script has a bug - it should be extracting this data
-- Fix `extraction_script.py` to extract the missing fields
-- Make the script more robust:
-  - Use flexible selectors
-  - Add fallback logic
-  - Handle different DOM structures
-- Test with `python test_script.py` until all fields are extracted
-
-### Step 3: Verify
-
-After fixing (if needed):
-- Run the test script
-- Ensure the missing fields are now extracted
-- If still failing, iterate and fix again
-
-## Success Criteria
-
-- **If you fixed the script**: Test passes and fields are extracted
-- **If data not in page**: Clearly report which fields are missing from DOM
-
-Start by reading the files and analyzing the DOM!
-"""
-
-            # Initialize Claude Agent with user's API key and base URL
-            # Get API key and base_url from BaseAgent's provider (which has user's API key)
-            api_key = None
-            base_url = None
-            if self.provider and hasattr(self.provider, 'api_key'):
-                api_key = self.provider.api_key
-                base_url = getattr(self.provider, 'base_url', None)
-                logger.info(f"Using API key from BaseAgent provider for Claude Agent (base_url: {base_url})")
-
-            claude_provider = ClaudeAgentProvider(
-                config_service=self.config_service,
-                api_key=api_key,
-                base_url=base_url
-            )
-            logger.info(f"Starting Claude Agent analysis...")
-            result = await claude_provider.run_task(
-                prompt=prompt,
-                working_dir=script_workspace
-            )
-
-            # Analyze Claude Agent's result
-            if result.success:
-                # Task completed successfully - script was fixed
-                logger.info(f"✅ Claude Agent completed in {result.iterations} iterations")
-
-                # Check if script was actually modified
-                script_modified = script_file.stat().st_mtime > analysis_file.stat().st_mtime
-
-                return {
-                    "should_fix": True,
-                    "fixed": True,
-                    "reason": f"Script fixed by Claude Agent. {result.output or ''}"
-                }
-            else:
-                # Task failed - either data not in page or couldn't fix
-                logger.warning(f"⚠️  Claude Agent task failed: {result.error}")
-
-                # Check error message to understand why
-                error_msg = result.error or ""
-                if "not found in dom" in error_msg.lower() or "no data" in error_msg.lower():
-                    # Data not in page
-                    return {
-                        "should_fix": False,
-                        "fixed": False,
-                        "reason": f"Data not found in page: {result.error}"
-                    }
-                else:
-                    # Couldn't fix the script
-                    return {
-                        "should_fix": True,
-                        "fixed": False,
-                        "reason": f"Failed to fix script: {result.error}"
-                    }
-
-        except Exception as e:
-            logger.error(f"Analysis and fix failed: {e}")
-            import traceback
-            traceback.print_exc()
-            return {
-                "should_fix": False,
-                "fixed": False,
-                "reason": f"Error during analysis: {str(e)}"
-            }
-
     def _parse_llm_json(self, text: str) -> Optional[List[Dict]]:
         """Parse JSON from LLM response - simple and robust"""
         import re
@@ -1308,7 +1038,7 @@ Extract data now:"""
         max_items: int
     ) -> Dict[str, Any]:
         """直接执行生成的脚本，使用提供的DOM数据（dom_dict 是嵌套字典，不是 HTML）"""
-        
+
         try:
             # 准备脚本执行环境
             execution_env = {
@@ -1320,8 +1050,10 @@ Extract data now:"""
                 'List': List,
                 'Dict': Dict,
                 'Any': Any,
+                # Inject dom_tools module for script execution
+                'dom_tools': dom_tools,
             }
-            
+
             # 执行脚本
             exec(script_content, execution_env, execution_env)
             
@@ -1397,12 +1129,13 @@ Extract data now:"""
             else:
                 logger.warning("No API key available from provider for cloud script generation")
 
-            # 4. Get page URL (cloud has DOM from recording, no need to upload)
+            # 4. Get page URL and DOM data from dom_analysis
             page_url = dom_analysis.get('page_url', '')
+            dom_dict = dom_analysis.get('dom_dict', {})
 
             logger.info(f"Requesting cloud script generation: workflow={workflow_id}, step={step_id}")
             logger.info(f"  Page URL: {page_url}")
-            logger.info(f"  Note: Cloud uses DOM from recording (no upload needed)")
+            logger.info(f"  DOM size: {len(json.dumps(dom_dict))} chars")
 
             # Send progress update to frontend
             if context and context.log_callback:
@@ -1415,17 +1148,29 @@ Extract data now:"""
                 except Exception as e:
                     logger.warning(f"Failed to send log callback: {e}")
 
-            # 5. Call cloud API to generate script
-            # For scraper: cloud has workflow YAML (data_requirements) and dom_snapshots
-            # Only need to send step_id and page_url
-            result = await cloud_client.generate_script(
+            # 5. Call cloud API to generate script with SSE streaming
+            # Progress callback to forward progress to frontend
+            async def script_progress_callback(level: str, message: str, data: dict):
+                if context and context.log_callback:
+                    try:
+                        turn = data.get("turn", 0)
+                        tool_name = data.get("tool_name")
+                        progress_msg = f"🔧 Generating script (turn {turn})"
+                        if tool_name:
+                            progress_msg += f" - using {tool_name}"
+                        await context.log_callback(level, progress_msg, data)
+                    except Exception as e:
+                        logger.warning(f"Failed to send progress callback: {e}")
+
+            result = await cloud_client.generate_script_stream(
                 workflow_id=workflow_id,
                 step_id=step_id,
                 script_type="scraper",
                 page_url=page_url,
                 user_id=user_id,
-                api_key=api_key  # Pass API key directly (thread-safe)
-                # dom_data not needed - cloud uses dom_snapshots from recording
+                dom_data=dom_dict,  # Upload current page DOM
+                api_key=api_key,
+                progress_callback=script_progress_callback
             )
 
             if not result.get('success'):

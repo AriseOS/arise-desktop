@@ -179,19 +179,39 @@ def list_interactive_in_container(dom: Dict, xpath_prefix: str) -> List[Dict]:
     return results
 
 
-def analyze_xpath_hint(dom: Dict, xpath_hint: str) -> Dict:
+def get_parent_xpath(xpath: str, levels: int = 1) -> str:
+    """Get parent xpath by removing last N segments."""
+    import re
+    # Handle ID-based xpath like //*[@id="app"]/div/span
+    id_match = re.match(r"^(//\*\[@id=['\"][^'\"]+['\"]\])(.*)$", xpath)
+    if id_match:
+        id_part = id_match.group(1)
+        rest = id_match.group(2)
+        parts = [p for p in rest.split('/') if p]
+        if len(parts) <= levels:
+            return id_part
+        remaining = '/'.join(parts[:-levels])
+        return f"{id_part}/{remaining}" if remaining else id_part
+    else:
+        parts = xpath.split('/')
+        if len(parts) <= levels:
+            return ''
+        return '/'.join(parts[:-levels])
+
+
+def analyze_xpath_hint(dom: Dict, xpath_hint: str, max_levels: int = 5) -> Dict:
     """
     Analyze xpath hint from recording and find the best matching interactive element.
 
     The xpath hint from recording may not exactly match the current DOM,
     so we try multiple strategies:
     1. Exact xpath match
-    2. Find interactive element with same xpath prefix
-    3. Find parent's interactive elements
+    2. Auto-search up parent levels to find interactive elements
 
     Args:
         dom: DOM dictionary
         xpath_hint: XPath from user's recording
+        max_levels: Maximum levels to search up
 
     Returns:
         Analysis result with best match and alternatives
@@ -200,7 +220,8 @@ def analyze_xpath_hint(dom: Dict, xpath_hint: str) -> Dict:
         'xpath_hint': xpath_hint,
         'exact_match': None,
         'interactive_match': None,
-        'alternatives': []
+        'alternatives': [],
+        'levels_up': 0
     }
 
     # Strategy 1: Exact match
@@ -210,28 +231,36 @@ def analyze_xpath_hint(dom: Dict, xpath_hint: str) -> Dict:
             'interactive_index': exact.get('interactive_index'),
             'tag': exact.get('tag'),
             'text': (exact.get('text', '') or '')[:50],
-            'class': exact.get('class', '')
+            'class': exact.get('class', ''),
+            'xpath': exact.get('xpath', '')
         }
         if exact.get('interactive_index') is not None:
             result['interactive_match'] = result['exact_match']
             return result
 
-    # Strategy 2: Find interactive element in same container
-    # Remove last segment to get parent xpath
-    parent_xpath = '/'.join(xpath_hint.split('/')[:-1])
-    if parent_xpath:
-        siblings = list_interactive_in_container(dom, parent_xpath)
-        for elem in siblings[:5]:  # Top 5 alternatives
-            result['alternatives'].append({
-                'interactive_index': elem.get('interactive_index'),
-                'tag': elem.get('tag'),
-                'text': (elem.get('text', '') or '')[:50],
-                'xpath': elem.get('xpath', ''),
-                'class': elem.get('class', '')
-            })
+    # Strategy 2: Auto-search up parent levels
+    current_xpath = xpath_hint
+    for level in range(1, max_levels + 1):
+        parent_xpath = get_parent_xpath(current_xpath, 1)
+        if not parent_xpath or parent_xpath == current_xpath:
+            break
+        current_xpath = parent_xpath
 
-        if siblings and result['interactive_match'] is None:
-            result['interactive_match'] = result['alternatives'][0]
+        siblings = list_interactive_in_container(dom, parent_xpath)
+        if siblings:
+            result['levels_up'] = level
+            for elem in siblings[:5]:  # Top 5 alternatives
+                result['alternatives'].append({
+                    'interactive_index': elem.get('interactive_index'),
+                    'tag': elem.get('tag'),
+                    'text': (elem.get('text', '') or '')[:50],
+                    'xpath': elem.get('xpath', ''),
+                    'class': elem.get('class', '')
+                })
+
+            if result['interactive_match'] is None:
+                result['interactive_match'] = result['alternatives'][0]
+            break
 
     return result
 
@@ -397,10 +426,15 @@ def main():
             print(f"    interactive_index: {em['interactive_index']}")
             print(f"    tag: {em['tag']}")
             print(f"    text: {em['text']}")
+            if em['interactive_index'] is not None:
+                print(f"\n  ✓ Element is interactive, use index {em['interactive_index']}")
         else:
             print(f"\n  No exact match found")
 
-        if analysis['interactive_match']:
+        if analysis['levels_up'] > 0:
+            print(f"\n  (Auto-searched {analysis['levels_up']} level(s) up)")
+
+        if analysis['interactive_match'] and (not analysis['exact_match'] or analysis['exact_match'].get('interactive_index') is None):
             im = analysis['interactive_match']
             print(f"\n  BEST INTERACTIVE MATCH:")
             print(f"    interactive_index: {im['interactive_index']}")
@@ -409,9 +443,9 @@ def main():
             if im.get('xpath'):
                 print(f"    xpath: {im['xpath']}")
 
-        if analysis['alternatives']:
-            print(f"\n  Alternatives ({len(analysis['alternatives'])}):")
-            for i, alt in enumerate(analysis['alternatives'][:5]):
+        if analysis['alternatives'] and len(analysis['alternatives']) > 1:
+            print(f"\n  Other alternatives ({len(analysis['alternatives']) - 1}):")
+            for i, alt in enumerate(analysis['alternatives'][1:5]):
                 print(f"    [{i+1}] index={alt['interactive_index']} <{alt['tag']}> \"{alt['text']}\"")
 
     elif command == "print":

@@ -62,6 +62,8 @@ steps:
 When click element has href, use **two steps**:
 
 ```yaml
+# Given operation with element.xpath = "//*[@id=\"app\"]/nav/a[2]"
+
 # Step 1: Extract link URL
 - id: extract-link-url
   agent: scraper_agent
@@ -73,7 +75,7 @@ When click element has href, use **two steps**:
       output_format:
         url: "Link href"
       xpath_hints:
-        url: "//a[contains(text(), 'Products')]"
+        url: "//*[@id=\"app\"]/nav/a[2]"  # Use exact xpath from operation
   outputs:
     extracted_data: link_info
 
@@ -106,7 +108,7 @@ If script generation fails for a step, modify the workflow:
 **For hover menu clicks** → Use scraper_agent to extract URL, then browser_agent to navigate:
 ```yaml
 # Instead of: browser_agent click on hover menu item
-# Use:
+# Use the xpath from the original operation:
 - id: extract-menu-link
   agent: scraper_agent
   inputs:
@@ -116,7 +118,7 @@ If script generation fails for a step, modify the workflow:
       output_format:
         url: "Menu item href"
       xpath_hints:
-        url: "//nav//a[contains(text(), 'Target')]"
+        url: "//*[@id=\"app\"]/nav/ul/li[3]/a"  # Use exact xpath from operation
   outputs:
     extracted_data: menu_link
 
@@ -136,6 +138,20 @@ If script generation fails for a step, modify the workflow:
 - For loops ("all items", "each product"), use `foreach`
 - **No separate data saving step** - do NOT add `storage_agent` steps to save/export data unless user explicitly requests it. Extracted data is usually saved in previous steps; users view and download it themselves.
 
+## CRITICAL: xpath_hints Rule
+
+**ONLY use xpaths from the operation's `element.xpath` field. NEVER construct or invent new xpaths.**
+
+The `xpath_hints` values MUST come directly from recorded operations. This is critical for script pre-generation to match DOM snapshots.
+
+```yaml
+# If operation has element.xpath = "//*[@id=\"app\"]/main/div[2]/a[1]"
+xpath_hints:
+  url: "//*[@id=\"app\"]/main/div[2]/a[1]"  # Use exact xpath from operation
+```
+
+For list extraction, use the xpath from the **first item's operation** (with index like `a[1]`). The script generator will automatically find the container.
+
 ## Variable Syntax
 
 ```yaml
@@ -151,10 +167,14 @@ If script generation fails for a step, modify the workflow:
 - type: click
   url: "https://shop.com"
   element:
+    xpath: "//*[@id=\"app\"]/nav/a[2]"
     href: "https://shop.com/products"
     textContent: "Products"
-- type: extract
+- type: click
   url: "https://shop.com/products"
+  element:
+    xpath: "//*[@id=\"app\"]/main/div[2]/a[1]/h3"
+    textContent: "Product A"
 ```
 
 **Generated workflow**:
@@ -165,6 +185,7 @@ description: "Extract products from shop"
 
 steps:
   - id: extract-products-link
+    name: "Extract Products link URL"
     agent: scraper_agent
     inputs:
       extraction_method: script
@@ -174,16 +195,18 @@ steps:
         output_format:
           url: "Link href"
         xpath_hints:
-          url: "//a[contains(text(), 'Products')]"
+          url: "//*[@id=\"app\"]/nav/a[2]"  # Use exact xpath from operation
     outputs:
       extracted_data: products_link
 
   - id: navigate-to-products
+    name: "Navigate to products page"
     agent: browser_agent
     inputs:
       target_url: "{{products_link.0.url}}"
 
   - id: extract-products
+    name: "Extract product list"
     agent: scraper_agent
     inputs:
       extraction_method: script
@@ -193,6 +216,8 @@ steps:
         output_format:
           name: "Product name"
           url: "Product URL"
+        xpath_hints:
+          name: "//*[@id=\"app\"]/main/div[2]/a[1]/h3"  # Use exact xpath from operation
     outputs:
       extracted_data: product_list
 ```

@@ -344,20 +344,61 @@ Generate `extraction_script.py` to extract data from the webpage DOM.
 
 ## DOM Tools
 
-DOM analysis tools are available at `.claude/skills/dom-extraction/tools/dom_tools.py`.
+Tools at `.claude/skills/dom-extraction/tools/dom_tools.py` output reusable code snippets.
 
-**IMPORTANT**: Read `.claude/skills/dom-extraction/SKILL.md` first for supported commands, syntax, and detailed workflow. Do not guess parameters.
+**IMPORTANT**: Read `.claude/skills/dom-extraction/SKILL.md` first.
 
 ## Workflow
 
-1. Read `requirement.json` to understand what to extract
-2. Use `find` with the xpath_hint to locate the element
-3. Remove index suffix `[1]` to get container xpath, then use `analyze`
-4. Write `extraction_script.py` with function `extract_data_from_page(dom_dict) -> List[Dict]`
-5. Test: `python extraction_script.py`
+### Step 1: Read Requirements
+```bash
+cat requirement.json
+```
+Identify: `user_description`, `output_format`, `xpath_hints`
 
-## CRITICAL: URLs Must Be Absolute
+### Step 2: Determine Extraction Type
+- **List** ("all", "every", "list") → Use `container` command
+- **Multi-field** (multiple single fields) → Use `find` with JSON
+- **Single-field** → Use `find` with xpath
 
-All URLs in extracted data MUST be absolute. Use `urljoin("{page_url}", relative_url)` to convert.
-Relative URLs like `/products/xxx` will cause navigation failures!
+### Step 3: Verify and Extract
+
+**For List Extraction:**
+```bash
+# xpath_hint like //*[@id='app']/div[4]/div/a[1] → remove [1] to get container
+python .claude/skills/dom-extraction/tools/dom_tools.py container "//*[@id='app']/div[4]/div" --fields "name:text,url:href"
+```
+This verifies AND extracts in one command. Use the output code snippet.
+
+**For Multi-field Extraction:**
+```bash
+python .claude/skills/dom-extraction/tools/dom_tools.py find '{{"field1": "<xpath1>", "field2": "<xpath2>"}}' --field text
+```
+
+**CRITICAL**: xpath_hints in requirement.json point to the EXACT element user selected. The xpath includes indices like `div[4]` which identify the specific container. Do NOT search the entire DOM - extract ONLY from the container indicated by xpath_hints.
+
+### Step 4: If xpath fails, search
+```bash
+python .claude/skills/dom-extraction/tools/dom_tools.py search --text "Product Name"
+python .claude/skills/dom-extraction/tools/dom_tools.py search --class "product-item"
+```
+
+### Step 5: Write Script
+Use code snippets from tool output. Import from `dom_utils`:
+```python
+from dom_utils import extract_list, extract_single, extract_multi
+```
+
+### Step 6: Test
+```bash
+python extraction_script.py
+```
+
+## CRITICAL Rules
+
+1. **Use dom_utils functions** - Don't write custom xpath search logic. The tool output gives you code snippets.
+
+2. **URLs MUST be absolute** - Use `urljoin("{page_url}", url)` for all URLs.
+
+3. **Respect xpath indices** - `div[4]` means the 4th div. Extract from that specific container, not all matching containers.
 """
