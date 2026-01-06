@@ -41,7 +41,8 @@ class BaseAgent:
         provider_config: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         browser_manager: Optional[Any] = None,
-        browser_session_id: Optional[str] = None
+        browser_session_id: Optional[str] = None,
+        cloud_client: Optional[Any] = None
     ):
         """初始化BaseAgent
 
@@ -54,6 +55,7 @@ class BaseAgent:
                             如果workflow中使用浏览器相关工具，此参数必须提供。
             browser_session_id: 浏览器会话ID，指定使用哪个browser session。
                                必须与 browser_manager 一起使用。
+            cloud_client: CloudClient实例，用于与云端通信（如脚本生成）
 
         Important:
             如果workflow需要使用浏览器（BrowserAgent/ToolAgent with browser tools），
@@ -68,6 +70,9 @@ class BaseAgent:
         # Browser management
         self.browser_manager = browser_manager
         self.browser_session_id = browser_session_id
+
+        # Cloud client for script generation
+        self.cloud_client = cloud_client
 
         # 核心组件
         self.tools: Dict[str, BaseTool] = {}

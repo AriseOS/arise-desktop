@@ -285,15 +285,38 @@ class StorageManager:
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(yaml_content)
 
-    def get_workflow(self, user_id: str, workflow_name: str) -> str:
+    def get_workflow(self, user_id: str, workflow_id: str) -> str:
         """Read workflow YAML from local file"""
-        file_path = self._user_path(user_id) / "workflows" / workflow_name / "workflow.yaml"
+        file_path = self._user_path(user_id) / "workflows" / workflow_id / "workflow.yaml"
         with open(file_path, 'r', encoding='utf-8') as f:
             return f.read()
 
-    def workflow_exists(self, user_id: str, workflow_name: str) -> bool:
+    def get_workflow_metadata(self, user_id: str, workflow_id: str) -> Optional[Dict[str, Any]]:
+        """Read workflow metadata.json from local file
+
+        Returns:
+            Dict with metadata fields or None if not found:
+            {
+                'workflow_id': 'workflow_xxx',
+                'workflow_name': 'human-readable-name',
+                'source_recording_id': 'session_xxx',
+                'created_at': '2025-01-05T18:02:30Z',
+                'updated_at': '2025-01-05T18:07:50Z',
+                'resources': {...}
+            }
+        """
+        file_path = self._user_path(user_id) / "workflows" / workflow_id / "metadata.json"
+        if not file_path.exists():
+            return None
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            return None
+
+    def workflow_exists(self, user_id: str, workflow_id: str) -> bool:
         """Check if workflow exists locally"""
-        file_path = self._user_path(user_id) / "workflows" / workflow_name / "workflow.yaml"
+        file_path = self._user_path(user_id) / "workflows" / workflow_id / "workflow.yaml"
         return file_path.exists()
 
     def list_workflows(self, user_id: str) -> List[str]:

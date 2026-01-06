@@ -1389,7 +1389,15 @@ Extract data now:"""
             if not cloud_client:
                 raise RuntimeError("CloudClient not available in agent context")
 
-            # 3. Get page URL (cloud has DOM from recording, no need to upload)
+            # 3. Get API key from provider (same pattern as other agents)
+            api_key = None
+            if self.provider and hasattr(self.provider, 'api_key') and self.provider.api_key:
+                api_key = self.provider.api_key
+                logger.info(f"Got API key from provider for cloud script generation")
+            else:
+                logger.warning("No API key available from provider for cloud script generation")
+
+            # 4. Get page URL (cloud has DOM from recording, no need to upload)
             page_url = dom_analysis.get('page_url', '')
 
             logger.info(f"Requesting cloud script generation: workflow={workflow_id}, step={step_id}")
@@ -1407,7 +1415,7 @@ Extract data now:"""
                 except Exception as e:
                     logger.warning(f"Failed to send log callback: {e}")
 
-            # 4. Call cloud API to generate script
+            # 5. Call cloud API to generate script
             # For scraper: cloud has workflow YAML (data_requirements) and dom_snapshots
             # Only need to send step_id and page_url
             result = await cloud_client.generate_script(
@@ -1415,7 +1423,8 @@ Extract data now:"""
                 step_id=step_id,
                 script_type="scraper",
                 page_url=page_url,
-                user_id=user_id
+                user_id=user_id,
+                api_key=api_key  # Pass API key directly (thread-safe)
                 # dom_data not needed - cloud uses dom_snapshots from recording
             )
 

@@ -161,7 +161,7 @@ class SimpleUserBehaviorMonitor:
 
         except Exception as e:
             logger.error(f"Background DOM capture failed for {url}: {e}")
-    
+
     async def _setup_tab_listeners(self, cdp_session):
         """Set up Tab creation and destruction event listeners"""
         async def handle_target_created(event, session_id=None):
@@ -296,6 +296,7 @@ class SimpleUserBehaviorMonitor:
             logger.info(f"[Background] Monitoring set up for new tab: {target_id}")
 
             # 7. Capture initial DOM for the new tab (if DOM capture is enabled)
+            # Switch focus to new tab to use capture_dom_snapshot (same format as scraper_agent)
             if self._dom_capture_enabled:
                 try:
                     # Get current URL of the new tab
@@ -307,6 +308,14 @@ class SimpleUserBehaviorMonitor:
                     if tab_url and tab_url not in ['about:blank', 'chrome://newtab/']:
                         logger.info(f"[Background] Capturing initial DOM for new tab: {tab_url[:60]}...")
                         await asyncio.sleep(1.0)  # Wait for page to load
+
+                        # Switch browser_session focus to new tab (without visual switch)
+                        # This updates _dom_watchdog to use the new tab's DOM
+                        await self.browser_session.get_or_create_cdp_session(
+                            target_id=target_id, focus=True
+                        )
+
+                        # Now capture_dom_snapshot will get the new tab's DOM
                         await self.capture_dom_snapshot(tab_url)
                 except Exception as e:
                     logger.warning(f"[Background] Failed to capture initial DOM for new tab: {e}")

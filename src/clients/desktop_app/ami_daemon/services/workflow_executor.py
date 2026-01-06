@@ -259,7 +259,8 @@ class WorkflowExecutor:
                 config_service=config_service,
                 provider_config=provider_config,
                 browser_manager=self.browser,  # Pass BrowserManager reference
-                browser_session_id=f"workflow_{task_id}"  # Specify session ID
+                browser_session_id=f"workflow_{task_id}",  # Specify session ID
+                cloud_client=self.cloud_client  # Pass CloudClient for script generation
             )
 
             # workflow is already loaded by WorkflowConfigLoader above

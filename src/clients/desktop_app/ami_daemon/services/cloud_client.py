@@ -803,7 +803,8 @@ class CloudClient:
         script_type: str,
         page_url: str,
         user_id: str = "default_user",
-        dom_data: Optional[Dict[str, Any]] = None
+        dom_data: Optional[Dict[str, Any]] = None,
+        api_key: Optional[str] = None
     ) -> Dict[str, Any]:
         """Request cloud to generate script for workflow step
 
@@ -819,6 +820,7 @@ class CloudClient:
             page_url: Current page URL (for DOM matching / absolute URL conversion)
             user_id: User ID
             dom_data: DOM dictionary - only needed for browser scripts
+            api_key: API key for Claude Agent SDK (script generation)
 
         Returns:
             dict with:
@@ -833,9 +835,12 @@ class CloudClient:
             logger.info(f"[CloudClient] Requesting script generation: workflow={workflow_id}, step={step_id}, type={script_type}")
 
             # Build request headers
+            # X-Api-Key is for Claude Agent SDK (script generation)
             headers = {"X-User-Id": user_id}
-            if self.user_api_key:
-                headers["X-Ami-API-Key"] = self.user_api_key
+            # Prefer explicit api_key parameter, fallback to instance api_key
+            effective_api_key = api_key or self.user_api_key
+            if effective_api_key:
+                headers["X-Api-Key"] = effective_api_key
 
             # Build request payload - minimal data, cloud has the rest
             payload = {

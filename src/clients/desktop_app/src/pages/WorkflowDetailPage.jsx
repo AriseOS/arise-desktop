@@ -557,7 +557,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
         >
           <Icon icon="arrowLeft" />
         </button>
-        <div className="page-title">{workflowData?.metadata?.workflow_name || workflowData?.workflow_name || 'Workflow 详情'}</div>
+        <div className="page-title">{workflowData?.workflow_name || workflowData?.name || 'Workflow 详情'}</div>
         <button
           className="run-button"
           onClick={handleRunWorkflow}
@@ -598,7 +598,6 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
         {/* Show tabs if we have workflowData (even during refresh/loading) */}
         {workflowData && (
           <>
-            {/* Workflow Traceability Info - only show source_recording_id (MetaFlow is now internal) */}
             {/* Workflow Metadata Card */}
             {workflowData && (
               <div className="workflow-traceability-card">
@@ -607,14 +606,17 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                   <h3>Metadata</h3>
                 </div>
                 <div className="traceability-content" style={{ flexDirection: 'column', gap: '8px', alignItems: 'flex-start' }}>
+                  {/* Name from metadata.json workflow_name */}
                   <div className="trace-item">
                     <span className="trace-label">Name:</span>
-                    <code className="trace-value" style={{ width: 'auto' }}>{workflowData.metadata?.workflow_name || workflowData.workflow_name || workflowId}</code>
+                    <code className="trace-value" style={{ width: 'auto' }}>{workflowData.workflow_name || workflowData.name || workflowId}</code>
                   </div>
+                  {/* ID from metadata.json workflow_id */}
                   <div className="trace-item">
                     <span className="trace-label">ID:</span>
-                    <code className="trace-value" style={{ width: 'auto' }}>{workflowData.agent_id || workflowData.id || workflowData.workflow_id || workflowId}</code>
+                    <code className="trace-value" style={{ width: 'auto' }}>{workflowData.workflow_id || workflowId}</code>
                   </div>
+                  {/* Source recording from metadata.json */}
                   {workflowData.source_recording_id && (
                     <div className="trace-item">
                       <span className="trace-label">Source:</span>
@@ -628,13 +630,26 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                       </button>
                     </div>
                   )}
-                  {/* Custom Metadata */}
-                  {workflowData.metadata && Object.entries(workflowData.metadata).map(([key, value]) => (
-                    <div className="trace-item" key={key}>
-                      <span className="trace-label">{key}:</span>
-                      <code className="trace-value" style={{ width: 'auto' }}>{String(value)}</code>
+                  {/* Description from workflow.yaml */}
+                  {workflowData.description && (
+                    <div className="trace-item">
+                      <span className="trace-label">Description:</span>
+                      <code className="trace-value" style={{ width: 'auto' }}>{workflowData.description}</code>
                     </div>
-                  ))}
+                  )}
+                  {/* Timestamps from metadata.json */}
+                  {workflowData.created_at && (
+                    <div className="trace-item">
+                      <span className="trace-label">Created:</span>
+                      <code className="trace-value" style={{ width: 'auto' }}>{new Date(workflowData.created_at).toLocaleString()}</code>
+                    </div>
+                  )}
+                  {workflowData.updated_at && (
+                    <div className="trace-item">
+                      <span className="trace-label">Updated:</span>
+                      <code className="trace-value" style={{ width: 'auto' }}>{new Date(workflowData.updated_at).toLocaleString()}</code>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

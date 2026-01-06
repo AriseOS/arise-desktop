@@ -2176,7 +2176,10 @@ async def list_workflows(user_id: str):
 async def get_workflow_detail(workflow_id: str, user_id: str):
     """Get detailed workflow data for visualization
 
-    Returns workflow structure with steps and connections for ReactFlow
+    Returns:
+        - metadata: from metadata.json (workflow_id, workflow_name, source_recording_id, created_at, etc.)
+        - steps/connections: from workflow.yaml
+        - workflow_yaml: raw YAML content
 
     Auto-sync workflow resources before returning details
     """
@@ -2195,6 +2198,9 @@ async def get_workflow_detail(workflow_id: str, user_id: str):
         if not storage_manager.workflow_exists(user_id, workflow_id):
             raise HTTPException(status_code=404, detail=f"Workflow not found: {workflow_id}")
 
+        # Read metadata.json (system metadata)
+        metadata = storage_manager.get_workflow_metadata(user_id, workflow_id) or {}
+
         # Read workflow YAML
         workflow_yaml = storage_manager.get_workflow(user_id, workflow_id)
 
@@ -2205,10 +2211,9 @@ async def get_workflow_detail(workflow_id: str, user_id: str):
         if not isinstance(workflow_data, dict):
             raise HTTPException(status_code=500, detail="Invalid workflow format")
 
-        # Extract workflow metadata from metadata section
-        metadata = workflow_data.get('metadata', {})
-        name = metadata.get('name', workflow_id)
-        description = metadata.get('description', '')
+        # Get name/description from YAML top-level fields (not metadata section)
+        yaml_name = workflow_data.get('name', '')
+        yaml_description = workflow_data.get('description', '')
 
         # Extract steps
         steps_data = workflow_data.get('steps', [])
@@ -2216,21 +2221,21 @@ async def get_workflow_detail(workflow_id: str, user_id: str):
         def process_steps(steps_in):
             results = []
             for idx, step in enumerate(steps_in):
-                # Preserved all original keys from step to ensure nothing is lost, 
+                # Preserved all original keys from step to ensure nothing is lost,
                 # but explicitely handle known fields for clarity
                 processed_step = step.copy()
-                
+
                 # Ensure id exists
                 step_id = step.get('id', f"step-{idx}")
                 processed_step['id'] = step_id
-                
+
                 # Recursively process children/steps
                 if 'steps' in step and isinstance(step['steps'], list):
                     processed_step['steps'] = process_steps(step['steps'])
-                
+
                 if 'children' in step and isinstance(step['children'], list):
                     processed_step['children'] = process_steps(step['children'])
-                    
+
                 results.append(processed_step)
             return results
 
@@ -2239,30 +2244,29 @@ async def get_workflow_detail(workflow_id: str, user_id: str):
         # Extract connections (if exists) or auto-generate
         connections = workflow_data.get('connections', [])
 
+        # Build response with clear data sources:
+        # - metadata: from metadata.json
+        # - name/description: from workflow.yaml top-level
+        # - steps/connections: from workflow.yaml
         response_data = {
-            'workflow_id': workflow_id,
-            'name': name,
-            'description': description,
+            # System metadata from metadata.json
+            'workflow_id': metadata.get('workflow_id', workflow_id),
+            'workflow_name': metadata.get('workflow_name', yaml_name or workflow_id),
+            'source_recording_id': metadata.get('source_recording_id'),
+            'created_at': metadata.get('created_at'),
+            'updated_at': metadata.get('updated_at'),
+            'resources': metadata.get('resources'),
+            # YAML content
+            'name': yaml_name or metadata.get('workflow_name', workflow_id),  # Display name
+            'description': yaml_description,
             'steps': steps_list,
             'connections': connections,
-            'workflow_yaml': workflow_yaml  # Add raw YAML for display
+            'workflow_yaml': workflow_yaml,
+            # Full metadata object for frontend
+            'metadata': metadata
         }
 
-        # Get traceability info (recording association)
-        try:
-            logger.info(f"Fetching traceability info from Cloud Backend for workflow: {workflow_id}")
-            cloud_workflow = await cloud_client.get_workflow(workflow_id, user_id)
-            if cloud_workflow:
-                response_data['source_recording_id'] = cloud_workflow.get("source_recording_id")
-                logger.info(f"Traceability info retrieved: recording={response_data.get('source_recording_id')}")
-            else:
-                logger.warning(f"No workflow data found in Cloud Backend for: {workflow_id}")
-                response_data['source_recording_id'] = None
-        except Exception as e:
-            logger.warning(f"Could not fetch traceability info from Cloud Backend: {e}")
-            response_data['source_recording_id'] = None
-
-        logger.info(f"Loaded workflow detail: {workflow_id}")
+        logger.info(f"Loaded workflow detail: {workflow_id}, name={response_data['workflow_name']}")
         return response_data
 
     except HTTPException:

@@ -50,16 +50,20 @@ async def initialize_services():
     # Initialize browser manager
     browser_manager = BrowserManager(config_service=config)
 
-    # Initialize workflow executor
-    workflow_executor = WorkflowExecutor(storage_manager, browser_manager)
-
-    # Initialize CDP recorder
-    cdp_recorder = CDPRecorder(storage_manager, browser_manager)
-
-    # Initialize cloud client
+    # Initialize cloud client (before workflow_executor, which needs it)
     cloud_client = CloudClient(
         api_url=config.get("cloud.api_url", "https://api.ami.com")
     )
+
+    # Initialize workflow executor with cloud_client for script generation
+    workflow_executor = WorkflowExecutor(
+        storage_manager,
+        browser_manager,
+        cloud_client=cloud_client
+    )
+
+    # Initialize CDP recorder
+    cdp_recorder = CDPRecorder(storage_manager, browser_manager)
 
     sys.stderr.write("App Backend daemon initialized successfully\n")
     sys.stderr.flush()
