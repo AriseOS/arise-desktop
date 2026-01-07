@@ -8,12 +8,16 @@ Usage:
     python dom_tools.py <command> [args...]
 
 Commands:
-    find <xpath> [--field text]           - Find element and extract field value
-    find <json_xpaths> [--field text]     - Find multiple elements by xpath dict
-    container <xpath> [--fields ...] [--parent N]  - Extract list data from container
-    search --text "..." [--tag ...] [--class ...]  - Search elements by content
-    analyze <xpath>                       - Analyze container structure
+    find <xpath>                          - Find element, show value + children + siblings
+    find <json_xpaths>                    - Find multiple elements, show structure for each
+    container <xpath> [--fields ...]      - Extract list data from container
+    search --text "..." [--tag ...]       - Search elements by content
     children <xpath> [tag]                - List children of container
+
+The 'find' command is intelligent:
+- If xpath points to a leaf element: returns the value directly
+- If xpath points to a container: shows all children with data (xpath + text/href)
+- Always shows sibling elements to help decide if content needs merging
 """
 
 import json
@@ -469,21 +473,117 @@ def parse_fields_arg(fields_str: str) -> Dict[str, str]:
 # CLI Interface
 # =============================================================================
 
+def collect_children_with_data(element: Dict, max_depth: int = 5) -> List[Dict]:
+    """
+    Collect all descendant elements that have meaningful data (text or href).
+
+    Args:
+        element: Root element to search from
+        max_depth: Maximum depth to search
+
+    Returns:
+        List of elements with xpath, text, href
+    """
+    results = []
+
+    def collect(node: Dict, depth: int):
+        if depth > max_depth:
+            return
+
+        # Check if this node has meaningful data
+        text = node.get('text', '')
+        href = node.get('href', '')
+        xpath = node.get('xpath', '')
+
+        # Only include if it has data and xpath
+        if xpath and (text or href):
+            # Skip if text is too long (likely aggregated container text)
+            if len(text) <= 100:
+                results.append({
+                    'xpath': xpath,
+                    'tag': node.get('tag', ''),
+                    'text': text,
+                    'href': href
+                })
+
+        # Recurse into children
+        for child in node.get('children', []):
+            collect(child, depth + 1)
+
+    # Start from children, not the element itself
+    for child in element.get('children', []):
+        collect(child, 1)
+
+    return results
+
+
+def find_siblings(dom: Dict, xpath: str) -> List[Dict]:
+    """
+    Find sibling elements of the given xpath.
+
+    Args:
+        dom: Root DOM dictionary
+        xpath: XPath of the element
+
+    Returns:
+        List of sibling elements with data
+    """
+    # Get parent xpath
+    parent_xpath = get_parent_xpath(xpath, 1)
+    if not parent_xpath:
+        return []
+
+    # Find parent container
+    parent = find_or_build_container(dom, parent_xpath)
+    if not parent:
+        return []
+
+    # Get siblings (children of parent, excluding the element itself)
+    normalized_xpath = normalize_xpath(xpath)
+    siblings = []
+
+    for child in parent.get('children', []):
+        child_xpath = normalize_xpath(child.get('xpath', ''))
+        if child_xpath and child_xpath != normalized_xpath:
+            text = child.get('text', '')
+            href = child.get('href', '')
+            if text or href:
+                siblings.append({
+                    'xpath': child.get('xpath', ''),
+                    'tag': child.get('tag', ''),
+                    'text': text[:100] if text else '',
+                    'href': href
+                })
+
+    return siblings
+
+
+def is_container(element: Dict) -> bool:
+    """Check if element is a container (has children with data)."""
+    children = element.get('children', [])
+    if not children:
+        return False
+
+    # Check if any child has text or href
+    for child in children:
+        if child.get('text') or child.get('href'):
+            return True
+        # Check grandchildren too
+        for grandchild in child.get('children', []):
+            if grandchild.get('text') or grandchild.get('href'):
+                return True
+
+    return False
+
+
 def cmd_find(dom: Dict, args: List[str]):
-    """Handle find command."""
+    """Handle find command - returns value + children + siblings for each xpath."""
     if not args:
-        print("Usage: python dom_tools.py find <xpath> [--field text]")
-        print("       python dom_tools.py find '<json_xpaths>' [--field text]")
+        print("Usage: python dom_tools.py find <xpath>")
+        print("       python dom_tools.py find '<json_xpaths>'")
         sys.exit(1)
 
     xpath_arg = args[0]
-    field = 'text'
-
-    # Parse --field argument
-    if '--field' in args:
-        idx = args.index('--field')
-        if idx + 1 < len(args):
-            field = args[idx + 1]
 
     # Check if it's JSON (multiple xpaths)
     if xpath_arg.startswith('{'):
@@ -493,43 +593,143 @@ def cmd_find(dom: Dict, args: List[str]):
             print(f"✗ Invalid JSON: {xpath_arg}")
             sys.exit(1)
 
-        results = extract_multi(dom, xpath_mapping, field)
+        # Process each xpath
+        all_results = {}
+        code_xpaths = {}
 
-        # Check results
-        all_found = all(v is not None for v in results.values())
-        found_count = sum(1 for v in results.values() if v is not None)
+        for name, xpath in xpath_mapping.items():
+            element = find_by_xpath(dom, xpath)
 
-        if all_found:
-            print(f"✓ Found all {len(results)} elements")
+            print(f"\n{'='*60}")
+            print(f"Field: {name}")
+            print(f"XPath: {xpath}")
+
+            if not element:
+                print(f"  ✗ Not found")
+                all_results[name] = None
+                continue
+
+            text = element.get('text', '')
+            href = element.get('href', '')
+            tag = element.get('tag', '')
+
+            print(f"  tag: {tag}")
+            if text:
+                text_preview = text[:80] + '...' if len(text) > 80 else text
+                print(f"  text: \"{text_preview}\"")
+            if href:
+                print(f"  href: {href}")
+
+            all_results[name] = text or href or ''
+            code_xpaths[name] = xpath
+
+            # Check if it's a container
+            if is_container(element):
+                print(f"\n  ⚠ Container detected - showing children with data:")
+                children_data = collect_children_with_data(element)
+                for i, child in enumerate(children_data[:10]):
+                    child_text = child.get('text', '')
+                    child_href = child.get('href', '')
+                    # Show relative xpath (remove common prefix)
+                    rel_xpath = child['xpath']
+                    if rel_xpath.startswith(xpath):
+                        rel_xpath = "..." + rel_xpath[len(xpath):]
+                    print(f"    [{i+1}] {rel_xpath}")
+                    print(f"        tag: {child['tag']}, text: \"{child_text[:50]}\"" + (f", href: {child_href}" if child_href else ""))
+                if len(children_data) > 10:
+                    print(f"    ... and {len(children_data) - 10} more")
+
+                # Suggest using child xpath
+                if children_data:
+                    print(f"\n  → To extract specific value, use child xpath like:")
+                    print(f"     {children_data[0]['xpath']}")
+
+            # Show siblings
+            siblings = find_siblings(dom, xpath)
+            if siblings:
+                print(f"\n  Siblings ({len(siblings)}):")
+                for i, sib in enumerate(siblings[:5]):
+                    sib_text = sib.get('text', '')[:50]
+                    # Show relative xpath
+                    rel_xpath = sib['xpath'].split('/')[-1] if '/' in sib['xpath'] else sib['xpath']
+                    print(f"    [{i+1}] .../{rel_xpath}")
+                    print(f"        tag: {sib['tag']}, text: \"{sib_text}\"")
+                if len(siblings) > 5:
+                    print(f"    ... and {len(siblings) - 5} more")
+
+        # Summary
+        found_count = sum(1 for v in all_results.values() if v is not None)
+        print(f"\n{'='*60}")
+        if found_count == len(all_results):
+            print(f"✓ Found all {len(all_results)} elements")
         else:
-            print(f"⚠ Found {found_count}/{len(results)} elements")
-
-        print("\nResults:")
-        print(json.dumps(results, indent=2, ensure_ascii=False))
+            print(f"⚠ Found {found_count}/{len(all_results)} elements")
 
         # Output code snippet
-        print("\n# Code snippet:")
-        print(f"from dom_tools import extract_multi")
-        print(f"result = extract_multi(dom_dict, {json.dumps(xpath_mapping, ensure_ascii=False)}, '{field}')")
+        if code_xpaths:
+            print("\n# Code snippet (update xpaths if needed based on children above):")
+            print(f"from dom_tools import extract_multi")
+            print(f"result = extract_multi(dom_dict, {json.dumps(code_xpaths, ensure_ascii=False)}, 'text')")
 
     else:
         # Single xpath
         element = find_by_xpath(dom, xpath_arg)
-        if element:
-            value = extract_field(element, field)
-            print(f"✓ Found element at {xpath_arg}")
-            print(f"  {field}: {value}")
-            print(f"  tag: {element.get('tag')}")
-            if element.get('class'):
-                print(f"  class: {element.get('class')}")
-
-            # Output code snippet
-            print("\n# Code snippet:")
-            print(f"from dom_tools import extract_single")
-            print(f"result = extract_single(dom_dict, \"{xpath_arg}\", '{field}')")
-        else:
+        if not element:
             print(f"✗ Element not found: {xpath_arg}")
             print("  Hint: Use 'search --text \"...\"' to find elements by content")
+            return
+
+        text = element.get('text', '')
+        href = element.get('href', '')
+        tag = element.get('tag', '')
+
+        print(f"✓ Found: {xpath_arg}")
+        print(f"  tag: {tag}")
+        if element.get('class'):
+            print(f"  class: {element.get('class')}")
+        if text:
+            text_preview = text[:80] + '...' if len(text) > 80 else text
+            print(f"  text: \"{text_preview}\"")
+        if href:
+            print(f"  href: {href}")
+
+        # Check if it's a container
+        if is_container(element):
+            print(f"\n⚠ Container detected - showing children with data:")
+            children_data = collect_children_with_data(element)
+            for i, child in enumerate(children_data[:10]):
+                child_text = child.get('text', '')
+                child_href = child.get('href', '')
+                # Show relative xpath
+                rel_xpath = child['xpath']
+                if rel_xpath.startswith(xpath_arg):
+                    rel_xpath = "..." + rel_xpath[len(xpath_arg):]
+                print(f"  [{i+1}] {rel_xpath}")
+                print(f"      tag: {child['tag']}, text: \"{child_text[:50]}\"" + (f", href: {child_href}" if child_href else ""))
+            if len(children_data) > 10:
+                print(f"  ... and {len(children_data) - 10} more")
+
+            # Suggest using child xpath
+            if children_data:
+                print(f"\n→ To extract specific value, use child xpath like:")
+                print(f"   {children_data[0]['xpath']}")
+
+        # Show siblings
+        siblings = find_siblings(dom, xpath_arg)
+        if siblings:
+            print(f"\nSiblings ({len(siblings)}):")
+            for i, sib in enumerate(siblings[:5]):
+                sib_text = sib.get('text', '')[:50]
+                rel_xpath = sib['xpath'].split('/')[-1] if '/' in sib['xpath'] else sib['xpath']
+                print(f"  [{i+1}] .../{rel_xpath}")
+                print(f"      tag: {sib['tag']}, text: \"{sib_text}\"")
+            if len(siblings) > 5:
+                print(f"  ... and {len(siblings) - 5} more")
+
+        # Output code snippet
+        print("\n# Code snippet:")
+        print(f"from dom_tools import extract_single")
+        print(f"result = extract_single(dom_dict, \"{xpath_arg}\", 'text')")
 
 
 def find_container_with_siblings(dom: Dict, xpath: str, min_siblings: int = 2, max_levels: int = 5) -> tuple:
@@ -693,34 +893,6 @@ def cmd_search(dom: Dict, args: List[str]):
         print(f"\n  ... and {len(results) - 10} more")
 
 
-def cmd_analyze(dom: Dict, args: List[str]):
-    """Handle analyze command."""
-    if not args:
-        print("Usage: python dom_tools.py analyze <xpath>")
-        sys.exit(1)
-
-    xpath = args[0]
-    container = find_or_build_container(dom, xpath)
-
-    if not container:
-        print(f"✗ Container not found: {xpath}")
-        return
-
-    is_virtual = container.get('_virtual', False)
-    stats = analyze_container(container)
-
-    print(f"✓ Container Analysis: {xpath}")
-    if is_virtual:
-        print(f"  (Virtual container built from children)")
-    print(f"  Tag: {stats['tag']}")
-    print(f"  Class: {stats['class']}")
-    print(f"  Total children: {stats['total_children']}")
-    print(f"  By tag: {json.dumps(stats['by_tag'])}")
-    print(f"  By class: {json.dumps(stats['by_class'])}")
-
-    if stats['sample_child']:
-        print(f"\n  Sample child:")
-        print(json.dumps(stats['sample_child'], indent=4, ensure_ascii=False))
 
 
 def cmd_children(dom: Dict, args: List[str]):
@@ -780,8 +952,6 @@ def main():
         cmd_container(dom, args)
     elif command == "search":
         cmd_search(dom, args)
-    elif command == "analyze":
-        cmd_analyze(dom, args)
     elif command == "children":
         cmd_children(dom, args)
     else:

@@ -758,11 +758,15 @@ class StorageService:
                     if resource_dir.name.startswith("scraper_script_"):
                         resource_id = resource_dir.name
 
-                        # Get list of files to sync (only extraction_script.py for now)
+                        # Get list of files to sync
                         files = []
                         extraction_script = resource_dir / "extraction_script.py"
                         if extraction_script.exists():
                             files.append("extraction_script.py")
+                        # Include dom_tools.py (required for script execution)
+                        dom_tools = resource_dir / "dom_tools.py"
+                        if dom_tools.exists():
+                            files.append("dom_tools.py")
 
                         if files:
                             resources["scraper_scripts"].append({

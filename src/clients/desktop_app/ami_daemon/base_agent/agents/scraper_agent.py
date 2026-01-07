@@ -15,9 +15,6 @@ from src.common.llm import OpenAIProvider, AnthropicProvider
 # Import script templates from common module (for consistency with Cloud Backend)
 from src.common.script_generation.templates import SCRAPER_AGENT_PROMPT
 
-# Import dom_tools for script execution (PyInstaller will auto-detect this)
-from lib import dom_tools
-
 try:
     from browser_use import Tools
     from browser_use.browser.session import BrowserSession
@@ -531,7 +528,7 @@ class ScraperAgent(BaseStepAgent):
 
 
     async def _save_dom_snapshot(self, url: str, dom_dict: Dict) -> None:
-        """Save full DOM snapshot for a specific URL to script workspace directory
+        """Save full DOM snapshot to cloud for debugging and future reference
 
         Args:
             url: The webpage URL
@@ -541,71 +538,57 @@ class ScraperAgent(BaseStepAgent):
             logger.warning("⚠️  No URL provided, skipping DOM snapshot save")
             return
 
-        if not self.config_service:
-            logger.warning("⚠️  Cannot save DOM snapshot: ConfigService not available")
+        if not hasattr(self, '_context') or not self._context:
+            logger.warning("⚠️  No context available, skipping DOM snapshot save")
             return
 
-        # Use cached script_key (set in _extract_data_from_current_page)
-        if not hasattr(self, '_current_script_key') or not self._current_script_key:
-            logger.warning("⚠️  No script key available, skipping DOM snapshot save")
+        # Get cloud client from context
+        cloud_client = None
+        if self._context.agent_instance and hasattr(self._context.agent_instance, 'cloud_client'):
+            cloud_client = self._context.agent_instance.cloud_client
+
+        if not cloud_client:
+            logger.warning("⚠️  CloudClient not available, skipping DOM snapshot save")
             return
 
         try:
-            scripts_root = self.config_service.get_path("data.scripts")
-            script_workspace = scripts_root / self._current_script_key
+            user_id = getattr(self._context, 'user_id', 'default_user')
+            workflow_id = getattr(self._context, 'workflow_id', None)
+            step_id = getattr(self._context, 'step_id', None)
 
-            # Save in script workspace: dom_snapshots/{url_hash}/
+            if not workflow_id or not step_id:
+                logger.warning("⚠️  workflow_id or step_id not available, skipping DOM snapshot save")
+                return
+
+            # Generate URL hash for filename
             url_hash = self._generate_url_hash(url)
-            snapshot_dir = script_workspace / "dom_snapshots" / url_hash
-            snapshot_dir.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now().isoformat()
 
-            # Save metadata
-            metadata_file = snapshot_dir / "metadata.json"
-            metadata = {
+            # Build DOM snapshot data
+            snapshot_data = {
                 "url": url,
                 "url_hash": url_hash,
-                "timestamp": datetime.now().isoformat()
-            }
-            metadata_file.write_text(
-                json.dumps(metadata, indent=2, ensure_ascii=False),
-                encoding='utf-8'
-            )
-
-            # Save full DOM dict
-            dom_file = snapshot_dir / "dom_data.json"
-            dom_file.write_text(
-                json.dumps(dom_dict, indent=2, ensure_ascii=False),
-                encoding='utf-8'
-            )
-
-            # Update URL index file for fast lookup
-            dom_snapshots_dir = script_workspace / "dom_snapshots"
-            index_file = dom_snapshots_dir / "url_index.json"
-
-            # Load existing index
-            url_index = {}
-            if index_file.exists():
-                try:
-                    url_index = json.loads(index_file.read_text(encoding='utf-8'))
-                except Exception as e:
-                    logger.warning(f"Failed to load URL index, creating new one: {e}")
-
-            # Update index
-            url_index[url] = {
-                "hash": url_hash,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": timestamp,
+                "dom": dom_dict
             }
 
-            # Save index
-            index_file.write_text(
-                json.dumps(url_index, indent=2, ensure_ascii=False),
-                encoding='utf-8'
+            # Upload to cloud: dom_snapshots/{url_hash}.json
+            file_path = f"dom_snapshots/{url_hash}.json"
+            content = json.dumps(snapshot_data, ensure_ascii=False).encode('utf-8')
+
+            success = await cloud_client.upload_workflow_file(
+                workflow_id=workflow_id,
+                file_path=file_path,
+                content=content,
+                user_id=user_id
             )
 
-            logger.info(f"✅ DOM snapshot saved to: {snapshot_dir}")
-            logger.info(f"   URL: {url}")
-            logger.info(f"   Hash: {url_hash}")
-            logger.info(f"   DOM size: {dom_file.stat().st_size} bytes")
+            if success:
+                logger.info(f"✅ DOM snapshot uploaded to cloud: {file_path}")
+                logger.info(f"   URL: {url}")
+                logger.info(f"   Size: {len(content)} bytes")
+            else:
+                logger.warning(f"⚠️  Failed to upload DOM snapshot to cloud")
 
         except Exception as e:
             logger.warning(f"⚠️  Failed to save DOM snapshot: {e}")
@@ -832,11 +815,15 @@ class ScraperAgent(BaseStepAgent):
                 execution_dict = dom_dict
 
             result = await self._execute_generated_script_direct(
-                generated_script, execution_dict, max_items
+                generated_script, execution_dict, max_items, script_workspace
             )
 
-            # Note: DOM snapshot is now stored in cloud during script generation
-            # No need to save locally
+            # Save DOM snapshot for debugging and future reference
+            try:
+                page_url = await self.browser_session.get_current_page_url()
+                await self._save_dom_snapshot(page_url, execution_dict)
+            except Exception as e:
+                logger.warning(f"Failed to save DOM snapshot: {e}")
 
             return result
 
@@ -1035,11 +1022,17 @@ Extract data now:"""
         self,
         script_content: str,
         dom_dict: Dict,
-        max_items: int
+        max_items: int,
+        script_dir: Optional[Path] = None
     ) -> Dict[str, Any]:
         """直接执行生成的脚本，使用提供的DOM数据（dom_dict 是嵌套字典，不是 HTML）"""
+        import sys
 
         try:
+            # Add script directory to sys.path so 'from dom_tools import ...' works
+            if script_dir and str(script_dir) not in sys.path:
+                sys.path.insert(0, str(script_dir))
+
             # 准备脚本执行环境
             execution_env = {
                 'max_items': max_items,
@@ -1050,20 +1043,46 @@ Extract data now:"""
                 'List': List,
                 'Dict': Dict,
                 'Any': Any,
-                # Inject dom_tools module for script execution
-                'dom_tools': dom_tools,
             }
 
             # 执行脚本
             exec(script_content, execution_env, execution_env)
-            
-            # 获取执行函数
+
+            # 获取执行函数 - 支持两种函数名
             execute_func = execution_env.get('execute_extraction')
-            if not execute_func:
-                return self._create_error_result("脚本缺少 execute_extraction 函数")
-            
-            # 使用提供的DOM数据执行提取 (只传 dom_dict，不需要 serialized_dom)
-            result = execute_func(dom_dict, max_items)
+            extract_func = execution_env.get('extract_data_from_page')
+
+            if execute_func:
+                # 使用 execute_extraction(dom_dict, max_items)
+                result = execute_func(dom_dict, max_items)
+            elif extract_func:
+                # 使用 extract_data_from_page(dom_dict) - 云端生成的脚本格式
+                extracted_data = extract_func(dom_dict)
+                # 包装为标准结果格式
+                if isinstance(extracted_data, list):
+                    # Apply max_items limit
+                    if max_items and max_items > 0:
+                        extracted_data = extracted_data[:max_items]
+                    result = {
+                        "success": True,
+                        "data": extracted_data,
+                        "count": len(extracted_data)
+                    }
+                elif isinstance(extracted_data, dict):
+                    result = {
+                        "success": True,
+                        "data": [extracted_data],
+                        "count": 1
+                    }
+                else:
+                    result = {
+                        "success": True,
+                        "data": extracted_data,
+                        "count": 1 if extracted_data else 0
+                    }
+            else:
+                return self._create_error_result("脚本缺少 execute_extraction 或 extract_data_from_page 函数")
+
             return result
             
         except Exception as e:
@@ -1187,11 +1206,12 @@ Extract data now:"""
             logger.info(f"   Script key: {script_key}")
             logger.info(f"   Script size: {len(script_content)} chars")
 
-            # 5. Save script to local cache
-            if self.config_service and script_key:
+            # 5. Save script to local cache (use the same path as the cache check)
+            # self._current_script_key already contains full path like:
+            # users/{user_id}/workflows/{workflow_id}/{step_id}/scraper_script_xxx
+            if self.config_service and hasattr(self, '_current_script_key') and self._current_script_key:
                 scripts_root = self.config_service.get_path("data.scripts")
-                # Build local cache path matching cloud structure
-                local_script_dir = scripts_root / f"users/{user_id}/workflows/{workflow_id}/{step_id}/{script_key}"
+                local_script_dir = scripts_root / self._current_script_key
                 local_script_dir.mkdir(parents=True, exist_ok=True)
 
                 local_script_file = local_script_dir / "extraction_script.py"
@@ -1204,6 +1224,19 @@ Extract data now:"""
                     json.dumps(data_requirements, indent=2, ensure_ascii=False),
                     encoding='utf-8'
                 )
+
+                # Download dom_tools.py from cloud (required for script execution)
+                try:
+                    dom_tools_content = await cloud_client.download_workflow_file(
+                        workflow_id=workflow_id,
+                        file_path=f"{step_id}/{script_key}/dom_tools.py",
+                        user_id=user_id
+                    )
+                    dom_tools_file = local_script_dir / "dom_tools.py"
+                    dom_tools_file.write_bytes(dom_tools_content)
+                    logger.info(f"   Downloaded dom_tools.py to: {dom_tools_file}")
+                except Exception as e:
+                    logger.warning(f"   Failed to download dom_tools.py: {e}")
 
             # Send completion update to frontend
             if context and context.log_callback:
@@ -1239,7 +1272,7 @@ Extract data now:"""
         else:
             code = response.strip()
         
-        # 包装执行结构
+        # 包装执行结构 - 支持 extract_data_from_page 或 main 函数
         return f'''
 import json
 import logging
@@ -1248,30 +1281,57 @@ from typing import List, Dict, Any
 {code}
 
 def execute_extraction(dom_dict, max_items: int = 100):
-    """Execute data extraction wrapper function"""
+    """Execute data extraction wrapper function
+
+    Supports scripts with either:
+    - extract_data_from_page(dom_dict) function
+    - main() function that returns extracted data
+    """
     import logging
     logger = logging.getLogger(__name__)
 
     try:
-        # Extract all available data (dom_dict is a nested dictionary, NOT HTML)
-        all_data = extract_data_from_page(dom_dict)
-        
-        # Apply quantity limit at wrapper level
-        if isinstance(all_data, list):
-            limited_data = all_data[:max_items] if max_items > 0 else all_data
-            return {{
-                "success": True,
-                "data": limited_data,
-                "total_count": len(limited_data),
-                "error": None
-            }}
+        # Try extract_data_from_page first, then fall back to main
+        # Use globals() to check function existence in exec() environment
+        _globals = globals()
+        if 'extract_data_from_page' in _globals:
+            all_data = extract_data_from_page(dom_dict)
+        elif 'main' in _globals:
+            # For scripts with main(), we need to provide dom_dict via a different mechanism
+            # Check if main accepts arguments
+            import inspect
+            main_sig = inspect.signature(main)
+            if len(main_sig.parameters) > 0:
+                all_data = main(dom_dict)
+            else:
+                # main() with no args - script likely loads dom_data.json itself
+                # We need to save dom_dict to dom_data.json temporarily
+                import tempfile
+                import os
+                original_cwd = os.getcwd()
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    os.chdir(tmpdir)
+                    with open('dom_data.json', 'w', encoding='utf-8') as f:
+                        json.dump(dom_dict, f, ensure_ascii=False)
+                    all_data = main()
+                    os.chdir(original_cwd)
         else:
-            return {{
-                "success": True,
-                "data": all_data,
-                "total_count": 1 if all_data else 0,
-                "error": None
-            }}
+            raise NameError("Script must define either 'extract_data_from_page(dom_dict)' or 'main()' function")
+
+        # Normalize to list - scraper_agent always returns List[Dict]
+        if isinstance(all_data, dict):
+            all_data = [all_data]
+        elif not isinstance(all_data, list):
+            all_data = [all_data] if all_data else []
+
+        # Apply quantity limit
+        limited_data = all_data[:max_items] if max_items > 0 else all_data
+        return {{
+            "success": True,
+            "data": limited_data,
+            "total_count": len(limited_data),
+            "error": None
+        }}
     except Exception as e:
         logger.error("Data extraction failed: " + str(e))
         return {{

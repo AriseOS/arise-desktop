@@ -87,6 +87,15 @@ class ScraperScriptGenerator:
             else:
                 logger.warning(f"Skills not found at {skills_src}")
 
+            # Copy dom_tools.py to working directory root for both:
+            # 1. Claude Agent to run: python dom_tools.py ...
+            # 2. Generated script to import: from dom_tools import ...
+            dom_tools_src = skills_src / "dom-extraction" / "tools" / "dom_tools.py"
+            dom_tools_dest = working_dir / "dom_tools.py"
+            if dom_tools_src.exists():
+                shutil.copy2(dom_tools_src, dom_tools_dest)
+                logger.info(f"Copied dom_tools.py to {dom_tools_dest}")
+
             # Save input files
             await self._save_input_files(working_dir, requirement, dom_dict)
 
@@ -167,8 +176,7 @@ class ScraperScriptGenerator:
 
             script_content = script_file.read_text(encoding='utf-8')
 
-            # Note: dom_tools.py is NOT copied here.
-            # Desktop daemon injects the path to ami_daemon/lib/dom_tools.py at runtime.
+            # dom_tools.py was already copied to working_dir at the start
 
             # Wrap script with execution wrapper
             wrapped_script = self._extract_and_wrap_code(script_content)

@@ -344,9 +344,15 @@ Generate `extraction_script.py` to extract data from the webpage DOM.
 
 ## DOM Tools
 
-Tools at `.claude/skills/dom-extraction/tools/dom_tools.py` output reusable code snippets.
+`dom_tools.py` is available in the current directory.
 
-**IMPORTANT**: Read `.claude/skills/dom-extraction/SKILL.md` first.
+| Command | Purpose | Output |
+|---------|---------|--------|
+| `find <xpath>` or `find <json>` | Multi-field extraction | value + children + siblings |
+| `container <xpath> --fields ...` | List extraction | List items array |
+| `search --text/--class` | Search elements | Matching elements list |
+
+**IMPORTANT**: Read `.claude/skills/dom-extraction/SKILL.md` for detailed workflow.
 
 ## Workflow
 
@@ -358,35 +364,41 @@ Identify: `user_description`, `output_format`, `xpath_hints`
 
 ### Step 2: Determine Extraction Type
 - **List** ("all", "every", "list") → Use `container` command
-- **Multi-field** (multiple single fields) → Use `find` with JSON
-- **Single-field** → Use `find` with xpath
+- **Multi-field** (detail page) → Use `find` with JSON
 
-### Step 3: Verify and Extract
+### Step 3: Execute Based on Type
 
-**For List Extraction:**
+**For List Extraction (one step):**
 ```bash
-# xpath_hint like //*[@id='app']/div[4]/div/a[1] → remove [1] to get container
-python .claude/skills/dom-extraction/tools/dom_tools.py container "//*[@id='app']/div[4]/div" --fields "name:text,url:href"
+python dom_tools.py container "//*[@id='app']/div[4]/div/a[1]" --fields "name:text,url:href"
 ```
-This verifies AND extracts in one command. Use the output code snippet.
+Container auto-finds parent. Use the output code snippet directly.
 
 **For Multi-field Extraction:**
 ```bash
-python .claude/skills/dom-extraction/tools/dom_tools.py find '{{"field1": "<xpath1>", "field2": "<xpath2>"}}' --field text
+python dom_tools.py find '{{"name": "<xpath1>", "rating": "<xpath2>", "description": "<xpath3>"}}'
 ```
 
-**CRITICAL**: xpath_hints in requirement.json point to the EXACT element user selected. The xpath includes indices like `div[4]` which identify the specific container. Do NOT search the entire DOM - extract ONLY from the container indicated by xpath_hints.
+The `find` command returns for each xpath:
+- **value**: The extracted text/href
+- **children**: If container, shows all child elements with xpath + text
+- **siblings**: Shows sibling elements
+
+**Analyze the output:**
+- If xpath is a **container** (shows children) → use the child xpath for specific value
+- If xpath has **siblings** → decide if content needs merging
+- If xpath **not found** → use `search` command
 
 ### Step 4: If xpath fails, search
 ```bash
-python .claude/skills/dom-extraction/tools/dom_tools.py search --text "Product Name"
-python .claude/skills/dom-extraction/tools/dom_tools.py search --class "product-item"
+python dom_tools.py search --text "9.0"
+python dom_tools.py search --class "rating"
 ```
 
 ### Step 5: Write Script
-Use code snippets from tool output. Import from `dom_utils`:
+Use corrected xpaths based on `find` output:
 ```python
-from dom_utils import extract_list, extract_single, extract_multi
+from dom_tools import extract_list, extract_single, extract_multi
 ```
 
 ### Step 6: Test
@@ -396,9 +408,63 @@ python extraction_script.py
 
 ## CRITICAL Rules
 
-1. **Use dom_utils functions** - Don't write custom xpath search logic. The tool output gives you code snippets.
+1. **Use dom_tools functions** - Don't write custom xpath search logic.
 
-2. **URLs MUST be absolute** - Use `urljoin("{page_url}", url)` for all URLs.
+2. **Trust `find` output** - If it shows children, use the child xpath. If it shows siblings, consider merging.
 
-3. **Respect xpath indices** - `div[4]` means the 4th div. Extract from that specific container, not all matching containers.
+3. **URLs MUST be absolute** - Use `urljoin("{page_url}", url)` for all URLs.
+
+4. **Respect xpath indices** - `div[4]` means the 4th div. Extract from that specific container.
+
+## Required Script Format
+
+Your `extraction_script.py` MUST follow this exact structure:
+
+```python
+import json
+from typing import Dict, List
+from urllib.parse import urljoin
+
+from dom_tools import extract_list, extract_single, extract_multi
+
+PAGE_URL = "{page_url}"
+
+def make_absolute(url: str) -> str:
+    \"\"\"Convert relative URL to absolute URL\"\"\"
+    if not url or url.startswith(('http://', 'https://')):
+        return url
+    return urljoin(PAGE_URL, url)
+
+def extract_data_from_page(dom_dict: Dict) -> List[Dict]:
+    \"\"\"Extract data from DOM dictionary.
+
+    Args:
+        dom_dict: The page DOM as a nested dictionary
+
+    Returns:
+        List of extracted data dictionaries
+    \"\"\"
+    # YOUR EXTRACTION LOGIC HERE
+    # Use extract_list, extract_single, or extract_multi from dom_tools
+    results = []
+
+    # Make URLs absolute
+    for item in results:
+        if 'url' in item:
+            item['url'] = make_absolute(item['url'])
+
+    return results
+
+# Main entry point - reads dom_data.json and calls extract function
+if __name__ == "__main__":
+    with open("dom_data.json", "r") as f:
+        dom = json.load(f)
+    results = extract_data_from_page(dom)
+    print(json.dumps(results, indent=2, ensure_ascii=False))
+```
+
+**IMPORTANT**:
+- The `extract_data_from_page(dom_dict)` function receives DOM as parameter - do NOT read files inside this function
+- File reading (`dom_data.json`) only happens in `if __name__ == "__main__":` block for testing
+- This structure allows the script to be imported and called with DOM data directly
 """

@@ -982,7 +982,8 @@ class CloudClient:
                     return {"success": False, "error": "No completion event received"}
 
         except httpx.HTTPStatusError as e:
-            error_msg = f"HTTP {e.response.status_code}: {e.response.text}"
+            # For streaming response, we can't access response.text directly
+            error_msg = f"HTTP {e.response.status_code}"
             logger.error(f"[CloudClient] Script generation failed: {error_msg}")
             return {"success": False, "error": error_msg}
         except Exception as e:

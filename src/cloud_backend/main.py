@@ -2509,7 +2509,40 @@ async def generate_script_stream(
                     "generated_at": datetime.utcnow().isoformat(),
                     "turns": result.turns
                 }
+
+                # Update resources for sync (include dom_tools.py)
+                if "resources" not in metadata:
+                    metadata["resources"] = {}
+                resource_type = "scraper_scripts" if request.script_type == "scraper" else "browser_scripts"
+                if resource_type not in metadata["resources"]:
+                    metadata["resources"][resource_type] = []
+
+                # Build files list
+                files_to_sync = [script_name]
+                if request.script_type == "scraper":
+                    # Include dom_tools.py for scraper scripts
+                    dom_tools_path = working_dir / "dom_tools.py"
+                    if dom_tools_path.exists():
+                        files_to_sync.append("dom_tools.py")
+
+                # Add or update resource entry
+                resource_entry = {
+                    "step_id": request.step_id,
+                    "resource_id": script_key,
+                    "files": files_to_sync
+                }
+                # Remove existing entry for this step if exists
+                metadata["resources"][resource_type] = [
+                    r for r in metadata["resources"][resource_type]
+                    if r.get("step_id") != request.step_id or r.get("resource_id") != script_key
+                ]
+                metadata["resources"][resource_type].append(resource_entry)
+
+                # Update timestamp
+                metadata["updated_at"] = datetime.utcnow().isoformat()
+
                 storage_service.save_workflow_metadata(x_user_id, workflow_id, metadata)
+                logger.info(f"[{request_id}] Updated metadata with resources: {files_to_sync}")
             except Exception as e:
                 logger.warning(f"[{request_id}] Failed to update metadata: {e}")
 
