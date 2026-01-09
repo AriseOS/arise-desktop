@@ -826,6 +826,36 @@ async def update_recording_metadata(recording_id: str, user_id: str, data: dict)
     return {"success": True, "message": "Recording metadata updated"}
 
 
+@app.delete("/api/v1/recordings/{recording_id}")
+async def delete_recording(recording_id: str, user_id: str):
+    """
+    Delete a recording from Cloud Backend
+
+    Query:
+        user_id: User ID
+
+    Returns:
+        {"success": true, "message": "Recording deleted"}
+    """
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+
+    try:
+        success = storage_service.delete_recording(user_id, recording_id)
+
+        if not success:
+            raise HTTPException(404, f"Recording not found: {recording_id}")
+
+        logger.info(f"Recording {recording_id} deleted for user {user_id}")
+        return {"success": True, "message": "Recording deleted"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete recording {recording_id}: {e}")
+        raise HTTPException(500, f"Failed to delete recording: {e}")
+
+
 # ===== Workflows API =====
 
 @app.get("/api/v1/workflows")

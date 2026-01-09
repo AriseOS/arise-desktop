@@ -633,6 +633,32 @@ class StorageService:
         # Sort by created_at, handling None values
         return sorted(result, key=lambda x: x.get("created_at") or "", reverse=True)
 
+    def delete_recording(self, user_id: str, recording_id: str) -> bool:
+        """Delete a recording and all its associated files
+
+        Args:
+            user_id: User ID
+            recording_id: Recording ID to delete
+
+        Returns:
+            True if deleted, False if not found
+        """
+        import shutil
+
+        recording_path = self._user_path(user_id) / "recordings" / recording_id
+
+        if not recording_path.exists():
+            logger.warning(f"Recording not found for deletion: {recording_id}")
+            return False
+
+        try:
+            shutil.rmtree(recording_path)
+            logger.info(f"Deleted recording: {recording_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete recording {recording_id}: {e}")
+            raise
+
     # ===== Workflow Management =====
 
     def save_workflow(

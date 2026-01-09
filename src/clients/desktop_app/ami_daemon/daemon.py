@@ -1052,11 +1052,42 @@ async def clear_recording_workflow(session_id: str, user_id: str):
 
 @app.get("/api/v1/recordings")
 async def list_recordings(user_id: str):
-    """List all recordings for a user"""
+    """List all recordings for a user, merging local and cloud data"""
     try:
         logger.info(f"Listing recordings for user: {user_id}")
-        recordings = storage_manager.list_recordings(user_id)
-        logger.info(f"Found {len(recordings)} recordings")
+
+        # Step 1: Get local recordings
+        local_recordings = storage_manager.list_recordings(user_id)
+        local_by_id = {r["session_id"]: r for r in local_recordings}
+        logger.info(f"Found {len(local_recordings)} local recordings")
+
+        # Step 2: Get cloud recordings (best effort)
+        try:
+            cloud_recordings = await cloud_client.list_recordings(user_id)
+            logger.info(f"Found {len(cloud_recordings)} cloud recordings")
+
+            # Merge cloud recordings into local list
+            for cloud_rec in cloud_recordings:
+                recording_id = cloud_rec.get("recording_id")
+                if recording_id and recording_id not in local_by_id:
+                    # Cloud-only recording - add to list with cloud_only flag
+                    local_by_id[recording_id] = {
+                        "session_id": recording_id,
+                        "name": cloud_rec.get("task_description", ""),
+                        "created_at": cloud_rec.get("created_at"),
+                        "workflow_id": cloud_rec.get("workflow_id"),
+                        "cloud_only": True  # Flag to indicate not downloaded locally
+                    }
+        except Exception as cloud_error:
+            logger.warning(f"Failed to fetch cloud recordings: {cloud_error}")
+
+        # Sort by created_at (newest first)
+        recordings = sorted(
+            local_by_id.values(),
+            key=lambda x: x.get("created_at") or "",
+            reverse=True
+        )
+
         return {
             "recordings": recordings,
             "count": len(recordings)
@@ -1072,6 +1103,32 @@ async def get_recording_detail(session_id: str, user_id: str):
     try:
         logger.info(f"Getting recording detail: session_id={session_id}")
         detail = storage_manager.get_recording_detail(user_id, session_id)
+
+        # If not found locally, try to download from cloud
+        if detail is None:
+            logger.info(f"Recording not found locally, trying cloud: {session_id}")
+            try:
+                cloud_recording = await cloud_client.get_recording(session_id, user_id)
+                if cloud_recording and cloud_recording.get("operations"):
+                    # Download from cloud and save locally
+                    logger.info(f"Downloading recording from cloud: {session_id}")
+                    recording_data = {
+                        "operations": cloud_recording.get("operations", []),
+                        "task_metadata": {
+                            "task_description": cloud_recording.get("task_description"),
+                            "user_query": cloud_recording.get("user_query")
+                        },
+                        "workflow_id": cloud_recording.get("workflow_id"),
+                        "updated_at": cloud_recording.get("updated_at"),
+                        "created_at": cloud_recording.get("created_at")
+                    }
+                    storage_manager.save_recording(user_id, session_id, recording_data, update_timestamp=False)
+                    logger.info(f"Recording downloaded from cloud: {session_id}")
+
+                    # Now get the detail from local storage
+                    detail = storage_manager.get_recording_detail(user_id, session_id)
+            except Exception as cloud_error:
+                logger.warning(f"Failed to download from cloud: {cloud_error}")
 
         if detail is None:
             raise HTTPException(status_code=404, detail=f"Recording not found: {session_id}")
@@ -1135,15 +1192,29 @@ async def get_recording_detail(session_id: str, user_id: str):
 
 @app.delete("/api/v1/recordings/{session_id}")
 async def delete_recording(session_id: str, user_id: str):
-    """Delete a recording"""
+    """Delete a recording from both local and cloud storage"""
     try:
         logger.info(f"Deleting recording: session_id={session_id}")
+
+        # Step 1: Delete from local storage
         success = storage_manager.delete_recording(user_id, session_id)
 
         if not success:
             raise HTTPException(status_code=404, detail=f"Recording not found: {session_id}")
 
-        logger.info(f"Recording deleted: {session_id}")
+        logger.info(f"Recording deleted from local storage: {session_id}")
+
+        # Step 2: Sync deletion to cloud (best effort, don't fail if cloud delete fails)
+        try:
+            cloud_success = await cloud_client.delete_recording(session_id, user_id)
+            if cloud_success:
+                logger.info(f"Recording deleted from cloud: {session_id}")
+            else:
+                logger.warning(f"Recording not found in cloud or already deleted: {session_id}")
+        except Exception as cloud_error:
+            # Don't fail the request if cloud deletion fails
+            logger.warning(f"Failed to delete recording from cloud (continuing): {cloud_error}")
+
         return {"status": "success", "message": "Recording deleted"}
     except HTTPException:
         raise
@@ -1517,6 +1588,139 @@ async def upload_to_cloud(
             "files_transferred": files_uploaded,
             "errors": errors
         }
+
+
+# ============================================================================
+# Workflow Sync API Endpoints
+# ============================================================================
+
+@app.get("/api/v1/workflows/{workflow_id}/sync/status")
+async def get_workflow_sync_status(workflow_id: str, user_id: str):
+    """Check sync status between local and cloud
+
+    Returns:
+        {
+            "needs_sync": bool,
+            "direction": "upload" | "download" | "none",
+            "local_updated_at": str | null,
+            "cloud_updated_at": str | null
+        }
+    """
+    try:
+        logger.info(f"[SyncStatus] Checking sync status for workflow {workflow_id}")
+
+        # Get local workflow path
+        home_dir = Path.home()
+        ami_root = home_dir / ".ami"
+        local_workflow_path = ami_root / "users" / user_id / "workflows" / workflow_id
+
+        # Read local metadata
+        local_metadata_path = local_workflow_path / "metadata.json"
+        local_updated_at = None
+
+        if local_metadata_path.exists():
+            with open(local_metadata_path, 'r', encoding='utf-8') as f:
+                local_metadata = json.load(f)
+                local_updated_at = local_metadata.get("updated_at")
+
+        # Get cloud metadata
+        cloud_metadata = await cloud_client.get_workflow_metadata(workflow_id, user_id)
+        cloud_updated_at = cloud_metadata.get("updated_at") if cloud_metadata else None
+
+        # Determine sync direction
+        from src.common.timestamp_utils import parse_timestamp
+
+        local_dt = parse_timestamp(local_updated_at) if local_updated_at else None
+        cloud_dt = parse_timestamp(cloud_updated_at) if cloud_updated_at else None
+
+        if not local_dt and not cloud_dt:
+            direction = "none"
+            needs_sync = False
+        elif not cloud_dt or (local_dt and local_dt > cloud_dt):
+            direction = "upload"
+            needs_sync = True
+        elif not local_dt or cloud_dt > local_dt:
+            direction = "download"
+            needs_sync = True
+        else:
+            direction = "none"
+            needs_sync = False
+
+        return {
+            "needs_sync": needs_sync,
+            "direction": direction,
+            "local_updated_at": local_updated_at,
+            "cloud_updated_at": cloud_updated_at
+        }
+
+    except Exception as e:
+        logger.error(f"[SyncStatus] Failed to check sync status for {workflow_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/workflows/{workflow_id}/sync")
+async def sync_workflow(workflow_id: str, user_id: str, data: dict = None):
+    """Synchronize workflow resources between local and cloud
+
+    Request body (optional):
+        direction: "upload" | "download" | null (auto-detect based on timestamps)
+
+    Returns:
+        {
+            "success": bool,
+            "message": str,
+            "synced_resources": list,
+            "errors": list
+        }
+    """
+    try:
+        direction = data.get("direction") if data else None
+        logger.info(f"[Sync] Sync request for workflow {workflow_id}, direction={direction}")
+
+        if direction == "download":
+            # Force download from cloud
+            cloud_metadata = await cloud_client.get_workflow_metadata(workflow_id, user_id)
+            if not cloud_metadata:
+                raise HTTPException(status_code=404, detail="Workflow not found in cloud")
+
+            home_dir = Path.home()
+            ami_root = home_dir / ".ami"
+            local_workflow_path = ami_root / "users" / user_id / "workflows" / workflow_id
+
+            result = await download_from_cloud(workflow_id, user_id, cloud_metadata, local_workflow_path)
+
+        elif direction == "upload":
+            # Force upload to cloud
+            home_dir = Path.home()
+            ami_root = home_dir / ".ami"
+            local_workflow_path = ami_root / "users" / user_id / "workflows" / workflow_id
+            local_metadata_path = local_workflow_path / "metadata.json"
+
+            if not local_metadata_path.exists():
+                raise HTTPException(status_code=404, detail="Workflow not found locally")
+
+            with open(local_metadata_path, 'r', encoding='utf-8') as f:
+                local_metadata = json.load(f)
+
+            result = await upload_to_cloud(workflow_id, user_id, local_metadata, local_workflow_path)
+
+        else:
+            # Auto-detect direction based on timestamps
+            result = await sync_workflow_resources(workflow_id, user_id)
+
+        # Transform result to match expected frontend format
+        return {
+            "success": result.get("synced", False) or result.get("direction") == "none",
+            "message": result.get("message", ""),
+            "synced_resources": [],  # Could be enhanced to list actual files
+            "errors": result.get("errors", [])
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[Sync] Failed to sync workflow {workflow_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================================

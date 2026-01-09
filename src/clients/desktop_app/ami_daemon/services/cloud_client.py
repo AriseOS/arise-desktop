@@ -253,6 +253,39 @@ class CloudClient:
         response.raise_for_status()
         return response.json()
 
+    async def list_recordings(
+        self,
+        user_id: str = "default_user"
+    ) -> List[Dict[str, Any]]:
+        """List all recordings for user from Cloud Backend
+
+        Args:
+            user_id: User ID
+
+        Returns:
+            List of recording dicts with:
+            - recording_id: recording ID
+            - task_description: task description
+            - created_at: creation timestamp
+            - workflow_id: associated workflow ID (if any)
+        """
+        logger.info(f"Fetching recording list from Cloud for user: {user_id}")
+
+        try:
+            response = await self.client.get(
+                "/api/v1/recordings",
+                params={"user_id": user_id}
+            )
+            response.raise_for_status()
+            recordings = response.json()
+
+            logger.info(f"Fetched {len(recordings)} recordings from Cloud")
+            return recordings
+
+        except Exception as e:
+            logger.warning(f"Failed to fetch recordings from Cloud: {e}")
+            return []
+
     async def list_workflows(
         self,
         user_id: str = "default_user"
@@ -313,6 +346,35 @@ class CloudClient:
 
         except Exception as e:
             logger.warning(f"Failed to delete workflow from Cloud: {e}")
+            return False
+
+    async def delete_recording(
+        self,
+        recording_id: str,
+        user_id: str = "default_user"
+    ) -> bool:
+        """Delete recording from Cloud Backend
+
+        Args:
+            recording_id: Recording ID to delete
+            user_id: User ID
+
+        Returns:
+            True if deleted successfully, False otherwise
+        """
+        logger.info(f"Deleting recording from Cloud: {recording_id}")
+
+        try:
+            response = await self.client.delete(
+                f"/api/v1/recordings/{recording_id}",
+                params={"user_id": user_id}
+            )
+            response.raise_for_status()
+            logger.info(f"Recording deleted from Cloud: {recording_id}")
+            return True
+
+        except Exception as e:
+            logger.warning(f"Failed to delete recording from Cloud: {e}")
             return False
 
     async def report_execution(

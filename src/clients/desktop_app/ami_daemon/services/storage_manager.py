@@ -266,8 +266,10 @@ class StorageManager:
             return {
                 "session_id": session_id,
                 "created_at": created_at,
+                "updated_at": recording_data.get("updated_at"),
                 "action_count": action_count,
                 "task_metadata": task_metadata,
+                "workflow_id": recording_data.get("workflow_id"),
                 "operations": operations,
                 "dom_snapshots": recording_data.get("dom_snapshots", {})
             }
