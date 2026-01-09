@@ -6,10 +6,12 @@ Validates:
 2. Workflow structure (apiVersion, name, steps)
 3. Required fields
 4. Variable references
+5. Agent input requirements (via INPUT_SCHEMA)
 """
 import logging
 import yaml
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict, Any
+
 from pydantic import ValidationError
 
 logger = logging.getLogger(__name__)
@@ -21,6 +23,16 @@ try:
 except (ImportError, ModuleNotFoundError):
     WORKFLOW_SCHEMA_AVAILABLE = False
     logger.warning("Workflow schema not available, skipping Pydantic validation")
+
+# Try to import agent schemas for input validation
+try:
+    from src.clients.desktop_app.ami_daemon.base_agent.agents import get_all_agent_schemas
+    AGENT_SCHEMAS = get_all_agent_schemas()
+    AGENT_SCHEMAS_AVAILABLE = True
+except (ImportError, ModuleNotFoundError):
+    AGENT_SCHEMAS = {}
+    AGENT_SCHEMAS_AVAILABLE = False
+    logger.warning("Agent schemas not available, skipping agent input validation")
 
 
 class WorkflowYAMLValidator:
@@ -132,7 +144,86 @@ class WorkflowYAMLValidator:
         if agent not in valid_agent_types:
             return f"invalid agent: {agent}"
 
+        # Validate agent inputs against INPUT_SCHEMA
+        if AGENT_SCHEMAS_AVAILABLE:
+            input_error = self._validate_agent_inputs(agent, step.get("inputs", {}))
+            if input_error:
+                return input_error
+
         return ""
+
+    def _validate_agent_inputs(self, agent_type: str, inputs: Dict[str, Any]) -> str:
+        """
+        Validate agent inputs against INPUT_SCHEMA
+
+        Args:
+            agent_type: The agent type (e.g., "storage_agent")
+            inputs: The inputs dictionary from the step
+
+        Returns:
+            Error message if invalid, empty string if valid
+        """
+        schema = AGENT_SCHEMAS.get(agent_type)
+        if not schema:
+            return ""  # No schema defined, skip validation
+
+        # Check required fields
+        for field_name, field_schema in schema.fields.items():
+            value = inputs.get(field_name)
+
+            # Check if field is required
+            is_required = field_schema.required
+
+            # Check conditional required (e.g., "operation == 'store'")
+            if field_schema.required_when:
+                is_required = self._evaluate_required_condition(
+                    field_schema.required_when, inputs
+                )
+
+            # Skip validation for template variables like "{{var}}"
+            if value is not None and isinstance(value, str) and value.startswith("{{"):
+                continue
+
+            if is_required and value is None:
+                return f"missing required input '{field_name}' for {agent_type}"
+
+            # Check enum values (skip template variables)
+            if value is not None and field_schema.enum:
+                if not isinstance(value, str) or not value.startswith("{{"):
+                    if value not in field_schema.enum:
+                        return f"invalid value '{value}' for '{field_name}', must be one of {field_schema.enum}"
+
+        return ""
+
+    def _evaluate_required_condition(self, condition: str, inputs: Dict[str, Any]) -> bool:
+        """
+        Evaluate a required_when condition like "operation == 'store'"
+
+        Args:
+            condition: The condition string
+            inputs: The inputs dictionary
+
+        Returns:
+            True if condition is met, False otherwise
+        """
+        import re
+        match = re.match(r"(\w+)\s*(==|!=)\s*['\"]?([^'\"]+)['\"]?", condition)
+        if not match:
+            return False
+
+        field, operator, expected = match.groups()
+        actual = inputs.get(field)
+
+        # Skip if actual value is a template variable
+        if isinstance(actual, str) and actual.startswith("{{"):
+            return False  # Can't evaluate, assume not required
+
+        if operator == "==":
+            return actual == expected
+        elif operator == "!=":
+            return actual != expected
+
+        return False
 
     def _validate_control_flow_step(self, step: dict) -> str:
         """

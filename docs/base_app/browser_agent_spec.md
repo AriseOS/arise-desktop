@@ -10,7 +10,24 @@ Browser interactions: navigate, click, fill, scroll. **browser_agent handles nav
 - browser_agent: Navigation + Interactions (click, fill, scroll)
 - scraper_agent: Data extraction
 
-## Input Parameters
+## Input Schema
+
+The agent validates inputs using `INPUT_SCHEMA`. Access programmatically:
+```python
+from src.clients.desktop_app.ami_daemon.base_agent.agents import BrowserAgent
+schema = BrowserAgent.get_input_schema()
+```
+
+### Fields
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `target_url` | str | No | URL to navigate to before interaction |
+| `interaction_steps` | list | No | List of interaction steps |
+| `timeout` | int | No | Execution timeout in seconds (default: 30) |
+
+**Note**: At least one of `target_url` or `interaction_steps` should be provided.
+
+## Input Parameters (YAML)
 
 ### Optional
 ```yaml
@@ -22,8 +39,6 @@ inputs:
         hint_name: "//xpath/expression"
       text: "input text"                 # For fill operations only
 ```
-
-**Note**: At least one of `target_url` or `interaction_steps` must be provided.
 
 ## Output
 

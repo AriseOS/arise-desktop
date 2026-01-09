@@ -4,7 +4,7 @@ Autonomous Browser Agent - 自主浏览器 Agent
 import logging
 from typing import Any, Dict
 
-from .base_agent import BaseStepAgent, AgentMetadata
+from .base_agent import BaseStepAgent, AgentMetadata, InputSchema, FieldSchema
 from ..core.schemas import AgentContext, AgentInput, AgentOutput
 
 logger = logging.getLogger(__name__)
@@ -17,6 +17,33 @@ class AutonomousBrowserAgent(BaseStepAgent):
     这是一个专门用于自主浏览器操作的 Agent，它实际上是对 ToolAgent + AutonomousBrowserTool 的封装。
     在 Workflow 中使用 autonomous_browser_agent 类型时，会调用此 Agent。
     """
+
+    INPUT_SCHEMA = InputSchema(
+        description="Autonomous browser agent that can explore and interact with web pages using natural language instructions",
+        fields={
+            "task": FieldSchema(
+                type="str",
+                required=True,
+                description="Task description in natural language (alternative: 'instruction')"
+            ),
+            "max_actions": FieldSchema(
+                type="int",
+                required=False,
+                default=20,
+                description="Maximum number of actions the agent can take"
+            ),
+        },
+        examples=[
+            {
+                "task": "Go to google.com and search for 'Python tutorials'",
+                "max_actions": 10
+            },
+            {
+                "task": "Navigate to the login page and fill in the credentials",
+                "max_actions": 15
+            }
+        ]
+    )
 
     def __init__(self):
         metadata = AgentMetadata(

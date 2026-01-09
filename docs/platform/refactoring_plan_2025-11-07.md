@@ -1279,7 +1279,7 @@ class BaseAgent:
         
         self.tools = {}
         self.memory = MemoryManager()
-        self.workflow_engine = AgentWorkflowEngine(self)
+        self.workflow_engine = WorkflowEngine(self)
     
     async def run_workflow(self, workflow, context: Dict):
         # user_id 通过 context 传递

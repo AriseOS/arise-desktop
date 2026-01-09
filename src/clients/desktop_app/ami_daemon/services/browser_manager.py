@@ -326,6 +326,49 @@ class BrowserManager:
         """
         return self.state == BrowserState.RUNNING and len(self._managed_sessions) > 0
 
+    async def close_workflow_session(self, session_id: str) -> Dict[str, Any]:
+        """Close a specific workflow browser session
+
+        Args:
+            session_id: Session identifier (e.g., "workflow_task_xxx")
+
+        Returns:
+            Dict with status of the close operation
+        """
+        if session_id not in self._managed_sessions:
+            logger.debug(f"Session not found (may already be closed): {session_id}")
+            return {"status": "not_found", "session_id": session_id}
+
+        logger.info(f"Closing workflow browser session: {session_id}")
+
+        try:
+            # Close session via session manager
+            if self.session_manager:
+                await self.session_manager.close_session(session_id, force=True)
+
+            # Remove from managed sessions
+            if session_id in self._managed_sessions:
+                del self._managed_sessions[session_id]
+
+            logger.info(f"✅ Workflow browser session closed: {session_id}")
+
+            # Update global state if no more sessions
+            if not self._managed_sessions:
+                self.state = BrowserState.STOPPED
+                # Stop health check if no sessions left
+                if self._health_check_task and not self._health_check_task.done():
+                    self._health_check_task.cancel()
+                self._notify_status_change("stopped")
+
+            return {"status": "closed", "session_id": session_id}
+
+        except Exception as e:
+            logger.error(f"Error closing workflow session {session_id}: {e}")
+            # Still remove from managed sessions to avoid stale references
+            if session_id in self._managed_sessions:
+                del self._managed_sessions[session_id]
+            return {"status": "error", "session_id": session_id, "error": str(e)}
+
     def subscribe_status_change(self, callback: Callable[[str], None]):
         """Subscribe to browser status change events
 

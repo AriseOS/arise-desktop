@@ -11,8 +11,8 @@
 ## 现有架构分析
 
 ### 核心组件
-- `BaseAgent`: 主要的Agent基类，包含 `AgentWorkflowEngine`
-- `AgentWorkflowEngine`: 工作流执行引擎，已支持 `AgentWorkflowStep`
+- `BaseAgent`: 主要的Agent基类，包含 `WorkflowEngine`
+- `WorkflowEngine`: 工作流执行引擎，已支持 `AgentWorkflowStep`
 - `AgentRegistry`: Agent注册系统
 - `BaseStepAgent`: 步骤Agent基类
 - `TextAgent/ToolAgent/CodeAgent`: 具体的Agent实现
@@ -80,12 +80,12 @@ class BaseAgent:
             custom_agent = MyCustomAgent()
             success = agent.register_custom_agent(custom_agent)
         """
-        if not self.agent_workflow_engine:
+        if not self.workflow_engine:
             logger.error("工作流引擎未初始化")
             return False
         
         try:
-            self.agent_workflow_engine.agent_registry.register_agent(agent)
+            self.workflow_engine.agent_registry.register_agent(agent)
             logger.info(f"自定义Agent注册成功: {agent.metadata.name}")
             return True
         except Exception as e:
@@ -185,10 +185,10 @@ class BaseAgent:
             agents = agent.list_available_agents()
             print(f"可用Agent: {agents}")
         """
-        if not self.agent_workflow_engine:
+        if not self.workflow_engine:
             return []
         
-        return self.agent_workflow_engine.agent_registry.list_agent_names()
+        return self.workflow_engine.agent_registry.list_agent_names()
 
     def get_agent_info(self, agent_name: str) -> Optional[Dict[str, Any]]:
         """
@@ -204,11 +204,11 @@ class BaseAgent:
             info = agent.get_agent_info("text_agent")
             print(f"Agent信息: {info}")
         """
-        if not self.agent_workflow_engine:
+        if not self.workflow_engine:
             return None
         
         try:
-            agent_instance = self.agent_workflow_engine.agent_registry.get_agent(agent_name)
+            agent_instance = self.workflow_engine.agent_registry.get_agent(agent_name)
             if agent_instance:
                 return {
                     "name": agent_instance.metadata.name,

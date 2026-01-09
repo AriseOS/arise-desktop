@@ -5,7 +5,36 @@
 ## Purpose
 Persistent data storage with LLM-generated SQL. Supports store, query, and export operations.
 
-## Input Parameters
+## Input Schema
+
+The agent validates inputs using `INPUT_SCHEMA`. Access programmatically:
+```python
+from src.clients.desktop_app.ami_daemon.base_agent.agents import StorageAgent
+schema = StorageAgent.get_input_schema()
+```
+
+### Required Fields
+| Field | Type | Description |
+|-------|------|-------------|
+| `operation` | str | Operation type: `store`, `query`, or `export` |
+| `collection` | str | Table/collection name (suffixed with user_id) |
+
+### Conditional Required Fields
+| Field | Type | Required When | Description |
+|-------|------|---------------|-------------|
+| `data` | dict\|list | `operation == 'store'` | Data to store |
+| `export_format` | str | `operation == 'export'` | Format: `csv`, `excel`, or `json` |
+
+### Optional Fields
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `upsert_key` | str | - | Field name for upsert (update if exists) |
+| `filters` | dict | - | Query filters as field-value pairs |
+| `limit` | int | - | Maximum results for query |
+| `order_by` | str | - | Field to order results by |
+| `output_path` | str | - | Export file path |
+
+## Input Parameters (YAML)
 
 ### Store Operation
 ```yaml
@@ -23,10 +52,9 @@ inputs:
 inputs:
   operation: "query"
   collection: "collection_name"
-  query_requirements:                 # Natural language query description
-    description: "Query description"
-    filters: {}                       # Optional: Filter conditions
-    limit: 10                         # Optional: Result limit
+  filters: {}                         # Optional: Filter conditions
+  limit: 10                           # Optional: Result limit
+  order_by: "field_name"              # Optional: Order by field
 ```
 
 ### Export Operation

@@ -11,7 +11,7 @@ BaseAgent框架采用了三层架构设计：**BaseAgent核心框架** + **Workf
 
 ### 1.2 技术实现结构
 ```
-AgentWorkflowEngine (base_agent/core/agent_workflow_engine.py:24)
+WorkflowEngine (base_agent/core/workflow_engine.py)
 ├── AgentRegistry - 管理所有可用Agent类型
 ├── AgentExecutor - 负责Agent的执行调度  
 ├── AgentRouter - 处理Agent间的路由和通信
@@ -184,7 +184,7 @@ agent2 = BaseAgent(..., user_id="user123")
 
 ### 4.1 核心框架文件
 - `base_app/base_app/base_agent/core/base_agent.py` - BaseAgent主类实现
-- `base_app/base_app/base_agent/core/agent_workflow_engine.py` - Agent工作流引擎
+- `base_app/base_app/base_agent/core/workflow_engine.py` - 工作流引擎
 - `base_app/base_app/base_agent/core/schemas.py` - 数据结构定义
 
 ### 4.2 Agent实现文件

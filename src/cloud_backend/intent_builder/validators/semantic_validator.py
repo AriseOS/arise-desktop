@@ -81,13 +81,17 @@ class SemanticValidationResult:
 
 
 # Validation prompt template
-VALIDATOR_PROMPT = """You are a Workflow validation expert. Your task is to verify that a generated Workflow can accomplish the user's intended task.
+VALIDATOR_PROMPT = """You are validating whether a generated Workflow can accomplish the user's task.
 
-## User's Task Description
+## Context
+
+The user recorded their browser actions (clicks, navigation, data extraction). A workflow was generated to automate what they did. Your job is to check: **Can this workflow accomplish the user's goal?**
+
+## User's Task
 {task_description}
 
 ## User's Intent Sequence
-The user performed these actions (in order):
+What the user did:
 {intent_summary}
 
 ## Generated Workflow
@@ -95,46 +99,49 @@ The user performed these actions (in order):
 {workflow_yaml}
 ```
 
-## Validation Criteria
+## Validation Focus
 
-Please evaluate the workflow on these dimensions:
+**Only check if the workflow can accomplish the user's goal.** Don't nitpick implementation details.
 
-1. **Completeness**: Does the workflow cover all the steps needed to accomplish the task?
-   - Are all user intents represented in the workflow?
-   - Are there any missing steps?
+Ask yourself:
+1. **Does it achieve the goal?** - Will running this workflow produce the data/result the user wanted?
+2. **Are the key steps there?** - Navigation to the right pages, extraction of the right data?
+3. **Will the data flow work?** - Can extracted data be used by later steps?
 
-2. **Correctness**: Are the steps in the right order with correct configurations?
-   - Is browser_agent used for navigation and scraper_agent for extraction?
-   - Are data dependencies handled correctly (e.g., extracting URLs before navigating)?
-
-3. **Data Flow**: Are variables properly defined and used?
-   - Are extracted data variables available where needed?
-   - Is loop data flow correct (extracting list, then iterating)?
-
-4. **Executability**: Can each step actually execute?
-   - Are required inputs provided?
-   - Are agent types used correctly?
+**Don't worry about:**
+- Exact xpath accuracy (scripts handle this)
+- Wait times or loading states (handled at runtime)
+- Minor optimizations
+- Whether it follows the exact same path as user (shortcuts are OK)
+- Array index notation like `.0` (valid syntax)
 
 ## Output Format
 
-Respond with a JSON object:
 ```json
-{
+{{
     "valid": true/false,
     "score": 0-100,
-    "summary": "Brief overall assessment",
+    "summary": "Brief assessment",
     "issues": [
-        {
+        {{
             "severity": "error" or "warning",
-            "message": "Description of the issue",
-            "suggestion": "How to fix it (optional)"
-        }
+            "message": "Issue description",
+            "suggestion": "How to fix (optional)"
+        }}
     ]
-}
+}}
 ```
 
-If the workflow looks correct and complete, return valid=true with score >= 80.
-Only return valid=false if there are critical issues that would prevent task completion.
+**Scoring guide:**
+- 80-100: Workflow will accomplish the task
+- 60-79: Workflow will likely work but has minor issues
+- 40-59: Workflow might not work, has significant issues
+- 0-39: Workflow will not accomplish the task
+
+**Return valid=true if score >= 70.** Only return valid=false for critical issues like:
+- Missing essential steps (e.g., never navigates to the target page)
+- Broken data flow (e.g., uses variable that's never defined)
+- Wrong goal (e.g., extracts completely different data than requested)
 """
 
 
@@ -252,21 +259,19 @@ class SemanticValidator:
 
         except Exception as e:
             logger.error(f"Semantic validation error: {e}")
-            # On error, return a warning but don't block
-            return SemanticValidationResult(
-                valid=True,
-                score=60,
-                summary=f"Semantic validation encountered an error: {str(e)}",
-                issues=[SemanticIssue(
-                    severity="warning",
-                    message=f"Semantic validation failed: {str(e)}"
-                )]
-            )
+            raise
 
     def _parse_response(self, response: Dict[str, Any]) -> SemanticValidationResult:
         """Parse LLM response into SemanticValidationResult"""
         try:
-            valid = response.get("valid", True)
+            # Check if this is a fallback response from failed JSON parsing
+            if "answer" in response and "valid" not in response:
+                raise ValueError(f"LLM returned invalid JSON, got raw text: {str(response.get('answer', ''))[:100]}")
+
+            valid = response.get("valid")
+            if valid is None:
+                raise ValueError(f"Missing 'valid' field in response: {response}")
+
             score = response.get("score", 80 if valid else 40)
             summary = response.get("summary", "")
 
@@ -287,8 +292,4 @@ class SemanticValidator:
 
         except Exception as e:
             logger.error(f"Failed to parse validation response: {e}")
-            return SemanticValidationResult(
-                valid=True,
-                score=60,
-                summary="Failed to parse validation response"
-            )
+            raise

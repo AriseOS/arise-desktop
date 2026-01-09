@@ -204,7 +204,7 @@ class WorkflowExecutor:
 
         try:
             # Use WorkflowConfigLoader to parse and validate YAML
-            from src.clients.desktop_app.ami_daemon.base_agent.workflows.workflow_loader import WorkflowConfigLoader
+            from src.clients.desktop_app.ami_daemon.base_agent.workflows.loader import WorkflowConfigLoader
 
             loader = WorkflowConfigLoader()
             # Pass workflow_id for file path organization (e.g., "workflow_75a80ae0a48f")
@@ -366,8 +366,8 @@ class WorkflowExecutor:
             task.progress = 100
             task.completed_at = datetime.now()
             task.result = result.final_result
-            task.error = result.error if not result.success else None
-            task.message = "Execution completed" if result.success else f"Failed: {result.error}"
+            task.error = result.error_message if not result.success else None
+            task.message = "Execution completed" if result.success else f"Failed: {result.error_message}"
 
             # Send final progress update (include workflow_yaml for feedback context)
             await self._send_progress_update(task_id, {
@@ -399,8 +399,8 @@ class WorkflowExecutor:
             else:
                 await log_callback(
                     "error",
-                    f"❌ Workflow failed: {result.error}",
-                    {"error": result.error}
+                    f"❌ Workflow failed: {result.error_message}",
+                    {"error": result.error_message}
                 )
 
             # Save result
@@ -488,6 +488,16 @@ class WorkflowExecutor:
                 "error": task.error,
                 "timestamp": datetime.now().isoformat()
             })
+
+        finally:
+            # Always close browser session after workflow completes (success or failure)
+            session_id = f"workflow_{task_id}"
+            try:
+                logger.info(f"Closing browser session after workflow: {session_id}")
+                await self.browser.close_workflow_session(session_id)
+                logger.info(f"✅ Browser session closed: {session_id}")
+            except Exception as e:
+                logger.warning(f"Failed to close browser session {session_id}: {e}")
 
     async def _send_progress_update(self, task_id: str, data: dict):
         """Send progress update via callback if set"""

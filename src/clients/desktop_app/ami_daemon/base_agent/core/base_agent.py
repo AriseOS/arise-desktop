@@ -1,21 +1,17 @@
 """
-BaseAgent 基础框架
-所有定制Agent的基础类，提供标准化接口和能力
+BaseAgent Framework
+Base class for all custom Agents, providing standardized interfaces and capabilities
 """
 import asyncio
 import logging
-import time
 import uuid
 from typing import Any, Dict, List, Optional, Callable, Union
 from datetime import datetime
-import json
 
 from .schemas import (
-    AgentConfig, AgentResult, AgentState, AgentStatus, AgentPriority,
-    WorkflowResult, Workflow, AgentCapabilitySpec, InterfaceSpec, ExtensionSpec,
-    StepType, ErrorHandling, AgentWorkflowStep
+    AgentConfig, AgentResult, AgentState, AgentStatus,
+    WorkflowResult, Workflow, AgentWorkflowStep
 )
-from .agent_workflow_engine import AgentWorkflowEngine
 from ..tools.base_tool import BaseTool, ToolResult, ToolStatus
 from ..memory.memory_manager import MemoryManager
 
@@ -24,16 +20,16 @@ logger = logging.getLogger(__name__)
 
 class BaseAgent:
     """
-    通用Agent基础框架
-    所有定制Agent都继承此类，提供标准化接口
-    
-    核心设计原则：
-    1. 标准化接口 - 为AI工具提供清晰的扩展规范
-    2. 工具集成 - 无缝集成各种外部工具
-    3. 状态管理 - 完整的执行状态和内存管理
-    4. 可扩展性 - 支持钩子和插件机制
+    Universal Agent base framework.
+    All custom Agents inherit from this class for standardized interfaces.
+
+    Core design principles:
+    1. Standardized interfaces - Clear extension specs for AI tools
+    2. Tool integration - Seamless integration with various external tools
+    3. State management - Complete execution state and memory management
+    4. Extensibility - Support for hooks and plugin mechanisms
     """
-    
+
     def __init__(
         self,
         config: Optional[AgentConfig] = None,
@@ -44,25 +40,18 @@ class BaseAgent:
         browser_session_id: Optional[str] = None,
         cloud_client: Optional[Any] = None
     ):
-        """初始化BaseAgent
+        """Initialize BaseAgent
 
         Args:
-            config: Agent配置
-            config_service: 配置服务实例
-            provider_config: LLM provider配置
-            user_id: 用户ID，用于Memory隔离。如果不指定，每个BaseAgent实例将拥有独立的Memory命名空间
-            browser_manager: BrowserManager实例引用，用于统一管理浏览器会话。
-                            如果workflow中使用浏览器相关工具，此参数必须提供。
-            browser_session_id: 浏览器会话ID，指定使用哪个browser session。
-                               必须与 browser_manager 一起使用。
-            cloud_client: CloudClient实例，用于与云端通信（如脚本生成）
-
-        Important:
-            如果workflow需要使用浏览器（BrowserAgent/ToolAgent with browser tools），
-            必须同时提供 browser_manager 和 browser_session_id 参数。
-            BrowserManager 必须在调用 BaseAgent 之前先创建对应的浏览器会话。
+            config: Agent configuration
+            config_service: Configuration service instance
+            provider_config: LLM provider configuration
+            user_id: User ID for Memory isolation
+            browser_manager: BrowserManager instance for unified browser session management
+            browser_session_id: Browser session ID
+            cloud_client: CloudClient instance for cloud communication
         """
-        # 基础配置
+        # Basic configuration
         self.config = config or AgentConfig(name="BaseAgent")
         self.config_service = config_service
         self.id = str(uuid.uuid4())
@@ -74,173 +63,141 @@ class BaseAgent:
         # Cloud client for script generation
         self.cloud_client = cloud_client
 
-        # 核心组件
+        # Core components
         self.tools: Dict[str, BaseTool] = {}
         self.hooks: Dict[str, List[Callable]] = {}
 
-        # Provider初始化
+        # Provider initialization
         self.provider = None
         self.provider_config = provider_config or {}
         self._initialize_provider()
 
-        # 确定 Memory 的 user_id
+        # Determine Memory user_id
         if user_id:
-            # 明确为某个用户服务
             memory_user_id = user_id
             self.user_id = user_id
-            logger.info(f"BaseAgent 实例 {self.id[:8]} 已启动，服务用户: {user_id}")
+            logger.info(f"BaseAgent instance {self.id[:8]} started, serving user: {user_id}")
         else:
-            # 兼容模式：使用 agent.id（每个实例独立 memory）
             memory_user_id = f"agent_{self.id}"
             self.user_id = memory_user_id
             logger.warning(
-                f"BaseAgent 未指定 user_id，使用实例独立 memory 命名空间: {memory_user_id[:20]}..."
-                "\n提示: 如需跨实例共享 memory（如脚本缓存），请在创建 BaseAgent 时传入 user_id 参数"
+                f"BaseAgent user_id not specified, using instance-isolated memory namespace: {memory_user_id[:20]}..."
             )
 
-        # Memory系统 - 始终启用
+        # Memory system
         self.memory_manager = MemoryManager(
             user_id=memory_user_id,
             config_service=config_service
         )
-        logger.info(f"Memory系统已启用，user_id: {memory_user_id}")
-        
-        # Agent工作流引擎
+        logger.info(f"Memory system enabled, user_id: {memory_user_id}")
+
+        # Workflow engine - lazy import to avoid circular dependency
         try:
-            self.agent_workflow_engine = AgentWorkflowEngine(agent_instance=self)
-            logger.info("Agent工作流引擎初始化成功")
+            from .workflow_engine import WorkflowEngine
+            self.workflow_engine = WorkflowEngine(agent_instance=self)
+            logger.info("Workflow engine initialized successfully")
         except ImportError as e:
-            logger.error(f"Agent工作流引擎初始化失败: {e}")
-            self.agent_workflow_engine = None
-        
-        # 状态管理
+            logger.error(f"Workflow engine initialization failed: {e}")
+            self.workflow_engine = None
+
+        # State management
         self.state = AgentState(
             agent_id=self.id,
             status=AgentStatus.CREATED
         )
-        
-        # 执行统计
-        self._execution_history: List[Dict[str, Any]] = []
-        self._last_checkpoint: Optional[datetime] = None
 
-        # 初始化日志
+        # Execution statistics
+        self._execution_history: List[Dict[str, Any]] = []
+
+        # Setup logging
         self._setup_logging()
-        
-        # 自动注册配置中的工具
-        self._auto_register_tools()
-        
-        logger.info(f"BaseAgent {self.config.name} ({self.id}) 初始化完成")
-    
-    # ==================== 标准化接口 ====================
-    
+
+        logger.info(f"BaseAgent {self.config.name} ({self.id}) initialized")
+
+    # ==================== Standardized Interfaces ====================
+
     async def execute(self, input_data: Any, **kwargs) -> AgentResult:
         """
-        主执行入口 - 子类必须实现
-        
+        Main execution entry - subclasses must implement
+
         Args:
-            input_data: 输入数据
-            **kwargs: 额外参数
-            
+            input_data: Input data
+            **kwargs: Additional parameters
+
         Returns:
-            AgentResult: 执行结果
-            
-        Example:
-            async def execute(self, task: str, **kwargs) -> AgentResult:
-                # 实现具体的Agent逻辑
-                result = await self.use_tool('browser', 'navigate', {'url': 'https://example.com'})
-                return AgentResult(success=True, data=result.data)
+            AgentResult: Execution result
         """
-        raise NotImplementedError("子类必须实现 execute 方法")
-    
+        raise NotImplementedError("Subclasses must implement execute method")
+
     async def initialize(self) -> bool:
         """
-        初始化Agent
-        
+        Initialize Agent
+
         Returns:
-            bool: 初始化是否成功
-            
-        Example:
-            async def initialize(self) -> bool:
-                # 初始化工具
-                await self.register_tool('browser', BrowserTool())
-                # 加载配置
-                await self.load_memory('user_preferences')
-                return await super().initialize()
+            bool: Whether initialization was successful
         """
         try:
             self.state.status = AgentStatus.INITIALIZING
             await self._trigger_hook('before_initialize')
-            
-            # 初始化Provider
+
+            # Initialize Provider
             if self.provider:
                 provider_success = await self.initialize_provider_async()
                 if not provider_success:
-                    logger.error("Provider初始化失败，无法进行大模型推理")
+                    logger.error("Provider initialization failed")
                     self.state.status = AgentStatus.FAILED
                     return False
             else:
-                logger.error("Provider未设置，无法进行大模型推理")
+                logger.error("Provider not set")
                 self.state.status = AgentStatus.FAILED
                 return False
-            
-            # 初始化所有工具
+
+            # Initialize all tools
             for tool_name, tool in self.tools.items():
                 success = await tool.initialize()
                 if not success:
-                    logger.error(f"工具 {tool_name} 初始化失败")
+                    logger.error(f"Tool {tool_name} initialization failed")
                     return False
 
             self.state.status = AgentStatus.READY
             self.state.started_at = datetime.now()
-            
+
             await self._trigger_hook('after_initialize')
-            logger.info(f"Agent {self.config.name} 初始化成功")
+            logger.info(f"Agent {self.config.name} initialized successfully")
             return True
-            
+
         except Exception as e:
-            logger.error(f"Agent初始化失败: {e}")
+            logger.error(f"Agent initialization failed: {e}")
             self.state.status = AgentStatus.FAILED
             return False
-    
+
     async def cleanup(self) -> bool:
         """
-        清理资源
-        
+        Cleanup resources
+
         Returns:
-            bool: 清理是否成功
-            
-        Example:
-            async def cleanup(self) -> bool:
-                # 保存状态
-                await self.save_checkpoint()
-                # 清理自定义资源
-                await self.custom_cleanup()
-                return await super().cleanup()
+            bool: Whether cleanup was successful
         """
         try:
             await self._trigger_hook('before_cleanup')
-            
-            # 清理所有工具
+
+            # Cleanup all tools
             for tool_name, tool in self.tools.items():
                 await tool.cleanup()
-            
-            # 保存最终状态
-            if self.config.enable_persistence:
-                await self.save_checkpoint()
-            
+
             self.state.status = AgentStatus.STOPPED
             self.state.completed_at = datetime.now()
-            
+
             await self._trigger_hook('after_cleanup')
-            logger.info(f"Agent {self.config.name} 清理完成")
+            logger.info(f"Agent {self.config.name} cleanup completed")
             return True
-            
+
         except Exception as e:
-            logger.error(f"Agent清理失败: {e}")
+            logger.error(f"Agent cleanup failed: {e}")
             return False
-    
-    # ==================== 工作流接口 ====================
-    
+
+    # ==================== Workflow Interface ====================
+
     async def run_workflow(
         self,
         workflow: Union[Workflow, List[AgentWorkflowStep]],
@@ -255,51 +212,15 @@ class BaseAgent:
             workflow: Workflow definition or list of steps
             input_data: Input data dict
             step_callback: Optional async callback function(step_index, step_name, status, result)
-                          Called when step starts and completes for real-time progress updates
             log_callback: Optional async callback function(level, message, metadata)
-                         Called for detailed execution logs from agents
-            workflow_id: Optional workflow ID for resource path organization.
-                        If not provided, uses workflow.name or generates one.
+            workflow_id: Optional workflow ID for resource path organization
 
         Returns:
             WorkflowResult: Workflow execution result
-
-        Example:
-            # Using step list
-            steps = [
-                AgentWorkflowStep(
-                    name="Search memory",
-                    step_type=StepType.MEMORY,
-                    memory_action="search",
-                    query="user preferences"
-                ),
-                AgentWorkflowStep(
-                    name="Generate response",
-                    step_type=StepType.CODE,
-                    code="result = f'Based on memory: {step_results}'"
-                )
-            ]
-            result = await self.run_workflow(steps)
-
-            # Using complete workflow
-            workflow = Workflow(name="user_qa", steps=steps)
-            result = await self.run_workflow(workflow, {"user_input": "hello"})
-
-            # With callbacks for progress and logs
-            async def progress_callback(step_idx, step_name, status, result):
-                print(f"Step {step_idx}: {step_name} - {status}")
-
-            async def log_callback(level, message, metadata):
-                print(f"[{level}] {message}")
-
-            result = await self.run_workflow(workflow, input_data,
-                                            step_callback=progress_callback,
-                                            log_callback=log_callback)
         """
         if isinstance(workflow, list):
-            # All steps are AgentWorkflowStep, use Agent workflow engine
-            if self.agent_workflow_engine:
-                return await self.agent_workflow_engine.execute_workflow(
+            if self.workflow_engine:
+                return await self.workflow_engine.execute_workflow(
                     workflow,
                     workflow_id=workflow_id,
                     input_data=input_data or {},
@@ -307,13 +228,11 @@ class BaseAgent:
                     log_callback=log_callback
                 )
             else:
-                raise RuntimeError("Agent workflow engine not initialized")
+                raise RuntimeError("Workflow engine not initialized")
         else:
-            # All workflows use AgentWorkflowStep, use Agent workflow engine
-            if self.agent_workflow_engine:
-                # Priority: explicit workflow_id > workflow.workflow_id > workflow.name
+            if self.workflow_engine:
                 effective_workflow_id = workflow_id or workflow.workflow_id or workflow.name
-                return await self.agent_workflow_engine.execute_workflow(
+                return await self.workflow_engine.execute_workflow(
                     workflow.steps,
                     workflow_id=effective_workflow_id,
                     input_data=input_data or {},
@@ -321,88 +240,20 @@ class BaseAgent:
                     log_callback=log_callback
                 )
             else:
-                raise RuntimeError("Agent workflow engine not initialized")
-    
-    async def process_user_input(self, user_input: str, user_id: str = None) -> str:
-        """
-        处理用户输入的主方法
+                raise RuntimeError("Workflow engine not initialized")
 
-        DEPRECATED: This method is deprecated. Use workflow execution instead.
-
-        Args:
-            user_input: 用户输入
-            user_id: 用户ID
-
-        Returns:
-            str: 处理结果
-        """
-        raise NotImplementedError(
-            "process_user_input is deprecated. Please load and execute a workflow using "
-            "load_workflow() and run_workflow() instead."
-        )
-    
-    
-    # ==================== 状态管理 ====================
-    
-    async def save_checkpoint(self) -> bool:
-        """
-        保存检查点
-        
-        Returns:
-            bool: 是否保存成功
-        """
-        try:
-            if not self.config.enable_persistence:
-                return True
-            
-            checkpoint_data = {
-                'state': self.state.dict(),
-                'variables': self.variables,
-                'memory': self.memory,
-                'execution_history': self._execution_history[-10:]  # 只保存最近10条
-            }
-            
-            # 实际实现中这里应该保存到数据库或文件
-            logger.debug(f"检查点已保存: {self.id}")
-            self._last_checkpoint = datetime.now()
-            return True
-            
-        except Exception as e:
-            logger.error(f"保存检查点失败: {e}")
-            return False
-    
-    async def restore_checkpoint(self, checkpoint_id: str) -> bool:
-        """
-        恢复检查点
-        
-        Args:
-            checkpoint_id: 检查点ID
-            
-        Returns:
-            bool: 是否恢复成功
-        """
-        try:
-            # 实际实现中这里应该从数据库或文件加载
-            logger.debug(f"检查点已恢复: {checkpoint_id}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"恢复检查点失败: {e}")
-            return False
-    
-    # ==================== 私有方法 ====================
-
+    # ==================== Private Methods ====================
 
     def _setup_logging(self) -> None:
-        """设置日志"""
+        """Setup logging"""
         if self.config.enable_logging:
             logging.basicConfig(
                 level=getattr(logging, self.config.log_level),
                 format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
             )
-    
+
     async def _trigger_hook(self, event: str, **kwargs) -> None:
-        """触发钩子"""
+        """Trigger hook"""
         if event in self.hooks:
             for callback in self.hooks[event]:
                 try:
@@ -411,21 +262,20 @@ class BaseAgent:
                     else:
                         callback(**kwargs)
                 except Exception as e:
-                    logger.error(f"钩子执行失败 {event}: {e}")
-    
-    
-    # ==================== 便利方法 ====================
-    
+                    logger.error(f"Hook execution failed {event}: {e}")
+
+    # ==================== Utility Methods ====================
+
     def get_status(self) -> AgentStatus:
-        """获取当前状态"""
+        """Get current status"""
         return self.state.status
-    
+
     def get_execution_history(self) -> List[Dict[str, Any]]:
-        """获取执行历史"""
+        """Get execution history"""
         return self._execution_history.copy()
-    
+
     def get_tool_info(self, tool_name: str) -> Optional[Dict[str, Any]]:
-        """获取工具信息"""
+        """Get tool info"""
         if tool_name in self.tools:
             tool = self.tools[tool_name]
             return {
@@ -435,38 +285,34 @@ class BaseAgent:
                 'status': tool.status.value
             }
         return None
-    
+
     async def health_check(self) -> Dict[str, Any]:
-        """健康检查"""
+        """Health check"""
         health_info = {
             'agent_id': self.id,
             'status': self.state.status.value,
             'uptime': (datetime.now() - self.state.created_at).total_seconds(),
             'tools': {},
-            'memory_usage': len(self.memory) + len(self.variables),
             'execution_count': self.state.execution_count
         }
-        
-        # 检查所有工具健康状态
+
         for tool_name, tool in self.tools.items():
             health_info['tools'][tool_name] = await tool.health_check()
-        
-        # 检查Provider健康状态
+
         if self.provider:
             health_info['provider'] = {
                 'type': type(self.provider).__name__,
                 'initialized': getattr(self.provider, 'is_initialized', False),
                 'model': getattr(self.provider, 'model_name', 'unknown')
             }
-        
+
         return health_info
-    
-    # ==================== Provider管理 ====================
-    
+
+    # ==================== Provider Management ====================
+
     def _initialize_provider(self) -> None:
-        """初始化Provider - 自动从config_service读取配置"""
+        """Initialize Provider - auto-load from config_service"""
         try:
-            # If provider_config is empty but config_service exists, auto-load from config
             if not self.provider_config and self.config_service:
                 import os
                 logger.info("No provider_config provided, loading from config_service")
@@ -474,14 +320,11 @@ class BaseAgent:
                 provider_type = self.config_service.get('llm.provider', 'anthropic')
                 model_name = self.config_service.get('llm.model', 'claude-3-5-sonnet-20241022')
 
-                # Auto-detect API key source
-                # Priority: provider_config['api_key'] > env var
                 if provider_type == 'anthropic':
                     api_key = os.environ.get('ANTHROPIC_API_KEY')
                 else:
                     api_key = os.environ.get('OPENAI_API_KEY')
 
-                # Check if should use API Proxy
                 use_proxy = self.config_service.get('llm.use_proxy', False)
                 base_url = None
                 if use_proxy:
@@ -495,13 +338,11 @@ class BaseAgent:
                     'base_url': base_url
                 }
 
-            # Get provider config values
             provider_type = self.provider_config.get('type', 'openai')
             api_key = self.provider_config.get('api_key')
             model_name = self.provider_config.get('model_name')
             base_url = self.provider_config.get('base_url')
 
-            # Initialize provider based on type
             if provider_type == 'openai':
                 from src.common.llm import OpenAIProvider
                 self.provider = OpenAIProvider(api_key=api_key, model_name=model_name, base_url=base_url)
@@ -512,31 +353,31 @@ class BaseAgent:
                 logger.warning(f"Unknown provider type: {provider_type}")
                 return
 
-            logger.info(f"Provider initialized: {provider_type}, model: {model_name}, base_url: {base_url or 'default'}")
+            logger.info(f"Provider initialized: {provider_type}, model: {model_name}")
 
         except Exception as e:
             logger.error(f"Provider initialization failed: {e}")
             self.provider = None
-    
+
     async def initialize_provider_async(self) -> bool:
-        """异步初始化Provider"""
+        """Async initialize Provider"""
         if not self.provider:
-            logger.warning("Provider未设置")
+            logger.warning("Provider not set")
             return False
-        
+
         try:
             await self.provider._initialize_client()
-            logger.info("Provider异步初始化完成")
+            logger.info("Provider async initialization completed")
             return True
         except Exception as e:
-            logger.error(f"Provider异步初始化失败: {e}")
+            logger.error(f"Provider async initialization failed: {e}")
             return False
-    
+
     def get_provider_info(self) -> Dict[str, Any]:
-        """获取Provider信息"""
+        """Get Provider info"""
         if not self.provider:
             return {"status": "not_initialized"}
-        
+
         return {
             "type": type(self.provider).__name__,
             "model": getattr(self.provider, 'model_name', 'unknown'),
@@ -544,51 +385,35 @@ class BaseAgent:
             "api_key_set": bool(getattr(self.provider, 'api_key', None))
         }
 
- # ==================== 工具调用接口 ====================
-    
+    # ==================== Tool Call Interface ====================
+
     async def use_tool(
-        self, 
-        tool_name: str, 
-        action: str, 
+        self,
+        tool_name: str,
+        action: str,
         params: Dict[str, Any],
         **kwargs
     ) -> ToolResult:
         """
-        标准化工具调用接口
-        
+        Standardized tool call interface
+
         Args:
-            tool_name: 工具名称
-            action: 动作名称
-            params: 动作参数
-            **kwargs: 额外参数
-            
+            tool_name: Tool name
+            action: Action name
+            params: Action parameters
+            **kwargs: Additional parameters
+
         Returns:
-            ToolResult: 工具执行结果
-            
-        Raises:
-            ValueError: 工具未注册或参数无效
-            
-        Example:
-            # 使用浏览器工具导航
-            result = await self.use_tool('browser', 'navigate', {
-                'url': 'https://example.com'
-            })
-            
-            # 使用Android工具读取微信
-            result = await self.use_tool('android', 'read_chat', {
-                'app': '微信',
-                'contact': '客户A'
-            })
+            ToolResult: Tool execution result
         """
         if tool_name not in self.tools:
-            raise ValueError(f"工具 '{tool_name}' 未注册")
-        
+            raise ValueError(f"Tool '{tool_name}' not registered")
+
         tool = self.tools[tool_name]
-        
+
         try:
             await self._trigger_hook('before_tool_call', tool_name=tool_name, action=action)
-            
-            # 记录工具调用
+
             call_info = {
                 'tool': tool_name,
                 'action': action,
@@ -596,285 +421,94 @@ class BaseAgent:
                 'timestamp': datetime.now()
             }
             self._execution_history.append(call_info)
-            
-            # 执行工具调用
+
             result = await tool.execute_with_retry(action, params, **kwargs)
-            
-            # 更新调用记录
+
             call_info['result'] = {
                 'success': result.success,
                 'execution_time': result.execution_time
             }
-            
+
             await self._trigger_hook('after_tool_call', tool_name=tool_name, result=result)
-            
-            logger.debug(f"工具调用完成: {tool_name}.{action} -> {result.success}")
+
+            logger.debug(f"Tool call completed: {tool_name}.{action} -> {result.success}")
             return result
-            
+
         except Exception as e:
-            logger.error(f"工具调用失败: {tool_name}.{action}, 错误: {e}")
+            logger.error(f"Tool call failed: {tool_name}.{action}, error: {e}")
             return ToolResult(
                 success=False,
-                message=f"工具调用失败: {str(e)}",
+                message=f"Tool call failed: {str(e)}",
                 status=ToolStatus.ERROR
             )
-    
+
     def register_tool(self, name: str, tool: BaseTool) -> None:
         """
-        注册工具
-        
+        Register tool
+
         Args:
-            name: 工具名称
-            tool: 工具实例
-            
-        Example:
-            # 注册浏览器工具
-            self.register_tool('browser', BrowserTool(config))
-            
-            # 注册自定义工具
-            self.register_tool('custom', MyCustomTool())
+            name: Tool name
+            tool: Tool instance
         """
         if not isinstance(tool, BaseTool):
-            raise ValueError(f"工具必须继承自 BaseTool")
-        
+            raise ValueError("Tool must inherit from BaseTool")
+
         self.tools[name] = tool
-        logger.info(f"工具 '{name}' 注册成功: {tool.metadata.description}")
-    
+        logger.info(f"Tool '{name}' registered: {tool.metadata.description}")
+
     def unregister_tool(self, name: str) -> bool:
         """
-        注销工具
-        
+        Unregister tool
+
         Args:
-            name: 工具名称
-            
+            name: Tool name
+
         Returns:
-            bool: 是否成功注销
+            bool: Whether unregistration was successful
         """
         if name in self.tools:
             del self.tools[name]
-            logger.info(f"工具 '{name}' 已注销")
+            logger.info(f"Tool '{name}' unregistered")
             return True
         return False
-    
+
     def get_registered_tools(self) -> List[str]:
         """
-        获取已注册的工具列表
-        
+        Get list of registered tools
+
         Returns:
-            List[str]: 工具名称列表
+            List[str]: Tool name list
         """
         return list(self.tools.keys())
-    
-    def _auto_register_tools(self) -> None:
-        """
-        根据配置自动注册工具
-        """
-        if not self.config.tools:
-            logger.debug("没有配置工具，跳过自动注册")
-            return
-        
-        logger.info(f"开始自动注册工具: {self.config.tools}")
-        
-        for tool_name in self.config.tools:
-            try:
-                tool = self._create_tool_instance(tool_name)
-                if tool:
-                    self.register_tool(tool_name, tool)
-                    logger.info(f"工具 '{tool_name}' 自动注册成功")
-                else:
-                    logger.warning(f"无法创建工具实例: {tool_name}")
-            except Exception as e:
-                logger.error(f"自动注册工具失败 {tool_name}: {e}")
-                import traceback
-                traceback.print_exc()
-    
-    def _create_tool_instance(self, tool_name: str) -> Optional[BaseTool]:
-        """
-        根据工具名称创建工具实例
-        
-        Args:
-            tool_name: 工具名称
-            
-        Returns:
-            Optional[BaseTool]: 工具实例
-        """
-        tool_registry = {
-            'browser_use': self._create_browser_tool,
-            'browser': self._create_browser_tool,  # 兼容旧名称
-            'android': self._create_android_tool,
-            'memory': self._create_memory_tool,
-            'llm_extract': self._create_llm_extract_tool,
-            'wechat_send': self._create_wechat_tool,
-            'file_manager': self._create_file_manager_tool,
-            'web_search': self._create_web_search_tool,
-            'data_processor': self._create_data_processor_tool,
-            'email_sender': self._create_email_sender_tool,
-        }
-        
-        if tool_name in tool_registry:
-            return tool_registry[tool_name]()
-        else:
-            logger.warning(f"未知工具类型: {tool_name}")
-            return None
-    
-    def _create_browser_tool(self) -> Optional[BaseTool]:
-        """创建浏览器工具"""
-        try:
-            from ..tools.browser_use import BrowserTool, BrowserConfig
 
-            # Read browser config from ConfigService if available
-            browser_config = BrowserConfig()
-            if self.config_service:
-                # Get config values from YAML
-                headless = self.config_service.get('agent.tools.browser.headless', True)
-                timeout = self.config_service.get('agent.tools.browser.timeout', 30)
-
-                # Get LLM config for browser tool
-                llm_model = self.config_service.get('agent.llm.model', 'gpt-4o')
-                llm_api_key = self.config_service.get('agent.llm.api_key')
-
-                browser_config = BrowserConfig(
-                    headless=headless,
-                    llm_model=llm_model,
-                    llm_api_key=llm_api_key
-                )
-
-                logger.info(f"Browser tool will launch new browser (headless={headless})")
-
-            return BrowserTool(config=browser_config)
-        except ImportError as e:
-            logger.error(f"无法导入浏览器工具: {e}")
-            return None
-    
-    def _create_android_tool(self) -> Optional[BaseTool]:
-        """创建Android工具"""
-        try:
-            from ..tools.android_tool import AndroidTool
-            return AndroidTool()
-        except ImportError as e:
-            logger.error(f"无法导入Android工具: {e}")
-            return None
-    
-    def _create_memory_tool(self) -> Optional[BaseTool]:
-        """创建内存工具"""
-        try:
-            from ..tools.memory_tool import MemoryTool
-            return MemoryTool(self.memory_manager)
-        except ImportError as e:
-            logger.error(f"无法导入内存工具: {e}")
-            return None
-    
-    def _create_llm_extract_tool(self) -> Optional[BaseTool]:
-        """创建LLM提取工具"""
-        try:
-            from ..tools.llm_extract_tool import LLMExtractTool
-            return LLMExtractTool(provider=self.provider)
-        except ImportError as e:
-            logger.error(f"无法导入LLM提取工具: {e}")
-            return None
-    
-    def _create_wechat_tool(self) -> Optional[BaseTool]:
-        """创建微信工具"""
-        try:
-            from ..tools.wechat_tool import WeChatTool
-            return WeChatTool()
-        except ImportError as e:
-            logger.error(f"无法导入微信工具: {e}")
-            return None
-    
-    def _create_file_manager_tool(self) -> Optional[BaseTool]:
-        """创建文件管理工具"""
-        try:
-            from ..tools.file_manager_tool import FileManagerTool
-            return FileManagerTool()
-        except ImportError as e:
-            logger.error(f"无法导入文件管理工具: {e}")
-            return None
-    
-    def _create_web_search_tool(self) -> Optional[BaseTool]:
-        """创建网络搜索工具"""
-        try:
-            from ..tools.web_search_tool import WebSearchTool
-            return WebSearchTool()
-        except ImportError as e:
-            logger.error(f"无法导入网络搜索工具: {e}")
-            return None
-    
-    def _create_data_processor_tool(self) -> Optional[BaseTool]:
-        """创建数据处理工具"""
-        try:
-            from ..tools.data_processor_tool import DataProcessorTool
-            return DataProcessorTool()
-        except ImportError as e:
-            logger.error(f"无法导入数据处理工具: {e}")
-            return None
-    
-    def _create_email_sender_tool(self) -> Optional[BaseTool]:
-        """创建邮件发送工具"""
-        try:
-            from ..tools.email_sender_tool import EmailSenderTool
-            return EmailSenderTool()
-        except ImportError as e:
-            logger.error(f"无法导入邮件发送工具: {e}")
-            return None
-
-    # ==================== 用户自定义接口 ====================
-    
-    def create_workflow_builder(self, name: str, description: str = "") -> 'WorkflowBuilder':
-        """
-        创建工作流构建器 - 用户友好的工作流创建接口
-        
-        Args:
-            name: 工作流名称
-            description: 工作流描述
-            
-        Returns:
-            WorkflowBuilder: 工作流构建器实例
-            
-        Example:
-            builder = agent.create_workflow_builder("数据分析流程", "用于处理和分析数据")
-            builder.add_text_step("理解需求", "分析用户的数据分析需求")
-            builder.add_tool_step("读取数据", "从文件中读取数据", tools=["file_reader"])
-            builder.add_code_step("分析数据", "进行统计分析", language="python")
-            workflow = builder.build()
-        """
-        from .workflow_builder import WorkflowBuilder
-        return WorkflowBuilder(name, description, self)
+    # ==================== Agent Info ====================
 
     def list_available_agents(self) -> List[str]:
         """
-        列出所有可用的Agent
-        
+        List all available agents
+
         Returns:
-            List[str]: Agent名称列表
-            
-        Example:
-            agents = agent.list_available_agents()
-            print(f"可用Agent: {agents}")
+            List[str]: Agent name list
         """
-        if not self.agent_workflow_engine:
+        if not self.workflow_engine:
             return []
 
-        return list(self.agent_workflow_engine.AGENT_TYPES.keys())
+        return list(self.workflow_engine.AGENT_TYPES.keys())
 
     def get_agent_info(self, agent_name: str) -> Optional[Dict[str, Any]]:
         """
-        获取Agent信息
+        Get agent info
 
         Args:
-            agent_name: Agent名称
+            agent_name: Agent name
 
         Returns:
-            Optional[Dict[str, Any]]: Agent信息字典
-
-        Example:
-            info = agent.get_agent_info("text_agent")
-            print(f"Agent信息: {info}")
+            Optional[Dict[str, Any]]: Agent info dict
         """
-        if not self.agent_workflow_engine:
+        if not self.workflow_engine:
             return None
 
-        agent_class = self.agent_workflow_engine.AGENT_TYPES.get(agent_name)
+        agent_class = self.workflow_engine.AGENT_TYPES.get(agent_name)
         if agent_class:
             return {
                 "name": agent_name,
@@ -882,116 +516,3 @@ class BaseAgent:
             }
 
         return None
-
-    def create_quick_qa_workflow(self, name: str = "快速问答", system_prompt: str = None) -> 'Workflow':
-        """
-        创建快速问答工作流
-        
-        Args:
-            name: 工作流名称
-            system_prompt: 自定义系统提示词
-            
-        Returns:
-            Workflow: 问答工作流实例
-            
-        Example:
-            workflow = agent.create_quick_qa_workflow("智能助手", "你是一个友好的AI助手")
-            result = await agent.run_custom_workflow(workflow, {"user_input": "你好"})
-        """
-        builder = self.create_workflow_builder(name, "快速问答工作流")
-        
-        if system_prompt:
-            # 创建自定义文本Agent
-            qa_agent = self.create_custom_text_agent(
-                name=f"{name}_qa_agent",
-                system_prompt=system_prompt,
-                response_style="friendly"
-            )
-            self.register_custom_agent(qa_agent)
-            
-            builder.add_custom_step(
-                name="回答问题",
-                agent_name=f"{name}_qa_agent",
-                instruction="回答用户的问题"
-            )
-        else:
-            builder.add_text_step(
-                name="回答问题",
-                instruction="回答用户的问题",
-                response_style="friendly"
-            )
-        
-        return builder.build()
-
-    def export_workflow(self, workflow: 'Workflow', file_path: str = None) -> str:
-        """
-        导出工作流配置
-        
-        Args:
-            workflow: 工作流实例
-            file_path: 导出文件路径（可选）
-            
-        Returns:
-            str: 工作流JSON字符串
-            
-        Example:
-            json_str = agent.export_workflow(workflow, "my_workflow.json")
-        """
-        import json
-        from datetime import datetime
-        
-        def default_serializer(obj):
-            """自定义JSON序列化器"""
-            if isinstance(obj, datetime):
-                return obj.isoformat()
-            raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
-        
-        workflow_dict = workflow.model_dump() if hasattr(workflow, 'model_dump') else workflow.dict()
-        json_str = json.dumps(workflow_dict, indent=2, ensure_ascii=False, default=default_serializer)
-        
-        if file_path:
-            try:
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write(json_str)
-                logger.info(f"工作流已导出到: {file_path}")
-            except Exception as e:
-                logger.error(f"导出工作流失败: {e}")
-        
-        return json_str
-
-    def import_workflow(self, json_str: str = None, file_path: str = None) -> 'Workflow':
-        """
-        导入工作流配置
-        
-        Args:
-            json_str: 工作流JSON字符串
-            file_path: 导入文件路径
-            
-        Returns:
-            Workflow: 工作流实例
-            
-        Example:
-            workflow = agent.import_workflow(file_path="my_workflow.json")
-        """
-        import json
-        
-        if file_path:
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    json_str = f.read()
-                logger.info(f"从文件导入工作流: {file_path}")
-            except Exception as e:
-                logger.error(f"导入工作流文件失败: {e}")
-                raise
-        
-        if not json_str:
-            raise ValueError("必须提供json_str或file_path参数")
-        
-        try:
-            workflow_dict = json.loads(json_str)
-            workflow = Workflow(**workflow_dict)
-            logger.info(f"工作流导入成功: {workflow.name}")
-            return workflow
-        except Exception as e:
-            logger.error(f"解析工作流JSON失败: {e}")
-            raise

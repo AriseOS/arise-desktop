@@ -7,10 +7,8 @@ Core framework components for BaseAgent.
 | File | Purpose |
 |------|---------|
 | `base_agent.py` | Main BaseAgent class - the container that executes workflows |
-| `agent_workflow_engine.py` | Workflow execution engine with Agent dispatch |
+| `workflow_engine.py` | Workflow execution engine with Agent dispatch |
 | `schemas.py` | Data structures (AgentContext, AgentResult, WorkflowStep, etc.) |
-| `state_manager.py` | State persistence across workflow execution |
-| `workflow_builder.py` | Programmatic workflow construction |
 
 ## Key Concepts
 
@@ -25,7 +23,7 @@ agent = BaseAgent(config, user_id="user123")
 result = await agent.run_workflow(workflow, input_data)
 ```
 
-### AgentWorkflowEngine
+### WorkflowEngine
 
 Executes workflow steps with:
 - Agent type dispatch via `AGENT_TYPES` dict
@@ -71,7 +69,7 @@ Carries state through workflow execution:
 For debugging or testing individual steps:
 
 ```python
-engine = AgentWorkflowEngine(agent)
+engine = WorkflowEngine(agent)
 
 # Execute single step with provided variables
 result = await engine.execute_step(

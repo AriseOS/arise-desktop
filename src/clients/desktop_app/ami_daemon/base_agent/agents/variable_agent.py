@@ -13,7 +13,7 @@ All operations output to {"result": ...} for consistent workflow mapping.
 import re
 import logging
 from typing import Any, Dict, List
-from .base_agent import BaseStepAgent, AgentMetadata
+from .base_agent import BaseStepAgent, AgentMetadata, InputSchema, FieldSchema
 from ..core.schemas import AgentOutput, AgentContext, AgentInput
 
 
@@ -29,6 +29,86 @@ class VariableAgent(BaseStepAgent):
 
     All operations output to {"result": ...} for consistent workflow mapping.
     """
+
+    INPUT_SCHEMA = InputSchema(
+        description="Variable manipulation agent for set, filter, slice, extend operations (no LLM required)",
+        fields={
+            "operation": FieldSchema(
+                type="str",
+                required=True,
+                enum=["set", "filter", "slice", "extend"],
+                description="Operation type"
+            ),
+            "data": FieldSchema(
+                type="any",
+                required=True,
+                description="Input data: dict for set, list for filter/slice/extend"
+            ),
+            "field": FieldSchema(
+                type="str",
+                required_when="operation == 'filter'",
+                description="Field name to filter by"
+            ),
+            "contains": FieldSchema(
+                type="str",
+                required=False,
+                description="Substring to match (for filter operation)"
+            ),
+            "equals": FieldSchema(
+                type="any",
+                required=False,
+                description="Exact value to match (for filter operation)"
+            ),
+            "start": FieldSchema(
+                type="int",
+                required=False,
+                description="Start index for slice operation"
+            ),
+            "end": FieldSchema(
+                type="int",
+                required=False,
+                description="End index for slice operation"
+            ),
+            "start_value": FieldSchema(
+                type="any",
+                required=False,
+                description="Value to match for finding slice start position"
+            ),
+            "match_field": FieldSchema(
+                type="str",
+                required=False,
+                description="Field name to match start_value against"
+            ),
+            "items": FieldSchema(
+                type="any",
+                required=False,
+                description="Items to add (for extend operation)"
+            ),
+        },
+        examples=[
+            {
+                "operation": "set",
+                "data": {"name": "John", "age": 30}
+            },
+            {
+                "operation": "filter",
+                "data": [{"name": "A", "price": 10}, {"name": "B", "price": 20}],
+                "field": "price",
+                "equals": 10
+            },
+            {
+                "operation": "slice",
+                "data": [1, 2, 3, 4, 5],
+                "start": 1,
+                "end": 4
+            },
+            {
+                "operation": "extend",
+                "data": [1, 2, 3],
+                "items": [4, 5]
+            }
+        ]
+    )
 
     def __init__(self):
         """Initialize VariableAgent without LLM provider"""

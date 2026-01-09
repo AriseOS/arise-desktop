@@ -1,41 +1,54 @@
 """
-BaseAgent 核心模块
-提供 Agent 基础框架、工作流引擎和数据结构
+BaseAgent Core Module
+Provides Agent base framework, workflow engine and data structures
+
+Note: WorkflowEngine is NOT imported here to avoid circular imports.
+Import it directly: from .workflow_engine import WorkflowEngine
 """
 
 from .base_agent import BaseAgent
-from .agent_workflow_engine import AgentWorkflowEngine
 from .schemas import (
-    # Agent 相关
+    # Agent related
     AgentConfig, AgentResult, AgentState, AgentStatus, AgentPriority,
     AgentCapabilitySpec, InterfaceSpec, ExtensionSpec,
-    
-    # 工作流相关
-    AgentWorkflowStep, Workflow, WorkflowResult, 
+    AgentContext, AgentInput, AgentOutput,
+
+    # Workflow related
+    AgentWorkflowStep, Workflow, WorkflowResult,
     ExecutionContext, StepResult, StepType, ErrorHandling
 )
 
+# Lazy import for WorkflowEngine to avoid circular imports
+def __getattr__(name):
+    if name == "WorkflowEngine":
+        from .workflow_engine import WorkflowEngine
+        return WorkflowEngine
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 __all__ = [
-    # 核心类
+    # Core classes
     "BaseAgent",
-    "AgentWorkflowEngine",
-    
-    # Agent 数据结构
+    "WorkflowEngine",  # Available via __getattr__
+
+    # Agent data structures
     "AgentConfig",
-    "AgentResult", 
+    "AgentResult",
     "AgentState",
     "AgentStatus",
     "AgentPriority",
     "AgentCapabilitySpec",
     "InterfaceSpec",
     "ExtensionSpec",
-    
-    # 工作流数据结构
+    "AgentContext",
+    "AgentInput",
+    "AgentOutput",
+
+    # Workflow data structures
     "AgentWorkflowStep",
     "Workflow",
     "WorkflowResult",
     "ExecutionContext",
-    "StepResult", 
+    "StepResult",
     "StepType",
     "ErrorHandling"
 ]

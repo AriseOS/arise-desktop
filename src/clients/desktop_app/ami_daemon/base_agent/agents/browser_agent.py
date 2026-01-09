@@ -42,7 +42,7 @@ import logging
 from typing import Any, Dict, Optional, List
 from pathlib import Path
 
-from .base_agent import BaseStepAgent, AgentMetadata
+from .base_agent import BaseStepAgent, AgentMetadata, InputSchema, FieldSchema
 from ..core.schemas import AgentContext
 
 # Import script templates from common module
@@ -95,6 +95,49 @@ class BrowserAgent(BaseStepAgent):
     6. Execute operation (click/fill/scroll) using Element API
     7. If failed → update DOM, feedback to Claude Agent, retry
     """
+
+    INPUT_SCHEMA = InputSchema(
+        description="Browser interaction agent for clicking, filling forms, and scrolling",
+        fields={
+            "target_url": FieldSchema(
+                type="str",
+                required=False,
+                description="URL to navigate to before interaction (optional if already on target page)"
+            ),
+            "interaction_steps": FieldSchema(
+                type="list",
+                required=False,
+                items_type="dict",
+                description="List of interaction steps, each with 'task' and 'xpath_hints'"
+            ),
+            "timeout": FieldSchema(
+                type="int",
+                required=False,
+                default=30,
+                description="Execution timeout in seconds"
+            ),
+        },
+        examples=[
+            {
+                "target_url": "https://example.com/login",
+                "interaction_steps": [
+                    {
+                        "task": "Click the login button",
+                        "xpath_hints": {"login_button": "//button[contains(text(), 'Login')]"}
+                    }
+                ]
+            },
+            {
+                "interaction_steps": [
+                    {
+                        "task": "Fill the search box with 'python'",
+                        "xpath_hints": {"search_input": "//input[@name='q']"},
+                        "text": "python"
+                    }
+                ]
+            }
+        ]
+    )
 
     # ==========================================================================
     # Preset Template: test_operation.py - Validates find_element.py

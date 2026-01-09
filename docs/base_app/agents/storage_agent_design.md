@@ -746,9 +746,9 @@ data:
 ### 5.2 Agent 注册
 
 ```python
-# base_app/base_agent/core/agent_workflow_engine.py
+# base_app/base_agent/core/workflow_engine.py
 
-class AgentWorkflowEngine:
+class WorkflowEngine:
     def __init__(self, ...):
         # Register built-in agents
         self.agent_registry.register("text_agent", TextAgent)
@@ -765,7 +765,7 @@ base_app/base_agent/
 ├── agents/
 │   └── storage_agent.py          # StorageAgent main class (single file)
 └── core/
-    └── agent_workflow_engine.py  # Register StorageAgent
+    └── workflow_engine.py  # Register StorageAgent
 ```
 
 ## 7. LLM 生成 SQL 的优势

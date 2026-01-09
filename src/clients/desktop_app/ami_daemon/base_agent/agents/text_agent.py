@@ -7,21 +7,47 @@ import logging
 from typing import Any, Dict
 
 try:
-    from .base_agent import BaseStepAgent, AgentMetadata
+    from .base_agent import BaseStepAgent, AgentMetadata, InputSchema, FieldSchema
     from ..core.schemas import (
         AgentContext, AgentInput, AgentOutput
     )
 except ImportError:
     # 绝对导入作为备选
-    from base_agent.agents.base_agent import BaseStepAgent, AgentMetadata
+    from base_agent.agents.base_agent import BaseStepAgent, AgentMetadata, InputSchema, FieldSchema
     from base_agent.core.schemas import (
         AgentContext, AgentInput, AgentOutput
     )
 
 
 class TextAgent(BaseStepAgent):
-    """文本生成Agent"""
-    
+    """Text generation agent using LLM"""
+
+    INPUT_SCHEMA = InputSchema(
+        description="Text generation agent for answering questions, generating text, summarizing content",
+        fields={
+            "instruction": FieldSchema(
+                type="str",
+                required=True,
+                description="Task instruction for the LLM"
+            ),
+            "data": FieldSchema(
+                type="dict",
+                required=False,
+                description="Input data to provide context to the LLM"
+            ),
+        },
+        examples=[
+            {
+                "instruction": "Summarize the following article",
+                "data": {"article": "...article content..."}
+            },
+            {
+                "instruction": "Answer the question based on the provided data",
+                "data": {"question": "What is the price?", "product_info": {"price": 99.99}}
+            }
+        ]
+    )
+
     def __init__(self):
         metadata = AgentMetadata(
             name="text_agent",

@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional, Union, List
 from datetime import datetime
 from pathlib import Path
 
-from .base_agent import BaseStepAgent, AgentMetadata
+from .base_agent import BaseStepAgent, AgentMetadata, InputSchema, FieldSchema
 from ..core.schemas import AgentContext
 from src.common.llm import OpenAIProvider, AnthropicProvider
 
@@ -51,7 +51,86 @@ class ScraperAgent(BaseStepAgent):
     - 支持复杂的页面交互（点击、滚动、输入等）
     - script模式自动检查KV缓存，无需手动区分初始化/执行阶段
     """
-    
+
+    INPUT_SCHEMA = InputSchema(
+        description="Web scraping agent for extracting structured data from web pages",
+        fields={
+            "data_requirements": FieldSchema(
+                type="dict|str",
+                required=True,
+                description="Data extraction requirements with output_format defining fields to extract"
+            ),
+            "target_path": FieldSchema(
+                type="str|list",
+                required=False,
+                description="URL(s) to navigate to (optional if already on target page)"
+            ),
+            "interaction_steps": FieldSchema(
+                type="list",
+                required=False,
+                items_type="dict",
+                description="Pre-extraction interactions (e.g., scroll to load more content)"
+            ),
+            "extraction_method": FieldSchema(
+                type="str",
+                required=False,
+                enum=["script", "llm"],
+                default="llm",
+                description="Extraction method: 'script' for cached scripts, 'llm' for direct LLM extraction"
+            ),
+            "dom_scope": FieldSchema(
+                type="str",
+                required=False,
+                enum=["partial", "full"],
+                default="partial",
+                description="DOM scope: 'partial' for visible elements, 'full' for complete DOM"
+            ),
+            "debug_mode": FieldSchema(
+                type="bool",
+                required=False,
+                default=False,
+                description="Enable debug mode for detailed logging"
+            ),
+            "max_items": FieldSchema(
+                type="int",
+                required=False,
+                default=0,
+                description="Maximum items to extract (0 for unlimited)"
+            ),
+            "timeout": FieldSchema(
+                type="int",
+                required=False,
+                default=30,
+                description="Extraction timeout in seconds"
+            ),
+        },
+        examples=[
+            {
+                "data_requirements": {
+                    "user_description": "Extract product information from the page",
+                    "output_format": {
+                        "name": "Product name",
+                        "price": "Product price",
+                        "description": "Product description"
+                    }
+                },
+                "target_path": "https://example.com/products",
+                "extraction_method": "llm"
+            },
+            {
+                "data_requirements": {
+                    "user_description": "Extract all article titles",
+                    "output_format": {"title": "Article title", "url": "Article URL"}
+                },
+                "interaction_steps": [
+                    {"action_type": "scroll", "parameters": {"direction": "down", "amount": 3}}
+                ],
+                "extraction_method": "script",
+                "max_items": 20
+            }
+        ]
+    )
+
     SYSTEM_PROMPT = """你是网页数据提取专家。根据提供的三步指导，分析DOM结构生成提取脚本。只返回Python代码，不要解释。"""
     
     def __init__(self,

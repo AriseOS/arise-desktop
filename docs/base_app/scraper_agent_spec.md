@@ -10,7 +10,31 @@ Data extraction from web pages. **scraper_agent ONLY extracts data from the curr
 - Use `browser_agent` to navigate first, then `scraper_agent` to extract
 - scraper_agent always operates on the current page from the shared browser session
 
-## Input Parameters
+## Input Schema
+
+The agent validates inputs using `INPUT_SCHEMA`. Access programmatically:
+```python
+from src.clients.desktop_app.ami_daemon.base_agent.agents import ScraperAgent
+schema = ScraperAgent.get_input_schema()
+```
+
+### Required Fields
+| Field | Type | Description |
+|-------|------|-------------|
+| `data_requirements` | dict\|str | Data extraction requirements with output_format |
+
+### Optional Fields
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `target_path` | str\|list | - | URL(s) to navigate (optional if already on page) |
+| `interaction_steps` | list | - | Pre-extraction interactions (e.g., scroll) |
+| `extraction_method` | str | "llm" | `llm` or `script` |
+| `dom_scope` | str | "partial" | `partial` or `full` |
+| `debug_mode` | bool | false | Enable debug logging |
+| `max_items` | int | 0 | Max items to extract (0 = unlimited) |
+| `timeout` | int | 30 | Timeout in seconds |
+
+## Input Parameters (YAML)
 
 ### Required
 ```yaml
@@ -28,15 +52,9 @@ inputs:
 inputs:
   extraction_method: "llm"            # "llm" | "script" (default: "llm")
   dom_scope: "partial"                # "partial" | "full" (default: "partial")
-  session_id: "session-id"            # Browser session to reuse
-  use_shared_session: true            # Use shared session from workflow (default: true)
-  options:
-    max_items: 20                     # Max items to extract
-    timeout: 30                       # Timeout in seconds
+  max_items: 20                       # Max items to extract
+  timeout: 30                         # Timeout in seconds
 ```
-
-**Removed Parameters**:
-- `target_path`: REMOVED. scraper_agent no longer navigates. Use browser_agent instead.
 
 ## Output
 

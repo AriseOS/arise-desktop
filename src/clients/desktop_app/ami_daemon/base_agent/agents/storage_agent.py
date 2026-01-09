@@ -10,10 +10,10 @@ from datetime import datetime
 from pathlib import Path
 
 try:
-    from .base_agent import BaseStepAgent, AgentMetadata
+    from .base_agent import BaseStepAgent, AgentMetadata, InputSchema, FieldSchema
     from ..core.schemas import AgentContext, AgentInput, AgentOutput
 except ImportError:
-    from base_agent.agents.base_agent import BaseStepAgent, AgentMetadata
+    from base_agent.agents.base_agent import BaseStepAgent, AgentMetadata, InputSchema, FieldSchema
     from base_agent.core.schemas import AgentContext, AgentInput, AgentOutput
 
 
@@ -31,6 +31,78 @@ class StorageAgent(BaseStepAgent):
 
     Uses LLM to generate SQL scripts and caches them in Memory KV Storage.
     """
+
+    INPUT_SCHEMA = InputSchema(
+        description="Storage agent for data persistence operations",
+        fields={
+            "operation": FieldSchema(
+                type="str",
+                required=True,
+                enum=["store", "query", "export"],
+                description="Operation type: store, query, or export"
+            ),
+            "collection": FieldSchema(
+                type="str",
+                required=True,
+                description="Collection/table name to operate on"
+            ),
+            "data": FieldSchema(
+                type="dict|list",
+                required_when="operation == 'store'",
+                description="Data to store (dict for single item, list of dicts for multiple)"
+            ),
+            "upsert_key": FieldSchema(
+                type="str",
+                required=False,
+                description="Field name for upsert operation (update if exists)"
+            ),
+            "filters": FieldSchema(
+                type="dict",
+                required=False,
+                description="Query filters as field-value pairs"
+            ),
+            "limit": FieldSchema(
+                type="int",
+                required=False,
+                description="Maximum number of results to return"
+            ),
+            "order_by": FieldSchema(
+                type="str",
+                required=False,
+                description="Field name to order results by"
+            ),
+            "export_format": FieldSchema(
+                type="str",
+                required_when="operation == 'export'",
+                enum=["csv", "excel", "json"],
+                description="Export format type"
+            ),
+            "output_path": FieldSchema(
+                type="str",
+                required=False,
+                description="Output file path for export"
+            ),
+        },
+        examples=[
+            {
+                "operation": "store",
+                "collection": "products",
+                "data": [{"name": "Product A", "price": 10.99}]
+            },
+            {
+                "operation": "query",
+                "collection": "products",
+                "filters": {"price": {"$lt": 20}},
+                "limit": 10
+            },
+            {
+                "operation": "export",
+                "collection": "products",
+                "export_format": "csv",
+                "output_path": "/tmp/products.csv"
+            }
+        ]
+    )
 
     SYSTEM_PROMPT_SCHEMA = """You are a SQLite schema expert. Generate CREATE TABLE statement based on data structure.
 
@@ -132,7 +204,7 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
         return True
 
     async def validate_input(self, input_data: Any) -> bool:
-        """Validate input data"""
+        """Validate input data using INPUT_SCHEMA"""
         from ..core.schemas import AgentInput
 
         # Handle AgentInput wrapper (from workflow engine)
@@ -140,49 +212,28 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
             input_data = input_data.data
 
         if not isinstance(input_data, dict):
-            logger.error(f"❌ Input validation failed: input_data is not a dict, got {type(input_data)}")
+            logger.error(f"Input validation failed: input_data is not a dict, got {type(input_data)}")
             return False
 
+        # Use schema-based validation
+        is_valid, error = self.validate_against_schema(input_data)
+        if not is_valid:
+            logger.error(f"Input validation failed: {error}")
+            return False
+
+        # Additional custom validation for store operation
         operation = input_data.get('operation')
-        if operation not in ['store', 'query', 'export']:
-            logger.error(f"❌ Input validation failed: invalid operation '{operation}', must be 'store', 'query', or 'export'")
-            return False
-
-        collection = input_data.get('collection')
-        if not collection or not isinstance(collection, str):
-            logger.error(f"❌ Input validation failed: collection is missing or not a string, got {collection}")
-            return False
-
         if operation == 'store':
             data = input_data.get('data')
-            if not data:
-                logger.error(f"❌ Input validation failed: 'data' field is missing or empty for store operation")
-                logger.error(f"   Input keys: {list(input_data.keys())}")
-                return False
             if isinstance(data, list):
                 if len(data) == 0:
-                    logger.error(f"❌ Input validation failed: data list is empty (no items to store)")
+                    logger.error("Input validation failed: data list is empty (no items to store)")
                     return False
                 if not all(isinstance(item, dict) for item in data):
-                    logger.error(f"❌ Input validation failed: data list contains non-dict items")
+                    logger.error("Input validation failed: data list contains non-dict items")
                     return False
-                return True
-            if isinstance(data, dict):
-                return True
-            logger.error(f"❌ Input validation failed: data must be dict or list of dicts, got {type(data)}")
-            return False
 
-        elif operation == 'query':
-            return True  # filters, limit, order_by are optional
-
-        elif operation == 'export':
-            format_type = input_data.get('export_format')
-            if format_type not in ['csv', 'excel', 'json']:
-                logger.error(f"❌ Input validation failed: invalid export_format '{format_type}', must be 'csv', 'excel', or 'json'")
-                return False
-            return True
-
-        return False
+        return True
 
     async def execute(self, input_data: AgentInput, context: AgentContext) -> AgentOutput:
         """Execute storage operation"""

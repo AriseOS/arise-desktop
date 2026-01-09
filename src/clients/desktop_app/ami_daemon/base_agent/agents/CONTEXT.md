@@ -2,24 +2,42 @@
 
 Agent implementations for the BaseAgent framework.
 
+## INPUT_SCHEMA System
+
+Each agent defines an `INPUT_SCHEMA` that specifies its input requirements. This enables:
+1. **Automatic validation** - `BaseStepAgent.validate_input()` validates against schema
+2. **Documentation generation** - Schema fields include descriptions and examples
+3. **Workflow builder integration** - Intent Builder can query agent schemas
+
+```python
+# Get schema for a specific agent
+from src.clients.desktop_app.ami_daemon.base_agent.agents import StorageAgent
+schema = StorageAgent.get_input_schema()
+print(schema.fields)  # {'operation': FieldSchema(...), 'collection': FieldSchema(...), ...}
+
+# Get all agent schemas
+from src.clients.desktop_app.ami_daemon.base_agent.agents import get_all_agent_schemas
+all_schemas = get_all_agent_schemas()
+```
+
 ## Agent Types
 
 ### Core Agents (BaseStepAgent subclasses)
 
-| File | Agent | Purpose |
-|------|-------|---------|
-| `text_agent.py` | TextAgent | LLM-based text generation, structured JSON output |
-| `browser_agent.py` | BrowserAgent | Page navigation + intelligent interaction (click/input/scroll) |
-| `scraper_agent.py` | ScraperAgent | Data extraction with Claude Agent SDK |
-| `storage_agent.py` | StorageAgent | SQLite storage with LLM-generated SQL |
-| `variable_agent.py` | VariableAgent | Variable manipulation and transformation |
-| `autonomous_browser_agent.py` | AutonomousBrowserAgent | Self-directed browser automation |
+| File | Agent | Required Inputs |
+|------|-------|-----------------|
+| `text_agent.py` | TextAgent | `instruction` |
+| `browser_agent.py` | BrowserAgent | (none, uses `target_url` or `interaction_steps`) |
+| `scraper_agent.py` | ScraperAgent | `data_requirements` |
+| `storage_agent.py` | StorageAgent | `operation`, `collection` |
+| `variable_agent.py` | VariableAgent | `operation`, `data` |
+| `autonomous_browser_agent.py` | AutonomousBrowserAgent | `task` |
 
 ### Infrastructure
 
 | File | Purpose |
 |------|---------|
-| `base_agent.py` | BaseStepAgent abstract class |
+| `base_agent.py` | BaseStepAgent abstract class with `InputSchema`, `FieldSchema` |
 
 ## ScraperAgent Architecture
 
@@ -97,8 +115,9 @@ ScraperAgent calls **cloud API** to generate Python extraction scripts that pars
 | `set` | Initialize/combine variables |
 | `filter` | Filter list by condition |
 | `slice` | Slice list by index |
+| `extend` | Extend list with new elements |
 
-**Note**: Variable agent simplified to 3 operations. Output key is always `result`.
+**Note**: Output key is always `result` for consistent workflow mapping.
 
 ## See Also
 

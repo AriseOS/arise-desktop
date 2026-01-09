@@ -362,7 +362,7 @@ assert agent.memory_manager is not None
 ### 在 Workflow 中访问
 
 ```python
-# AgentWorkflowEngine 创建 AgentContext
+# WorkflowEngine 创建 AgentContext
 context = AgentContext(
     workflow_id=workflow_id,
     variables=input_data or {},

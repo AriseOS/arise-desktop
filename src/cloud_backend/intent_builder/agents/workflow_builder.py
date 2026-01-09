@@ -79,17 +79,41 @@ When the workflow runs, it starts from scratch. If the user clicked through 3 pa
 
 ## Output
 
-Output the complete Workflow YAML in a ```yaml code block.
+**IMPORTANT**: You must write the final workflow to `workflow.yaml` file using the Write tool. Do NOT just output it in a code block - the file is required for the system to read your workflow.
+
+After writing the file, also output the complete YAML in a ```yaml code block for display.
 """
 
 
 # System prompt for modification mode
 MODIFICATION_SYSTEM_PROMPT = """You are helping users modify their existing workflow.
 
-## What You Can Do
+## How Workflow Works
 
-1. **Modify workflow YAML**: Change steps, add/remove agents, update parameters
-2. **Fix extraction scripts**: Debug and fix scraper scripts that have missing fields or extraction errors
+A workflow has two layers:
+
+1. **workflow.yaml** - The framework that defines:
+   - What steps to execute and in what order
+   - Which agent handles each step (browser_agent, scraper_agent, etc.)
+   - Step parameters like URLs, selectors, output variables
+
+2. **extraction_script.py** - The actual code that runs for scraper steps:
+   - Located in `{step_id}/scraper_script_{hash}/` directories
+   - Parses DOM data and extracts specific fields
+   - Uses XPath selectors to find elements
+
+## What You Can Modify
+
+Based on user's request, determine which file to modify:
+
+| User Says | Modify |
+|-----------|--------|
+| "Add/remove a step", "Change step order", "Use different agent" | `workflow.yaml` |
+| "Extract more fields", "Fix extraction error", "Wrong data extracted" | `extraction_script.py` |
+| "Change URL", "Update selector", "Modify parameters" | `workflow.yaml` |
+| "XPath not working", "Field is empty", "Missing data" | `extraction_script.py` |
+
+After you modify files, the system will automatically validate and sync changes.
 
 ## Working Directory Structure
 
@@ -336,7 +360,8 @@ Use TodoWrite to track these steps:
    - Consecutive scrolls → Combine or remove
 5. [ ] Generate the optimized workflow YAML
 6. [ ] Validate with `workflow-validation` skill
-7. [ ] Output final YAML and list optimizations applied
+7. [ ] **Write the workflow to `workflow.yaml` file** (REQUIRED - use Write tool)
+8. [ ] Output final YAML in code block and list optimizations applied
 
 ## Key Reminders
 
@@ -958,7 +983,8 @@ Use TodoWrite to track these steps:
    - Consecutive scrolls → Combine or remove
 5. [ ] Generate the optimized workflow YAML
 6. [ ] Validate with `workflow-validation` skill
-7. [ ] Output final YAML and list optimizations applied
+7. [ ] **Write the workflow to `workflow.yaml` file** (REQUIRED - use Write tool)
+8. [ ] Output final YAML in code block and list optimizations applied
 
 ## Key Reminders
 
@@ -1930,8 +1956,9 @@ Start by reading the relevant files to understand the current state.
 
             logger.info(f"✅ [chat_stream] Response stream complete, total messages: {message_count}")
 
-            # Try to extract updated workflow
-            # Priority 1: Check if Claude wrote to workflow.yaml file
+            # Check if Claude wrote to workflow.yaml file
+            # Only detect actual file changes, don't extract from response text
+            # (response text may contain yaml blocks that aren't workflow definitions)
             workflow_file = self._work_dir / "workflow.yaml"
             if workflow_file.exists():
                 file_yaml = workflow_file.read_text()
@@ -1939,13 +1966,7 @@ Start by reading the relevant files to understand the current state.
                     new_yaml = file_yaml
                     logger.info(f"📝 [chat_stream] Detected workflow.yaml change")
 
-            # Priority 2: Extract from response text
-            if not new_yaml:
-                new_yaml = self._extract_yaml_from_response(response_text)
-                if new_yaml:
-                    logger.info(f"📝 [chat_stream] Extracted YAML from response text")
-
-            # Validate and update if we got new YAML
+            # Validate and update if workflow.yaml was modified
             workflow_updated = False
             if new_yaml:
                 try:
@@ -1981,20 +2002,6 @@ Start by reading the relevant files to understand the current state.
         except Exception as e:
             logger.error(f"Chat stream error: {e}")
             yield StreamEvent(type="error", message=str(e))
-
-    def _extract_yaml_from_response(self, response_text: str) -> Optional[str]:
-        """Extract YAML from response text"""
-        import re
-
-        # Look for ```yaml ... ``` blocks
-        yaml_pattern = r'```yaml\s*(.*?)\s*```'
-        matches = re.findall(yaml_pattern, response_text, re.DOTALL)
-
-        if matches:
-            # Return the last match (most likely the final workflow)
-            return matches[-1].strip()
-
-        return None
 
     def get_current_workflow(self) -> Dict[str, Any]:
         """Get the current workflow dictionary"""
