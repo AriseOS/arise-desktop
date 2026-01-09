@@ -5,6 +5,7 @@ import yaml from 'js-yaml'
 import Icon from '../components/Icons'
 import FlowVisualization from '../components/FlowVisualization'
 import { api } from '../utils/api'
+import { syncResources } from '../utils/workflowSync'
 import '../styles/WorkflowDetailPage.css'
 
 const nodeTypes = {
@@ -112,6 +113,30 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
       }
     }
   }, [workflowId, activeTab, dialogueSessionId, modificationLog])
+
+  // Cleanup: close workflow session when page unmounts
+  useEffect(() => {
+    return () => {
+      if (dialogueSessionId) {
+        // Close the session on unmount - fire and forget
+        api.closeWorkflowSession(dialogueSessionId).catch(err => {
+          console.warn('Failed to close workflow session:', err)
+        })
+        // Clear session ID from localStorage to avoid using stale session
+        try {
+          const key = `workflow_chat_${workflowId}`
+          const saved = localStorage.getItem(key)
+          if (saved) {
+            const state = JSON.parse(saved)
+            delete state.dialogueSessionId
+            localStorage.setItem(key, JSON.stringify(state))
+          }
+        } catch (e) {
+          console.warn('Failed to clear session ID from localStorage:', e)
+        }
+      }
+    }
+  }, [dialogueSessionId, workflowId])
 
   // History state
   const [executions, setExecutions] = useState([])
@@ -240,7 +265,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
       // Clear previous progress events and start fresh
       setProgressEvents([])
 
-      const response = await api.workflowChat(sessionId, userMessage, (event) => {
+      const response = await api.workflowChat(sessionId, userMessage, async (event) => {
         // Handle streaming events - add to progressEvents for display
         if (event.type === 'text') {
           // Accumulate text events
@@ -262,6 +287,17 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
         } else if (event.type === 'workflow_updated') {
           // Add workflow_updated event
           setProgressEvents(prev => [...prev, { type: 'workflow_updated', content: 'Workflow updated' }])
+        } else if (event.type === 'sync_required') {
+          // Handle sync_required event - sync modified files to local client
+          setProgressEvents(prev => [...prev, { type: 'sync', content: `Syncing ${event.files?.length || 0} files to local...` }])
+          try {
+            await syncResources(workflowId, 'download')
+            setProgressEvents(prev => [...prev, { type: 'sync_complete', content: 'Files synced to local' }])
+            showStatus('Files synced to local', 'success')
+          } catch (syncError) {
+            console.error('Sync failed:', syncError)
+            setProgressEvents(prev => [...prev, { type: 'sync_error', content: 'Sync failed' }])
+          }
         } else if (event.type === 'error') {
           // Add error event
           setProgressEvents(prev => [...prev, { type: 'error', content: event.message }])

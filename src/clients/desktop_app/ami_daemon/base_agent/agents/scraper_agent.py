@@ -261,11 +261,17 @@ class ScraperAgent(BaseStepAgent):
         result = await self._handle_scrape(actual_data, context, config)
 
         # Wrap result in AgentOutput for workflow engine
+        # 统一契约：输出放在 data["result"] 中，类型为 List[Dict]
         if isinstance(input_data, AgentInput):
+            extracted_data = result.get('extracted_data', [])
             return AgentOutput(
                 success=result.get('success', False),
-                data=result,
-                message=result.get('message', '')
+                data={"result": extracted_data},
+                message=result.get('message', ''),
+                metadata={
+                    "extraction_method": result.get('extraction_method'),
+                    "total_items": len(extracted_data) if isinstance(extracted_data, list) else 0
+                }
             )
         else:
             return result

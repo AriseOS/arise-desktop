@@ -29,11 +29,12 @@ from enum import Enum
 
 from .tools.validate import validate_workflow_yaml, validate_workflow_dict, ValidationResult
 
-# Skills directory relative to this module
-SKILLS_DIR = Path(__file__).parent.parent / ".claude" / "skills"
+# Skills management
+from src.cloud_backend.services.skills import SkillManager
 
 if TYPE_CHECKING:
     from src.common.config_service import ConfigService
+    from src.cloud_backend.services.storage_service import StorageService
 
 logger = logging.getLogger(__name__)
 
@@ -85,41 +86,65 @@ Output the complete Workflow YAML in a ```yaml code block.
 # System prompt for modification mode
 MODIFICATION_SYSTEM_PROMPT = """You are helping users modify their existing workflow.
 
-## What You're Doing
+## What You Can Do
 
-The user has an existing Workflow YAML and wants to make changes. Your job is to:
-1. Understand what changes they want
-2. Modify the workflow accordingly
-3. Validate the changes
-4. Output the updated YAML
+1. **Modify workflow YAML**: Change steps, add/remove agents, update parameters
+2. **Fix extraction scripts**: Debug and fix scraper scripts that have missing fields or extraction errors
 
-## Current Workflow
+## Working Directory Structure
 
-The user's current workflow is provided below. Make changes based on their requests while preserving parts they didn't ask to change.
+You are working in a session directory that contains a copy of the workflow:
+
+```
+./                              # Session working directory (your cwd)
+├── workflow.yaml               # Workflow definition - MODIFY THIS
+├── metadata.json
+└── {step_id}/                  # Step directories
+    └── scraper_script_{hash}/  # Scraper script directory
+        ├── extraction_script.py  # MODIFY THIS for extraction fixes
+        ├── dom_tools.py        # Utility for DOM parsing
+        ├── requirement.json    # Original extraction requirements
+        └── dom_snapshots/
+            └── {url_hash}.json # DOM data for testing
+```
 
 ## Available Skills
 
 | Skill | Purpose |
 |-------|---------|
-| workflow-generation | Workflow structure reference |
 | agent-specs | Agent capabilities (browser_agent, scraper_agent, etc.) |
+| workflow-generation | Workflow structure reference |
+| workflow-validation | Validate your workflow changes |
 | workflow-optimizations | Optimization patterns |
-| workflow-validation | Validate your changes |
+| dom-extraction | How to write extraction scripts |
+| scraper-fix | How to debug and fix extraction issues |
 
-## Process
+## For Workflow Modifications
 
 1. Read the user's request carefully
-2. Make the requested changes to the workflow
+2. Make the requested changes to `workflow.yaml`
 3. Use workflow-validation skill to check your changes
 4. Output the complete updated YAML in a ```yaml code block
 5. Briefly explain what you changed
 
-## Important
+## For Extraction Script Fixes
 
-- Always output the COMPLETE workflow YAML, not just the changed parts
+When user reports missing fields or extraction errors:
+
+1. Identify which step has the issue (look at step directories)
+2. Read the `scraper-fix` skill for detailed guidance
+3. Navigate to the script directory: `{step_id}/scraper_script_{hash}/`
+4. Use `dom_tools.py` to debug: `python dom_tools.py find '{"field": "xpath"}'`
+5. Modify `extraction_script.py` to fix the issue
+6. Test by running `python extraction_script.py`
+
+## Important Rules
+
+- Always output the COMPLETE workflow YAML when modifying workflow.yaml
 - Preserve parts the user didn't ask to change
 - Every step must have: id, name, agent_type
-- Validate before outputting
+- Validate workflow changes before outputting
+- For scripts, only modify files in the script directory
 """
 
 
@@ -322,19 +347,8 @@ Use TodoWrite to track these steps:
 
     def _prepare_working_directory(self) -> Path:
         """Create a temporary working directory with Skills accessible"""
-        import shutil
-
         work_dir = Path(tempfile.mkdtemp(prefix="workflow_builder_"))
-
-        # Copy Skills directory to working directory for Claude Agent to access
-        # Skills now include all specs (agent-specs, workflow-generation, etc.)
-        if SKILLS_DIR.exists():
-            skills_dst = work_dir / ".claude" / "skills"
-            shutil.copytree(SKILLS_DIR, skills_dst)
-            logger.info(f"Copied Skills from {SKILLS_DIR} to {skills_dst}")
-        else:
-            logger.warning(f"Skills directory not found: {SKILLS_DIR}")
-
+        SkillManager.prepare_workflow_skills(work_dir)
         return work_dir
 
     def _extract_yaml_from_response(self, response: str) -> Optional[str]:
@@ -955,19 +969,9 @@ Use TodoWrite to track these steps:
 
     def _prepare_working_directory(self) -> Path:
         """Create a temporary working directory with Skills accessible"""
-        import shutil
-
         work_dir = Path(tempfile.mkdtemp(prefix="workflow_builder_session_"))
-
-        # Copy Skills directory to working directory for Claude Agent to access
-        # Skills now include all specs (agent-specs, workflow-generation, etc.)
-        if SKILLS_DIR.exists():
-            skills_dst = work_dir / ".claude" / "skills"
-            shutil.copytree(SKILLS_DIR, skills_dst)
-            logger.info(f"[Session] Copied Skills from {SKILLS_DIR} to {skills_dst}")
-        else:
-            logger.warning(f"[Session] Skills directory not found: {SKILLS_DIR}")
-
+        SkillManager.prepare_workflow_skills(work_dir)
+        logger.info(f"[Session] Prepared workflow skills in {work_dir}")
         return work_dir
 
     def _extract_yaml_from_response(self, response: str) -> Optional[str]:
@@ -1600,17 +1604,39 @@ class WorkflowModificationSession:
     Unlike WorkflowBuilderSession which generates from intents,
     this session takes an existing workflow and modifies it based on user requests.
 
+    Can modify both:
+    - workflow.yaml (workflow structure)
+    - extraction_script.py (scraper scripts in step directories)
+
     Supports SSE streaming for real-time progress updates.
 
+    Session workflow:
+    1. Copy entire workflow directory to session directory
+    2. User interacts with Claude to modify files
+    3. After each chat, sync modified files back to original workflow
+    4. On close, cleanup session directory
+
     Example:
-        async with WorkflowModificationSession(api_key="...", workflow_yaml="...") as session:
-            async for event in session.chat_stream("把第3步改成抓取更多字段"):
-                print(event)  # StreamEvent with type, content, etc.
+        session = WorkflowModificationSession(
+            workflow_yaml="...",
+            user_id="user1",
+            workflow_id="wf_123",
+            storage_service=storage_service,
+            api_key="..."
+        )
+        await session._connect()
+        async for event in session.chat_stream("把第3步改成抓取更多字段"):
+            print(event)
+        await session._disconnect()
+        session.cleanup()
     """
 
     def __init__(
         self,
         workflow_yaml: str,
+        user_id: str,
+        workflow_id: str,
+        storage_service: "StorageService",
         config_service: Optional["ConfigService"] = None,
         api_key: Optional[str] = None,
         model: Optional[str] = None,
@@ -1623,6 +1649,9 @@ class WorkflowModificationSession:
 
         Args:
             workflow_yaml: The existing workflow YAML to modify
+            user_id: User ID for session storage
+            workflow_id: Workflow ID to copy and modify
+            storage_service: StorageService for session directory management
             config_service: ConfigService for reading configuration
             api_key: Anthropic API key
             model: Model to use (default: claude-sonnet-4-5)
@@ -1631,6 +1660,9 @@ class WorkflowModificationSession:
             session_id: Optional session ID (auto-generated if not provided)
         """
         self.workflow_yaml = workflow_yaml
+        self.user_id = user_id
+        self.workflow_id = workflow_id
+        self.storage_service = storage_service
 
         # Parse and validate the workflow
         try:
@@ -1679,6 +1711,7 @@ class WorkflowModificationSession:
         self._initialized = False
 
         logger.info(f"WorkflowModificationSession initialized: {self.session_id}")
+        logger.info(f"  User: {user_id}, Workflow: {workflow_id}")
 
     async def __aenter__(self):
         """Async context manager entry - connect to Claude Agent"""
@@ -1690,7 +1723,11 @@ class WorkflowModificationSession:
         await self._disconnect()
 
     async def _connect(self):
-        """Connect to Claude Agent with modification system prompt"""
+        """Connect to Claude Agent with modification system prompt.
+
+        Prepares session directory by copying workflow, then connects to Claude.
+        The workflow.yaml is already in the session directory (copied by _prepare_working_directory).
+        """
         logger.info(f"🔌 [_connect] Starting connection for session {self.session_id}")
 
         if self._initialized:
@@ -1704,16 +1741,18 @@ class WorkflowModificationSession:
             logger.error(f"❌ [_connect] Claude Agent SDK not installed")
             raise RuntimeError("Claude Agent SDK not installed")
 
-        # Prepare working directory with skills
+        # Prepare working directory - copies entire workflow to session directory
         self._work_dir = self._prepare_working_directory()
         logger.info(f"📁 [_connect] Work directory: {self._work_dir}")
 
-        # Write current workflow to file for Claude to read
-        workflow_file = self._work_dir / "current_workflow.yaml"
-        workflow_file.write_text(self.workflow_yaml)
-        logger.info(f"📝 [_connect] Wrote workflow to {workflow_file} ({len(self.workflow_yaml)} chars)")
+        # workflow.yaml is already in the session directory (copied from original workflow)
+        workflow_file = self._work_dir / "workflow.yaml"
+        if workflow_file.exists():
+            logger.info(f"📝 [_connect] Workflow file exists: {workflow_file}")
+        else:
+            logger.warning(f"⚠️ [_connect] Workflow file not found: {workflow_file}")
 
-        # Build system prompt with workflow context
+        # Build system prompt
         system_prompt = self._build_system_prompt()
         logger.info(f"📋 [_connect] Built system prompt ({len(system_prompt)} chars)")
 
@@ -1747,7 +1786,12 @@ class WorkflowModificationSession:
         logger.info(f"✅ [_connect] WorkflowModificationSession {self.session_id} connected successfully")
 
     async def _disconnect(self):
-        """Disconnect from Claude Agent"""
+        """Disconnect from Claude Agent.
+
+        Note: This only disconnects the Claude connection.
+        Call cleanup() separately to remove the session directory.
+        Sync happens in main.py after each chat, not here.
+        """
         if self._client:
             await self._client.disconnect()
             self._client = None
@@ -1756,35 +1800,55 @@ class WorkflowModificationSession:
         self.state = SessionState.CLOSED
         logger.info(f"WorkflowModificationSession {self.session_id} disconnected")
 
+    def cleanup(self):
+        """Cleanup session directory.
+
+        Should be called after _disconnect() when the session is no longer needed.
+        """
+        if self.storage_service and self.user_id and self.session_id:
+            self.storage_service.cleanup_modification_session(
+                user_id=self.user_id,
+                session_id=self.session_id
+            )
+            logger.info(f"WorkflowModificationSession {self.session_id} cleaned up")
+
     def _prepare_working_directory(self) -> Path:
-        """Prepare working directory with skills"""
-        import tempfile
-        import shutil
+        """Prepare working directory by copying workflow to session directory.
 
-        # Create temp directory
-        work_dir = Path(tempfile.mkdtemp(prefix="workflow_mod_"))
+        Uses storage_service to:
+        1. Create session directory at ami-server/sessions/{user_id}/{session_id}/
+        2. Copy entire workflow directory (including step subdirectories with scripts)
+        3. Add modification skills for both workflow and script editing
+        """
+        # Copy workflow to session directory
+        work_dir = self.storage_service.copy_workflow_to_session(
+            user_id=self.user_id,
+            workflow_id=self.workflow_id,
+            session_id=self.session_id
+        )
 
-        # Copy skills directory
-        skills_src = Path(__file__).parent.parent.parent / ".claude" / "skills"
-        if skills_src.exists():
-            skills_dst = work_dir / ".claude" / "skills"
-            shutil.copytree(skills_src, skills_dst)
-            logger.debug(f"Copied skills to {skills_dst}")
+        # Add modification skills (includes workflow and scraper-fix skills)
+        SkillManager.prepare_modification_skills(work_dir)
 
+        logger.info(f"Prepared session directory: {work_dir}")
         return work_dir
 
     def _build_system_prompt(self) -> str:
-        """Build system prompt for modification mode"""
-        # Include the current workflow in the prompt
+        """Build system prompt for modification mode.
+
+        The workflow.yaml is available in the working directory,
+        so Claude can read it with the Read tool.
+        """
         return f"""{MODIFICATION_SYSTEM_PROMPT}
 
-## Current Workflow
+## Your Working Directory
 
-```yaml
-{self.workflow_yaml}
-```
+The workflow and all its resources are in your current working directory.
+- Read `workflow.yaml` to see the current workflow
+- Browse step directories to find scraper scripts
 
-The user will ask you to modify this workflow. Make changes based on their requests.
+The user will ask you to modify the workflow or fix extraction issues.
+Start by reading the relevant files to understand the current state.
 """
 
     async def chat_stream(
@@ -1867,16 +1931,19 @@ The user will ask you to modify this workflow. Make changes based on their reque
             logger.info(f"✅ [chat_stream] Response stream complete, total messages: {message_count}")
 
             # Try to extract updated workflow
-            # Priority 1: Check if Claude wrote to file
-            workflow_file = self._work_dir / "current_workflow.yaml"
+            # Priority 1: Check if Claude wrote to workflow.yaml file
+            workflow_file = self._work_dir / "workflow.yaml"
             if workflow_file.exists():
                 file_yaml = workflow_file.read_text()
                 if file_yaml != self.workflow_yaml:
                     new_yaml = file_yaml
+                    logger.info(f"📝 [chat_stream] Detected workflow.yaml change")
 
             # Priority 2: Extract from response text
             if not new_yaml:
                 new_yaml = self._extract_yaml_from_response(response_text)
+                if new_yaml:
+                    logger.info(f"📝 [chat_stream] Extracted YAML from response text")
 
             # Validate and update if we got new YAML
             workflow_updated = False

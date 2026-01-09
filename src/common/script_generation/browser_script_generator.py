@@ -15,6 +15,7 @@ from .templates import (
     BROWSER_FIND_ELEMENT_TEMPLATE,
     BROWSER_AGENT_PROMPT,
 )
+from src.cloud_backend.services.skills import SkillManager
 
 logger = logging.getLogger(__name__)
 
@@ -77,16 +78,7 @@ class BrowserScriptGenerator:
             working_dir.mkdir(parents=True, exist_ok=True)
 
             # Copy skills to working directory for Claude Agent to use
-            skills_src = Path(__file__).parent / ".claude" / "skills"
-            skills_dest = working_dir / ".claude" / "skills"
-            if skills_src.exists():
-                if skills_dest.exists():
-                    shutil.rmtree(skills_dest)
-                skills_dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copytree(skills_src, skills_dest)
-                logger.info(f"Copied skills to {skills_dest}")
-            else:
-                logger.warning(f"Skills not found at {skills_src}")
+            SkillManager.prepare_browser_skills(working_dir)
 
             # Save input files
             await self._save_input_files(working_dir, task, dom_dict)

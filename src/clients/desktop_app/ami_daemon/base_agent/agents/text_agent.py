@@ -148,9 +148,10 @@ class TextAgent(BaseStepAgent):
             self.logger.info(f"  Response type: {type(parsed_data)}")
             self.logger.info(f"  Response keys: {list(parsed_data.keys()) if isinstance(parsed_data, dict) else 'N/A'}")
 
+            # 统一契约：输出放在 data["result"] 中，类型为 Dict
             return AgentOutput(
                 success=True,
-                data=parsed_data,
+                data={"result": parsed_data},
                 message="Text generation completed"
             )
 

@@ -190,6 +190,200 @@ class StorageService:
 
         return cleaned_count
 
+    # ===== Workflow Modification Session 管理 =====
+
+    def get_modification_session_path(self, user_id: str, session_id: str) -> Path:
+        """Get working directory for Workflow Modification Session.
+
+        Storage structure:
+            {base_path}/sessions/{user_id}/{session_id}/
+
+        This is different from intent_builder sessions as it contains
+        full workflow directory copies including step subdirectories.
+        """
+        path = self.base_path / "sessions" / str(user_id) / session_id
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def copy_workflow_to_session(
+        self,
+        user_id: str,
+        workflow_id: str,
+        session_id: str
+    ) -> Path:
+        """Copy entire workflow directory to session working directory.
+
+        Args:
+            user_id: User ID
+            workflow_id: Source workflow ID
+            session_id: Target session ID
+
+        Returns:
+            Path to the session working directory
+
+        Copies:
+            - workflow.yaml
+            - metadata.json
+            - {step_id}/scraper_script_xxx/ directories
+            - dom_snapshots/ (if exists)
+        """
+        import shutil
+
+        source_path = self.get_workflow_path(user_id, workflow_id)
+        session_path = self.get_modification_session_path(user_id, session_id)
+
+        if not source_path.exists():
+            raise FileNotFoundError(f"Workflow not found: {workflow_id}")
+
+        # Copy workflow directory contents (not the directory itself)
+        for item in source_path.iterdir():
+            dest = session_path / item.name
+            if item.is_dir():
+                if dest.exists():
+                    shutil.rmtree(dest)
+                shutil.copytree(item, dest)
+            else:
+                shutil.copy2(item, dest)
+
+        # Save session metadata for tracking
+        session_meta = {
+            "user_id": user_id,
+            "workflow_id": workflow_id,
+            "session_id": session_id,
+            "source_path": str(source_path),
+            "created_at": get_current_timestamp()
+        }
+        session_meta_file = session_path / ".session_metadata.json"
+        with open(session_meta_file, 'w', encoding='utf-8') as f:
+            json.dump(session_meta, f, indent=2)
+
+        logger.info(f"Copied workflow {workflow_id} to session {session_id}")
+        return session_path
+
+    def sync_session_to_workflow(
+        self,
+        user_id: str,
+        session_id: str
+    ) -> List[str]:
+        """Sync modified files from session back to original workflow.
+
+        Only syncs specific file patterns:
+            - workflow.yaml
+            - */scraper_script_*/extraction_script.py
+            - */scraper_script_*/dom_tools.py
+
+        Updates workflow metadata.json timestamp.
+
+        Returns:
+            List of synced file paths (relative), empty list if nothing synced
+        """
+        import shutil
+
+        session_path = self.get_modification_session_path(user_id, session_id)
+        session_meta_file = session_path / ".session_metadata.json"
+
+        if not session_meta_file.exists():
+            logger.error(f"Session metadata not found: {session_id}")
+            return []
+
+        with open(session_meta_file, 'r') as f:
+            session_meta = json.load(f)
+
+        workflow_id = session_meta["workflow_id"]
+        workflow_path = self.get_workflow_path(user_id, workflow_id)
+
+        # Sync patterns - only sync these specific files
+        sync_patterns = [
+            "workflow.yaml",
+            "*/scraper_script_*/extraction_script.py",
+            "*/scraper_script_*/dom_tools.py",
+        ]
+
+        synced_files = []
+        for pattern in sync_patterns:
+            for src_file in session_path.glob(pattern):
+                rel_path = src_file.relative_to(session_path)
+                dst_file = workflow_path / rel_path
+
+                # Copy if modified or new
+                if not dst_file.exists() or src_file.stat().st_mtime > dst_file.stat().st_mtime:
+                    dst_file.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src_file, dst_file)
+                    synced_files.append(str(rel_path))
+
+        # Update workflow metadata timestamp if any files were synced
+        if synced_files:
+            workflow_yaml_path = workflow_path / "workflow.yaml"
+            if workflow_yaml_path.exists():
+                self.update_workflow_yaml(
+                    user_id,
+                    workflow_id,
+                    workflow_yaml_path.read_text(encoding='utf-8')
+                )
+            logger.info(f"Synced {len(synced_files)} files from session {session_id}: {synced_files}")
+
+        return synced_files
+
+    def cleanup_modification_session(self, user_id: str, session_id: str) -> bool:
+        """Clean up a workflow modification session directory.
+
+        Returns:
+            True if cleanup successful, False if not found
+        """
+        import shutil
+
+        session_path = self.get_modification_session_path(user_id, session_id)
+        if not session_path.exists():
+            return False
+
+        shutil.rmtree(session_path)
+        logger.info(f"Cleaned up modification session: {session_id}")
+        return True
+
+    def cleanup_expired_modification_sessions(self, timeout_minutes: int = 60) -> int:
+        """Clean up expired Workflow Modification sessions.
+
+        Args:
+            timeout_minutes: Session timeout in minutes (default: 60)
+
+        Returns:
+            Number of sessions cleaned up
+        """
+        import shutil
+        import time
+
+        cleaned_count = 0
+        current_time = time.time()
+        timeout_seconds = timeout_minutes * 60
+
+        sessions_dir = self.base_path / "sessions"
+        if not sessions_dir.exists():
+            return 0
+
+        # Scan all users
+        for user_dir in sessions_dir.iterdir():
+            if not user_dir.is_dir():
+                continue
+
+            # Scan all sessions for this user
+            for session_dir in user_dir.iterdir():
+                if not session_dir.is_dir():
+                    continue
+
+                try:
+                    # Check directory last modified time
+                    last_modified = session_dir.stat().st_mtime
+                    age_seconds = current_time - last_modified
+
+                    if age_seconds > timeout_seconds:
+                        shutil.rmtree(session_dir)
+                        cleaned_count += 1
+                        logger.info(f"🗑️  Cleaned expired modification session: {session_dir.name} (age: {age_seconds/60:.1f} min)")
+                except Exception as e:
+                    logger.error(f"Failed to cleanup modification session {session_dir}: {e}")
+
+        return cleaned_count
+
     # ===== Recording 管理 =====
     
     def save_recording(

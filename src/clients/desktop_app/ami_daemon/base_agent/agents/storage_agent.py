@@ -206,9 +206,10 @@ SELECT * FROM products_alice WHERE price < ? AND rating > ? LIMIT ?
             else:
                 raise ValueError(f"Unsupported operation: {operation}")
 
+            # 统一契约：输出放在 data["result"] 中
             return AgentOutput(
                 success=True,
-                data=result,
+                data={"result": result},
                 message=result.get('message', 'Operation completed')
             )
 

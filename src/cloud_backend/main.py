@@ -63,12 +63,18 @@ def start_session_cleanup_task(timeout_minutes: int, interval_minutes: int):
                 # Wait for interval
                 await asyncio.sleep(interval_minutes * 60)
 
-                # Run cleanup
+                # Run cleanup for Intent Builder sessions
                 logger.debug(f"🧹 Running session cleanup...")
                 cleaned_count = storage_service.cleanup_expired_sessions(timeout_minutes)
 
                 if cleaned_count > 0:
-                    logger.info(f"🧹 Cleaned {cleaned_count} expired sessions")
+                    logger.info(f"🧹 Cleaned {cleaned_count} expired Intent Builder sessions")
+
+                # Run cleanup for Workflow Modification sessions (60 min timeout)
+                mod_cleaned_count = storage_service.cleanup_expired_modification_sessions(60)
+
+                if mod_cleaned_count > 0:
+                    logger.info(f"🧹 Cleaned {mod_cleaned_count} expired Workflow Modification sessions")
 
             except asyncio.CancelledError:
                 logger.info("🧹 Session cleanup task cancelled")
@@ -1548,16 +1554,19 @@ async def create_workflow_session(
 
         session_id = str(uuid.uuid4())
 
-        # Create WorkflowModificationSession
+        # Create WorkflowModificationSession with storage_service for session directory management
         session = WorkflowModificationSession(
             workflow_yaml=workflow_yaml,
+            user_id=user_id,
+            workflow_id=workflow_id,
+            storage_service=storage_service,
             config_service=config_service,
             api_key=x_ami_api_key,
             base_url=config_service.get("llm.proxy_url"),
             session_id=session_id
         )
 
-        # Connect the session
+        # Connect the session (copies workflow to session directory)
         await session._connect()
 
         # Store session reference
@@ -1646,17 +1655,23 @@ async def workflow_session_chat(
 
             logger.info(f"✅ [event_generator] Stream complete, {event_count} events sent")
 
-            # If workflow was updated, save it
-            if workflow_updated and final_yaml:
-                try:
-                    storage_service.update_workflow_yaml(
-                        user_id=user_id,
-                        workflow_id=workflow_id,
-                        workflow_yaml=final_yaml
-                    )
-                    logger.info(f"✅ Workflow updated via dialogue: {workflow_id}")
-                except Exception as e:
-                    logger.error(f"Failed to save updated workflow: {e}")
+            # After chat completes, sync modified files from session back to original workflow
+            # This syncs both workflow.yaml and extraction_script.py changes
+            try:
+                synced_files = storage_service.sync_session_to_workflow(
+                    user_id=user_id,
+                    session_id=session_id
+                )
+                if synced_files:
+                    logger.info(f"✅ Synced {len(synced_files)} files: {synced_files}")
+                    # Send sync_required event to trigger frontend sync to local client
+                    sync_event = {
+                        "type": "sync_required",
+                        "files": synced_files
+                    }
+                    yield f"data: {json.dumps(sync_event)}\n\n"
+            except Exception as e:
+                logger.error(f"Failed to sync session to workflow: {e}")
 
         except Exception as e:
             logger.error(f"❌ Workflow chat stream error: {e}")
@@ -1683,6 +1698,8 @@ async def close_workflow_session(
 ):
     """
     Close a workflow modification session.
+
+    Disconnects from Claude Agent and cleans up session directory.
     """
     if session_id not in _workflow_sessions:
         raise HTTPException(404, f"Session not found: {session_id}")
@@ -1691,12 +1708,19 @@ async def close_workflow_session(
     session = session_data["session"]
 
     try:
+        # Disconnect from Claude Agent
         await session._disconnect()
     except Exception as e:
         logger.warning(f"Error disconnecting session: {e}")
 
+    try:
+        # Cleanup session directory
+        session.cleanup()
+    except Exception as e:
+        logger.warning(f"Error cleaning up session: {e}")
+
     del _workflow_sessions[session_id]
-    logger.info(f"✅ Workflow session closed: {session_id}")
+    logger.info(f"✅ Workflow session closed and cleaned up: {session_id}")
 
     return {"success": True}
 

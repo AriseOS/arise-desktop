@@ -5,6 +5,35 @@ description: Generate workflows from user's recorded browser actions.
 
 # Workflow Generation
 
+## IMPORTANT: Output Contract
+
+**All agents output to `result` key**. Always use `outputs: {result: variable_name}`:
+
+```yaml
+# Step 1: Extract data
+- id: extract
+  agent: scraper_agent
+  inputs:
+    data_requirements:
+      user_description: "Extract products"
+      output_format:
+        name: "Name"
+        url: "URL"
+  outputs:
+    result: products              # → context.variables["products"] = List[Dict]
+
+# Step 2: Reference in next step's inputs
+- id: navigate
+  agent: browser_agent
+  inputs:
+    target_url: "{{products.0.url}}"   # Reference: {{variable_name.field}}
+```
+
+**Key points**:
+1. `outputs: {result: X}` stores Agent output in variable `X`
+2. Reference in inputs: `"{{X}}"` or `"{{X.0.field}}"`
+3. **Do NOT use** agent-specific keys like `extracted_data`. Always use `result`.
+
 ## Goal
 
 Convert user's recorded browser actions (intent operations) into a replayable Workflow YAML.
@@ -77,7 +106,7 @@ When click element has href, use **two steps**:
       xpath_hints:
         url: "//*[@id=\"app\"]/nav/a[2]"  # Use exact xpath from operation
   outputs:
-    extracted_data: link_info
+    result: link_info                    # Use "result" key
 
 # Step 2: Navigate
 - id: navigate-to-link
@@ -120,7 +149,7 @@ If script generation fails for a step, modify the workflow:
       xpath_hints:
         url: "//*[@id=\"app\"]/nav/ul/li[3]/a"  # Use exact xpath from operation
   outputs:
-    extracted_data: menu_link
+    result: menu_link                           # Use "result" key
 
 - id: navigate-to-target
   agent: browser_agent
@@ -197,7 +226,7 @@ steps:
         xpath_hints:
           url: "//*[@id=\"app\"]/nav/a[2]"  # Use exact xpath from operation
     outputs:
-      extracted_data: products_link
+      result: products_link                  # Use "result" key
 
   - id: navigate-to-products
     name: "Navigate to products page"
@@ -219,5 +248,5 @@ steps:
         xpath_hints:
           name: "//*[@id=\"app\"]/main/div[2]/a[1]/h3"  # Use exact xpath from operation
     outputs:
-      extracted_data: product_list
+      result: product_list                   # Use "result" key
 ```

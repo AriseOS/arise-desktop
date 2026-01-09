@@ -656,12 +656,12 @@ export const api = {
                 throw new Error(data.message);
               }
             } catch (parseError) {
-              // Only log parse errors, not re-thrown errors
-              if (!(parseError instanceof Error && parseError.message === data?.message)) {
-                console.warn('[API] Failed to parse SSE event:', line, parseError);
-              } else {
+              // Re-throw if this is an error we threw ourselves (from data.type === 'error')
+              if (parseError.message && !parseError.message.includes('JSON')) {
                 throw parseError;
               }
+              // Otherwise just log the parse error
+              console.warn('[API] Failed to parse SSE event:', line, parseError);
             }
           }
         }

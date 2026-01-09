@@ -501,38 +501,58 @@ class AgentWorkflowEngine:
         return result
     
     async def _update_context_variables(
-        self, 
-        step_result: StepResult, 
-        outputs: Dict[str, str], 
+        self,
+        step_result: StepResult,
+        outputs: Dict[str, str],
         context: AgentContext
     ):
-        """更新上下文变量"""
+        """更新上下文变量
+
+        统一契约：所有 Agent 的输出都放在 data["result"] 中
+        outputs 格式: {result: variable_name}
+        """
         if not step_result.data or not isinstance(step_result.data, AgentOutput):
             return
-        
+
         agent_output = step_result.data
-        for output_key, var_name in outputs.items():
-            if output_key in agent_output.data:
-                context.variables[var_name] = agent_output.data[output_key]
-                logger.debug(f"更新上下文变量: {var_name} = {agent_output.data[output_key]}")
+
+        # 统一契约：从 data["result"] 读取输出
+        if "result" in agent_output.data:
+            for output_key, var_name in outputs.items():
+                if output_key == "result":
+                    context.variables[var_name] = agent_output.data["result"]
+                    logger.debug(f"更新上下文变量: {var_name} = {agent_output.data['result']}")
+        else:
+            # 兼容旧格式（逐步废弃）
+            for output_key, var_name in outputs.items():
+                if output_key in agent_output.data:
+                    context.variables[var_name] = agent_output.data[output_key]
+                    logger.warning(f"[兼容模式] 更新上下文变量: {var_name} = {agent_output.data[output_key]}")
     
     async def _extract_step_outputs(
-        self, 
-        step_result: StepResult, 
+        self,
+        step_result: StepResult,
         outputs: Dict[str, str]
     ) -> Any:
-        """提取当前步骤的输出值"""
+        """提取当前步骤的输出值
+
+        统一契约：所有 Agent 的输出都放在 data["result"] 中
+        """
         if not step_result.data or not outputs or not isinstance(step_result.data, AgentOutput):
             return None
-        
+
         agent_output = step_result.data
+
+        # 统一契约：从 data["result"] 读取输出
+        if "result" in agent_output.data:
+            return agent_output.data["result"]
+
+        # 兼容旧格式（逐步废弃）
         step_outputs = {}
-        
         for output_key, var_name in outputs.items():
             if output_key in agent_output.data:
                 step_outputs[var_name] = agent_output.data[output_key]
-        
-        # 如果只有一个输出，直接返回值；否则返回字典
+
         if len(step_outputs) == 1:
             return list(step_outputs.values())[0]
         elif len(step_outputs) > 1:

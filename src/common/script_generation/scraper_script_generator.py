@@ -11,6 +11,7 @@ from typing import Dict, Any, Optional, Callable, Awaitable
 
 from .types import ScriptGenerationResult, ScriptType, ScraperRequirement
 from .templates import SCRAPER_AGENT_PROMPT
+from src.cloud_backend.services.skills import SkillManager
 
 logger = logging.getLogger(__name__)
 
@@ -76,23 +77,14 @@ class ScraperScriptGenerator:
             working_dir.mkdir(parents=True, exist_ok=True)
 
             # Copy skills to working directory for Claude Agent to use
-            skills_src = Path(__file__).parent / ".claude" / "skills"
-            skills_dest = working_dir / ".claude" / "skills"
-            if skills_src.exists():
-                if skills_dest.exists():
-                    shutil.rmtree(skills_dest)
-                skills_dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copytree(skills_src, skills_dest)
-                logger.info(f"Copied skills to {skills_dest}")
-            else:
-                logger.warning(f"Skills not found at {skills_src}")
+            SkillManager.prepare_scraper_skills(working_dir)
 
             # Copy dom_tools.py to working directory root for both:
             # 1. Claude Agent to run: python dom_tools.py ...
             # 2. Generated script to import: from dom_tools import ...
-            dom_tools_src = skills_src / "dom-extraction" / "tools" / "dom_tools.py"
+            dom_tools_src = SkillManager.get_skill_path("dom-extraction") / "tools" / "dom_tools.py"
             dom_tools_dest = working_dir / "dom_tools.py"
-            if dom_tools_src.exists():
+            if dom_tools_src and dom_tools_src.exists():
                 shutil.copy2(dom_tools_src, dom_tools_dest)
                 logger.info(f"Copied dom_tools.py to {dom_tools_dest}")
 

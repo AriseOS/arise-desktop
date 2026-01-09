@@ -46,6 +46,7 @@ from .base_agent import BaseStepAgent, AgentMetadata
 from ..core.schemas import AgentContext
 
 # Import script templates from common module
+from src.cloud_backend.services.skills import SkillManager
 from src.common.script_generation.templates import (
     BROWSER_TEST_OPERATION,
     BROWSER_FIND_ELEMENT_TEMPLATE,
@@ -1160,19 +1161,8 @@ grep -i "interactive_index" dom_data.json | head -20
             encoding='utf-8'
         )
 
-        # 4. Link .claude/skills directory for element finder tools
-        skills_source = Path(__file__).parent.parent.parent.parent / ".claude" / "skills"
-        skills_target = working_dir / ".claude" / "skills"
-        if skills_source.exists() and not skills_target.exists():
-            skills_target.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                skills_target.symlink_to(skills_source)
-                logger.debug(f"Linked skills directory: {skills_target} -> {skills_source}")
-            except OSError as e:
-                # If symlink fails (e.g., on Windows), copy instead
-                import shutil
-                shutil.copytree(skills_source, skills_target)
-                logger.debug(f"Copied skills directory to: {skills_target}")
+        # 4. Prepare .claude/skills directory for element finder tools
+        SkillManager.prepare_browser_skills(working_dir, use_symlink=True)
 
         logger.info(f"Workspace prepared: task.json, dom_data.json ({dom_file.stat().st_size} bytes)")
 
@@ -1401,15 +1391,28 @@ Please analyze and fix find_element.py.
                 except Exception as e:
                     logger.warning(f"Failed to send log callback: {e}")
 
-            # 6. Call cloud API to generate script
-            result = await cloud_client.generate_script(
+            # 6. Call cloud API to generate script with SSE streaming
+            async def script_progress_callback(level: str, message: str, data: dict):
+                if context and context.log_callback:
+                    try:
+                        turn = data.get("turn", 0)
+                        tool_name = data.get("tool_name")
+                        progress_msg = f"🔧 Generating script (turn {turn})"
+                        if tool_name:
+                            progress_msg += f" - using {tool_name}"
+                        await context.log_callback(level, progress_msg, data)
+                    except Exception as e:
+                        logger.warning(f"Failed to send progress callback: {e}")
+
+            result = await cloud_client.generate_script_stream(
                 workflow_id=workflow_id,
                 step_id=step_id,
                 script_type="browser",
                 page_url=page_url,
                 user_id=user_id,
                 api_key=api_key,
-                dom_data=dom_data  # Browser scripts need runtime DOM
+                dom_data=dom_data,  # Browser scripts need runtime DOM
+                progress_callback=script_progress_callback
             )
 
             if not result.get('success'):
@@ -1988,8 +1991,8 @@ SUCCESS: Found xpath: /html/body/...
             # Get page URL
             page_url = dom_dict.get('page_url', '')
 
-            # Call cloud API
-            result = await cloud_client.generate_script(
+            # Call cloud API with SSE streaming
+            result = await cloud_client.generate_script_stream(
                 workflow_id=workflow_id,
                 step_id=step_id,
                 script_type="browser",
@@ -2169,9 +2172,15 @@ SUCCESS: Found xpath: /html/body/...
         from ..core.schemas import AgentInput, AgentOutput
 
         if isinstance(input_data, AgentInput):
+            # 统一契约：输出放在 data["result"] 中
+            # browser_agent 通常不需要输出数据，但保持一致性
             return AgentOutput(
                 success=response.get('success', False),
-                data=response,
+                data={"result": {
+                    "url": response.get('current_url'),
+                    "title": response.get('title'),
+                    "success": response.get('success', False)
+                }},
                 message=response.get('message', '')
             )
         return response
