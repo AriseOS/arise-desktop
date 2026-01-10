@@ -107,16 +107,23 @@ After workflow generation, scripts are pre-generated in the background:
 workflows/{workflow_id}/
 ├── workflow.yaml
 ├── metadata.json        # Includes script_pregeneration status
+├── dom_snapshots/       # DOM snapshots from workflow execution
+│   ├── url_index.json   # Maps step_id -> DOM file
+│   └── {url_hash}.json  # Wrapped format: {"url":..., "step_id":..., "dom":{...}}
 └── {step_id}/
     ├── browser_script_{hash}/
-    │   ├── dom_data.json
     │   ├── find_element.py
     │   └── task.json
     └── scraper_script_{hash}/
-        ├── dom_data.json
         ├── extraction_script.py
+        ├── dom_tools.py
         └── requirement.json
 ```
+
+**Note**: `dom_data.json` is NOT saved permanently in script directories. During
+modification sessions, it's dynamically copied from `dom_snapshots/` using the
+`step_id` mapping in `url_index.json`. This ensures scripts always use the
+latest DOM captured during workflow execution.
 
 ## See Also
 

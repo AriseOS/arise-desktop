@@ -21,13 +21,39 @@ You are working in a session directory that contains a copy of the workflow:
 ./                              # Session working directory
 ├── workflow.yaml               # Workflow definition
 ├── metadata.json
+├── dom_snapshots/              # Global DOM snapshots for all pages
+│   ├── url_index.json          # URL to DOM file mapping
+│   └── {url_hash}.json         # DOM snapshot files (wrapped format)
 └── {step_id}/                  # Step directories
     └── scraper_script_{hash}/  # Scraper script directory
         ├── extraction_script.py
         ├── dom_tools.py
         ├── requirement.json
-        └── dom_snapshots/
-            └── {url_hash}.json
+        └── dom_data.json       # DOM for this step (copied from dom_snapshots)
+```
+
+### Finding DOM by URL
+
+When user mentions a specific URL (e.g., "https://watcha.cn/products/contract-maker"), find the corresponding DOM:
+
+1. **Read `dom_snapshots/url_index.json`** to find the mapping:
+```json
+[
+  {"url": "https://watcha.cn/products/contract-maker", "file": "abc123.json", "step_id": "extract-product-info"}
+]
+```
+
+2. **Load the DOM file** from `dom_snapshots/{file}`:
+```bash
+cat dom_snapshots/abc123.json | python -c "import json,sys; d=json.load(sys.stdin); print(json.dumps(d['dom'], indent=2)[:2000])"
+```
+
+3. **Or use dom_tools.py** with the URL's DOM:
+```bash
+# Copy the relevant DOM to a step directory first
+cp dom_snapshots/abc123.json {step_id}/scraper_script_xxx/dom_data.json
+cd {step_id}/scraper_script_xxx
+python dom_tools.py search --text "效率工具"
 ```
 
 ## Workflow
@@ -38,6 +64,13 @@ Ask user or infer from context:
 - Which step has extraction issues?
 - What fields are missing/wrong?
 - Which page/URL is affected?
+
+**If user provides a specific URL**, immediately look up the DOM:
+```bash
+# Find the DOM file for the URL
+cat dom_snapshots/url_index.json
+# Look for the entry matching the user's URL, then read that DOM file
+```
 
 ### Step 2: Locate Scraper Script
 
@@ -66,9 +99,16 @@ Read these files in the script directory:
    - Check `extract_data_from_page()` function
    - Look for hardcoded xpaths that may be wrong
 
-3. **dom_snapshots/*.json** - Actual DOM structure
+3. **dom_data.json** - DOM for this step (pre-copied from dom_snapshots)
    - Use this to find correct xpaths
    - Load via `dom_tools.py` commands
+
+4. **If URL-specific DOM needed** - Find via url_index.json:
+   ```bash
+   # Check url_index.json for the specific URL
+   cat dom_snapshots/url_index.json
+   # Copy the matching DOM file to work with dom_tools.py
+   ```
 
 ### Step 4: Debug with dom_tools.py
 

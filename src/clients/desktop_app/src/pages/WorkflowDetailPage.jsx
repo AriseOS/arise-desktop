@@ -104,7 +104,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
         const state = {
           activeTab,
           dialogueSessionId,
-          modificationLog,
+          modificationLog: modificationLog.slice(-10), // Keep only last 10 messages
           savedAt: Date.now()
         }
         localStorage.setItem(key, JSON.stringify(state))
@@ -237,58 +237,81 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
     }
   }
 
+  // Helper to create a new workflow session
+  const createNewSession = async (chatHistory = null) => {
+    showStatus('Creating dialogue session...', 'info')
+    const sessionResult = await api.createWorkflowSession(
+      userId,
+      workflowId,
+      workflowData.workflow_yaml,
+      chatHistory  // Pass existing chat history for context
+    )
+    setDialogueSessionId(sessionResult.session_id)
+    return sessionResult.session_id
+  }
+
+  // Helper to clear stale session from localStorage
+  const clearStaleSession = () => {
+    setDialogueSessionId(null)
+    try {
+      const key = `workflow_chat_${workflowId}`
+      const saved = localStorage.getItem(key)
+      if (saved) {
+        const state = JSON.parse(saved)
+        delete state.dialogueSessionId
+        localStorage.setItem(key, JSON.stringify(state))
+      }
+    } catch (e) {
+      console.warn('Failed to clear session from localStorage:', e)
+    }
+  }
+
   // Handle modification request using new WorkflowService API
   const handleModify = async () => {
-    if (!chatInput.trim() || isModifying) return
+    const messageToSend = chatInput.trim()
+    if (!messageToSend || isModifying) return
 
-    const userMessage = chatInput.trim()
     setChatInput('')
+    setModificationLog(prev => [...prev, { type: 'user', content: messageToSend }])
     setIsModifying(true)
-    setModificationLog(prev => [...prev, { type: 'user', content: userMessage }])
 
     try {
       let sessionId = dialogueSessionId
 
       // Create session if not exists
       if (!sessionId) {
-        showStatus('Creating dialogue session...', 'info')
-        const sessionResult = await api.createWorkflowSession(
-          userId,
-          workflowId,
-          workflowData.workflow_yaml
-        )
-        sessionId = sessionResult.session_id
-        setDialogueSessionId(sessionId)
+        sessionId = await createNewSession(modificationLog)
       }
 
       // Use the WorkflowService chat API with streaming events
       // Clear previous progress events and start fresh
       setProgressEvents([])
 
-      const response = await api.workflowChat(sessionId, userMessage, async (event) => {
-        // Handle streaming events - add to progressEvents for display
+      console.log('[handleModify] Before workflowChat, messageToSend:', messageToSend, 'type:', typeof messageToSend)
+      const response = await api.workflowChat(sessionId, messageToSend, async (event) => {
+        // Handle streaming events - text and tool_use are independent, don't overwrite each other
         if (event.type === 'text') {
-          // Accumulate text events
+          // Replace only existing text event, keep tool_use separate
+          const displayText = event.message.length > 200
+            ? event.message.substring(0, 200) + '...'
+            : event.message
           setProgressEvents(prev => {
-            // Find existing text event to update, or add new one
-            const textIdx = prev.findIndex(e => e.type === 'text')
-            if (textIdx >= 0) {
-              const updated = [...prev]
-              updated[textIdx] = { ...updated[textIdx], content: (updated[textIdx].content || '') + event.message }
-              return updated
-            }
-            return [...prev, { type: 'text', content: event.message }]
+            const filtered = prev.filter(e => e.type !== 'text')
+            return [...filtered, { type: 'text', content: displayText }]
           })
-          setCurrentToolUse(null)
         } else if (event.type === 'tool_use') {
-          // Add tool_use event
-          setProgressEvents(prev => [...prev, { type: 'tool_use', content: event.message }])
+          // Replace only existing tool_use event, keep text separate
+          setProgressEvents(prev => {
+            const filtered = prev.filter(e => e.type !== 'tool_use')
+            return [...filtered, { type: 'tool_use', content: event.message }]
+          })
           setCurrentToolUse(event.message)
         } else if (event.type === 'workflow_updated') {
-          // Add workflow_updated event
-          setProgressEvents(prev => [...prev, { type: 'workflow_updated', content: 'Workflow updated' }])
+          setProgressEvents(prev => {
+            if (prev.some(e => e.type === 'workflow_updated')) return prev
+            return [...prev, { type: 'workflow_updated', content: 'Workflow updated' }]
+          })
         } else if (event.type === 'sync_required') {
-          // Handle sync_required event - sync modified files to local client
           setProgressEvents(prev => [...prev, { type: 'sync', content: `Syncing ${event.files?.length || 0} files to local...` }])
           try {
             await syncResources(workflowId, 'download')
@@ -296,10 +319,10 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
             showStatus('Files synced to local', 'success')
           } catch (syncError) {
             console.error('Sync failed:', syncError)
-            setProgressEvents(prev => [...prev, { type: 'sync_error', content: 'Sync failed' }])
+            setProgressEvents(prev => [...prev, { type: 'sync_error', content: `Sync failed: ${syncError.message}` }])
+            showStatus('Warning: File sync failed. Local files may be out of date. Try refreshing the page.', 'warning')
           }
         } else if (event.type === 'error') {
-          // Add error event
           setProgressEvents(prev => [...prev, { type: 'error', content: event.message }])
         }
       })
@@ -310,7 +333,11 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
 
       // Add assistant reply to log
       if (response.message) {
-        setModificationLog(prev => [...prev, { type: 'assistant', content: response.message }])
+        // Ensure message is a string
+        const messageContent = typeof response.message === 'string'
+          ? response.message
+          : String(response.message || '')
+        setModificationLog(prev => [...prev, { type: 'assistant', content: messageContent }])
       }
 
       // Update workflow if modified
@@ -346,14 +373,108 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
 
     } catch (error) {
       console.error('Modification error:', error)
+
+      // If session not found (404), automatically create new session and retry
+      if (error.message.includes('404') || error.message.includes('Session not found')) {
+        console.log('Session expired or not found, creating new session and retrying...')
+
+        // Clear stale session
+        clearStaleSession()
+
+        try {
+          // Create new session with existing chat history (excluding current message which is already in log)
+          const historyForContext = modificationLog.slice(0, -1)  // Exclude current message
+          const newSessionId = await createNewSession(historyForContext)
+
+          showStatus('Session restored, retrying...', 'info')
+
+          // Retry the chat with the new session
+          setProgressEvents([])
+          const response = await api.workflowChat(newSessionId, messageToSend, async (event) => {
+            // Same event handling as above - text and tool_use are independent
+            if (event.type === 'text') {
+              const displayText = event.message.length > 200
+                ? event.message.substring(0, 200) + '...'
+                : event.message
+              setProgressEvents(prev => {
+                const filtered = prev.filter(e => e.type !== 'text')
+                return [...filtered, { type: 'text', content: displayText }]
+              })
+            } else if (event.type === 'tool_use') {
+              setProgressEvents(prev => {
+                const filtered = prev.filter(e => e.type !== 'tool_use')
+                return [...filtered, { type: 'tool_use', content: event.message }]
+              })
+              setCurrentToolUse(event.message)
+            } else if (event.type === 'workflow_updated') {
+              setProgressEvents(prev => {
+                if (prev.some(e => e.type === 'workflow_updated')) return prev
+                return [...prev, { type: 'workflow_updated', content: 'Workflow updated' }]
+              })
+            } else if (event.type === 'sync_required') {
+              setProgressEvents(prev => [...prev, { type: 'sync', content: `Syncing ${event.files?.length || 0} files to local...` }])
+              try {
+                await syncResources(workflowId, 'download')
+                setProgressEvents(prev => [...prev, { type: 'sync_complete', content: 'Files synced to local' }])
+                showStatus('Files synced to local', 'success')
+              } catch (syncError) {
+                console.error('Sync failed:', syncError)
+                setProgressEvents(prev => [...prev, { type: 'sync_error', content: `Sync failed: ${syncError.message}` }])
+                showStatus('Warning: File sync failed. Local files may be out of date. Try refreshing the page.', 'warning')
+              }
+            } else if (event.type === 'error') {
+              setProgressEvents(prev => [...prev, { type: 'error', content: event.message }])
+            }
+          })
+
+          setCurrentToolUse(null)
+          setProgressEvents([])
+
+          if (response.message) {
+            const messageContent = typeof response.message === 'string'
+              ? response.message
+              : String(response.message || '')
+            setModificationLog(prev => [...prev, { type: 'assistant', content: messageContent }])
+          }
+
+          if (response.workflow_updated && response.workflow_yaml) {
+            const updatedData = { ...workflowData, workflow_yaml: response.workflow_yaml }
+            try {
+              const parsed = yaml.load(response.workflow_yaml)
+              updatedData.steps = parsed.steps || []
+              updatedData.connections = parsed.connections || []
+            } catch (e) {
+              console.error('Failed to parse updated YAML:', e)
+            }
+            setWorkflowData(updatedData)
+
+            api.callAppBackend(`/api/v1/workflows/${workflowId}`, {
+              method: 'PUT',
+              body: JSON.stringify({
+                user_id: userId,
+                workflow_yaml: response.workflow_yaml
+              })
+            }).catch(err => {
+              console.error('Failed to save workflow:', err)
+              showStatus('Workflow modified but save failed.', 'warning')
+            })
+
+            showStatus('Workflow updated!', 'success')
+          } else {
+            showStatus('Response received', 'success')
+          }
+
+          return  // Successfully retried
+        } catch (retryError) {
+          console.error('Retry failed:', retryError)
+          showStatus(`Modification failed: ${retryError.message}`, 'error')
+          setModificationLog(prev => [...prev, { type: 'error', content: retryError.message }])
+          return
+        }
+      }
+
       showStatus(`Modification failed: ${error.message}`, 'error')
       setModificationLog(prev => [...prev, { type: 'error', content: error.message }])
-
-      // If session not found (404), clear session ID to create new one on next try
-      if (error.message.includes('404') || error.message.includes('Session not found')) {
-        console.log('Session expired or not found, clearing session ID')
-        setDialogueSessionId(null)
-      }
     } finally {
       setIsModifying(false)
     }
@@ -718,7 +839,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
             </div>
 
             {/* Tabs Content */}
-            <div className="workflow-tabs-content">
+            <div className={`workflow-tabs-content content-${activeTab === 'visual' ? 'visual' : 'scrolling'}`}>
               {activeTab === 'visual' ? (
                 <FlowVisualization
                   data={workflowData}
@@ -771,53 +892,40 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                         </div>
                       ))}
 
-                      {/* SSE Progress Events - similar to WorkflowExecutionLivePage skill-log */}
-                      {progressEvents.length > 0 && (
+                      {/* SSE Progress Events - Two-box layout: text on top, tool_use on bottom */}
+                      {isModifying && (
                         <div className="sse-progress-log">
-                          {progressEvents.map((event, idx) => (
-                            <div key={idx} className={`progress-event ${event.type}`}>
-                              {event.type === 'tool_use' && (
-                                <>
-                                  <Icon icon="tool" size={14} className="spinning-icon" />
-                                  <span>{event.content}</span>
-                                </>
-                              )}
-                              {event.type === 'text' && (
-                                <>
-                                  <Icon icon="messageSquare" size={14} />
-                                  <span>{event.content}</span>
-                                </>
-                              )}
-                              {event.type === 'workflow_updated' && (
-                                <>
-                                  <Icon icon="checkCircle" size={14} />
-                                  <span>Workflow updated successfully</span>
-                                </>
-                              )}
-                              {event.type === 'error' && (
-                                <>
-                                  <Icon icon="alertCircle" size={14} />
-                                  <span>{event.content}</span>
-                                </>
-                              )}
-                            </div>
-                          ))}
-                          {isModifying && (
-                            <div className="progress-event thinking">
-                              <Icon icon="loader" size={14} className="spinning-icon" />
-                              <span>Processing...</span>
+                          {/* Text box - AI thinking/response */}
+                          <div className="progress-event text">
+                            <Icon icon="messageSquare" size={14} />
+                            <span>
+                              {progressEvents.find(e => e.type === 'text')?.content || 'Thinking...'}
+                            </span>
+                          </div>
+
+                          {/* Tool use box - current tool being executed */}
+                          <div className="progress-event tool_use">
+                            <Icon icon="tool" size={14} className={progressEvents.find(e => e.type === 'tool_use') ? 'spinning-icon' : ''} />
+                            <span>
+                              {progressEvents.find(e => e.type === 'tool_use')?.content || 'Waiting for tool call...'}
+                            </span>
+                          </div>
+
+                          {/* Workflow updated indicator */}
+                          {progressEvents.find(e => e.type === 'workflow_updated') && (
+                            <div className="progress-event workflow_updated">
+                              <Icon icon="checkCircle" size={14} />
+                              <span>Workflow updated successfully</span>
                             </div>
                           )}
-                        </div>
-                      )}
 
-                      {/* Show simple spinner if modifying but no events yet */}
-                      {isModifying && progressEvents.length === 0 && (
-                        <div className="sse-progress-log">
-                          <div className="progress-event thinking">
-                            <Icon icon="loader" size={14} className="spinning-icon" />
-                            <span>Connecting to AI assistant...</span>
-                          </div>
+                          {/* Error indicator */}
+                          {progressEvents.find(e => e.type === 'error') && (
+                            <div className="progress-event error">
+                              <Icon icon="alertCircle" size={14} />
+                              <span>{progressEvents.find(e => e.type === 'error')?.content}</span>
+                            </div>
+                          )}
                         </div>
                       )}
 

@@ -160,10 +160,14 @@ import sys
 
 def test():
     """Test find_element.py and validate result"""
-    # Load DOM
+    # Load DOM (wrapped format: {"url": ..., "dom": {...}})
     try:
         with open("dom_data.json", "r", encoding="utf-8") as f:
-            dom_dict = json.load(f)
+            data = json.load(f)
+        if "dom" not in data:
+            print("FAILED: Invalid DOM format - missing 'dom' key")
+            return False
+        dom_dict = data["dom"]
     except Exception as e:
         print(f"FAILED: Cannot load dom_data.json: {e}")
         return False
@@ -348,10 +352,12 @@ def find_target_element(dom_dict: dict) -> dict:
     }
 
 if __name__ == "__main__":
-    # Test locally
+    # Test locally - DOM files use wrapped format: {"url": ..., "dom": {...}}
     with open("dom_data.json", "r", encoding="utf-8") as f:
-        dom = json.load(f)
-    result = find_target_element(dom)
+        data = json.load(f)
+    if "dom" not in data:
+        raise ValueError("Invalid DOM format: missing 'dom' key. Expected wrapped format.")
+    result = find_target_element(data["dom"])
     print(json.dumps(result, indent=2, ensure_ascii=False))
 '''
 
@@ -985,6 +991,39 @@ grep -i "interactive_index" dom_data.json | head -20
             traceback.print_exc()
             return {}, "", {}
 
+    async def _save_dom_data(self, working_dir: Path, dom_dict: Dict) -> None:
+        """Save DOM data to file in wrapped format.
+
+        All DOM data is saved in wrapped format: {"url": "...", "dom": {...}}
+        This is the standard format used throughout the codebase.
+
+        Args:
+            working_dir: Directory to save dom_data.json
+            dom_dict: DOM dictionary to save
+        """
+        try:
+            # Get current page URL
+            page_url = "unknown"
+            if self.browser_session:
+                try:
+                    page_url = await self.browser_session.get_current_page_url()
+                except Exception:
+                    pass
+
+            # Wrap DOM in standard format
+            wrapped_dom = {
+                "url": page_url,
+                "dom": dom_dict
+            }
+
+            dom_file = working_dir / "dom_data.json"
+            dom_file.write_text(
+                json.dumps(wrapped_dom, indent=2, ensure_ascii=False),
+                encoding='utf-8'
+            )
+        except Exception as e:
+            logger.warning(f"Failed to save dom_data.json: {e}")
+
     async def _generate_operation_script(
         self,
         task: str,
@@ -1064,11 +1103,8 @@ grep -i "interactive_index" dom_data.json | head -20
                     except Exception as e:
                         logger.warning(f"Failed to send log callback: {e}")
 
-                # Update DOM for current page
-                (working_dir / "dom_data.json").write_text(
-                    json.dumps(dom_dict, indent=2, ensure_ascii=False),
-                    encoding='utf-8'
-                )
+                # Update DOM for current page (wrapped format)
+                await self._save_dom_data(working_dir, dom_dict)
 
                 # Try executing cached script
                 find_result = self._execute_find_element_script(script_content, dom_dict)
@@ -1269,7 +1305,9 @@ grep -i "interactive_index" dom_data.json | head -20
                     continue
 
                 script_content = script_file.read_text(encoding='utf-8')
-                dom_dict = json.loads((working_dir / "dom_data.json").read_text(encoding='utf-8'))
+                # DOM files use wrapped format: {"url": ..., "dom": {...}}
+                dom_data = json.loads((working_dir / "dom_data.json").read_text(encoding='utf-8'))
+                dom_dict = dom_data.get("dom", dom_data)  # Unwrap, fallback to direct format for compatibility
 
                 find_result = self._execute_find_element_script(script_content, dom_dict)
 
@@ -1326,10 +1364,7 @@ grep -i "interactive_index" dom_data.json | head -20
                 new_dom, _, new_selector_map = await self._get_current_page_dom()
                 selector_map = new_selector_map  # Update selector_map for next attempt
 
-                (working_dir / "dom_data.json").write_text(
-                    json.dumps(new_dom, indent=2, ensure_ascii=False),
-                    encoding='utf-8'
-                )
+                await self._save_dom_data(working_dir, new_dom)
 
                 feedback = f"""
 ## Previous Attempt Failed
@@ -1400,15 +1435,15 @@ Please analyze and fix find_element.py.
                 api_key = self.provider.api_key
                 logger.info(f"Got API key from provider for cloud script generation")
 
-            # 4. Read DOM data from working directory
+            # 4. Read DOM data from working directory (wrapped format: {"url": ..., "dom": {...}})
             dom_file = working_dir / "dom_data.json"
             if not dom_file.exists():
                 raise RuntimeError(f"dom_data.json not found in {working_dir}")
 
             dom_data = json.loads(dom_file.read_text(encoding='utf-8'))
 
-            # 5. Get page URL from context or DOM
-            page_url = dom_data.get('page_url', '')
+            # 5. Get page URL from wrapped DOM format
+            page_url = dom_data.get('url', '')
 
             logger.info(f"Requesting cloud browser script generation: workflow={workflow_id}, step={step_id}")
             logger.info(f"  Task: {task}")
@@ -1504,10 +1539,7 @@ Please analyze and fix find_element.py.
             New selector_map
         """
         new_dom, _, new_selector_map = await self._get_current_page_dom()
-        (working_dir / "dom_data.json").write_text(
-            json.dumps(new_dom, indent=2, ensure_ascii=False),
-            encoding='utf-8'
-        )
+        await self._save_dom_data(working_dir, new_dom)
         logger.info(f"📄 Refreshed dom_data.json")
         return new_selector_map
 
@@ -1859,9 +1891,12 @@ def find_target_xpath(dom_dict: dict) -> str:
 
 
 if __name__ == "__main__":
-    # Test the script
+    # Test the script - DOM files use wrapped format: {"url": ..., "dom": {...}}
     with open("dom_data.json", "r", encoding="utf-8") as f:
-        dom_dict = json.load(f)
+        data = json.load(f)
+    if "dom" not in data:
+        raise ValueError("Invalid DOM format: missing 'dom' key")
+    dom_dict = data["dom"]
 
     xpath = find_target_xpath(dom_dict)
     if xpath:
@@ -1916,11 +1951,8 @@ if __name__ == "__main__":
 
             logger.info(f"BrowserAgent scroll_to_element workspace: {working_dir}")
 
-            # Save DOM data
-            (working_dir / "dom_data.json").write_text(
-                json.dumps(dom_dict, indent=2, ensure_ascii=False),
-                encoding='utf-8'
-            )
+            # Save DOM data (wrapped format)
+            await self._save_dom_data(working_dir, dom_dict)
 
             # Step 3: Check cached script
             if script_file.exists():
@@ -2062,10 +2094,7 @@ SUCCESS: Found xpath: /html/body/...
 
             # Update DOM (may have changed)
             dom_dict, _, _ = await self._get_current_page_dom()
-            (working_dir / "dom_data.json").write_text(
-                json.dumps(dom_dict, indent=2, ensure_ascii=False),
-                encoding='utf-8'
-            )
+            await self._save_dom_data(working_dir, dom_dict)
 
             xpath_result = self._execute_find_xpath_script(script_content, dom_dict)
 

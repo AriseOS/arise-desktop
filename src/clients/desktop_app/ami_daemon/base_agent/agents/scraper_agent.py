@@ -649,10 +649,11 @@ class ScraperAgent(BaseStepAgent):
             url_hash = self._generate_url_hash(url)
             timestamp = datetime.now().isoformat()
 
-            # Build DOM snapshot data
+            # Build DOM snapshot data (wrapped format with step_id for url_index mapping)
             snapshot_data = {
                 "url": url,
                 "url_hash": url_hash,
+                "step_id": step_id,  # Include step_id for url_index.json mapping
                 "timestamp": timestamp,
                 "dom": dom_dict
             }
@@ -909,6 +910,19 @@ class ScraperAgent(BaseStepAgent):
                 await self._save_dom_snapshot(page_url, execution_dict)
             except Exception as e:
                 logger.warning(f"Failed to save DOM snapshot: {e}")
+
+            # Update local dom_data.json in script directory with latest DOM
+            # This keeps the script's test data in sync with actual page structure
+            try:
+                if script_workspace and script_workspace.exists():
+                    dom_data_file = script_workspace / "dom_data.json"
+                    dom_data_file.write_text(
+                        json.dumps(execution_dict, indent=2, ensure_ascii=False),
+                        encoding='utf-8'
+                    )
+                    logger.info(f"Updated dom_data.json in script directory: {dom_data_file}")
+            except Exception as e:
+                logger.warning(f"Failed to update local dom_data.json: {e}")
 
             return result
 
@@ -1390,14 +1404,16 @@ def execute_extraction(dom_dict, max_items: int = 100):
                 all_data = main(dom_dict)
             else:
                 # main() with no args - script likely loads dom_data.json itself
-                # We need to save dom_dict to dom_data.json temporarily
+                # We need to save dom_dict to dom_data.json temporarily in wrapped format
                 import tempfile
                 import os
                 original_cwd = os.getcwd()
                 with tempfile.TemporaryDirectory() as tmpdir:
                     os.chdir(tmpdir)
+                    # Save in wrapped format with url and dom keys
+                    wrapped_dom = {{"url": "runtime", "dom": dom_dict}}
                     with open('dom_data.json', 'w', encoding='utf-8') as f:
-                        json.dump(dom_dict, f, ensure_ascii=False)
+                        json.dump(wrapped_dom, f, ensure_ascii=False)
                     all_data = main()
                     os.chdir(original_cwd)
         else:

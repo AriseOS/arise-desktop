@@ -76,6 +76,31 @@ def start_session_cleanup_task(timeout_minutes: int, interval_minutes: int):
                 if mod_cleaned_count > 0:
                     logger.info(f"🧹 Cleaned {mod_cleaned_count} expired Workflow Modification sessions")
 
+                # Also cleanup expired sessions from in-memory _workflow_sessions dict
+                expired_session_ids = []
+                now = datetime.now()
+                for session_id, session_data in _workflow_sessions.items():
+                    created_at_str = session_data.get("created_at")
+                    if created_at_str:
+                        try:
+                            created_at = datetime.fromisoformat(created_at_str)
+                            if (now - created_at).total_seconds() > 60 * 60:  # 60 min timeout
+                                expired_session_ids.append(session_id)
+                        except (ValueError, TypeError):
+                            pass
+
+                for session_id in expired_session_ids:
+                    try:
+                        session = _workflow_sessions[session_id].get("session")
+                        if session:
+                            await session._disconnect()
+                    except Exception as e:
+                        logger.warning(f"Error disconnecting expired session {session_id}: {e}")
+                    del _workflow_sessions[session_id]
+
+                if expired_session_ids:
+                    logger.info(f"🧹 Cleaned {len(expired_session_ids)} expired in-memory workflow sessions")
+
             except asyncio.CancelledError:
                 logger.info("🧹 Session cleanup task cancelled")
                 break
@@ -1555,13 +1580,18 @@ async def create_workflow_session(
         {
             "user_id": "user123",
             "workflow_id": "workflow_abc123",
-            "workflow_yaml": "apiVersion: v1\\nkind: Workflow\\n..."
+            "workflow_yaml": "apiVersion: v1\\nkind: Workflow\\n...",
+            "chat_history": [  // Optional - restore context from previous session
+                {"role": "user", "content": "..."},
+                {"role": "assistant", "content": "..."}
+            ]
         }
 
     Returns:
         {
             "session_id": "session_xyz789",
-            "success": true
+            "success": true,
+            "history_restored": true  // If chat_history was provided and injected
         }
     """
     if not x_ami_api_key:
@@ -1570,6 +1600,7 @@ async def create_workflow_session(
     user_id = data.get("user_id")
     workflow_id = data.get("workflow_id")
     workflow_yaml = data.get("workflow_yaml")
+    chat_history = data.get("chat_history")  # Optional: list of {role, content}
 
     if not user_id:
         raise HTTPException(400, "Missing user_id")
@@ -1593,7 +1624,8 @@ async def create_workflow_session(
             config_service=config_service,
             api_key=x_ami_api_key,
             base_url=config_service.get("llm.proxy_url"),
-            session_id=session_id
+            session_id=session_id,
+            chat_history=chat_history  # Pass chat history to session
         )
 
         # Connect the session (copies workflow to session directory)
@@ -1607,15 +1639,19 @@ async def create_workflow_session(
             "created_at": datetime.now().isoformat()
         }
 
-        logger.info(f"✅ Workflow modification session created: {session_id}")
+        history_restored = bool(chat_history and len(chat_history) > 0)
+        logger.info(f"✅ Workflow modification session created: {session_id}, history_restored={history_restored}")
 
         return {
             "session_id": session_id,
-            "success": True
+            "success": True,
+            "history_restored": history_restored
         }
 
     except Exception as e:
+        import traceback
         logger.error(f"❌ Failed to create workflow session: {e}")
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
         raise HTTPException(500, f"Failed to create session: {str(e)}")
 
 
@@ -1637,16 +1673,19 @@ async def workflow_session_chat(
         data: {"type": "complete", "message": "...", "workflow_yaml": "..."}
     """
     logger.info(f"🔄 [chat endpoint] Received chat request for session {session_id}")
+    logger.info(f"📦 [chat endpoint] Raw data received: {data}")
+    logger.info(f"📦 [chat endpoint] Data type: {type(data)}")
 
     if session_id not in _workflow_sessions:
         logger.error(f"❌ [chat endpoint] Session not found: {session_id}")
         raise HTTPException(404, f"Session not found: {session_id}")
 
     message = data.get("message")
+    logger.info(f"📦 [chat endpoint] Message value: {message}, type: {type(message)}")
     if not message:
         raise HTTPException(400, "Missing message")
 
-    logger.info(f"📝 [chat endpoint] Message: {message[:100]}...")
+    logger.info(f"📝 [chat endpoint] Message: {str(message)[:100]}...")
 
     session_data = _workflow_sessions[session_id]
     session = session_data["session"]
@@ -2306,6 +2345,10 @@ async def save_workflow_file(
 
     Returns:
         {"success": true, "size": 12345}
+
+    Special handling for dom_snapshots/*.json:
+        - Automatically updates dom_snapshots/url_index.json with step_id mapping
+        - Enables copy_workflow_to_session to find correct DOM for each step
     """
     try:
         workflow_path = storage_service.get_workflow_path(user_id, workflow_id)
@@ -2324,6 +2367,14 @@ async def save_workflow_file(
 
         logger.info(f"Saved file {path} ({len(content)} bytes) for {workflow_id}")
 
+        # Special handling: update url_index.json when saving DOM snapshots
+        if path.startswith("dom_snapshots/") and path.endswith(".json") and path != "dom_snapshots/url_index.json":
+            try:
+                _update_dom_url_index(workflow_path, path, content)
+            except Exception as e:
+                # Don't fail the upload if url_index update fails
+                logger.warning(f"Failed to update url_index.json: {e}")
+
         return {"success": True, "size": len(content)}
 
     except HTTPException:
@@ -2331,6 +2382,80 @@ async def save_workflow_file(
     except Exception as e:
         logger.error(f"Failed to save file {path} for {workflow_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _update_dom_url_index(workflow_path: Path, dom_file_path: str, content: bytes):
+    """Update dom_snapshots/url_index.json with step_id mapping
+
+    Called when a DOM snapshot is saved. Extracts metadata from the snapshot
+    and updates the url_index.json file.
+
+    Args:
+        workflow_path: Path to workflow directory
+        dom_file_path: Relative path like "dom_snapshots/abc123.json"
+        content: The DOM snapshot file content (JSON bytes)
+    """
+    import json
+
+    # Parse DOM snapshot to get metadata
+    try:
+        snapshot_data = json.loads(content.decode('utf-8'))
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        logger.warning(f"Failed to parse DOM snapshot {dom_file_path}: {e}")
+        return
+
+    url = snapshot_data.get("url")
+    step_id = snapshot_data.get("step_id")
+    url_hash = snapshot_data.get("url_hash")
+    timestamp = snapshot_data.get("timestamp")
+
+    if not url:
+        logger.warning(f"DOM snapshot {dom_file_path} missing 'url' field")
+        return
+
+    # Get filename from path
+    dom_filename = dom_file_path.split("/")[-1]  # e.g., "abc123.json"
+
+    # Load existing url_index.json or create new
+    url_index_path = workflow_path / "dom_snapshots" / "url_index.json"
+    url_index = []
+
+    if url_index_path.exists():
+        try:
+            with open(url_index_path, 'r', encoding='utf-8') as f:
+                url_index = json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            logger.warning(f"Failed to load url_index.json, creating new: {e}")
+            url_index = []
+
+    # Find existing entry by url or filename, update or append
+    entry_found = False
+    for entry in url_index:
+        if entry.get("url") == url or entry.get("file") == dom_filename:
+            # Update existing entry
+            entry["url"] = url
+            entry["file"] = dom_filename
+            entry["step_id"] = step_id
+            entry["captured_at"] = timestamp
+            entry_found = True
+            logger.info(f"Updated url_index entry: url={url}, step_id={step_id}")
+            break
+
+    if not entry_found:
+        # Append new entry
+        url_index.append({
+            "url": url,
+            "file": dom_filename,
+            "step_id": step_id,
+            "captured_at": timestamp
+        })
+        logger.info(f"Added url_index entry: url={url}, step_id={step_id}")
+
+    # Save updated url_index.json
+    with open(url_index_path, 'w', encoding='utf-8') as f:
+        json.dump(url_index, f, indent=2, ensure_ascii=False)
+
+    logger.info(f"Updated dom_snapshots/url_index.json ({len(url_index)} entries)")
 
 
 class GenerateScriptRequest(BaseModel):
@@ -2435,11 +2560,18 @@ async def generate_script_stream(
                     return
 
                 # Use client-uploaded DOM
+                # page_url may be extracted from wrapped DOM or from request
+                page_url = request.page_url
                 if request.dom_data:
-                    dom_dict = request.dom_data
+                    # Handle both wrapped {"url": ..., "dom": {...}} and direct DOM format
+                    if isinstance(request.dom_data, dict) and "dom" in request.dom_data:
+                        dom_dict = request.dom_data["dom"]
+                        page_url = request.dom_data.get("url") or request.page_url
+                    else:
+                        dom_dict = request.dom_data
                     yield f"data: {json.dumps({'type': 'progress', 'message': 'Using client-uploaded DOM', 'turn': 0})}\n\n"
                 else:
-                    dom_dict = _find_dom_for_step(workflow_dir, step_inputs, request.page_url)
+                    dom_dict = _find_dom_for_step(workflow_dir, step_inputs, page_url)
                     if not dom_dict:
                         yield f"data: {json.dumps({'type': 'error', 'message': 'No DOM data provided'})}\n\n"
                         return
@@ -2470,7 +2602,7 @@ async def generate_script_stream(
                         working_dir=working_dir,
                         api_key=api_key,
                         base_url=config_service.get("llm.base_url"),
-                        page_url=request.page_url,
+                        page_url=page_url,
                         progress_callback=progress_callback
                     )
 
@@ -2481,6 +2613,14 @@ async def generate_script_stream(
                 if not request.dom_data:
                     yield f"data: {json.dumps({'type': 'error', 'message': 'dom_data is required for browser script'})}\n\n"
                     return
+
+                # Handle both wrapped {"url": ..., "dom": {...}} and direct DOM format
+                if isinstance(request.dom_data, dict) and "dom" in request.dom_data:
+                    dom_dict = request.dom_data["dom"]
+                    page_url = request.dom_data.get("url") or request.page_url
+                else:
+                    dom_dict = request.dom_data
+                    page_url = request.page_url
 
                 # Build task
                 operation = step_inputs.get("operation", "click")
@@ -2509,10 +2649,11 @@ async def generate_script_stream(
                 async def run_generation():
                     return await generator.generate(
                         task=task,
-                        dom_dict=request.dom_data,
+                        dom_dict=dom_dict,
                         working_dir=working_dir,
                         api_key=api_key,
                         base_url=config_service.get("llm.base_url"),
+                        page_url=page_url,
                         progress_callback=progress_callback
                     )
 

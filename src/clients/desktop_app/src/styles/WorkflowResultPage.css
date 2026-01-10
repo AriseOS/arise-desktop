@@ -2,18 +2,23 @@
 .workflow-result-page {
     display: flex;
     flex-direction: column;
-    height: 100vh;
+    /* Allow growth */
+    height: auto;
+    min-height: 100%;
     background-color: var(--bg-primary);
     color: var(--text-primary);
+    overflow: visible;
 }
 
 .workflow-result-content {
-    flex: 1;
-    overflow-y: auto;
     padding: var(--spacing-lg);
     display: flex;
     flex-direction: column;
     gap: var(--spacing-lg);
+    /* Remove flex constraints */
+    height: auto;
+    flex: none;
+    overflow: visible;
 }
 
 .download-button {

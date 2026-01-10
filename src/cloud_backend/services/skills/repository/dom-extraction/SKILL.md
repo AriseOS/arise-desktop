@@ -211,7 +211,9 @@ def extract_data_from_page(dom_dict: Dict) -> List[Dict]:
 # Testing code - only runs when script is executed directly
 if __name__ == "__main__":
     with open("dom_data.json") as f:
-        dom = json.load(f)
+        data = json.load(f)
+    # DOM files use wrapped format: {"url": ..., "dom": {...}}
+    dom = data.get("dom", data)
     print(json.dumps(extract_data_from_page(dom), indent=2))
 ```
 

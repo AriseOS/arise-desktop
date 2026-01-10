@@ -305,9 +305,19 @@ def format_element_summary(elem: Dict) -> str:
 
 
 def load_dom(file_path: str = "dom_data.json") -> Dict:
-    """Load DOM from JSON file."""
+    """Load DOM from JSON file.
+
+    DOM files use wrapped format: {"url": "...", "dom": {...}}
+    Returns the DOM dictionary (unwrapped) ready for traversal.
+    """
     with open(file_path, 'r', encoding='utf-8') as f:
-        return json.load(f)
+        data = json.load(f)
+
+    # All DOM files use wrapped format: {"url": ..., "dom": {...}}
+    if "dom" not in data:
+        raise ValueError(f"Invalid DOM format: missing 'dom' key. Expected wrapped format.")
+
+    return data["dom"]
 
 
 # === CLI Interface ===

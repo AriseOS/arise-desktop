@@ -674,13 +674,14 @@
 .yaml-content {
   margin: 0;
   padding: 20px;
-  overflow: auto;
-  max-height: 600px;
+  /* overflow: auto; removed */
+  /* max-height: 600px; removed */
   font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.6;
   color: var(--text-primary);
   background: var(--bg-app);
+  overflow-x: auto;
 }
 
 .yaml-content code {

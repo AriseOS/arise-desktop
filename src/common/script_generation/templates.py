@@ -25,10 +25,14 @@ import sys
 
 def test():
     """Test find_element.py and validate result"""
-    # Load DOM
+    # Load DOM (wrapped format: {"url": ..., "dom": {...}})
     try:
         with open("dom_data.json", "r", encoding="utf-8") as f:
-            dom_dict = json.load(f)
+            data = json.load(f)
+        if "dom" not in data:
+            print("FAILED: Invalid DOM format - missing 'dom' key")
+            return False
+        dom_dict = data["dom"]
     except Exception as e:
         print(f"FAILED: Cannot load dom_data.json: {e}")
         return False
@@ -211,10 +215,12 @@ def find_target_element(dom_dict: dict) -> dict:
     }
 
 if __name__ == "__main__":
-    # Test locally
+    # Test locally - DOM files use wrapped format: {"url": ..., "dom": {...}}
     with open("dom_data.json", "r", encoding="utf-8") as f:
-        dom = json.load(f)
-    result = find_target_element(dom)
+        data = json.load(f)
+    if "dom" not in data:
+        raise ValueError("Invalid DOM format: missing 'dom' key")
+    result = find_target_element(data["dom"])
     print(json.dumps(result, indent=2, ensure_ascii=False))
 '''
 
@@ -229,13 +235,13 @@ BROWSER_AGENT_PROMPT = """# Browser Element Finder Task
 You are working in: `{working_dir}`
 
 ## Available Files
-- `task.json` - Task description with xpath hints
 - `dom_data.json` - Current page DOM structure (nested JSON)
 - `find_element_template.py` - Template with helper functions (copy and modify)
 - `test_operation.py` - Test script to validate your find_element.py
 
 ## Your Task
-Create `find_element.py` that finds the target element described in task.json.
+Create `find_element.py` that finds the target element.
+{task_details}
 
 ## Available Skills
 
@@ -247,7 +253,7 @@ cat .claude/skills/element-finder/SKILL.md
 **Element Tools** - Use these to find elements BEFORE writing script:
 ```bash
 # Analyze xpath hint from recording (RECOMMENDED FIRST STEP)
-python .claude/skills/element-finder/tools/element_tools.py hint "<xpath_from_task.json>"
+python .claude/skills/element-finder/tools/element_tools.py hint "<xpath_hint>"
 
 # Search by text keyword (searches text, aria-label, placeholder)
 python .claude/skills/element-finder/tools/element_tools.py search "Submit"
@@ -264,30 +270,24 @@ python .claude/skills/element-finder/tools/element_tools.py attr "aria-label" "S
 
 ## Instructions
 
-### Step 1: Read task.json
-```bash
-cat task.json
-```
-Understand what element to find and the xpath hints provided.
-
-### Step 2: Use Element Tools
+### Step 1: Use Element Tools
 Use the element tools to find the target element:
 ```bash
-# First, try the hint command with xpath from task.json
+# First, try the hint command with xpath hint above
 python .claude/skills/element-finder/tools/element_tools.py hint "<xpath_hint>"
 
 # If hint fails, search by text keywords
 python .claude/skills/element-finder/tools/element_tools.py search "<keyword>"
 ```
 
-### Step 3: Create find_element.py
+### Step 2: Create find_element.py
 Copy the template and implement the search logic based on what tools found:
 ```bash
 cp find_element_template.py find_element.py
 ```
 Then edit find_element.py to implement the actual search.
 
-### Step 4: Test
+### Step 3: Test
 Run the test script to verify your implementation:
 ```bash
 python test_operation.py
@@ -337,9 +337,17 @@ Generate `extraction_script.py` to extract data from the webpage DOM.
 - **Working Directory**: `{working_dir}`
 - **Page URL**: `{page_url}`
 
+## Extraction Requirements
+
+**User Description**: {user_description}
+
+**Output Format (fields to extract)**:
+{fields_description}
+{sample_description}
+{xpath_hints_description}
+
 ## Input Files
 
-- `requirement.json` - User requirements, output format, xpath hints
 - `dom_data.json` - Page DOM as nested JSON dictionary
 
 ## DOM Tools
@@ -356,17 +364,11 @@ Generate `extraction_script.py` to extract data from the webpage DOM.
 
 ## Workflow
 
-### Step 1: Read Requirements
-```bash
-cat requirement.json
-```
-Identify: `user_description`, `output_format`, `xpath_hints`
-
-### Step 2: Determine Extraction Type
+### Step 1: Determine Extraction Type
 - **List** ("all", "every", "list") → Use `container` command
 - **Multi-field** (detail page) → Use `find` with JSON
 
-### Step 3: Execute Based on Type
+### Step 2: Execute Based on Type
 
 **For List Extraction (one step):**
 ```bash
@@ -389,19 +391,19 @@ The `find` command returns for each xpath:
 - If xpath has **siblings** → decide if content needs merging
 - If xpath **not found** → use `search` command
 
-### Step 4: If xpath fails, search
+### Step 3: If xpath fails, search
 ```bash
 python dom_tools.py search --text "9.0"
 python dom_tools.py search --class "rating"
 ```
 
-### Step 5: Write Script
+### Step 4: Write Script
 Use corrected xpaths based on `find` output:
 ```python
 from dom_tools import extract_list, extract_single, extract_multi
 ```
 
-### Step 6: Test
+### Step 5: Test
 ```bash
 python extraction_script.py
 ```
@@ -458,13 +460,17 @@ def extract_data_from_page(dom_dict: Dict) -> List[Dict]:
 # Main entry point - reads dom_data.json and calls extract function
 if __name__ == "__main__":
     with open("dom_data.json", "r") as f:
-        dom = json.load(f)
-    results = extract_data_from_page(dom)
+        data = json.load(f)
+    # DOM files use wrapped format: {{"url": ..., "dom": {{...}}}}
+    if "dom" not in data:
+        raise ValueError("Invalid DOM format: missing 'dom' key. Expected wrapped format.")
+    results = extract_data_from_page(data["dom"])
     print(json.dumps(results, indent=2, ensure_ascii=False))
 ```
 
 **IMPORTANT**:
 - The `extract_data_from_page(dom_dict)` function receives DOM as parameter - do NOT read files inside this function
 - File reading (`dom_data.json`) only happens in `if __name__ == "__main__":` block for testing
+- DOM files use wrapped format: `{{"url": "...", "dom": {{...}}}}`
 - This structure allows the script to be imported and called with DOM data directly
 """

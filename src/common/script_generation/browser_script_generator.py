@@ -51,6 +51,7 @@ class BrowserScriptGenerator:
         working_dir: Path,
         api_key: str,
         base_url: Optional[str] = None,
+        page_url: Optional[str] = None,
         feedback: str = "",
         progress_callback: Optional[Callable[[str, str, Dict], Awaitable[None]]] = None
     ) -> ScriptGenerationResult:
@@ -62,6 +63,7 @@ class BrowserScriptGenerator:
             working_dir: Working directory for script generation
             api_key: API key for Claude Agent SDK
             base_url: Optional base URL for API
+            page_url: Optional page URL for DOM wrapper
             feedback: Feedback from previous attempt (for retries)
             progress_callback: Optional async callback for progress updates
                 Signature: async def callback(level: str, message: str, data: dict)
@@ -81,7 +83,7 @@ class BrowserScriptGenerator:
             SkillManager.prepare_browser_skills(working_dir)
 
             # Save input files
-            await self._save_input_files(working_dir, task, dom_dict)
+            await self._save_input_files(working_dir, task, dom_dict, page_url)
 
             # Build prompt
             prompt = self._build_prompt(working_dir, task, feedback)
@@ -195,9 +197,13 @@ class BrowserScriptGenerator:
         self,
         working_dir: Path,
         task: BrowserTask,
-        dom_dict: Dict[str, Any]
+        dom_dict: Dict[str, Any],
+        page_url: Optional[str] = None
     ) -> None:
-        """Save input files for Claude Agent"""
+        """Save input files for Claude Agent
+
+        DOM format (wrapped): {"url": "...", "dom": {...}}
+        """
         # Save task.json
         task_file = working_dir / "task.json"
         task_file.write_text(
@@ -205,10 +211,14 @@ class BrowserScriptGenerator:
             encoding='utf-8'
         )
 
-        # Save dom_data.json
+        # Save dom_data.json in wrapped format: {"url": ..., "dom": {...}}
+        wrapped_dom = {
+            "url": page_url or "unknown",
+            "dom": dom_dict
+        }
         dom_file = working_dir / "dom_data.json"
         dom_file.write_text(
-            json.dumps(dom_dict, indent=2, ensure_ascii=False),
+            json.dumps(wrapped_dom, indent=2, ensure_ascii=False),
             encoding='utf-8'
         )
 
@@ -228,16 +238,23 @@ class BrowserScriptGenerator:
         feedback: str = ""
     ) -> str:
         """Build Claude Agent prompt"""
-        prompt = BROWSER_AGENT_PROMPT.format(working_dir=working_dir)
-
-        # Add task-specific context
-        prompt += f"""
-
-## Current Task Details
+        # Build task details with xpath hints
+        task_details = f"""
 - **Task:** {task.task}
 - **Operation:** {task.operation}
 - **Text (for fill):** {task.text if task.text else "N/A"}
 """
+        if task.xpath_hints:
+            hints_list = "\n".join([
+                f"  - {name}: `{xpath}`"
+                for name, xpath in task.xpath_hints.items()
+            ])
+            task_details += f"- **XPath Hints:**\n{hints_list}"
+
+        prompt = BROWSER_AGENT_PROMPT.format(
+            working_dir=working_dir,
+            task_details=task_details
+        )
 
         # Add feedback if this is a retry
         if feedback:
@@ -247,10 +264,6 @@ class BrowserScriptGenerator:
 {feedback}
 
 Please fix find_element.py based on the error above.
-"""
-
-        prompt += """
-Start by reading task.json and dom_data.json to understand the requirements and DOM structure.
 """
 
         return prompt

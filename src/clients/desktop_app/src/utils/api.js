@@ -608,9 +608,22 @@ export const api = {
    * @returns {Promise<object>} Final result with workflow_yaml if updated
    */
   async workflowChat(sessionId, message, onEvent = null) {
+    // Ensure message is a string
+    let messageStr
+    if (typeof message === 'string') {
+      messageStr = message
+    } else if (message && typeof message === 'object') {
+      // If it's an object with content property, use that
+      messageStr = typeof message.content === 'string' ? message.content : String(message.content || '')
+    } else {
+      messageStr = String(message || '')
+    }
+
+    console.log('[workflowChat] sessionId:', sessionId, 'message:', messageStr.substring(0, 100))
+
     const response = await this.callAppBackendRaw(`/api/v1/workflow-sessions/${sessionId}/chat`, {
       method: 'POST',
-      body: JSON.stringify({ message })
+      body: JSON.stringify({ message: messageStr })
     });
 
     if (!response.ok) {
@@ -622,52 +635,67 @@ export const api = {
     const decoder = new TextDecoder();
     let buffer = '';
     let finalResult = { workflow_updated: false, workflow_yaml: null, message: '' };
+    let streamError = null;  // Track errors thrown from event processing
+
+    const processLine = (line) => {
+      if (line.startsWith('data: ')) {
+        try {
+          const data = JSON.parse(line.slice(6));
+
+          if (onEvent) {
+            onEvent(data);
+          }
+
+          if (data.type === 'workflow_updated' || data.type === 'complete') {
+            if (data.workflow_yaml) {
+              finalResult.workflow_updated = true;
+              finalResult.workflow_yaml = data.workflow_yaml;
+            }
+          }
+
+          if (data.type === 'complete') {
+            finalResult.message = data.message;
+          }
+
+          if (data.type === 'error') {
+            streamError = new Error(data.message);
+          }
+        } catch (parseError) {
+          // Only log JSON parse errors, don't throw
+          console.warn('[API] Failed to parse SSE event:', line, parseError);
+        }
+      }
+    };
 
     try {
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
 
-        buffer += decoder.decode(value, { stream: true });
+        if (value) {
+          buffer += decoder.decode(value, { stream: !done });
+        }
+
+        // Process complete SSE events
         const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
+
+        // If done, we process all lines including the last one
+        // If not done, we keep the last line in buffer as it might be incomplete
+        buffer = done ? '' : (lines.pop() || '');
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-
-              if (onEvent) {
-                onEvent(data);
-              }
-
-              if (data.type === 'workflow_updated' || data.type === 'complete') {
-                if (data.workflow_yaml) {
-                  finalResult.workflow_updated = true;
-                  finalResult.workflow_yaml = data.workflow_yaml;
-                }
-              }
-
-              if (data.type === 'complete') {
-                finalResult.message = data.message;
-              }
-
-              if (data.type === 'error') {
-                throw new Error(data.message);
-              }
-            } catch (parseError) {
-              // Re-throw if this is an error we threw ourselves (from data.type === 'error')
-              if (parseError.message && !parseError.message.includes('JSON')) {
-                throw parseError;
-              }
-              // Otherwise just log the parse error
-              console.warn('[API] Failed to parse SSE event:', line, parseError);
-            }
-          }
+          if (line.trim() === '') continue;  // Skip empty lines
+          processLine(line);
         }
+
+        if (done) break;
       }
     } finally {
       reader.releaseLock();
+    }
+
+    // Throw error after stream is fully processed
+    if (streamError) {
+      throw streamError;
     }
 
     return finalResult;
@@ -694,16 +722,29 @@ export const api = {
    * @param {string} userId - User ID
    * @param {string} workflowId - Workflow ID
    * @param {string} workflowYaml - Current Workflow YAML content
+   * @param {Array} chatHistory - Optional chat history to restore context
+   *   Format: [{type: 'user'|'assistant', content: string}, ...]
    * @returns {Promise<object>} Session creation result with session_id
    */
-  async createWorkflowSession(userId, workflowId, workflowYaml) {
+  async createWorkflowSession(userId, workflowId, workflowYaml, chatHistory = null) {
+    const body = {
+      user_id: userId,
+      workflow_id: workflowId,
+      workflow_yaml: workflowYaml
+    };
+    if (chatHistory && chatHistory.length > 0) {
+      // Filter out error messages and convert to backend format
+      // Ensure content is always a string to avoid cyclic structure errors
+      body.chat_history = chatHistory
+        .filter(msg => msg.type === 'user' || msg.type === 'assistant')
+        .map(msg => ({
+          role: msg.type,
+          content: typeof msg.content === 'string' ? msg.content : String(msg.content || '')
+        }));
+    }
     return await this.callAppBackend('/api/v1/workflow-sessions', {
       method: 'POST',
-      body: JSON.stringify({
-        user_id: userId,
-        workflow_id: workflowId,
-        workflow_yaml: workflowYaml
-      })
+      body: JSON.stringify(body)
     });
   },
 

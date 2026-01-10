@@ -48,6 +48,31 @@ async with WorkflowBuilderSession(api_key="...") as session:
     workflow = session.get_current_workflow()
 ```
 
+### WorkflowModificationSession
+
+Session for modifying existing workflows via dialogue. Supports both
+workflow YAML modifications and scraper script regeneration.
+
+```python
+session = WorkflowModificationSession(
+    workflow_yaml=existing_yaml,
+    user_id="user1",
+    workflow_id="workflow_123",
+    storage_service=storage_service,
+    api_key="..."
+)
+
+await session._connect()
+async for event in session.chat_stream("抓取列表数据不对"):
+    print(event)  # StreamEvent with type, message, etc.
+await session._disconnect()
+```
+
+**Features:**
+- Pre-computes scraper diagnostic context (directory structure, requirements, script output)
+- Guides Claude to read `scraper-fix` skill for extraction issues
+- Syncs modified files back to original workflow
+
 ## Tools
 
 ### read_spec

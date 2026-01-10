@@ -18,8 +18,9 @@ skills/
     ├── workflow-generation/   # Workflow YAML generation
     ├── workflow-optimizations/  # Optimization patterns
     ├── workflow-validation/     # Validation scripts
-    ├── dom-extraction/   # DOM data extraction
-    └── element-finder/   # Browser element finding
+    ├── dom-extraction/   # DOM data extraction for script generation
+    ├── element-finder/   # Browser element finding
+    └── scraper-fix/      # Scraper extraction diagnostics and fixes
 ```
 
 ## Usage
@@ -47,12 +48,14 @@ dom_tools_path = SkillManager.get_skill_path("dom-extraction") / "tools" / "dom_
 | `prepare_workflow_skills()` | agent-specs, workflow-generation, workflow-optimizations, workflow-validation | WorkflowBuilder |
 | `prepare_browser_skills()` | element-finder | BrowserAgent, BrowserScriptGenerator |
 | `prepare_scraper_skills()` | dom-extraction | ScraperScriptGenerator |
+| `prepare_modification_skills()` | All workflow skills + dom-extraction + scraper-fix | WorkflowModificationSession |
 
 ## When to Update Skills
 
 - `agent-specs/`: When agent I/O contracts change
 - `workflow-generation/`: When workflow YAML structure changes
-- `dom-extraction/`: When extraction logic changes
+- `dom-extraction/`: When extraction logic or dom_tools commands change
 - `element-finder/`: When element finding logic changes
 - `workflow-validation/`: When validation rules change
 - `workflow-optimizations/`: When new optimization patterns discovered
+- `scraper-fix/`: When diagnostic workflow or dom_tools commands change

@@ -226,6 +226,10 @@ class StorageService:
             - metadata.json
             - {step_id}/scraper_script_xxx/ directories
             - dom_snapshots/ (if exists)
+
+        Post-copy processing:
+            - Copies latest DOM from dom_snapshots/ to each step's dom_data.json
+              based on step_id mapping in url_index.json
         """
         import shutil
 
@@ -257,8 +261,88 @@ class StorageService:
         with open(session_meta_file, 'w', encoding='utf-8') as f:
             json.dump(session_meta, f, indent=2)
 
+        # Copy latest DOM from dom_snapshots to each step's script directory
+        self._populate_dom_data_from_snapshots(session_path)
+
         logger.info(f"Copied workflow {workflow_id} to session {session_id}")
         return session_path
+
+    def _populate_dom_data_from_snapshots(self, session_path: Path) -> None:
+        """Copy DOM snapshots to each step's script directory based on step_id mapping.
+
+        Reads dom_snapshots/url_index.json to find step_id -> DOM file mapping,
+        then copies each DOM file to the corresponding step's dom_data.json.
+
+        This ensures modification sessions have up-to-date DOM data for script testing.
+
+        Args:
+            session_path: Path to session working directory
+        """
+        dom_snapshots_dir = session_path / "dom_snapshots"
+        url_index_file = dom_snapshots_dir / "url_index.json"
+
+        if not url_index_file.exists():
+            logger.debug(f"No url_index.json found in {dom_snapshots_dir}")
+            return
+
+        try:
+            with open(url_index_file, 'r', encoding='utf-8') as f:
+                url_index = json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            logger.warning(f"Failed to load url_index.json: {e}")
+            return
+
+        if not isinstance(url_index, list):
+            logger.warning(f"url_index.json is not a list: {type(url_index)}")
+            return
+
+        # Build step_id -> DOM file mapping
+        step_dom_map = {}
+        for entry in url_index:
+            step_id = entry.get("step_id")
+            dom_file = entry.get("file")
+            if step_id and dom_file:
+                # Keep latest entry for each step_id (last one wins)
+                step_dom_map[step_id] = dom_file
+
+        logger.info(f"Found {len(step_dom_map)} step -> DOM mappings: {list(step_dom_map.keys())}")
+
+        # Copy DOM to each step's script directory
+        for step_id, dom_filename in step_dom_map.items():
+            # Find script directory for this step
+            step_dir = session_path / step_id
+            if not step_dir.exists():
+                logger.debug(f"Step directory not found: {step_id}")
+                continue
+
+            # Find scraper_script_xxx directory
+            script_dirs = list(step_dir.glob("scraper_script_*"))
+            if not script_dirs:
+                logger.debug(f"No scraper_script directory found for step: {step_id}")
+                continue
+
+            # Use first (should only be one)
+            script_dir = script_dirs[0]
+
+            # Read DOM snapshot
+            dom_snapshot_file = dom_snapshots_dir / dom_filename
+            if not dom_snapshot_file.exists():
+                logger.warning(f"DOM snapshot not found: {dom_filename}")
+                continue
+
+            try:
+                with open(dom_snapshot_file, 'r', encoding='utf-8') as f:
+                    dom_data = json.load(f)
+
+                # Save to script directory (keep wrapped format - scripts handle unwrapping)
+                dom_data_file = script_dir / "dom_data.json"
+                with open(dom_data_file, 'w', encoding='utf-8') as f:
+                    json.dump(dom_data, f, indent=2, ensure_ascii=False)
+
+                logger.info(f"Copied DOM to {step_id}/.../{dom_data_file.name}")
+
+            except Exception as e:
+                logger.warning(f"Failed to copy DOM for step {step_id}: {e}")
 
     def sync_session_to_workflow(
         self,

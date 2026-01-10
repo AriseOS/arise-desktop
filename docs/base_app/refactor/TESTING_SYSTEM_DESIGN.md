@@ -768,9 +768,156 @@ class ValidationAgent:
 
 ---
 
-## 9. 模块复用
+## 9. 生成过程分析 (GenerationAnalyzer)
 
-### 9.1 可直接复用的模块
+### 9.1 目标
+
+持续改进系统需要分析 WorkflowBuilder 和 Script 生成的详细过程，找出可以优化的地方：
+
+1. **理解 AI 决策过程** - 分析生成日志中的工具调用和思考过程
+2. **识别失败模式** - 找出导致失败的常见原因
+3. **提供改进建议** - 生成可操作的优化建议
+
+### 9.2 分析类型
+
+#### 9.2.1 单次运行分析 (analyze_run)
+
+分析单个 run 的生成过程：
+
+**输入数据**：
+- `trace.md` - 生成过程日志（工具调用、AI 思考）
+- `workflow.yaml` - 生成的 workflow
+- `intents.json` - 提取的用户意图
+- `validation_result.json` - 验证结果
+- `execution/result.json` - Mock 执行结果
+
+**分析重点**：
+- **Intent Extraction**: 用户意图是否被正确识别？
+- **Workflow Structure**: 生成的 workflow 结构是否合理？
+- **Step Mapping**: workflow 步骤是否正确映射用户意图？
+- **Script Generation**: 提取脚本是否正确定位元素？
+- **Data Flow**: 变量是否正确传递？
+
+**输出**：
+```
+run_N/analysis/
+├── generation_analysis.md    # 人可读分析报告
+└── generation_analysis.json  # 机器可读数据
+```
+
+#### 9.2.2 跨运行模式分析 (analyze_case_patterns)
+
+分析同一 case 多个 run 的模式：
+
+**分析重点**：
+- **一致性问题**: 结果是否一致？还是高度变化？
+- **系统性问题**: 哪些问题在所有 run 中都出现？
+- **根因分析**: 识别导致问题的根本原因
+
+**输出**：
+```
+cases/{case_name}/analysis/
+├── generation_analysis.md    # 跨 run 模式分析
+└── generation_analysis.json
+```
+
+### 9.3 分析结果结构
+
+```python
+@dataclass
+class AnalysisResult:
+    success: bool
+    workflow_analysis: Optional[str]      # Workflow 生成分析
+    script_analysis: Optional[str]        # Script 生成分析
+    improvement_suggestions: List[str]    # 改进建议列表
+    patterns_identified: List[str]        # 识别的模式
+    error: Optional[str]
+```
+
+### 9.4 generation_analysis.md 示例
+
+```markdown
+# Generation Process Analysis
+
+## Workflow Generation Analysis
+
+The workflow correctly identifies the main user intent to extract speaker information
+from the CES website. However, there are some observations:
+
+1. The navigation steps are well-structured, going from Google search to CES homepage
+   to the keynotes page
+2. The extraction step correctly targets the speaker cards section
+
+Potential issues:
+- The xpath_hints use absolute paths which may break if page structure changes
+- No fallback mechanism for elements that may not be present
+
+## Script Generation Analysis
+
+The extraction script targets `//div[@class="speaker-card"]` which is correct.
+However:
+- The script extracts only the first level of nested elements
+- Some speaker cards have different structures (e.g., "title" vs "role" field names)
+
+## Patterns Identified
+
+- Workflow tends to generate redundant navigation steps for redirects
+- Script selectors use absolute xpaths instead of more robust CSS selectors
+- Data requirements don't specify optional vs required fields
+
+## Improvement Suggestions
+
+1. **Use relative selectors**: Instead of absolute xpaths like `/html/body/div[3]/...`,
+   use relative selectors like `//div[contains(@class, 'speaker')]`
+
+2. **Add fallback selectors**: For critical elements, provide multiple selector options
+   in the xpath_hints
+
+3. **Specify field requirements**: In data_requirements, mark fields as optional/required
+   to handle cases where some data may not be present
+
+4. **Simplify navigation**: Consider combining consecutive click operations into a
+   single navigation step when the intermediate pages are just redirects
+```
+
+### 9.5 与报告系统集成
+
+**summary.md 改进建议部分**：
+
+GenerationAnalyzer 的建议会自动整合到 summary.md 的"改进建议"部分：
+
+```markdown
+## 改进建议
+
+- **Structure Issues** (2 failures): Review WorkflowBuilder prompts for correct YAML syntax
+- **Script Issues** (1 failure): Review script generation for correct xpath selectors
+- [ces_keynote_speakers] Use relative selectors instead of absolute xpaths
+- [ces_keynote_speakers] Add fallback selectors for critical elements
+- See AI analysis: `cases/ces_keynote_speakers/run_1/analysis/generation_analysis.md`
+```
+
+### 9.6 触发条件
+
+| 分析类型 | 触发条件 |
+|---------|---------|
+| 单次运行分析 | 每个 run 完成后自动执行（需要 API Key） |
+| 跨运行模式分析 | case 有多个 run 时，在报告生成阶段执行 |
+
+### 9.7 代码位置
+
+```
+test/analyzer/
+├── __init__.py
+├── log_parser.py           # 日志解析
+├── trace_formatter.py      # trace.md 格式化
+└── generation_analyzer.py  # 生成过程 AI 分析（新增）
+```
+
+---
+
+## 10. 模块复用
+
+### 10.1 可直接复用的模块
 
 | 模块 | 位置 | 依赖 |
 |-----|------|------|
@@ -781,7 +928,7 @@ class ValidationAgent:
 | `RuleValidator` | `intent_builder/agents/tools/validate.py` | 无 |
 | `SemanticValidator` | `intent_builder/validators/semantic_validator.py` | API Key |
 
-### 9.2 复用方式
+### 10.2 复用方式
 
 所有模块都可以独立 import 使用，不依赖 FastAPI 或数据库：
 
@@ -797,9 +944,9 @@ rule_validator = RuleValidator()  # 无需 API key
 
 ---
 
-## 10. DOM 映射逻辑抽取
+## 11. DOM 映射逻辑抽取
 
-### 10.1 背景
+### 11.1 背景
 
 现有的 `ScriptPregenerationService._find_matching_dom()` 实现了 step → DOM 的映射逻辑，但：
 - 错误率较高，经常找不到对应的 xpath

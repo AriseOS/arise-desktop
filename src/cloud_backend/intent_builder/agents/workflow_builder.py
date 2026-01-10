@@ -102,48 +102,32 @@ A workflow has two layers:
    - Parses DOM data and extracts specific fields
    - Uses XPath selectors to find elements
 
-## What You Can Modify
+## Problem Type Detection
 
-Based on user's request, determine which file to modify:
+**IMPORTANT**: First determine what type of problem the user is reporting:
 
-| User Says | Modify |
-|-----------|--------|
-| "Add/remove a step", "Change step order", "Use different agent" | `workflow.yaml` |
-| "Extract more fields", "Fix extraction error", "Wrong data extracted" | `extraction_script.py` |
-| "Change URL", "Update selector", "Modify parameters" | `workflow.yaml` |
-| "XPath not working", "Field is empty", "Missing data" | `extraction_script.py` |
+| User Keywords | Problem Type | Action |
+|---------------|--------------|--------|
+| "抓不到", "空", "没有数据", "empty", "no data" | **Scraper Fix** | Read `scraper-fix` skill and follow its workflow |
+| "字段缺失", "missing field", "少了", "没抓到xxx" | **Scraper Fix** | Read `scraper-fix` skill and follow its workflow |
+| "数据错误", "wrong data", "抓错了" | **Scraper Fix** | Read `scraper-fix` skill and follow its workflow |
+| "添加步骤", "删除步骤", "修改顺序" | Workflow Modification | Edit `workflow.yaml` |
+| "修改URL", "改参数" | Workflow Modification | Edit `workflow.yaml` |
 
-After you modify files, the system will automatically validate and sync changes.
+## For Scraper/Extraction Issues
 
-## Working Directory Structure
+When user reports data extraction problems:
 
-You are working in a session directory that contains a copy of the workflow:
+1. **Read the scraper-fix skill FIRST**:
+   ```bash
+   cat .claude/skills/scraper-fix/SKILL.md
+   ```
 
-```
-./                              # Session working directory (your cwd)
-├── workflow.yaml               # Workflow definition - MODIFY THIS
-├── metadata.json
-└── {step_id}/                  # Step directories
-    └── scraper_script_{hash}/  # Scraper script directory
-        ├── extraction_script.py  # MODIFY THIS for extraction fixes
-        ├── dom_tools.py        # Utility for DOM parsing
-        ├── requirement.json    # Original extraction requirements
-        └── dom_snapshots/
-            └── {url_hash}.json # DOM data for testing
-```
+2. **Follow the workflow in the skill** to diagnose and fix the issue.
 
-## Available Skills
+3. **Run and verify** the script outputs correct data before finishing.
 
-| Skill | Purpose |
-|-------|---------|
-| agent-specs | Agent capabilities (browser_agent, scraper_agent, etc.) |
-| workflow-generation | Workflow structure reference |
-| workflow-validation | Validate your workflow changes |
-| workflow-optimizations | Optimization patterns |
-| dom-extraction | How to write extraction scripts |
-| scraper-fix | How to debug and fix extraction issues |
-
-## For Workflow Modifications
+## For Workflow Structure Modifications
 
 1. Read the user's request carefully
 2. Make the requested changes to `workflow.yaml`
@@ -151,23 +135,12 @@ You are working in a session directory that contains a copy of the workflow:
 4. Output the complete updated YAML in a ```yaml code block
 5. Briefly explain what you changed
 
-## For Extraction Script Fixes
-
-When user reports missing fields or extraction errors:
-
-1. Identify which step has the issue (look at step directories)
-2. Read the `scraper-fix` skill for detailed guidance
-3. Navigate to the script directory: `{step_id}/scraper_script_{hash}/`
-4. Use `dom_tools.py` to debug: `python dom_tools.py find '{"field": "xpath"}'`
-5. Modify `extraction_script.py` to fix the issue
-6. Test by running `python extraction_script.py`
-
 ## Important Rules
 
+- **For scraper issues**: Always read `scraper-fix` skill first
 - Always output the COMPLETE workflow YAML when modifying workflow.yaml
 - Preserve parts the user didn't ask to change
 - Every step must have: id, name, agent_type
-- Validate workflow changes before outputting
 - For scripts, only modify files in the script directory
 """
 
@@ -528,8 +501,23 @@ Use TodoWrite to track these steps:
                                         logger.info(f"   📝 TextBlock: {preview}")
                                         final_response += block.text + "\n"
                                     elif hasattr(block, 'name'):
-                                        # ToolUseBlock
-                                        logger.info(f"   🔧 ToolUse: {block.name}")
+                                        # ToolUseBlock - log with input parameters
+                                        tool_input = getattr(block, 'input', {})
+                                        if block.name == "Bash":
+                                            cmd = tool_input.get('command', '')[:200]
+                                            logger.info(f"   🔧 ToolUse: Bash - {cmd}")
+                                        elif block.name == "Write":
+                                            file_path = tool_input.get('file_path', '')
+                                            content_len = len(tool_input.get('content', ''))
+                                            logger.info(f"   🔧 ToolUse: Write - {file_path} ({content_len} chars)")
+                                        elif block.name == "Read":
+                                            file_path = tool_input.get('file_path', '')
+                                            logger.info(f"   🔧 ToolUse: Read - {file_path}")
+                                        elif block.name == "Edit":
+                                            file_path = tool_input.get('file_path', '')
+                                            logger.info(f"   🔧 ToolUse: Edit - {file_path}")
+                                        else:
+                                            logger.info(f"   🔧 ToolUse: {block.name}")
 
                         if isinstance(message, ResultMessage):
                             logger.info(f"✅ ResultMessage: is_error={message.is_error}, num_turns={message.num_turns}")
@@ -696,6 +684,23 @@ Use TodoWrite to track these steps:
                                         )
 
                                     elif isinstance(block, ToolUseBlock):
+                                        # Log tool details
+                                        tool_input = getattr(block, 'input', {})
+                                        if block.name == "Bash":
+                                            cmd = tool_input.get('command', '')[:200]
+                                            logger.info(f"   🔧 ToolUse: Bash - {cmd}")
+                                        elif block.name == "Write":
+                                            file_path = tool_input.get('file_path', '')
+                                            content_len = len(tool_input.get('content', ''))
+                                            logger.info(f"   🔧 ToolUse: Write - {file_path} ({content_len} chars)")
+                                        elif block.name == "Read":
+                                            file_path = tool_input.get('file_path', '')
+                                            logger.info(f"   🔧 ToolUse: Read - {file_path}")
+                                        elif block.name == "Edit":
+                                            file_path = tool_input.get('file_path', '')
+                                            logger.info(f"   🔧 ToolUse: Edit - {file_path}")
+                                        else:
+                                            logger.info(f"   🔧 ToolUse: {block.name}")
                                         yield StreamEvent(
                                             type="tool_use",
                                             message=f"Using tool: {block.name}",
@@ -1217,7 +1222,23 @@ Use TodoWrite to track these steps:
                                         data={"progress": progress}
                                     ))
                             elif isinstance(block, ToolUseBlock):
-                                logger.info(f"   🔧 [Session] ToolUse: {block.name}")
+                                # Log tool name and input parameters for debugging
+                                tool_input = getattr(block, 'input', {})
+                                if block.name == "Bash":
+                                    cmd = tool_input.get('command', '')[:200]
+                                    logger.info(f"   🔧 [Session] ToolUse: Bash - {cmd}")
+                                elif block.name == "Write":
+                                    file_path = tool_input.get('file_path', '')
+                                    content_len = len(tool_input.get('content', ''))
+                                    logger.info(f"   🔧 [Session] ToolUse: Write - {file_path} ({content_len} chars)")
+                                elif block.name == "Read":
+                                    file_path = tool_input.get('file_path', '')
+                                    logger.info(f"   🔧 [Session] ToolUse: Read - {file_path}")
+                                elif block.name == "Edit":
+                                    file_path = tool_input.get('file_path', '')
+                                    logger.info(f"   🔧 [Session] ToolUse: Edit - {file_path}")
+                                else:
+                                    logger.info(f"   🔧 [Session] ToolUse: {block.name}")
                                 if on_progress:
                                     on_progress(StreamEvent(
                                         type="tool_use",
@@ -1668,7 +1689,8 @@ class WorkflowModificationSession:
         model: Optional[str] = None,
         base_url: Optional[str] = None,
         max_iterations: int = 100,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
+        chat_history: Optional[List[Dict[str, str]]] = None
     ):
         """
         Initialize WorkflowModificationSession.
@@ -1684,11 +1706,14 @@ class WorkflowModificationSession:
             base_url: API proxy URL
             max_iterations: Max turns per request
             session_id: Optional session ID (auto-generated if not provided)
+            chat_history: Optional chat history to restore context
+                Format: [{"role": "user"|"assistant", "content": "..."}, ...]
         """
         self.workflow_yaml = workflow_yaml
         self.user_id = user_id
         self.workflow_id = workflow_id
         self.storage_service = storage_service
+        self.chat_history = chat_history or []
 
         # Parse and validate the workflow
         try:
@@ -1738,6 +1763,8 @@ class WorkflowModificationSession:
 
         logger.info(f"WorkflowModificationSession initialized: {self.session_id}")
         logger.info(f"  User: {user_id}, Workflow: {workflow_id}")
+        if self.chat_history:
+            logger.info(f"  Chat history: {len(self.chat_history)} messages to restore")
 
     async def __aenter__(self):
         """Async context manager entry - connect to Claude Agent"""
@@ -1753,6 +1780,7 @@ class WorkflowModificationSession:
 
         Prepares session directory by copying workflow, then connects to Claude.
         The workflow.yaml is already in the session directory (copied by _prepare_working_directory).
+        If chat_history is provided, injects it as context after connection.
         """
         logger.info(f"🔌 [_connect] Starting connection for session {self.session_id}")
 
@@ -1778,7 +1806,7 @@ class WorkflowModificationSession:
         else:
             logger.warning(f"⚠️ [_connect] Workflow file not found: {workflow_file}")
 
-        # Build system prompt
+        # Build system prompt (include chat history context if available)
         system_prompt = self._build_system_prompt()
         logger.info(f"📋 [_connect] Built system prompt ({len(system_prompt)} chars)")
 
@@ -1790,7 +1818,7 @@ class WorkflowModificationSession:
 
         options = ClaudeAgentOptions(
             max_turns=self.max_iterations,
-            permission_mode="acceptEdits",
+            permission_mode="bypassPermissions",
             cwd=str(self._work_dir),
             system_prompt=system_prompt,
             model=self.model,
@@ -1853,7 +1881,7 @@ class WorkflowModificationSession:
             session_id=self.session_id
         )
 
-        # Add modification skills (includes workflow and scraper-fix skills)
+        # Add modification skills (includes workflow and dom-extraction skills)
         SkillManager.prepare_modification_skills(work_dir)
 
         logger.info(f"Prepared session directory: {work_dir}")
@@ -1864,8 +1892,38 @@ class WorkflowModificationSession:
 
         The workflow.yaml is available in the working directory,
         so Claude can read it with the Read tool.
+        If chat_history is provided, include it as context in the system prompt.
+
+        Also generates pre-computed scraper context to avoid exploration overhead.
         """
-        return f"""{MODIFICATION_SYSTEM_PROMPT}
+        # Lazy import to avoid circular dependency
+        from src.cloud_backend.intent_builder.services.scraper_context_service import (
+            generate_scraper_context_markdown
+        )
+
+        base_prompt = MODIFICATION_SYSTEM_PROMPT
+
+        # Generate scraper context (directory structure, requirements, script status)
+        scraper_context = ""
+        if self._work_dir and self._work_dir.exists():
+            try:
+                scraper_context = generate_scraper_context_markdown(
+                    session_dir=self._work_dir,
+                    workflow_yaml=self.workflow_yaml,
+                    pre_run_scripts=True,  # Pre-run scripts to show current output
+                    dom_snapshots=None  # Will use existing dom_data.json if available
+                )
+                logger.info(f"📊 [_build_system_prompt] Generated scraper context ({len(scraper_context)} chars)")
+            except Exception as e:
+                logger.warning(f"⚠️ [_build_system_prompt] Failed to generate scraper context: {e}")
+                scraper_context = ""
+
+        # Append scraper context if available
+        if scraper_context:
+            base_prompt += f"\n\n{scraper_context}"
+        else:
+            # Fallback to basic working directory info
+            base_prompt += """
 
 ## Your Working Directory
 
@@ -1874,8 +1932,32 @@ The workflow and all its resources are in your current working directory.
 - Browse step directories to find scraper scripts
 
 The user will ask you to modify the workflow or fix extraction issues.
-Start by reading the relevant files to understand the current state.
 """
+
+        # If chat history is provided, append it as context
+        if self.chat_history and len(self.chat_history) > 0:
+            history_lines = [
+                "",
+                "## Previous Conversation Context",
+                "",
+                "This session was restored from a previous conversation. Here is the context:",
+                ""
+            ]
+
+            for msg in self.chat_history:
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                # Truncate very long messages to save context
+                if len(content) > 500:
+                    content = content[:500] + "... [truncated]"
+                history_lines.append(f"**{role.upper()}**: {content}")
+                history_lines.append("")
+
+            history_lines.append("Continue helping the user based on this context.")
+            base_prompt += "\n".join(history_lines)
+            logger.info(f"📜 [_build_system_prompt] Added {len(self.chat_history)} messages to system prompt as context")
+
+        return base_prompt
 
     async def chat_stream(
         self,
@@ -1907,8 +1989,10 @@ Start by reading the relevant files to understand the current state.
             from claude_agent_sdk import (
                 AssistantMessage,
                 ResultMessage,
+                UserMessage,
                 TextBlock,
                 ToolUseBlock,
+                ToolResultBlock,
             )
         except ImportError:
             logger.error(f"❌ [chat_stream] Claude Agent SDK not installed")
@@ -1944,11 +2028,41 @@ Start by reading the relevant files to understand the current state.
                                     message=block.text
                                 )
                             elif isinstance(block, ToolUseBlock):
-                                logger.info(f"   🔧 [chat_stream] ToolUseBlock: {block.name}")
+                                # Log tool name and input parameters for debugging
+                                tool_input = getattr(block, 'input', {})
+                                if block.name == "Bash":
+                                    cmd = tool_input.get('command', '')[:200]
+                                    logger.info(f"   🔧 [chat_stream] ToolUseBlock: Bash - {cmd}")
+                                elif block.name == "Write":
+                                    file_path = tool_input.get('file_path', '')
+                                    content_len = len(tool_input.get('content', ''))
+                                    logger.info(f"   🔧 [chat_stream] ToolUseBlock: Write - {file_path} ({content_len} chars)")
+                                elif block.name == "Read":
+                                    file_path = tool_input.get('file_path', '')
+                                    logger.info(f"   🔧 [chat_stream] ToolUseBlock: Read - {file_path}")
+                                elif block.name == "Edit":
+                                    file_path = tool_input.get('file_path', '')
+                                    logger.info(f"   🔧 [chat_stream] ToolUseBlock: Edit - {file_path}")
+                                else:
+                                    logger.info(f"   🔧 [chat_stream] ToolUseBlock: {block.name}")
                                 yield StreamEvent(
                                     type="tool_use",
                                     message=f"Using tool: {block.name}"
                                 )
+
+                if isinstance(message, UserMessage):
+                    # Log tool results (UserMessage contains tool execution results)
+                    if hasattr(message, 'content'):
+                        for block in message.content:
+                            if isinstance(block, ToolResultBlock):
+                                tool_id = getattr(block, 'tool_use_id', '')[:8]
+                                content = getattr(block, 'content', '')
+                                # Truncate long output
+                                if len(content) > 500:
+                                    preview = content[:500] + f"... ({len(content)} chars total)"
+                                else:
+                                    preview = content
+                                logger.info(f"   📋 [chat_stream] ToolResult [{tool_id}]: {preview}")
 
                 if isinstance(message, ResultMessage):
                     logger.info(f"✅ [chat_stream] ResultMessage received, is_error={message.is_error}")

@@ -16,6 +16,7 @@ Provides the main entry points for:
 |------|---------|
 | `workflow_service.py` | WorkflowService - unified API for workflow generation |
 | `script_pregeneration_service.py` | Pre-generates scripts using DOM snapshots from recording |
+| `scraper_context_service.py` | Pre-computes diagnostic context for scraper fix sessions |
 
 ## WorkflowService
 
@@ -150,3 +151,55 @@ script_gen_result = await _generate_scripts_sync(
 
 This ensures scripts are ready immediately after workflow generation, rather than
 being generated in the background or on first execution.
+
+## ScraperContextService
+
+Pre-computes diagnostic context for workflow modification sessions to optimize
+scraper fix workflows. Eliminates the need for Claude to explore directory
+structure or read files to understand the problem context.
+
+### Purpose
+
+When users report extraction issues ("抓不到数据", "数据错误"), the service
+pre-computes and injects into the system prompt:
+
+1. **Directory structure** - All scraper step locations
+2. **Requirement.json content** - Expected fields and xpath hints
+3. **Pre-run script output** - Current extraction results or errors
+4. **URL index** - Which step handles which page
+
+### Usage
+
+```python
+from src.cloud_backend.intent_builder.services.scraper_context_service import (
+    generate_scraper_context_markdown
+)
+
+# Generate context for injection into system prompt
+context_md = generate_scraper_context_markdown(
+    session_dir=Path("/path/to/session"),
+    workflow_yaml=workflow_yaml,
+    pre_run_scripts=True,  # Run scripts to get current output
+    dom_snapshots=None     # Optional: provide DOM for testing
+)
+
+# Returns markdown like:
+# ## Workflow Context (Pre-computed)
+# **Workflow**: product-extraction
+#
+# ### Directory Structure
+# ...
+#
+# ### Scraper Steps
+# #### Step 1: extract-product-list
+# - **Script Directory**: extract-product-list/scraper_script_be988de5/
+# - **Requirement**: 提取产品列表
+# - **Current Script Output**: ⚠️ Empty list `[]`
+# ...
+```
+
+### Integration
+
+Automatically called by `WorkflowModificationSession._build_system_prompt()`.
+The context is injected into the system prompt so Claude can immediately
+understand the problem without exploration.

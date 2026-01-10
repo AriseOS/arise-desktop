@@ -2,12 +2,15 @@
 .workflow-detail-page {
     display: flex;
     flex-direction: column;
-    height: 100vh;
+    /* Use auto height to allow growth, triggering .app-content scroll */
+    height: auto;
+    min-height: 100%;
     background-color: var(--bg-primary);
     color: var(--text-primary);
+    overflow: visible;
 }
 
-/* Sync status banner */
+/* Sync status banner styles remain same */
 .sync-status-banner {
     padding: var(--spacing-md) var(--spacing-lg);
     margin: 0 var(--spacing-lg);
@@ -53,12 +56,14 @@
 }
 
 .workflow-detail-content {
-    flex: 1;
     display: flex;
     flex-direction: column;
-    overflow-y: auto;
     padding: var(--spacing-lg);
     gap: var(--spacing-lg);
+    /* Ensure no height constraint */
+    height: auto;
+    flex: none;
+    overflow: visible;
 }
 
 .run-button {
@@ -270,27 +275,42 @@
 }
 
 .workflow-tabs-content {
-    flex: 1;
+    /* Remove flex: 1 to prevent collapse/constraint */
+    flex: none;
+    height: auto;
     overflow: hidden;
+    /* Changed below for scrolling class */
     position: relative;
     background-color: var(--bg-secondary);
     border-radius: var(--radius-lg);
     border: 1px solid var(--border-color);
     min-height: 500px;
-    /* Reduced from 750px as per user request */
     display: flex;
     flex-direction: column;
+}
+
+/* Visual tab needs fixed height */
+.workflow-tabs-content.content-visual {
+    height: 800px;
+    overflow: hidden;
+}
+
+/* Scrolling tabs grow with content */
+.workflow-tabs-content.content-scrolling {
+    height: auto;
+    overflow: visible;
 }
 
 /* YAML View */
 .workflow-yaml-container {
     flex: 1;
-    overflow: auto;
+    /* overflow: auto; removed */
     padding: var(--spacing-lg);
     background-color: #1e1e1e;
     /* Dark background for code */
     color: #d4d4d4;
     min-height: 0;
+    overflow-x: auto;
 }
 
 .workflow-yaml-content {

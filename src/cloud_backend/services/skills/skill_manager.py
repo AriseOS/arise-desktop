@@ -24,6 +24,7 @@ class SkillManager:
     SCRAPER_SCRIPT_SKILLS = ["dom-extraction"]
 
     # Skills for workflow modification session (can modify workflow.yaml and scripts)
+    # Uses scraper-fix for diagnosing/fixing extraction issues, dom-extraction for script regeneration
     MODIFICATION_SKILLS = [
         "agent-specs",
         "workflow-generation",

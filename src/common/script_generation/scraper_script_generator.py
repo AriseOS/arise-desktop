@@ -89,7 +89,7 @@ class ScraperScriptGenerator:
                 logger.info(f"Copied dom_tools.py to {dom_tools_dest}")
 
             # Save input files
-            await self._save_input_files(working_dir, requirement, dom_dict)
+            await self._save_input_files(working_dir, requirement, dom_dict, page_url)
 
             # Build prompt
             prompt = self._build_prompt(working_dir, requirement, page_url)
@@ -173,6 +173,10 @@ class ScraperScriptGenerator:
             # Wrap script with execution wrapper
             wrapped_script = self._extract_and_wrap_code(script_content)
 
+            # Note: Keep dom_data.json in workflow directory for first execution.
+            # During modification sessions, it will be overwritten with latest DOM
+            # from dom_snapshots/ by copy_workflow_to_session().
+
             # Send completion callback
             if progress_callback:
                 await progress_callback(
@@ -208,20 +212,37 @@ class ScraperScriptGenerator:
         self,
         working_dir: Path,
         requirement: ScraperRequirement,
-        dom_dict: Dict[str, Any]
+        dom_dict: Dict[str, Any],
+        page_url: Optional[str] = None
     ) -> None:
-        """Save input files for Claude Agent"""
-        # Save requirement.json
+        """Save input files for Claude Agent
+
+        Saves:
+        - requirement.json: Extraction requirements (permanent)
+        - dom_data.json: DOM data in wrapped format (kept for first execution)
+
+        Note: dom_data.json is kept in workflow directory for first execution.
+        During modification sessions, it will be overwritten with latest DOM
+        from dom_snapshots/ by copy_workflow_to_session().
+
+        DOM format (wrapped): {"url": "...", "dom": {...}}
+        """
+        # Save requirement.json (permanent - describes what to extract)
         requirement_file = working_dir / "requirement.json"
         requirement_file.write_text(
             json.dumps(requirement.to_dict(), indent=2, ensure_ascii=False),
             encoding='utf-8'
         )
 
-        # Save dom_data.json
+        # Save dom_data.json in wrapped format: {"url": ..., "dom": {...}}
+        # This is the standard format used everywhere for DOM data
+        wrapped_dom = {
+            "url": page_url or "unknown",
+            "dom": dom_dict
+        }
         dom_file = working_dir / "dom_data.json"
         dom_file.write_text(
-            json.dumps(dom_dict, indent=2, ensure_ascii=False),
+            json.dumps(wrapped_dom, indent=2, ensure_ascii=False),
             encoding='utf-8'
         )
 
