@@ -318,6 +318,7 @@ class WorkflowEngine:
                     "current_page": resolved_input.get('current_page', None),
                     "max_pages": resolved_input.get('max_pages', None),
                     "items_found": resolved_input.get('items_found', None),
+                    "items": resolved_input.get('items', None),
                     "start": resolved_input.get('start', None),
                     "start_value": resolved_input.get('start_value', None),
                     "match_field": resolved_input.get('match_field', None),

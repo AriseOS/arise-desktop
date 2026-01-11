@@ -31,9 +31,9 @@ class TextAgent(BaseStepAgent):
                 description="Task instruction for the LLM"
             ),
             "data": FieldSchema(
-                type="dict",
+                type="any",
                 required=False,
-                description="Input data to provide context to the LLM"
+                description="Input data to provide context to the LLM (dict, list, or any JSON-serializable value)"
             ),
         },
         examples=[

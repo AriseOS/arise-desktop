@@ -506,8 +506,6 @@ class WorkflowExecutor:
                 await self.progress_callback(task_id, data)
             except Exception as e:
                 # Log error but don't fail execution
-                import logging
-                logger = logging.getLogger(__name__)
                 logger.error(f"Failed to send progress update: {e}")
 
     async def _upload_execution_log(

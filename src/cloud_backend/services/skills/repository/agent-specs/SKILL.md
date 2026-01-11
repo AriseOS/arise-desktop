@@ -235,16 +235,29 @@ Generate or transform text using LLM.
   agent: text_agent
   inputs:
     instruction: "Summarize this content"  # Required: task instruction for LLM
-    data:                                  # Optional: input data for context
+    data:                                  # Optional: input data (dict, list, or any value)
       content: "{{extracted_text}}"
   outputs:
     result: summary                  # Dict (LLM response)
+
+# data can also be a list or variable reference
+- id: analyze-products
+  agent: text_agent
+  inputs:
+    instruction: "Analyze these products and find the best value"
+    data: "{{products}}"             # Can be list, dict, or any JSON value
+  outputs:
+    result: analysis
 ```
 
 ## Control Flow
 
 ### foreach
+
+**CRITICAL**: `foreach` value must be a YAML list, NOT a string.
+
 ```yaml
+# Variable reference (quotes required for template syntax)
 - foreach: "{{product_list}}"
   as: product
   do:
@@ -252,6 +265,24 @@ Generate or transform text using LLM.
       agent: browser_agent
       inputs:
         target_url: "{{product.url}}"
+
+# Literal list - NO QUOTES (YAML parses as actual list)
+- foreach: [1, 2, 3, 4, 5]
+  as: page_num
+  do:
+    - id: navigate-page
+      agent: browser_agent
+      inputs:
+        target_url: "https://example.com/page/{{page_num}}"
+```
+
+**Common mistake**:
+```yaml
+# ❌ WRONG - quotes make it a string "[1, 2, 3]"
+- foreach: "[1, 2, 3]"
+
+# ✅ CORRECT - no quotes, YAML parses as list
+- foreach: [1, 2, 3]
 ```
 
 ### if

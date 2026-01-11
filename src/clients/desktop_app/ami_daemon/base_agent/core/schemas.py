@@ -297,14 +297,15 @@ class AgentWorkflowStep(BaseModel):
     loop_timeout: Optional[int] = Field(default=None, description="while/foreach循环超时时间，None表示无超时")
 
     # foreach 特有配置
-    source: Optional[str] = Field(default=None, description="foreach遍历的源列表变量名（如 '{{all_product_urls}}'）")
+    # source: 支持变量引用 "{{list_var}}" 或字面量列表 [1, 2, 3]
+    source: Optional[Union[str, List[Any]]] = Field(default=None, description="foreach遍历的源：变量引用如 '{{items}}' 或字面量列表如 [1, 2, 3]")
     item_var: Optional[str] = Field(default="item", description="foreach当前项的变量名")
     index_var: Optional[str] = Field(default="index", description="foreach当前索引的变量名")
 
     # Variable Agent 特有配置
     operation: Optional[str] = Field(default=None, description="Variable operation type")
-    data: Optional[Dict[str, Any]] = Field(default=None, description="Data for set operation")
-    source: Optional[str] = Field(default=None, description="Source variable for operations")
+    data: Optional[Union[Dict[str, Any], List[Any], str]] = Field(default=None, description="Data for variable operations: Dict for set, List or variable reference string for filter/slice/extend")
+    # Note: 'source' field is shared with foreach, defined above
     field: Optional[str] = Field(default=None, description="Field for extract operation")
     value: Optional[Any] = Field(default=None, description="Value for increment/decrement")
     expression: Optional[str] = Field(default=None, description="Expression for calculate")

@@ -244,6 +244,23 @@ If script generation fails for a step, modify the workflow:
 - **NEVER write `outputs: null`** - if a step doesn't need output, simply omit the `outputs` field
 - **No export/save steps needed** - scraper_agent automatically stores extracted data; the app handles export. Do NOT add `storage_agent` export steps unless user explicitly asks for it.
 
+### foreach Syntax
+
+**CRITICAL**: `foreach` value must be a YAML list, NOT a quoted string.
+
+```yaml
+# ✅ Variable reference
+- foreach: "{{extracted_items}}"
+  as: item
+
+# ✅ Literal list - NO QUOTES
+- foreach: [1, 2, 3, 4, 5]
+  as: page_num
+
+# ❌ WRONG - quotes make it a string, causes runtime error
+- foreach: "[1, 2, 3]"
+```
+
 ## CRITICAL: xpath_hints Rule
 
 **ONLY use xpaths from the operation's `element.xpath` field. NEVER construct or invent new xpaths.**
