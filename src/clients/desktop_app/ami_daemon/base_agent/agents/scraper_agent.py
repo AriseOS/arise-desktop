@@ -900,24 +900,32 @@ class ScraperAgent(BaseStepAgent):
                 execution_dom = target_dom
                 execution_dict = dom_dict
 
+            # Get current page URL before script execution
+            page_url = ""
+            try:
+                page_url = await self.browser_session.get_current_page_url()
+                logger.info(f"📍 Current page URL: {page_url}")
+            except Exception as e:
+                logger.warning(f"⚠️  Could not get current page URL: {e}")
+
             result = await self._execute_generated_script_direct(
-                generated_script, execution_dict, max_items, script_workspace
+                generated_script, execution_dict, max_items, script_workspace, page_url
             )
 
             # Save DOM snapshot for debugging and future reference
             try:
-                page_url = await self.browser_session.get_current_page_url()
                 await self._save_dom_snapshot(page_url, execution_dict)
             except Exception as e:
                 logger.warning(f"Failed to save DOM snapshot: {e}")
 
             # Update local dom_data.json in script directory with latest DOM
-            # This keeps the script's test data in sync with actual page structure
+            # Use wrapped format for consistency with main() testing
             try:
                 if script_workspace and script_workspace.exists():
                     dom_data_file = script_workspace / "dom_data.json"
+                    wrapped_data = {"url": page_url, "dom": execution_dict}
                     dom_data_file.write_text(
-                        json.dumps(execution_dict, indent=2, ensure_ascii=False),
+                        json.dumps(wrapped_data, indent=2, ensure_ascii=False),
                         encoding='utf-8'
                     )
                     logger.info(f"Updated dom_data.json in script directory: {dom_data_file}")
@@ -1122,9 +1130,18 @@ Extract data now:"""
         script_content: str,
         dom_dict: Dict,
         max_items: int,
-        script_dir: Optional[Path] = None
+        script_dir: Optional[Path] = None,
+        page_url: str = ""
     ) -> Dict[str, Any]:
-        """直接执行生成的脚本，使用提供的DOM数据（dom_dict 是嵌套字典，不是 HTML）"""
+        """直接执行生成的脚本，使用提供的DOM数据
+
+        Args:
+            script_content: 脚本内容
+            dom_dict: DOM字典（嵌套字典，不是 HTML）
+            max_items: 最大提取数量
+            script_dir: 脚本目录（用于导入 dom_tools）
+            page_url: 当前页面URL（传给 extract_data_from_page）
+        """
         import sys
 
         try:
@@ -1152,11 +1169,11 @@ Extract data now:"""
             extract_func = execution_env.get('extract_data_from_page')
 
             if execute_func:
-                # 使用 execute_extraction(dom_dict, max_items)
-                result = execute_func(dom_dict, max_items)
+                # 使用 execute_extraction(dom_dict, max_items, page_url)
+                result = execute_func(dom_dict, max_items, page_url)
             elif extract_func:
-                # 使用 extract_data_from_page(dom_dict) - 云端生成的脚本格式
-                extracted_data = extract_func(dom_dict)
+                # 使用 extract_data_from_page(dom_dict, page_url)
+                extracted_data = extract_func(dom_dict, page_url)
                 # 包装为标准结果格式
                 if isinstance(extracted_data, list):
                     # Apply max_items limit
@@ -1297,17 +1314,14 @@ Extract data now:"""
 
             script_content = result.get('script_content', '')
             script_path = result.get('script_path', '')
-            script_key = result.get('script_key', '')
             turns = result.get('turns', 0)
 
             logger.info(f"✅ Cloud script generation completed in {turns} turns")
             logger.info(f"   Script path: {script_path}")
-            logger.info(f"   Script key: {script_key}")
             logger.info(f"   Script size: {len(script_content)} chars")
 
             # 5. Save script to local cache (use the same path as the cache check)
-            # self._current_script_key already contains full path like:
-            # users/{user_id}/workflows/{workflow_id}/{step_id}/scraper_script_xxx
+            # self._current_script_key contains path: users/{user_id}/workflows/{workflow_id}/{step_id}
             if self.config_service and hasattr(self, '_current_script_key') and self._current_script_key:
                 scripts_root = self.config_service.get_path("data.scripts")
                 local_script_dir = scripts_root / self._current_script_key
@@ -1325,10 +1339,11 @@ Extract data now:"""
                 )
 
                 # Download dom_tools.py from cloud (required for script execution)
+                # Cloud stores files directly in step directory (no hash subdirectory)
                 try:
                     dom_tools_content = await cloud_client.download_workflow_file(
                         workflow_id=workflow_id,
-                        file_path=f"{step_id}/{script_key}/dom_tools.py",
+                        file_path=f"{step_id}/dom_tools.py",
                         user_id=user_id
                     )
                     dom_tools_file = local_script_dir / "dom_tools.py"
@@ -1379,12 +1394,17 @@ from typing import List, Dict, Any
 
 {code}
 
-def execute_extraction(dom_dict, max_items: int = 100):
+def execute_extraction(dom_dict, max_items: int = 100, page_url: str = ""):
     """Execute data extraction wrapper function
 
     Supports scripts with either:
-    - extract_data_from_page(dom_dict) function
+    - extract_data_from_page(dom_dict, page_url) function
     - main() function that returns extracted data
+
+    Args:
+        dom_dict: DOM dictionary
+        max_items: Maximum items to extract
+        page_url: Current page URL for absolute URL conversion
     """
     import logging
     logger = logging.getLogger(__name__)
@@ -1394,7 +1414,7 @@ def execute_extraction(dom_dict, max_items: int = 100):
         # Use globals() to check function existence in exec() environment
         _globals = globals()
         if 'extract_data_from_page' in _globals:
-            all_data = extract_data_from_page(dom_dict)
+            all_data = extract_data_from_page(dom_dict, page_url)
         elif 'main' in _globals:
             # For scripts with main(), we need to provide dom_dict via a different mechanism
             # Check if main accepts arguments
@@ -1411,13 +1431,13 @@ def execute_extraction(dom_dict, max_items: int = 100):
                 with tempfile.TemporaryDirectory() as tmpdir:
                     os.chdir(tmpdir)
                     # Save in wrapped format with url and dom keys
-                    wrapped_dom = {{"url": "runtime", "dom": dom_dict}}
+                    wrapped_dom = {{"url": page_url, "dom": dom_dict}}
                     with open('dom_data.json', 'w', encoding='utf-8') as f:
                         json.dump(wrapped_dom, f, ensure_ascii=False)
                     all_data = main()
                     os.chdir(original_cwd)
         else:
-            raise NameError("Script must define either 'extract_data_from_page(dom_dict)' or 'main()' function")
+            raise NameError("Script must define either 'extract_data_from_page(dom_dict, page_url)' or 'main()' function")
 
         # Normalize to list - scraper_agent always returns List[Dict]
         if isinstance(all_data, dict):
@@ -1446,20 +1466,14 @@ def execute_extraction(dom_dict, max_items: int = 100):
     def _generate_script_key(self, data_requirements: Dict) -> str:
         """Generate script storage path relative to data.root
 
-        Path structure: users/{user_id}/workflows/{workflow_id}/{step_id}/{hash_based_key}
-        Full path will be: {data.root}/users/{user_id}/workflows/{workflow_id}/{step_id}/{script_key}
-
-        This allows:
-        - Organizing scripts by user and workflow
-        - Organizing by step within workflow
-        - Caching/reusing scripts with same requirements within a step
+        Path structure: users/{user_id}/workflows/{workflow_id}/{step_id}
+        Scripts are stored directly in the step directory.
 
         Args:
-            data_requirements: Dict containing user_description and output_format
+            data_requirements: Dict containing user_description and output_format (unused)
 
         Returns:
-            Relative path like: users/default_user/workflows/producthunt-daily-top10/extract-daily-link/scraper_script_a1b2c3d4
-            Which resolves to: ~/.ami/users/default_user/workflows/producthunt-daily-top10/extract-daily-link/scraper_script_a1b2c3d4/
+            Relative path like: users/default_user/workflows/producthunt-daily-top10/extract-daily-link
         """
         # Get context information
         user_id = "default_user"
@@ -1474,16 +1488,8 @@ def execute_extraction(dom_dict, max_items: int = 100):
         else:
             logger.warning("ScraperAgent: No context available, using default values for script path")
 
-        # Generate hash-based key using data requirements
-        # IMPORTANT: Must match cloud_backend/intent_builder/services/script_pregeneration_service.py
-        user_desc = data_requirements.get('user_description', '')
-        output_format = data_requirements.get('output_format', {})
-        content = f"scraper:{user_desc}:{json.dumps(output_format, sort_keys=True)}"
-        hash_suffix = hashlib.md5(content.encode()).hexdigest()[:8]
-        script_key = f"scraper_script_{hash_suffix}"
-
-        # Build relative path (will be prefixed with data.root by config_service)
-        script_path = f"users/{user_id}/workflows/{workflow_id}/{step_id}/{script_key}"
+        # Build relative path directly to step directory (no hash subdirectory)
+        script_path = f"users/{user_id}/workflows/{workflow_id}/{step_id}"
         logger.info(f"Generated script path: {script_path}")
         return script_path
     

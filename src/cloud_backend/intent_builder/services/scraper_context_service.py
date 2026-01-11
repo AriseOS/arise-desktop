@@ -30,7 +30,7 @@ class ScraperStepInfo:
     """Information about a single scraper step."""
     step_id: str
     step_name: str
-    script_dir: str  # Relative path like "step_id/scraper_script_xxx"
+    script_dir: str  # Relative path - now just step_id (no hash subdirectory)
     url_pattern: Optional[str] = None
 
     # From requirement.json
@@ -76,12 +76,11 @@ class ScraperContext:
 
         for step in self.scraper_steps:
             lines.append(f"└── {step.step_id}/")
-            lines.append(f"    └── {step.script_dir.split('/')[-1]}/")
-            lines.append(f"        ├── extraction_script.py")
-            lines.append(f"        ├── dom_tools.py")
-            lines.append(f"        ├── requirement.json")
+            lines.append(f"    ├── extraction_script.py")
+            lines.append(f"    ├── dom_tools.py")
+            lines.append(f"    ├── requirement.json")
             if step.has_dom_data:
-                lines.append(f"        └── dom_data.json ({_format_size(step.dom_file_size)})")
+                lines.append(f"    └── dom_data.json ({_format_size(step.dom_file_size)})")
 
         lines.append("```")
         lines.append("")
@@ -227,10 +226,11 @@ class ScraperContextService:
                 continue
 
             # Create step info
+            # script_dir is now the step directory itself (no hash subdirectory)
             step_info = ScraperStepInfo(
                 step_id=step_id,
                 step_name=step_name,
-                script_dir=f"{step_id}/{script_dir.name}"
+                script_dir=step_id
             )
 
             # Extract URL pattern from step config
@@ -261,13 +261,17 @@ class ScraperContextService:
         return context
 
     def _find_script_dir(self, step_dir: Path) -> Optional[Path]:
-        """Find scraper_script_xxx directory in step directory."""
+        """Find script directory for step.
+
+        Scripts are now stored directly in the step directory (no hash subdirectory).
+        Returns the step directory itself if it contains the required script files.
+        """
         if not step_dir.exists():
             return None
 
-        for child in step_dir.iterdir():
-            if child.is_dir() and child.name.startswith("scraper_script_"):
-                return child
+        # Check if step directory contains extraction_script.py
+        if (step_dir / "extraction_script.py").exists():
+            return step_dir
 
         return None
 

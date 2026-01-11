@@ -475,11 +475,8 @@ class ScriptPregenerationService:
             text=text
         )
 
-        # Generate script key for directory naming
-        script_key = self._generate_script_key("browser", task_desc, xpath_hints)
-
-        # Create working directory
-        working_dir = workflow_dir / step_id / f"browser_script_{script_key}"
+        # Create working directory - directly in step directory (no hash subdirectory)
+        working_dir = workflow_dir / step_id
         working_dir.mkdir(parents=True, exist_ok=True)
 
         # Generate script
@@ -526,11 +523,8 @@ class ScriptPregenerationService:
             sample_data=sample_data
         )
 
-        # Generate script key for directory naming
-        script_key = self._generate_script_key("scraper", user_description, output_format)
-
-        # Create working directory
-        working_dir = workflow_dir / step_id / f"scraper_script_{script_key}"
+        # Create working directory - directly in step directory (no hash subdirectory)
+        working_dir = workflow_dir / step_id
         working_dir.mkdir(parents=True, exist_ok=True)
 
         # Generate script
@@ -544,13 +538,3 @@ class ScriptPregenerationService:
         )
 
         return result
-
-    def _generate_script_key(
-        self,
-        script_type: str,
-        description: str,
-        extra: Dict
-    ) -> str:
-        """Generate a unique key for script caching"""
-        content = f"{script_type}:{description}:{json.dumps(extra, sort_keys=True)}"
-        return hashlib.md5(content.encode()).hexdigest()[:8]

@@ -1406,21 +1406,20 @@ async def download_from_cloud(
 
             for resource in resource_list:
                 step_id = resource.get("step_id")
-                resource_id = resource.get("resource_id")
                 files = resource.get("files", [])
 
-                logger.info(f"[Download] Resource: {step_id}/{resource_id} ({len(files)} files)")
+                logger.info(f"[Download] Resource: step {step_id} ({len(files)} files)")
 
                 for filename in files:
                     try:
-                        # Construct file path: step_id/resource_id/filename
-                        file_path = f"{step_id}/{resource_id}/{filename}"
+                        # Construct file path: step_id/filename
+                        file_path = f"{step_id}/{filename}"
 
                         # Download file
                         content = await cloud_client.download_workflow_file(workflow_id, file_path, user_id)
 
                         # Save to local
-                        local_file_path = local_workflow_path / step_id / resource_id / filename
+                        local_file_path = local_workflow_path / step_id / filename
                         local_file_path.parent.mkdir(parents=True, exist_ok=True)
                         local_file_path.write_bytes(content)
 
@@ -1522,22 +1521,21 @@ async def upload_to_cloud(
 
             for resource in resource_list:
                 step_id = resource.get("step_id")
-                resource_id = resource.get("resource_id")
 
                 # Collect files using SimpleSync (auto-ignore dom_snapshots/, etc.)
-                resource_path = local_workflow_path / step_id / resource_id
+                resource_path = local_workflow_path / step_id
 
                 if not resource_path.exists():
                     logger.warning(f"[Upload] Resource path not found: {resource_path}")
                     continue
 
                 files_to_upload = sync.collect_files(resource_path)
-                logger.info(f"[Upload] Resource: {step_id}/{resource_id} ({len(files_to_upload)} files after filtering)")
+                logger.info(f"[Upload] Resource: step {step_id} ({len(files_to_upload)} files after filtering)")
 
                 for rel_path, abs_path in files_to_upload.items():
                     try:
-                        # Construct cloud file path: step_id/resource_id/filename
-                        file_path = f"{step_id}/{resource_id}/{rel_path}"
+                        # Construct cloud file path: step_id/filename
+                        file_path = f"{step_id}/{rel_path}"
 
                         # Read file content
                         content = abs_path.read_bytes()

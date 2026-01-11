@@ -449,10 +449,13 @@ class StoredScript:
 ### 2.6 辅助方法
 
 ```python
-def _generate_script_key(self, data_requirements: str) -> str:
-    """生成脚本存储key（基于数据需求）"""
-    hash_suffix = hashlib.md5(data_requirements.encode()).hexdigest()[:8]
-    return f"scraper_script_{hash_suffix}"
+def _generate_script_key(self, data_requirements: Dict) -> str:
+    """生成脚本存储路径（直接使用 step 目录）"""
+    user_id = self.context.get("user_id")
+    workflow_id = self.context.get("workflow_id")
+    step_id = self.context.get("step_id")
+    # 脚本直接存储在 step 目录下，无 hash 子目录
+    return f"users/{user_id}/workflows/{workflow_id}/{step_id}"
 
 async def _save_dom_to_file(self, dom_representation: str, debug_key: str):
     """调试模式：保存DOM结构到文件"""

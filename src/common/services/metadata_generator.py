@@ -77,7 +77,7 @@ class MetadataGenerator:
         return metadata
 
     def _scan_scraper_scripts(self, workflow_path: Path) -> List[Dict]:
-        """Scan for scraper_script_* directories"""
+        """Scan for scraper scripts in step directories"""
         scraper_scripts = []
 
         # Iterate through step directories
@@ -86,59 +86,45 @@ class MetadataGenerator:
                 continue
 
             # Skip special directories
-            if step_dir.name in ["executions", "metadata.json"]:
+            if step_dir.name in ["executions", "metadata.json", "dom_snapshots", ".claude"]:
                 continue
 
             step_id = step_dir.name
 
-            # Look for scraper_script_* subdirectories
-            for resource_dir in step_dir.iterdir():
-                if not resource_dir.is_dir():
-                    continue
+            # Check for extraction_script.py directly in step directory
+            extraction_script = step_dir / "extraction_script.py"
+            if not extraction_script.exists():
+                continue
 
-                if not resource_dir.name.startswith("scraper_script_"):
-                    continue
+            requirement_json = step_dir / "requirement.json"
+            test_extraction = step_dir / "test_extraction.py"
 
-                resource_id = resource_dir.name
+            files = ["extraction_script.py"]
+            if requirement_json.exists():
+                files.append("requirement.json")
+            if test_extraction.exists():
+                files.append("test_extraction.py")
 
-                # Check for required files
-                extraction_script = resource_dir / "extraction_script.py"
-                requirement_json = resource_dir / "requirement.json"
-                test_extraction = resource_dir / "test_extraction.py"
+            # Get latest modification time from the files
+            timestamps = []
+            for file in [extraction_script, requirement_json, test_extraction]:
+                if file.exists():
+                    timestamps.append(file.stat().st_mtime)
 
-                if not extraction_script.exists():
-                    logger.warning(f"Missing extraction_script.py in {resource_dir}")
-                    continue
+            if timestamps:
+                latest_mtime = max(timestamps)
+                updated_at = datetime.fromtimestamp(latest_mtime, tz=timezone.utc).isoformat()
+            else:
+                updated_at = get_current_timestamp()
 
-                files = []
-                if extraction_script.exists():
-                    files.append("extraction_script.py")
-                if requirement_json.exists():
-                    files.append("requirement.json")
-                if test_extraction.exists():
-                    files.append("test_extraction.py")
+            scraper_scripts.append({
+                "step_id": step_id,
+                "files": files,
+                "created_at": updated_at,
+                "updated_at": updated_at
+            })
 
-                # Get latest modification time from the files
-                timestamps = []
-                for file in [extraction_script, requirement_json, test_extraction]:
-                    if file.exists():
-                        timestamps.append(file.stat().st_mtime)
-
-                if timestamps:
-                    latest_mtime = max(timestamps)
-                    updated_at = datetime.fromtimestamp(latest_mtime, tz=timezone.utc).isoformat()
-                else:
-                    updated_at = get_current_timestamp()
-
-                scraper_scripts.append({
-                    "step_id": step_id,
-                    "resource_id": resource_id,
-                    "files": files,
-                    "created_at": updated_at,
-                    "updated_at": updated_at
-                })
-
-                logger.info(f"  Found resource: {step_id}/{resource_id} with {len(files)} files")
+            logger.info(f"  Found resource: {step_id} with {len(files)} files")
 
         return scraper_scripts
 

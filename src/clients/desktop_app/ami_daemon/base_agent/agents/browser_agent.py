@@ -543,14 +543,16 @@ grep -i "interactive_index" dom_data.json | head -20
         - Task description hash
         - XPath hints hash
 
-        Path structure: users/{user_id}/workflows/{workflow_id}/{step_id}/browser_script_{hash}
+        Path structure: users/{user_id}/workflows/{workflow_id}/{step_id}
+        Scripts are stored directly in the step directory (no hash subdirectory).
+        The hash is only used internally to detect if script regeneration is needed.
 
         Args:
             task: Task description
             xpath_hints: XPath hints for element location
 
         Returns:
-            Relative path for script storage
+            Relative path for script storage (step directory)
         """
         # Get context information
         user_id = "default_user"
@@ -563,15 +565,58 @@ grep -i "interactive_index" dom_data.json | head -20
             step_id = getattr(self._context, 'step_id', step_id)
             logger.debug(f"BrowserAgent context info - user_id: {user_id}, workflow_id: {workflow_id}, step_id: {step_id}")
 
-        # Generate hash-based key using task and xpath_hints
+        # Generate hash for internal use (detecting if regeneration needed)
+        # Note: Hash is no longer used in directory path
         content = f"browser_{task}_{json.dumps(xpath_hints, sort_keys=True)}"
-        hash_suffix = hashlib.md5(content.encode()).hexdigest()[:8]
-        script_key = f"browser_script_{hash_suffix}"
+        self._current_script_hash = hashlib.md5(content.encode()).hexdigest()[:8]
 
-        # Build relative path (will be prefixed with data.scripts by config_service)
-        script_path = f"users/{user_id}/workflows/{workflow_id}/{step_id}/{script_key}"
+        # Build relative path - directly to step directory (no hash subdirectory)
+        script_path = f"users/{user_id}/workflows/{workflow_id}/{step_id}"
         logger.debug(f"Generated script path: {script_path}")
         return script_path
+
+    def _is_cache_valid(self, working_dir: Path, task: str, xpath_hints: Dict[str, str]) -> bool:
+        """Check if cached script is still valid by comparing task.json hash.
+
+        The cache is invalid if:
+        1. task.json doesn't exist
+        2. The hash of current task+xpath_hints differs from saved ones
+
+        Args:
+            working_dir: Path to script directory (step directory)
+            task: Current task description
+            xpath_hints: Current xpath hints
+
+        Returns:
+            True if cache is valid, False if regeneration needed
+        """
+        task_file = working_dir / "task.json"
+
+        if not task_file.exists():
+            logger.debug("Cache invalid: task.json not found")
+            return False
+
+        try:
+            saved_task = json.loads(task_file.read_text(encoding='utf-8'))
+
+            # Generate hash for both current and saved task info
+            current_content = f"browser_{task}_{json.dumps(xpath_hints, sort_keys=True)}"
+            current_hash = hashlib.md5(current_content.encode()).hexdigest()[:8]
+
+            saved_task_desc = saved_task.get('task', '')
+            saved_xpath_hints = saved_task.get('xpath_hints', {})
+            saved_content = f"browser_{saved_task_desc}_{json.dumps(saved_xpath_hints, sort_keys=True)}"
+            saved_hash = hashlib.md5(saved_content.encode()).hexdigest()[:8]
+
+            if current_hash != saved_hash:
+                logger.debug(f"Cache invalid: hash mismatch (current={current_hash}, saved={saved_hash})")
+                return False
+
+            return True
+
+        except Exception as e:
+            logger.warning(f"Cache validation failed: {e}")
+            return False
 
     async def validate_input(self, input_data: Any) -> bool:
         """Validate input data
@@ -1082,8 +1127,12 @@ grep -i "interactive_index" dom_data.json | head -20
             # 2. Prepare workspace with preset templates and input files
             await self._prepare_workspace(working_dir, task, operation, xpath_hints, text, dom_dict)
 
-            # 3. Check if cached script exists and try to use it first
-            if script_file.exists():
+            # 3. Check if cached script exists and is still valid
+            cache_valid = script_file.exists() and self._is_cache_valid(working_dir, task, xpath_hints)
+            if not cache_valid and script_file.exists():
+                logger.info(f"🔄 Cache invalidated: task or xpath_hints changed, regenerating script")
+
+            if cache_valid:
                 logger.info(f"✅ Found cached script: {script_file}")
                 script_content = script_file.read_text(encoding='utf-8')
 

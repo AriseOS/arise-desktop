@@ -520,13 +520,13 @@ class WorkflowEngine:
         try:
             resolved_dict = self._resolve_step_variables(step, context)
             max_iterations = step.max_iterations
-            loop_timeout = step.loop_timeout or 3600
+            loop_timeout = step.loop_timeout  # None means no timeout
             iterations_executed = 0
             sub_step_results = []
             exit_reason = "condition_false"
 
             while max_iterations is None or iterations_executed < max_iterations:
-                if time.time() - step_start_time > loop_timeout:
+                if loop_timeout and time.time() - step_start_time > loop_timeout:
                     exit_reason = "timeout"
                     break
 
@@ -605,7 +605,7 @@ class WorkflowEngine:
                 source_list = source_var
 
             max_iterations = step.max_iterations
-            loop_timeout = step.loop_timeout or 600
+            loop_timeout = step.loop_timeout  # None means no timeout
 
             if not source_list:
                 raise ValueError("foreach step source resolved to empty")
@@ -628,7 +628,7 @@ class WorkflowEngine:
                     logger.warning(f"Max iterations {max_iterations} reached")
                     break
 
-                if time.time() - step_start_time > loop_timeout:
+                if loop_timeout and time.time() - step_start_time > loop_timeout:
                     exit_reason = "timeout"
                     logger.warning(f"Timeout {loop_timeout}s reached")
                     break

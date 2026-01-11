@@ -139,7 +139,7 @@ class AgentContext(BaseModel):
     memory_manager: Optional[Any] = Field(default=None, description="内存管理器")
 
     # 执行控制
-    timeout: int = Field(default=300, description="超时时间")
+    timeout: Optional[int] = Field(default=None, description="超时时间，None表示无超时")
     retry_count: int = Field(default=0, description="重试次数")
 
     # 日志和监控
@@ -286,15 +286,15 @@ class AgentWorkflowStep(BaseModel):
     
     # 执行控制
     condition: Optional[str] = Field(default=None, description="执行条件")
-    timeout: int = Field(default=300, description="超时时间")
+    timeout: Optional[int] = Field(default=None, description="超时时间，None表示无超时")
     retry_count: int = Field(default=0, description="重试次数")
-    
+
     # 控制流相关字段 (仅当agent_type为if/while/foreach时使用)
     then: Optional[List['AgentWorkflowStep']] = Field(default=None, description="if条件为真时执行的步骤")
     else_: Optional[List['AgentWorkflowStep']] = Field(default=None, alias="else", description="if条件为假时执行的步骤")
     steps: Optional[List['AgentWorkflowStep']] = Field(default=None, description="while/foreach循环体步骤")
     max_iterations: Optional[int] = Field(default=None, description="while/foreach最大循环次数，None表示无限制")
-    loop_timeout: Optional[int] = Field(default=3600, description="while/foreach循环超时时间")
+    loop_timeout: Optional[int] = Field(default=None, description="while/foreach循环超时时间，None表示无超时")
 
     # foreach 特有配置
     source: Optional[str] = Field(default=None, description="foreach遍历的源列表变量名（如 '{{all_product_urls}}'）")

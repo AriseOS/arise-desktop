@@ -12,7 +12,7 @@ from datetime import datetime
 from dataclasses import dataclass
 
 from src.common.resource_types import ResourceType, ResourceConfig
-from src.common.timestamp_utils import get_current_timestamp
+from src.common.timestamp_utils import get_current_timestamp, parse_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,6 @@ logger = logging.getLogger(__name__)
 class ResourceInfo:
     """Resource metadata"""
     step_id: str
-    resource_id: str
     resource_type: ResourceType
     files: List[str]
     created_at: str
@@ -66,12 +65,17 @@ class ResourceManager:
         user_id: str,
         workflow_id: str,
         step_id: str,
-        resource_type: ResourceType,
-        resource_id: str
+        resource_type: ResourceType
     ) -> Path:
-        """Get local resource directory path"""
+        """Get local resource directory path
+
+        Path structure:
+        ~/.ami/users/{user_id}/workflows/{workflow_id}/{step_id}/
+
+        Scripts are stored directly in step directory (no hash subdirectory).
+        """
         workflow_path = self.get_local_workflow_path(user_id, workflow_id)
-        return workflow_path / step_id / resource_id
+        return workflow_path / step_id
 
     def save_resource_local(
         self,
@@ -79,7 +83,6 @@ class ResourceManager:
         workflow_id: str,
         step_id: str,
         resource_type: ResourceType,
-        resource_id: str,
         files: Dict[str, bytes],
         custom_timestamp: Optional[str] = None
     ) -> bool:
@@ -91,7 +94,7 @@ class ResourceManager:
         """
         try:
             resource_path = self.get_local_resource_path(
-                user_id, workflow_id, step_id, resource_type, resource_id
+                user_id, workflow_id, step_id, resource_type
             )
             resource_path.mkdir(parents=True, exist_ok=True)
 
@@ -103,11 +106,11 @@ class ResourceManager:
                 else:
                     file_path.write_bytes(content)
 
-            logger.info(f"Saved resource {resource_id} to {resource_path}")
+            logger.info(f"Saved resource for step {step_id} to {resource_path}")
 
             # Update metadata with correct timestamp
             self.update_workflow_metadata(
-                user_id, workflow_id, step_id, resource_type, resource_id,
+                user_id, workflow_id, step_id, resource_type,
                 list(files.keys()),
                 custom_timestamp=custom_timestamp
             )
@@ -115,7 +118,7 @@ class ResourceManager:
             return True
 
         except Exception as e:
-            logger.error(f"Failed to save resource {resource_id}: {e}")
+            logger.error(f"Failed to save resource for step {step_id}: {e}")
             return False
 
     def load_resource_local(
@@ -123,13 +126,12 @@ class ResourceManager:
         user_id: str,
         workflow_id: str,
         step_id: str,
-        resource_type: ResourceType,
-        resource_id: str
+        resource_type: ResourceType
     ) -> Optional[Dict[str, bytes]]:
         """Load resource from local filesystem"""
         try:
             resource_path = self.get_local_resource_path(
-                user_id, workflow_id, step_id, resource_type, resource_id
+                user_id, workflow_id, step_id, resource_type
             )
 
             if not resource_path.exists():
@@ -148,7 +150,7 @@ class ResourceManager:
             return files
 
         except Exception as e:
-            logger.error(f"Failed to load resource {resource_id}: {e}")
+            logger.error(f"Failed to load resource for step {step_id}: {e}")
             return None
 
     def update_workflow_metadata(
@@ -157,7 +159,6 @@ class ResourceManager:
         workflow_id: str,
         step_id: str,
         resource_type: ResourceType,
-        resource_id: str,
         files: List[str],
         custom_timestamp: Optional[str] = None
     ) -> bool:
@@ -201,18 +202,17 @@ class ResourceManager:
             if resource_type_key not in metadata["resources"]:
                 metadata["resources"][resource_type_key] = []
 
-            # Find or create resource entry
+            # Find or create resource entry by step_id
             resource_list = metadata["resources"][resource_type_key]
             resource_entry = None
             for entry in resource_list:
-                if entry["step_id"] == step_id and entry["resource_id"] == resource_id:
+                if entry["step_id"] == step_id:
                     resource_entry = entry
                     break
 
             if resource_entry is None:
                 resource_entry = {
                     "step_id": step_id,
-                    "resource_id": resource_id,
                     "created_at": get_current_timestamp()
                 }
                 resource_list.append(resource_entry)
@@ -282,10 +282,14 @@ class ResourceManager:
             elif cloud_updated_at is None:
                 logger.info(f"[Sync Check] Cloud metadata missing, will upload to cloud for {workflow_id}")
                 return True, "upload"
-            elif cloud_updated_at > local_updated_at:
+            # Parse timestamps for proper comparison
+            local_dt = parse_timestamp(local_updated_at)
+            cloud_dt = parse_timestamp(cloud_updated_at)
+
+            if cloud_dt > local_dt:
                 logger.info(f"[Sync Check] Cloud is newer ({cloud_updated_at} > {local_updated_at}), will download for {workflow_id}")
                 return True, "download"
-            elif local_updated_at > cloud_updated_at:
+            elif local_dt > cloud_dt:
                 logger.info(f"[Sync Check] Local is newer ({local_updated_at} > {cloud_updated_at}), will upload for {workflow_id}")
                 return True, "upload"
             else:
@@ -385,37 +389,35 @@ class ResourceManager:
                 for resource_entry in resource_list:
                     try:
                         step_id = resource_entry["step_id"]
-                        resource_id = resource_entry["resource_id"]
-                        logger.info(f"[Upload] Processing resource {resource_id} in step {step_id}")
+                        logger.info(f"[Upload] Processing resource in step {step_id}")
 
                         files = self.load_resource_local(
-                            user_id, workflow_id, step_id, resource_type, resource_id
+                            user_id, workflow_id, step_id, resource_type
                         )
 
                         if not files:
-                            logger.warning(f"[Upload] Failed to load resource {resource_id} from local")
-                            errors.append(f"Failed to load resource {resource_id}")
+                            logger.warning(f"[Upload] Failed to load resource for step {step_id} from local")
+                            errors.append(f"Failed to load resource for step {step_id}")
                             continue
 
-                        logger.info(f"[Upload] Loaded {len(files)} files for {resource_id}: {list(files.keys())}")
+                        logger.info(f"[Upload] Loaded {len(files)} files for step {step_id}: {list(files.keys())}")
 
                         success = await self.storage_service.save_workflow_resource(
-                            user_id, workflow_id, step_id, resource_type, resource_id, files
+                            user_id, workflow_id, step_id, resource_type, files
                         )
 
                         if success:
-                            logger.info(f"[Upload] Successfully uploaded resource {resource_id}")
+                            logger.info(f"[Upload] Successfully uploaded resource for step {step_id}")
                             synced.append(ResourceInfo(
                                 step_id=step_id,
-                                resource_id=resource_id,
                                 resource_type=resource_type,
                                 files=list(files.keys()),
                                 created_at=resource_entry.get("created_at", ""),
                                 updated_at=resource_entry.get("updated_at", "")
                             ))
                         else:
-                            logger.error(f"[Upload] Failed to upload resource {resource_id}")
-                            errors.append(f"Failed to upload resource {resource_id}")
+                            logger.error(f"[Upload] Failed to upload resource for step {step_id}")
+                            errors.append(f"Failed to upload resource for step {step_id}")
 
                     except Exception as e:
                         logger.error(f"[Upload] Failed to upload resource: {e}", exc_info=True)
@@ -480,39 +482,37 @@ class ResourceManager:
                 for resource_entry in resource_list:
                     try:
                         step_id = resource_entry["step_id"]
-                        resource_id = resource_entry["resource_id"]
-                        logger.info(f"[Download] Processing resource {resource_id} in step {step_id}")
+                        logger.info(f"[Download] Processing resource in step {step_id}")
 
                         files = await self.storage_service.load_workflow_resource(
-                            user_id, workflow_id, step_id, resource_type, resource_id
+                            user_id, workflow_id, step_id, resource_type
                         )
 
                         if not files:
-                            logger.warning(f"[Download] Failed to load resource {resource_id} from cloud")
-                            errors.append(f"Failed to download resource {resource_id}")
+                            logger.warning(f"[Download] Failed to load resource for step {step_id} from cloud")
+                            errors.append(f"Failed to download resource for step {step_id}")
                             continue
 
-                        logger.info(f"[Download] Downloaded {len(files)} files for {resource_id}: {list(files.keys())}")
+                        logger.info(f"[Download] Downloaded {len(files)} files for step {step_id}: {list(files.keys())}")
 
                         # CRITICAL: Save to local with PRESERVED cloud timestamp
                         success = self.save_resource_local(
-                            user_id, workflow_id, step_id, resource_type, resource_id, files,
+                            user_id, workflow_id, step_id, resource_type, files,
                             custom_timestamp=cloud_updated_at
                         )
 
                         if success:
-                            logger.info(f"[Download] Successfully saved resource {resource_id} to local")
+                            logger.info(f"[Download] Successfully saved resource for step {step_id} to local")
                             synced.append(ResourceInfo(
                                 step_id=step_id,
-                                resource_id=resource_id,
                                 resource_type=resource_type,
                                 files=list(files.keys()),
                                 created_at=resource_entry.get("created_at", ""),
                                 updated_at=resource_entry.get("updated_at", "")
                             ))
                         else:
-                            logger.error(f"[Download] Failed to save resource {resource_id} to local")
-                            errors.append(f"Failed to save resource {resource_id}")
+                            logger.error(f"[Download] Failed to save resource for step {step_id} to local")
+                            errors.append(f"Failed to save resource for step {step_id}")
 
                     except Exception as e:
                         logger.error(f"[Download] Failed to download resource: {e}", exc_info=True)

@@ -373,15 +373,13 @@ asyncio.run(test_pregeneration())
    # Expected structure:
    # workflow.yaml
    # metadata.json
-   # {step_id}/
-   #   browser_script_{hash}/
-   #     dom_data.json
-   #     find_element.py
-   #     task.json
-   #   scraper_script_{hash}/
-   #     dom_data.json
-   #     extraction_script.py
-   #     requirement.json
+   # {step_id}/              # Scripts stored directly in step directory
+   #   dom_data.json
+   #   find_element.py       # browser agent script
+   #   task.json             # browser agent config
+   #   extraction_script.py  # scraper agent script
+   #   requirement.json      # scraper agent config
+   #   dom_tools.py          # DOM utilities
    ```
 
 6. **Check workflow metadata:**

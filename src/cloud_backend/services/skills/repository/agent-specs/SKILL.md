@@ -78,12 +78,11 @@ Navigate and interact with pages. Does NOT extract data.
 **Required**: At least one of `target_url` or `interaction_steps`
 
 ```yaml
-# Navigate only
+# Navigate only (no outputs needed - just omit the field)
 - id: go-to-page
   agent: browser_agent
   inputs:
     target_url: "https://example.com"  # URL to navigate to
-  outputs: null                        # Usually no output needed
 
 # Interactions (click, fill, scroll)
 - id: click-button

@@ -414,9 +414,11 @@ python extraction_script.py
 
 2. **Trust `find` output** - If it shows children, use the child xpath. If it shows siblings, consider merging.
 
-3. **URLs MUST be absolute** - Use `urljoin("{page_url}", url)` for all URLs.
+3. **URLs MUST be absolute** - Use `make_absolute(url, page_url)` to convert relative URLs.
 
 4. **Respect xpath indices** - `div[4]` means the 4th div. Extract from that specific container.
+
+5. **page_url parameter** - The function receives `page_url` as second parameter. Use it for URL conversion or return it directly if needed.
 
 ## Required Script Format
 
@@ -429,19 +431,20 @@ from urllib.parse import urljoin
 
 from dom_tools import extract_list, extract_single, extract_multi
 
-PAGE_URL = "{page_url}"
 
-def make_absolute(url: str) -> str:
+def make_absolute(url: str, page_url: str) -> str:
     \"\"\"Convert relative URL to absolute URL\"\"\"
     if not url or url.startswith(('http://', 'https://')):
         return url
-    return urljoin(PAGE_URL, url)
+    return urljoin(page_url, url)
 
-def extract_data_from_page(dom_dict: Dict) -> List[Dict]:
+
+def extract_data_from_page(dom_dict: Dict, page_url: str = "") -> List[Dict]:
     \"\"\"Extract data from DOM dictionary.
 
     Args:
         dom_dict: The page DOM as a nested dictionary
+        page_url: Current page URL (use for make_absolute or return directly)
 
     Returns:
         List of extracted data dictionaries
@@ -450,12 +453,13 @@ def extract_data_from_page(dom_dict: Dict) -> List[Dict]:
     # Use extract_list, extract_single, or extract_multi from dom_tools
     results = []
 
-    # Make URLs absolute
+    # Make URLs absolute using page_url parameter
     for item in results:
         if 'url' in item:
-            item['url'] = make_absolute(item['url'])
+            item['url'] = make_absolute(item['url'], page_url)
 
     return results
+
 
 # Main entry point - reads dom_data.json and calls extract function
 if __name__ == "__main__":
@@ -464,13 +468,15 @@ if __name__ == "__main__":
     # DOM files use wrapped format: {{"url": ..., "dom": {{...}}}}
     if "dom" not in data:
         raise ValueError("Invalid DOM format: missing 'dom' key. Expected wrapped format.")
-    results = extract_data_from_page(data["dom"])
+    page_url = data.get("url", "")
+    results = extract_data_from_page(data["dom"], page_url)
     print(json.dumps(results, indent=2, ensure_ascii=False))
 ```
 
 **IMPORTANT**:
-- The `extract_data_from_page(dom_dict)` function receives DOM as parameter - do NOT read files inside this function
+- `extract_data_from_page(dom_dict, page_url)` receives both DOM and current page URL
+- Use `page_url` parameter to convert relative URLs via `make_absolute(url, page_url)`
+- You can also return `page_url` directly if the user wants the current page URL as output
 - File reading (`dom_data.json`) only happens in `if __name__ == "__main__":` block for testing
 - DOM files use wrapped format: `{{"url": "...", "dom": {{...}}}}`
-- This structure allows the script to be imported and called with DOM data directly
 """

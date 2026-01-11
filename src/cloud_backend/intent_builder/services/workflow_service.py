@@ -246,8 +246,10 @@ class WorkflowService:
                 model=self.model,
                 base_url=self.base_url
             )
+            # Use user_query (the actual user goal) for semantic validation
+            # Never fall back to task_description as it may mislead validation
             validation = await validator.validate(
-                request.task_description,
+                request.user_query or "",
                 intent_sequence,
                 result.workflow
             )
@@ -330,8 +332,9 @@ class WorkflowService:
                     model=self.model,
                     base_url=self.base_url
                 )
+                # Use user_query (the actual user goal) for semantic validation
                 validation = await validator.validate(
-                    request.task_description,
+                    request.user_query or "",
                     intent_sequence,
                     result.workflow
                 )
@@ -355,7 +358,7 @@ class WorkflowService:
                             session_id=session_id
                         )
                         validation = await validator.validate(
-                            request.task_description,
+                            request.user_query or "",
                             intent_sequence,
                             result.workflow
                         )
@@ -551,8 +554,9 @@ class WorkflowService:
                     model=self.model,
                     base_url=self.base_url
                 )
+                # Use user_query (the actual user goal) for semantic validation
                 validation = await validator.validate(
-                    request.task_description,
+                    request.user_query or "",
                     intent_sequence,
                     result.workflow
                 )

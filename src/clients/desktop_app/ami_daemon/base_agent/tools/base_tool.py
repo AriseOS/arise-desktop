@@ -45,7 +45,7 @@ class ToolResult(BaseModel):
 
 class ToolConfig(BaseModel):
     """工具配置基类"""
-    timeout: int = Field(default=300, description="超时时间(秒)")
+    timeout: Optional[int] = Field(default=None, description="超时时间(秒)，None表示无超时")
     retry_count: int = Field(default=3, description="重试次数")
     retry_delay: float = Field(default=1.0, description="重试延迟(秒)")
     enable_logging: bool = Field(default=True, description="是否启用日志")
@@ -270,21 +270,24 @@ class BaseTool(ABC):
         
         last_error = None
         start_time = time.time()
-        
+
         for attempt in range(self.config.retry_count + 1):
             try:
-                # 设置超时
-                result = await asyncio.wait_for(
-                    self.execute(action, params, **kwargs),
-                    timeout=self.config.timeout
-                )
-                
+                # 执行（如果设置了超时则使用 wait_for）
+                if self.config.timeout:
+                    result = await asyncio.wait_for(
+                        self.execute(action, params, **kwargs),
+                        timeout=self.config.timeout
+                    )
+                else:
+                    result = await self.execute(action, params, **kwargs)
+
                 if result.success:
                     result.execution_time = time.time() - start_time
                     return result
-                    
+
                 last_error = result.message
-                
+
             except asyncio.TimeoutError:
                 last_error = f"执行超时 ({self.config.timeout}秒)"
                 logger.warning(f"工具执行超时: {action}")

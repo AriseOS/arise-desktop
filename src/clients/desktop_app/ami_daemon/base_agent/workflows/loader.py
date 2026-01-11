@@ -455,7 +455,6 @@ class WorkflowConfigLoader:
             item_var=item_var,
             index_var=step_config.get('index_var', 'index'),
             max_iterations=step_config.get('max_iterations'),
-            loop_timeout=step_config.get('loop_timeout', 3600),
             steps=[self._create_step_from_v2(s) for s in sub_steps]
         )
         return step
@@ -487,7 +486,6 @@ class WorkflowConfigLoader:
             agent_type='while',
             condition=condition,
             max_iterations=step_config.get('max_iterations'),
-            loop_timeout=step_config.get('timeout', 3600),
             steps=[self._create_step_from_v2(s) for s in sub_steps]
         )
         return step

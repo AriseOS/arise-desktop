@@ -1068,190 +1068,6 @@ async def delete_workflow(workflow_id: str, user_id: str):
 _workflow_sessions: dict = {}
 
 
-@app.post("/api/v1/workflows/generate")
-async def generate_workflow_direct(
-    data: dict,
-    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
-):
-    """
-    Generate Workflow directly from Recording or Intent sequence (NEW v2 API)
-
-    This endpoint uses the new WorkflowBuilder architecture which:
-    - Bypasses the MetaFlow intermediate layer
-    - Uses Claude Agent SDK for generation
-    - Includes two-layer validation (rule + semantic)
-    - Supports follow-up dialogue for workflow modification
-
-    Headers:
-        X-Ami-API-Key: User's API key (required)
-
-    Body:
-        {
-            "user_id": "user123",
-            "task_description": "Extract product info from website",
-            "recording_id": "recording_xxx",           // Optional: generate from recording
-            "intent_sequence": [...],                  // Optional: provide Intent sequence directly
-            "enable_semantic_validation": true,        // Enable semantic validation (default: true)
-            "enable_dialogue": true                    // Keep session for follow-up dialogue (default: true)
-        }
-
-    Returns:
-        {
-            "workflow_id": "workflow_xxx",
-            "workflow_name": "extract-products",
-            "workflow_yaml": "...",
-            "session_id": "ws_xxx",                    // If enable_dialogue=true
-            "validation_result": {...},
-            "status": "success"
-        }
-    """
-    if not x_ami_api_key:
-        raise HTTPException(400, "Missing X-Ami-API-Key header")
-
-    user_id = data.get("user_id")
-    task_description = data.get("task_description")
-    recording_id = data.get("recording_id")
-    operations = data.get("operations")  # Direct operations from App Backend
-    source_recording_id = data.get("source_recording_id")  # For traceability
-    intent_sequence = data.get("intent_sequence")
-    enable_semantic_validation = data.get("enable_semantic_validation", True)
-    enable_dialogue = data.get("enable_dialogue", True)
-
-    if not user_id:
-        raise HTTPException(400, "Missing user_id")
-    if not task_description:
-        raise HTTPException(400, "Missing task_description")
-
-    logger.info(f"🚀 [API v2] Generating Workflow directly for user {user_id}")
-    logger.info(f"📝 Task Description: {task_description}")
-
-    try:
-        # Import the new WorkflowService
-        from src.cloud_backend.intent_builder.services import (
-            WorkflowService,
-            GenerationRequest
-        )
-
-        # Get operations from:
-        # 1. Direct operations parameter (from App Backend proxy)
-        # 2. recording_id (from Cloud Backend storage)
-        if not intent_sequence:
-            # Try direct operations first (from App Backend)
-            if operations:
-                logger.info(f"📹 Using direct operations: {len(operations)} operations")
-                recording_id = source_recording_id  # Use source_recording_id for traceability
-            elif recording_id:
-                # Fallback to loading from Cloud Backend storage
-                recording_data = storage_service.get_recording(user_id, recording_id)
-                if not recording_data:
-                    raise HTTPException(404, f"Recording not found: {recording_id}")
-
-                operations = recording_data.get("operations", [])
-                if not operations:
-                    raise HTTPException(400, f"Recording {recording_id} has no operations")
-
-                logger.info(f"📹 Loaded recording from storage: {len(operations)} operations")
-
-            if operations:
-                # Extract intents from operations
-                from src.cloud_backend.intent_builder.extractors.intent_extractor import IntentExtractor
-                from src.common.llm import AnthropicProvider
-
-                llm = AnthropicProvider(
-                    api_key=x_ami_api_key,
-                    base_url=config_service.get("llm.proxy_url")
-                )
-                extractor = IntentExtractor(llm_provider=llm)
-
-                intents = await extractor.extract_intents(
-                    operations=operations,
-                    task_description=task_description,
-                    source_session_id=recording_id or source_recording_id
-                )
-                intent_sequence = [intent.to_dict() for intent in intents]
-                logger.info(f"✅ Extracted {len(intent_sequence)} intents")
-
-        if not intent_sequence:
-            raise HTTPException(400, "No intent_sequence, operations, or recording_id provided")
-
-        # Create WorkflowService and generate
-        service = WorkflowService(
-            config_service=config_service,
-            api_key=x_ami_api_key,
-            base_url=config_service.get("llm.proxy_url")
-        )
-
-        request = GenerationRequest(
-            recording_id=recording_id,
-            task_description=task_description,
-            intent_sequence=intent_sequence,
-            enable_semantic_validation=enable_semantic_validation
-        )
-
-        response = await service.generate(request, enable_dialogue=enable_dialogue)
-
-        if not response.success:
-            raise HTTPException(500, f"Workflow generation failed: {response.error}")
-
-        # Generate workflow_id and save
-        workflow_id = response.workflow_id or f"workflow_{uuid.uuid4().hex[:12]}"
-
-        # Extract workflow name from YAML (v2 format: name at top level)
-        import yaml
-        workflow_dict = yaml.safe_load(response.workflow_yaml)
-        workflow_name = workflow_dict.get("name", workflow_id)
-
-        # Save workflow to storage
-        storage_service.save_workflow(
-            user_id=user_id,
-            workflow_id=workflow_id,
-            workflow_yaml=response.workflow_yaml,
-            workflow_name=workflow_name,
-            source_recording_id=recording_id
-        )
-
-        # Link recording to workflow (reverse link)
-        if recording_id:
-            try:
-                storage_service.update_recording_workflow(user_id, recording_id, workflow_id)
-                logger.info(f"✅ Recording {recording_id} linked to Workflow {workflow_id}")
-            except Exception as e:
-                logger.warning(f"⚠️ Failed to link recording to workflow: {e}")
-
-        logger.info(f"✅ Workflow generated and saved: {workflow_id}")
-
-        result = {
-            "workflow_id": workflow_id,
-            "workflow_name": workflow_name,
-            "workflow_yaml": response.workflow_yaml,
-            "source_recording_id": recording_id,
-            "status": "success"
-        }
-
-        if response.session_id:
-            result["session_id"] = response.session_id
-            # Store session reference for later dialogue
-            _workflow_sessions[response.session_id] = {
-                "service": service,
-                "user_id": user_id,
-                "workflow_id": workflow_id,
-                "created_at": asyncio.get_event_loop().time()
-            }
-
-        if response.validation_result:
-            result["validation_result"] = response.validation_result.to_dict()
-
-        return result
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Workflow generation failed: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(500, f"Workflow generation failed: {str(e)}")
-
-
 @app.post("/api/v1/workflows/generate-stream")
 async def generate_workflow_stream(
     data: dict,
@@ -1463,32 +1279,32 @@ async def generate_workflow_stream(
                     except Exception as e:
                         logger.warning(f"⚠️ [Background] Failed to link recording to workflow: {e}")
 
-                # Generate scripts
+                # TEMPORARY: Skip script pre-generation (scripts generated on-demand during execution)
                 script_gen_result = None
-                if dom_snapshots and local_recording_id:
-                    await progress_queue.put({'status': 'generating_scripts', 'progress': 90, 'message': 'Generating scripts for workflow steps...'})
-
-                    try:
-                        workflow_dir = storage_service.get_workflow_path(user_id, workflow_id)
-                        local_intents = intents if intents else None
-                        script_gen_result = await _generate_scripts_sync(
-                            workflow_yaml=response.workflow_yaml,
-                            dom_snapshots=dom_snapshots,
-                            workflow_dir=workflow_dir,
-                            api_key=x_ami_api_key,
-                            base_url=config_service.get("llm.proxy_url"),
-                            intents=local_intents
-                        )
-                        if script_gen_result:
-                            logger.info(f"🔧 [Background] Script generation: generated={script_gen_result.get('generated', 0)}, "
-                                       f"skipped={script_gen_result.get('skipped', 0)}, failed={script_gen_result.get('failed', 0)}")
-
-                            # Update metadata.json with resources info for client sync
-                            if script_gen_result.get('generated', 0) > 0:
-                                await storage_service.update_workflow_resources(user_id, workflow_id)
-                                logger.info(f"🔧 [Background] Updated metadata with generated scripts")
-                    except Exception as e:
-                        logger.warning(f"⚠️ [Background] Script generation failed: {e}")
+                # if dom_snapshots and local_recording_id:
+                #     await progress_queue.put({'status': 'generating_scripts', 'progress': 90, 'message': 'Generating scripts for workflow steps...'})
+                #
+                #     try:
+                #         workflow_dir = storage_service.get_workflow_path(user_id, workflow_id)
+                #         local_intents = intents if intents else None
+                #         script_gen_result = await _generate_scripts_sync(
+                #             workflow_yaml=response.workflow_yaml,
+                #             dom_snapshots=dom_snapshots,
+                #             workflow_dir=workflow_dir,
+                #             api_key=x_ami_api_key,
+                #             base_url=config_service.get("llm.proxy_url"),
+                #             intents=local_intents
+                #         )
+                #         if script_gen_result:
+                #             logger.info(f"🔧 [Background] Script generation: generated={script_gen_result.get('generated', 0)}, "
+                #                        f"skipped={script_gen_result.get('skipped', 0)}, failed={script_gen_result.get('failed', 0)}")
+                #
+                #             # Update metadata.json with resources info for client sync
+                #             if script_gen_result.get('generated', 0) > 0:
+                #                 await storage_service.update_workflow_resources(user_id, workflow_id)
+                #                 logger.info(f"🔧 [Background] Updated metadata with generated scripts")
+                #     except Exception as e:
+                #         logger.warning(f"⚠️ [Background] Script generation failed: {e}")
 
                 logger.info(f"✅ [Background] Workflow saved successfully")
                 completion_data = {
@@ -2492,7 +2308,7 @@ async def generate_script_stream(
 
     SSE Events:
     - {"type": "progress", "message": "...", "turn": N}
-    - {"type": "complete", "success": true, "script_path": "...", "script_content": "...", "script_key": "...", "turns": N}
+    - {"type": "complete", "success": true, "script_path": "...", "script_content": "...", "turns": N}
     - {"type": "error", "message": "..."}
     """
     import yaml
@@ -2585,10 +2401,8 @@ async def generate_script_stream(
                     sample_data=data_requirements.get("sample_data", [])
                 )
 
-                # Generate script key
-                content = f"scraper:{requirement.user_description}:{json.dumps(requirement.output_format, sort_keys=True)}"
-                script_key = f"scraper_script_{hashlib.md5(content.encode()).hexdigest()[:8]}"
-                working_dir = workflow_dir / request.step_id / script_key
+                # Working directory is now directly the step directory (no hash subdirectory)
+                working_dir = workflow_dir / request.step_id
                 working_dir.mkdir(parents=True, exist_ok=True)
 
                 # Create generator and run with streaming
@@ -2637,10 +2451,8 @@ async def generate_script_stream(
                     text=text
                 )
 
-                # Generate script key
-                content = f"browser:{task_desc}:{json.dumps(xpath_hints, sort_keys=True)}"
-                script_key = f"browser_script_{hashlib.md5(content.encode()).hexdigest()[:8]}"
-                working_dir = workflow_dir / request.step_id / script_key
+                # Working directory is now directly the step directory (no hash subdirectory)
+                working_dir = workflow_dir / request.step_id
                 working_dir.mkdir(parents=True, exist_ok=True)
 
                 # Create generator and run with streaming
@@ -2690,7 +2502,8 @@ async def generate_script_stream(
             if result.script_path and result.script_path.exists():
                 script_content = result.script_path.read_text(encoding='utf-8')
 
-            script_path = f"{request.step_id}/{script_key}/{script_name}"
+            # Script path is now directly in step directory (no hash subdirectory)
+            script_path = f"{request.step_id}/{script_name}"
 
             # Update workflow metadata
             try:
@@ -2699,7 +2512,6 @@ async def generate_script_stream(
                     metadata["generated_scripts"] = {}
                 metadata["generated_scripts"][request.step_id] = {
                     "script_type": request.script_type,
-                    "script_key": script_key,
                     "script_path": script_path,
                     "generated_at": datetime.utcnow().isoformat(),
                     "turns": result.turns
@@ -2723,13 +2535,12 @@ async def generate_script_stream(
                 # Add or update resource entry
                 resource_entry = {
                     "step_id": request.step_id,
-                    "resource_id": script_key,
                     "files": files_to_sync
                 }
                 # Remove existing entry for this step if exists
                 metadata["resources"][resource_type] = [
                     r for r in metadata["resources"][resource_type]
-                    if r.get("step_id") != request.step_id or r.get("resource_id") != script_key
+                    if r.get("step_id") != request.step_id
                 ]
                 metadata["resources"][resource_type].append(resource_entry)
 
@@ -2742,7 +2553,7 @@ async def generate_script_stream(
                 logger.warning(f"[{request_id}] Failed to update metadata: {e}")
 
             # Send completion event
-            yield f"data: {json.dumps({'type': 'complete', 'success': True, 'script_path': script_path, 'script_content': script_content, 'script_key': script_key, 'turns': result.turns})}\n\n"
+            yield f"data: {json.dumps({'type': 'complete', 'success': True, 'script_path': script_path, 'script_content': script_content, 'turns': result.turns})}\n\n"
 
             logger.info(f"[{request_id}] Script generated: {script_path} ({result.turns} turns)")
 

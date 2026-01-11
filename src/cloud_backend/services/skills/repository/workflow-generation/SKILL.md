@@ -38,6 +38,13 @@ description: Generate workflows from user's recorded browser actions.
 
 Convert user's recorded browser actions (intent operations) into a replayable Workflow YAML.
 
+**Key principle**: The workflow **replays** the user's recorded actions and **stores extracted data**. The app automatically handles data export/download - you do NOT need to add export steps.
+
+**What the workflow does:**
+1. Replay browser navigation and interactions
+2. Extract data from pages (scraper_agent stores data automatically)
+3. That's it! No export/save steps needed.
+
 ## Input: Intent Operations
 
 Each intent contains operations. Each operation has:
@@ -71,10 +78,15 @@ steps:
     name: "Human-readable step name"  # REQUIRED - every step must have a name
     agent: agent_type
     inputs: {...}
-    outputs: {...}
+    outputs:                          # OPTIONAL - omit if no output needed
+      result: variable_name
 ```
 
 **Required step fields**: `id`, `name`, `agent`
+
+**outputs field rules**:
+- If step produces output you want to reference later: `outputs: {result: variable_name}`
+- If step doesn't need output: **omit the outputs field entirely** (do NOT write `outputs: null`)
 
 ## Mapping Rules
 
@@ -85,6 +97,70 @@ steps:
 | extract | `scraper_agent` |
 | scroll | `browser_agent` + `interaction_steps` |
 | navigate | `browser_agent` + `target_url` |
+| summarize/transform text | `text_agent` |
+
+## text_agent
+
+Use `text_agent` for LLM-based text generation or transformation tasks (summarize, translate, analyze, etc.).
+
+**Required field**: `instruction` - MUST be provided, otherwise validation fails.
+
+```yaml
+- id: generate-summary
+  name: "Generate summary from extracted data"
+  agent: text_agent
+  inputs:
+    instruction: "Summarize the main points"  # REQUIRED - task instruction for LLM
+    data:                                      # Optional - input data for context
+      content: "{{extracted_text}}"
+  outputs:
+    result: summary                            # Dict (LLM response)
+```
+
+**Common use cases**:
+- Summarize extracted content: `instruction: "Summarize this article"`
+- Transform data format: `instruction: "Convert to bullet points"`
+- Generate descriptions: `instruction: "Write a brief description"`
+
+## Scroll Operations
+
+**CRITICAL**: `browser_agent` does NOT support `instruction` field. Use `interaction_steps` with `task` and `xpath_hints`.
+
+For scroll operations, use `interaction_steps` with empty `xpath_hints`:
+
+```yaml
+# Scroll down once
+- id: scroll-page
+  name: "Scroll down the page"
+  agent: browser_agent
+  inputs:
+    interaction_steps:
+      - task: "Scroll down the page"
+        xpath_hints: {}       # Empty dict for simple scroll
+        text: "down"          # "down" or "up"
+
+# Scroll multiple times (e.g., 3 times to load more content)
+- id: scroll-to-load-more
+  name: "Scroll down 3 times to load more products"
+  agent: browser_agent
+  inputs:
+    interaction_steps:
+      - task: "Scroll down the page"
+        xpath_hints: {}
+        text: "down"
+      - task: "Scroll down the page"
+        xpath_hints: {}
+        text: "down"
+      - task: "Scroll down the page"
+        xpath_hints: {}
+        text: "down"
+```
+
+**Important**:
+- Each `interaction_steps` item MUST have `task` (string) and `xpath_hints` (dict)
+- For simple scroll: use empty `xpath_hints: {}`
+- For scroll to element: provide xpath hints to locate the target element
+- `text` field: "down", "up", or pixel amount (e.g., "500")
 
 ## Key Rule: Click with href
 
@@ -165,7 +241,8 @@ If script generation fails for a step, modify the workflow:
 - Workflow runs from blank browser - include full path
 - Use original URL/href from operation, never simplify
 - For loops ("all items", "each product"), use `foreach`
-- **No separate data saving step** - do NOT add `storage_agent` steps to save/export data unless user explicitly requests it. Extracted data is usually saved in previous steps; users view and download it themselves.
+- **NEVER write `outputs: null`** - if a step doesn't need output, simply omit the `outputs` field
+- **No export/save steps needed** - scraper_agent automatically stores extracted data; the app handles export. Do NOT add `storage_agent` export steps unless user explicitly asks for it.
 
 ## CRITICAL: xpath_hints Rule
 

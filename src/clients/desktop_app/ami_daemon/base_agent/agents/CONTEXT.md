@@ -98,7 +98,8 @@ ScraperAgent calls **cloud API** to generate Python extraction scripts that pars
 ### Script Caching
 
 - Scripts cached locally after first cloud generation
-- Path: `~/.ami/users/{user}/workflows/{workflow}/{step}/scraper_script_{hash}/extraction_script.py`
+- Path: `~/.ami/users/{user}/workflows/{workflow}/{step}/extraction_script.py`
+- Scripts stored directly in step directory (no hash subdirectory)
 - Cached scripts reused across executions with same requirements
 
 ## Key Design Decisions

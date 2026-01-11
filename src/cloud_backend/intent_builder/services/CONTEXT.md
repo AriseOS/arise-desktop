@@ -192,7 +192,7 @@ context_md = generate_scraper_context_markdown(
 #
 # ### Scraper Steps
 # #### Step 1: extract-product-list
-# - **Script Directory**: extract-product-list/scraper_script_be988de5/
+# - **Script Directory**: extract-product-list/
 # - **Requirement**: 提取产品列表
 # - **Current Script Output**: ⚠️ Empty list `[]`
 # ...

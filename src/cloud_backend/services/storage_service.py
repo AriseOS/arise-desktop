@@ -224,7 +224,7 @@ class StorageService:
         Copies:
             - workflow.yaml
             - metadata.json
-            - {step_id}/scraper_script_xxx/ directories
+            - {step_id}/ directories (containing scripts directly)
             - dom_snapshots/ (if exists)
 
         Post-copy processing:
@@ -268,7 +268,7 @@ class StorageService:
         return session_path
 
     def _populate_dom_data_from_snapshots(self, session_path: Path) -> None:
-        """Copy DOM snapshots to each step's script directory based on step_id mapping.
+        """Copy DOM snapshots to each step directory based on step_id mapping.
 
         Reads dom_snapshots/url_index.json to find step_id -> DOM file mapping,
         then copies each DOM file to the corresponding step's dom_data.json.
@@ -307,22 +307,12 @@ class StorageService:
 
         logger.info(f"Found {len(step_dom_map)} step -> DOM mappings: {list(step_dom_map.keys())}")
 
-        # Copy DOM to each step's script directory
+        # Copy DOM to each step directory (scripts are now directly in step directory)
         for step_id, dom_filename in step_dom_map.items():
-            # Find script directory for this step
             step_dir = session_path / step_id
             if not step_dir.exists():
                 logger.debug(f"Step directory not found: {step_id}")
                 continue
-
-            # Find scraper_script_xxx directory
-            script_dirs = list(step_dir.glob("scraper_script_*"))
-            if not script_dirs:
-                logger.debug(f"No scraper_script directory found for step: {step_id}")
-                continue
-
-            # Use first (should only be one)
-            script_dir = script_dirs[0]
 
             # Read DOM snapshot
             dom_snapshot_file = dom_snapshots_dir / dom_filename
@@ -334,12 +324,12 @@ class StorageService:
                 with open(dom_snapshot_file, 'r', encoding='utf-8') as f:
                     dom_data = json.load(f)
 
-                # Save to script directory (keep wrapped format - scripts handle unwrapping)
-                dom_data_file = script_dir / "dom_data.json"
+                # Save directly to step directory (no hash subdirectory)
+                dom_data_file = step_dir / "dom_data.json"
                 with open(dom_data_file, 'w', encoding='utf-8') as f:
                     json.dump(dom_data, f, indent=2, ensure_ascii=False)
 
-                logger.info(f"Copied DOM to {step_id}/.../{dom_data_file.name}")
+                logger.info(f"Copied DOM to {step_id}/{dom_data_file.name}")
 
             except Exception as e:
                 logger.warning(f"Failed to copy DOM for step {step_id}: {e}")
@@ -353,8 +343,8 @@ class StorageService:
 
         Only syncs specific file patterns:
             - workflow.yaml
-            - */scraper_script_*/extraction_script.py
-            - */scraper_script_*/dom_tools.py
+            - */extraction_script.py
+            - */dom_tools.py
 
         Updates workflow metadata.json timestamp.
 
@@ -376,11 +366,15 @@ class StorageService:
         workflow_id = session_meta["workflow_id"]
         workflow_path = self.get_workflow_path(user_id, workflow_id)
 
-        # Sync patterns - only sync these specific files
+        # Sync patterns - scripts are now directly in step directories (no hash subdirectory)
+        # Include requirement.json and task.json for cache validation
         sync_patterns = [
             "workflow.yaml",
-            "*/scraper_script_*/extraction_script.py",
-            "*/scraper_script_*/dom_tools.py",
+            "*/extraction_script.py",
+            "*/dom_tools.py",
+            "*/requirement.json",  # For scraper cache validation
+            "*/task.json",         # For browser cache validation
+            "*/find_element.py",   # Browser agent script
         ]
 
         synced_files = []
@@ -395,7 +389,7 @@ class StorageService:
                     shutil.copy2(src_file, dst_file)
                     synced_files.append(str(rel_path))
 
-        # Update workflow metadata timestamp if any files were synced
+        # Update workflow metadata timestamp and resources if any files were synced
         if synced_files:
             workflow_yaml_path = workflow_path / "workflow.yaml"
             if workflow_yaml_path.exists():
@@ -404,9 +398,131 @@ class StorageService:
                     workflow_id,
                     workflow_yaml_path.read_text(encoding='utf-8')
                 )
+
+                # Update requirement.json for scraper_agent steps based on workflow.yaml
+                # This ensures cache validation uses the latest data_requirements
+                req_synced = self._sync_requirement_json_from_workflow(
+                    workflow_yaml_path, workflow_path
+                )
+                if req_synced:
+                    synced_files.extend(req_synced)
+
+            # Update resources in metadata.json to include synced files
+            self._update_workflow_resources_sync(user_id, workflow_id)
             logger.info(f"Synced {len(synced_files)} files from session {session_id}: {synced_files}")
 
         return synced_files
+
+    def _sync_requirement_json_from_workflow(
+        self,
+        workflow_yaml_path: Path,
+        workflow_path: Path
+    ) -> List[str]:
+        """Update requirement.json files based on workflow.yaml step definitions.
+
+        When workflow.yaml is modified (e.g., via AI dialogue), the data_requirements
+        in scraper_agent steps may change. This method ensures the corresponding
+        requirement.json files are updated to match, which is critical for cache
+        validation in scraper_agent.
+
+        Args:
+            workflow_yaml_path: Path to workflow.yaml
+            workflow_path: Path to workflow directory
+
+        Returns:
+            List of updated requirement.json paths (relative)
+        """
+        import yaml
+
+        updated_files = []
+
+        try:
+            workflow_yaml = workflow_yaml_path.read_text(encoding='utf-8')
+            workflow = yaml.safe_load(workflow_yaml)
+            if not workflow:
+                return []
+
+            # Extract all scraper_agent steps (including nested ones in foreach/if/while)
+            scraper_steps = self._extract_scraper_steps(workflow.get("steps", []))
+
+            for step in scraper_steps:
+                step_id = step.get("id")
+                if not step_id:
+                    continue
+
+                inputs = step.get("inputs", {})
+                data_req = inputs.get("data_requirements", {})
+
+                # Build requirement.json content
+                requirement_data = {
+                    "user_description": data_req.get("user_description", ""),
+                    "output_format": data_req.get("output_format", {}),
+                    "xpath_hints": data_req.get("xpath_hints"),
+                    "sample_data": data_req.get("sample_data", [])
+                }
+
+                # Write to step directory
+                step_dir = workflow_path / step_id
+                if not step_dir.exists():
+                    step_dir.mkdir(parents=True, exist_ok=True)
+
+                requirement_file = step_dir / "requirement.json"
+
+                # Check if content changed
+                needs_update = True
+                if requirement_file.exists():
+                    try:
+                        existing = json.loads(requirement_file.read_text(encoding='utf-8'))
+                        if existing == requirement_data:
+                            needs_update = False
+                    except Exception:
+                        pass  # File corrupted, update it
+
+                if needs_update:
+                    requirement_file.write_text(
+                        json.dumps(requirement_data, indent=2, ensure_ascii=False),
+                        encoding='utf-8'
+                    )
+                    rel_path = f"{step_id}/requirement.json"
+                    updated_files.append(rel_path)
+                    logger.info(f"Updated {rel_path} from workflow.yaml")
+
+        except Exception as e:
+            logger.warning(f"Failed to sync requirement.json from workflow: {e}")
+
+        return updated_files
+
+    def _extract_scraper_steps(self, steps: List[Dict]) -> List[Dict]:
+        """Extract all scraper_agent steps from workflow steps (including nested).
+
+        Recursively processes foreach, if, while control flow to find all
+        scraper_agent steps.
+
+        Args:
+            steps: List of workflow steps
+
+        Returns:
+            List of scraper_agent step definitions
+        """
+        result = []
+
+        for step in steps:
+            # Check for control flow (foreach, if, while)
+            if any(k in step for k in ["foreach", "if", "while"]):
+                # Process nested steps
+                for key in ["do", "then", "else", "steps"]:
+                    if key in step:
+                        nested = step[key]
+                        if isinstance(nested, list):
+                            result.extend(self._extract_scraper_steps(nested))
+                continue
+
+            # Check if this is a scraper_agent step
+            agent = step.get("agent") or step.get("agent_type")
+            if agent == "scraper_agent":
+                result.append(step)
+
+        return result
 
     def cleanup_modification_session(self, user_id: str, session_id: str) -> bool:
         """Clean up a workflow modification session directory.
@@ -933,18 +1049,17 @@ class StorageService:
         user_id: str,
         workflow_id: str,
         step_id: str,
-        resource_type,  # ResourceType enum
-        resource_id: str
+        resource_type  # ResourceType enum
     ) -> Path:
         """Get cloud resource directory path
 
-        Path structure matches local structure:
-        ~/ami-server/users/{user_id}/workflows/{workflow_id}/{step_id}/{resource_id}/
+        Path structure:
+        ~/ami-server/users/{user_id}/workflows/{workflow_id}/{step_id}/
 
-        Note: resource_type parameter is kept for API compatibility but not used in path
+        Scripts are stored directly in step directory (no hash subdirectory).
         """
         workflow_path = self.get_workflow_path(user_id, workflow_id)
-        return workflow_path / step_id / resource_id
+        return workflow_path / step_id
 
     async def save_workflow_resource(
         self,
@@ -952,13 +1067,12 @@ class StorageService:
         workflow_id: str,
         step_id: str,
         resource_type,  # ResourceType enum
-        resource_id: str,
         files: Dict[str, bytes]
     ) -> bool:
         """Save resource files to cloud"""
         try:
             resource_path = self.get_resource_path(
-                user_id, workflow_id, step_id, resource_type, resource_id
+                user_id, workflow_id, step_id, resource_type
             )
             resource_path.mkdir(parents=True, exist_ok=True)
 
@@ -969,7 +1083,7 @@ class StorageService:
                 else:
                     file_path.write_bytes(content)
 
-            logger.info(f"Saved resource {resource_id} to cloud: {resource_path}")
+            logger.info(f"Saved resource for step {step_id} to cloud: {resource_path}")
             return True
 
         except Exception as e:
@@ -981,15 +1095,14 @@ class StorageService:
         user_id: str,
         workflow_id: str,
         step_id: str,
-        resource_type,  # ResourceType enum
-        resource_id: str
+        resource_type  # ResourceType enum
     ) -> Optional[Dict[str, bytes]]:
         """Load resource files from cloud"""
         try:
             from src.common.resource_types import ResourceConfig, ResourceType
 
             resource_path = self.get_resource_path(
-                user_id, workflow_id, step_id, resource_type, resource_id
+                user_id, workflow_id, step_id, resource_type
             )
 
             if not resource_path.exists():
@@ -1015,13 +1128,13 @@ class StorageService:
             logger.error(f"Failed to load resource from cloud: {e}")
             return None
 
-    async def update_workflow_resources(
+    def _update_workflow_resources_sync(
         self,
         user_id: str,
         workflow_id: str
     ) -> bool:
         """
-        Scan workflow directory and update metadata.json with resources info.
+        Scan workflow directory and update metadata.json with resources info (sync version).
 
         This method scans the workflow directory for generated scripts and other
         resources, then updates the metadata.json to include them in the resources
@@ -1045,55 +1158,65 @@ class StorageService:
             # Scan for resources
             resources = {"scraper_scripts": []}
 
-            # Scan each step directory for scraper_script_* folders
+            # Scan each step directory for script files (now directly in step directory)
             for step_dir in workflow_path.iterdir():
                 if not step_dir.is_dir():
                     continue
-                if step_dir.name in ["executions", ".claude"]:
+                if step_dir.name in ["executions", ".claude", "dom_snapshots"]:
                     continue
 
                 step_id = step_dir.name
 
-                # Look for scraper_script_* directories
-                for resource_dir in step_dir.iterdir():
-                    if not resource_dir.is_dir():
-                        continue
+                # Check for extraction_script.py directly in step directory
+                extraction_script = step_dir / "extraction_script.py"
+                if extraction_script.exists():
+                    files = ["extraction_script.py"]
+                    # Include dom_tools.py (required for script execution)
+                    if (step_dir / "dom_tools.py").exists():
+                        files.append("dom_tools.py")
+                    # Include requirement.json (for cache validation)
+                    if (step_dir / "requirement.json").exists():
+                        files.append("requirement.json")
 
-                    if resource_dir.name.startswith("scraper_script_"):
-                        resource_id = resource_dir.name
+                    resources["scraper_scripts"].append({
+                        "step_id": step_id,
+                        "files": files
+                    })
+                    logger.info(f"Found resource: {step_id} with {len(files)} files")
 
-                        # Get list of files to sync
-                        files = []
-                        extraction_script = resource_dir / "extraction_script.py"
-                        if extraction_script.exists():
-                            files.append("extraction_script.py")
-                        # Include dom_tools.py (required for script execution)
-                        dom_tools = resource_dir / "dom_tools.py"
-                        if dom_tools.exists():
-                            files.append("dom_tools.py")
-
-                        if files:
-                            resources["scraper_scripts"].append({
-                                "step_id": step_id,
-                                "resource_id": resource_id,
-                                "files": files
-                            })
-                            logger.info(f"Found resource: {step_id}/{resource_id} with {len(files)} files")
+            # Check if resources actually changed
+            old_resources = metadata.get("resources", {})
+            resources_changed = old_resources != resources
 
             # Update metadata with resources
             metadata["resources"] = resources
 
-            # Update updated_at timestamp
-            from datetime import datetime, timezone
-            metadata["updated_at"] = datetime.now(timezone.utc).isoformat()
+            # Only update updated_at if resources actually changed
+            if resources_changed:
+                from datetime import datetime, timezone
+                metadata["updated_at"] = datetime.now(timezone.utc).isoformat()
+                logger.info(f"Resources changed, updated timestamp to {metadata['updated_at']}")
 
             # Save updated metadata
             with open(metadata_path, 'w', encoding='utf-8') as f:
                 json.dump(metadata, f, indent=2, ensure_ascii=False)
 
-            logger.info(f"Updated metadata with {len(resources.get('scraper_scripts', []))} scraper_scripts")
+            logger.info(f"Updated metadata with {len(resources.get('scraper_scripts', []))} scraper_scripts (changed: {resources_changed})")
             return True
 
         except Exception as e:
             logger.error(f"Failed to update workflow resources: {e}")
             return False
+
+    async def update_workflow_resources(
+        self,
+        user_id: str,
+        workflow_id: str
+    ) -> bool:
+        """
+        Scan workflow directory and update metadata.json with resources info (async wrapper).
+
+        Returns:
+            True if successful, False otherwise
+        """
+        return self._update_workflow_resources_sync(user_id, workflow_id)

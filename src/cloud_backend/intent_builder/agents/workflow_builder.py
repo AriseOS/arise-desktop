@@ -24,10 +24,10 @@ import tempfile
 import asyncio
 from pathlib import Path
 from typing import List, Dict, Any, Optional, AsyncIterator, Callable, TYPE_CHECKING
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
-from .tools.validate import validate_workflow_yaml, validate_workflow_dict, ValidationResult
+from .tools.validate import validate_workflow_dict
 
 # Skills management
 from src.cloud_backend.services.skills import SkillManager
@@ -98,7 +98,7 @@ A workflow has two layers:
    - Step parameters like URLs, selectors, output variables
 
 2. **extraction_script.py** - The actual code that runs for scraper steps:
-   - Located in `{step_id}/scraper_script_{hash}/` directories
+   - Located directly in `{step_id}/` directories
    - Parses DOM data and extracts specific fields
    - Uses XPath selectors to find elements
 
@@ -1549,99 +1549,6 @@ I'm ready to help with questions or modifications to this workflow."""
         except Exception as e:
             logger.error(f"Failed to set existing workflow: {e}")
             return False
-
-    async def _generate_scripts_for_workflow(
-        self,
-        workflow: Dict[str, Any],
-        workflow_yaml: str,
-        on_progress: Optional[Callable[[StreamEvent], None]] = None
-    ) -> Dict[str, Any]:
-        """Generate scripts for workflow steps that need them.
-
-        Uses ScriptPregenerationService to generate find_element.py and
-        extraction_script.py for browser_agent and scraper_agent steps.
-
-        Args:
-            workflow: Parsed workflow dictionary
-            workflow_yaml: Workflow YAML string
-            on_progress: Optional progress callback
-
-        Returns:
-            Script generation result dict with success, generated, skipped, failed counts
-        """
-        if not self._dom_snapshots or not self._workflow_dir:
-            logger.info("[Session] Skipping script generation - no DOM snapshots or workflow_dir")
-            return {"success": True, "skipped": True, "message": "No DOM snapshots provided"}
-
-        try:
-            from src.cloud_backend.intent_builder.services import ScriptPregenerationService
-
-            service = ScriptPregenerationService(
-                api_key=self.api_key,
-                base_url=self.base_url
-            )
-
-            logger.info(f"🔧 [Session] Starting script generation with {len(self._dom_snapshots)} DOM snapshots")
-
-            result = await service.pregenerate_scripts(
-                workflow_yaml=workflow_yaml,
-                dom_snapshots=self._dom_snapshots,
-                workflow_dir=self._workflow_dir,
-                intents=self._intent_sequence
-            )
-
-            logger.info(f"🔧 [Session] Script generation complete: "
-                       f"generated={result.get('generated', 0)}, "
-                       f"skipped={result.get('skipped', 0)}, "
-                       f"failed={result.get('failed', 0)}")
-
-            return result
-
-        except Exception as e:
-            logger.error(f"Script generation error: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "generated": 0,
-                "skipped": 0,
-                "failed": 0,
-                "details": []
-            }
-
-    def _build_script_failure_feedback(self, failed_steps: List[Dict[str, Any]]) -> str:
-        """Build feedback message for Claude when script generation fails.
-
-        Args:
-            failed_steps: List of step details that failed script generation
-
-        Returns:
-            Feedback message for Claude to fix the workflow
-        """
-        feedback_parts = ["Script generation failed for the following steps:\n"]
-
-        for step in failed_steps:
-            step_id = step.get("step_id", "unknown")
-            error = step.get("error", "Unknown error")
-            feedback_parts.append(f"\n## Step: {step_id}")
-            feedback_parts.append(f"Error: {error}")
-
-        feedback_parts.append("""
-
-The script generator could not find the target element in the DOM snapshot.
-This usually means:
-1. The element is inside a hover/dropdown menu (not visible in initial DOM)
-2. The element is dynamically loaded after user interaction
-3. The xpath or selector is incorrect
-
-**Suggested solutions:**
-- For hover menus: Use scraper_agent to extract the target URL first, then use browser_agent with operation=navigate
-- For dynamic content: Add a preceding step to trigger the content load
-- For incorrect selectors: Check the xpath_hints in the step inputs
-
-Please modify the workflow to handle this case. Output the complete updated YAML.
-""")
-
-        return "\n".join(feedback_parts)
 
 
 class WorkflowModificationSession:

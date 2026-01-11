@@ -746,7 +746,7 @@ class CloudClient:
 
         Args:
             workflow_id: Workflow ID
-            file_path: Relative path like "extract-daily-link/scraper_script_922ed7ac/extraction_script.py"
+            file_path: Relative path like "extract-daily-link/extraction_script.py"
             user_id: User ID
 
         Returns:
@@ -778,7 +778,7 @@ class CloudClient:
 
         Args:
             workflow_id: Workflow ID
-            file_path: Relative path like "extract-daily-link/scraper_script_922ed7ac/extraction_script.py"
+            file_path: Relative path like "extract-daily-link/extraction_script.py"
             content: File bytes
             user_id: User ID
 
@@ -886,9 +886,8 @@ class CloudClient:
         Returns:
             dict with:
                 - success: bool
-                - script_path: relative path in workflow (e.g., "step-id/scraper_script_xxx/extraction_script.py")
+                - script_path: relative path in workflow (e.g., "step-id/extraction_script.py")
                 - script_content: the generated script content
-                - script_key: script key for caching (e.g., "scraper_script_xxx")
                 - turns: number of LLM turns used
                 - error: error message if failed
         """
@@ -961,7 +960,7 @@ class CloudClient:
                 Signature: async def callback(level: str, message: str, data: dict)
 
         Returns:
-            dict with script_path, script_content, script_key, turns
+            dict with script_path, script_content, turns
         """
         import json
 
@@ -1021,7 +1020,6 @@ class CloudClient:
                                     "success": True,
                                     "script_path": event.get("script_path"),
                                     "script_content": event.get("script_content"),
-                                    "script_key": event.get("script_key"),
                                     "turns": event.get("turns", 0)
                                 }
                                 logger.info(f"[CloudClient] Script generated: {result.get('script_path')} (turns={result.get('turns')})")

@@ -292,12 +292,9 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
         // Handle streaming events - text and tool_use are independent, don't overwrite each other
         if (event.type === 'text') {
           // Replace only existing text event, keep tool_use separate
-          const displayText = event.message.length > 200
-            ? event.message.substring(0, 200) + '...'
-            : event.message
           setProgressEvents(prev => {
             const filtered = prev.filter(e => e.type !== 'text')
-            return [...filtered, { type: 'text', content: displayText }]
+            return [...filtered, { type: 'text', content: event.message }]
           })
         } else if (event.type === 'tool_use') {
           // Replace only existing tool_use event, keep text separate
@@ -393,12 +390,9 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
           const response = await api.workflowChat(newSessionId, messageToSend, async (event) => {
             // Same event handling as above - text and tool_use are independent
             if (event.type === 'text') {
-              const displayText = event.message.length > 200
-                ? event.message.substring(0, 200) + '...'
-                : event.message
               setProgressEvents(prev => {
                 const filtered = prev.filter(e => e.type !== 'text')
-                return [...filtered, { type: 'text', content: displayText }]
+                return [...filtered, { type: 'text', content: event.message }]
               })
             } else if (event.type === 'tool_use') {
               setProgressEvents(prev => {

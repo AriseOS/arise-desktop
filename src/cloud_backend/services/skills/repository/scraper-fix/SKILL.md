@@ -24,12 +24,11 @@ You are working in a session directory that contains a copy of the workflow:
 ├── dom_snapshots/              # Global DOM snapshots for all pages
 │   ├── url_index.json          # URL to DOM file mapping
 │   └── {url_hash}.json         # DOM snapshot files (wrapped format)
-└── {step_id}/                  # Step directories
-    └── scraper_script_{hash}/  # Scraper script directory
-        ├── extraction_script.py
-        ├── dom_tools.py
-        ├── requirement.json
-        └── dom_data.json       # DOM for this step (copied from dom_snapshots)
+└── {step_id}/                  # Step directories (scripts stored directly here)
+    ├── extraction_script.py
+    ├── dom_tools.py
+    ├── requirement.json
+    └── dom_data.json           # DOM for this step (copied from dom_snapshots)
 ```
 
 ### Finding DOM by URL
@@ -51,8 +50,8 @@ cat dom_snapshots/abc123.json | python -c "import json,sys; d=json.load(sys.stdi
 3. **Or use dom_tools.py** with the URL's DOM:
 ```bash
 # Copy the relevant DOM to a step directory first
-cp dom_snapshots/abc123.json {step_id}/scraper_script_xxx/dom_data.json
-cd {step_id}/scraper_script_xxx
+cp dom_snapshots/abc123.json {step_id}/dom_data.json
+cd {step_id}
 python dom_tools.py search --text "效率工具"
 ```
 
@@ -75,15 +74,15 @@ cat dom_snapshots/url_index.json
 ### Step 2: Locate Scraper Script
 
 1. Read `workflow.yaml` to find the step with issues
-2. Look for `scraper_agent` steps - they have script directories under `{step_id}/scraper_script_*`
-3. Navigate to the script directory
+2. Look for `scraper_agent` steps - their scripts are directly in `{step_id}/` directory
+3. Navigate to the step directory
 
 ```bash
 # List step directories
 ls -la
 
-# Find scraper script directories
-find . -type d -name "scraper_script_*"
+# Find step directories with extraction scripts
+find . -name "extraction_script.py"
 ```
 
 ### Step 3: Analyze Current State
@@ -112,10 +111,10 @@ Read these files in the script directory:
 
 ### Step 4: Debug with dom_tools.py
 
-The `dom_tools.py` in each script directory provides debugging commands:
+The `dom_tools.py` in each step directory provides debugging commands:
 
 ```bash
-cd {step_id}/scraper_script_{hash}
+cd {step_id}
 
 # Test single xpath
 python dom_tools.py find '{"field_name": "//xpath/to/test"}'
@@ -147,7 +146,7 @@ Modify `extraction_script.py` based on findings:
 ### Step 6: Test the Fix
 
 ```bash
-cd {step_id}/scraper_script_{hash}
+cd {step_id}
 
 # Run the script directly (uses dom_data.json for testing)
 python extraction_script.py

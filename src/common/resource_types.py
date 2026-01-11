@@ -20,7 +20,8 @@ class ResourceConfig:
         ResourceType.SCRAPER_SCRIPT: [
             "extraction_script.py",
             "requirement.json",
-            "test_extraction.py"
+            "test_extraction.py",
+            "dom_tools.py"
         ],
         ResourceType.CODE_AGENT_SCRIPT: [
             "generated_code.py",

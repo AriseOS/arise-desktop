@@ -43,12 +43,11 @@
 ├── metadata.json
 ├── workflow.yaml
 ├── dom_snapshots/          # 复制过来的 DOM 快照
-└── {step_id}/              # 每个步骤的脚本目录
-    └── scraper_script_{hash}/
-        ├── extraction_script.py   # 生成的提取脚本
-        ├── dom_data.json          # 用于生成脚本的 DOM
-        ├── dom_tools.py           # 辅助工具
-        └── requirement.json       # 提取需求
+└── {step_id}/              # 每个步骤的脚本目录（脚本直接存放）
+    ├── extraction_script.py   # 生成的提取脚本
+    ├── dom_data.json          # 用于生成脚本的 DOM
+    ├── dom_tools.py           # 辅助工具
+    └── requirement.json       # 提取需求
 ```
 
 ### 2.2 测试系统目录结构
@@ -92,10 +91,9 @@
                 │   │
                 │   ├── steps/          # 每个步骤的执行结果
                 │   │   └── {step_id}/
-                │   │       ├── scraper_script_xxx/
-                │   │       │   ├── extraction_script.py
-                │   │       │   ├── dom_data.json
-                │   │       │   └── dom_tools.py
+                │   │       ├── extraction_script.py
+                │   │       ├── dom_data.json
+                │   │       ├── dom_tools.py
                 │   │       ├── output.json
                 │   │       └── validation.json
                 │   │
@@ -241,7 +239,8 @@ run_N/
 │   └── raw_logs.json
 ├── steps/                    # 每个步骤的脚本和执行结果
 │   └── {step_id}/
-│       ├── scraper_script_xxx/
+│       ├── extraction_script.py
+│       ├── dom_tools.py
 │       ├── output.json
 │       └── validation.json
 ├── execution/                # Mock 执行结果
@@ -1416,8 +1415,9 @@ tree ~/ami-test/test_runs/{run_id}/
             ├── run_result.json   # 运行结果
             ├── validation_result.json  # 验证结果
             ├── steps/            # 脚本目录
-            │   └── {step_id}/
-            │       └── scraper_script_xxx/
+            │   └── {step_id}/    # 脚本直接存放在 step 目录
+            │       ├── extraction_script.py
+            │       └── dom_tools.py
             └── execution/        # Mock 执行结果（如有）
                 └── result.json
 ```

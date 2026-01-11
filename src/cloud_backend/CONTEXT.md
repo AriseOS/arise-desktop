@@ -110,17 +110,15 @@ workflows/{workflow_id}/
 ├── dom_snapshots/       # DOM snapshots from workflow execution
 │   ├── url_index.json   # Maps step_id -> DOM file
 │   └── {url_hash}.json  # Wrapped format: {"url":..., "step_id":..., "dom":{...}}
-└── {step_id}/
-    ├── browser_script_{hash}/
-    │   ├── find_element.py
-    │   └── task.json
-    └── scraper_script_{hash}/
-        ├── extraction_script.py
-        ├── dom_tools.py
-        └── requirement.json
+└── {step_id}/           # Scripts stored directly in step directory
+    ├── find_element.py  # Browser agent script
+    ├── task.json        # Browser task definition
+    ├── extraction_script.py  # Scraper agent script
+    ├── dom_tools.py     # Scraper utilities
+    └── requirement.json # Scraper requirements
 ```
 
-**Note**: `dom_data.json` is NOT saved permanently in script directories. During
+**Note**: `dom_data.json` is NOT saved permanently in step directories. During
 modification sessions, it's dynamically copied from `dom_snapshots/` using the
 `step_id` mapping in `url_index.json`. This ensures scripts always use the
 latest DOM captured during workflow execution.
