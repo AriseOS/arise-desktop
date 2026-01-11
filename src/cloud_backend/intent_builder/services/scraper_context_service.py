@@ -345,7 +345,7 @@ class ScraperContextService:
                 # Write temporary dom_data.json
                 try:
                     with open(dom_data_file, 'w', encoding='utf-8') as f:
-                        json.dump(dom_dict, f, ensure_ascii=False)
+                        json.dump(dom_dict, f, indent=2, ensure_ascii=False)
                     temp_dom_file = dom_data_file
                     has_dom = True
                 except Exception as e:

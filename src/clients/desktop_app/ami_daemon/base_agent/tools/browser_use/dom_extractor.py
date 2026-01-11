@@ -685,7 +685,7 @@ class DOMExtractor:
 
             # DOM dict is already simplified by extract_dom_dict, just convert to JSON
             import json
-            return json.dumps(dom_dict, separators=(',', ':'), ensure_ascii=False)
+            return json.dumps(dom_dict, ensure_ascii=False)
 
         except Exception as e:
             logger.error(f"Error extracting LLM view: {e}")

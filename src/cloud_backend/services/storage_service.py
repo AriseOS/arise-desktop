@@ -649,7 +649,7 @@ class StorageService:
                     "captured_at": captured_at
                 }
                 with open(dom_file, 'w', encoding='utf-8') as f:
-                    json.dump(dom_data, f, ensure_ascii=False)
+                    json.dump(dom_data, f, indent=2, ensure_ascii=False)
 
                 url_index.append({
                     "url": url,

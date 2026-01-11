@@ -239,7 +239,7 @@ class CDPRecorder:
 
             try:
                 with open(dom_file, 'w', encoding='utf-8') as f:
-                    json.dump(dom_data, f, ensure_ascii=False)
+                    json.dump(dom_data, f, indent=2, ensure_ascii=False)
                 logger.debug(f"Saved DOM snapshot for {url} -> {dom_filename}")
 
                 # Add to URL index
