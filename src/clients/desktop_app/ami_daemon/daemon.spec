@@ -50,10 +50,6 @@ a = Analysis(
         # Automation hooks JS
         (str(project_root / 'src/clients/desktop_app/ami_daemon/base_agent/tools/browser_use/automation_hooks.js'),
          'src/clients/desktop_app/ami_daemon/base_agent/tools/browser_use'),
-
-        # Workflow YAML files (user workflows)
-        (str(project_root / 'src/clients/desktop_app/ami_daemon/base_agent/workflows/user'),
-         'src/clients/desktop_app/ami_daemon/base_agent/workflows/user'),
     ] + playwright_browsers + git_bash_data,
     hiddenimports=[
         # Uvicorn and FastAPI
