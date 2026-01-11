@@ -112,7 +112,7 @@ a = Analysis(
         # File sync utilities
         'pathspec',
     ],
-    hookspath=['hooks'],
+    hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
@@ -144,6 +144,9 @@ a = Analysis(
         'keras',
         'sklearn',
         'PIL.ImageQt',
+
+        # Claude Code SDK (no longer used)
+        'claude_agent_sdk',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
