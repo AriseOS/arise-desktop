@@ -77,6 +77,8 @@ When the workflow runs, it starts from scratch. If the user clicked through 3 pa
 | workflow-optimizations | Optimization patterns (click-to-navigate, scroll, etc.) |
 | workflow-validation | Validate your YAML before output |
 
+**CRITICAL**: Only use agents defined in `agent-specs` skill. Do NOT invent agents like `llm_agent`, `ai_agent`, etc.
+
 ## Output
 
 **IMPORTANT**: You must write the final workflow to `workflow.yaml` file using the Write tool. Do NOT just output it in a code block - the file is required for the system to read your workflow.
@@ -94,8 +96,29 @@ A workflow has two layers:
 
 1. **workflow.yaml** - The framework that defines:
    - What steps to execute and in what order
-   - Which agent handles each step (browser_agent, scraper_agent, etc.)
+   - Which agent handles each step
    - Step parameters like URLs, selectors, output variables
+
+### Available Agents
+
+| Agent | Use Case | Required Inputs |
+|-------|----------|-----------------|
+| `browser_agent` | Navigate, click, fill forms | `target_url` or `interaction_steps` |
+| `scraper_agent` | Extract data from page | `data_requirements` |
+| `text_agent` | LLM text generation/transform | `instruction` |
+| `variable` | Data operations (set/filter/slice) | `operation`, `data` |
+| `storage_agent` | Store/query/export data | `operation`, `collection` |
+
+**Example - text_agent for summarization**:
+```yaml
+- id: generate-summary
+  agent: text_agent
+  inputs:
+    instruction: "Summarize this content in Chinese"
+    data: "{{extracted_content}}"
+  outputs:
+    result: summary
+```
 
 2. **extraction_script.py** - The actual code that runs for scraper steps:
    - Located directly in `{step_id}/` directories
@@ -140,7 +163,8 @@ When user reports data extraction problems:
 - **For scraper issues**: Always read `scraper-fix` skill first
 - Always output the COMPLETE workflow YAML when modifying workflow.yaml
 - Preserve parts the user didn't ask to change
-- Every step must have: id, name, agent_type
+- Every step must have: `id`, `agent`, and `inputs`
+- **Only use agents from the table above. Do NOT invent agents like `llm_agent`, `ai_agent`, etc.**
 - For scripts, only modify files in the script directory
 """
 
