@@ -840,7 +840,7 @@ class ScraperAgent(BaseStepAgent):
                     try:
                         await context.log_callback(
                             "info",
-                            "📝 No cached script found, generating new script with Claude SDK...",
+                            "📝 No cached script found, generating new script with Ami Coder...",
                             {"script_path": str(script_file)}
                         )
                     except Exception as e:

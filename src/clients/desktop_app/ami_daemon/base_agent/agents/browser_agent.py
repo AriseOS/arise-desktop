@@ -1113,7 +1113,7 @@ grep -i "interactive_index" dom_data.json | head -20
 
             # 1. Generate script key and create working directory
             if not self.config_service:
-                raise RuntimeError("ConfigService not available - required for Claude Agent SDK")
+                raise RuntimeError("ConfigService not available - required for Ami Coder")
 
             script_key = self._generate_script_key(task, xpath_hints)
             scripts_root = self.config_service.get_path("data.scripts")
@@ -1197,7 +1197,7 @@ grep -i "interactive_index" dom_data.json | head -20
                     try:
                         await context.log_callback(
                             "warning",
-                            "⚠️ Cached script didn't work, regenerating with Claude Agent...",
+                            "⚠️ Cached script didn't work, regenerating with Ami Coder...",
                             {"reason": "cache_miss_or_failed"}
                         )
                     except Exception as e:
@@ -1342,7 +1342,7 @@ grep -i "interactive_index" dom_data.json | head -20
                 )
 
                 if not claude_result.get('success'):
-                    feedback = f"Claude Agent failed: {claude_result.get('error')}"
+                    feedback = f"Ami Coder failed: {claude_result.get('error')}"
                     logger.warning(f"⚠️ {feedback}")
                     continue
 

@@ -423,12 +423,12 @@ class ClaudeAgentProvider:
             return AgentResult(
                 success=False,
                 iterations=0,
-                error="No messages received from Claude SDK. Check logs for subprocess errors."
+                error="No messages received from Ami Coder. Check logs for subprocess errors."
             )
 
         except ImportError as e:
             error_msg = (
-                "Claude Agent SDK not installed. "
+                "Ami Coder SDK not installed. "
                 "Please install with: pip install claude-agent-sdk"
             )
             logger.error(f"{error_msg}: {e}")
@@ -436,7 +436,7 @@ class ClaudeAgentProvider:
 
         except Exception as e:
             # System errors (network, API limits, etc.) are raised as exceptions
-            error_msg = f"Claude SDK error: {str(e)}"
+            error_msg = f"Ami Coder error: {str(e)}"
             logger.error(error_msg)
             raise RuntimeError(error_msg) from e
 
@@ -507,7 +507,7 @@ class ClaudeAgentProvider:
                 logger.info("=" * 80)
 
             turn_count = 0
-            yield StreamEvent(type="thinking", content="Initializing Claude Agent...", turn=0)
+            yield StreamEvent(type="thinking", content="Initializing Ami Coder...", turn=0)
 
             import asyncio
             async with asyncio.timeout(max_iterations * 30):
@@ -561,7 +561,7 @@ class ClaudeAgentProvider:
                         elif isinstance(message, SystemMessage):
                             logger.info(f"⚙️  SystemMessage: {message.subtype}")
                             if message.subtype == 'init':
-                                yield StreamEvent(type="thinking", content="Claude Agent initialized", turn=0)
+                                yield StreamEvent(type="thinking", content="Ami Coder initialized", turn=0)
 
                         elif isinstance(message, ResultMessage):
                             logger.info(
@@ -583,7 +583,7 @@ class ClaudeAgentProvider:
 
         except ImportError as e:
             logger.error(f"Claude Agent SDK not installed: {e}")
-            yield StreamEvent(type="error", content="Claude Agent SDK not installed", turn=0)
+            yield StreamEvent(type="error", content="Ami Coder SDK not installed", turn=0)
 
         except Exception as e:
             logger.error(f"Claude SDK error: {e}", exc_info=True)

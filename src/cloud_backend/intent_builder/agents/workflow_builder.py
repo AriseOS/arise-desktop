@@ -447,7 +447,7 @@ Use TodoWrite to track these steps:
         except ImportError:
             return GenerationResult(
                 success=False,
-                error="Claude Agent SDK not installed. Please install with: pip install claude-agent-sdk"
+                error="Ami Coder SDK not installed. Please install with: pip install claude-agent-sdk"
             )
 
         # Prepare working directory
@@ -627,7 +627,7 @@ Use TodoWrite to track these steps:
         except ImportError:
             yield StreamEvent(
                 type="error",
-                message="Claude Agent SDK not installed"
+                message="Ami Coder SDK not installed"
             )
             return
 
@@ -1072,7 +1072,7 @@ Use TodoWrite to track these steps:
             from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
         except ImportError:
             raise ImportError(
-                "Claude Agent SDK not installed. Please install with: pip install claude-agent-sdk"
+                "Ami Coder SDK not installed. Please install with: pip install claude-agent-sdk"
             )
 
         self._work_dir = self._prepare_working_directory()
@@ -1182,7 +1182,7 @@ Use TodoWrite to track these steps:
         except ImportError:
             return GenerationResult(
                 success=False,
-                error="Claude Agent SDK not installed"
+                error="Ami Coder SDK not installed"
             )
 
         try:
@@ -1396,7 +1396,7 @@ Use TodoWrite to track these steps:
         except ImportError:
             return DialogueMessage(
                 role="assistant",
-                content="Claude Agent SDK not installed"
+                content="Ami Coder SDK not installed"
             )
 
         # Record user message
@@ -1700,7 +1700,7 @@ class WorkflowModificationSession:
             logger.info(f"✅ [_connect] Claude Agent SDK imported successfully")
         except ImportError:
             logger.error(f"❌ [_connect] Claude Agent SDK not installed")
-            raise RuntimeError("Claude Agent SDK not installed")
+            raise RuntimeError("Ami Coder SDK not installed")
 
         # Prepare working directory - copies entire workflow to session directory
         self._work_dir = self._prepare_working_directory()
@@ -1903,7 +1903,7 @@ The user will ask you to modify the workflow or fix extraction issues.
             )
         except ImportError:
             logger.error(f"❌ [chat_stream] Claude Agent SDK not installed")
-            yield StreamEvent(type="error", message="Claude Agent SDK not installed")
+            yield StreamEvent(type="error", message="Ami Coder SDK not installed")
             return
 
         try:

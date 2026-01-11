@@ -145,7 +145,7 @@ class BrowserScriptGenerator:
                     success=False,
                     script_type=ScriptType.BROWSER_FIND_ELEMENT,
                     working_dir=working_dir,
-                    error=f"Claude Agent did not complete ({final_turn} turns)",
+                    error=f"Ami Coder did not complete ({final_turn} turns)",
                     turns=final_turn
                 )
 
