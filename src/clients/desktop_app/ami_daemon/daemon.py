@@ -382,7 +382,7 @@ class ListWorkflowsResponse(BaseModel):
 # Workflow History Models
 class WorkflowHistoryEntry(BaseModel):
     """Entry in the workflow history list"""
-    run_id: str
+    task_id: str  # Unified execution identifier
     workflow_id: str
     workflow_name: str
     started_at: str
@@ -398,7 +398,7 @@ class WorkflowHistoryListResponse(BaseModel):
 
 class WorkflowRunDetail(BaseModel):
     """Detailed information about a workflow run"""
-    run_id: str
+    task_id: str  # Unified execution identifier
     workflow_id: str
     workflow_name: str
     user_id: str
@@ -818,11 +818,22 @@ async def get_dashboard(user_id: str):
                 last_run = "never"
                 status = "not_run"
 
+            # Format creation time
+            created_at_str = workflow.get('created_at')
+            created_date = "unknown"
+            if created_at_str:
+                try:
+                    dt = datetime.fromisoformat(created_at_str)
+                    created_date = dt.strftime("%Y-%m-%d")
+                except Exception:
+                    pass
+
             recent_workflows.append({
                 "id": workflow_id,
                 "name": workflow['name'],
                 "lastRun": last_run,
-                "status": status
+                "status": status,
+                "createdDate": created_date
             })
 
         dashboard_data = {
@@ -2112,6 +2123,109 @@ async def get_workflow_status(task_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/v1/executions/{task_id}/stop")
+async def stop_workflow_execution(task_id: str):
+    """Stop a running workflow execution
+
+    Args:
+        task_id: Task ID to stop
+
+    Returns:
+        - success: Whether stop was successful
+        - stopped_at_step: Step index where workflow was stopped
+        - message: Human-readable status
+    """
+    try:
+        result = await workflow_executor.stop_workflow(task_id)
+        if not result["success"]:
+            raise HTTPException(status_code=400, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to stop workflow: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/executions/{task_id}/results")
+async def get_execution_results(task_id: str):
+    """Get execution results for a completed workflow
+
+    Args:
+        task_id: Task ID (unified execution identifier)
+
+    Returns:
+        - stats: Execution statistics (status, duration, totalRecords, timestamp)
+        - results: Scraped data array
+        - workflow_name: Human-readable workflow name
+    """
+    if not history_manager:
+        raise HTTPException(status_code=503, detail="History manager not initialized")
+
+    try:
+        # Get execution metadata from history
+        meta = history_manager.get_run_meta_by_id(task_id)
+        if not meta:
+            raise HTTPException(status_code=404, detail=f"Execution not found: {task_id}")
+
+        # Calculate duration
+        duration = "N/A"
+        if meta.started_at and meta.finished_at:
+            try:
+                from datetime import datetime
+                start = datetime.fromisoformat(meta.started_at.replace('Z', '+00:00'))
+                end = datetime.fromisoformat(meta.finished_at.replace('Z', '+00:00'))
+                duration_seconds = (end - start).total_seconds()
+                if duration_seconds < 60:
+                    duration = f"{int(duration_seconds)}s"
+                else:
+                    minutes = int(duration_seconds // 60)
+                    seconds = int(duration_seconds % 60)
+                    duration = f"{minutes}m {seconds}s"
+            except Exception:
+                pass
+
+        # Build stats
+        stats = {
+            "status": "success" if meta.status == "completed" else meta.status,
+            "duration": duration,
+            "totalRecords": 0,  # Will be updated if we have data
+            "timestamp": meta.finished_at or meta.started_at
+        }
+
+        # Try to get scraped data from execution result
+        # The result is stored by StorageManager in the same execution directory
+        results = []
+        if meta.task_id:
+            # Search for result data in the execution directory
+            result = history_manager._find_execution_by_task_id(task_id)
+            if result:
+                user_id, workflow_id, exec_path = result
+                result_file = exec_path / "result.json"
+                if result_file.exists():
+                    import json
+                    with open(result_file, 'r', encoding='utf-8') as f:
+                        result_data = json.load(f)
+                        # Extract scraped data if available
+                        if isinstance(result_data.get("result"), dict):
+                            data = result_data["result"].get("data", [])
+                            if isinstance(data, list):
+                                results = data
+                                stats["totalRecords"] = len(data)
+
+        return {
+            "stats": stats,
+            "results": results,
+            "workflow_name": meta.workflow_name
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get execution results: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.websocket("/ws/v1/executions/{task_id}")
 async def workflow_progress_websocket(websocket: WebSocket, task_id: str):
     """WebSocket endpoint for real-time workflow execution progress updates
@@ -2222,7 +2336,7 @@ async def list_workflow_history(
         return WorkflowHistoryListResponse(
             runs=[
                 WorkflowHistoryEntry(
-                    run_id=r.run_id,
+                    task_id=r.task_id,
                     workflow_id=r.workflow_id,
                     workflow_name=r.workflow_name,
                     started_at=r.started_at,
@@ -2238,13 +2352,13 @@ async def list_workflow_history(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/v1/workflows/{workflow_id}/history/{run_id}", response_model=WorkflowRunDetailResponse)
-async def get_workflow_run_detail(workflow_id: str, run_id: str, user_id: str):
+@app.get("/api/v1/workflows/{workflow_id}/history/{task_id}", response_model=WorkflowRunDetailResponse)
+async def get_workflow_run_detail(workflow_id: str, task_id: str, user_id: str):
     """Get execution logs and details for a specific workflow run
 
     Args:
         workflow_id: Workflow identifier
-        run_id: The run identifier
+        task_id: The task identifier (unified execution identifier)
         user_id: User identifier
 
     Returns:
@@ -2254,16 +2368,16 @@ async def get_workflow_run_detail(workflow_id: str, run_id: str, user_id: str):
         raise HTTPException(status_code=503, detail="History manager not initialized")
 
     try:
-        meta = history_manager.get_run_meta(user_id, workflow_id, run_id)
+        meta = history_manager.get_run_meta(user_id, workflow_id, task_id)
         if not meta:
-            raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+            raise HTTPException(status_code=404, detail=f"Run not found: {task_id}")
 
-        logs = history_manager.get_run_logs(user_id, workflow_id, run_id)
+        logs = history_manager.get_run_logs(user_id, workflow_id, task_id)
         workflow_yaml = history_manager.get_workflow_yaml(user_id, workflow_id)
 
         return WorkflowRunDetailResponse(
             meta=WorkflowRunDetail(
-                run_id=meta.run_id,
+                task_id=meta.task_id,
                 workflow_id=meta.workflow_id,
                 workflow_name=meta.workflow_name,
                 user_id=meta.user_id,

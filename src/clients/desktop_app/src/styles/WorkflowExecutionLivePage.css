@@ -92,6 +92,16 @@
   color: white;
 }
 
+.meta-badge[data-status="stopping"] {
+  background: #F59E0B;
+  color: white;
+}
+
+.meta-badge[data-status="stopped"] {
+  background: #6B7280;
+  color: white;
+}
+
 .meta-time {
   font-size: 13px;
   color: var(--text-secondary);
@@ -159,6 +169,33 @@
   border-color: var(--border-primary);
 }
 
+.btn-stop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border: none;
+  border-radius: var(--radius-lg);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: var(--shadow-sm);
+  background: #EF4444;
+  color: white;
+}
+
+.btn-stop:hover:not(:disabled) {
+  background: #DC2626;
+  box-shadow: var(--shadow-md);
+}
+
+.btn-stop:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: #9CA3AF;
+}
+
 /* ===================================
    PROGRESS SECTION
    =================================== */
@@ -215,6 +252,11 @@
 
 .progress-bar-fill[data-status="failed"] {
   background: linear-gradient(90deg, var(--status-error-text), #f87171);
+}
+
+.progress-bar-fill[data-status="stopping"],
+.progress-bar-fill[data-status="stopped"] {
+  background: linear-gradient(90deg, #6B7280, #9CA3AF);
 }
 
 .progress-bar-fill::after {

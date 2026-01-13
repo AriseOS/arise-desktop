@@ -2,6 +2,7 @@
 Workflow Execution Engine
 Based on Agent-as-Step architecture
 """
+import asyncio
 import logging
 import re
 import time
@@ -10,7 +11,7 @@ from typing import List, Dict, Any, Optional, Type
 
 from .schemas import (
     AgentWorkflowStep, WorkflowResult, StepResult,
-    AgentContext, AgentInput, AgentOutput
+    AgentContext, AgentInput, AgentOutput, StopSignal
 )
 from ..agents.base_agent import BaseStepAgent
 
@@ -117,9 +118,10 @@ class WorkflowEngine:
         workflow_id: str = None,
         input_data: Dict[str, Any] = None,
         step_callback: Optional[Any] = None,
-        log_callback: Optional[Any] = None
+        log_callback: Optional[Any] = None,
+        stop_signal: Optional[StopSignal] = None
     ) -> WorkflowResult:
-        """Execute workflow with optional step progress callback
+        """Execute workflow with optional step progress callback and stop support
 
         Args:
             steps: List of workflow steps
@@ -129,6 +131,7 @@ class WorkflowEngine:
                           Called when step starts (status='in_progress') and completes (status='completed'/'failed')
             log_callback: Optional async callback function(level, message, metadata)
                          Called for detailed execution logs from agents
+            stop_signal: Optional StopSignal for cooperative workflow stopping
         """
         start_time = time.time()
         workflow_id = workflow_id or f"workflow_{int(time.time())}"
@@ -152,6 +155,18 @@ class WorkflowEngine:
 
         try:
             for step_index, step in enumerate(steps):
+                # ===== CHECK STOP SIGNAL =====
+                if stop_signal and stop_signal.is_stop_requested():
+                    logger.info(f"Stop requested before step {step_index}: {step.name}")
+                    return WorkflowResult(
+                        success=False,
+                        stopped=True,
+                        workflow_id=workflow_id,
+                        steps=executed_steps,
+                        error_message="Workflow stopped by user request",
+                        total_execution_time=time.time() - start_time
+                    )
+
                 # Update context
                 context.step_id = step.id
 
@@ -162,13 +177,13 @@ class WorkflowEngine:
                     except Exception as e:
                         logger.warning(f"Step callback error (start): {e}")
 
-                # Execute step based on type
+                # Execute step based on type (pass stop_signal to control flow steps)
                 if step.agent_type == "if":
-                    step_result = await self._execute_if_step(step, context)
+                    step_result = await self._execute_if_step(step, context, stop_signal)
                 elif step.agent_type == "while":
-                    step_result = await self._execute_while_step(step, context)
+                    step_result = await self._execute_while_step(step, context, stop_signal)
                 elif step.agent_type == "foreach":
-                    step_result = await self._execute_foreach_step(step, context)
+                    step_result = await self._execute_foreach_step(step, context, stop_signal)
                 else:
                     # Check execution condition for normal steps
                     if step.condition and not await self._evaluate_condition(step.condition, context):
@@ -177,6 +192,18 @@ class WorkflowEngine:
 
                     # Execute normal agent step
                     step_result = await self._execute_agent_step(step, context)
+
+                # Check if control flow step was stopped
+                if hasattr(step_result, 'exit_reason') and step_result.exit_reason == 'stopped':
+                    logger.info(f"Workflow stopped during control flow step: {step.name}")
+                    return WorkflowResult(
+                        success=False,
+                        stopped=True,
+                        workflow_id=workflow_id,
+                        steps=executed_steps,
+                        error_message="Workflow stopped by user request",
+                        total_execution_time=time.time() - start_time
+                    )
 
                 # Update context variables
                 if step_result.success and step.outputs:
@@ -211,6 +238,11 @@ class WorkflowEngine:
                 error_message=failed_step_error,
                 total_execution_time=time.time() - start_time
             )
+
+        except asyncio.CancelledError:
+            # Must re-raise to allow force cancel to work
+            logger.info(f"Workflow {workflow_id} cancelled")
+            raise
 
         except Exception as e:
             logger.error(f"Workflow execution failed: {str(e)}")
@@ -272,6 +304,11 @@ class WorkflowEngine:
                 execution_time=time.time() - step_start_time
             )
 
+        except asyncio.CancelledError:
+            # Must re-raise to allow force cancel to work
+            logger.info(f"Agent step {step.id} cancelled")
+            raise
+
         except Exception as e:
             error_traceback = traceback.format_exc()
             logger.error(f"Agent step failed [step_id={step.id}, name={step.name}, agent_type={step.agent_type}]: {str(e)}\n{error_traceback}")
@@ -329,7 +366,6 @@ class WorkflowEngine:
             })
 
         return AgentInput(
-            instruction="",
             data=resolved_input,
             step_metadata=metadata
         )
@@ -461,7 +497,12 @@ class WorkflowEngine:
         """Evaluate condition expression"""
         return self.condition_evaluator.evaluate(condition, context.variables)
 
-    async def _execute_if_step(self, step: AgentWorkflowStep, context: AgentContext) -> StepResult:
+    async def _execute_if_step(
+        self,
+        step: AgentWorkflowStep,
+        context: AgentContext,
+        stop_signal: Optional[StopSignal] = None
+    ) -> StepResult:
         """Execute if/else control flow step"""
         step_start_time = time.time()
 
@@ -476,11 +517,23 @@ class WorkflowEngine:
 
             sub_step_results = []
             branch_success = True
+            exit_reason = None
 
             if sub_steps:
                 for sub_step in sub_steps:
-                    sub_result = await self._execute_single_step(sub_step, context)
+                    # Check stop signal before each sub-step
+                    if stop_signal and stop_signal.is_stop_requested():
+                        exit_reason = "stopped"
+                        logger.info(f"If step stopped during branch execution")
+                        break
+
+                    sub_result = await self._execute_single_step(sub_step, context, stop_signal)
                     sub_step_results.append(sub_result)
+
+                    # Check if sub-step was stopped
+                    if hasattr(sub_result, 'exit_reason') and sub_result.exit_reason == 'stopped':
+                        exit_reason = "stopped"
+                        break
 
                     if not sub_result.success:
                         branch_success = False
@@ -491,15 +544,20 @@ class WorkflowEngine:
 
             return StepResult(
                 step_id=step.id,
-                success=branch_success,
+                success=branch_success and exit_reason != "stopped",
                 data=None,
                 message=f"If step completed, branch: {branch_executed}",
                 execution_time=time.time() - step_start_time,
                 step_type="if",
                 condition_result=condition_result,
                 branch_executed=branch_executed,
+                exit_reason=exit_reason,
                 sub_step_results=sub_step_results
             )
+
+        except asyncio.CancelledError:
+            logger.info(f"If step {step.id} cancelled")
+            raise
 
         except Exception as e:
             error_traceback = traceback.format_exc()
@@ -514,7 +572,12 @@ class WorkflowEngine:
                 step_type="if"
             )
 
-    async def _execute_while_step(self, step: AgentWorkflowStep, context: AgentContext) -> StepResult:
+    async def _execute_while_step(
+        self,
+        step: AgentWorkflowStep,
+        context: AgentContext,
+        stop_signal: Optional[StopSignal] = None
+    ) -> StepResult:
         """Execute while loop control flow step"""
         step_start_time = time.time()
 
@@ -527,6 +590,12 @@ class WorkflowEngine:
             exit_reason = "condition_false"
 
             while max_iterations is None or iterations_executed < max_iterations:
+                # ===== CHECK STOP SIGNAL =====
+                if stop_signal and stop_signal.is_stop_requested():
+                    exit_reason = "stopped"
+                    logger.info(f"While loop stopped at iteration {iterations_executed}")
+                    break
+
                 if loop_timeout and time.time() - step_start_time > loop_timeout:
                     exit_reason = "timeout"
                     break
@@ -544,8 +613,14 @@ class WorkflowEngine:
 
                 if step.steps:
                     for sub_step in step.steps:
-                        sub_result = await self._execute_single_step(sub_step, context)
+                        sub_result = await self._execute_single_step(sub_step, context, stop_signal)
                         iteration_results.append(sub_result)
+
+                        # Check if sub-step was stopped
+                        if hasattr(sub_result, 'exit_reason') and sub_result.exit_reason == 'stopped':
+                            exit_reason = "stopped"
+                            iteration_success = False
+                            break
 
                         if not sub_result.success:
                             iteration_success = False
@@ -561,12 +636,12 @@ class WorkflowEngine:
                 if not iteration_success:
                     break
 
-            if max_iterations is not None and iterations_executed >= max_iterations:
+            if max_iterations is not None and iterations_executed >= max_iterations and exit_reason == "condition_false":
                 exit_reason = "max_iterations_reached"
 
             return StepResult(
                 step_id=step.id,
-                success=True,
+                success=(exit_reason not in ("stopped", "step_failed")),
                 data=None,
                 message=f"While loop completed, {iterations_executed} iterations, exit: {exit_reason}",
                 execution_time=time.time() - step_start_time,
@@ -575,6 +650,10 @@ class WorkflowEngine:
                 exit_reason=exit_reason,
                 sub_step_results=sub_step_results
             )
+
+        except asyncio.CancelledError:
+            logger.info(f"While step {step.id} cancelled")
+            raise
 
         except Exception as e:
             error_traceback = traceback.format_exc()
@@ -589,7 +668,12 @@ class WorkflowEngine:
                 step_type="while"
             )
 
-    async def _execute_foreach_step(self, step: AgentWorkflowStep, context: AgentContext) -> StepResult:
+    async def _execute_foreach_step(
+        self,
+        step: AgentWorkflowStep,
+        context: AgentContext,
+        stop_signal: Optional[StopSignal] = None
+    ) -> StepResult:
         """Execute foreach loop control flow step"""
         step_start_time = time.time()
 
@@ -624,6 +708,12 @@ class WorkflowEngine:
             exit_reason = "completed"
 
             for index, item in enumerate(source_list):
+                # ===== CHECK STOP SIGNAL =====
+                if stop_signal and stop_signal.is_stop_requested():
+                    exit_reason = "stopped"
+                    logger.info(f"Foreach loop stopped at iteration {iterations_executed}")
+                    break
+
                 if max_iterations is not None and iterations_executed >= max_iterations:
                     exit_reason = "max_iterations_reached"
                     logger.warning(f"Max iterations {max_iterations} reached")
@@ -644,8 +734,14 @@ class WorkflowEngine:
 
                 if step.steps:
                     for sub_step in step.steps:
-                        sub_result = await self._execute_single_step(sub_step, context)
+                        sub_result = await self._execute_single_step(sub_step, context, stop_signal)
                         iteration_results.append(sub_result)
+
+                        # Check if sub-step was stopped
+                        if hasattr(sub_result, 'exit_reason') and sub_result.exit_reason == 'stopped':
+                            exit_reason = "stopped"
+                            iteration_success = False
+                            break
 
                         if not sub_result.success:
                             iteration_success = False
@@ -670,7 +766,7 @@ class WorkflowEngine:
 
             return StepResult(
                 step_id=step.id,
-                success=True,
+                success=(exit_reason not in ("stopped", "step_failed")),
                 data=None,
                 message=f"Foreach completed, {iterations_executed}/{len(source_list)} items, exit: {exit_reason}",
                 execution_time=time.time() - step_start_time,
@@ -679,6 +775,10 @@ class WorkflowEngine:
                 exit_reason=exit_reason,
                 sub_step_results=sub_step_results
             )
+
+        except asyncio.CancelledError:
+            logger.info(f"Foreach step {step.id} cancelled")
+            raise
 
         except Exception as e:
             error_traceback = traceback.format_exc()
@@ -693,18 +793,23 @@ class WorkflowEngine:
                 step_type="foreach"
             )
 
-    async def _execute_single_step(self, step: AgentWorkflowStep, context: AgentContext) -> StepResult:
+    async def _execute_single_step(
+        self,
+        step: AgentWorkflowStep,
+        context: AgentContext,
+        stop_signal: Optional[StopSignal] = None
+    ) -> StepResult:
         """Execute a single step (agent or control flow)"""
         original_step_id = context.step_id
         context.step_id = step.id
 
         try:
             if step.agent_type == "if":
-                return await self._execute_if_step(step, context)
+                return await self._execute_if_step(step, context, stop_signal)
             elif step.agent_type == "while":
-                return await self._execute_while_step(step, context)
+                return await self._execute_while_step(step, context, stop_signal)
             elif step.agent_type == "foreach":
-                return await self._execute_foreach_step(step, context)
+                return await self._execute_foreach_step(step, context, stop_signal)
             else:
                 if step.condition and not await self._evaluate_condition(step.condition, context):
                     logger.info(f"Step {step.name} condition not met, skipping")

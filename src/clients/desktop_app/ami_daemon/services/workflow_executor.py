@@ -1,5 +1,6 @@
 """Workflow execution engine"""
 
+import asyncio
 import logging
 import uuid
 import yaml
@@ -11,6 +12,7 @@ from src.clients.desktop_app.ami_daemon.services.storage_manager import StorageM
 from src.clients.desktop_app.ami_daemon.services.browser_manager import BrowserManager
 from src.clients.desktop_app.ami_daemon.services.workflow_history import WorkflowHistoryManager
 from src.clients.desktop_app.ami_daemon.services.cloud_client import CloudClient
+from src.clients.desktop_app.ami_daemon.base_agent.core.schemas import StopSignal
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +44,9 @@ class WorkflowExecutor:
         self.auto_upload_logs = auto_upload_logs
         self.tasks: Dict[str, ExecutionTask] = {}
         self.progress_callback: Optional[Callable[[str, dict], Awaitable[None]]] = None
-        # Map task_id to (user_id, workflow_id, execution_id) for history tracking
-        self._task_context: Dict[str, tuple[str, str, str]] = {}
+        # Stop signal management
+        self.stop_signals: Dict[str, StopSignal] = {}
+        self.task_handles: Dict[str, asyncio.Task] = {}
 
     def set_progress_callback(self, callback: Callable[[str, dict], Awaitable[None]]):
         """Set callback for progress updates
@@ -121,19 +124,18 @@ class WorkflowExecutor:
         self.tasks[task_id] = task
 
         # Create history run if history manager is available
-        execution_id = None
+        # Use task_id as the unified execution identifier
         if self.history:
             try:
-                execution_id = self.history.create_run(
+                self.history.create_run(
+                    task_id=task_id,
                     user_id=user_id,
                     workflow_id=workflow_id,
                     workflow_name=workflow_name,
                     workflow_yaml=workflow_yaml,
                     total_steps=total_steps,
                 )
-                # Store context for history tracking: (user_id, workflow_id, execution_id)
-                self._task_context[task_id] = (user_id, workflow_id, execution_id)
-                logger.info(f"Created history run {execution_id} for task {task_id}")
+                logger.info(f"Created history run for task {task_id}")
             except Exception as e:
                 logger.error(f"Failed to create history run: {e}")
 
@@ -150,11 +152,15 @@ class WorkflowExecutor:
             "timestamp": datetime.now().isoformat()
         })
 
-        # Execute in background
-        import asyncio
-        asyncio.create_task(
-            self._execute_workflow(task_id, user_id, workflow_yaml, inputs, user_api_key)
+        # Create stop signal for this task
+        stop_signal = StopSignal()
+        self.stop_signals[task_id] = stop_signal
+
+        # Execute in background and store task handle
+        task_handle = asyncio.create_task(
+            self._execute_workflow(task_id, user_id, workflow_yaml, inputs, user_api_key, stop_signal)
         )
+        self.task_handles[task_id] = task_handle
 
         return {"task_id": task_id, "status": "running"}
 
@@ -193,14 +199,12 @@ class WorkflowExecutor:
         user_id: str,
         workflow_yaml: str,
         inputs: Optional[dict],
-        user_api_key: Optional[str] = None
+        user_api_key: Optional[str] = None,
+        stop_signal: Optional[StopSignal] = None
     ):
         """Internal execution logic (runs in background)"""
         task = self.tasks[task_id]
-
-        # Initialize history_context before try block to avoid UnboundLocalError in except
-        history_context = self._task_context.get(task_id)
-        steps_info = task.steps  # Also initialize steps_info for exception handler
+        steps_info = task.steps  # Initialize steps_info for use throughout the method
 
         try:
             # Use WorkflowConfigLoader to parse and validate YAML
@@ -294,15 +298,14 @@ class WorkflowExecutor:
                         step["status"] = "pending"
 
                 # Log to workflow history (not to app.log)
-                if history_context and self.history:
+                if self.history:
                     try:
-                        ctx_user_id, ctx_workflow_id, ctx_execution_id = history_context
                         # Get step type from steps_info
                         step_type = steps_info[step_index].get("type", "unknown") if step_index < len(steps_info) else "unknown"
                         self.history.log_step(
-                            user_id=ctx_user_id,
-                            workflow_id=ctx_workflow_id,
-                            execution_id=ctx_execution_id,
+                            user_id=user_id,
+                            workflow_id=task.workflow_id,
+                            task_id=task_id,
                             step_index=step_index,
                             action=step_type,
                             status=step_status,
@@ -358,57 +361,86 @@ class WorkflowExecutor:
                 input_data=inputs or {},
                 step_callback=step_progress_callback,
                 log_callback=log_callback,
-                workflow_id=task.workflow_id  # System identifier like "workflow_75a80ae0a48f"
+                workflow_id=task.workflow_id,  # System identifier like "workflow_75a80ae0a48f"
+                stop_signal=stop_signal
             )
 
-            # Update task
-            task.status = "completed" if result.success else "failed"
-            task.progress = 100
-            task.completed_at = datetime.now()
-            task.result = result.final_result
-            task.error = result.error_message if not result.success else None
-            task.message = "Execution completed" if result.success else f"Failed: {result.error_message}"
+            # Update task based on result
+            if result.stopped:
+                # Workflow was stopped by user request
+                task.status = "stopped"
+                task.stopped_at_step = task.current_step
+                task.completed_at = datetime.now()
+                task.result = result.final_result
+                task.error = None
+                task.message = f"Stopped at step {task.current_step + 1}"
 
-            # Send final progress update (include workflow_yaml for feedback context)
-            await self._send_progress_update(task_id, {
-                "type": "progress_update",
-                "task_id": task_id,
-                "status": task.status,
-                "progress": 100,
-                "current_step": task.total_steps - 1,  # Last step index (0-based)
-                "total_steps": task.total_steps,
-                "message": task.message,
-                "result": {
-                    **(task.result if isinstance(task.result, dict) else {"value": task.result}),
-                    "workflow_yaml": workflow_yaml,  # Include workflow YAML for feedback system
-                    "workflow_id": task.workflow_id,  # System identifier
-                    "workflow_name": task.workflow_name,  # Human-readable name
-                    "steps": task.steps  # Include steps info for scraper step lookup
-                },
-                "error": task.error,
-                "timestamp": datetime.now().isoformat()
-            })
+                # Send stopped progress update
+                await self._send_progress_update(task_id, {
+                    "type": "progress_update",
+                    "task_id": task_id,
+                    "status": "stopped",
+                    "progress": task.progress,
+                    "current_step": task.current_step,
+                    "total_steps": task.total_steps,
+                    "stopped_at_step": task.stopped_at_step,
+                    "message": task.message,
+                    "timestamp": datetime.now().isoformat()
+                })
 
-            # Send completion log to Execution Logs
-            if result.success:
                 await log_callback(
-                    "success",
-                    f"✅ Workflow completed successfully",
-                    {"result": task.result}
+                    "warning",
+                    f"⏹️ Workflow stopped by user request at step {task.current_step + 1}",
+                    {"stopped_at_step": task.stopped_at_step}
                 )
             else:
-                await log_callback(
-                    "error",
-                    f"❌ Workflow failed: {result.error_message}",
-                    {"error": result.error_message}
-                )
+                # Normal completion or failure
+                task.status = "completed" if result.success else "failed"
+                task.progress = 100
+                task.completed_at = datetime.now()
+                task.result = result.final_result
+                task.error = result.error_message if not result.success else None
+                task.message = "Execution completed" if result.success else f"Failed: {result.error_message}"
 
-            # Save result
-            execution_id = str(uuid.uuid4())
+                # Send final progress update (include workflow_yaml for feedback context)
+                await self._send_progress_update(task_id, {
+                    "type": "progress_update",
+                    "task_id": task_id,
+                    "status": task.status,
+                    "progress": 100,
+                    "current_step": task.total_steps - 1,  # Last step index (0-based)
+                    "total_steps": task.total_steps,
+                    "message": task.message,
+                    "result": {
+                        **(task.result if isinstance(task.result, dict) else {"value": task.result}),
+                        "workflow_yaml": workflow_yaml,  # Include workflow YAML for feedback system
+                        "workflow_id": task.workflow_id,  # System identifier
+                        "workflow_name": task.workflow_name,  # Human-readable name
+                        "steps": task.steps  # Include steps info for scraper step lookup
+                    },
+                    "error": task.error,
+                    "timestamp": datetime.now().isoformat()
+                })
+
+                # Send completion log to Execution Logs
+                if result.success:
+                    await log_callback(
+                        "success",
+                        f"✅ Workflow completed successfully",
+                        {"result": task.result}
+                    )
+                else:
+                    await log_callback(
+                        "error",
+                        f"❌ Workflow failed: {result.error_message}",
+                        {"error": result.error_message}
+                    )
+
+            # Save result using task_id as the execution identifier
             self.storage.save_execution_result(
                 user_id,
                 task.workflow_id,  # Use workflow_id for file path
-                execution_id,
+                task_id,  # Use task_id as execution identifier (unified ID)
                 {
                     "task_id": task_id,
                     "status": task.status,
@@ -420,14 +452,13 @@ class WorkflowExecutor:
             )
 
             # Update workflow history status
-            if history_context and self.history:
+            if self.history:
                 try:
-                    ctx_user_id, ctx_workflow_id, ctx_execution_id = history_context
                     steps_completed = sum(1 for s in steps_info if s.get("status") == "completed")
                     self.history.update_run_status(
-                        user_id=ctx_user_id,
-                        workflow_id=ctx_workflow_id,
-                        execution_id=ctx_execution_id,
+                        user_id=user_id,
+                        workflow_id=task.workflow_id,
+                        task_id=task_id,
                         status=task.status,
                         steps_completed=steps_completed,
                         error_summary=task.error,
@@ -436,10 +467,48 @@ class WorkflowExecutor:
                     # Auto-upload execution log to cloud
                     if self.auto_upload_logs and self.cloud_client:
                         await self._upload_execution_log(
-                            ctx_user_id, ctx_workflow_id, ctx_execution_id
+                            user_id, task.workflow_id, task_id
                         )
                 except Exception as e:
                     logger.error(f"Failed to update history run status: {e}")
+
+        except asyncio.CancelledError:
+            # Force cancellation from stop_workflow timeout
+            logger.info(f"Workflow {task_id} was force cancelled")
+            task.status = "stopped"
+            task.stopped_at_step = task.current_step
+            task.completed_at = datetime.now()
+            task.message = f"Force stopped at step {task.current_step + 1}"
+
+            # Send stopped progress update
+            await self._send_progress_update(task_id, {
+                "type": "progress_update",
+                "task_id": task_id,
+                "status": "stopped",
+                "progress": task.progress,
+                "current_step": task.current_step,
+                "total_steps": task.total_steps,
+                "stopped_at_step": task.stopped_at_step,
+                "message": task.message,
+                "timestamp": datetime.now().isoformat()
+            })
+
+            # Update workflow history with stopped status
+            if self.history:
+                try:
+                    steps_completed = sum(1 for s in steps_info if s.get("status") == "completed")
+                    self.history.update_run_status(
+                        user_id=user_id,
+                        workflow_id=task.workflow_id,
+                        task_id=task_id,
+                        status="stopped",
+                        steps_completed=steps_completed,
+                        error_summary="Force stopped by user",
+                    )
+                except Exception as he:
+                    logger.error(f"Failed to update history run status: {he}")
+
+            # Do not re-raise - we've handled the cancellation
 
         except Exception as e:
             task.status = "failed"
@@ -449,14 +518,13 @@ class WorkflowExecutor:
             task.completed_at = datetime.now()
 
             # Update workflow history with failure
-            if history_context and self.history:
+            if self.history:
                 try:
-                    ctx_user_id, ctx_workflow_id, ctx_execution_id = history_context
                     steps_completed = sum(1 for s in steps_info if s.get("status") == "completed")
                     self.history.update_run_status(
-                        user_id=ctx_user_id,
-                        workflow_id=ctx_workflow_id,
-                        execution_id=ctx_execution_id,
+                        user_id=user_id,
+                        workflow_id=task.workflow_id,
+                        task_id=task_id,
                         status="failed",
                         steps_completed=steps_completed,
                         error_summary=str(e),
@@ -465,7 +533,7 @@ class WorkflowExecutor:
                     # Auto-upload execution log to cloud (even for failures)
                     if self.auto_upload_logs and self.cloud_client:
                         await self._upload_execution_log(
-                            ctx_user_id, ctx_workflow_id, ctx_execution_id
+                            user_id, task.workflow_id, task_id
                         )
                 except Exception as he:
                     logger.error(f"Failed to update history run status: {he}")
@@ -490,7 +558,11 @@ class WorkflowExecutor:
             })
 
         finally:
-            # Always close browser session after workflow completes (success or failure)
+            # ===== UNIFIED CLEANUP FOR ALL EXIT PATHS =====
+            # 1. Cleanup task resources (stop signals, task handles)
+            self._cleanup_task_resources(task_id)
+
+            # 2. Close browser session
             session_id = f"workflow_{task_id}"
             try:
                 logger.info(f"Closing browser session after workflow: {session_id}")
@@ -498,6 +570,85 @@ class WorkflowExecutor:
                 logger.info(f"✅ Browser session closed: {session_id}")
             except Exception as e:
                 logger.warning(f"Failed to close browser session {session_id}: {e}")
+
+    def _cleanup_task_resources(self, task_id: str):
+        """Cleanup task-related resources (signals, handles)"""
+        if task_id in self.stop_signals:
+            del self.stop_signals[task_id]
+        if task_id in self.task_handles:
+            del self.task_handles[task_id]
+
+    async def stop_workflow(self, task_id: str) -> Dict[str, any]:
+        """Stop a running workflow
+
+        Strategy:
+        1. Set stop signal (cooperative stop)
+        2. Wait up to STOP_TIMEOUT for graceful stop
+        3. If timeout, force cancel the task
+        4. Return result (cleanup happens in _execute_workflow finally)
+
+        Args:
+            task_id: Task ID to stop
+
+        Returns:
+            Dict with success status and details
+        """
+        STOP_TIMEOUT = 10  # seconds
+
+        # Validate task exists and is running
+        task = self.tasks.get(task_id)
+        if not task:
+            return {"success": False, "error": "Task not found"}
+
+        if task.status not in ("running",):
+            return {"success": False, "error": f"Task cannot be stopped (status: {task.status})"}
+
+        stop_signal = self.stop_signals.get(task_id)
+        task_handle = self.task_handles.get(task_id)
+
+        if not stop_signal or not task_handle:
+            return {"success": False, "error": "Task control not available"}
+
+        # Update status to stopping
+        task.status = "stopping"
+        task.message = "Stopping workflow..."
+
+        # Send progress update
+        await self._send_progress_update(task_id, {
+            "type": "progress_update",
+            "task_id": task_id,
+            "status": "stopping",
+            "progress": task.progress,
+            "current_step": task.current_step,
+            "total_steps": task.total_steps,
+            "message": "Stopping workflow...",
+            "timestamp": datetime.now().isoformat()
+        })
+
+        # Step 1: Request cooperative stop
+        stop_signal.request_stop()
+        logger.info(f"Stop signal sent for workflow {task_id}")
+
+        # Step 2: Wait for graceful stop with timeout
+        try:
+            await asyncio.wait_for(asyncio.shield(task_handle), timeout=STOP_TIMEOUT)
+            logger.info(f"Workflow {task_id} stopped gracefully")
+        except asyncio.TimeoutError:
+            # Step 3: Force cancel
+            logger.warning(f"Workflow {task_id} did not stop gracefully, forcing cancel")
+            task_handle.cancel()
+            try:
+                await task_handle
+            except asyncio.CancelledError:
+                logger.info(f"Workflow {task_id} force cancelled")
+
+        # Note: Cleanup (browser, resources) happens in _execute_workflow finally block
+
+        return {
+            "success": True,
+            "stopped_at_step": task.stopped_at_step,
+            "message": task.message
+        }
 
     async def _send_progress_update(self, task_id: str, data: dict):
         """Send progress update via callback if set"""
@@ -509,23 +660,23 @@ class WorkflowExecutor:
                 logger.error(f"Failed to send progress update: {e}")
 
     async def _upload_execution_log(
-        self, user_id: str, workflow_id: str, execution_id: str
+        self, user_id: str, workflow_id: str, task_id: str
     ):
         """Upload execution log to cloud (fire-and-forget).
 
         Args:
             user_id: User ID
             workflow_id: Workflow ID
-            execution_id: Execution ID
+            task_id: Task ID (unified execution identifier)
         """
         if not self.history or not self.cloud_client:
             return
 
         try:
             # Get log data for upload
-            log_data = self.history.get_run_for_upload(user_id, workflow_id, execution_id)
+            log_data = self.history.get_run_for_upload(user_id, workflow_id, task_id)
             if not log_data:
-                logger.warning(f"No log data found for execution {execution_id}")
+                logger.warning(f"No log data found for task {task_id}")
                 return
 
             # Upload to cloud
@@ -533,8 +684,8 @@ class WorkflowExecutor:
 
             if result.get("success"):
                 # Mark as uploaded in local history
-                self.history.mark_as_uploaded(user_id, workflow_id, execution_id)
-                logger.info(f"Execution log uploaded: {execution_id}")
+                self.history.mark_as_uploaded(user_id, workflow_id, task_id)
+                logger.info(f"Execution log uploaded: {task_id}")
             else:
                 logger.warning(f"Failed to upload execution log: {result.get('error')}")
 

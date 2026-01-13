@@ -75,23 +75,30 @@ class TextAgent(BaseStepAgent):
     async def validate_input(self, input_data: Any) -> bool:
         """验证输入数据"""
         if isinstance(input_data, AgentInput):
-            return True
+            return "instruction" in input_data.data
         if isinstance(input_data, dict):
-            return "instruction" in input_data
+            data = input_data.get("data", input_data)
+            return "instruction" in data
         return False
-    
-    def _build_complete_prompt(self, instruction: str, input_data: Dict[str, Any], expected_outputs: Dict[str, str]) -> str:
-        """构建完整的大模型提示词，包含指令、输入和输出要求"""
-        
+
+    def _build_complete_prompt(self, input_data: Dict[str, Any], expected_outputs: Dict[str, str]) -> str:
+        """构建完整的大模型提示词，包含指令、输入和输出要求
+
+        Args:
+            input_data: 包含 instruction 和其他输入数据的字典
+            expected_outputs: 期望的输出字段定义
+        """
         prompt_parts = []
-        
-        # 1. 添加任务指令
+
+        # 1. 提取并添加任务指令
+        instruction = input_data.get("instruction", "")
         prompt_parts.append(f"## 任务指令\n{instruction}")
-        
-        # 2. 添加输入数据
-        if input_data:
+
+        # 2. 添加输入数据（排除 instruction 字段，避免重复）
+        other_data = {k: v for k, v in input_data.items() if k != "instruction"}
+        if other_data:
             prompt_parts.append("## 输入数据")
-            for key, value in input_data.items():
+            for key, value in other_data.items():
                 if isinstance(value, (dict, list)):
                     prompt_parts.append(f"**{key}**:\n```json\n{self._format_json_value(value)}\n```")
                 else:
@@ -144,21 +151,32 @@ class TextAgent(BaseStepAgent):
             # Get expected output format
             expected_outputs = agent_input.step_metadata.get('expected_outputs', {})
 
+            # Get instruction from input data
+            instruction = agent_input.data.get('instruction', '')
+
             # Build complete prompt
             complete_prompt = self._build_complete_prompt(
-                instruction=agent_input.instruction,
                 input_data=agent_input.data,
                 expected_outputs=expected_outputs
             )
 
             self.logger.info(f"[TextAgent] Calling LLM provider")
             self.logger.info(f"  Provider type: {type(self.provider).__name__}")
-            self.logger.info(f"  Provider has base_url: {hasattr(self.provider, 'base_url')}")
-            if hasattr(self.provider, 'base_url'):
-                self.logger.info(f"  Base URL: {self.provider.base_url}")
-            if hasattr(self.provider, 'api_key'):
-                self.logger.info(f"  API Key: {self.provider.api_key[:10]}..." if self.provider.api_key else "  API Key: None")
             self.logger.info(f"  Complete prompt length: {len(complete_prompt)} chars")
+
+            # Send start log to frontend
+            if context and context.log_callback:
+                try:
+                    await context.log_callback(
+                        "info",
+                        f"🤖 Generating text response...",
+                        {
+                            "instruction": instruction[:100] if instruction else None,
+                            "expected_outputs": list(expected_outputs.keys()) if expected_outputs else None
+                        }
+                    )
+                except Exception as e:
+                    self.logger.warning(f"Failed to send log callback: {e}")
 
             # Use Provider's JSON generation capability
             # This automatically handles:
@@ -174,10 +192,24 @@ class TextAgent(BaseStepAgent):
             self.logger.info(f"  Response type: {type(parsed_data)}")
             self.logger.info(f"  Response keys: {list(parsed_data.keys()) if isinstance(parsed_data, dict) else 'N/A'}")
 
-            # 统一契约：输出放在 data["result"] 中，类型为 Dict
+            # Send output to frontend via log_callback
+            if context and context.log_callback:
+                try:
+                    await context.log_callback(
+                        "success",
+                        f"✅ Text generation completed",
+                        {
+                            "output": parsed_data,
+                            "output_keys": list(parsed_data.keys()) if isinstance(parsed_data, dict) else None
+                        }
+                    )
+                except Exception as e:
+                    self.logger.warning(f"Failed to send log callback: {e}")
+
+            # Direct output: data is the parsed response
             return AgentOutput(
                 success=True,
-                data={"result": parsed_data},
+                data=parsed_data,
                 message="Text generation completed"
             )
 

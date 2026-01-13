@@ -14,7 +14,8 @@ function WorkflowExecutionLivePage({
   workflowName = 'Workflow Execution'
 }) {
   const userId = session?.username;
-  const [status, setStatus] = useState('connecting'); // 'connecting', 'running', 'completed', 'failed'
+  const [status, setStatus] = useState('connecting'); // 'connecting', 'running', 'stopping', 'stopped', 'completed', 'failed'
+  const [isStopping, setIsStopping] = useState(false);
   const [progress, setProgress] = useState(0);
   const [currentStep, setCurrentStep] = useState(0);
   const [totalSteps, setTotalSteps] = useState(0);
@@ -204,14 +205,18 @@ function WorkflowExecutionLivePage({
         addLogEntry(logEntry);
       }
 
-      // Handle completion
-      if (data.status === 'completed' || data.status === 'failed') {
+      // Handle completion/stopped states
+      if (data.status === 'completed' || data.status === 'failed' || data.status === 'stopped') {
         shouldReconnectRef.current = false;
         if (heartbeatIntervalRef.current) {
           clearInterval(heartbeatIntervalRef.current);
           heartbeatIntervalRef.current = null;
         }
 
+        // Reset stopping state when workflow actually stops
+        if (data.status === 'stopped') {
+          setIsStopping(false);
+        }
       }
     }
   };
@@ -310,6 +315,32 @@ function WorkflowExecutionLivePage({
     }
   }, [currentStep]);
 
+  // Handle stop workflow
+  const handleStopWorkflow = async () => {
+    if (isStopping || status !== 'running') return;
+
+    setIsStopping(true);
+    setStatus('stopping');
+    setCurrentMessage('Stopping workflow...');
+
+    try {
+      const result = await api.stopWorkflow(taskId);
+      if (result.success) {
+        showStatus('Workflow stop requested', 'info');
+        // Status will be updated via WebSocket when workflow actually stops
+      } else {
+        showStatus(result.error || 'Failed to stop workflow', 'error');
+        setIsStopping(false);
+        setStatus('running');
+      }
+    } catch (error) {
+      console.error('Failed to stop workflow:', error);
+      showStatus('Failed to stop workflow: ' + error.message, 'error');
+      setIsStopping(false);
+      setStatus('running');
+    }
+  };
+
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -396,6 +427,8 @@ function WorkflowExecutionLivePage({
               <span className="meta-badge" data-status={status}>
                 {status === 'connecting' && <><Icon icon="loader" size={14} /> Connecting</>}
                 {status === 'running' && <><Icon icon="play" size={14} /> Running</>}
+                {status === 'stopping' && <><Icon icon="loader" size={14} /> Stopping</>}
+                {status === 'stopped' && <><Icon icon="square" size={14} /> Stopped</>}
                 {status === 'completed' && <><Icon icon="checkCircle" size={14} /> Completed</>}
                 {status === 'failed' && <><Icon icon="alertCircle" size={14} /> Failed</>}
               </span>
@@ -408,12 +441,22 @@ function WorkflowExecutionLivePage({
           </div>
         </div>
         <div className="header-actions">
+          {(status === 'running' || status === 'stopping') && (
+            <button
+              className="btn-stop"
+              onClick={handleStopWorkflow}
+              disabled={isStopping || status === 'stopping'}
+            >
+              <Icon icon={isStopping ? "loader" : "square"} />
+              {isStopping ? 'Stopping...' : 'Stop'}
+            </button>
+          )}
           {status === 'completed' && (
             <button className="btn-view-results" onClick={() => onNavigate('execution-result', { taskId })}>
               <Icon icon="barChart" /> View Results
             </button>
           )}
-          {status === 'failed' && (
+          {(status === 'failed' || status === 'stopped') && (
             <button className="btn-back" onClick={() => onNavigate('main')}>
               <Icon icon="home" /> Back to Home
             </button>

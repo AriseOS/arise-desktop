@@ -790,6 +790,28 @@
     color: var(--text-tertiary);
 }
 
+.btn-view-live {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 12px;
+    background: var(--primary-color);
+    color: white;
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-left: auto;
+    margin-right: 8px;
+}
+
+.btn-view-live:hover {
+    background: var(--primary-color-dark, #0056b3);
+    transform: translateY(-1px);
+}
+
 /* Execution Detail Modal */
 .modal-overlay {
     position: fixed;

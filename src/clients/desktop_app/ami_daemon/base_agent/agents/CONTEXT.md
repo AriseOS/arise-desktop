@@ -26,12 +26,12 @@ all_schemas = get_all_agent_schemas()
 
 | File | Agent | Required Inputs |
 |------|-------|-----------------|
-| `text_agent.py` | TextAgent | `instruction` |
-| `browser_agent.py` | BrowserAgent | (none, uses `target_url` or `interaction_steps`) |
-| `scraper_agent.py` | ScraperAgent | `data_requirements` |
-| `storage_agent.py` | StorageAgent | `operation`, `collection` |
-| `variable_agent.py` | VariableAgent | `operation`, `data` |
-| `autonomous_browser_agent.py` | AutonomousBrowserAgent | `task` |
+| `text_agent.py` | TextAgent | `inputs.instruction` |
+| `browser_agent.py` | BrowserAgent | `inputs.target_url` or `inputs.interaction_steps` |
+| `scraper_agent.py` | ScraperAgent | `inputs.data_requirements` |
+| `storage_agent.py` | StorageAgent | `inputs.operation`, `inputs.collection` |
+| `variable_agent.py` | VariableAgent | `inputs.operation`, `inputs.data` |
+| `autonomous_browser_agent.py` | AutonomousBrowserAgent | `inputs.task` |
 
 ### Infrastructure
 

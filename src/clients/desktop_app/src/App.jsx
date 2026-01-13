@@ -428,6 +428,9 @@ function App() {
                     <p style={{ fontSize: '13px', margin: 0 }}>
                       Last run: {workflow.lastRun}
                     </p>
+                    <p style={{ fontSize: '12px', margin: 0, color: 'var(--text-tertiary)' }}>
+                      Created: {workflow.createdDate}
+                    </p>
                   </div>
                 </div>
                 <div className="flex-row" style={{ gap: '8px' }}>
@@ -684,7 +687,7 @@ function App() {
             onNavigate={navigate}
             showStatus={showStatus}
             workflowId={pageParams.workflowId}
-            executionId={pageParams.executionId}
+            taskId={pageParams.taskId}
           />
         );
 

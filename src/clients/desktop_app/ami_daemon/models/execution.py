@@ -13,7 +13,7 @@ class ExecutionTask:
     workflow_id: str  # System identifier like "workflow_75a80ae0a48f"
     workflow_name: str  # Human-readable name like "watcha-extract-all-products"
     user_id: str
-    status: str  # running, completed, failed
+    status: str  # running, stopping, stopped, completed, failed
     progress: int  # 0-100
     current_step: int
     total_steps: int
@@ -23,3 +23,4 @@ class ExecutionTask:
     result: Optional[dict] = None
     error: Optional[str] = None
     steps: List[Dict[str, Any]] = field(default_factory=list)  # List of step info for timeline
+    stopped_at_step: Optional[int] = None  # Step index when stopped by user

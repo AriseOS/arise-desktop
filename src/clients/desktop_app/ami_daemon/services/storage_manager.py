@@ -377,10 +377,10 @@ class StorageManager:
                     with open(workflow_file, 'r', encoding='utf-8') as f:
                         data = yaml.safe_load(f)
                         if isinstance(data, dict):
-                            # Get name and description from metadata section
+                            # Get name and description (support both v2 top-level and v1 metadata)
                             metadata = data.get('metadata', {})
-                            name = metadata.get('name', workflow_id)
-                            description = metadata.get('description', '')
+                            name = data.get('name') or metadata.get('name') or workflow_id
+                            description = data.get('description') or metadata.get('description', '')
                 except Exception:
                     # Use defaults if parsing fails
                     pass

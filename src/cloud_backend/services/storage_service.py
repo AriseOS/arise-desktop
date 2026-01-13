@@ -82,7 +82,7 @@ class StorageService:
 
         Storage structure:
             {base_path}/users/{user_id}/workflow_logs/{workflow_id}/
-                {run_id}.json
+                {task_id}.json
 
         Args:
             user_id: User identifier

@@ -79,8 +79,8 @@ App Backend (ami_daemon) provides REST API for the desktop application, handling
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/workflow-history` | List execution history |
-| GET | `/api/workflow-history/{run_id}` | Get run detail with logs |
-| GET | `/api/workflow-history/{run_id}/for-upload` | Get run data for cloud upload |
+| GET | `/api/workflow-history/{task_id}` | Get run detail with logs |
+| GET | `/api/workflow-history/{task_id}/for-upload` | Get run data for cloud upload |
 
 ---
 

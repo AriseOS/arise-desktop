@@ -821,15 +821,15 @@ class CloudClient:
 
         Args:
             log_data: Execution log data from WorkflowHistoryManager.get_run_for_upload()
-                Contains: type, run_id, user_id, device_id, workflow_id, workflow_name,
+                Contains: type, task_id, user_id, device_id, workflow_id, workflow_name,
                          meta, logs, workflow_yaml, device_info
             user_id: User ID (required)
 
         Returns:
-            dict: {"success": True, "run_id": "..."}
+            dict: {"success": True, "task_id": "..."}
         """
         try:
-            logger.info(f"Uploading execution log: {log_data.get('run_id')}")
+            logger.info(f"Uploading execution log: {log_data.get('task_id')}")
 
             # Build request headers
             headers = {}
@@ -848,7 +848,7 @@ class CloudClient:
             response.raise_for_status()
             result = response.json()
 
-            logger.info(f"Execution log uploaded: {result.get('run_id')}")
+            logger.info(f"Execution log uploaded: {result.get('task_id')}")
             return result
 
         except httpx.HTTPStatusError as e:

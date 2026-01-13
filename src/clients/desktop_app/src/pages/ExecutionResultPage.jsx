@@ -8,7 +8,7 @@ function ExecutionResultPage({
   onNavigate,
   showStatus,
   workflowId,
-  executionId
+  taskId
 }) {
   const userId = session?.username;
   const [workflowName, setWorkflowName] = useState('');
@@ -20,14 +20,14 @@ function ExecutionResultPage({
   // Fetch execution results from API
   useEffect(() => {
     const fetchResults = async () => {
-      if (!executionId) {
-        showStatus('No execution ID provided', 'error');
+      if (!taskId) {
+        showStatus('No task ID provided', 'error');
         setLoading(false);
         return;
       }
 
       try {
-        const data = await api.callAppBackend(`/api/v1/executions/${executionId}/results`);
+        const data = await api.callAppBackend(`/api/v1/executions/${taskId}/results`);
         setExecutionStats(data.stats);
         setScrapedData(data.results || []);
         setWorkflowName(data.workflow_name || 'Workflow');
@@ -40,7 +40,7 @@ function ExecutionResultPage({
     };
 
     fetchResults();
-  }, [executionId]);
+  }, [taskId]);
 
   const handleDownload = (format) => {
     showStatus(`Downloading data as ${format.toUpperCase()}...`, 'info');
@@ -50,11 +50,22 @@ function ExecutionResultPage({
     }, 1000);
   };
 
-  const handleRunAgain = () => {
+  const handleRunAgain = async () => {
     showStatus('Starting workflow execution...', 'info');
-    setTimeout(() => {
-      onNavigate('execution-monitor', { workflowId });
-    }, 500);
+    try {
+      const result = await api.executeWorkflow(workflowId, userId);
+      const newTaskId = result.task_id;
+      showStatus('Workflow started! Redirecting to live execution page...', 'success');
+      setTimeout(() => {
+        onNavigate('workflow-execution-live', {
+          taskId: newTaskId,
+          workflowName: workflowName
+        });
+      }, 500);
+    } catch (error) {
+      console.error('Failed to start workflow:', error);
+      showStatus(`Failed to start workflow: ${error.message}`, 'error');
+    }
   };
 
   const handleSaveWorkflow = () => {

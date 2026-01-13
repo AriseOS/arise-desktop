@@ -2,6 +2,7 @@
 Core data structures for BaseAgent and Workflow system
 定义BaseAgent和工作流系统的核心数据结构
 """
+import asyncio
 import uuid
 from datetime import datetime
 from enum import Enum
@@ -10,6 +11,31 @@ from pydantic import BaseModel, Field, PrivateAttr
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+# ==================== Workflow Control ====================
+
+class StopSignal:
+    """Signal for stopping workflow execution.
+
+    Used to cooperatively stop a running workflow. The workflow engine
+    checks this signal at step boundaries and loop iterations.
+    """
+
+    def __init__(self):
+        self._stop_event = asyncio.Event()
+
+    def request_stop(self):
+        """Request workflow to stop at next checkpoint."""
+        self._stop_event.set()
+
+    def is_stop_requested(self) -> bool:
+        """Check if stop was requested."""
+        return self._stop_event.is_set()
+
+    def reset(self):
+        """Reset the signal (for reuse)."""
+        self._stop_event.clear()
 
 
 # ==================== Agent Core Schemas ====================
@@ -108,7 +134,6 @@ class AgentResult(BaseModel):
 
 class AgentInput(BaseModel):
     """统一的Agent输入模型"""
-    instruction: str = Field(..., description="执行指令")
     data: Dict[str, Any] = Field(default_factory=dict, description="输入数据")
     step_metadata: Dict[str, Any] = Field(default_factory=dict, description="步骤元数据")
 
@@ -397,26 +422,27 @@ class WorkflowResult(BaseModel):
     # 基础结果
     success: bool = Field(..., description="执行是否成功")
     workflow_id: str = Field(..., description="工作流ID")
-    
+    stopped: bool = Field(default=False, description="是否被用户停止")
+
     # 执行统计
     completed_steps: List[str] = Field(default_factory=list, description="已完成步骤")
     failed_steps: List[str] = Field(default_factory=list, description="失败步骤")
     step_results: Dict[str, Any] = Field(default_factory=dict, description="步骤结果")
     steps: List['StepResult'] = Field(default_factory=list, description="步骤执行结果列表")
-    
+
     # 时间信息
     total_execution_time: float = Field(default=0.0, description="总执行时间(秒)")
     started_at: datetime = Field(default_factory=datetime.now, description="开始时间")
     completed_at: Optional[datetime] = Field(default=None, description="完成时间")
-    
+
     # 输出数据
     final_result: Any = Field(default=None, description="最终结果")
     output_variables: Dict[str, Any] = Field(default_factory=dict, description="输出变量")
-    
+
     # 错误信息
     error_message: Optional[str] = Field(default=None, description="错误消息")
     error_details: List[Dict[str, Any]] = Field(default_factory=list, description="详细错误信息")
-    
+
     # 性能信息
     memory_usage_mb: float = Field(default=0.0, description="内存使用量(MB)")
     step_execution_times: Dict[str, float] = Field(default_factory=dict, description="各步骤执行时间")

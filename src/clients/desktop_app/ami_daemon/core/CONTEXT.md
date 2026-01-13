@@ -15,7 +15,7 @@ The logging system follows a separation principle:
 |----------|----------|---------|
 | System logs | `~/.ami/logs/app.log` | App startup/shutdown, service status, config, network |
 | Error logs | `~/.ami/logs/error.log` | WARNING and above only |
-| Workflow logs | `~/.ami/workflow_history/runs/{run_id}/log.jsonl` | Per-execution step details |
+| Workflow logs | `~/.ami/users/{user_id}/workflows/{workflow_id}/executions/{task_id}/log.jsonl` | Per-execution step details |
 
 ### Features
 

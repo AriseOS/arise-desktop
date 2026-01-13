@@ -64,7 +64,7 @@ All logs use structured JSON format with request context:
 Uploaded logs are stored in:
 ```
 {storage_base}/users/{user_id}/
-├── workflow_logs/{workflow_id}/{run_id}.json
+├── workflow_logs/{workflow_id}/{task_id}.json
 └── diagnostics/{diagnostic_id}.json
 ```
 

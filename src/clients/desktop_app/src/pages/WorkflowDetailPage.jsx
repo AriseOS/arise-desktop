@@ -497,10 +497,10 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
     }
   }
 
-  const fetchExecutionDetail = async (runId) => {
+  const fetchExecutionDetail = async (taskId) => {
     setDetailLoading(true)
     try {
-      const url = `/api/v1/workflows/${workflowId}/history/${runId}?user_id=${userId}`
+      const url = `/api/v1/workflows/${workflowId}/history/${taskId}?user_id=${userId}`
       const detail = await api.callAppBackend(url)
       setExecutionDetail(detail)
     } catch (error) {
@@ -513,7 +513,15 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
 
   const handleViewExecution = (execution) => {
     setSelectedExecution(execution)
-    fetchExecutionDetail(execution.run_id)
+    fetchExecutionDetail(execution.task_id)
+  }
+
+  const handleViewLive = (execution, e) => {
+    e.stopPropagation()
+    onNavigate('workflow-execution-live', {
+      taskId: execution.task_id,
+      workflowName: execution.workflow_name || workflowId
+    })
   }
 
   const handleCloseDetail = () => {
@@ -1115,7 +1123,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                     <div className="execution-list">
                       {executions.map((execution) => (
                         <div
-                          key={execution.run_id}
+                          key={execution.task_id}
                           className={`execution-item ${getStatusClass(execution.status)}`}
                           onClick={() => handleViewExecution(execution)}
                         >
@@ -1135,6 +1143,15 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                               )}
                             </div>
                           </div>
+                          {execution.status === 'running' && (
+                            <button
+                              className="btn-view-live"
+                              onClick={(e) => handleViewLive(execution, e)}
+                            >
+                              <Icon icon="eye" size={14} />
+                              <span>View Live</span>
+                            </button>
+                          )}
                           <div className="execution-arrow">
                             <Icon icon="chevronRight" size={16} />
                           </div>

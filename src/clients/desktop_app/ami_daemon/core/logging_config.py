@@ -9,7 +9,7 @@ Provides rotating file handlers for system logs with the following features:
 
 Log separation principle:
 - System logs (app.log): App startup/shutdown, service status, config loading, network
-- Workflow execution logs: Written separately to workflow_history/runs/{run_id}/log.jsonl
+- Workflow execution logs: Written separately to users/{user_id}/workflows/{workflow_id}/executions/{task_id}/log.jsonl
 """
 
 import logging

@@ -10,7 +10,7 @@ from datetime import datetime
 
 from .schemas import (
     AgentConfig, AgentResult, AgentState, AgentStatus,
-    WorkflowResult, Workflow, AgentWorkflowStep
+    WorkflowResult, Workflow, AgentWorkflowStep, StopSignal
 )
 from ..tools.base_tool import BaseTool, ToolResult, ToolStatus
 from ..memory.memory_manager import MemoryManager
@@ -204,7 +204,8 @@ class BaseAgent:
         input_data: Dict[str, Any] = None,
         step_callback: Optional[Any] = None,
         log_callback: Optional[Any] = None,
-        workflow_id: Optional[str] = None
+        workflow_id: Optional[str] = None,
+        stop_signal: Optional[StopSignal] = None
     ) -> WorkflowResult:
         """Execute workflow with optional step progress and log callbacks
 
@@ -214,6 +215,7 @@ class BaseAgent:
             step_callback: Optional async callback function(step_index, step_name, status, result)
             log_callback: Optional async callback function(level, message, metadata)
             workflow_id: Optional workflow ID for resource path organization
+            stop_signal: Optional StopSignal for cooperative workflow stopping
 
         Returns:
             WorkflowResult: Workflow execution result
@@ -225,7 +227,8 @@ class BaseAgent:
                     workflow_id=workflow_id,
                     input_data=input_data or {},
                     step_callback=step_callback,
-                    log_callback=log_callback
+                    log_callback=log_callback,
+                    stop_signal=stop_signal
                 )
             else:
                 raise RuntimeError("Workflow engine not initialized")
@@ -237,7 +240,8 @@ class BaseAgent:
                     workflow_id=effective_workflow_id,
                     input_data=input_data or {},
                     step_callback=step_callback,
-                    log_callback=log_callback
+                    log_callback=log_callback,
+                    stop_signal=stop_signal
                 )
             else:
                 raise RuntimeError("Workflow engine not initialized")

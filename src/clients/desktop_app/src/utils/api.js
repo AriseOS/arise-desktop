@@ -775,6 +775,18 @@ export const api = {
   },
 
   /**
+   * Stop a running workflow execution
+   *
+   * @param {string} taskId - Task ID to stop
+   * @returns {Promise<object>} Stop result with success, stopped_at_step, message
+   */
+  async stopWorkflow(taskId) {
+    return await this.callAppBackend(`/api/v1/executions/${taskId}/stop`, {
+      method: 'POST'
+    });
+  },
+
+  /**
    * List all workflows
    *
    * @param {string} userId - User ID

@@ -24,7 +24,7 @@ class AutonomousBrowserAgent(BaseStepAgent):
             "task": FieldSchema(
                 type="str",
                 required=True,
-                description="Task description in natural language (alternative: 'instruction')"
+                description="Task description in natural language"
             ),
             "max_actions": FieldSchema(
                 type="int",
@@ -129,13 +129,10 @@ class AutonomousBrowserAgent(BaseStepAgent):
             if isinstance(input_data, AgentInput):
                 # Get task from data field (resolved_input from workflow)
                 if input_data.data:
-                    task = input_data.data.get("task") or input_data.data.get("instruction", "")
+                    task = input_data.data.get("task", "")
                     max_actions = input_data.data.get("max_actions", 20)
-                # Fallback to instruction field
-                if not task:
-                    task = input_data.instruction
             elif isinstance(input_data, dict):
-                task = input_data.get("task") or input_data.get("instruction", "")
+                task = input_data.get("task", "")
                 max_actions = input_data.get("max_actions", 20)
 
             logger.info(f"AutonomousBrowserAgent executing task: {task[:100] if task else 'EMPTY'}...")
@@ -144,7 +141,7 @@ class AutonomousBrowserAgent(BaseStepAgent):
                 logger.error("Missing task description")
                 return AgentOutput(
                     success=False,
-                    message="Missing task description (task or instruction)",
+                    message="Missing task description",
                     data={}
                 )
 

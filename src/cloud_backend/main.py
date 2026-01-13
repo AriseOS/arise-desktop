@@ -1647,13 +1647,13 @@ async def upload_workflow_log(data: dict, x_ami_api_key: Optional[str] = Header(
     Body:
         {
             "type": "workflow_run",
-            "run_id": "uuid",
+            "task_id": "task_workflow_abc12345",
             "user_id": "user123",
             "device_id": "device_xxx",
             "workflow_id": "workflow_name",
             "workflow_name": "Workflow Display Name",
             "meta": {
-                "run_id": "uuid",
+                "task_id": "task_workflow_abc12345",
                 "workflow_id": "...",
                 "workflow_name": "...",
                 "user_id": "...",
@@ -1690,9 +1690,9 @@ async def upload_workflow_log(data: dict, x_ami_api_key: Optional[str] = Header(
         X-Ami-API-Key: User's API key (optional but recommended)
 
     Returns:
-        {"success": true, "run_id": "uuid"}
+        {"success": true, "task_id": "task_workflow_abc12345"}
     """
-    run_id = data.get("run_id")
+    task_id = data.get("task_id")
     user_id = data.get("user_id")
     workflow_id = data.get("workflow_id")
     workflow_name = data.get("workflow_name")
@@ -1702,8 +1702,8 @@ async def upload_workflow_log(data: dict, x_ami_api_key: Optional[str] = Header(
 
     if not user_id:
         raise HTTPException(400, "Missing user_id")
-    if not run_id:
-        raise HTTPException(400, "Missing run_id")
+    if not task_id:
+        raise HTTPException(400, "Missing task_id")
     if not workflow_id:
         raise HTTPException(400, "Missing workflow_id")
 
@@ -1712,19 +1712,19 @@ async def upload_workflow_log(data: dict, x_ami_api_key: Optional[str] = Header(
         log_path = storage_service.get_user_workflow_logs_path(user_id, workflow_id)
         log_path.mkdir(parents=True, exist_ok=True)
 
-        # Save log file as {run_id}.json
-        log_file = log_path / f"{run_id}.json"
+        # Save log file as {task_id}.json
+        log_file = log_path / f"{task_id}.json"
         log_file.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 
         logger.info(
-            f"Workflow log uploaded: {run_id} "
+            f"Workflow log uploaded: {task_id} "
             f"(workflow={workflow_name}, status={meta.get('status')}, "
             f"steps={meta.get('steps_completed')}/{meta.get('steps_total')})"
         )
 
         return {
             "success": True,
-            "run_id": run_id,
+            "task_id": task_id,
             "message": "Workflow log uploaded successfully"
         }
 
