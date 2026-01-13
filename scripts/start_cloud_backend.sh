@@ -40,8 +40,8 @@ if [ "$WITH_LOGGING" = true ]; then
 
     cd "$PROJECT_ROOT/deploy/logging"
 
-    # Start logging stack
-    docker-compose up -d
+    # Start logging stack (use new docker compose v2 syntax)
+    docker compose up -d
 
     if [ $? -eq 0 ]; then
         echo "✅ Logging stack started successfully"

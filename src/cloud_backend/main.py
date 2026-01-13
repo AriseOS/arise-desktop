@@ -2091,6 +2091,8 @@ async def get_workflow_metadata(workflow_id: str, user_id: str):
         if not metadata:
             raise HTTPException(status_code=404, detail=f"Metadata not found for workflow {workflow_id}")
         return metadata
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to get metadata for {workflow_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
