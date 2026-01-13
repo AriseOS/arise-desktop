@@ -107,12 +107,10 @@ class CDPRecorder:
 
         self.monitor = SimpleUserBehaviorMonitor(operation_list=self.operations)
 
-        # Navigate to starting URL first to ensure page is loaded
-        await browser_session_info.session.navigate_to(url)
-
-        # Wait for page to be fully loaded before setting up monitoring
-        import asyncio
-        await asyncio.sleep(2.0)
+        # Navigate to starting URL if not about:blank
+        # about:blank is the default page - no navigation needed, saves 4s timeout wait
+        if url != "about:blank":
+            await browser_session_info.session.navigate_to(url)
 
         # Setup monitoring (CDP Binding + script injection)
         # Pass the actual BrowserSession object, not BrowserSessionInfo
