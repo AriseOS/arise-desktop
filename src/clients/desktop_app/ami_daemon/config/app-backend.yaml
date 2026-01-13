@@ -37,8 +37,8 @@ llm:
 cloud:
   api_url: https://cloud.ariseos.com
   timeout: 120
-  # Note: HTTP/HTTPS proxy is controlled by system environment variables
-  # Set HTTP_PROXY or HTTPS_PROXY in your system if needed
+  # Proxy: Only reads from environment variables (HTTPS_PROXY, HTTP_PROXY, ALL_PROXY)
+  # System proxy settings (e.g., Clash modifying macOS preferences) are ignored
 
 logging:
   level: INFO
