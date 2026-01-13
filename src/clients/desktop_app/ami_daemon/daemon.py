@@ -869,9 +869,7 @@ async def start_recording(request: StartRecordingRequest):
         if not browser_status["is_running"]:
             logger.info("Browser not running, starting browser for recording...")
             await browser_manager.start_browser(headless=False)
-
-            # Wait for browser to be fully ready
-            await asyncio.sleep(2)
+            # start_browser returns when browser is fully ready - no sleep needed
             logger.info("Browser ready for recording")
 
         # 2. Prepare metadata
