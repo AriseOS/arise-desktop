@@ -8,7 +8,8 @@ import { BACKEND_CONFIG } from '../config/backend';
 
 // Use daemon (local backend) for sync operations
 // Daemon handles the actual sync between local storage and cloud
-const DAEMON_BASE = BACKEND_CONFIG.httpBase;
+// Get URL dynamically since port may change
+const getDaemonBase = () => BACKEND_CONFIG.httpBase;
 
 /**
  * Check if workflow needs sync
@@ -27,7 +28,7 @@ export async function checkSyncStatus(workflowId) {
     const userId = await getCurrentUserId();
 
     const response = await fetch(
-      `${DAEMON_BASE}/api/v1/workflows/${workflowId}/sync/status?user_id=${userId}`
+      `${getDaemonBase()}/api/v1/workflows/${workflowId}/sync/status?user_id=${userId}`
     );
 
     if (!response.ok) {
@@ -62,7 +63,7 @@ export async function syncResources(workflowId, direction = null) {
     const body = direction ? { direction } : {};
 
     const response = await fetch(
-      `${DAEMON_BASE}/api/v1/workflows/${workflowId}/sync?user_id=${userId}`,
+      `${getDaemonBase()}/api/v1/workflows/${workflowId}/sync?user_id=${userId}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -103,7 +104,7 @@ export async function listResources(workflowId, source = 'local') {
     const userId = await getCurrentUserId();
 
     const response = await fetch(
-      `${DAEMON_BASE}/api/v1/workflows/${workflowId}/resources?user_id=${userId}&source=${source}`
+      `${getDaemonBase()}/api/v1/workflows/${workflowId}/resources?user_id=${userId}&source=${source}`
     );
 
     if (!response.ok) {

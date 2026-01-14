@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import Icon from '../components/Icons';
 import WorkflowGenerationProgress from '../components/WorkflowGenerationProgress';
 import { api } from '../utils/api';
@@ -11,6 +12,7 @@ import '../styles/GenerationPage.css';
  * without the intermediate MetaFlow step.
  */
 function GenerationPage({ session, onNavigate, showStatus, params = {}, version }) {
+  const { t } = useTranslation();
   const userId = session?.username;
 
   // Extract params
@@ -257,7 +259,7 @@ function GenerationPage({ session, onNavigate, showStatus, params = {}, version 
 
   const handleGenerateWorkflow = async () => {
     if (!recordingId && !taskDescription.trim()) {
-      showStatus("Please enter a task description", "error");
+      showStatus(t('generation.hints.enterDescription'), "error");
       return;
     }
 
@@ -276,9 +278,9 @@ function GenerationPage({ session, onNavigate, showStatus, params = {}, version 
       simulationStateRef.current = { stage: 'analyzing', stepIndex: 0, active: true };
 
       // Initial Logs
-      addLog('info', 'Initializing workflow generation engine...');
-      if (recordingId) addLog('info', `Loaded recording: ${recordingName}`);
-      addLog('analyzing', 'Starting deep analysis...');
+      addLog('info', t('generation.hints.initEngine'));
+      if (recordingId) addLog('info', t('generation.hints.loadedRecording', { name: recordingName }));
+      addLog('analyzing', t('generation.hints.startAnalysis'));
 
       // Start Simulation for first stage
       startSimulation('analyzing');
@@ -312,9 +314,9 @@ function GenerationPage({ session, onNavigate, showStatus, params = {}, version 
             // If completely failed, stop everything
             if (event.status === 'failed') {
               stopSimulation();
-              setGenerationError(event.message || 'Generation failed');
+              setGenerationError(event.message || t('generation.stages.failed'));
               updateStage(simulationStateRef.current.stage, 'failed');
-              addLog('error', `Generation Failed: ${event.message}`);
+              addLog('error', `${t('generation.stages.failed')}: ${event.message}`);
               return;
             }
 
@@ -329,7 +331,7 @@ function GenerationPage({ session, onNavigate, showStatus, params = {}, version 
               // Run the matrix effect
               await runFastForwardCompletion();
 
-              addLog('success', 'Workflow generated successfully!');
+              addLog('success', t('generation.hints.genSuccess'));
               return;
             }
 
@@ -370,10 +372,10 @@ function GenerationPage({ session, onNavigate, showStatus, params = {}, version 
       }
 
       updateStage('complete', 'completed');
-      addLog('success', 'Workflow generation finalized.');
+      addLog('success', t('generation.hints.genFinalized'));
 
       setWorkflowResult(result);
-      showStatus("Workflow generated successfully!", "success");
+      showStatus(t('generation.hints.genSuccess'), "success");
 
       // Navigate
       setTimeout(() => {
@@ -384,7 +386,7 @@ function GenerationPage({ session, onNavigate, showStatus, params = {}, version 
           });
         } else {
           console.error("No workflow result returned", result);
-          showStatus("Error: No workflow ID returned", "error");
+          showStatus(t('generation.hints.genFailed', { error: 'No workflow ID returned' }), "error");
         }
       }, 1000); // Give a moment to see the 'Ready' state
 
@@ -395,7 +397,7 @@ function GenerationPage({ session, onNavigate, showStatus, params = {}, version 
       setGenerationError(error.message);
       updateStage(currentStage, 'failed');
       addLog('error', error.message);
-      showStatus(`Failed to generate Workflow: ${error.message}`, "error");
+      showStatus(t('generation.hints.genFailed', { error: error.message }), "error");
     }
   };
 
@@ -406,7 +408,7 @@ function GenerationPage({ session, onNavigate, showStatus, params = {}, version 
     setStageStatuses({});
     setGenerationLogs([]);
     setGenerationError(null);
-    showStatus("Generation cancelled", "info");
+    showStatus(t('generation.hints.cancelled'), "info");
   };
 
   // --- Render ---
@@ -430,23 +432,23 @@ function GenerationPage({ session, onNavigate, showStatus, params = {}, version 
         <button className="back-button" onClick={() => onNavigate("main")}>
           <Icon icon="arrowLeft" />
         </button>
-        <div className="page-title"><Icon icon="cpu" size={28} /> Generate Workflow</div>
+        <div className="page-title"><Icon icon="cpu" size={28} /> {t('generation.title')}</div>
       </div>
 
       <div className="generation-content">
         <div className="generation-step">
           <div className="step-header">
             <div className="step-number">1</div>
-            <h3>Describe Your Task</h3>
+            <h3>{t('generation.describeTask')}</h3>
           </div>
 
           <div className="step-content">
             <div className="input-group">
-              <label>What would you like the workflow to do?</label>
+              <label>{t('generation.whatToDo')}</label>
               <textarea
                 value={taskDescription}
                 onChange={(e) => setTaskDescription(e.target.value)}
-                placeholder="Example: Search Google for 'coffee', then extract the titles and links of the top 10 search results"
+                placeholder={t('generation.placeholder')}
                 rows={6}
               />
             </div>
@@ -457,23 +459,22 @@ function GenerationPage({ session, onNavigate, showStatus, params = {}, version 
               disabled={!taskDescription.trim()}
             >
               <Icon icon="zap" size={16} />
-              <span>Generate Workflow</span>
+              <span>{t('generation.generateBtn')}</span>
             </button>
 
             <p className="step-description">
-              The AI will analyze your task description and generate an executable Workflow.
-              This typically takes 30-60 seconds.
+              {t('generation.stepDescription')}
             </p>
           </div>
         </div>
 
         <div className="generation-tips">
-          <h4><Icon icon="info" size={16} /> Tips for better results</h4>
+          <h4><Icon icon="info" size={16} /> {t('generation.tips.title')}</h4>
           <ul>
-            <li>Be specific about what data you want to extract</li>
-            <li>Mention the website or URL you want to work with</li>
-            <li>Describe the steps in order if there are multiple</li>
-            <li>You can modify the generated Workflow through dialogue later</li>
+            <li>{t('generation.tips.tip1')}</li>
+            <li>{t('generation.tips.tip2')}</li>
+            <li>{t('generation.tips.tip3')}</li>
+            <li>{t('generation.tips.tip4')}</li>
           </ul>
         </div>
       </div>

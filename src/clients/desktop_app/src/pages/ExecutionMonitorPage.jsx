@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import Icon from '../components/Icons';
 import { api } from '../utils/api';
 import '../styles/ExecutionMonitorPage.css';
@@ -12,6 +13,7 @@ function ExecutionMonitorPage({
   initialStatus = 'running',
   initialSteps = []
 }) {
+  const { t } = useTranslation();
   const userId = session?.username;
   const [status, setStatus] = useState(initialStatus); // 'running', 'paused', 'completed', 'failed'
   const [progress, setProgress] = useState(0);
@@ -78,7 +80,7 @@ function ExecutionMonitorPage({
   const handleStopConfirm = () => {
     setStopConfirm(false);
     setStatus('paused');
-    showStatus('Execution stopped', 'info');
+    showStatus(t('monitoring.toasts.stopped'), 'info');
   };
 
   const handleStopCancel = () => {
@@ -87,7 +89,7 @@ function ExecutionMonitorPage({
 
   const handleContinue = () => {
     setStatus('running');
-    showStatus('Execution resumed', 'info');
+    showStatus(t('monitoring.toasts.resumed'), 'info');
   };
 
   const formatTime = (seconds) => {
@@ -132,17 +134,17 @@ function ExecutionMonitorPage({
             <Icon icon="arrowLeft" />
           </button>
           <div className="header-info">
-            <h1 className="execution-title">Execution: {workflowName}</h1>
+            <h1 className="execution-title">{t('monitoring.title', { name: workflowName })}</h1>
             <div className="execution-meta">
               <span className="meta-badge" data-status={status}>
-                {status === 'running' && <><Icon icon="play" size={14} /> Running</>}
-                {status === 'paused' && <><Icon icon="pause" size={14} /> Paused</>}
-                {status === 'completed' && <><Icon icon="checkCircle" size={14} /> Completed</>}
-                {status === 'failed' && <><Icon icon="alertCircle" size={14} /> Failed</>}
+                {status === 'running' && <><Icon icon="play" size={14} /> {t('monitoring.status.running')}</>}
+                {status === 'paused' && <><Icon icon="pause" size={14} /> {t('monitoring.status.paused')}</>}
+                {status === 'completed' && <><Icon icon="checkCircle" size={14} /> {t('monitoring.status.completed')}</>}
+                {status === 'failed' && <><Icon icon="alertCircle" size={14} /> {t('monitoring.status.failed')}</>}
               </span>
-              <span className="meta-time">Elapsed: {formatTime(elapsedTime)}</span>
+              <span className="meta-time">{t('monitoring.elapsed', { time: formatTime(elapsedTime) })}</span>
               {status === 'running' && (
-                <span className="meta-time">Est. remaining: {formatTime(estimatedTimeLeft)}</span>
+                <span className="meta-time">{t('monitoring.estRemaining', { time: formatTime(estimatedTimeLeft) })}</span>
               )}
             </div>
           </div>
@@ -151,16 +153,16 @@ function ExecutionMonitorPage({
           {status === 'running' ? (
             <button className="btn-stop" onClick={handleStopClick}>
               <Icon icon="square" />
-              Stop
+              {t('monitoring.stop')}
             </button>
           ) : status === 'paused' ? (
             <button className="btn-continue" onClick={handleContinue}>
               <Icon icon="play" />
-              Continue
+              {t('monitoring.continue')}
             </button>
           ) : status === 'completed' ? (
             <button className="btn-view-results" onClick={() => onNavigate('execution-result')}>
-              <Icon icon="barChart" /> View Results
+              <Icon icon="barChart" /> {t('monitoring.viewResults')}
             </button>
           ) : null}
         </div>
@@ -173,7 +175,7 @@ function ExecutionMonitorPage({
         </div>
         <div className="progress-info">
           <span className="progress-percent">{progress}%</span>
-          <span className="progress-steps">Step {currentStep + 1} of {steps.length}</span>
+          <span className="progress-steps">{t('monitoring.progress', { current: currentStep + 1, total: steps.length })}</span>
         </div>
       </div>
 
@@ -195,9 +197,9 @@ function ExecutionMonitorPage({
           <div className="browser-content">
             <div className="browser-placeholder">
               <div className="browser-notice">
-                <h3><Icon icon="globe" size={24} /> Browser Window</h3>
-                <p>Real-time browser view will be displayed here</p>
-                <p className="current-action">Current: Scraping product 10/25</p>
+                <h3><Icon icon="globe" size={24} /> {t('monitoring.browserTitle')}</h3>
+                <p>{t('monitoring.browserNotice')}</p>
+                <p className="current-action">{t('monitoring.currentAction')}</p>
               </div>
             </div>
           </div>
@@ -206,10 +208,10 @@ function ExecutionMonitorPage({
         {/* Execution Logs */}
         <div className="logs-panel">
           <div className="logs-header">
-            <h3><Icon icon="fileText" size={18} /> Execution Logs</h3>
+            <h3><Icon icon="fileText" size={18} /> {t('monitoring.logsTitle')}</h3>
             <div className="logs-actions">
               <button className="btn-clear-logs" onClick={() => setLogs([])}>
-                Clear
+                {t('monitoring.clearLogs')}
               </button>
             </div>
           </div>
@@ -237,7 +239,7 @@ function ExecutionMonitorPage({
             <div className="logs-list">
               {logs.length === 0 ? (
                 <div className="logs-empty">
-                  <p>Waiting for logs...</p>
+                  <p>{t('monitoring.waitingLogs')}</p>
                 </div>
               ) : (
                 logs.map((log, idx) => (
@@ -261,18 +263,18 @@ function ExecutionMonitorPage({
         <div className="modal-overlay" onClick={handleStopCancel}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>Confirm Stop Execution</h3>
+              <h3>{t('monitoring.modal.confirmStop')}</h3>
             </div>
             <div className="modal-body">
-              <p>Are you sure you want to stop execution?</p>
-              <p className="warning-text">Completed data will be saved.</p>
+              <p>{t('monitoring.modal.areYouSure')}</p>
+              <p className="warning-text">{t('monitoring.modal.warning')}</p>
             </div>
             <div className="modal-footer">
               <button className="btn-cancel" onClick={handleStopCancel}>
-                Cancel
+                {t('monitoring.modal.cancel')}
               </button>
               <button className="btn-confirm-delete" onClick={handleStopConfirm}>
-                Stop Execution
+                {t('monitoring.modal.stopExecution')}
               </button>
             </div>
           </div>

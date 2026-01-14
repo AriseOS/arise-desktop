@@ -12,6 +12,58 @@ struct AppState {
     daemon: std::sync::Mutex<Option<PythonDaemon>>,
 }
 
+/// Read daemon port from file
+/// Returns the port number if daemon is running, or default port if file doesn't exist
+#[tauri::command]
+fn get_daemon_port() -> serde_json::Value {
+    let home = std::env::var("HOME").unwrap_or_else(|_| {
+        std::env::var("USERPROFILE").unwrap_or_else(|_| String::from("~"))
+    });
+    let port_file = PathBuf::from(home).join(".ami").join("daemon.port");
+
+    if !port_file.exists() {
+        println!("Port file not found, using default port 8765");
+        return serde_json::json!({
+            "success": true,
+            "port": 8765,
+            "source": "default"
+        });
+    }
+
+    match std::fs::read_to_string(&port_file) {
+        Ok(content) => {
+            match content.trim().parse::<u16>() {
+                Ok(port) => {
+                    println!("Read daemon port from file: {}", port);
+                    serde_json::json!({
+                        "success": true,
+                        "port": port,
+                        "source": "file"
+                    })
+                }
+                Err(e) => {
+                    println!("Failed to parse port file content '{}': {}", content, e);
+                    serde_json::json!({
+                        "success": true,
+                        "port": 8765,
+                        "source": "default",
+                        "warning": format!("Invalid port file content: {}", e)
+                    })
+                }
+            }
+        }
+        Err(e) => {
+            println!("Failed to read port file: {}", e);
+            serde_json::json!({
+                "success": true,
+                "port": 8765,
+                "source": "default",
+                "warning": format!("Failed to read port file: {}", e)
+            })
+        }
+    }
+}
+
 /// Read daemon log file content (last N lines)
 #[tauri::command]
 fn read_daemon_logs(max_lines: Option<usize>) -> serde_json::Value {
@@ -119,7 +171,7 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
-        .invoke_handler(tauri::generate_handler![check_browser_installed, read_daemon_logs])
+        .invoke_handler(tauri::generate_handler![check_browser_installed, read_daemon_logs, get_daemon_port])
         .setup(|app| {
             // Initialize HTTP daemon on startup
             println!("🚀 Initializing Python HTTP daemon...");

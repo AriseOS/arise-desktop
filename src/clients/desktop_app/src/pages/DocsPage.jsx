@@ -1,22 +1,21 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import Icon from '../components/Icons';
 import '../styles/DocsPage.css';
 
 const DOCS_URL = 'https://docs.ariseos.com';
 
-function DocsPage({ language = 'en', onNavigate }) {
+function DocsPage({ onNavigate }) {
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(true);
-
-  const headerTitle = language === 'zh' ? '使用手册' : 'Help & User Guide';
-  const backLabel = language === 'zh' ? '返回' : 'Back';
 
   return (
     <div className="page docs-page">
       <div className="docs-header">
         <button className="back-button" onClick={() => onNavigate('main')}>
-          <Icon icon="arrowLeft" size={16} /> {backLabel}
+          <Icon icon="arrowLeft" size={16} /> {t('docs.back')}
         </button>
-        <h1 className="docs-title">{headerTitle}</h1>
+        <h1 className="docs-title">{t('docs.title')}</h1>
         <div className="docs-header-actions">
           <a
             href={DOCS_URL}
@@ -24,7 +23,7 @@ function DocsPage({ language = 'en', onNavigate }) {
             rel="noopener noreferrer"
             className="btn btn-secondary btn-sm"
           >
-            {language === 'zh' ? '在浏览器中打开' : 'Open in Browser'}
+            {t('docs.openInBrowser')}
           </a>
         </div>
       </div>
@@ -33,7 +32,7 @@ function DocsPage({ language = 'en', onNavigate }) {
         {loading && (
           <div className="docs-loading">
             <div className="loading-spinner" />
-            <p>{language === 'zh' ? '正在加载文档...' : 'Loading documentation...'}</p>
+            <p>{t('docs.loading')}</p>
           </div>
         )}
         <iframe

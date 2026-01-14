@@ -167,6 +167,7 @@ function App() {
         setSetupChecking(false); // Stop setup check UI (if we want to switch)
 
         // Wait for backend (up to 20s)
+        // waitForBackend automatically discovers daemon port on each retry
         const isReady = await api.waitForBackend();
 
         if (isReady) {
@@ -215,8 +216,9 @@ function App() {
     setBackendChecking(true);
 
     try {
-      // Try to reconnect to backend
-      const isReady = await api.waitForBackend(10000); // 10s timeout for retry
+      // Try to reconnect to backend (10s timeout for retry)
+      // waitForBackend automatically discovers daemon port on each retry
+      const isReady = await api.waitForBackend(10000);
 
       if (isReady) {
         console.log('[App] Backend reconnected successfully');
@@ -289,15 +291,15 @@ function App() {
     if (browserOpening) return;
 
     setBrowserOpening(true);
-    showStatus("Opening browser...", "info");
+    showStatus(t('common.browser.opening'), "info");
 
     try {
       const result = await api.startBrowser(false);
 
       if (result.status === "already_running") {
-        showStatus("Browser is already running", "success");
+        showStatus(t('common.browser.alreadyRunning'), "success");
       } else {
-        showStatus("Browser opened successfully!", "success");
+        showStatus(t('common.browser.opened'), "success");
       }
     } catch (error) {
       console.error("Open browser error:", error);

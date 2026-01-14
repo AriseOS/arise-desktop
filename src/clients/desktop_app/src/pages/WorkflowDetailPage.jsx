@@ -1183,10 +1183,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                           <span className="stat-label">{t('workflowDetail.status')}</span>
                           <div className={`stat-value-badge ${getStatusClass(executionDetail.meta?.status)}`}>
                             {getStatusIcon(executionDetail.meta?.status)}
-                            <div className={`stat-value-badge ${getStatusClass(executionDetail.meta?.status)}`}>
-                              {getStatusIcon(executionDetail.meta?.status)}
-                              <span>{(executionDetail.meta?.status && t(`myWorkflows.status.${executionDetail.meta.status}`)) || executionDetail.meta?.status || t('workflowDetail.unknown')}</span>
-                            </div>
+                            <span>{(executionDetail.meta?.status && t(`myWorkflows.status.${executionDetail.meta.status}`)) || executionDetail.meta?.status || t('workflowDetail.unknown')}</span>
                           </div>
                           <div className="stat-card">
                             <span className="stat-label">{t('workflowDetail.duration')}</span>

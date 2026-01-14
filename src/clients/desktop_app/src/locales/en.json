@@ -163,7 +163,48 @@
         "csvDownloadedCount": "Downloaded {{count}} CSV files",
         "csvPartialFailed": "Some CSV files failed to download",
         "csvDownloaded": "CSV Downloaded",
-        "csvDownloadFailed": "CSV Download Failed"
+        "csvDownloadFailed": "CSV Download Failed",
+        "loading": "Loading results...",
+        "failedTitle": "Failed to load results",
+        "backToHome": "Back to Home",
+        "successTitle": "Execution Successful!",
+        "scrapedSummary": "Scraped {{count}} records in {{duration}}",
+        "noDataAvailable": "No data available",
+        "downloadExcel": "Download Excel",
+        "downloadCSV": "Download CSV",
+        "downloadJSON": "Download JSON",
+        "noDataMessage": "No data was extracted from this execution.",
+        "saveWorkflowTitle": "Want to use this workflow again?",
+        "saveWorkflowDesc": "Save it for easy access and reuse",
+        "workflowNameLabel": "Workflow Name:",
+        "workflowNamePlaceholder": "Enter workflow name...",
+        "saveWorkflowBtn": "Save Workflow",
+        "whatsNext": "What's next?",
+        "runAgain": "Run Again",
+        "runAgainDesc": "Execute this workflow again with the same settings",
+        "createNew": "Create New Workflow",
+        "createNewDesc": "Record a new workflow for a different task",
+        "backToDashboard": "Back to Home",
+        "backToDashboardDesc": "Return to the main dashboard",
+        "firstTime": {
+            "title": "Congratulations on your first automation!",
+            "content": "You've just saved approximately 30 minutes of manual work.",
+            "gotIt": "Got it!"
+        },
+        "downloading": "Downloading data as {{format}}...",
+        "downloadSuccess": "Downloaded successfully as {{format}}!",
+        "enterName": "Please enter a workflow name",
+        "saving": "Saving workflow...",
+        "savedSuccess": "Workflow \"{{name}}\" saved successfully!",
+        "startExecution": "Starting workflow execution...",
+        "startedRedirecting": "Workflow started! Redirecting to live execution page...",
+        "startFailed": "Failed to start workflow: {{error}}",
+        "status": "Status",
+        "duration": "Duration",
+        "completed": "Completed",
+        "records": "Records",
+        "showingRecords": "Showing first {{count}} of {{total}} records",
+        "rowsInfo": "Total {{total}} records • Showing first {{shown}} rows"
     },
     "recordingDetail": {
         "title": "Recording Details",
@@ -244,6 +285,7 @@
         "local": "Local",
         "status": {
             "ready": "Ready",
+            "completed": "Completed",
             "running": "Running",
             "draft": "Draft",
             "failed": "Failed",
@@ -290,6 +332,111 @@
         "logoutSuccess": "Logged out successfully",
         "logoutFailed": "Failed to logout",
         "loggedInAs": "Logged in as {{username}}"
+    },
+    "workflowExecution": {
+        "connecting": "Connecting...",
+        "waitingForUpdates": "Connected. Waiting for updates...",
+        "connectionLost": "Connection lost. Reconnecting...",
+        "connectionFailed": "Connection failed. Please check if the workflow is running.",
+        "noTaskId": "No task ID provided",
+        "failedToConnect": "Unable to connect to workflow stream",
+        "failedLog": "Failed to connect to workflow stream",
+        "stopRequested": "Workflow stop requested",
+        "stopFailed": "Failed to stop workflow: {{error}}",
+        "failedToStop": "Failed to stop workflow",
+        "stopping": "Stopping workflow...",
+        "status": {
+            "connecting": "Connecting",
+            "running": "Running",
+            "stopping": "Stopping",
+            "stopped": "Stopped",
+            "completed": "Completed",
+            "failed": "Failed"
+        },
+        "elapsed": "Elapsed: {{time}}",
+        "live": "Live",
+        "offline": "Offline",
+        "stop": "Stop",
+        "viewResults": "View Results",
+        "backToHome": "Back to Home",
+        "progressTitle": "Workflow Progress",
+        "initializing": "Initializing...",
+        "stepProgress": "Step {{current}}/{{total}}",
+        "coldStart": {
+            "title": "First-time optimization:",
+            "content": "AI is generating execution scripts. Some specific steps may take a few minutes to complete."
+        },
+        "waitingForSteps": "Waiting for workflow steps...",
+        "logsTitle": "Execution Logs",
+        "clearLogs": "Clear",
+        "waitingForLogs": "Waiting for logs...",
+        "showDetails": "Show details",
+        "hideDetails": "Hide details",
+        "codeContentMissing": "Code content missing. Metadata keys: {{keys}}"
+    },
+    "userFlows": {
+        "title": "User Flows",
+        "newRecording": "New Recording",
+        "listTitle": "Recording List",
+        "refresh": "Refresh",
+        "loading": "Loading user flows...",
+        "empty": {
+            "title": "No user flows found",
+            "desc": "Start recording browser actions to create your first flow"
+        },
+        "startRecording": "Start Recording",
+        "status": {
+            "completed": "Completed",
+            "recording": "Recording",
+            "failed": "Failed"
+        },
+        "meta": {
+            "startUrl": "Start URL:",
+            "actions": "Actions:",
+            "actionsUnit": "actions",
+            "time": "Recorded at:",
+            "sessionId": "Session ID:"
+        },
+        "generate": "Generate Workflow",
+        "generating": "Generating...",
+        "details": "View Details",
+        "delete": "Delete",
+        "guide": {
+            "title": "User Guide",
+            "recording": {
+                "title": "Record Flow",
+                "desc": "Click \"New Recording\" to start identifying browser actions. The system will record your every step."
+            },
+            "generate": {
+                "title": "Generate Workflow",
+                "desc": "Generate executable Workflows directly from user flows without waiting for AI processing."
+            },
+            "details": {
+                "title": "View Details",
+                "desc": "View detailed operation steps to understand the specific content of the recording."
+            }
+        },
+        "deleteConfirm": {
+            "title": "Confirm Delete",
+            "desc": "Are you sure you want to delete \"{{name}}\"?",
+            "warning": "This action cannot be undone.",
+            "cancel": "Cancel",
+            "confirm": "Delete"
+        },
+        "toasts": {
+            "loadLoading": "Loading user flows...",
+            "loadSuccess": "User flows loaded successfully",
+            "loadFailed": "Failed to load user flows",
+            "deleteLoading": "Deleting recording...",
+            "deleteSuccess": "Recording deleted successfully",
+            "deleteFailed": "Failed to delete recording: {{error}}"
+        }
+    },
+    "docs": {
+        "title": "Help & User Guide",
+        "back": "Back",
+        "openInBrowser": "Open in Browser",
+        "loading": "Loading documentation..."
     },
     "setup": {
         "title": "Welcome to Ami",

@@ -9,12 +9,14 @@
  */
 
 import { auth } from './auth';
-import { BACKEND_CONFIG } from '../config/backend';
+import { BACKEND_CONFIG, initBackendPort } from '../config/backend';
 
 // API endpoints
 // CRS (Claude Relay Service) - User Management and LLM Proxy
 const CRS_BASE = 'https://api.ariseos.com'; // CRS production URL
-const APP_BACKEND_BASE = BACKEND_CONFIG.httpBase;
+
+// Get backend URL dynamically (port may change)
+const getBackendBase = () => BACKEND_CONFIG.httpBase;
 
 // Connection error event handling
 // Used to notify App when backend becomes unreachable
@@ -54,11 +56,21 @@ export const api = {
   // ============================================================================
 
   /**
+   * Initialize the API client (discover daemon port)
+   * Note: Usually not needed to call directly - waitForBackend() calls this automatically
+   * @param {boolean} forceRefresh - If true, re-read port from file even if cached
+   * @returns {Promise<number>} The discovered port
+   */
+  async init(forceRefresh = false) {
+    return await initBackendPort(forceRefresh);
+  },
+
+  /**
    * Get the backend base URL
    * @returns {string} Backend base URL
    */
   getBackendUrl() {
-    return APP_BACKEND_BASE;
+    return getBackendBase();
   },
 
   /**
@@ -67,7 +79,7 @@ export const api = {
    */
   async healthCheck() {
     try {
-      const response = await fetch(`${APP_BACKEND_BASE}/health`, {
+      const response = await fetch(`${getBackendBase()}/health`, {
         method: 'GET',
         // Short timeout to avoid long hangs
         signal: AbortSignal.timeout(2000)
@@ -80,6 +92,7 @@ export const api = {
 
   /**
    * Wait for backend to be ready
+   * Automatically discovers daemon port on each retry (daemon may still be starting)
    * @param {number} timeoutMs - Max wait time in ms (default 20000)
    * @returns {Promise<boolean>} True if ready, False if timed out
    */
@@ -87,6 +100,9 @@ export const api = {
     const startTime = Date.now();
 
     while (Date.now() - startTime < timeoutMs) {
+      // Re-read port file on each attempt (daemon may have just written it)
+      await initBackendPort(true);
+
       if (await this.healthCheck()) {
         return true;
       }
@@ -102,7 +118,7 @@ export const api = {
    */
   async getVersionInfo() {
     try {
-      const response = await fetch(`${APP_BACKEND_BASE}/api/v1/app/version`, {
+      const response = await fetch(`${getBackendBase()}/api/v1/app/version`, {
         method: 'GET',
         signal: AbortSignal.timeout(5000)
       });
@@ -138,7 +154,7 @@ export const api = {
         user_id: session.username,
         ...(userDescription && { user_description: userDescription })
       };
-      const response = await fetch(`${APP_BACKEND_BASE}/api/v1/app/diagnostic`, {
+      const response = await fetch(`${getBackendBase()}/api/v1/app/diagnostic`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -358,7 +374,7 @@ export const api = {
         console.log(`[API] Calling ${endpoint} without API key`);
       }
 
-      const response = await fetch(`${APP_BACKEND_BASE}${endpoint}`, {
+      const response = await fetch(`${getBackendBase()}${endpoint}`, {
         ...options,
         headers
       });
@@ -405,7 +421,7 @@ export const api = {
         headers['X-Ami-API-Key'] = apiKey;
       }
 
-      return await fetch(`${APP_BACKEND_BASE}${endpoint}`, {
+      return await fetch(`${getBackendBase()}${endpoint}`, {
         ...options,
         headers
       });
