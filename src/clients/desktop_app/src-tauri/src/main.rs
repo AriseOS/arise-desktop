@@ -12,6 +12,46 @@ struct AppState {
     daemon: std::sync::Mutex<Option<PythonDaemon>>,
 }
 
+/// Read daemon log file content (last N lines)
+#[tauri::command]
+fn read_daemon_logs(max_lines: Option<usize>) -> serde_json::Value {
+    let max_lines = max_lines.unwrap_or(100);
+    let home = std::env::var("HOME").unwrap_or_else(|_| String::from("~"));
+    let log_path = PathBuf::from(home).join(".ami").join("logs").join("app.log");
+
+    if !log_path.exists() {
+        return serde_json::json!({
+            "success": false,
+            "error": "Log file not found",
+            "path": log_path.to_string_lossy().to_string(),
+            "logs": []
+        });
+    }
+
+    match std::fs::read_to_string(&log_path) {
+        Ok(content) => {
+            let lines: Vec<&str> = content.lines().collect();
+            let start = if lines.len() > max_lines { lines.len() - max_lines } else { 0 };
+            let recent_lines: Vec<String> = lines[start..].iter().map(|s| s.to_string()).collect();
+
+            serde_json::json!({
+                "success": true,
+                "path": log_path.to_string_lossy().to_string(),
+                "logs": recent_lines,
+                "total_lines": lines.len()
+            })
+        }
+        Err(e) => {
+            serde_json::json!({
+                "success": false,
+                "error": format!("Failed to read log file: {}", e),
+                "path": log_path.to_string_lossy().to_string(),
+                "logs": []
+            })
+        }
+    }
+}
+
 /// Check if a usable browser is available (Chrome or Playwright Chromium)
 #[tauri::command]
 fn check_browser_installed() -> serde_json::Value {
@@ -79,7 +119,7 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
-        .invoke_handler(tauri::generate_handler![check_browser_installed])
+        .invoke_handler(tauri::generate_handler![check_browser_installed, read_daemon_logs])
         .setup(|app| {
             // Initialize HTTP daemon on startup
             println!("🚀 Initializing Python HTTP daemon...");

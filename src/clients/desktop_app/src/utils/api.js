@@ -16,6 +16,35 @@ import { BACKEND_CONFIG } from '../config/backend';
 const CRS_BASE = 'https://api.ariseos.com'; // CRS production URL
 const APP_BACKEND_BASE = BACKEND_CONFIG.httpBase;
 
+// Connection error event handling
+// Used to notify App when backend becomes unreachable
+let connectionErrorCallback = null;
+
+/**
+ * Register a callback to be called when backend connection fails
+ * @param {function} callback - Called with error info when connection fails
+ */
+export const onConnectionError = (callback) => {
+  connectionErrorCallback = callback;
+};
+
+/**
+ * Check if an error is a connection error (network failure, refused, etc.)
+ */
+const isConnectionError = (error) => {
+  if (!error) return false;
+  const message = error.message?.toLowerCase() || '';
+  return (
+    message.includes('failed to fetch') ||
+    message.includes('network') ||
+    message.includes('econnrefused') ||
+    message.includes('connection refused') ||
+    message.includes('net::err_connection_refused') ||
+    message.includes('load failed') ||
+    error.name === 'TypeError' && message.includes('fetch')
+  );
+};
+
 /**
  * API client utility
  */
@@ -348,6 +377,10 @@ export const api = {
       return await response.json();
     } catch (error) {
       console.error('[API] App Backend error:', error);
+      // Check if this is a connection error and notify App
+      if (isConnectionError(error) && connectionErrorCallback) {
+        connectionErrorCallback({ endpoint, error });
+      }
       throw error;
     }
   },
@@ -360,21 +393,29 @@ export const api = {
    * @returns {Promise<Response>} Raw fetch Response
    */
   async callAppBackendRaw(endpoint, options = {}) {
-    const apiKey = await auth.getApiKey();
+    try {
+      const apiKey = await auth.getApiKey();
 
-    const headers = {
-      'Content-Type': 'application/json',
-      ...options.headers
-    };
+      const headers = {
+        'Content-Type': 'application/json',
+        ...options.headers
+      };
 
-    if (apiKey) {
-      headers['X-Ami-API-Key'] = apiKey;
+      if (apiKey) {
+        headers['X-Ami-API-Key'] = apiKey;
+      }
+
+      return await fetch(`${APP_BACKEND_BASE}${endpoint}`, {
+        ...options,
+        headers
+      });
+    } catch (error) {
+      // Check if this is a connection error and notify App
+      if (isConnectionError(error) && connectionErrorCallback) {
+        connectionErrorCallback({ endpoint, error });
+      }
+      throw error;
     }
-
-    return await fetch(`${APP_BACKEND_BASE}${endpoint}`, {
-      ...options,
-      headers
-    });
   },
 
   // ============================================================================

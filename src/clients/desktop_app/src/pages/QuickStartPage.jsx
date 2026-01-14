@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useTranslation } from "react-i18next";
 import Icon from '../components/Icons';
 import { api } from '../utils/api';
 import '../styles/QuickStartPage.css';
 
 function QuickStartPage({ session, onNavigate, showStatus, version }) {
+  const { t } = useTranslation();
   const userId = session?.username;
   const [step, setStep] = useState('tutorial'); // 'tutorial', 'input', 'recording', 'analyzing'
   const [tutorialPage, setTutorialPage] = useState(0);
@@ -57,19 +59,19 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
   // Get operation type label with icon
   const getOperationTypeLabel = (type) => {
     const typeLabels = {
-      'click': { text: '点击', icon: 'mousePointer' },
-      'input': { text: '输入', icon: 'keyboard' },
-      'navigate': { text: '导航', icon: 'globe' },
-      'scroll': { text: '滚动', icon: 'arrowDown' },
-      'select': { text: '选择', icon: 'list' },
-      'submit': { text: '提交', icon: 'checkCircle' },
-      'hover': { text: '悬停', icon: 'mousePointer' },
-      'keydown': { text: '按键', icon: 'keyboard' },
-      'change': { text: '修改', icon: 'edit' },
-      'newtab': { text: '新标签', icon: 'plus' },
-      'closetab': { text: '关闭标签', icon: 'x' },
-      'copy_action': { text: '复制', icon: 'clipboard' },
-      'paste_action': { text: '粘贴', icon: 'clipboard' }
+      'click': { text: t('quickStart.operations.click'), icon: 'mousePointer' },
+      'input': { text: t('quickStart.operations.input'), icon: 'keyboard' },
+      'navigate': { text: t('quickStart.operations.navigate'), icon: 'globe' },
+      'scroll': { text: t('quickStart.operations.scroll'), icon: 'arrowDown' },
+      'select': { text: t('quickStart.operations.select'), icon: 'list' },
+      'submit': { text: t('quickStart.operations.submit'), icon: 'checkCircle' },
+      'hover': { text: t('quickStart.operations.hover'), icon: 'mousePointer' },
+      'keydown': { text: t('quickStart.operations.keydown'), icon: 'keyboard' },
+      'change': { text: t('quickStart.operations.change'), icon: 'edit' },
+      'newtab': { text: t('quickStart.operations.newtab'), icon: 'plus' },
+      'closetab': { text: t('quickStart.operations.closetab'), icon: 'x' },
+      'copy_action': { text: t('quickStart.operations.copy_action'), icon: 'clipboard' },
+      'paste_action': { text: t('quickStart.operations.paste_action'), icon: 'clipboard' }
     };
     const label = typeLabels[type] || { text: type || '操作', icon: 'mapPin' };
     return (
@@ -82,21 +84,21 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
 
   const tutorialSteps = [
     {
-      title: "How Recording Works",
-      description: "AI watches and learns from your browser actions",
-      content: "We capture: Clicks, Text Input, Page Navigation, Copy/Paste\n\nThe AI uses this to build an automated workflow that replays your exact actions.",
+      title: t('quickStart.tutorial.step1Title'),
+      description: t('quickStart.tutorial.step1Desc'),
+      content: t('quickStart.tutorial.step1Content'),
       icon: "video"
     },
     {
-      title: "Key Tip: Select + Copy",
-      description: "This is how you tell AI what data to extract",
-      content: "When you see data you want:\n1. Select the text with your mouse\n2. Press Ctrl+C (Cmd+C on Mac)\n\nAI knows: 'User wants to extract this field'",
+      title: t('quickStart.tutorial.step2Title'),
+      description: t('quickStart.tutorial.step2Desc'),
+      content: t('quickStart.tutorial.step2Content'),
       icon: "clipboard"
     },
     {
-      title: "Complete Your Path",
-      description: "Start from the beginning, click through each step",
-      content: "Why? The workflow runs on a fresh browser.\n\nIt needs your full click path to:\n• Navigate to the right page\n• Find the same elements\n• Extract the same data",
+      title: t('quickStart.tutorial.step3Title'),
+      description: t('quickStart.tutorial.step3Desc'),
+      content: t('quickStart.tutorial.step3Content'),
       icon: "cpu"
     }
   ];
@@ -124,19 +126,19 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
     if (browserOpening) return;
 
     setBrowserOpening(true);
-    showStatus("Opening browser...", "info");
+    showStatus(t('quickStart.status.openingBrowser'), "info");
 
     try {
       const result = await api.startBrowser(false);
 
       if (result.status === "already_running") {
-        showStatus("Browser is already running. You can login to your accounts now.", "success");
+        showStatus(t('quickStart.status.browserAlreadyRunning'), "success");
       } else {
-        showStatus("Browser opened! Login to your accounts, then click 'Start Recording' when ready.", "success");
+        showStatus(t('quickStart.status.browserOpened'), "success");
       }
     } catch (error) {
       console.error("Open browser error:", error);
-      showStatus(`Failed to open browser: ${error.message}`, "error");
+      showStatus(`${t('quickStart.status.openBrowserFailed')}: ${error.message}`, "error");
     } finally {
       setBrowserOpening(false);
     }
@@ -144,7 +146,7 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
 
   const handleStartRecording = async () => {
     try {
-      showStatus("Starting recording...", "info");
+      showStatus(t('quickStart.status.startingRecording'), "info");
 
       // Use about:blank as default URL - user can navigate anywhere in browser
       const result = await api.callAppBackend('/api/v1/recordings/start', {
@@ -161,23 +163,23 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
       });
       setCurrentSessionId(result.session_id);
       setStep('recording');
-      showStatus("Recording started! Navigate to any website in the browser", "success");
+      showStatus(t('quickStart.status.recordingStarted'), "success");
 
     } catch (error) {
       console.error("Start recording error:", error);
-      showStatus(`Failed to start recording: ${error.message}`, "error");
+      showStatus(`${t('quickStart.status.startRecordingFailed')}: ${error.message}`, "error");
     }
   };
 
   const handleStopRecording = async () => {
     try {
-      showStatus("Stopping recording...", "info");
+      showStatus(t('quickStart.status.stoppingRecording'), "info");
 
       const result = await api.callAppBackend('/api/v1/recordings/stop', {
         method: "POST"
       });
       setOperationsCount(result.operations_count);
-      showStatus(`Recording completed! Captured ${result.operations_count} operations`, "success");
+      showStatus(t('quickStart.status.recordingCompleted', { count: result.operations_count }), "success");
 
       // Analyze recording with AI
       setStep('analyzing');
@@ -185,7 +187,7 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
 
     } catch (error) {
       console.error("Stop recording error:", error);
-      showStatus(`Failed to stop recording: ${error.message}`, "error");
+      showStatus(`${t('quickStart.status.stopRecordingFailed')}: ${error.message}`, "error");
       setStep('input');
     }
   };
@@ -193,7 +195,7 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
   const handleAnalyzeRecording = async (sessionId) => {
     try {
       setAnalysisProgress(0);
-      showStatus("AI is analyzing your operations...", "info");
+      showStatus(t('quickStart.status.analyzing'), "info");
 
       const progressInterval = setInterval(() => {
         setAnalysisProgress(prev => {
@@ -211,7 +213,7 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
       clearInterval(progressInterval);
       setAnalysisProgress(100);
 
-      showStatus(`Analysis complete!`, "success");
+      showStatus(t('quickStart.analysisComplete'), "success");
 
       // Save metadata immediately after analysis
       try {
@@ -242,7 +244,7 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
 
     } catch (error) {
       console.error("Analysis error:", error);
-      showStatus(`Failed to analyze recording: ${error.message}`, "error");
+      showStatus(`${t('quickStart.status.analyzeFailed')}: ${error.message}`, "error");
       setStep('input');
     }
   };
@@ -256,7 +258,7 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
       <div className="tutorial-overlay">
         <div className="tutorial-modal">
           <button className="tutorial-skip" onClick={handleSkipTutorial}>
-            <Icon icon="x" /> Skip Tutorial
+            <Icon icon="x" /> {t('quickStart.tutorial.skip')}
           </button>
 
           <div className="tutorial-content">
@@ -286,11 +288,11 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
             <div className="tutorial-buttons">
               {tutorialPage > 0 && (
                 <button className="tutorial-btn secondary" onClick={handlePrevTutorialPage}>
-                  Previous
+                  {t('quickStart.tutorial.previous')}
                 </button>
               )}
               <button className="tutorial-btn primary" onClick={handleNextTutorialPage}>
-                {tutorialPage === tutorialSteps.length - 1 ? "Get Started" : "Next"}
+                {tutorialPage === tutorialSteps.length - 1 ? t('quickStart.tutorial.getStarted') : t('quickStart.tutorial.next')}
               </button>
             </div>
           </div>
@@ -308,7 +310,7 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
           <Icon icon="arrowLeft" />
         </button>
         <div className="page-title">
-          <Icon icon="zap" /> Quick Start
+          <Icon icon="zap" /> {t('quickStart.title')}
         </div>
       </div>
 
@@ -316,8 +318,8 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
         {/* LEFT COLUMN: START BUTTON card */}
         <div className="input-card">
           <div className="card-header">
-            <h2>Start Recording</h2>
-            <p>Click below to open the browser. We'll capture your actions to build the workflow.</p>
+            <h2>{t('quickStart.startRecordingTitle')}</h2>
+            <p>{t('quickStart.startRecordingDesc')}</p>
           </div>
 
           <button
@@ -327,12 +329,12 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
             <span className="btn-icon">
               <Icon icon="video" />
             </span>
-            <span>Open Browser & Start Recording</span>
+            <span>{t('quickStart.openBrowserAndRecord')}</span>
           </button>
 
           <div className="browser-only-section">
             <div className="browser-only-divider">
-              <span>or</span>
+              <span>{t('quickStart.or')}</span>
             </div>
             <button
               className="open-browser-btn"
@@ -340,11 +342,11 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
               disabled={browserOpening}
             >
               <Icon icon="globe" size={16} />
-              <span>{browserOpening ? "Opening..." : "Open Browser Only"}</span>
+              <span>{browserOpening ? t('quickStart.opening') : t('quickStart.openBrowserOnly')}</span>
             </button>
             <div className="browser-only-hint">
               <Icon icon="info" size={14} />
-              <span>Need to login first? Open browser to login, then start recording.</span>
+              <span>{t('quickStart.needLoginHint')}</span>
             </div>
           </div>
         </div>
@@ -352,34 +354,34 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
         {/* RIGHT COLUMN: TIPS & RULES */}
         <div className="tips-panel">
           <div className="tips-section">
-            <h3><Icon icon="zap" size={18} /> Recording Best Practices</h3>
+            <h3><Icon icon="zap" size={18} /> {t('quickStart.recordingBestPractices')}</h3>
             <ul className="tips-list">
               <li>
-                <strong>Select + Copy = Extract:</strong> To extract data, select text with mouse then press Ctrl+C. AI recognizes this as data to extract.
+                <strong>{t('quickStart.tipSelectCopy')}</strong> {t('quickStart.tipSelectCopyDesc')}
               </li>
               <li>
-                <strong>Complete Path:</strong> Start from the beginning. Every click is recorded. AI needs the full path to automate replay.
+                <strong>{t('quickStart.tipCompletePath')}</strong> {t('quickStart.tipCompletePathDesc')}
               </li>
               <li>
-                <strong>Wait for Load:</strong> Ensure pages fully load before clicking. This helps AI identify the correct elements.
+                <strong>{t('quickStart.tipWaitForLoad')}</strong> {t('quickStart.tipWaitForLoadDesc')}
               </li>
             </ul>
           </div>
 
           <div className="tips-section">
-            <h3><Icon icon="clipboard" size={18} /> What Gets Recorded</h3>
+            <h3><Icon icon="clipboard" size={18} /> {t('quickStart.whatGetsRecorded')}</h3>
             <ul className="tips-list info">
-              <li><strong>Clicks:</strong> Buttons, links, menu items</li>
-              <li><strong>Inputs:</strong> Text fields, search boxes</li>
-              <li><strong>Select+Copy:</strong> Selected and copied text (key for data extraction)</li>
-              <li><strong>Navigation:</strong> URL changes and page transitions</li>
+              <li><strong>{t('quickStart.clicks')}</strong> {t('quickStart.clicksDesc')}</li>
+              <li><strong>{t('quickStart.inputs')}</strong> {t('quickStart.inputsDesc')}</li>
+              <li><strong>{t('quickStart.selectCopy')}</strong> {t('quickStart.selectCopyDesc')}</li>
+              <li><strong>{t('quickStart.navigation')}</strong> {t('quickStart.navigationDesc')}</li>
             </ul>
           </div>
 
           <div className="tips-section warning-section">
-            <h3><Icon icon="alertTriangle" size={18} /> Note</h3>
+            <h3><Icon icon="alertTriangle" size={18} /> {t('quickStart.note')}</h3>
             <ul className="tips-list warning">
-              <li>Do not close the browser directly. Return here and click "Stop Recording".</li>
+              <li>{t('quickStart.doNotCloseBrowser')}</li>
             </ul>
           </div>
         </div>
@@ -395,24 +397,24 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
         <div className="recording-status-bar">
           <div className="recording-indicator">
             <span className="recording-dot"></span>
-            <span>Recording...</span>
+            <span>{t('quickStart.recordingStatus')}</span>
           </div>
           <div className="recording-stats">
-            <span className="operations-badge">{operationsCount} operations</span>
-            <span className="session-id">Session: {currentSessionId}</span>
+            <span className="operations-badge">{operationsCount} {t('recordingsLibrary.operations')}</span>
+            <span className="session-id">{t('recordingsLibrary.sessionId')}: {currentSessionId}</span>
           </div>
         </div>
 
         <div className="recording-actions">
           <button className="stop-recording-btn" onClick={handleStopRecording}>
             <Icon icon="square" />
-            <span>Stop Recording</span>
+            <span>{t('quickStart.stopRecording')}</span>
           </button>
         </div>
 
         <div className="recording-warning">
           <Icon icon="alertTriangle" />
-          <span>Do not close the browser directly. Come back here and click "Stop Recording" when done.</span>
+          <span>{t('quickStart.doNotCloseWarning')}</span>
         </div>
       </div>
 
@@ -420,7 +422,7 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
       <div className="recording-operations-container">
         <div className="operations-header">
           <span className="operations-title">
-            <Icon icon="list" /> Captured Operations
+            <Icon icon="list" /> {t('quickStart.capturedOperations')}
           </span>
           <span className="operations-count">{capturedOperations.length}</span>
         </div>
@@ -428,8 +430,8 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
           {capturedOperations.length === 0 ? (
             <div className="empty-operations-full">
               <Icon icon="clipboard" size={64} />
-              <h3>Waiting for operations...</h3>
-              <p>Perform actions in the browser window. Your clicks, inputs, and navigation will appear here.</p>
+              <h3>{t('quickStart.waitingForOperations')}</h3>
+              <p>{t('quickStart.waitingDesc')}</p>
             </div>
           ) : (
             capturedOperations.map((op, index) => (
@@ -477,10 +479,10 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
       <div className="generating-content">
         <div className="generating-animation">
           <div className="spinner-large"></div>
-          <h2><Icon icon="cpu" /> AI is analyzing...</h2>
+          <h2><Icon icon="cpu" /> {t('quickStart.aiAnalyzing')}</h2>
         </div>
 
-        <p className="generating-status">Understanding your operations</p>
+        <p className="generating-status">{t('quickStart.understandingOperations')}</p>
 
         <div className="progress-bar">
           <div
@@ -495,24 +497,24 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
             <span className="step-icon">
               {analysisProgress > 30 ? <Icon icon="check" /> : <Icon icon="clock" />}
             </span>
-            <span>Analyzing operation sequence</span>
+            <span>{t('quickStart.stepAnalyzing')}</span>
           </div>
           <div className={`step-item ${analysisProgress > 60 ? 'completed' : analysisProgress > 30 ? 'active' : ''}`}>
             <span className="step-icon">
               {analysisProgress > 60 ? <Icon icon="check" /> : <Icon icon="clock" />}
             </span>
-            <span>Detecting patterns</span>
+            <span>{t('quickStart.stepDetecting')}</span>
           </div>
           <div className={`step-item ${analysisProgress > 90 ? 'completed' : analysisProgress > 60 ? 'active' : ''}`}>
             <span className="step-icon">
               {analysisProgress > 90 ? <Icon icon="check" /> : <Icon icon="clock" />}
             </span>
-            <span>Generating description</span>
+            <span>{t('quickStart.stepGenerating')}</span>
           </div>
         </div>
 
         {analysisProgress < 100 && (
-          <p className="estimated-time">Estimated time remaining: ~{Math.max(1, Math.ceil((100 - analysisProgress) / 20))}s</p>
+          <p className="estimated-time">{t('quickStart.estimatedTime', { seconds: Math.max(1, Math.ceil((100 - analysisProgress) / 20)) })}</p>
         )}
       </div>
     </div>
@@ -528,7 +530,7 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
       {step === 'analyzing' && renderAnalyzing()}
 
       <div className="footer">
-        <p>Ami v{version || '1.0.0'} • {session?.username && `Logged in as ${session.username}`}</p>
+        <p>Ami v{version || '1.0.0'} • {session?.username && t('settings.loggedInAs', { username: session.username })}</p>
       </div>
     </div>
   );

@@ -30,6 +30,9 @@ export const Icon = ({ name, size = 24, className = "", ...props }) => {
         'chevron-up': (
             <path d="M18 15l-6-6-6 6" />
         ),
+        'chevron-right': (
+            <path d="M9 18l6-6-6-6" />
+        ),
         menu: (
             <path d="M3 12h18M3 6h18M3 18h18" />
         ),

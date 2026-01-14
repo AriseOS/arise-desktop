@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react'
+import { useTranslation } from "react-i18next";
 import Icon from '../components/Icons'
 import { api } from '../utils/api'
 import '../styles/MyWorkflowsPage.css'
 
 function MyWorkflowsPage({ session, onNavigate, onLogout, version }) {
+  const { t, i18n } = useTranslation();
   // Get user_id from session
   const userId = session?.username;
   const [workflows, setWorkflows] = useState([])
@@ -93,7 +95,7 @@ function MyWorkflowsPage({ session, onNavigate, onLogout, version }) {
       setWorkflows(prev => prev.filter(w => w.agent_id !== workflowId))
     } catch (err) {
       console.error('Delete workflow error:', err)
-      setError(`Failed to delete workflow: ${err.message}`)
+      setError(`${t('myWorkflows.deleteFailed')}: ${err.message}`)
     }
   }
 
@@ -102,9 +104,9 @@ function MyWorkflowsPage({ session, onNavigate, onLogout, version }) {
   }
 
   const formatDate = (dateString) => {
-    if (!dateString) return '从未'
+    if (!dateString) return t('myWorkflows.never')
     const date = new Date(dateString)
-    return date.toLocaleString('zh-CN', {
+    return date.toLocaleString(i18n.language === 'zh' ? 'zh-CN' : 'en-US', {
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
@@ -124,11 +126,11 @@ function MyWorkflowsPage({ session, onNavigate, onLogout, version }) {
 
   const getStatusText = (status) => {
     switch (status) {
-      case 'ready': return '就绪'
-      case 'running': return '运行中'
-      case 'draft': return '草稿'
-      case 'failed': return '失败'
-      default: return '未知'
+      case 'ready': return t('myWorkflows.status.ready')
+      case 'running': return t('myWorkflows.status.running')
+      case 'draft': return t('myWorkflows.status.draft')
+      case 'failed': return t('myWorkflows.status.failed')
+      default: return t('myWorkflows.status.unknown')
     }
   }
 
@@ -141,11 +143,11 @@ function MyWorkflowsPage({ session, onNavigate, onLogout, version }) {
         >
           <Icon icon="arrowLeft" />
         </button>
-        <div className="page-title"><Icon icon="cpu" size={28} /> Workflow 管理</div>
+        <div className="page-title"><Icon icon="cpu" size={28} /> {t('myWorkflows.pageTitle')}</div>
         <div className="header-actions">
           <button className="secondary-button" onClick={handleQuickGenerate}>
             <Icon icon="zap" size={16} />
-            <span>快速生成</span>
+            <span>{t('myWorkflows.quickGenerate')}</span>
           </button>
           {/* <button className="primary-button" onClick={handleGenerateWorkflow}>
             <Icon icon="plusCircle" size={16} />
@@ -157,11 +159,11 @@ function MyWorkflowsPage({ session, onNavigate, onLogout, version }) {
       <div className="workflows-content">
         <div className="page-section">
           <div className="section-header">
-            <h3>我的 Workflow</h3>
+            <h3>{t('myWorkflows.myWorkflows')}</h3>
             <div className="section-stats">
               <span className="stat-item">
                 <span className="stat-value">{workflows.length}</span>
-                <span className="stat-label">个工作流</span>
+                <span className="stat-label">{t('myWorkflows.workflowsCount')}</span>
               </span>
             </div>
           </div>
@@ -169,27 +171,27 @@ function MyWorkflowsPage({ session, onNavigate, onLogout, version }) {
           {loading ? (
             <div className="loading-state">
               <div className="loading-spinner"></div>
-              <p>正在加载工作流...</p>
+              <p>{t('myWorkflows.loading')}</p>
             </div>
           ) : error ? (
             <div className="error-state">
               <div className="error-icon"><Icon icon="alertCircle" size={48} /></div>
               <div className="error-message">{error}</div>
               <button className="retry-button" onClick={loadWorkflows}>
-                重试
+                {t('myWorkflows.retry')}
               </button>
             </div>
           ) : workflows.length === 0 ? (
             <div className="empty-state">
               <div className="empty-state-icon"><Icon icon="cpu" size={48} /></div>
-              <div className="empty-state-title">暂无 Workflow</div>
+              <div className="empty-state-title">{t('myWorkflows.noWorkflows')}</div>
               <div className="empty-state-desc">
-                创建你的第一个自动化工作流，提高工作效率
+                {t('myWorkflows.noWorkflowsDesc')}
               </div>
               <div className="empty-actions">
                 <button className="primary-button" onClick={handleQuickGenerate}>
                   <Icon icon="zap" size={16} />
-                  <span>从录制快速生成</span>
+                  <span>{t('myWorkflows.quickGenerateFromRecord')}</span>
                 </button>
                 {/* <button className="secondary-button" onClick={handleGenerateWorkflow}>
                   <Icon icon="plusCircle" size={16} />
@@ -213,7 +215,7 @@ function MyWorkflowsPage({ session, onNavigate, onLogout, version }) {
                     </div>
                     <div className="workflow-source">
                       {workflow.source === 'cloud' ? <Icon icon="cloud" size={12} /> : <Icon icon="monitor" size={12} />}
-                      {workflow.source === 'cloud' ? '云端' : '本地'}
+                      {workflow.source === 'cloud' ? t('myWorkflows.cloud') : t('myWorkflows.local')}
                     </div>
                   </div>
 
@@ -224,17 +226,17 @@ function MyWorkflowsPage({ session, onNavigate, onLogout, version }) {
                   <div className="workflow-meta">
                     <div className="meta-item">
                       <span className="meta-icon"><Icon icon="calendar" size={12} /></span>
-                      <span className="meta-label">创建时间:</span>
+                      <span className="meta-label">{t('myWorkflows.createdAt')}:</span>
                       <span className="meta-value">{formatDate(workflow.created_at)}</span>
                     </div>
                     <div className="meta-item">
                       <span className="meta-icon"><Icon icon="clock" size={12} /></span>
-                      <span className="meta-label">最后运行:</span>
+                      <span className="meta-label">{t('myWorkflows.lastRun')}:</span>
                       <span className="meta-value">{formatDate(workflow.last_run)}</span>
                     </div>
                     <div className="meta-item">
                       <span className="meta-icon"><Icon icon="hash" size={12} /></span>
-                      <span className="meta-label">ID:</span>
+                      <span className="meta-label">{t('workflowDetail.id')}:</span>
                       <span className="meta-value">{workflow.agent_id}</span>
                     </div>
                   </div>
@@ -245,7 +247,7 @@ function MyWorkflowsPage({ session, onNavigate, onLogout, version }) {
                       onClick={() => handleWorkflowClick(workflow.agent_id)}
                     >
                       <Icon icon="eye" size={14} />
-                      <span>查看详情</span>
+                      <span>{t('myWorkflows.viewDetails')}</span>
                     </button>
 
                     <button
@@ -253,7 +255,7 @@ function MyWorkflowsPage({ session, onNavigate, onLogout, version }) {
                       onClick={() => handleRunWorkflow(workflow.agent_id)}
                     >
                       <Icon icon="play" size={14} />
-                      <span>运行</span>
+                      <span>{t('common.run')}</span>
                     </button>
 
                     <button
@@ -261,7 +263,7 @@ function MyWorkflowsPage({ session, onNavigate, onLogout, version }) {
                       onClick={() => handleDeleteClick(workflow.agent_id)}
                     >
                       <Icon icon="trash" size={14} />
-                      <span>删除</span>
+                      <span>{t('common.delete')}</span>
                     </button>
                   </div>
                 </div>
@@ -270,45 +272,10 @@ function MyWorkflowsPage({ session, onNavigate, onLogout, version }) {
           )}
         </div>
 
-        <div className="page-section">
-          <div className="section-header">
-            <h3>📖 功能介绍</h3>
-          </div>
-          <div className="feature-grid">
-            <div className="feature-item">
-              <div className="feature-icon"><Icon icon="zap" size={24} /></div>
-              <div className="feature-text">
-                <h4>快速生成</h4>
-                <p>从已有录制直接生成 Workflow，无需等待</p>
-              </div>
-            </div>
-            {/* <div className="feature-item">
-              <div className="feature-icon"><Icon icon="cpu" size={24} /></div>
-              <div className="feature-text">
-                <h4>AI 智能生成</h4>
-                <p>描述需求，AI 自动生成复杂 Workflow</p>
-              </div>
-            </div> */}
-            <div className="feature-item">
-              <div className="feature-icon"><Icon icon="layout" size={24} /></div>
-              <div className="feature-text">
-                <h4>可视化编辑</h4>
-                <p>拖拽式编辑 Workflow，直观易用</p>
-              </div>
-            </div>
-            <div className="feature-item">
-              <div className="feature-icon"><Icon icon="play" size={24} /></div>
-              <div className="feature-text">
-                <h4>一键运行</h4>
-                <p>点击即可执行 Workflow，查看运行结果</p>
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
 
       <div className="footer">
-        <p>Ami v{version || '1.0.0'} • {session?.username && `Logged in as ${session.username}`}</p>
+        <p>Ami v{version || '1.0.0'} • {session?.username && t('settings.loggedInAs', { username: session.username })}</p>
       </div>
 
       {/* Delete Confirmation Modal */}
@@ -316,18 +283,18 @@ function MyWorkflowsPage({ session, onNavigate, onLogout, version }) {
         <div className="modal-overlay" onClick={handleDeleteCancel}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>Confirm Delete</h3>
+              <h3>{t('myWorkflows.deleteConfirmTitle')}</h3>
             </div>
             <div className="modal-body">
-              <p>Are you sure you want to delete <strong>"{deleteConfirm.workflowName}"</strong>?</p>
-              <p className="warning-text">This action cannot be undone.</p>
+              <p>{t('myWorkflows.deleteConfirmMessage', { name: deleteConfirm.workflowName })}</p>
+              <p className="warning-text">{t('myWorkflows.undoneWarning')}</p>
             </div>
             <div className="modal-footer">
               <button className="btn-cancel" onClick={handleDeleteCancel}>
-                Cancel
+                {t('common.cancel')}
               </button>
               <button className="btn-confirm-delete" onClick={handleDeleteConfirm}>
-                Delete
+                {t('common.delete')}
               </button>
             </div>
           </div>
