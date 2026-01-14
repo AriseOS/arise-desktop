@@ -830,9 +830,10 @@
 .execution-detail-modal {
     background-color: var(--bg-primary);
     border-radius: var(--radius-lg);
-    width: 100%;
-    max-width: 600px;
-    max-height: 80vh;
+    width: auto;
+    min-width: 600px;
+    max-width: 900px;
+    max-height: 85vh;
     display: flex;
     flex-direction: column;
     box-shadow: var(--shadow-lg);
@@ -998,6 +999,8 @@
 .timeline-wrapper {
     position: relative;
     padding-left: 16px;
+    width: 100%;
+    box-sizing: border-box;
     /* Indent the whole timeline from modal edge */
 }
 
@@ -1018,6 +1021,8 @@
     position: relative;
     margin-bottom: var(--spacing-lg);
     padding-left: 48px;
+    width: 100%;
+    box-sizing: border-box;
     /* Space for badge to hang left */
     z-index: 1;
 }
@@ -1038,7 +1043,7 @@
 /* Badge hangs to the left of the content */
 .step-badge {
     position: absolute;
-    left: -48px;
+    left: 0;
     /* Move back into the padding area */
     top: 0;
     width: 32px;
@@ -1086,6 +1091,8 @@
     border-radius: 4px;
     text-transform: uppercase;
     font-weight: bold;
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 
 .timeline-group-content {
@@ -1093,6 +1100,8 @@
     border-radius: var(--radius-md);
     border: 1px solid var(--border-color);
     overflow: hidden;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 .timeline-log-entry {
@@ -1164,6 +1173,7 @@
     align-items: center;
     gap: 6px;
     flex-wrap: wrap;
+    /* Allow wrapping */
 }
 
 .log-action {
@@ -1175,12 +1185,18 @@
     color: var(--text-secondary);
     font-family: var(--font-mono);
     background-color: rgba(0, 0, 0, 0.05);
-    padding: 0 4px;
+    padding: 2px 4px;
     border-radius: 3px;
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 4px;
     font-size: 11px;
+
+    /* Enhance wrapping behavior */
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-width: 100%;
+    box-sizing: border-box;
 }
 
 .log-sub-message {

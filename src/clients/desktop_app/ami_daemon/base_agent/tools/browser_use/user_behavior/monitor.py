@@ -71,10 +71,7 @@ class SimpleUserBehaviorMonitor:
     async def _enable_page_events(self, cdp_session):
         """Enable Page domain events to listen for navigation"""
         try:
-            # Wait a bit to ensure CDP session is ready
-            import asyncio
-            await asyncio.sleep(0.5)
-
+            # CDP session is already ready when passed to this method - no sleep needed
             await cdp_session.cdp_client.send.Page.enable(
                 session_id=cdp_session.session_id
             )

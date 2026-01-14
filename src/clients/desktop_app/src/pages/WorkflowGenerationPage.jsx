@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import ReactFlow, {
   Background,
   Controls,
@@ -21,6 +22,7 @@ const nodeTypes = {
 }
 
 function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData, version }) {
+  const { t } = useTranslation()
   const userId = session?.username;
   const [workflowData, setWorkflowData] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -41,7 +43,7 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
   const loadQuickGeneratedWorkflow = async (workflowName) => {
     setLoading(true);
     try {
-      showStatus("加载快速生成的Workflow...", "info");
+      showStatus(t('workflowGeneration.loading'), "info");
 
       // Fetch workflow detail from backend
       const response = await fetch(`${BACKEND_CONFIG.httpBase}/api/v1/workflows/${workflowName}?user_id=${userId}`);
@@ -54,7 +56,7 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
 
       // Version check: reject v1 format
       if (workflowDetail.apiVersion === 'ami.io/v1' || workflowDetail.kind === 'Workflow') {
-        throw new Error('v1 格式已不再支持，请将 workflow 升级到 v2 格式');
+        throw new Error(t('workflowGeneration.v1NotSupported'));
       }
 
       // Transform to workflow visualization format (v2 format)
@@ -190,10 +192,10 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
       };
 
       setWorkflowData(workflow);
-      showStatus("Workflow加载成功", "success");
+      showStatus(t('workflowGeneration.loadSuccess'), "success");
     } catch (error) {
       console.error("Load quick generated workflow error:", error);
-      showStatus(`加载Workflow失败: ${error.message}`, "error");
+      showStatus(t('workflowGeneration.loadFailed', { error: error.message }), "error");
       // Fallback to default workflow
       generateWorkflowData();
     } finally {
@@ -210,7 +212,7 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
 
       // Version check: reject v1 format
       if (workflowYaml.apiVersion === 'ami.io/v1' || workflowYaml.kind === 'Workflow') {
-        showStatus('v1 格式已不再支持，请将 workflow 升级到 v2 格式', 'error');
+        showStatus(t('workflowGeneration.v1NotSupported'), 'error');
         setLoading(false);
         return;
       }
@@ -359,7 +361,7 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
 
     const poll = async () => {
       if (attempts >= maxAttempts) {
-        showStatus('执行超时', 'error')
+        showStatus(t('workflowGeneration.executeTimeout'), 'error')
         setIsRunning(false)
         return
       }
@@ -388,7 +390,7 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
           const endTime = new Date(endNow.getTime() - endNow.getTimezoneOffset() * 60000).toISOString().replace('Z', '')
 
           if (taskInfo.result && taskInfo.result.success) {
-            showStatus('执行成功', 'success')
+            showStatus(t('workflowGeneration.executeSuccess'), 'success')
             // Navigate to result page with time range
             setTimeout(() => {
               onNavigate('workflow-result', {
@@ -398,12 +400,12 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
               })
             }, 1000)
           } else {
-            showStatus('执行完成但有错误', 'warning')
+            showStatus(t('workflowGeneration.executeWarning'), 'warning')
           }
           return
         } else if (taskInfo.status === 'failed') {
           setIsRunning(false)
-          showStatus(`执行失败: ${taskInfo.error || '未知错误'}`, 'error')
+          showStatus(t('workflowGeneration.executeFailed', { error: taskInfo.error || t('workflowGeneration.unknownError') }), 'error')
           return
         } else if (taskInfo.status === 'running') {
           // Continue polling
@@ -412,7 +414,7 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
         }
       } catch (err) {
         console.error('Poll task status error:', err)
-        showStatus('获取状态失败', 'error')
+        showStatus(t('workflowGeneration.getStatusFailed'), 'error')
         setIsRunning(false)
       }
     }
@@ -424,7 +426,7 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
     if (isRunning) return
 
     setIsRunning(true)
-    showStatus('开始执行...', 'info')
+    showStatus(t('workflowGeneration.startExecution'), 'info')
 
     // Record start time in local timezone to match database format
     const now = new Date()
@@ -454,24 +456,24 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
         // Start polling for task status, pass startTime and workflowName
         pollTaskStatus(result.task_id, startTime, workflowName)
       } else {
-        showStatus('启动失败', 'error')
+        showStatus(t('workflowGeneration.startFailed'), 'error')
         setIsRunning(false)
       }
     } catch (err) {
       console.error('Run workflow error:', err)
-      showStatus('启动失败', 'error')
+      showStatus(t('workflowGeneration.startFailed'), 'error')
       setIsRunning(false)
     }
   }
 
   const handleSave = async () => {
-    showStatus('保存中...', 'info')
+    showStatus(t('workflowGeneration.saving'), 'info')
 
     try {
       // TODO: Call actual save workflow API
       await new Promise(resolve => setTimeout(resolve, 1000))
 
-      showStatus('保存成功', 'success')
+      showStatus(t('workflowGeneration.saveSuccess'), 'success')
 
       // Navigate back to main page after save
       setTimeout(() => {
@@ -479,7 +481,7 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
       }, 1000)
     } catch (err) {
       console.error('Save workflow error:', err)
-      showStatus('保存失败', 'error')
+      showStatus(t('workflowGeneration.saveFailed'), 'error')
     }
   }
 
@@ -501,12 +503,12 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
           {isRunning ? (
             <>
               <div className="btn-spinner"></div>
-              <span>运行中</span>
+              <span>{t('workflowGeneration.statusRunning')}</span>
             </>
           ) : (
             <>
               <Icon icon="play" size={16} />
-              <span>运行</span>
+              <span>{t('workflowGeneration.statusRun')}</span>
             </>
           )}
         </button>
@@ -516,7 +518,7 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
         {loading && (
           <div className="empty-state">
             <div className="empty-state-icon"><Icon icon="clock" size={48} /></div>
-            <div className="empty-state-title">生成中...</div>
+            <div className="empty-state-title">{t('workflowGeneration.generating')}</div>
           </div>
         )}
 
@@ -533,7 +535,7 @@ function WorkflowGenerationPage({ session, onNavigate, showStatus, recordingData
             onClick={handleSave}
           >
             <Icon icon="save" size={20} />
-            <span>保存 Workflow</span>
+            <span>{t('workflowGeneration.saveWorkflow')}</span>
           </button>
         </div>
       )}
@@ -560,7 +562,7 @@ function WorkflowVisualization({ workflowData }) {
     return (
       <div className="empty-state">
         <div className="empty-state-icon"><Icon icon="clipboard" size={48} /></div>
-        <div className="empty-state-title">无流程数据</div>
+        <div className="empty-state-title">{t('workflowGeneration.noFlowData')}</div>
       </div>
     )
   }

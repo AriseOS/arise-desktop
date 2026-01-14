@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from "react-i18next";
 import Icon from '../components/Icons';
 import { api } from '../utils/api';
 import '../styles/RecordingDetailPage.css';
 
 function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
+  const { t } = useTranslation();
   const userId = session?.username;
   const [recording, setRecording] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -13,7 +15,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
 
   const handleSaveQuery = async () => {
     if (!editedQuery.trim()) {
-      showStatus('Query cannot be empty', 'warning');
+      showStatus(t('recordingDetail.queryEmpty'), 'warning');
       return;
     }
 
@@ -37,10 +39,10 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
       }));
 
       setIsEditingQuery(false);
-      showStatus('User query updated!', 'success');
+      showStatus(t('recordingDetail.queryUpdated'), 'success');
     } catch (error) {
       console.error('Error updating query:', error);
-      showStatus(`Failed to update query: ${error.message}`, 'error');
+      showStatus(`${t('recordingDetail.queryUpdateFailed')}: ${error.message}`, 'error');
     }
   };
 
@@ -92,17 +94,17 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
 
   const getOperationTypeLabel = (type) => {
     const typeLabels = {
-      'click': 'Click',
-      'input': 'Input',
-      'navigate': 'Navigate',
-      'scroll': 'Scroll',
-      'select': 'Select',
-      'submit': 'Submit',
-      'hover': 'Hover',
-      'copy_action': 'Copy Data',
-      'test': 'Test',
-      'type': 'Type',
-      'fill': 'Fill'
+      'click': t('recordingDetail.click'),
+      'input': t('recordingDetail.input'),
+      'navigate': t('recordingDetail.navigate'),
+      'scroll': t('recordingDetail.scroll'),
+      'select': t('recordingDetail.select'),
+      'submit': t('recordingDetail.submit'),
+      'hover': t('recordingDetail.hover'),
+      'copy_action': t('recordingDetail.copyAction'),
+      'test': t('recordingDetail.test'),
+      'type': t('recordingDetail.type'),
+      'fill': t('recordingDetail.fill')
     };
     return typeLabels[type] || `${type.charAt(0).toUpperCase() + type.slice(1)}`;
   };
@@ -137,7 +139,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
       if (operation.url) {
         details.push(
           <div key="url" className="action-detail">
-            <span className="detail-label">URL:</span>
+            <span className="detail-label">{t('recordingDetail.url')}:</span>
             <span className="detail-value url-link">{operation.url}</span>
           </div>
         );
@@ -145,7 +147,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
       if (operation.page_title) {
         details.push(
           <div key="page_title" className="action-detail">
-            <span className="detail-label">Page Title:</span>
+            <span className="detail-label">{t('recordingDetail.pageTitle')}:</span>
             <span className="detail-value">"{operation.page_title}"</span>
           </div>
         );
@@ -158,7 +160,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
         const displayText = element.textContent.trim();
         details.push(
           <div key="element_text" className="action-detail highlight-action">
-            <span className="detail-label"><Icon icon="mousePointer" size={14} /> Clicked on:</span>
+            <span className="detail-label"><Icon icon="mousePointer" size={14} /> {t('recordingDetail.clickedOn')}:</span>
             <span className="detail-value clicked-text">"{displayText.substring(0, 100)}{displayText.length > 100 ? '...' : ''}"</span>
           </div>
         );
@@ -174,7 +176,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
       if (element.tagName) {
         details.push(
           <div key="tag" className="action-detail">
-            <span className="detail-label">Tag:</span>
+            <span className="detail-label">{t('recordingDetail.tag')}:</span>
             <span className="detail-value code">{element.tagName}</span>
           </div>
         );
@@ -186,7 +188,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
       if (data.value) {
         details.push(
           <div key="value" className="action-detail">
-            <span className="detail-label">Input Value:</span>
+            <span className="detail-label">{t('recordingDetail.inputValue')}:</span>
             <span className="detail-value">"{data.value}"</span>
           </div>
         );
@@ -207,7 +209,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
         const selectedText = data.selectedText.trim();
         details.push(
           <div key="selected_text" className="action-detail highlight-action">
-            <span className="detail-label"><Icon icon="checkSquare" size={14} /> Selected:</span>
+            <span className="detail-label"><Icon icon="checkSquare" size={14} /> {t('recordingDetail.selected')}:</span>
             <span className="detail-value selected-text">"{selectedText.substring(0, 100)}{selectedText.length > 100 ? '...' : ''}"</span>
           </div>
         );
@@ -216,7 +218,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
         const elementText = element.textContent.trim();
         details.push(
           <div key="element_text" className="action-detail">
-            <span className="detail-label">From Element:</span>
+            <span className="detail-label">{t('recordingDetail.fromElement')}:</span>
             <span className="detail-value">"{elementText.substring(0, 100)}{elementText.length > 100 ? '...' : ''}"</span>
           </div>
         );
@@ -236,7 +238,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
       if (data.copiedText) {
         details.push(
           <div key="copied_text" className="action-detail field-mapping">
-            <span className="detail-label"><Icon icon="clipboard" size={14} /> Copied Text:</span>
+            <span className="detail-label"><Icon icon="clipboard" size={14} /> {t('recordingDetail.copiedText')}:</span>
             <span className="detail-value field-value">"{data.copiedText}"</span>
           </div>
         );
@@ -256,7 +258,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
       if (data.direction) {
         details.push(
           <div key="direction" className="action-detail">
-            <span className="detail-label">Direction:</span>
+            <span className="detail-label">{t('recordingDetail.direction')}:</span>
             <span className="detail-value">{data.direction}</span>
           </div>
         );
@@ -268,7 +270,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
       if (data.message) {
         details.push(
           <div key="message" className="action-detail">
-            <span className="detail-label">Message:</span>
+            <span className="detail-label">{t('recordingDetail.message')}:</span>
             <span className="detail-value">{data.message}</span>
           </div>
         );
@@ -279,7 +281,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
     if (type !== 'navigate' && operation.url) {
       details.push(
         <div key="operation_url" className="action-detail url-context">
-          <span className="detail-label">Page:</span>
+          <span className="detail-label">{t('recordingDetail.page')}:</span>
           <span className="detail-value url-text">{operation.url}</span>
         </div>
       );
@@ -293,7 +295,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
       <div className="recording-detail-page">
         <div className="loading-container">
           <div className="spinner-large"></div>
-          <p>Loading recording details...</p>
+          <p>{t('recordingDetail.loading')}</p>
         </div>
       </div>
     );
@@ -304,10 +306,10 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
       <div className="recording-detail-page">
         <div className="error-container">
           <div className="error-icon"><Icon icon="alertCircle" size={64} /></div>
-          <h2>Recording not found</h2>
-          <p>The requested recording could not be loaded.</p>
+          <h2>{t('recordingDetail.notFound')}</h2>
+          <p>{t('recordingDetail.loadFailed')}</p>
           <button className="btn-back" onClick={() => onNavigate('recordings-library')}>
-            Back to Recordings
+            {t('recordingDetail.backToLibrary')}
           </button>
         </div>
       </div>
@@ -334,19 +336,19 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
       <div className="detail-content">
         {/* Recording Info Section */}
         <div className="info-section">
-          <h2 className="section-title">Recording Information</h2>
+          <h2 className="section-title">{t('recordingDetail.infoTitle')}</h2>
 
           {/* Task Metadata */}
           {recording.task_metadata && Object.keys(recording.task_metadata).length > 0 && (
             <div className="task-metadata-section">
               {recording.task_metadata.task_description && (
                 <div className="metadata-item">
-                  <span className="metadata-label"><Icon icon="fileText" size={16} /> Task Description:</span>
+                  <span className="metadata-label"><Icon icon="fileText" size={16} /> {t('recordingDetail.taskDescription')}:</span>
                   <span className="metadata-value">{recording.task_metadata.task_description}</span>
                 </div>
               )}
               <div className="metadata-item">
-                <span className="metadata-label"><Icon icon="target" size={16} /> User Query:</span>
+                <span className="metadata-label"><Icon icon="target" size={16} /> {t('recordingDetail.userQuery')}:</span>
                 {isEditingQuery ? (
                   <div className="edit-query-container">
                     <input
@@ -364,7 +366,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
                 ) : (
                   <div className="metadata-value-container">
                     <span className="metadata-value">
-                      {recording.task_metadata.user_query || "No query provided"}
+                      {recording.task_metadata.user_query || t('recordingDetail.noQuery')}
                     </span>
                     <button
                       className="btn-edit-icon"
@@ -372,7 +374,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
                         setEditedQuery(recording.task_metadata.user_query || "");
                         setIsEditingQuery(true);
                       }}
-                      title="Edit User Query"
+                      title={t('recordingDetail.editQuery')}
                     >
                       <Icon icon="edit" size={14} />
                     </button>
@@ -381,7 +383,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
               </div>
               {recording.task_metadata.session_id && (
                 <div className="metadata-item">
-                  <span className="metadata-label"><Icon icon="tag" size={16} /> Session ID:</span>
+                  <span className="metadata-label"><Icon icon="tag" size={16} /> {t('recordingDetail.sessionId')}:</span>
                   <span className="metadata-value">{recording.task_metadata.session_id}</span>
                 </div>
               )}
@@ -390,19 +392,19 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
 
           <div className="info-grid">
             <div className="info-item">
-              <span className="info-label">Created:</span>
+              <span className="info-label">{t('recordingDetail.created')}:</span>
               <span className="info-value">{formatTimestamp(recording.created_at)}</span>
             </div>
             <div className="info-item">
-              <span className="info-label">Operations:</span>
+              <span className="info-label">{t('recordingDetail.operationsCount')}:</span>
               <span className="info-value">{operations.length}</span>
             </div>
             <div className="info-item">
-              <span className="info-label">Extracted Fields:</span>
+              <span className="info-label">{t('recordingDetail.fieldsCount')}:</span>
               <span className="info-value">{fields.length}</span>
             </div>
             <div className="info-item">
-              <span className="info-label">Session ID:</span>
+              <span className="info-label">{t('recordingDetail.sessionId')}:</span>
               <span className="info-value code">{sessionId}</span>
             </div>
           </div>
@@ -411,7 +413,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
           {recording.workflow_id && (
             <div className="linked-entity-section">
               <div className="linked-entity-item">
-                <span className="linked-label">Linked Workflow:</span>
+                <span className="linked-label">{t('recordingDetail.linkedWorkflow')}:</span>
                 <button
                   className="linked-value-button"
                   onClick={() => onNavigate('workflow-detail', { workflowId: recording.workflow_id })}
@@ -433,21 +435,21 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
               onClick={() => setActiveTab('timeline')}
             >
               <Icon icon="list" />
-              <span>Timeline</span>
+              <span>{t('recordingDetail.timeline')}</span>
             </button>
             <button
               className={`tab-button ${activeTab === 'doms' ? 'active' : ''}`}
               onClick={() => setActiveTab('doms')}
             >
               <Icon icon="code" />
-              <span>DOMs</span>
+              <span>{t('recordingDetail.doms')}</span>
             </button>
             <button
               className={`tab-button ${activeTab === 'yaml' ? 'active' : ''}`}
               onClick={() => setActiveTab('yaml')}
             >
               <Icon icon="fileText" />
-              <span>YAML</span>
+              <span>{t('recordingDetail.yaml')}</span>
             </button>
           </div>
 
@@ -455,11 +457,11 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
           <div className="tab-content">
             {activeTab === 'timeline' && (
               <div className="timeline-section">
-                <h2 className="section-title">Operations Timeline</h2>
+                <h2 className="section-title">{t('recordingDetail.operationsTimeline')}</h2>
 
                 {operations.length === 0 ? (
                   <div className="empty-message">
-                    <p>No operations recorded.</p>
+                    <p>{t('recordingDetail.noOperations')}</p>
                   </div>
                 ) : (
                   <div className="timeline-list">
@@ -501,10 +503,10 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
 
             {activeTab === 'doms' && (
               <div className="doms-section">
-                <h2 className="section-title">DOM Snapshots ({recording.dom_snapshots ? Object.keys(recording.dom_snapshots).length : 0})</h2>
+                <h2 className="section-title">{t('recordingDetail.domSnapshots')} ({recording.dom_snapshots ? Object.keys(recording.dom_snapshots).length : 0})</h2>
                 {!recording.dom_snapshots || Object.keys(recording.dom_snapshots).length === 0 ? (
                   <div className="empty-message">
-                    <p>No DOM snapshots available.</p>
+                    <p>{t('recordingDetail.noDoms')}</p>
                   </div>
                 ) : (
                   <div className="dom-list">
@@ -523,7 +525,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
 
             {activeTab === 'yaml' && (
               <div className="yaml-section">
-                <h2 className="section-title">Recording Data (JSON)</h2>
+                <h2 className="section-title">{t('recordingDetail.recordingData')}</h2>
                 <div className="yaml-container">
                   <pre className="yaml-content">
                     <code>{JSON.stringify(recording, null, 2)}</code>
@@ -537,14 +539,14 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
         {/* Extracted Fields Section */}
         {fields.length > 0 && (
           <div className="fields-section">
-            <h2 className="section-title">Extracted Fields ({fields.length})</h2>
+            <h2 className="section-title">{t('recordingDetail.fieldsTitle')} ({fields.length})</h2>
             <div className="fields-table-container">
               <table className="fields-table">
                 <thead>
                   <tr>
-                    <th>Field Name</th>
-                    <th>XPath</th>
-                    <th>Sample Value</th>
+                    <th>{t('recordingDetail.fieldName')}</th>
+                    <th>{t('recordingDetail.xpath')}</th>
+                    <th>{t('recordingDetail.sampleValue')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -565,10 +567,10 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
         <div className="action-section">
           <button className="btn-generate-workflow" onClick={handleGenerateWorkflow}>
             <Icon icon="zap" />
-            Generate Workflow
+            {t('recordingDetail.generateWorkflow')}
           </button>
           <p className="action-hint">
-            AI will analyze this recording and create an executable workflow
+            {t('recordingDetail.generateHint')}
           </p>
         </div>
       </div>

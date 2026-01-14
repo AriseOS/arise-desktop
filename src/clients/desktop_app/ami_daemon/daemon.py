@@ -76,6 +76,10 @@ version_check_result: Optional[Dict[str, Any]] = None
 # App version from config
 APP_VERSION = config.get("app.version", "0.0.1")
 
+# Magic identifier for health check (used to verify this is our daemon, not another service)
+# Format: "ami-daemon-{version}"
+DAEMON_MAGIC = f"ami-daemon-{APP_VERSION}"
+
 
 def get_platform_identifier() -> str:
     """Get platform identifier for version check
@@ -460,9 +464,11 @@ def update_cloud_client_api_key(api_key: Optional[str]):
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check endpoint with magic identifier for daemon detection"""
     return {
         "status": "ok",
+        "magic": DAEMON_MAGIC,
+        "version": APP_VERSION,
         "browser_ready": browser_manager.is_ready() if browser_manager else False
     }
 
@@ -869,9 +875,7 @@ async def start_recording(request: StartRecordingRequest):
         if not browser_status["is_running"]:
             logger.info("Browser not running, starting browser for recording...")
             await browser_manager.start_browser(headless=False)
-
-            # Wait for browser to be fully ready
-            await asyncio.sleep(2)
+            # start_browser returns when browser is fully ready - no sleep needed
             logger.info("Browser ready for recording")
 
         # 2. Prepare metadata
@@ -3330,13 +3334,183 @@ async def cleanup_resources():
 
 
 # ============================================================================
+# Single Instance Management
+# ============================================================================
+
+def get_ami_dir() -> Path:
+    """Get the .ami directory path."""
+    return Path.home() / ".ami"
+
+
+def get_port_file_path() -> Path:
+    """Get the path to the daemon port file."""
+    return get_ami_dir() / "daemon.port"
+
+
+def check_existing_daemon(host: str, port: int, timeout: float = 2.0) -> tuple[bool, bool]:
+    """Check if a daemon is already running on the given port.
+
+    Args:
+        host: Host to check
+        port: Port to check
+        timeout: Timeout for health check request
+
+    Returns:
+        Tuple of (is_our_daemon, port_is_occupied):
+        - (True, True): Our daemon is running and healthy
+        - (False, True): Port is occupied by another service
+        - (False, False): Port is free (connection refused)
+    """
+    import urllib.request
+    import urllib.error
+
+    url = f"http://{host}:{port}/health"
+    try:
+        req = urllib.request.Request(url, method='GET')
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            if response.status == 200:
+                # Check magic number to verify it's our daemon
+                data = json.loads(response.read().decode('utf-8'))
+                magic = data.get("magic", "")
+                if magic.startswith("ami-daemon-"):
+                    logger.info(f"Found our daemon at {host}:{port} (magic: {magic})")
+                    return (True, True)
+                else:
+                    logger.warning(f"Port {port} is occupied by unknown service (no valid magic)")
+                    return (False, True)
+    except urllib.error.HTTPError as e:
+        # Got HTTP response but not 200 - port is occupied by another service
+        logger.warning(f"Port {port} is occupied by another service: HTTP {e.code}")
+        return (False, True)
+    except (urllib.error.URLError, OSError) as e:
+        # Connection refused or timeout - port is free
+        logger.info(f"Port {port} is free: {e}")
+        return (False, False)
+
+    return (False, False)
+
+
+def read_port_file() -> Optional[int]:
+    """Read the daemon port from file.
+
+    Returns:
+        Port number if file exists and valid, None otherwise
+    """
+    port_file = get_port_file_path()
+    try:
+        if port_file.exists():
+            content = port_file.read_text().strip()
+            return int(content)
+    except (ValueError, OSError) as e:
+        logger.warning(f"Failed to read port file: {e}")
+    return None
+
+
+def write_port_file(port: int) -> None:
+    """Write the daemon port to file for frontend discovery.
+
+    Args:
+        port: The port number daemon is running on
+    """
+    port_file = get_port_file_path()
+    port_file.parent.mkdir(parents=True, exist_ok=True)
+    port_file.write_text(str(port))
+    logger.info(f"Port file written: {port_file} -> {port}")
+
+
+def cleanup_port_file() -> None:
+    """Remove the port file on shutdown."""
+    port_file = get_port_file_path()
+    try:
+        if port_file.exists():
+            port_file.unlink()
+            logger.info(f"Port file removed: {port_file}")
+    except Exception as e:
+        logger.warning(f"Failed to remove port file: {e}")
+
+
+def find_available_port(host: str, start_port: int, max_attempts: int = 10) -> int:
+    """Find an available port starting from start_port.
+
+    Uses HTTP health check first (to detect any HTTP service), then falls back to socket test.
+
+    Args:
+        host: Host to bind to
+        start_port: Port to start searching from
+        max_attempts: Maximum number of ports to try
+
+    Returns:
+        Available port number
+
+    Raises:
+        RuntimeError: If no available port found
+    """
+    import socket
+
+    for port in range(start_port, start_port + max_attempts):
+        # First, check if any service is responding on this port
+        is_our_daemon, port_occupied = check_existing_daemon(host, port)
+
+        if is_our_daemon:
+            # Our daemon is already running on this port - should not happen here,
+            # but skip this port just in case
+            logger.warning(f"Port {port} has our daemon running, skipping")
+            continue
+
+        if port_occupied:
+            # Port is occupied by another service
+            logger.warning(f"Port {port} is occupied by another service, skipping")
+            continue
+
+        # Port seems free from HTTP perspective, now verify with socket bind
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                # Do NOT use SO_REUSEADDR - we want to detect if port is truly free
+                s.bind((host, port))
+                logger.info(f"Port {port} is available")
+                return port
+        except OSError as e:
+            logger.warning(f"Port {port} socket bind failed: {e}")
+            continue
+
+    raise RuntimeError(f"No available port found in range {start_port}-{start_port + max_attempts - 1}")
+
+
+# ============================================================================
 # Main Entry Point
 # ============================================================================
 
 def main():
-    """Start HTTP server"""
-    port = config.get("daemon.port", 8765)
+    """Start HTTP server with single-instance support"""
+    start_port = config.get("daemon.port", 8765)
     host = config.get("daemon.host", "127.0.0.1")
+
+    # Check if another daemon is already running (from port file)
+    existing_port = read_port_file()
+    if existing_port is not None:
+        is_our_daemon, port_occupied = check_existing_daemon(host, existing_port)
+
+        if is_our_daemon:
+            # Our daemon is already running - exit gracefully
+            logger.info("=" * 60)
+            logger.info(f"Another daemon is already running on port {existing_port}")
+            logger.info("This instance will exit. Frontend should connect to existing daemon.")
+            logger.info("=" * 60)
+            return  # Exit without error - this is expected behavior
+
+        # Port file exists but it's not our daemon - clean up stale file
+        logger.info(f"Stale port file found (port {existing_port}), cleaning up...")
+        cleanup_port_file()
+
+    # Find an available port (in case default port is occupied by other apps)
+    try:
+        port = find_available_port(host, start_port)
+    except RuntimeError as e:
+        logger.error(f"Failed to find available port: {e}")
+        return
+
+    # Write port to file for frontend discovery
+    write_port_file(port)
 
     # DO NOT register signal handlers - uvicorn handles them automatically
     # and will call our lifespan shutdown context manager
@@ -3346,12 +3520,16 @@ def main():
     logger.info("Process will respond to SIGTERM/SIGINT for graceful shutdown")
     logger.info("=" * 60)
 
-    uvicorn.run(
-        app,
-        host=host,
-        port=port,
-        log_level="info"
-    )
+    try:
+        uvicorn.run(
+            app,
+            host=host,
+            port=port,
+            log_level="info"
+        )
+    finally:
+        # Clean up port file on exit
+        cleanup_port_file()
 
 
 if __name__ == "__main__":

@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import Icon from '../components/Icons';
 import { api } from '../utils/api';
 import '../styles/UserFlowsPage.css';
 
 function UserFlowsPage({ session, onNavigate, showStatus, version }) {
+  const { t, i18n } = useTranslation();
   const userId = session?.username;
   const [recordings, setRecordings] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -19,15 +21,15 @@ function UserFlowsPage({ session, onNavigate, showStatus, version }) {
   const loadRecordings = async () => {
     try {
       setLoading(true);
-      showStatus("加载录制流程列表...", "info");
+      showStatus(t('userFlows.toasts.loadLoading'), "info");
 
       const data = await api.callAppBackend(`/api/v1/recordings?user_id=${userId}`);
       setRecordings(data.recordings || []);
-      showStatus("录制流程列表加载成功", "success");
+      showStatus(t('userFlows.toasts.loadSuccess'), "success");
 
     } catch (error) {
       console.error("Load recordings error:", error);
-      showStatus("加载录制流程失败", "error");
+      showStatus(t('userFlows.toasts.loadFailed'), "error");
       setRecordings([]);
     } finally {
       setLoading(false);
@@ -60,18 +62,18 @@ function UserFlowsPage({ session, onNavigate, showStatus, version }) {
     setDeleteConfirm(null);
 
     try {
-      showStatus("Deleting recording...", "info");
+      showStatus(t('userFlows.toasts.deleteLoading'), "info");
 
       await api.callAppBackend(`/api/v1/recordings/${sessionId}?user_id=${userId}`, {
         method: 'DELETE'
       });
 
       setRecordings(prev => prev.filter(r => r.session_id !== sessionId));
-      showStatus("Recording deleted successfully", "success");
+      showStatus(t('userFlows.toasts.deleteSuccess'), "success");
 
     } catch (error) {
       console.error("Delete recording error:", error);
-      showStatus(`Failed to delete recording: ${error.message}`, "error");
+      showStatus(t('userFlows.toasts.deleteFailed', { error: error.message }), "error");
     }
   };
 
@@ -81,7 +83,8 @@ function UserFlowsPage({ session, onNavigate, showStatus, version }) {
 
   const formatDate = (dateString) => {
     const date = new Date(dateString);
-    return date.toLocaleString('zh-CN', {
+    const locale = i18n.language === 'zh' ? 'zh-CN' : 'en-US';
+    return date.toLocaleString(locale, {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
@@ -105,21 +108,21 @@ function UserFlowsPage({ session, onNavigate, showStatus, version }) {
         <button className="back-button" onClick={() => onNavigate("main")}>
           <Icon icon="arrowLeft" />
         </button>
-        <div className="page-title"><Icon icon="video" size={28} /> 用户流程</div>
+        <div className="page-title"><Icon icon="video" size={28} /> {t('userFlows.title')}</div>
         <button className="primary-button" onClick={handleNewRecording}>
           <Icon icon="plusCircle" size={20} />
-          <span>新建录制</span>
+          <span>{t('userFlows.newRecording')}</span>
         </button>
       </div>
 
       <div className="user-flows-content">
         <div className="page-section">
           <div className="section-header">
-            <h3>录制流程列表</h3>
+            <h3>{t('userFlows.listTitle')}</h3>
             <div className="section-actions">
               <button className="secondary-button" onClick={loadRecordings}>
                 <Icon icon="refreshCw" size={16} />
-                <span>刷新</span>
+                <span>{t('userFlows.refresh')}</span>
               </button>
             </div>
           </div>
@@ -127,18 +130,18 @@ function UserFlowsPage({ session, onNavigate, showStatus, version }) {
           {loading ? (
             <div className="loading-state">
               <div className="loading-spinner"></div>
-              <p>正在加载录制流程...</p>
+              <p>{t('userFlows.loading')}</p>
             </div>
           ) : recordings.length === 0 ? (
             <div className="empty-state">
               <div className="empty-state-icon"><Icon icon="video" size={48} /></div>
-              <div className="empty-state-title">暂无录制流程</div>
+              <div className="empty-state-title">{t('userFlows.empty.title')}</div>
               <div className="empty-state-desc">
-                开始录制浏览器操作，创建你的第一个流程
+                {t('userFlows.empty.desc')}
               </div>
               <button className="primary-button" onClick={handleNewRecording}>
                 <Icon icon="plusCircle" size={20} />
-                <span>开始录制</span>
+                <span>{t('userFlows.startRecording')}</span>
               </button>
             </div>
           ) : (
@@ -153,8 +156,8 @@ function UserFlowsPage({ session, onNavigate, showStatus, version }) {
                           className="status-badge"
                           style={{ backgroundColor: getStatusColor(recording.status) }}
                         >
-                          {recording.status === 'completed' ? '已完成' :
-                            recording.status === 'recording' ? '录制中' : '失败'}
+                          {recording.status === 'completed' ? t('userFlows.status.completed') :
+                            recording.status === 'recording' ? t('userFlows.status.recording') : t('userFlows.status.failed')}
                         </div>
                       </div>
 
@@ -165,22 +168,22 @@ function UserFlowsPage({ session, onNavigate, showStatus, version }) {
                       <div className="recording-meta">
                         <div className="meta-item">
                           <span className="meta-icon"><Icon icon="globe" size={14} /></span>
-                          <span className="meta-label">起始URL:</span>
+                          <span className="meta-label">{t('userFlows.meta.startUrl')}</span>
                           <span className="meta-value">{recording.url}</span>
                         </div>
                         <div className="meta-item">
                           <span className="meta-icon"><Icon icon="zap" size={14} /></span>
-                          <span className="meta-label">操作数量:</span>
-                          <span className="meta-value">{recording.operations_count} 个操作</span>
+                          <span className="meta-label">{t('userFlows.meta.actions')}</span>
+                          <span className="meta-value">{recording.operations_count} {t('userFlows.meta.actionsUnit')}</span>
                         </div>
                         <div className="meta-item">
                           <span className="meta-icon"><Icon icon="calendar" size={14} /></span>
-                          <span className="meta-label">录制时间:</span>
+                          <span className="meta-label">{t('userFlows.meta.time')}</span>
                           <span className="meta-value">{formatDate(recording.created_at)}</span>
                         </div>
                         <div className="meta-item">
                           <span className="meta-icon"><Icon icon="hash" size={14} /></span>
-                          <span className="meta-label">会话ID:</span>
+                          <span className="meta-label">{t('userFlows.meta.sessionId')}</span>
                           <span className="meta-value">{recording.session_id}</span>
                         </div>
                       </div>
@@ -196,19 +199,19 @@ function UserFlowsPage({ session, onNavigate, showStatus, version }) {
                       {selectedRecording === recording.session_id ? (
                         <>
                           <span className="btn-spinner"></span>
-                          <span>生成中...</span>
+                          <span>{t('userFlows.generating')}</span>
                         </>
                       ) : (
                         <>
                           <Icon icon="play" size={16} />
-                          <span>生成 Workflow</span>
+                          <span>{t('userFlows.generate')}</span>
                         </>
                       )}
                     </button>
 
                     <button className="action-button secondary">
                       <Icon icon="eye" size={16} />
-                      <span>查看详情</span>
+                      <span>{t('userFlows.details')}</span>
                     </button>
 
                     <button
@@ -216,7 +219,7 @@ function UserFlowsPage({ session, onNavigate, showStatus, version }) {
                       onClick={() => handleDeleteClick(recording)}
                     >
                       <Icon icon="trash2" size={16} />
-                      <span>删除</span>
+                      <span>{t('userFlows.delete')}</span>
                     </button>
                   </div>
                 </div>
@@ -227,28 +230,28 @@ function UserFlowsPage({ session, onNavigate, showStatus, version }) {
 
         <div className="page-section">
           <div className="section-header">
-            <h3><Icon icon="bookOpen" size={20} /> 使用指南</h3>
+            <h3><Icon icon="bookOpen" size={20} /> {t('userFlows.guide.title')}</h3>
           </div>
           <div className="guide-content">
             <div className="guide-item">
               <div className="guide-icon"><Icon icon="video" size={24} /></div>
               <div className="guide-text">
-                <h4>录制流程</h4>
-                <p>点击"新建录制"开始录制浏览器操作，系统会记录你的每一步操作</p>
+                <h4>{t('userFlows.guide.recording.title')}</h4>
+                <p>{t('userFlows.guide.recording.desc')}</p>
               </div>
             </div>
             <div className="guide-item">
               <div className="guide-icon"><Icon icon="zap" size={24} /></div>
               <div className="guide-text">
-                <h4>生成 Workflow</h4>
-                <p>从录制流程直接生成可执行的 Workflow，无需等待 AI 处理</p>
+                <h4>{t('userFlows.guide.generate.title')}</h4>
+                <p>{t('userFlows.guide.generate.desc')}</p>
               </div>
             </div>
             <div className="guide-item">
               <div className="guide-icon"><Icon icon="search" size={24} /></div>
               <div className="guide-text">
-                <h4>查看详情</h4>
-                <p>查看录制的详细操作步骤，了解录制的具体内容</p>
+                <h4>{t('userFlows.guide.details.title')}</h4>
+                <p>{t('userFlows.guide.details.desc')}</p>
               </div>
             </div>
           </div>
@@ -264,18 +267,18 @@ function UserFlowsPage({ session, onNavigate, showStatus, version }) {
         <div className="modal-overlay" onClick={handleDeleteCancel}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>Confirm Delete</h3>
+              <h3>{t('userFlows.deleteConfirm.title')}</h3>
             </div>
             <div className="modal-body">
-              <p>Are you sure you want to delete <strong>"{deleteConfirm.recordingName}"</strong>?</p>
-              <p className="warning-text">This action cannot be undone.</p>
+              <p>{t('userFlows.deleteConfirm.desc', { name: deleteConfirm.recordingName })}</p>
+              <p className="warning-text">{t('userFlows.deleteConfirm.warning')}</p>
             </div>
             <div className="modal-footer">
               <button className="btn-cancel" onClick={handleDeleteCancel}>
-                Cancel
+                {t('userFlows.deleteConfirm.cancel')}
               </button>
               <button className="btn-confirm-delete" onClick={handleDeleteConfirm}>
-                Delete
+                {t('userFlows.deleteConfirm.confirm')}
               </button>
             </div>
           </div>

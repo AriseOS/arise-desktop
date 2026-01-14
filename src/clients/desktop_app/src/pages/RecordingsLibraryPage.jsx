@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from "react-i18next";
 import Icon from '../components/Icons';
 import { api } from '../utils/api';
 import '../styles/RecordingsLibraryPage.css';
 
 function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
+  const { t } = useTranslation();
   const userId = session?.username;
   const [recordings, setRecordings] = useState([]);
   const [filteredRecordings, setFilteredRecordings] = useState([]);
@@ -39,7 +41,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
         });
       } catch (error) {
         console.error('Error fetching recordings:', error);
-        showStatus(`Failed to load recordings: ${error.message}`, 'error');
+        showStatus(`${t('recordingsLibrary.loadFailed')}: ${error.message}`, 'error');
         setRecordings([]);
         setFilteredRecordings([]);
       } finally {
@@ -94,14 +96,14 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
         console.error('Failed to clear workflow_id from recording:', updateError);
       }
 
-      showStatus('Workflow has been deleted. You can generate a new one.', 'info');
+      showStatus(t('recordingsLibrary.workflowDeleted'), 'info');
     }
   };
 
   const handleGenerateWorkflow = (sessionId) => {
     // Get recording info for the generation page
     const recording = recordings.find(r => r.session_id === sessionId);
-    const recordingName = recording?.task_metadata?.name || `Recording ${sessionId}`;
+    const recordingName = recording?.task_metadata?.name || `${t('recordingsLibrary.recordingTitlePrefix')} ${sessionId}`;
 
     // Navigate to the dedicated generation page with recording info
     onNavigate('generation', {
@@ -114,7 +116,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
 
   const handleDeleteClick = (sessionId) => {
     const recording = recordings.find(r => r.session_id === sessionId);
-    const recordingName = recording?.task_metadata?.name || `Recording ${sessionId}`;
+    const recordingName = recording?.task_metadata?.name || `${t('recordingsLibrary.recordingTitlePrefix')} ${sessionId}`;
 
     setDeleteConfirm({ sessionId, recordingName });
   };
@@ -126,7 +128,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
     setDeleteConfirm(null);
 
     try {
-      showStatus('Deleting recording...', 'info');
+      showStatus(t('recordingsLibrary.deleting'), 'info');
 
       await api.callAppBackend(`/api/v1/recordings/${sessionId}?user_id=${userId}`, {
         method: 'DELETE'
@@ -141,10 +143,10 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
         return updated;
       });
 
-      showStatus('Recording deleted successfully', 'success');
+      showStatus(t('recordingsLibrary.deleteSuccess'), 'success');
     } catch (error) {
       console.error('Error deleting recording:', error);
-      showStatus(`Failed to delete recording: ${error.message}`, 'error');
+      showStatus(`${t('recordingsLibrary.deleteFailed')}: ${error.message}`, 'error');
     }
   };
 
@@ -162,10 +164,10 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
 
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins} minutes ago`;
-    if (diffHours < 24) return `${diffHours} hours ago`;
-    if (diffDays < 7) return `${diffDays} days ago`;
+    if (diffMins < 1) return t('recordingsLibrary.time.justNow');
+    if (diffMins < 60) return t('recordingsLibrary.time.minutesAgo', { count: diffMins });
+    if (diffHours < 24) return t('recordingsLibrary.time.hoursAgo', { count: diffHours });
+    if (diffDays < 7) return t('recordingsLibrary.time.daysAgo', { count: diffDays });
 
     return date.toLocaleDateString();
   };
@@ -175,7 +177,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
       <div className="recordings-library-page">
         <div className="loading-container">
           <div className="spinner-large"></div>
-          <p>Loading recordings...</p>
+          <p>{t('common.loading')}</p>
         </div>
       </div>
     );
@@ -188,7 +190,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
         <button className="btn-icon" onClick={() => onNavigate('main')} aria-label="Go Back">
           <Icon name="arrowLeft" />
         </button>
-        <h1 className="page-title"><Icon name="book" /> Recordings Library</h1>
+        <h1 className="page-title"><Icon name="book" /> {t('recordingsLibrary.title')}</h1>
         <div className="header-spacer"></div>
       </div>
 
@@ -201,7 +203,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
           <input
             type="text"
             className="search-input"
-            placeholder="Search by URL, field name, or session ID..."
+            placeholder={t('recordingsLibrary.searchPlaceholder')}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
@@ -217,8 +219,8 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
       <div className="results-info">
         <p className="results-count">
           {filteredRecordings.length === 0
-            ? 'No recordings found'
-            : `${filteredRecordings.length} recording${filteredRecordings.length === 1 ? '' : 's'}`}
+            ? t('recordingsLibrary.noRecordingsFound')
+            : `${filteredRecordings.length} ${filteredRecordings.length === 1 ? t('recordingsLibrary.recordingUnit') : t('recordingsLibrary.recordingsUnit')}`}
         </p>
       </div>
 
@@ -229,20 +231,20 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
             {recordings.length === 0 ? (
               <>
                 <div className="empty-icon"><Icon name="video" /></div>
-                <h3>No recordings yet</h3>
-                <p>Start recording a new workflow to see it here.</p>
+                <h3>{t('recordingsLibrary.noRecordingsYet')}</h3>
+                <p>{t('recordingsLibrary.startRecordingDesc')}</p>
                 <button className="btn-start-recording" onClick={() => onNavigate('quick-start')}>
                   <span className="button-icon"><Icon name="video" /></span>
-                  <span>Start Recording</span>
+                  <span>{t('recordingsLibrary.startRecording')}</span>
                 </button>
               </>
             ) : (
               <>
                 <div className="empty-icon"><Icon name="search" /></div>
-                <h3>No results found</h3>
-                <p>Try adjusting your search query.</p>
+                <h3>{t('recordingsLibrary.noResultsFound')}</h3>
+                <p>{t('recordingsLibrary.adjustQuery')}</p>
                 <button className="btn-clear-search" onClick={() => setSearchQuery('')}>
-                  Clear Search
+                  {t('recordingsLibrary.clearSearch')}
                 </button>
               </>
             )}
@@ -254,7 +256,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
                 <div className="recording-icon"><Icon name="video" /></div>
                 <div className="recording-info">
                   <h3 className="recording-title">
-                    {recording.task_metadata?.name || `Recording ${recording.session_id}`}
+                    {recording.task_metadata?.name || `${t('recordingsLibrary.recordingTitlePrefix')} ${recording.session_id}`}
                   </h3>
                   <div className="recording-meta">
                     <span className="meta-item">
@@ -263,11 +265,11 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
                     </span>
                     <span className="meta-item">
                       <Icon name="activity" />
-                      {recording.action_count || 0} operations
+                      {recording.action_count || 0} {t('recordingsLibrary.operations')}
                     </span>
                     <span className="meta-item">
                       <Icon name="code" />
-                      {recording.dom_count || 0} DOMs
+                      {recording.dom_count || 0} {t('recordingsLibrary.doms')}
                     </span>
                   </div>
                 </div>
@@ -279,7 +281,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
                   onClick={() => handleViewDetails(recording.session_id)}
                 >
                   <Icon name="eye" />
-                  View Details
+                  {t('recordingsLibrary.viewDetails')}
                 </button>
                 {workflowIds[recording.session_id] ? (
                   <button
@@ -287,7 +289,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
                     onClick={() => handleViewWorkflow(workflowIds[recording.session_id], recording.session_id)}
                   >
                     <Icon name="fileText" />
-                    View Workflow
+                    {t('recordingsLibrary.viewWorkflow')}
                   </button>
                 ) : (
                   <button
@@ -295,7 +297,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
                     onClick={() => handleGenerateWorkflow(recording.session_id)}
                   >
                     <Icon name="zap" />
-                    Generate Workflow
+                    {t('recordingsLibrary.generateWorkflow')}
                   </button>
                 )}
                 <button
@@ -305,7 +307,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
                     e.stopPropagation();
                     handleDeleteClick(recording.session_id);
                   }}
-                  title="Delete recording"
+                  title={t('recordingsLibrary.deleteRecording')}
                 >
                   <Icon name="trash" />
                 </button>
@@ -320,18 +322,18 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
         <div className="modal-overlay" onClick={handleDeleteCancel}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>Confirm Delete</h3>
+              <h3>{t('recordingsLibrary.confirmDelete')}</h3>
             </div>
             <div className="modal-body">
-              <p>Are you sure you want to delete <strong>"{deleteConfirm.recordingName}"</strong>?</p>
-              <p className="warning-text">This action cannot be undone.</p>
+              <p dangerouslySetInnerHTML={{ __html: t('recordingsLibrary.deleteMessage', { name: `<strong>${deleteConfirm.recordingName}</strong>` }) }}></p>
+              <p className="warning-text">{t('recordingsLibrary.undoneWarning')}</p>
             </div>
             <div className="modal-footer">
               <button className="btn-cancel" onClick={handleDeleteCancel}>
-                Cancel
+                {t('recordingsLibrary.cancel')}
               </button>
               <button className="btn btn-danger-solid" onClick={handleDeleteConfirm}>
-                Delete
+                {t('recordingsLibrary.delete')}
               </button>
             </div>
           </div>

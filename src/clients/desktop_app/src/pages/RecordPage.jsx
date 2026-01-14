@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import { DEFAULT_CONFIG_KEY } from '../config/index'
 import Icon from '../components/Icons'
 import '../styles/RecordPage.css'
 
 function RecordPage({ onNavigate, showStatus, currentUser, version }) {
+  const { t } = useTranslation()
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [isRecording, setIsRecording] = useState(false)
@@ -79,12 +81,12 @@ function RecordPage({ onNavigate, showStatus, currentUser, version }) {
 
   const handleStartRecord = async () => {
     if (!title.trim()) {
-      showStatus('请输入标题', 'error')
+      showStatus(t('auth.validation.enterUsername'), 'error') // Reusing enterUsername or adding a new dedicated key
       return
     }
 
     try {
-      showStatus('开始录制...', 'info')
+      showStatus(t('recording.hints.starting'), 'info')
 
       const response = await fetch('http://localhost:8000/api/recording/start', {
         method: 'POST',
@@ -133,7 +135,7 @@ function RecordPage({ onNavigate, showStatus, currentUser, version }) {
           }
         }
 
-        showStatus('录制已开始，请在浏览器中操作', 'success')
+        showStatus(t('recording.hints.started'), 'success')
 
         // Save recording state
         await saveRecordingState({
@@ -147,20 +149,20 @@ function RecordPage({ onNavigate, showStatus, currentUser, version }) {
       }
     } catch (error) {
       console.error('Start recording error:', error)
-      showStatus('启动录制失败', 'error')
+      showStatus(t('recording.hints.startFailed', { error: error.message }), 'error')
       setIsRecording(false)
     }
   }
 
   const getOperationTypeLabel = (type) => {
     const typeLabels = {
-      'click': { text: '点击', icon: 'mousePointer' },
-      'input': { text: '输入', icon: 'keyboard' },
-      'navigate': { text: '导航', icon: 'globe' },
-      'scroll': { text: '滚动', icon: 'arrowDown' },
-      'select': { text: '选择', icon: 'list' },
-      'submit': { text: '提交', icon: 'checkCircle' },
-      'hover': { text: '悬停', icon: 'mousePointer' }
+      'click': { text: t('recording.ops.click'), icon: 'mousePointer' },
+      'input': { text: t('recording.ops.input'), icon: 'keyboard' },
+      'navigate': { text: t('recording.ops.navigate'), icon: 'globe' },
+      'scroll': { text: t('recording.ops.scroll'), icon: 'arrowDown' },
+      'select': { text: t('recording.ops.select'), icon: 'list' },
+      'submit': { text: t('recording.ops.submit'), icon: 'checkCircle' },
+      'hover': { text: t('recording.ops.hover'), icon: 'mousePointer' }
     }
     const label = typeLabels[type] || { text: type, icon: 'mapPin' }
     return (
@@ -173,12 +175,12 @@ function RecordPage({ onNavigate, showStatus, currentUser, version }) {
 
   const handleStopRecord = async () => {
     if (!sessionId) {
-      showStatus('无录制会话', 'error')
+      showStatus(t('recording.hints.noRecording'), 'error')
       return
     }
 
     try {
-      showStatus('正在停止录制...', 'info')
+      showStatus(t('recording.hints.stopping'), 'info')
 
       const response = await fetch('http://localhost:8000/api/recording/stop', {
         method: 'POST',
@@ -234,7 +236,7 @@ function RecordPage({ onNavigate, showStatus, currentUser, version }) {
           }
         })
 
-        showStatus(`录制完成，捕获 ${result.operation_count} 个操作`, 'success')
+        showStatus(t('recording.hints.stopped', { count: result.operation_count }), 'success')
 
         // Stop recording UI state
         setIsRecording(false)
@@ -259,7 +261,7 @@ function RecordPage({ onNavigate, showStatus, currentUser, version }) {
       }
     } catch (error) {
       console.error('Stop recording error:', error)
-      showStatus('停止录制失败', 'error')
+      showStatus(t('recording.hints.stopFailed', { error: error.message }), 'error')
     }
   }
 
@@ -273,7 +275,7 @@ function RecordPage({ onNavigate, showStatus, currentUser, version }) {
         >
           <Icon icon="arrowLeft" />
         </button>
-        <div className="page-title"><Icon icon="video" size={28} /> 录制 Workflow</div>
+        <div className="page-title"><Icon icon="video" size={28} /> {t('recording.title')}</div>
       </div>
 
       <div className="record-content">
@@ -285,7 +287,7 @@ function RecordPage({ onNavigate, showStatus, currentUser, version }) {
                 <div className="input-group">
                   <label>
                     <span>
-                      标题 <span className="required">*</span>
+                      {t('recording.titleLabel')} <span className="required">*</span>
                     </span>
                     <span className="input-hint">{title.length}/50</span>
                   </label>
@@ -293,7 +295,7 @@ function RecordPage({ onNavigate, showStatus, currentUser, version }) {
                     type="text"
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
-                    placeholder="例如：自动填写表单"
+                    placeholder={t('recording.namePlaceholder')}
                     disabled={isRecording}
                     maxLength={50}
                   />
@@ -301,13 +303,13 @@ function RecordPage({ onNavigate, showStatus, currentUser, version }) {
 
                 <div className="input-group">
                   <label>
-                    <span>功能描述</span>
+                    <span>{t('recording.descLabel')}</span>
                     <span className="input-hint">{description.length}/500</span>
                   </label>
                   <textarea
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
-                    placeholder="详细描述这个工作流要完成什么任务，包含哪些步骤...&#10;&#10;例如：打开某个网站，填写表单字段，提交数据&#10;&#10;留空则根据录制的操作自动生成描述"
+                    placeholder={t('recording.descPlaceholder')}
                     disabled={isRecording}
                     maxLength={500}
                   />
@@ -316,14 +318,14 @@ function RecordPage({ onNavigate, showStatus, currentUser, version }) {
             ) : (
               <div className="operations-display">
                 <div className="operations-header">
-                  <span className="operations-title">已捕获操作</span>
-                  <span className="operations-count">{capturedOperations.length} 个操作</span>
+                  <span className="operations-title">{t('recording.capturedOps')}</span>
+                  <span className="operations-count">{t('recording.opsCount', { count: capturedOperations.length })}</span>
                 </div>
                 <div className="operations-list">
                   {capturedOperations.length === 0 ? (
                     <div className="empty-operations">
                       <div className="empty-icon"><Icon icon="clipboard" size={48} /></div>
-                      <div className="empty-text">等待捕获操作...</div>
+                      <div className="empty-text">{t('recording.waitingOps')}</div>
                     </div>
                   ) : (
                     capturedOperations.map((op, index) => (
@@ -356,17 +358,17 @@ function RecordPage({ onNavigate, showStatus, currentUser, version }) {
               {isGenerating ? (
                 <>
                   <div className="btn-spinner"></div>
-                  <span>生成中...</span>
+                  <span>{t('recording.generating')}</span>
                 </>
               ) : isRecording ? (
                 <>
                   <Icon icon="square" size={20} />
-                  <span>停止录制</span>
+                  <span>{t('recording.stopBtn')}</span>
                 </>
               ) : (
                 <>
                   <Icon icon="circle" size={20} fill="currentColor" />
-                  <span>开始录制</span>
+                  <span>{t('recording.startBtn')}</span>
                 </>
               )}
             </button>
@@ -376,34 +378,34 @@ function RecordPage({ onNavigate, showStatus, currentUser, version }) {
           {!isRecording && (
             <div className="record-tips-panel">
               <div className="tips-section">
-                <h3><Icon icon="zap" size={18} /> 录制最佳实践</h3>
+                <h3><Icon icon="zap" size={18} /> {t('recording.hints.title')}</h3>
                 <ul className="tips-list">
                   <li>
-                    <strong>选中 + 复制 = 提取：</strong> 要提取数据时，先用鼠标选中文本，再按 Ctrl+C 复制。AI 会识别这是你要提取的数据。
+                    <strong>{t('recording.hints.selectCopy')}</strong> {t('recording.hints.selectCopyDesc')}
                   </li>
                   <li>
-                    <strong>完整操作路径：</strong> 从起始页面开始，每一步点击都会被记录。AI 需要完整路径才能自动化重放。
+                    <strong>{t('recording.hints.completePath')}</strong> {t('recording.hints.completePathDesc')}
                   </li>
                   <li>
-                    <strong>等待加载：</strong> 确保页面完全加载后再点击下一个元素，这有助于 AI 识别正确的按钮和链接。
+                    <strong>{t('recording.hints.waitForLoad')}</strong> {t('recording.hints.waitForLoadDesc')}
                   </li>
                 </ul>
               </div>
 
               <div className="tips-section">
-                <h3><Icon icon="clipboard" size={18} /> 会被记录的操作</h3>
+                <h3><Icon icon="clipboard" size={18} /> {t('recording.hints.whatRecorded')}</h3>
                 <ul className="tips-list info">
-                  <li><strong>点击：</strong> 按钮、链接、菜单项等元素的点击</li>
-                  <li><strong>输入：</strong> 文本框、搜索框中输入的内容</li>
-                  <li><strong>选择+复制：</strong> 选中文本后复制的内容（提取数据的关键）</li>
-                  <li><strong>页面跳转：</strong> URL 变化和页面切换</li>
+                  <li><strong>{t('recording.hints.clicks')}</strong> {t('recording.hints.clicksDesc')}</li>
+                  <li><strong>{t('recording.hints.inputs')}</strong> {t('recording.hints.inputsDesc')}</li>
+                  <li><strong>{t('recording.hints.copyExtract')}</strong> {t('recording.hints.copyExtractDesc')}</li>
+                  <li><strong>{t('recording.hints.navigation')}</strong> {t('recording.hints.navigationDesc')}</li>
                 </ul>
               </div>
 
               <div className="tips-section">
-                <h3><Icon icon="alertTriangle" size={18} /> 注意</h3>
+                <h3><Icon icon="alertTriangle" size={18} /> {t('recording.hints.note')}</h3>
                 <ul className="tips-list warning">
-                  <li>不要直接关闭浏览器，返回这里点击"停止录制"</li>
+                  <li>{t('recording.hints.doNotClose')}</li>
                 </ul>
               </div>
             </div>

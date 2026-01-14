@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import 'reactflow/dist/style.css'
+import { useTranslation } from "react-i18next";
 import CustomNode from '../components/CustomNode'
 import yaml from 'js-yaml'
 import Icon from '../components/Icons'
@@ -13,6 +14,7 @@ const nodeTypes = {
 }
 
 function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStatus, onLogout, pageData, version }) {
+  const { t } = useTranslation();
   // Get user_id from session
   const userId = session?.username;
 
@@ -199,9 +201,9 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
       console.error('Load workflow error:', err)
       // Only show error if we don't have cached data to display
       if (!workflowData) {
-        setError('加载工作流数据失败')
+        setError(t('workflowDetail.loadFailed'))
       } else {
-        showStatus('刷新数据失败，显示缓存数据', 'warning')
+        showStatus(t('workflowDetail.refreshFailed'), 'warning')
       }
     } finally {
       setLoading(false)
@@ -214,13 +216,13 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
     setIsRunning(true)
 
     try {
-      showStatus('启动 Workflow 执行...', 'info')
+      showStatus(t('workflowDetail.startingExecution'), 'info')
 
       // Use api.executeWorkflow to automatically include API key header
       const result = await api.executeWorkflow(workflowId, userId)
       const taskId = result.task_id
 
-      showStatus('Workflow started! Redirecting to live execution page...', 'success')
+      showStatus(t('workflowDetail.startedRedirecting'), 'success')
 
       // Navigate to live execution page immediately
       setTimeout(() => {
@@ -231,7 +233,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
       }, 500)
     } catch (err) {
       console.error('Run workflow error:', err)
-      showStatus('执行失败', 'error')
+      showStatus(t('workflowDetail.executionFailed'), 'error')
     } finally {
       setIsRunning(false)
     }
@@ -239,7 +241,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
 
   // Helper to create a new workflow session
   const createNewSession = async (chatHistory = null) => {
-    showStatus('Creating dialogue session...', 'info')
+    showStatus(t('workflowDetail.creatingSession'), 'info')
     const sessionResult = await api.createWorkflowSession(
       userId,
       workflowId,
@@ -313,11 +315,11 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
           try {
             await syncResources(workflowId, 'download')
             setProgressEvents(prev => [...prev, { type: 'sync_complete', content: 'Files synced to local' }])
-            showStatus('Files synced to local', 'success')
+            showStatus(t('workflowDetail.syncSuccess'), 'success')
           } catch (syncError) {
             console.error('Sync failed:', syncError)
             setProgressEvents(prev => [...prev, { type: 'sync_error', content: `Sync failed: ${syncError.message}` }])
-            showStatus('Warning: File sync failed. Local files may be out of date. Try refreshing the page.', 'warning')
+            showStatus(t('workflowDetail.syncWarning'), 'warning')
           }
         } else if (event.type === 'error') {
           setProgressEvents(prev => [...prev, { type: 'error', content: event.message }])
@@ -360,12 +362,12 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
           console.log('Workflow saved:', result)
         }).catch(err => {
           console.error('Failed to save workflow:', err)
-          showStatus('Workflow modified but save failed.', 'warning')
+          showStatus(t('workflowDetail.saveFailed'), 'warning')
         })
 
-        showStatus('Workflow updated!', 'success')
+        showStatus(t('workflowDetail.statusUpdated'), 'success')
       } else {
-        showStatus('Response received', 'success')
+        showStatus(t('workflowDetail.responseReceived'), 'success')
       }
 
     } catch (error) {
@@ -383,7 +385,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
           const historyForContext = modificationLog.slice(0, -1)  // Exclude current message
           const newSessionId = await createNewSession(historyForContext)
 
-          showStatus('Session restored, retrying...', 'info')
+          showStatus(t('workflowDetail.sessionRestored'), 'info')
 
           // Retry the chat with the new session
           setProgressEvents([])
@@ -410,11 +412,11 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
               try {
                 await syncResources(workflowId, 'download')
                 setProgressEvents(prev => [...prev, { type: 'sync_complete', content: 'Files synced to local' }])
-                showStatus('Files synced to local', 'success')
+                showStatus(t('workflowDetail.syncSuccess'), 'success')
               } catch (syncError) {
                 console.error('Sync failed:', syncError)
                 setProgressEvents(prev => [...prev, { type: 'sync_error', content: `Sync failed: ${syncError.message}` }])
-                showStatus('Warning: File sync failed. Local files may be out of date. Try refreshing the page.', 'warning')
+                showStatus(t('workflowDetail.syncWarning'), 'warning')
               }
             } else if (event.type === 'error') {
               setProgressEvents(prev => [...prev, { type: 'error', content: event.message }])
@@ -450,29 +452,30 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
               })
             }).catch(err => {
               console.error('Failed to save workflow:', err)
-              showStatus('Workflow modified but save failed.', 'warning')
+              showStatus(t('workflowDetail.saveFailed'), 'warning')
             })
 
-            showStatus('Workflow updated!', 'success')
+            showStatus(t('workflowDetail.statusUpdated'), 'success')
           } else {
-            showStatus('Response received', 'success')
+            showStatus(t('workflowDetail.responseReceived'), 'success')
           }
 
           return  // Successfully retried
         } catch (retryError) {
           console.error('Retry failed:', retryError)
-          showStatus(`Modification failed: ${retryError.message}`, 'error')
+          showStatus(t('workflowDetail.modificationFailed', { error: retryError.message }), 'error')
           setModificationLog(prev => [...prev, { type: 'error', content: retryError.message }])
           return
         }
       }
 
-      showStatus(`Modification failed: ${error.message}`, 'error')
+      showStatus(t('workflowDetail.modificationFailed', { error: error.message }), 'error')
       setModificationLog(prev => [...prev, { type: 'error', content: error.message }])
     } finally {
       setIsModifying(false)
     }
   }
+
 
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -582,7 +585,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
     setDeleteConfirm(null)
 
     try {
-      showStatus('Deleting...', 'info')
+      showStatus(t('workflowDetail.deleting'), 'info')
       const url = `/api/v1/workflows/${workflowId}/data/collections/${collectionName}?user_id=${userId}`
       await api.callAppBackend(url, { method: 'DELETE' })
       showStatus(`Collection "${collectionName}" deleted`, 'success')
@@ -601,7 +604,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
 
   const handleExportCollection = async (collectionName) => {
     try {
-      showStatus('Exporting...', 'info')
+      showStatus(t('workflowDetail.exporting'), 'info')
       const response = await api.callAppBackendRaw(
         `/api/v1/workflows/${workflowId}/data/collections/${collectionName}/export?user_id=${userId}`
       )
@@ -624,7 +627,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
       document.body.removeChild(link)
       URL.revokeObjectURL(url)
 
-      showStatus('Export completed', 'success')
+      showStatus(t('workflowDetail.exportCompleted'), 'success')
     } catch (error) {
       console.error('Export error:', error)
       showStatus(`Export failed: ${error.message}`, 'error')
@@ -704,7 +707,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
         >
           <Icon icon="arrowLeft" />
         </button>
-        <div className="page-title">{workflowData?.workflow_name || workflowData?.name || 'Workflow 详情'}</div>
+        <div className="page-title">{workflowData?.workflow_name || workflowData?.name || t('workflowDetail.title')}</div>
         <button
           className="run-button"
           onClick={handleRunWorkflow}
@@ -713,12 +716,12 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
           {isRunning ? (
             <>
               <div className="btn-spinner"></div>
-              <span>运行中</span>
+              <span>{t('common.running')}</span>
             </>
           ) : (
             <>
               <Icon icon="play" size={16} />
-              <span>运行</span>
+              <span>{t('common.run')}</span>
             </>
           )}
         </button>
@@ -729,7 +732,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
         {loading && !workflowData && (
           <div className="empty-state">
             <div className="empty-state-icon"><Icon icon="clock" size={48} /></div>
-            <div className="empty-state-title">加载中...</div>
+            <div className="empty-state-title">{t('common.loading')}</div>
           </div>
         )}
 
@@ -737,7 +740,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
         {error && !workflowData && (
           <div className="empty-state">
             <div className="empty-state-icon"><Icon icon="alertTriangle" size={48} /></div>
-            <div className="empty-state-title">错误</div>
+            <div className="empty-state-title">{t('common.error')}</div>
             <div className="empty-state-desc">{error}</div>
           </div>
         )}
@@ -750,28 +753,28 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
               <div className="workflow-traceability-card">
                 <div className="traceability-header">
                   <Icon icon="info" size={16} />
-                  <h3>Metadata</h3>
+                  <h3>{t('workflowDetail.metadata')}</h3>
                 </div>
                 <div className="traceability-content" style={{ flexDirection: 'column', gap: '8px', alignItems: 'flex-start' }}>
                   {/* Name from metadata.json workflow_name */}
                   <div className="trace-item">
-                    <span className="trace-label">Name:</span>
+                    <span className="trace-label">{t('workflowDetail.name')}:</span>
                     <code className="trace-value" style={{ width: 'auto' }}>{workflowData.workflow_name || workflowData.name || workflowId}</code>
                   </div>
                   {/* ID from metadata.json workflow_id */}
                   <div className="trace-item">
-                    <span className="trace-label">ID:</span>
+                    <span className="trace-label">{t('workflowDetail.id')}:</span>
                     <code className="trace-value" style={{ width: 'auto' }}>{workflowData.workflow_id || workflowId}</code>
                   </div>
                   {/* Source recording from metadata.json */}
                   {workflowData.source_recording_id && (
                     <div className="trace-item">
-                      <span className="trace-label">Source:</span>
+                      <span className="trace-label">{t('workflowDetail.source')}:</span>
                       <code className="trace-value" style={{ width: 'auto' }}>{workflowData.source_recording_id}</code>
                       <button
                         className="trace-link-button"
                         onClick={() => onNavigate('recording-detail', { sessionId: workflowData.source_recording_id })}
-                        title="View Recording"
+                        title={t('workflowDetail.viewRecording')}
                       >
                         <Icon icon="externalLink" size={14} />
                       </button>
@@ -780,20 +783,20 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                   {/* Description from workflow.yaml */}
                   {workflowData.description && (
                     <div className="trace-item">
-                      <span className="trace-label">Description:</span>
+                      <span className="trace-label">{t('workflowDetail.description')}:</span>
                       <code className="trace-value" style={{ width: 'auto' }}>{workflowData.description}</code>
                     </div>
                   )}
                   {/* Timestamps from metadata.json */}
                   {workflowData.created_at && (
                     <div className="trace-item">
-                      <span className="trace-label">Created:</span>
+                      <span className="trace-label">{t('workflowDetail.created')}:</span>
                       <code className="trace-value" style={{ width: 'auto' }}>{new Date(workflowData.created_at).toLocaleString()}</code>
                     </div>
                   )}
                   {workflowData.updated_at && (
                     <div className="trace-item">
-                      <span className="trace-label">Updated:</span>
+                      <span className="trace-label">{t('workflowDetail.labelUpdated')}:</span>
                       <code className="trace-value" style={{ width: 'auto' }}>{new Date(workflowData.updated_at).toLocaleString()}</code>
                     </div>
                   )}
@@ -808,35 +811,35 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                 onClick={() => setActiveTab('visual')}
               >
                 <Icon icon="layout" size={16} />
-                <span>Visual</span>
+                <span>{t('workflowDetail.visual')}</span>
               </button>
               <button
                 className={`workflow-tab-button ${activeTab === 'yaml' ? 'active' : ''}`}
                 onClick={() => setActiveTab('yaml')}
               >
                 <Icon icon="code" size={16} />
-                <span>YAML</span>
+                <span>{t('workflowDetail.yaml')}</span>
               </button>
               <button
                 className={`workflow-tab-button ${activeTab === 'chat' ? 'active' : ''}`}
                 onClick={() => setActiveTab('chat')}
               >
                 <Icon icon="messageSquare" size={16} />
-                <span>AI 对话</span>
+                <span>{t('workflowDetail.aiChat')}</span>
               </button>
               <button
                 className={`workflow-tab-button ${activeTab === 'data' ? 'active' : ''}`}
                 onClick={() => setActiveTab('data')}
               >
                 <Icon icon="database" size={16} />
-                <span>数据</span>
+                <span>{t('workflowDetail.data')}</span>
               </button>
               <button
                 className={`workflow-tab-button ${activeTab === 'history' ? 'active' : ''}`}
                 onClick={() => setActiveTab('history')}
               >
                 <Icon icon="clock" size={16} />
-                <span>执行历史</span>
+                <span>{t('workflowDetail.history')}</span>
               </button>
             </div>
 
@@ -860,80 +863,77 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                     <div
                       className="chat-instructions-badge"
                       onClick={() => setChatInstructionsCollapsed(false)}
-                      title="点击展开说明"
+                      title={t('workflowDetail.expandInstructions')}
                     >
                       <Icon icon="bot" size={14} />
-                      <span>AI 助手</span>
+                      <span>{t('workflowDetail.aiAssistant')}</span>
                       <Icon icon="chevronDown" size={12} />
                     </div>
                   ) : (
                     <div className="chat-instructions">
                       <div className="chat-instructions-header">
-                        <h3><Icon icon="bot" size={20} /> AI 助手</h3>
+                        <h3><Icon icon="bot" size={20} /> {t('workflowDetail.aiAssistant')}</h3>
                         <button
                           className="collapse-btn"
                           onClick={() => setChatInstructionsCollapsed(true)}
-                          title="收起"
+                          title={t('workflowDetail.collapse')}
                         >
                           <Icon icon="x" size={14} />
                         </button>
                       </div>
-                      <p>使用自然语言描述你想要的修改，AI 会帮你调整 workflow 配置</p>
+                      <p>{t('workflowDetail.chatInstructions')}</p>
                     </div>
                   )}
 
                   {/* Modification Log */}
-                  {(modificationLog.length > 0 || progressEvents.length > 0) && (
-                    <div className="modification-log">
-                      {modificationLog.map((msg, index) => (
-                        <div key={index} className={`log-message ${msg.type}`}>
-                          <span className="log-avatar">
-                            {msg.type === 'user' ? <Icon icon="user" size={16} /> : msg.type === 'error' ? <Icon icon="xCircle" size={16} /> : <Icon icon="bot" size={16} />}
-                          </span>
-                          <pre className="log-content">{msg.content}</pre>
-                        </div>
-                      ))}
-
-                      {/* SSE Progress Events - Two-box layout: text on top, tool_use on bottom */}
-                      {isModifying && (
-                        <div className="sse-progress-log">
-                          {/* Text box - AI thinking/response */}
-                          <div className="progress-event text">
-                            <Icon icon="messageSquare" size={14} />
-                            <span>
-                              {progressEvents.find(e => e.type === 'text')?.content || 'Thinking...'}
+                  {/* Modification Log */}
+                  <div className="modification-log">
+                    {(modificationLog.length > 0 || progressEvents.length > 0) ? (
+                      <>
+                        {modificationLog.map((msg, index) => (
+                          <div key={index} className={`log-message ${msg.type}`}>
+                            <span className="log-avatar">
+                              {msg.type === 'user' ? <Icon icon="user" size={16} /> : msg.type === 'error' ? <Icon icon="xCircle" size={16} /> : <Icon icon="bot" size={16} />}
                             </span>
+                            <pre className="log-content">{msg.content}</pre>
                           </div>
+                        ))}
 
-                          {/* Tool use box - current tool being executed */}
-                          <div className="progress-event tool_use">
-                            <Icon icon="tool" size={14} className={progressEvents.find(e => e.type === 'tool_use') ? 'spinning-icon' : ''} />
-                            <span>
-                              {progressEvents.find(e => e.type === 'tool_use')?.content || 'Waiting for tool call...'}
-                            </span>
+                        {/* SSE Progress Events */}
+                        {isModifying && (
+                          <div className="sse-progress-log">
+                            <div className="progress-event text">
+                              <Icon icon="messageSquare" size={14} />
+                              <span>{progressEvents.find(e => e.type === 'text')?.content || t('workflowDetail.thinking')}</span>
+                            </div>
+                            <div className="progress-event tool_use">
+                              <Icon icon="tool" size={14} className={progressEvents.find(e => e.type === 'tool_use') ? 'spinning-icon' : ''} />
+                              <span>{progressEvents.find(e => e.type === 'tool_use')?.content || t('workflowDetail.waitingForTool')}</span>
+                            </div>
+                            {progressEvents.find(e => e.type === 'workflow_updated') && (
+                              <div className="progress-event workflow_updated">
+                                <Icon icon="checkCircle" size={14} />
+                                <span>{t('workflowDetail.workflowUpdatedSuccess')}</span>
+                              </div>
+                            )}
+                            {progressEvents.find(e => e.type === 'error') && (
+                              <div className="progress-event error">
+                                <Icon icon="alertCircle" size={14} />
+                                <span>{progressEvents.find(e => e.type === 'error')?.content}</span>
+                              </div>
+                            )}
+                            <div ref={logEndRef} />
                           </div>
-
-                          {/* Workflow updated indicator */}
-                          {progressEvents.find(e => e.type === 'workflow_updated') && (
-                            <div className="progress-event workflow_updated">
-                              <Icon icon="checkCircle" size={14} />
-                              <span>Workflow updated successfully</span>
-                            </div>
-                          )}
-
-                          {/* Error indicator */}
-                          {progressEvents.find(e => e.type === 'error') && (
-                            <div className="progress-event error">
-                              <Icon icon="alertCircle" size={14} />
-                              <span>{progressEvents.find(e => e.type === 'error')?.content}</span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      <div ref={logEndRef} />
-                    </div>
-                  )}
+                        )}
+                        <div ref={logEndRef} />
+                      </>
+                    ) : (
+                      <div className="empty-chat-state">
+                        <Icon icon="messageSquare" size={32} style={{ opacity: 0.3, marginBottom: 12 }} />
+                        <p style={{ opacity: 0.5 }}>{t('workflowDetail.chatInstructions')}</p>
+                      </div>
+                    )}
+                  </div>
 
                   {/* Modification Input */}
                   <div className="modification-input">
@@ -941,7 +941,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                       value={chatInput}
                       onChange={(e) => setChatInput(e.target.value)}
                       onKeyPress={handleKeyPress}
-                      placeholder="例如：在 scraper 步骤前添加 2 秒延迟，或者修改超时时间为 30 秒..."
+                      placeholder={t('workflowDetail.chatInstructions')}
                       disabled={isModifying}
                       rows={3}
                     />
@@ -950,11 +950,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                       disabled={!chatInput.trim() || isModifying}
                       className="modify-button"
                     >
-                      {isModifying ? (
-                        <div className="btn-spinner"></div>
-                      ) : (
-                        <Icon icon="send" size={16} />
-                      )}
+                      {isModifying ? <div className="btn-spinner"></div> : <Icon icon="send" size={16} />}
                     </button>
                   </div>
                 </div>
@@ -963,14 +959,14 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                   {dataLoading ? (
                     <div className="data-loading">
                       <div className="spinner"></div>
-                      <p>Loading collections...</p>
+                      <p>{t('workflowDetail.loadingCollections')}</p>
                     </div>
                   ) : collections.length === 0 ? (
                     <div className="data-empty">
                       <Icon icon="database" size={48} />
-                      <p>No collections found</p>
+                      <p>{t('workflowDetail.noCollections')}</p>
                       <span className="data-empty-hint">
-                        This workflow may not store data, or it hasn't been executed yet.
+                        {t('workflowDetail.noCollectionsDesc')}
                       </span>
                     </div>
                   ) : (
@@ -978,8 +974,8 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                       {/* Left Sidebar */}
                       <div className="data-sidebar">
                         <div className="sidebar-header">
-                          <span className="sidebar-title">Data Collections</span>
-                          <button className="btn-icon-ghost" onClick={handleRefreshData} title="Refresh">
+                          <span className="sidebar-title">{t('workflowDetail.dataCollections')}</span>
+                          <button className="btn-icon-ghost" onClick={handleRefreshData} title={t('workflowDetail.refresh')}>
                             <Icon icon="refresh" size={14} />
                           </button>
                         </div>
@@ -995,7 +991,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                               </div>
                               <div className="item-content">
                                 <span className="item-name">{col.collection_name}</span>
-                                <span className="item-meta">{col.records_count} records</span>
+                                <span className="item-meta">{col.records_count} {t('workflowDetail.records')}</span>
                               </div>
                             </div>
                           ))}
@@ -1009,13 +1005,13 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                             <div className="empty-icon-circle">
                               <Icon icon="mousePointer" size={24} />
                             </div>
-                            <h3>Select a Collection</h3>
-                            <p>Choose a data collection from the left to view and manage its records.</p>
+                            <h3>{t('workflowDetail.selectCollection')}</h3>
+                            <p>{t('workflowDetail.selectCollectionDesc')}</p>
                           </div>
                         ) : collectionLoading ? (
                           <div className="main-loading-state">
                             <div className="spinner"></div>
-                            <p>Loading records...</p>
+                            <p>{t('workflowDetail.loadingRecords')}</p>
                           </div>
                         ) : collectionData ? (
                           <>
@@ -1026,11 +1022,11 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                                 <div className="header-badges">
                                   <span className="badge-pill">
                                     <Icon icon="list" size={12} />
-                                    {collectionData.total_records} Records
+                                    {collectionData.total_records} {t('workflowDetail.records')}
                                   </span>
                                   <span className="badge-pill">
                                     <Icon icon="columns" size={12} />
-                                    {collectionData.fields?.length || 0} Fields
+                                    {collectionData.fields?.length || 0} {t('workflowDetail.fields')}
                                   </span>
                                 </div>
                               </div>
@@ -1041,14 +1037,14 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                                   onClick={() => handleExportCollection(selectedCollection.collection_name)}
                                 >
                                   <Icon icon="download" size={16} />
-                                  <span>Export CSV</span>
+                                  <span>{t('workflowDetail.exportCSV')}</span>
                                 </button>
                                 <button
                                   className="btn-danger-secondary"
                                   onClick={() => handleDeleteClick(selectedCollection.collection_name)}
                                 >
                                   <Icon icon="trash2" size={16} />
-                                  <span>Delete</span>
+                                  <span>{t('common.delete')}</span>
                                 </button>
                               </div>
                             </div>
@@ -1099,10 +1095,10 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                       value={statusFilter}
                       onChange={(e) => setStatusFilter(e.target.value)}
                     >
-                      <option value="all">全部状态</option>
-                      <option value="completed">成功</option>
-                      <option value="failed">失败</option>
-                      <option value="running">运行中</option>
+                      <option value="all">{t('workflowDetail.statusAll')}</option>
+                      <option value="completed">{t('workflowDetail.statusCompleted')}</option>
+                      <option value="failed">{t('workflowDetail.statusFailed')}</option>
+                      <option value="running">{t('workflowDetail.statusRunning')}</option>
                     </select>
                     <button className="btn-refresh" onClick={fetchExecutionHistory}>
                       <Icon icon="refresh" size={16} />
@@ -1112,12 +1108,12 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                   {historyLoading ? (
                     <div className="history-loading">
                       <div className="spinner"></div>
-                      <p>加载执行历史...</p>
+                      <p>{t('workflowDetail.loadHistory')}</p>
                     </div>
                   ) : executions.length === 0 ? (
                     <div className="history-empty">
                       <Icon icon="inbox" size={48} />
-                      <p>暂无执行记录</p>
+                      <p>{t('workflowDetail.noHistory')}</p>
                     </div>
                   ) : (
                     <div className="execution-list">
@@ -1134,7 +1130,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                             <div className="execution-time">{formatTime(execution.started_at)}</div>
                             <div className="execution-meta">
                               <span className={`status-text ${getStatusClass(execution.status)}`}>
-                                {execution.status}
+                                {(execution.status && t(`myWorkflows.status.${execution.status}`)) || execution.status || t('workflowDetail.unknown')}
                               </span>
                               {execution.error_summary && (
                                 <span className="error-hint" title={execution.error_summary}>
@@ -1149,7 +1145,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                               onClick={(e) => handleViewLive(execution, e)}
                             >
                               <Icon icon="eye" size={14} />
-                              <span>View Live</span>
+                              <span>{t('workflowDetail.viewLive')}</span>
                             </button>
                           )}
                           <div className="execution-arrow">
@@ -1168,7 +1164,7 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
               <div className="modal-overlay" onClick={handleCloseDetail}>
                 <div className="execution-detail-modal" onClick={e => e.stopPropagation()}>
                   <div className="modal-header">
-                    <h2>执行详情</h2>
+                    <h2>{t('workflowDetail.executionDetail')}</h2>
                     <button className="btn-close" onClick={handleCloseDetail}>
                       <Icon icon="x" size={20} />
                     </button>
@@ -1177,172 +1173,194 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
                   {detailLoading ? (
                     <div className="modal-loading">
                       <div className="spinner"></div>
-                      <p>加载中...</p>
+                      <p>{t('common.loading')}</p>
                     </div>
                   ) : executionDetail ? (
                     <div className="modal-content">
                       {/* Header Stats */}
                       <div className="detail-header-stats">
                         <div className="stat-card">
-                          <span className="stat-label">Status</span>
+                          <span className="stat-label">{t('workflowDetail.status')}</span>
                           <div className={`stat-value-badge ${getStatusClass(executionDetail.meta?.status)}`}>
                             {getStatusIcon(executionDetail.meta?.status)}
-                            <span>{executionDetail.meta?.status || 'Unknown'}</span>
+                            <span>{(executionDetail.meta?.status && t(`myWorkflows.status.${executionDetail.meta.status}`)) || executionDetail.meta?.status || t('workflowDetail.unknown')}</span>
+                          </div>
+                          <div className="stat-card">
+                            <span className="stat-label">{t('workflowDetail.duration')}</span>
+                            <span className="stat-value">
+                              {formatDuration(executionDetail.meta?.started_at, executionDetail.meta?.finished_at)}
+                            </span>
+                          </div>
+                          <div className="stat-card">
+                            <span className="stat-label">{t('workflowDetail.stepsCompleted')}</span>
+                            <span className="stat-value">
+                              {executionDetail.meta?.steps_completed || 0}
+                              <span className="stat-sub"> / {executionDetail.meta?.steps_total || 0}</span>
+                            </span>
+                          </div>
+                          <div className="stat-card">
+                            <span className="stat-label">{t('workflowDetail.startedAt')}</span>
+                            <span className="stat-value sm">{formatTime(executionDetail.meta?.started_at)}</span>
                           </div>
                         </div>
-                        <div className="stat-card">
-                          <span className="stat-label">Duration</span>
-                          <span className="stat-value">
-                            {formatDuration(executionDetail.meta?.started_at, executionDetail.meta?.finished_at)}
-                          </span>
-                        </div>
-                        <div className="stat-card">
-                          <span className="stat-label">Steps Completed</span>
-                          <span className="stat-value">
-                            {executionDetail.meta?.steps_completed || 0}
-                            <span className="stat-sub"> / {executionDetail.meta?.steps_total || 0}</span>
-                          </span>
-                        </div>
-                        <div className="stat-card">
-                          <span className="stat-label">Started At</span>
-                          <span className="stat-value sm">{formatTime(executionDetail.meta?.started_at)}</span>
-                        </div>
-                      </div>
 
-                      {executionDetail.meta?.error_summary && (
-                        <div className="error-summary-banner">
-                          <div className="error-icon-wrapper">
-                            <Icon icon="alertTriangle" size={20} />
+                        {executionDetail.meta?.error_summary && (
+                          <div className="error-summary-banner">
+                            <div className="error-icon-wrapper">
+                              <Icon icon="alertTriangle" size={20} />
+                            </div>
+                            <div className="error-content">
+                              <h4>{t('workflowDetail.executionFailedTitle')}</h4>
+                              <pre>{executionDetail.meta.error_summary}</pre>
+                            </div>
                           </div>
-                          <div className="error-content">
-                            <h4>Execution Failed</h4>
-                            <pre>{executionDetail.meta.error_summary}</pre>
-                          </div>
-                        </div>
-                      )}
+                        )}
 
-                      <div className="detail-timeline-section">
-                        <h3>Execution Timeline</h3>
-                        <div className="timeline-wrapper">
-                          {executionDetail.logs && executionDetail.logs.length > 0 ? (
-                            (() => {
-                              // Group logs by step
-                              const groupedLogs = executionDetail.logs.reduce((acc, log, idx) => {
-                                const stepIdx = log.step !== undefined ? log.step : -1;
-                                if (!acc[stepIdx]) {
-                                  acc[stepIdx] = {
-                                    step: stepIdx,
-                                    logs: [],
-                                    status: 'completed',
-                                    hasError: false
-                                  };
-                                }
-                                // Add original index to log for unique key/expanding
-                                acc[stepIdx].logs.push({ ...log, originalIdx: idx });
-                                if (log.status === 'failed') {
-                                  acc[stepIdx].status = 'failed';
-                                  acc[stepIdx].hasError = true;
-                                }
-                                return acc;
-                              }, {});
+                        <div className="detail-timeline-section">
+                          <h3>{t('workflowDetail.executionTimeline')}</h3>
+                          <div className="timeline-wrapper">
+                            {executionDetail.logs && executionDetail.logs.length > 0 ? (
+                              (() => {
+                                // Group logs by step
+                                const groupedLogs = executionDetail.logs.reduce((acc, log, idx) => {
+                                  const stepIdx = log.step !== undefined ? log.step : -1;
+                                  if (!acc[stepIdx]) {
+                                    acc[stepIdx] = {
+                                      step: stepIdx,
+                                      logs: [],
+                                      status: 'completed',
+                                      hasError: false
+                                    };
+                                  }
+                                  // Add original index to log for unique key/expanding
+                                  acc[stepIdx].logs.push({ ...log, originalIdx: idx });
+                                  if (log.status === 'failed') {
+                                    acc[stepIdx].status = 'failed';
+                                    acc[stepIdx].hasError = true;
+                                  }
+                                  return acc;
+                                }, {});
 
-                              const sortedGroups = Object.values(groupedLogs).sort((a, b) => a.step - b.step);
+                                const sortedGroups = Object.values(groupedLogs).sort((a, b) => a.step - b.step);
 
-                              return sortedGroups.map((group, groupIdx) => (
-                                <div key={groupIdx} className={`timeline-group ${group.status}`}>
-                                  <div className="timeline-group-header">
-                                    <div className={`step-badge ${group.status}`}>
-                                      {group.status === 'failed' ? (
-                                        <Icon icon="x" size={12} />
-                                      ) : (
-                                        <span className="step-num">{group.step + 1}</span>
-                                      )}
+                                return sortedGroups.map((group, groupIdx) => (
+                                  <div key={groupIdx} className={`timeline-group ${group.status}`}>
+                                    <div className="timeline-group-header">
+                                      <div className={`step-badge ${group.status}`}>
+                                        {group.status === 'failed' ? (
+                                          <Icon icon="x" size={12} />
+                                        ) : (
+                                          <span className="step-num">{group.step + 1}</span>
+                                        )}
+                                      </div>
+                                      <span className="step-title">{t('workflowDetail.stepPrefix', { step: group.step + 1 })}</span>
+                                      {group.hasError && <span className="step-error-tag">{t('myWorkflows.status.failed')}</span>}
                                     </div>
-                                    <span className="step-title">Step {group.step + 1}</span>
-                                    {group.hasError && <span className="step-error-tag">Failed</span>}
-                                  </div>
 
-                                  <div className="timeline-group-content">
-                                    {group.logs.map((log) => {
-                                      const hasMetadata = log.metadata && Object.keys(log.metadata).length > 0;
+                                    <div className="timeline-group-content">
+                                      {group.logs.map((log) => {
+                                        const hasMetadata = log.metadata && Object.keys(log.metadata).length > 0;
 
-                                      return (
-                                        <div key={log.originalIdx} className={`timeline-log-entry ${log.status}`}>
-                                          <div className="log-row-primary">
-                                            <div className="log-time-col">
-                                              {formatTime(log.ts).split(' ')[1] || formatTime(log.ts)}
-                                            </div>
-                                            <div className="log-divider">
-                                              <div className="log-dot"></div>
-                                            </div>
-                                            <div className="log-details">
-                                              <div className="log-main-line">
-                                                <span className="log-action">{log.action}</span>
-                                                {log.target && (
-                                                  <span className="log-target">
-                                                    <Icon icon="arrowRight" size={10} /> {log.target}
-                                                  </span>
-                                                )}
+                                        return (
+                                          <div key={log.originalIdx} className={`timeline-log-entry ${log.status}`}>
+                                            <div className="log-row-primary">
+                                              <div className="log-time-col">
+                                                {formatTime(log.ts).split(' ')[1] || formatTime(log.ts)}
                                               </div>
-                                              {log.message && <div className="log-sub-message">{log.message}</div>}
-
-                                              {/* Inline Metadata Preview (e.g. error message) */}
-                                              {hasMetadata && log.metadata.error && (
-                                                <div className="log-inline-error">
-                                                  <Icon icon="alertCircle" size={12} />
-                                                  {log.metadata.error}
-                                                </div>
-                                              )}
-                                            </div>
-                                            <div className="log-meta-right">
-                                              {log.duration_ms && (
-                                                <span className="log-duration-badge">{log.duration_ms}ms</span>
-                                              )}
-                                            </div>
-                                          </div>
-
-                                          {/* Full Metadata Block */}
-                                          {hasMetadata && (
-                                            <div className="log-metadata-block">
-                                              <details>
-                                                <summary>View Details</summary>
-                                                <div className="metadata-content">
-                                                  {log.metadata.content_type === 'code' ? (
-                                                    <pre className="code-block">
-                                                      <code>{log.metadata.script_content || JSON.stringify(log.metadata, null, 2)}</code>
-                                                    </pre>
-                                                  ) : (
-                                                    <pre className="json-block">{JSON.stringify(log.metadata, null, 2)}</pre>
+                                              <div className="log-divider">
+                                                <div className="log-dot"></div>
+                                              </div>
+                                              <div className="log-details">
+                                                <div className="log-main-line">
+                                                  <span className="log-action">{log.action}</span>
+                                                  {log.target && (
+                                                    <span className="log-target">
+                                                      <Icon icon="arrowRight" size={10} /> {log.target}
+                                                    </span>
                                                   )}
                                                 </div>
-                                              </details>
+                                                {log.message && <div className="log-sub-message">{log.message}</div>}
+
+                                                {/* Inline Metadata Preview (e.g. error message) */}
+                                                {hasMetadata && log.metadata.error && (
+                                                  <div className="log-inline-error">
+                                                    <Icon icon="alertCircle" size={12} />
+                                                    {log.metadata.error}
+                                                  </div>
+                                                )}
+                                              </div>
+                                              <div className="log-meta-right">
+                                                {log.duration_ms && (
+                                                  <span className="log-duration-badge">{log.duration_ms}ms</span>
+                                                )}
+                                              </div>
                                             </div>
-                                          )}
-                                        </div>
-                                      );
-                                    })}
+
+                                            {/* Full Metadata Block */}
+                                            {hasMetadata && (
+                                              <div className="log-metadata-block">
+                                                <details>
+                                                  <summary>{t('workflowDetail.viewDetails')}</summary>
+                                                  <div className="metadata-content">
+                                                    {log.metadata.content_type === 'code' ? (
+                                                      <pre className="code-block">
+                                                        <code>{log.metadata.script_content || JSON.stringify(log.metadata, null, 2)}</code>
+                                                      </pre>
+                                                    ) : (
+                                                      <pre className="json-block">{JSON.stringify(log.metadata, null, 2)}</pre>
+                                                    )}
+                                                  </div>
+                                                </details>
+                                              </div>
+                                            )}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
                                   </div>
-                                </div>
-                              ));
-                            })()
-                          ) : (
-                            <div className="no-logs-state">
-                              <Icon icon="list" size={32} />
-                              <p>No execution logs available</p>
-                            </div>
-                          )}
+                                ));
+                              })()
+                            ) : (
+                              <div className="no-logs-state">
+                                <Icon icon="list" size={32} />
+                                <p>{t('workflowDetail.noLogs')}</p>
+                              </div>
+                            )}
+                          </div>
                         </div>
+                      </div>
+                      <div className="modal-footer">
+                        <button className="btn btn-primary" onClick={handleCloseDetail}>
+                          {t('workflowDetail.close')}
+                        </button>
                       </div>
                     </div>
                   ) : (
                     <div className="modal-error">
-                      <p>加载执行详情失败</p>
+                      <p>{t('workflowDetail.loadDetailFailed')}</p>
                     </div>
                   )}
+                </div>
+              </div>
+            )}
 
+            {/* Delete Collection Confirmation Modal */}
+            {deleteConfirm && (
+              <div className="modal-overlay" onClick={handleDeleteCancel}>
+                <div className="delete-confirm-modal" onClick={(e) => e.stopPropagation()}>
+                  <div className="modal-header">
+                    <h3>{t('workflowDetail.confirmDelete')}</h3>
+                  </div>
+                  <div className="modal-body">
+                    <p>{t('workflowDetail.deleteCollectionMessage', { name: deleteConfirm.collectionName })}</p>
+                    <p className="warning-text">{t('workflowDetail.undoneWarning')}</p>
+                  </div>
                   <div className="modal-footer">
-                    <button className="btn btn-primary" onClick={handleCloseDetail}>
-                      关闭
+                    <button className="btn-cancel" onClick={handleDeleteCancel}>
+                      {t('common.cancel')}
+                    </button>
+                    <button className="btn-confirm-delete" onClick={handleDeleteConfirm}>
+                      {t('common.delete')}
                     </button>
                   </div>
                 </div>
@@ -1352,41 +1370,13 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
         )}
       </div>
 
-
-
       <div className="footer">
-        <p>Ami v{version || '1.0.0'} • {session?.username && `Logged in as ${session.username}`}</p>
+        <p>Ami v{version || '1.0.0'} • {session?.username && t('settings.loggedInAs', { username: session.username })}</p>
       </div>
-
-      {/* Delete Collection Confirmation Modal */}
-      {
-        deleteConfirm && (
-          <div className="modal-overlay" onClick={handleDeleteCancel}>
-            <div className="delete-confirm-modal" onClick={(e) => e.stopPropagation()}>
-              <div className="modal-header">
-                <h3>Confirm Delete</h3>
-              </div>
-              <div className="modal-body">
-                <p>Are you sure you want to delete collection <strong>"{deleteConfirm.collectionName}"</strong>?</p>
-                <p className="warning-text">This action cannot be undone.</p>
-              </div>
-              <div className="modal-footer">
-                <button className="btn-cancel" onClick={handleDeleteCancel}>
-                  Cancel
-                </button>
-                <button className="btn-confirm-delete" onClick={handleDeleteConfirm}>
-                  Delete
-                </button>
-              </div>
-            </div>
-          </div>
-        )
-      }
-
-
-    </div >
+    </div>
   )
 }
 
 export default WorkflowDetailPage
+
 
