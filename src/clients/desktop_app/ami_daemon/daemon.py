@@ -47,6 +47,7 @@ from src.clients.desktop_app.ami_daemon.services.workflow_executor import Workfl
 from src.clients.desktop_app.ami_daemon.services.workflow_history import WorkflowHistoryManager
 from src.clients.desktop_app.ami_daemon.services.cdp_recorder import CDPRecorder
 from src.clients.desktop_app.ami_daemon.services.cloud_client import CloudClient
+from src.clients.desktop_app.ami_daemon.base_agent.tools.browser_use.extension_installer import ensure_extensions_installed
 
 # Load configuration first (needed for logging setup)
 config = get_config()
@@ -202,6 +203,12 @@ async def lifespan(app: FastAPI):
             # Store result but continue startup - frontend will handle blocking
         else:
             logger.info(f"✓ Version {APP_VERSION} is compatible")
+
+        # Install bundled browser extensions to browser-use cache (avoids Google download in China)
+        if ensure_extensions_installed():
+            logger.info("✓ Browser extensions installed")
+        else:
+            logger.warning("⚠️ Browser extensions not available (may need to download from Google)")
 
         # Initialize browser manager (but do NOT start browser yet - on-demand startup)
         browser_manager = BrowserManager(config_service=config)
