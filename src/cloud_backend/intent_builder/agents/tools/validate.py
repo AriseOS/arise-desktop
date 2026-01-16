@@ -28,6 +28,7 @@ VALID_AGENT_TYPES = {
     "variable",
     "text_agent",
     "autonomous_browser_agent",
+    "tavily_agent",
 }
 
 # Control flow keys (v2 syntax)
@@ -53,6 +54,7 @@ AGENT_SPECIFIC_FIELDS = {
     "browser_agent": {"step": [], "inputs": []},
     "storage_agent": {"step": [], "inputs": ["operation", "collection"]},
     "autonomous_browser_agent": {"step": [], "inputs": ["task"]},
+    "tavily_agent": {"step": [], "inputs": ["operation", "query"]},
 }
 
 

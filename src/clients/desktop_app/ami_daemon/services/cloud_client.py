@@ -1101,6 +1101,192 @@ class CloudClient:
             logger.error(f"Error uploading diagnostic: {e}")
             return {"success": False, "error": str(e)}
 
+    # ============================================================================
+    # Tavily API Methods
+    # ============================================================================
+
+    async def tavily_search(
+        self,
+        query: str,
+        max_results: int = 10,
+        search_depth: str = "basic",
+        topic: Optional[str] = None,
+        days: Optional[int] = None,
+        time_range: Optional[str] = None,
+        include_domains: Optional[List[str]] = None,
+        exclude_domains: Optional[List[str]] = None,
+        include_answer: Optional[bool] = None,
+        include_raw_content: Optional[bool] = None,
+        include_images: Optional[bool] = None,
+        country: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Call Cloud Backend Tavily search API
+
+        Args:
+            query: Search query
+            max_results: Number of results to return (default: 10)
+            search_depth: "basic", "advanced", "fast", "ultra-fast"
+            topic: "general", "news", "finance"
+            days: Limit to past N days
+            time_range: "day", "week", "month", "year"
+            include_domains: Only include results from these domains
+            exclude_domains: Exclude results from these domains
+            include_answer: Include LLM-generated answer
+            include_raw_content: Include raw page content
+            include_images: Include image results
+            country: Country code for localized results
+
+        Returns:
+            dict with:
+                - results: List of search results
+                - query: Original query
+                - total: Number of results
+                - answer: (optional) LLM-generated answer
+                - images: (optional) Image results
+        """
+        if not self.user_api_key:
+            raise ValueError("User API key is required for Tavily search")
+
+        payload = {
+            "query": query,
+            "max_results": max_results,
+            "search_depth": search_depth,
+        }
+
+        # Optional parameters - only include if set
+        if topic:
+            payload["topic"] = topic
+        if days is not None:
+            payload["days"] = days
+        if time_range:
+            payload["time_range"] = time_range
+        if include_domains:
+            payload["include_domains"] = include_domains
+        if exclude_domains:
+            payload["exclude_domains"] = exclude_domains
+        if include_answer is not None:
+            payload["include_answer"] = include_answer
+        if include_raw_content is not None:
+            payload["include_raw_content"] = include_raw_content
+        if include_images is not None:
+            payload["include_images"] = include_images
+        if country:
+            payload["country"] = country
+
+        logger.info(f"[CloudClient] Tavily search: {query[:50]}... (depth={search_depth}, topic={topic}, days={days})")
+
+        response = await self.client.post(
+            "/api/v1/tavily/search",
+            json=payload,
+            headers={"X-Ami-API-Key": self.user_api_key},
+            timeout=60.0
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def tavily_research(
+        self,
+        query: str,
+        stream: bool = False,
+        model: Optional[str] = None,
+        citation_format: Optional[str] = None,
+        progress_callback: Optional[Callable[[str, str, Dict[str, Any]], Awaitable[None]]] = None,
+    ) -> Dict[str, Any]:
+        """Call Cloud Backend Tavily research API
+
+        Args:
+            query: Research topic
+            stream: Enable streaming for progress updates
+            model: "mini", "pro", "auto"
+            citation_format: "numbered", "mla", "apa", "chicago"
+            progress_callback: Async callback for progress updates (if streaming)
+                Signature: async def callback(level: str, message: str, data: dict)
+
+        Returns:
+            dict with:
+                - report/content: Research report content
+                - sources: List of sources used
+        """
+        import json as json_lib
+
+        if not self.user_api_key:
+            raise ValueError("User API key is required for Tavily research")
+
+        payload = {
+            "query": query,
+            "stream": stream,
+        }
+
+        # Optional parameters
+        if model:
+            payload["model"] = model
+        if citation_format:
+            payload["citation_format"] = citation_format
+
+        logger.info(f"[CloudClient] Tavily research: {query[:50]}... (stream={stream}, model={model})")
+
+        if stream:
+            # Streaming response
+            result = {"report": "", "sources": []}
+            async with self.client.stream(
+                "POST",
+                "/api/v1/tavily/research",
+                json=payload,
+                headers={"X-Ami-API-Key": self.user_api_key},
+                timeout=300.0
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
+
+                    # Ignore SSE comments (keepalive, etc.)
+                    if line.startswith(":"):
+                        continue
+
+                    # Parse SSE event
+                    if line.startswith("data: "):
+                        data_str = line[6:]
+                        try:
+                            event = json_lib.loads(data_str)
+                            event_type = event.get("type")
+
+                            if event_type == "progress" and progress_callback:
+                                await progress_callback(
+                                    event.get("level", "info"),
+                                    event.get("message", ""),
+                                    event.get("data", {})
+                                )
+                            elif event_type == "error":
+                                error_msg = event.get("message", "Unknown error")
+                                logger.error(f"[CloudClient] Tavily research error: {error_msg}")
+                                raise Exception(f"Tavily research failed: {error_msg}")
+                            elif event_type == "result":
+                                result = event.get("data", result)
+                            elif event_type == "complete":
+                                if "report" in event:
+                                    result["report"] = event["report"]
+                                if "sources" in event:
+                                    result["sources"] = event["sources"]
+                                if "data" in event:
+                                    result = event.get("data", result)
+
+                        except json_lib.JSONDecodeError:
+                            # Raw text chunk - append to report
+                            result["report"] += data_str
+
+            return result
+        else:
+            # Non-streaming response
+            response = await self.client.post(
+                "/api/v1/tavily/research",
+                json=payload,
+                headers={"X-Ami-API-Key": self.user_api_key},
+                timeout=300.0
+            )
+            response.raise_for_status()
+            return response.json()
+
     async def close(self):
         """Close HTTP client"""
         await self.client.aclose()

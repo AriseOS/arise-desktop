@@ -28,6 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
+import httpx
 
 # 添加项目根目录到 Python 路径
 # 当前文件: src/cloud-backend/main.py
@@ -2570,6 +2571,227 @@ async def generate_script_stream(
             "X-Accel-Buffering": "no"
         }
     )
+
+
+# ============================================================================
+# Tavily API - Web search and research via CRS
+# ============================================================================
+
+
+class TavilySearchRequest(BaseModel):
+    """Request for Tavily search operation - aligned with Tavily SDK"""
+    query: str
+    max_results: int = 10
+    search_depth: str = "basic"  # basic, advanced, fast, ultra-fast
+    topic: Optional[str] = None  # general, news, finance
+    days: Optional[int] = None  # Limit to past N days
+    time_range: Optional[str] = None  # day, week, month, year
+    include_domains: Optional[List[str]] = None
+    exclude_domains: Optional[List[str]] = None
+    include_answer: Optional[bool] = None
+    include_raw_content: Optional[bool] = None
+    include_images: Optional[bool] = None
+    country: Optional[str] = None
+
+
+class TavilyResearchRequest(BaseModel):
+    """Request for Tavily research operation - aligned with Tavily SDK"""
+    query: str
+    stream: bool = False
+    model: Optional[str] = None  # mini, pro, auto
+    citation_format: Optional[str] = None  # numbered, mla, apa, chicago
+
+
+@app.post("/api/v1/tavily/search")
+async def tavily_search(
+    request: TavilySearchRequest,
+    x_ami_api_key: str = Header(..., alias="X-Ami-API-Key")
+):
+    """
+    Execute Tavily search via CRS
+
+    Returns list of search results with title, url, snippet.
+    Supports all Tavily SDK search parameters.
+    """
+    tavily_url = config_service.get("tavily.api_url", "https://api.ariseos.com/tavily")
+    tavily_endpoint = f"{tavily_url.rstrip('/')}/search"
+
+    # Build payload with all supported parameters
+    payload = {
+        "query": request.query,
+        "search_depth": request.search_depth,
+        "max_results": request.max_results,
+    }
+
+    # Optional parameters - only include if set
+    if request.topic:
+        payload["topic"] = request.topic
+    if request.days is not None:
+        payload["days"] = request.days
+    if request.time_range:
+        payload["time_range"] = request.time_range
+    if request.include_domains:
+        payload["include_domains"] = request.include_domains
+    if request.exclude_domains:
+        payload["exclude_domains"] = request.exclude_domains
+    if request.include_answer is not None:
+        payload["include_answer"] = request.include_answer
+    if request.include_raw_content is not None:
+        payload["include_raw_content"] = request.include_raw_content
+    if request.include_images is not None:
+        payload["include_images"] = request.include_images
+    if request.country:
+        payload["country"] = request.country
+
+    # CRS uses Authorization: Bearer header for authentication
+    headers = {
+        "Authorization": f"Bearer {x_ami_api_key}",
+        "Content-Type": "application/json",
+    }
+
+    logger.info(f"Tavily search: query={request.query[:50]}..., depth={request.search_depth}, topic={request.topic}, days={request.days}")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                tavily_endpoint,
+                json=payload,
+                headers=headers,
+                timeout=60.0
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            # Process results - preserve all fields from Tavily API
+            results = []
+            for r in data.get("results", []):
+                result = {
+                    "title": r.get("title", ""),
+                    "url": r.get("url", ""),
+                    "snippet": r.get("content", "")[:500] if r.get("content") else "",
+                    "published_date": r.get("published_date"),
+                    "score": r.get("score"),
+                }
+                # Include raw_content if requested and available
+                if request.include_raw_content and r.get("raw_content"):
+                    result["raw_content"] = r.get("raw_content")
+                results.append(result)
+
+            # Build response
+            response_data = {
+                "results": results,
+                "query": request.query,
+                "total": len(results)
+            }
+
+            # Include answer if available
+            if data.get("answer"):
+                response_data["answer"] = data.get("answer")
+
+            # Include images if available
+            if data.get("images"):
+                response_data["images"] = data.get("images")
+
+            logger.info(f"Tavily search completed: {len(results)} results")
+            return response_data
+
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Tavily search failed: {e.response.status_code} - {e.response.text}")
+        raise HTTPException(status_code=e.response.status_code, detail=f"Tavily API error: {e.response.text}")
+    except httpx.RequestError as e:
+        logger.error(f"Tavily search request error: {e}")
+        raise HTTPException(status_code=502, detail=f"Failed to reach Tavily API: {str(e)}")
+
+
+@app.post("/api/v1/tavily/research")
+async def tavily_research(
+    request: TavilyResearchRequest,
+    x_ami_api_key: str = Header(..., alias="X-Ami-API-Key")
+):
+    """
+    Execute Tavily deep research via CRS
+
+    Supports both streaming and non-streaming modes.
+    Returns comprehensive analysis report with sources.
+    """
+    tavily_url = config_service.get("tavily.api_url", "https://api.ariseos.com/tavily")
+    tavily_endpoint = f"{tavily_url.rstrip('/')}/research"
+
+    # Build payload for Tavily research
+    # Note: CRS uses "input" field instead of "query" for research endpoint
+    payload = {
+        "input": request.query,
+        "stream": request.stream,
+    }
+
+    # Optional parameters
+    if request.model:
+        payload["model"] = request.model
+    if request.citation_format:
+        payload["citation_format"] = request.citation_format
+
+    # CRS uses Authorization: Bearer header for authentication
+    headers = {
+        "Authorization": f"Bearer {x_ami_api_key}",
+        "Content-Type": "application/json",
+    }
+
+    logger.info(f"Tavily research: query={request.query[:50]}..., stream={request.stream}, model={request.model}")
+
+    try:
+        if request.stream:
+            # Streaming response
+            async def event_generator():
+                try:
+                    async with httpx.AsyncClient() as client:
+                        async with client.stream(
+                            "POST",
+                            tavily_endpoint,
+                            json=payload,
+                            headers=headers,
+                            timeout=300.0
+                        ) as response:
+                            response.raise_for_status()
+                            async for chunk in response.aiter_bytes():
+                                yield chunk
+                except httpx.HTTPStatusError as e:
+                    logger.error(f"Tavily research stream failed: {e.response.status_code}")
+                    error_event = f'data: {{"type": "error", "message": "HTTP {e.response.status_code}"}}\n\n'
+                    yield error_event.encode('utf-8')
+                except Exception as e:
+                    logger.error(f"Tavily research stream error: {e}")
+                    error_event = f'data: {{"type": "error", "message": "{str(e)}"}}\n\n'
+                    yield error_event.encode('utf-8')
+
+            return StreamingResponse(
+                event_generator(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no"
+                }
+            )
+        else:
+            # Non-streaming response
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    tavily_endpoint,
+                    json=payload,
+                    headers=headers,
+                    timeout=300.0
+                )
+                response.raise_for_status()
+                result = response.json()
+                logger.info(f"Tavily research completed")
+                return result
+
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Tavily research failed: {e.response.status_code} - {e.response.text}")
+        raise HTTPException(status_code=e.response.status_code, detail=f"Tavily API error: {e.response.text}")
+    except httpx.RequestError as e:
+        logger.error(f"Tavily research request error: {e}")
+        raise HTTPException(status_code=502, detail=f"Failed to reach Tavily API: {str(e)}")
 
 
 def _find_step_in_workflow(workflow: Dict, step_id: str) -> Optional[Dict]:

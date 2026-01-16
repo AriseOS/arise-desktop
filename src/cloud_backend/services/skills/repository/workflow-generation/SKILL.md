@@ -98,6 +98,59 @@ steps:
 | scroll | `browser_agent` + `interaction_steps` |
 | navigate | `browser_agent` + `target_url` |
 | summarize/transform text | `text_agent` |
+| web search (no specific search recorded) | `tavily_agent` |
+
+### When to use tavily_agent
+
+Use `tavily_agent` when:
+- User query requires searching/retrieving information from the web
+- BUT the intent operations do NOT show a specific search approach (e.g., no Google search, no website search box interaction recorded)
+
+**Example scenarios:**
+- User query: "Search for the latest AI news" + No search operations in intents → Use `tavily_agent`
+- User query: "Find top 10 products" + Intent shows user searched on Google → Use recorded browser operations
+- User query: "Get recent tech news" + Intent shows user browsed a news website → Use recorded browser operations
+
+```yaml
+# When user needs web search but didn't record a specific search method
+- id: search-web
+  agent: tavily_agent
+  inputs:
+    operation: search
+    query: "AI news"           # Derived from user query
+    max_results: 10
+    days: 3                    # For recent content
+    topic: news                # If searching news
+  outputs:
+    result: search_results
+```
+
+**tavily_agent output structure** - for using results in subsequent steps:
+
+```yaml
+# search_results contains:
+{
+  query: "AI news",
+  results: [                          # Array of search results
+    {
+      title: "Article Title",
+      url: "https://example.com/...",
+      content: "Snippet text...",     # Page excerpt
+      score: 0.95,                    # Relevance score
+      published_date: "2024-01-15"    # Optional
+    },
+    ...
+  ],
+  answer: "...",                      # Optional: if include_answer=true
+  images: [...]                       # Optional: if include_images=true
+}
+
+# Common access patterns:
+# - "{{search_results.results}}"        → Full results array
+# - "{{search_results.results.0.url}}"  → First result's URL
+# - "{{search_results.results.0.title}}" → First result's title
+# - "{{search_results.answer}}"         → AI-generated answer (if requested)
+```
 
 ## text_agent
 
