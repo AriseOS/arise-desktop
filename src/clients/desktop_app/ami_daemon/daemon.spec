@@ -39,6 +39,9 @@ a = Analysis(
         # Automation hooks JS
         (str(project_root / 'src/clients/desktop_app/ami_daemon/base_agent/tools/browser_use/automation_hooks.js'),
          'src/clients/desktop_app/ami_daemon/base_agent/tools/browser_use'),
+
+        # Bundled browser extensions (avoid downloading from Google in China)
+        (str(project_root / 'deploy/bundled_extensions'), 'bundled_extensions'),
     ] + playwright_browsers,
     hiddenimports=[
         # Uvicorn and FastAPI
