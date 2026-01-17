@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import Icon from '../components/Icons';
 import { api } from '../utils/api';
 import '../styles/RecordingAnalysisPage.css';
 
 function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
+  const { t } = useTranslation();
   const userId = session?.username;
   const [taskDescription, setTaskDescription] = useState(pageData?.taskDescription || '');
   const [userQuery, setUserQuery] = useState(pageData?.userQuery || '');
@@ -11,19 +13,19 @@ function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
 
   const detectedPatterns = pageData?.detectedPatterns || {};
   const sessionId = pageData?.sessionId;
-  const recordingName = pageData?.name || 'Unnamed Task';
+  const recordingName = pageData?.name || t('analysis.unnamedTask');
 
   const handleConfirmAndGenerate = async () => {
     if (!taskDescription.trim() || !userQuery.trim()) {
-      showStatus("Please fill in both task description and user query", "error");
+      showStatus(t('analysis.validation'), "error");
       return;
     }
 
     try {
-      setIsSaving(true);
+      setIsGenerating(true); // Assuming setIsSaving was meant to be setIsGenerating or similar, keeping logic but internationalizing messages
 
       // Save metadata first
-      showStatus("Saving metadata...", "info");
+      showStatus(t('analysis.savingMetadata'), "info");
       await api.callAppBackend(`/api/v1/recordings/${sessionId}`, {
         method: "PATCH",
         body: JSON.stringify({
@@ -44,7 +46,7 @@ function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
     } catch (error) {
       console.error("Save metadata error:", error);
       setIsSaving(false);
-      showStatus(`Failed to save metadata: ${error.message}`, "error");
+      showStatus(t('analysis.saveFailed', { error: error.message }), "error");
     }
   };
 
@@ -55,9 +57,9 @@ function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
       badges.push(
         <div key="loop" className="pattern-badge loop">
           <span className="badge-icon"><Icon icon="refreshCw" size={14} /></span>
-          <span className="badge-text">Loop Pattern Detected</span>
+          <span className="badge-text">{t('analysis.loopPattern')}</span>
           {detectedPatterns.loop_count && (
-            <span className="badge-detail">Count: {detectedPatterns.loop_count}</span>
+            <span className="badge-detail">{t('analysis.loopCount', { count: detectedPatterns.loop_count })}</span>
           )}
         </div>
       );
@@ -67,9 +69,9 @@ function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
       badges.push(
         <div key="extraction" className="pattern-badge extraction">
           <span className="badge-icon"><Icon icon="database" size={14} /></span>
-          <span className="badge-text">Data Extraction</span>
+          <span className="badge-text">{t('analysis.dataExtraction')}</span>
           <span className="badge-detail">
-            Fields: {detectedPatterns.extracted_fields.join(', ')}
+            {t('analysis.fields', { fields: detectedPatterns.extracted_fields.join(', ') })}
           </span>
         </div>
       );
@@ -79,8 +81,8 @@ function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
       badges.push(
         <div key="navigation" className="pattern-badge navigation">
           <span className="badge-icon"><Icon icon="globe" size={14} /></span>
-          <span className="badge-text">Navigation</span>
-          <span className="badge-detail">Depth: {detectedPatterns.navigation_depth}</span>
+          <span className="badge-text">{t('analysis.navigation')}</span>
+          <span className="badge-detail">{t('analysis.depth', { depth: detectedPatterns.navigation_depth })}</span>
         </div>
       );
     }
@@ -94,13 +96,13 @@ function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
         <button className="back-button" onClick={() => onNavigate("main")}>
           <Icon icon="arrowLeft" />
         </button>
-        <div className="page-title"><Icon icon="checkCircle" /> AI Analysis Complete</div>
+        <div className="page-title"><Icon icon="checkCircle" /> {t('analysis.title')}</div>
       </div>
 
       <div className="analysis-container">
         <div className="ai-badge">
           <span className="ai-icon"><Icon icon="cpu" size={16} /></span>
-          <span className="ai-text">AI Generated Summary</span>
+          <span className="ai-text">{t('analysis.aiSummary')}</span>
         </div>
 
         {/* Recording Name */}
@@ -111,7 +113,7 @@ function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
         {/* Detected Patterns */}
         {renderPatternBadges().length > 0 && (
           <div className="patterns-section">
-            <h3><Icon icon="search" size={18} /> Detected Patterns</h3>
+            <h3><Icon icon="search" size={18} /> {t('analysis.patternsTitle')}</h3>
             <div className="patterns-grid">
               {renderPatternBadges()}
             </div>
@@ -122,15 +124,15 @@ function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
         <div className="form-section">
           <label className="form-label">
             <span className="label-icon"><Icon icon="fileText" size={18} /></span>
-            <span className="label-text">Task Description</span>
-            <span className="label-hint">What operations did you perform?</span>
+            <span className="label-text">{t('analysis.taskDesc')}</span>
+            <span className="label-hint">{t('analysis.taskDescHint')}</span>
           </label>
           <textarea
             className="form-textarea"
             value={taskDescription}
             onChange={(e) => setTaskDescription(e.target.value)}
             rows={4}
-            placeholder="Describe the operations you performed..."
+            placeholder={t('analysis.taskDescPlaceholder')}
           />
         </div>
 
@@ -138,15 +140,15 @@ function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
         <div className="form-section">
           <label className="form-label">
             <span className="label-icon"><Icon icon="target" size={18} /></span>
-            <span className="label-text">User Query (Goal)</span>
-            <span className="label-hint">What is your final goal?</span>
+            <span className="label-text">{t('analysis.userQuery')}</span>
+            <span className="label-hint">{t('analysis.userQueryHint')}</span>
           </label>
           <textarea
             className="form-textarea"
             value={userQuery}
             onChange={(e) => setUserQuery(e.target.value)}
             rows={4}
-            placeholder="Describe what you want to achieve..."
+            placeholder={t('analysis.userQueryPlaceholder')}
           />
         </div>
 
@@ -156,7 +158,7 @@ function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
             className="btn-secondary"
             onClick={() => onNavigate("main")}
           >
-            Cancel
+            {t('analysis.cancel')}
           </button>
           <button
             className="btn-primary"
@@ -164,17 +166,17 @@ function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
             disabled={isSaving || !taskDescription.trim() || !userQuery.trim()}
           >
             <span className="btn-icon"><Icon icon="zap" /></span>
-            <span>{isSaving ? 'Saving...' : 'Confirm & Generate Workflow'}</span>
+            <span>{isSaving ? t('analysis.saving') : t('analysis.confirmBtn')}</span>
           </button>
         </div>
 
         {/* Info Box */}
         <div className="info-box">
-          <p className="info-title"><Icon icon="info" size={16} /> Tips</p>
+          <p className="info-title"><Icon icon="info" size={16} /> {t('analysis.tips.title')}</p>
           <ul className="info-list">
-            <li>AI analyzed your operations and suggested descriptions above</li>
-            <li>You can edit them to better match your intent</li>
-            <li>Keywords like "top 10", "all", "every" help AI detect loops</li>
+            <li>{t('analysis.tips.tip1')}</li>
+            <li>{t('analysis.tips.tip2')}</li>
+            <li>{t('analysis.tips.tip3')}</li>
           </ul>
         </div>
       </div>

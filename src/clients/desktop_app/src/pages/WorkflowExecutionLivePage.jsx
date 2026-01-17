@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import Icon from '../components/Icons';
 import { api } from '../utils/api';
 import { BACKEND_CONFIG } from '../config/backend';
@@ -13,6 +14,7 @@ function WorkflowExecutionLivePage({
   taskId,
   workflowName = 'Workflow Execution'
 }) {
+  const { t } = useTranslation();
   const userId = session?.username;
   const [status, setStatus] = useState('connecting'); // 'connecting', 'running', 'stopping', 'stopped', 'completed', 'failed'
   const [isStopping, setIsStopping] = useState(false);
@@ -38,7 +40,7 @@ function WorkflowExecutionLivePage({
   // WebSocket connection management
   useEffect(() => {
     if (!taskId) {
-      showStatus('No task ID provided', 'error');
+      showStatus(t('workflowExecution.noTaskId'), 'error');
       return;
     }
 
@@ -74,7 +76,7 @@ function WorkflowExecutionLivePage({
         console.log('[WS] Connected to workflow progress stream');
         setWsConnected(true);
         setStatus('running');
-        setCurrentMessage('Connected. Waiting for updates...');
+        setCurrentMessage(t('workflowExecution.waitingForUpdates'));
         reconnectAttemptsRef.current = 0; // Reset reconnect counter on successful connection
 
         // Start heartbeat
@@ -121,10 +123,10 @@ function WorkflowExecutionLivePage({
 
           // Only show error if reconnect attempts exceed threshold
           if (reconnectAttemptsRef.current > 3) {
-            showStatus('Unable to connect to workflow stream', 'error');
-            setCurrentMessage('Connection failed. Please check if the workflow is running.');
+            showStatus(t('workflowExecution.failedToConnect'), 'error');
+            setCurrentMessage(t('workflowExecution.connectionFailed'));
           } else {
-            setCurrentMessage('Connection lost. Reconnecting...');
+            setCurrentMessage(t('workflowExecution.connectionLost'));
             reconnectTimeoutRef.current = setTimeout(() => {
               console.log(`[WS] Attempting to reconnect (attempt ${reconnectAttemptsRef.current})...`);
               connectWebSocket();
@@ -134,7 +136,7 @@ function WorkflowExecutionLivePage({
       };
     } catch (error) {
       console.error('[WS] Failed to create WebSocket connection:', error);
-      showStatus('Failed to connect to workflow stream', 'error');
+      showStatus(t('workflowExecution.failedLog'), 'error');
     }
   };
 
@@ -321,21 +323,21 @@ function WorkflowExecutionLivePage({
 
     setIsStopping(true);
     setStatus('stopping');
-    setCurrentMessage('Stopping workflow...');
+    setCurrentMessage(t('workflowExecution.stopping'));
 
     try {
       const result = await api.stopWorkflow(taskId);
       if (result.success) {
-        showStatus('Workflow stop requested', 'info');
+        showStatus(t('workflowExecution.stopRequested'), 'info');
         // Status will be updated via WebSocket when workflow actually stops
       } else {
-        showStatus(result.error || 'Failed to stop workflow', 'error');
+        showStatus(result.error || t('workflowExecution.failedToStop'), 'error');
         setIsStopping(false);
         setStatus('running');
       }
     } catch (error) {
       console.error('Failed to stop workflow:', error);
-      showStatus('Failed to stop workflow: ' + error.message, 'error');
+      showStatus(t('workflowExecution.stopFailed', { error: error.message }), 'error');
       setIsStopping(false);
       setStatus('running');
     }
@@ -425,17 +427,17 @@ function WorkflowExecutionLivePage({
             <h1 className="execution-title">{workflowName}</h1>
             <div className="execution-meta">
               <span className="meta-badge" data-status={status}>
-                {status === 'connecting' && <><Icon icon="loader" size={14} /> Connecting</>}
-                {status === 'running' && <><Icon icon="play" size={14} /> Running</>}
-                {status === 'stopping' && <><Icon icon="loader" size={14} /> Stopping</>}
-                {status === 'stopped' && <><Icon icon="square" size={14} /> Stopped</>}
-                {status === 'completed' && <><Icon icon="checkCircle" size={14} /> Completed</>}
-                {status === 'failed' && <><Icon icon="alertCircle" size={14} /> Failed</>}
+                {status === 'connecting' && <><Icon icon="loader" size={14} /> {t('workflowExecution.status.connecting')}</>}
+                {status === 'running' && <><Icon icon="play" size={14} /> {t('workflowExecution.status.running')}</>}
+                {status === 'stopping' && <><Icon icon="loader" size={14} /> {t('workflowExecution.status.stopping')}</>}
+                {status === 'stopped' && <><Icon icon="square" size={14} /> {t('workflowExecution.status.stopped')}</>}
+                {status === 'completed' && <><Icon icon="checkCircle" size={14} /> {t('workflowExecution.status.completed')}</>}
+                {status === 'failed' && <><Icon icon="alertCircle" size={14} /> {t('workflowExecution.status.failed')}</>}
               </span>
-              <span className="meta-time">Elapsed: {formatTime(elapsedTime)}</span>
+              <span className="meta-time">{t('workflowExecution.elapsed', { time: formatTime(elapsedTime) })}</span>
               <span className={`connection-status ${wsConnected ? 'connected' : 'disconnected'}`}>
                 <Icon icon={wsConnected ? "wifi" : "wifiOff"} size={14} />
-                {wsConnected ? 'Live' : 'Offline'}
+                {wsConnected ? t('workflowExecution.live') : t('workflowExecution.offline')}
               </span>
             </div>
           </div>
@@ -448,17 +450,17 @@ function WorkflowExecutionLivePage({
               disabled={isStopping || status === 'stopping'}
             >
               <Icon icon={isStopping ? "loader" : "square"} />
-              {isStopping ? 'Stopping...' : 'Stop'}
+              {isStopping ? t('workflowExecution.stopping') : t('workflowExecution.stop')}
             </button>
           )}
           {status === 'completed' && (
             <button className="btn-view-results" onClick={() => onNavigate('execution-result', { taskId })}>
-              <Icon icon="barChart" /> View Results
+              <Icon icon="barChart" /> {t('workflowExecution.viewResults')}
             </button>
           )}
           {(status === 'failed' || status === 'stopped') && (
             <button className="btn-back" onClick={() => onNavigate('main')}>
-              <Icon icon="home" /> Back to Home
+              <Icon icon="home" /> {t('workflowExecution.backToHome')}
             </button>
           )}
         </div>
@@ -467,9 +469,11 @@ function WorkflowExecutionLivePage({
       {/* Progress Section */}
       <div className="progress-section">
         <div className="progress-header">
-          <h2><Icon icon="activity" size={20} /> Workflow Progress</h2>
+          <h2><Icon icon="activity" size={20} /> {t('workflowExecution.progressTitle')}</h2>
           <span className="progress-text">
-            {currentStep >= 0 ? `Step ${currentStep + 1}/${totalSteps}` : 'Initializing...'}
+            {currentStep >= 0
+              ? t('workflowExecution.stepProgress', { current: currentStep + 1, total: totalSteps })
+              : t('workflowExecution.initializing')}
           </span>
         </div>
 
@@ -489,7 +493,7 @@ function WorkflowExecutionLivePage({
           }}>
             <Icon icon="info" size={16} />
             <span>
-              <strong>First-time optimization:</strong> AI is generating execution scripts. Some specific steps may take a few minutes to complete.
+              <strong>{t('workflowExecution.coldStart.title')}</strong> {t('workflowExecution.coldStart.content')}
             </span>
           </div>
         )}
@@ -517,7 +521,7 @@ function WorkflowExecutionLivePage({
                 textAlign: 'center',
                 padding: '40px 0'
               }}>
-                Waiting for workflow steps...
+                {t('workflowExecution.waitingForSteps')}
               </div>
             ) : (
               renderSteps(steps)
@@ -529,17 +533,17 @@ function WorkflowExecutionLivePage({
       {/* Logs Section */}
       <div className="logs-section">
         <div className="logs-header">
-          <h3><Icon icon="fileText" size={18} /> Execution Logs</h3>
+          <h3><Icon icon="fileText" size={18} /> {t('workflowExecution.logsTitle')}</h3>
           <div className="logs-actions">
             <button className="btn-clear-logs" onClick={() => setLogs([])}>
-              Clear
+              {t('workflowExecution.clearLogs')}
             </button>
           </div>
         </div>
         <div className="logs-content">
           {logs.length === 0 ? (
             <div className="logs-empty">
-              <p>Waiting for logs...</p>
+              <p>{t('workflowExecution.waitingForLogs')}</p>
             </div>
           ) : (
             <div className="logs-list">
@@ -565,7 +569,7 @@ function WorkflowExecutionLivePage({
                         <button
                           className="log-expand-btn"
                           onClick={() => toggleLogExpand(idx)}
-                          title={isExpanded ? "Hide details" : "Show details"}
+                          title={isExpanded ? t('workflowExecution.hideDetails') : t('workflowExecution.showDetails')}
                         >
                           <Icon icon={isExpanded ? "chevron-up" : "chevron-down"} size={14} />
                         </button>
@@ -590,7 +594,7 @@ function WorkflowExecutionLivePage({
                             </div>
                           ) : (
                             <div style={{ padding: '8px', color: 'var(--status-error-text)' }}>
-                              Code content missing. Metadata keys: {Object.keys(log.metadata).join(', ')}
+                              {t('workflowExecution.codeContentMissing', { keys: Object.keys(log.metadata).join(', ') })}
                               <pre style={{ marginTop: '8px' }}>{JSON.stringify(log.metadata, null, 2)}</pre>
                             </div>
                           )

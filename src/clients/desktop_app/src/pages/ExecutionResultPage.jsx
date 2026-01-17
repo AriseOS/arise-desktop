@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import Icon from '../components/Icons';
 import { api } from '../utils/api';
 import '../styles/ExecutionResultPage.css';
@@ -10,6 +11,7 @@ function ExecutionResultPage({
   workflowId,
   taskId
 }) {
+  const { t } = useTranslation();
   const userId = session?.username;
   const [workflowName, setWorkflowName] = useState('');
   const [isEditingName, setIsEditingName] = useState(false);
@@ -33,7 +35,7 @@ function ExecutionResultPage({
         setWorkflowName(data.workflow_name || 'Workflow');
       } catch (error) {
         console.error('Error fetching results:', error);
-        showStatus(`Failed to load results: ${error.message}`, 'error');
+        showStatus(`${t('workflowResult.failedTitle')}: ${error.message}`, 'error');
       } finally {
         setLoading(false);
       }
@@ -43,19 +45,19 @@ function ExecutionResultPage({
   }, [taskId]);
 
   const handleDownload = (format) => {
-    showStatus(`Downloading data as ${format.toUpperCase()}...`, 'info');
+    showStatus(t('workflowResult.downloading', { format: format.toUpperCase() }), 'info');
     // Mock download
     setTimeout(() => {
-      showStatus(`Downloaded successfully as ${format.toUpperCase()}!`, 'success');
+      showStatus(t('workflowResult.downloadSuccess', { format: format.toUpperCase() }), 'success');
     }, 1000);
   };
 
   const handleRunAgain = async () => {
-    showStatus('Starting workflow execution...', 'info');
+    showStatus(t('workflowResult.startExecution'), 'info');
     try {
       const result = await api.executeWorkflow(workflowId, userId);
       const newTaskId = result.task_id;
-      showStatus('Workflow started! Redirecting to live execution page...', 'success');
+      showStatus(t('workflowResult.startedRedirecting'), 'success');
       setTimeout(() => {
         onNavigate('workflow-execution-live', {
           taskId: newTaskId,
@@ -64,19 +66,19 @@ function ExecutionResultPage({
       }, 500);
     } catch (error) {
       console.error('Failed to start workflow:', error);
-      showStatus(`Failed to start workflow: ${error.message}`, 'error');
+      showStatus(t('workflowResult.startFailed', { error: error.message }), 'error');
     }
   };
 
   const handleSaveWorkflow = () => {
     if (!workflowName.trim()) {
-      showStatus('Please enter a workflow name', 'error');
+      showStatus(t('workflowResult.enterName'), 'error');
       return;
     }
 
-    showStatus('Saving workflow...', 'info');
+    showStatus(t('workflowResult.saving'), 'info');
     setTimeout(() => {
-      showStatus(`Workflow "${workflowName}" saved successfully!`, 'success');
+      showStatus(t('workflowResult.savedSuccess', { name: workflowName }), 'success');
       setTimeout(() => {
         onNavigate('workflows');
       }, 1500);
@@ -97,7 +99,7 @@ function ExecutionResultPage({
       <div className="execution-result-page">
         <div className="loading-container">
           <div className="spinner-large"></div>
-          <p>Loading results...</p>
+          <p>{t('workflowResult.loading')}</p>
         </div>
       </div>
     );
@@ -108,9 +110,9 @@ function ExecutionResultPage({
       <div className="execution-result-page">
         <div className="error-container">
           <div className="error-icon"><Icon icon="alertCircle" size={64} /></div>
-          <h2>Failed to load results</h2>
+          <h2>{t('workflowResult.failedTitle')}</h2>
           <button className="btn-back" onClick={() => onNavigate('main')}>
-            Back to Home
+            {t('workflowResult.backToHome')}
           </button>
         </div>
       </div>
@@ -123,9 +125,12 @@ function ExecutionResultPage({
       <div className="result-header">
         <div className="success-celebration">
           <div className="success-icon"><Icon icon="checkCircle" size={48} /></div>
-          <h1 className="success-title">Execution Successful!</h1>
+          <h1 className="success-title">{t('workflowResult.successTitle')}</h1>
           <p className="success-subtitle">
-            Scraped {executionStats.totalRecords || 0} records in {executionStats.duration || 'N/A'}
+            {t('workflowResult.scrapedSummary', {
+              count: executionStats.totalRecords || 0,
+              duration: executionStats.duration || 'N/A'
+            })}
           </p>
         </div>
       </div>
@@ -136,23 +141,26 @@ function ExecutionResultPage({
         <div className="data-preview-section">
           <div className="section-header">
             <div className="header-left">
-              <h2><Icon icon="barChart" size={20} /> Data Preview</h2>
+              <h2><Icon icon="barChart" size={20} /> {t('workflowResult.dataPreview')}</h2>
               <span className="data-count">
                 {scrapedData.length > 0
-                  ? `Showing first ${Math.min(10, scrapedData.length)} of ${executionStats.totalRecords || scrapedData.length} records`
-                  : 'No data available'}
+                  ? t('workflowResult.showingRecords', {
+                    count: Math.min(10, scrapedData.length),
+                    total: executionStats.totalRecords || scrapedData.length
+                  })
+                  : t('workflowResult.noDataAvailable')}
               </span>
             </div>
             <div className="header-right">
               <button className="btn-download" onClick={() => handleDownload('excel')}>
                 <Icon icon="download" />
-                Download Excel
+                {t('workflowResult.downloadExcel')}
               </button>
               <button className="btn-download secondary" onClick={() => handleDownload('csv')}>
-                Download CSV
+                {t('workflowResult.downloadCSV')}
               </button>
               <button className="btn-download secondary" onClick={() => handleDownload('json')}>
-                Download JSON
+                {t('workflowResult.downloadJSON')}
               </button>
             </div>
           </div>
@@ -181,12 +189,15 @@ function ExecutionResultPage({
               </div>
 
               <div className="table-footer">
-                <p>Total {executionStats.totalRecords || scrapedData.length} records • Showing first {Math.min(10, scrapedData.length)} rows</p>
+                <p>{t('workflowResult.rowsInfo', {
+                  total: executionStats.totalRecords || scrapedData.length,
+                  shown: Math.min(10, scrapedData.length)
+                })}</p>
               </div>
             </>
           ) : (
             <div className="no-data-message">
-              <p>No data was extracted from this execution.</p>
+              <p>{t('workflowResult.noDataMessage')}</p>
             </div>
           )}
         </div>
@@ -195,16 +206,16 @@ function ExecutionResultPage({
         <div className="save-workflow-section">
           <div className="save-card">
             <div className="save-icon"><Icon icon="save" size={24} /></div>
-            <h3>Want to use this workflow again?</h3>
-            <p>Save it for easy access and reuse</p>
+            <h3>{t('workflowResult.saveWorkflowTitle')}</h3>
+            <p>{t('workflowResult.saveWorkflowDesc')}</p>
 
             <div className="workflow-name-input">
-              <label>Workflow Name:</label>
+              <label>{t('workflowResult.workflowNameLabel')}</label>
               <input
                 type="text"
                 value={workflowName}
                 onChange={(e) => setWorkflowName(e.target.value)}
-                placeholder="Enter workflow name..."
+                placeholder={t('workflowResult.workflowNamePlaceholder')}
                 onFocus={() => setIsEditingName(true)}
                 onBlur={() => setIsEditingName(false)}
               />
@@ -212,31 +223,31 @@ function ExecutionResultPage({
 
             <button className="btn-save-workflow" onClick={handleSaveWorkflow}>
               <Icon icon="save" />
-              Save Workflow
+              {t('workflowResult.saveWorkflowBtn')}
             </button>
           </div>
         </div>
 
         {/* Next Actions */}
         <div className="next-actions-section">
-          <h3>What's next?</h3>
+          <h3>{t('workflowResult.whatsNext')}</h3>
           <div className="action-cards">
             <div className="action-card" onClick={handleRunAgain}>
               <div className="action-icon"><Icon icon="play" size={24} /></div>
-              <h4>Run Again</h4>
-              <p>Execute this workflow again with the same settings</p>
+              <h4>{t('workflowResult.runAgain')}</h4>
+              <p>{t('workflowResult.runAgainDesc')}</p>
             </div>
 
             <div className="action-card" onClick={handleCreateNew}>
               <div className="action-icon"><Icon icon="plusCircle" size={24} /></div>
-              <h4>Create New Workflow</h4>
-              <p>Record a new workflow for a different task</p>
+              <h4>{t('workflowResult.createNew')}</h4>
+              <p>{t('workflowResult.createNewDesc')}</p>
             </div>
 
             <div className="action-card" onClick={() => onNavigate('main')}>
               <div className="action-icon"><Icon icon="home" size={24} /></div>
-              <h4>Back to Home</h4>
-              <p>Return to the main dashboard</p>
+              <h4>{t('workflowResult.backToDashboard')}</h4>
+              <p>{t('workflowResult.backToDashboardDesc')}</p>
             </div>
           </div>
         </div>
@@ -245,8 +256,8 @@ function ExecutionResultPage({
         {localStorage.getItem('firstSuccessfulRun') !== 'true' && (
           <div className="first-time-celebration">
             <div className="celebration-content">
-              <h3><Icon icon="star" size={24} /> Congratulations on your first automation!</h3>
-              <p>You've just saved approximately <strong>30 minutes</strong> of manual work.</p>
+              <h3><Icon icon="star" size={24} /> {t('workflowResult.firstTime.title')}</h3>
+              <p dangerouslySetInnerHTML={{ __html: t('workflowResult.firstTime.content').replace('30 minutes', '<strong>30 minutes</strong>').replace('30 分钟', '<strong>30 分钟</strong>') }}></p>
               <button
                 className="btn-got-it"
                 onClick={() => {
@@ -254,7 +265,7 @@ function ExecutionResultPage({
                   document.querySelector('.first-time-celebration').style.display = 'none';
                 }}
               >
-                Got it!
+                {t('workflowResult.firstTime.gotIt')}
               </button>
             </div>
           </div>
@@ -264,21 +275,21 @@ function ExecutionResultPage({
       {/* Execution Info Footer */}
       <div className="execution-info-footer">
         <div className="info-item">
-          <span className="info-label">Status:</span>
+          <span className="info-label">{t('workflowResult.status')}:</span>
           <span className="info-value success">
             {executionStats.status === 'success' ? <><Icon icon="checkCircle" size={14} /> Success</> : <><Icon icon="x" size={14} /> Failed</>}
           </span>
         </div>
         <div className="info-item">
-          <span className="info-label">Duration:</span>
+          <span className="info-label">{t('workflowResult.duration')}:</span>
           <span className="info-value">{executionStats.duration || 'N/A'}</span>
         </div>
         <div className="info-item">
-          <span className="info-label">Completed:</span>
+          <span className="info-label">{t('workflowResult.completed')}:</span>
           <span className="info-value">{executionStats.timestamp || 'N/A'}</span>
         </div>
         <div className="info-item">
-          <span className="info-label">Records:</span>
+          <span className="info-label">{t('workflowResult.records')}:</span>
           <span className="info-value">{executionStats.totalRecords || 0}</span>
         </div>
       </div>

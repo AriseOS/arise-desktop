@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 import "./extension.css";
@@ -6,7 +7,7 @@ import Icon from "./components/Icons";
 
 // Import utilities
 import { auth } from "./utils/auth";
-import { api } from "./utils/api";
+import { api, onConnectionError } from "./utils/api";
 
 // Import pages
 import InitializingPage from "./pages/InitializingPage";
@@ -31,15 +32,31 @@ import RecordingDetailPage from "./pages/RecordingDetailPage";
 // DataManagementPage removed - Data is now per-workflow, see WorkflowDetailPage "Data" tab
 import WorkflowExecutionLivePage from "./pages/WorkflowExecutionLivePage";
 import DocsPage from "./pages/DocsPage";
+import BackendErrorPage from "./pages/BackendErrorPage";
 
 // Import setup styles
 import "./styles/SetupPage.css";
 
 function App() {
+  const { t, i18n } = useTranslation();
   // Setup state
   const [setupComplete, setSetupComplete] = useState(false);
   const [setupChecking, setSetupChecking] = useState(true);
   const [backendChecking, setBackendChecking] = useState(false);
+  const [backendError, setBackendError] = useState(false);
+
+  // Refs to access current state in callbacks
+  const setupCompleteRef = useRef(false);
+  const backendErrorRef = useRef(false);
+
+  // Keep refs in sync with state
+  useEffect(() => {
+    setupCompleteRef.current = setupComplete;
+  }, [setupComplete]);
+
+  useEffect(() => {
+    backendErrorRef.current = backendError;
+  }, [backendError]);
 
   // Version check state
   const [versionInfo, setVersionInfo] = useState(null);
@@ -61,18 +78,19 @@ function App() {
   const confirmUploadDiagnostic = async () => {
     setDiagnosticModalOpen(false);
     setDiagnosticUploading(true);
-    showStatus("Collecting diagnostic data...", "info");
+    setDiagnosticUploading(true);
+    showStatus(t('app.collectingData'), "info");
 
     try {
       const result = await api.uploadDiagnostic(diagnosticDescription);
       if (result.success) {
-        showStatus(`Diagnostic uploaded: ${result.diagnostic_id}`, "success");
+        showStatus(t('app.uploadSuccess', { id: result.diagnostic_id }), "success");
       } else {
-        showStatus("Failed to upload diagnostic", "error");
+        showStatus(t('app.uploadFailed'), "error");
       }
     } catch (error) {
       console.error("[App] Diagnostic upload failed:", error);
-      showStatus(`Diagnostic upload failed: ${error.message}`, "error");
+      showStatus(t('app.uploadError', { error: error.message }), "error");
     } finally {
       setDiagnosticUploading(false);
     }
@@ -119,15 +137,25 @@ function App() {
     }
 
     checkSetupStatus();
+
+    // Listen for runtime connection errors
+    onConnectionError(({ endpoint, error }) => {
+      console.error(`[App] Backend connection lost at ${endpoint}:`, error);
+      // Only trigger if we were previously connected (setupComplete) and not already showing error
+      if (setupCompleteRef.current && !backendErrorRef.current) {
+        setBackendError(true);
+      }
+    });
   }, []);
 
   useEffect(() => {
     try {
       window.localStorage.setItem("ami_language", language);
+      i18n.changeLanguage(language);
     } catch (e) {
       console.error("[App] Failed to save language to storage:", e);
     }
-  }, [language]);
+  }, [language, i18n]);
 
   const checkSetupStatus = async () => {
     try {
@@ -139,6 +167,7 @@ function App() {
         setSetupChecking(false); // Stop setup check UI (if we want to switch)
 
         // Wait for backend (up to 20s)
+        // waitForBackend automatically discovers daemon port on each retry
         const isReady = await api.waitForBackend();
 
         if (isReady) {
@@ -156,11 +185,10 @@ function App() {
           setSetupComplete(true);
           checkLoginStatus();
         } else {
-          // Backend failed to start? Show error or fallback to setup?
+          // Backend failed to start - show error page with logs
           console.error("Backend failed to start or connect.");
-          showStatus("Backend failed to connect.", "error");
-          // Still allow setup complete to show UI, but subsequent calls will fail
-          setSetupComplete(true);
+          setBackendError(true);
+          setSetupComplete(false);
         }
       } else {
         // Setup not complete, show setup page
@@ -181,6 +209,37 @@ function App() {
     setSetupComplete(true);
     // After setup, check login status
     checkLoginStatus();
+  };
+
+  const handleBackendRetry = async () => {
+    setBackendError(false);
+    setBackendChecking(true);
+
+    try {
+      // Try to reconnect to backend (10s timeout for retry)
+      // waitForBackend automatically discovers daemon port on each retry
+      const isReady = await api.waitForBackend(10000);
+
+      if (isReady) {
+        console.log('[App] Backend reconnected successfully');
+        setBackendChecking(false);
+        // If we were already logged in, just restore the state
+        if (setupComplete) {
+          return;
+        }
+        // Otherwise do full setup check
+        setSetupChecking(true);
+        await checkSetupStatus();
+      } else {
+        console.error('[App] Backend retry failed');
+        setBackendError(true);
+        setBackendChecking(false);
+      }
+    } catch (error) {
+      console.error('[App] Backend retry error:', error);
+      setBackendError(true);
+      setBackendChecking(false);
+    }
   };
 
   const checkLoginStatus = async () => {
@@ -232,15 +291,15 @@ function App() {
     if (browserOpening) return;
 
     setBrowserOpening(true);
-    showStatus("Opening browser...", "info");
+    showStatus(t('common.browser.opening'), "info");
 
     try {
       const result = await api.startBrowser(false);
 
       if (result.status === "already_running") {
-        showStatus("Browser is already running", "success");
+        showStatus(t('common.browser.alreadyRunning'), "success");
       } else {
-        showStatus("Browser opened successfully!", "success");
+        showStatus(t('common.browser.opened'), "success");
       }
     } catch (error) {
       console.error("Open browser error:", error);
@@ -291,22 +350,20 @@ function App() {
   const renderNewUserHome = () => (
     <div className="page home-page new-user fade-in">
       <div className="home-hero">
-
-        <h1 className="hero-title">Welcome to Ami</h1>
-        <p className="hero-subtitle">Let AI automate your repetitive work</p>
+        <h1 className="hero-title">{t('app.welcome')}</h1>
+        <p className="hero-subtitle">{t('app.subtitle')}</p>
       </div>
 
       <div className="card home-main-card" style={{ padding: '40px', maxWidth: '600px', margin: '0 auto' }}>
-        <h2 style={{ textAlign: 'center', marginBottom: '16px' }}>Start your first automation</h2>
+        <h2 style={{ textAlign: 'center', marginBottom: '16px' }}>{t('app.startFirstAutomation')}</h2>
         <p style={{ textAlign: 'center', marginBottom: '32px', color: 'var(--text-secondary)' }}>
-          Just perform the task once, copy the data you need.<br />
-          Leave the rest to AI.
+          {t('app.recordDesc')}
         </p>
 
         <div className="flex-row" style={{ gap: '20px', justifyContent: 'center' }}>
           <button className="btn btn-primary" onClick={() => navigate("quick-start")} style={{ padding: '12px 24px', fontSize: '16px', minWidth: '180px', justifyContent: 'center' }}>
             <Icon name="record" size={20} />
-            <span>Start Recording</span>
+            <span>{t('app.startRecording')}</span>
           </button>
 
           <button
@@ -316,13 +373,13 @@ function App() {
             style={{ padding: '12px 24px', fontSize: '16px', minWidth: '180px', justifyContent: 'center' }}
           >
             <Icon name="browser" size={20} />
-            <span>{browserOpening ? "Opening..." : "Open Browser"}</span>
+            <span>{browserOpening ? t('app.opening') : t('app.openBrowser')}</span>
           </button>
         </div>
 
         <div style={{ textAlign: 'center', marginTop: '24px' }}>
           <a style={{ color: 'var(--primary-main)', cursor: 'pointer', fontSize: '14px', fontWeight: 500 }} onClick={() => navigate("workflows")}>
-            See what others are using it for →
+            {t('app.seeOthers')}
           </a>
         </div>
       </div>
@@ -356,8 +413,8 @@ function App() {
     <div className="page home-page returning-user fade-in">
       <div className="page-header">
         <div>
-          <h1 className="page-title">Good Morning, {session?.username || 'User'}</h1>
-          <p className="page-subtitle">Ready to automate your work?</p>
+          <h1 className="page-title">{t('app.goodMorning')}, {session?.username || 'User'}</h1>
+          <p className="page-subtitle">{t('app.readyToAutomate')}</p>
         </div>
         <div className="flex-row" style={{ gap: '8px', alignItems: 'center' }}>
           <button
@@ -381,13 +438,13 @@ function App() {
         {/* Quick Start Section */}
         <div className="card" style={{ padding: '24px', marginBottom: '24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
-            <h2 style={{ fontSize: '20px', marginBottom: '8px' }}>Create new workflow</h2>
-            <p style={{ margin: 0 }}>Record your actions and let AI learn from them.</p>
+            <h2 style={{ fontSize: '20px', marginBottom: '8px' }}>{t('app.createNewWorkflow')}</h2>
+            <p style={{ margin: 0 }}>{t('app.recordDesc')}</p>
           </div>
           <div className="flex-row" style={{ gap: '12px' }}>
             <button className="btn btn-primary" onClick={() => navigate("quick-start")} style={{ minWidth: '140px', justifyContent: 'center' }}>
               <Icon name="record" size={18} />
-              <span>Start Recording</span>
+              <span>{t('app.startRecording')}</span>
             </button>
             <button
               className="btn btn-secondary"
@@ -396,7 +453,7 @@ function App() {
               style={{ minWidth: '140px', justifyContent: 'center' }}
             >
               <Icon name="browser" size={18} />
-              <span>{browserOpening ? "Opening..." : "Open Browser"}</span>
+              <span>{browserOpening ? t('app.opening') : t('app.openBrowser')}</span>
             </button>
           </div>
         </div>
@@ -404,9 +461,9 @@ function App() {
         {/* Recent Workflows Section */}
         <div className="recent-section">
           <div className="flex-row" style={{ justifyContent: 'space-between', marginBottom: '16px', alignItems: 'center' }}>
-            <h3 style={{ margin: 0 }}>Recent Workflows</h3>
+            <h3 style={{ margin: 0 }}>{t('app.recentWorkflows')}</h3>
             <a style={{ color: 'var(--primary-main)', cursor: 'pointer', fontSize: '14px', fontWeight: 500 }} onClick={() => navigate("workflows")}>
-              View All
+              {t('app.viewAll')}
             </a>
           </div>
 
@@ -436,17 +493,17 @@ function App() {
                 <div className="flex-row" style={{ gap: '8px' }}>
                   <button className="btn btn-primary" style={{ padding: '8px 16px', fontSize: '13px' }} onClick={() => navigate("workflow-detail", { workflowId: workflow.id })}>
                     <Icon name="play" size={14} />
-                    <span>Run</span>
+                    <span>{t('common.run')}</span>
                   </button>
                   <button className="btn btn-secondary" style={{ padding: '8px 16px', fontSize: '13px' }} onClick={() => navigate("workflow-detail", { workflowId: workflow.id })}>
-                    <span>Details</span>
+                    <span>{t('common.details')}</span>
                   </button>
                 </div>
               </div>
             ))}
             {recentWorkflows.length === 0 && (
               <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-tertiary)' }}>
-                No recent workflows found.
+                {t('app.noRecentWorkflows')}
               </div>
             )}
           </div>
@@ -462,7 +519,7 @@ function App() {
         <div className="page auth-loading-page flex-center" style={{ height: '100vh' }}>
           <div className="auth-loading flex-col" style={{ alignItems: 'center', gap: '16px' }}>
             <div className="loading-spinner"></div>
-            <p>Loading Dashboard...</p>
+            <p>{t('common.loading')}</p>
           </div>
         </div>
       );
@@ -477,12 +534,12 @@ function App() {
         <div style={{ marginBottom: '24px' }}>
           <Icon name="alert" size={48} style={{ color: 'var(--status-warning-text)' }} />
         </div>
-        <h1 style={{ fontSize: '24px', marginBottom: '16px' }}>Update Required</h1>
+        <h1 style={{ fontSize: '24px', marginBottom: '16px' }}>{t('app.updateRequired')}</h1>
         <p style={{ marginBottom: '8px', color: 'var(--text-secondary)' }}>
           Your current version ({versionInfo?.version || 'unknown'}) is no longer supported.
         </p>
         <p style={{ marginBottom: '24px', color: 'var(--text-secondary)' }}>
-          Please update to version {versionInfo?.minimum_version || 'latest'} or later to continue.
+          {t('app.updateDesc', { version: versionInfo?.minimum_version || 'latest' })}
         </p>
         <a
           href={versionInfo?.update_url || 'http://download.ariseos.com/releases/latest/'}
@@ -492,7 +549,7 @@ function App() {
           style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '12px 24px', fontSize: '16px' }}
         >
           <Icon name="download" size={20} />
-          <span>Download Update</span>
+          <span>{t('app.downloadUpdate')}</span>
         </a>
         <p style={{ marginTop: '16px', fontSize: '12px', color: 'var(--text-tertiary)' }}>
           Platform: {versionInfo?.platform || 'unknown'}
@@ -509,15 +566,20 @@ function App() {
     }
 
     // Show loading while checking setup
-    if (setupChecking) {
+    if (setupChecking || backendChecking) {
       return (
         <div className="page auth-loading-page flex-center" style={{ height: '100vh' }}>
           <div className="auth-loading flex-col" style={{ alignItems: 'center', gap: '16px' }}>
             <div className="loading-spinner"></div>
-            <p>Loading...</p>
+            <p>{backendChecking ? t('backendError.connecting') : t('common.loading')}</p>
           </div>
         </div>
       );
+    }
+
+    // Show backend error page if connection failed
+    if (backendError) {
+      return <BackendErrorPage onRetry={handleBackendRetry} />;
     }
 
     // Show setup page if setup not complete
@@ -531,7 +593,7 @@ function App() {
         <div className="page auth-loading-page flex-center" style={{ height: '100vh' }}>
           <div className="auth-loading flex-col" style={{ alignItems: 'center', gap: '16px' }}>
             <div className="loading-spinner"></div>
-            <p>Loading...</p>
+            <p>{t('common.loading')}</p>
           </div>
         </div>
       );
@@ -772,9 +834,9 @@ function App() {
     }
 
     const navItems = [
-      { id: "quick-start", icon: "record", label: "Record" },
-      { id: "workflows", icon: "workflows", label: "Workflows" },
-      { id: "recordings-library", icon: "library", label: "Library" },
+      { id: "quick-start", icon: "record", label: t('nav.record') },
+      { id: "workflows", icon: "workflows", label: t('nav.workflows') },
+      { id: "recordings-library", icon: "library", label: t('nav.library') },
     ];
 
     return (
@@ -796,7 +858,7 @@ function App() {
           className={`nav-item diagnostic-btn ${diagnosticUploading ? 'uploading' : ''}`}
           onClick={handleUploadDiagnostic}
           disabled={diagnosticUploading}
-          title="Upload diagnostic logs"
+          title={t('app.diagnosticTitle')}
         >
           <span className="nav-icon">
             <Icon name={diagnosticUploading ? "loader" : "bug"} size={18} />
@@ -837,13 +899,13 @@ function App() {
             boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)'
           }}>
             <div className="modal-header" style={{ marginBottom: '16px' }}>
-              <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 600 }}>Upload Diagnostic Logs</h3>
+              <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 600 }}>{t('app.diagnosticTitle')}</h3>
             </div>
             <div className="modal-body">
-              <p style={{ marginBottom: '12px' }}>Please describe the issue you encountered (optional). This helps us improve the product.</p>
+              <p style={{ marginBottom: '12px' }}>{t('app.diagnosticDesc')}</p>
               <textarea
                 className="log-description-input"
-                placeholder="Describe what happened..."
+                placeholder={t('app.describeIssue')}
                 value={diagnosticDescription}
                 onChange={(e) => setDiagnosticDescription(e.target.value)}
                 rows={4}
@@ -863,7 +925,7 @@ function App() {
                 }}
               />
               <p className="modal-hint" style={{ fontSize: '13px', color: 'var(--text-tertiary)', margin: 0 }}>
-                We will upload recent logs to our support server.
+                {t('app.uploadingLogs')}
               </p>
             </div>
             <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px' }}>
@@ -872,14 +934,14 @@ function App() {
                 onClick={() => setDiagnosticModalOpen(false)}
                 style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--border-subtle)', background: 'transparent', cursor: 'pointer' }}
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 className="btn btn-primary"
                 onClick={confirmUploadDiagnostic}
                 style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', background: 'var(--primary-main)', color: 'white', cursor: 'pointer' }}
               >
-                Confirm Upload
+                {t('app.confirmUpload')}
               </button>
             </div>
           </div>

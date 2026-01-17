@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { useTranslation } from "react-i18next";
 import ReactMarkdown from 'react-markdown'
 import jsPDF from 'jspdf'
 import html2canvas from 'html2canvas'
@@ -95,6 +96,7 @@ const DEMO_MARKDOWN = `# 咖啡市场对比调研报告（ Allegro vs. Amazon �
 `
 
 function WorkflowResultPage({ session, onNavigate, showStatus, params, version }) {
+  const { t } = useTranslation();
   const userId = session?.username;
   const reportRef = useRef(null)
   const [resultData, setResultData] = useState(null)
@@ -296,7 +298,7 @@ function WorkflowResultPage({ session, onNavigate, showStatus, params, version }
       setLoading(false)
     } catch (err) {
       console.error('Load result data error:', err)
-      showStatus('加载结果失败', 'error')
+      showStatus(t('workflowResult.loadFailed'), 'error')
       setLoading(false)
     }
   }
@@ -304,7 +306,7 @@ function WorkflowResultPage({ session, onNavigate, showStatus, params, version }
   const downloadPDF = async () => {
     if (!reportRef.current) return
 
-    showStatus('正在生成PDF...', 'info')
+    showStatus(t('workflowResult.generatingPDF'), 'info')
 
     try {
       const canvas = await html2canvas(reportRef.current, {
@@ -355,17 +357,17 @@ function WorkflowResultPage({ session, onNavigate, showStatus, params, version }
 
         if (response && response.success) {
           console.log(`Download initiated: ${filename} with ID: ${response.downloadId}`)
-          showStatus('PDF已下载', 'success')
+          showStatus(t('workflowResult.pdfDownloaded'), 'success')
         } else {
-          showStatus('PDF下载失败', 'error')
+          showStatus(t('workflowResult.pdfDownloadFailed'), 'error')
         }
       } catch (error) {
         console.error('Download error:', error)
-        showStatus('PDF下载失败', 'error')
+        showStatus(t('workflowResult.pdfDownloadFailed'), 'error')
       }
     } catch (error) {
       console.error('PDF generation error:', error)
-      showStatus('PDF生成失败', 'error')
+      showStatus(t('workflowResult.pdfGenerationFailed'), 'error')
     }
   }
 
@@ -406,9 +408,9 @@ function WorkflowResultPage({ session, onNavigate, showStatus, params, version }
       }
 
       if (successCount === resultData.collections.length) {
-        showStatus(`已下载 ${successCount} 个CSV文件`, 'success')
+        showStatus(t('workflowResult.csvDownloadedCount', { count: successCount }), 'success')
       } else {
-        showStatus('部分CSV文件下载失败', 'error')
+        showStatus(t('workflowResult.csvPartialFailed'), 'error')
       }
     } else {
       // Single collection CSV download
@@ -434,13 +436,13 @@ function WorkflowResultPage({ session, onNavigate, showStatus, params, version }
 
         if (response && response.success) {
           console.log(`Download initiated: ${filename} with ID: ${response.downloadId}`)
-          showStatus('CSV文件已下载', 'success')
+          showStatus(t('workflowResult.csvDownloaded'), 'success')
         } else {
-          showStatus('CSV下载失败', 'error')
+          showStatus(t('workflowResult.csvDownloadFailed'), 'error')
         }
       } catch (error) {
         console.error('Download error:', error)
-        showStatus('CSV下载失败', 'error')
+        showStatus(t('workflowResult.csvDownloadFailed'), 'error')
       }
     }
   }
@@ -463,11 +465,11 @@ function WorkflowResultPage({ session, onNavigate, showStatus, params, version }
         >
           <Icon icon="arrowLeft" />
         </button>
-        <div className="page-title">运行结果</div>
+        <div className="page-title">{t('workflowResult.title')}</div>
         {!loading && (workflowName === 'coffee-market-analysis-workflow' || resultData) && (
           <button className="download-button" onClick={handleDownload}>
             <Icon icon="download" size={18} />
-            <span>下载</span>
+            <span>{t('common.download')}</span>
           </button>
         )}
       </div>
@@ -476,7 +478,7 @@ function WorkflowResultPage({ session, onNavigate, showStatus, params, version }
         {loading && (
           <div className="empty-state">
             <div className="empty-state-icon"><Icon icon="clock" size={48} /></div>
-            <div className="empty-state-title">加载中...</div>
+            <div className="empty-state-title">{t('common.loading')}</div>
           </div>
         )}
 
@@ -496,19 +498,19 @@ function WorkflowResultPage({ session, onNavigate, showStatus, params, version }
                 <span className="summary-value">{resultData.workflow_name}</span>
               </div>
               <div className="summary-item">
-                <span className="summary-label">采集数量</span>
-                <span className="summary-value">{resultData.total_items} 条</span>
+                <span className="summary-label">{t('workflowResult.totalItems')}</span>
+                <span className="summary-value">{resultData.total_items} {t('workflowResult.itemsUnit')}</span>
               </div>
               {!resultData.isMultiCollection && (
                 <div className="summary-item">
-                  <span className="summary-label">字段数量</span>
-                  <span className="summary-value">{resultData.fields.length} 个</span>
+                  <span className="summary-label">{t('workflowResult.fieldsCount')}</span>
+                  <span className="summary-value">{resultData.fields.length} {t('workflowResult.fieldsUnit')}</span>
                 </div>
               )}
               {resultData.isMultiCollection && (
                 <div className="summary-item">
-                  <span className="summary-label">数据源</span>
-                  <span className="summary-value">{resultData.collections.length} 个</span>
+                  <span className="summary-label">{t('workflowResult.dataSources')}</span>
+                  <span className="summary-value">{resultData.collections.length} {t('workflowResult.dataSourcesUnit')}</span>
                 </div>
               )}
             </div>
@@ -519,7 +521,7 @@ function WorkflowResultPage({ session, onNavigate, showStatus, params, version }
                 <div key={collectionIdx} className="result-table-container">
                   <div className="result-table-header">
                     <span className="table-title">{collection.displayName}</span>
-                    <span className="table-subtitle">共 {collection.count} 条数据</span>
+                    <span className="table-subtitle">{t('workflowResult.totalCount', { count: collection.count })}</span>
                   </div>
 
                   <div className="result-table-wrapper">
@@ -554,8 +556,8 @@ function WorkflowResultPage({ session, onNavigate, showStatus, params, version }
               // Single collection display
               <div className="result-table-container">
                 <div className="result-table-header">
-                  <span className="table-title">数据预览</span>
-                  <span className="table-subtitle">共 {resultData.total_items} 条数据</span>
+                  <span className="table-title">{t('workflowResult.dataPreview')}</span>
+                  <span className="table-subtitle">{t('workflowResult.totalCount', { count: resultData.total_items })}</span>
                 </div>
 
                 <div className="result-table-wrapper">

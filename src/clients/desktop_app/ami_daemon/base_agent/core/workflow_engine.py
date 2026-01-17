@@ -43,6 +43,7 @@ class WorkflowEngine:
         from ..agents.scraper_agent import ScraperAgent
         from ..agents.storage_agent import StorageAgent
         from ..agents.autonomous_browser_agent import AutonomousBrowserAgent
+        from ..agents.tavily_agent import TavilyAgent
 
         cls._AGENT_TYPES = {
             'text_agent': TextAgent,
@@ -51,6 +52,7 @@ class WorkflowEngine:
             'storage_agent': StorageAgent,
             'browser_agent': BrowserAgent,
             'autonomous_browser_agent': AutonomousBrowserAgent,
+            'tavily_agent': TavilyAgent,
         }
         cls._agent_types_loaded = True
 
@@ -357,6 +359,7 @@ class WorkflowEngine:
                     "items_found": resolved_input.get('items_found', None),
                     "items": resolved_input.get('items', None),
                     "start": resolved_input.get('start', None),
+                    "end": resolved_input.get('end', None),
                     "start_value": resolved_input.get('start_value', None),
                     "match_field": resolved_input.get('match_field', None),
                     "contains": resolved_input.get('contains', None),

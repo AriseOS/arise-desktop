@@ -32,6 +32,7 @@ all_schemas = get_all_agent_schemas()
 | `storage_agent.py` | StorageAgent | `inputs.operation`, `inputs.collection` |
 | `variable_agent.py` | VariableAgent | `inputs.operation`, `inputs.data` |
 | `autonomous_browser_agent.py` | AutonomousBrowserAgent | `inputs.task` |
+| `tavily_agent.py` | TavilyAgent | `inputs.operation`, `inputs.query` |
 
 ### Infrastructure
 
@@ -137,5 +138,6 @@ ScraperAgent calls **cloud API** to generate Python extraction scripts that pars
 | `browser_agent.py` | `src/cloud_backend/intent_builder/.claude/skills/agent-specs/references/browser_agent.md` |
 | `scraper_agent.py` | `src/cloud_backend/intent_builder/.claude/skills/agent-specs/references/scraper_agent.md` |
 | `storage_agent.py` | `src/cloud_backend/intent_builder/.claude/skills/agent-specs/references/storage_agent.md` |
+| `tavily_agent.py` | `src/cloud_backend/services/skills/repository/agent-specs/SKILL.md` |
 
 Also update `docs/base_app/*_agent_spec.md` (source of truth for specs).

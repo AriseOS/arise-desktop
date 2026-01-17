@@ -12,6 +12,7 @@ const AGENT_COLORS = {
   loop: { border: '#8b5cf6', bg: '#ede9fe', text: '#6d28d9', label: 'LOOP' }, // Violet
   storage_agent: { border: '#10b981', bg: '#d1fae5', text: '#047857', label: 'STORAGE' }, // Emerald
   text_agent: { border: '#3b82f6', bg: '#dbeafe', text: '#1d4ed8', label: 'TEXT' }, // Blue
+  tavily_agent: { border: '#ec4899', bg: '#fce7f3', text: '#be185d', label: 'TAVILY' }, // Pink
   default: { border: '#94a3b8', bg: '#f1f5f9', text: '#475569', label: 'STEP' } // Slate
 };
 

@@ -1,17 +1,20 @@
 import { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { api } from "../utils/api";
 
 function SetupPage({ onSetupComplete }) {
+  const { t } = useTranslation();
   const [status, setStatus] = useState("checking");
-  const [message, setMessage] = useState("Checking browser installation...");
+  const [message, setMessage] = useState("");
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState(null);
   const [browserInfo, setBrowserInfo] = useState(null);
 
   useEffect(() => {
+    setMessage(t('setup.checking')); // Set initial message
     checkBrowserStatus();
-  }, []);
+  }, [t]);
 
   const checkBrowserStatus = async () => {
     try {
@@ -24,25 +27,25 @@ function SetupPage({ onSetupComplete }) {
       if (browserInfo.available) {
         // Browser is available (Chrome or Playwright Chromium)
         setStatus("ready");
-        setMessage(`Found ${browserInfo.browser_type}, ready to use!`);
+        setMessage(t('setup.ready', { browser: browserInfo.browser_type }));
         setProgress(100);
         setTimeout(() => onSetupComplete(), 1000);
       } else {
         // No browser found, show installation option
         setStatus("pending");
-        setMessage("No browser found. Please install Google Chrome or click below to install Chromium.");
+        setMessage(t('setup.notFound'));
         setProgress(0);
       }
     } catch (err) {
       console.error("Failed to check browser:", err);
-      setError("Failed to check browser installation. Please restart the app.");
+      setError(t('setup.checkFailed'));
     }
   };
 
   const retryCheck = () => {
     setError(null);
     setStatus("checking");
-    setMessage("Checking browser installation...");
+    setMessage(t('setup.checking'));
     checkBrowserStatus();
   };
 
@@ -59,13 +62,13 @@ function SetupPage({ onSetupComplete }) {
           )}
         </div>
 
-        <h1>Welcome to Ami</h1>
+        <h1>{t('setup.title')}</h1>
 
         {error ? (
           <div className="setup-error">
             <p className="error-message">{error}</p>
             <button onClick={retryCheck} className="retry-button">
-              Retry
+              {t('setup.retry')}
             </button>
           </div>
         ) : (
@@ -75,20 +78,20 @@ function SetupPage({ onSetupComplete }) {
             {status === "pending" && (
               <div className="setup-actions">
                 <p className="setup-note">
-                  Please download and install Google Chrome from:
+                  {t('setup.installChrome')}
                   <br />
                   <a href="https://www.google.com/chrome/" target="_blank" rel="noopener noreferrer">
                     https://www.google.com/chrome/
                   </a>
                 </p>
                 <button onClick={retryCheck} className="retry-button">
-                  I've installed Chrome - Retry Check
+                  {t('setup.installedRetry')}
                 </button>
               </div>
             )}
 
             {status === "ready" && (
-              <p className="setup-success">Setup complete! Launching app...</p>
+              <p className="setup-success">{t('setup.complete')}</p>
             )}
           </>
         )}

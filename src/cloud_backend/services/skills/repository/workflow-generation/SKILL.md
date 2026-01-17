@@ -5,6 +5,17 @@ description: Generate workflows from user's recorded browser actions.
 
 # Workflow Generation
 
+## Context: App Environment
+
+Workflows run inside a desktop app. Understanding this environment helps you generate correct workflows:
+
+- **User records browser actions** → converted to intent operations (your input)
+- **You generate a workflow YAML** → the app executes it
+- **`storage_agent` stores data** → user can view and export data directly in the app UI
+- **No export steps needed in workflow** → the app provides export functionality (CSV, Excel, etc.)
+
+This means: use `storage_agent` with `operation: store` to save extracted data. The user will access and export it through the app interface.
+
 ## IMPORTANT: Output Contract
 
 **All agents output to `result` key**. Always use `outputs: {result: variable_name}`:
@@ -38,12 +49,7 @@ description: Generate workflows from user's recorded browser actions.
 
 Convert user's recorded browser actions (intent operations) into a replayable Workflow YAML.
 
-**Key principle**: The workflow **replays** the user's recorded actions and **stores extracted data**. The app automatically handles data export/download - you do NOT need to add export steps.
-
-**What the workflow does:**
-1. Replay browser navigation and interactions
-2. Extract data from pages (scraper_agent stores data automatically)
-3. That's it! No export/save steps needed.
+**Key principle**: The workflow **replays** the user's recorded actions. Use the available agents to navigate, interact, extract data, and store results.
 
 ## Input: Intent Operations
 
@@ -98,6 +104,59 @@ steps:
 | scroll | `browser_agent` + `interaction_steps` |
 | navigate | `browser_agent` + `target_url` |
 | summarize/transform text | `text_agent` |
+| web search (no specific search recorded) | `tavily_agent` |
+
+### When to use tavily_agent
+
+Use `tavily_agent` when:
+- User query requires searching/retrieving information from the web
+- BUT the intent operations do NOT show a specific search approach (e.g., no Google search, no website search box interaction recorded)
+
+**Example scenarios:**
+- User query: "Search for the latest AI news" + No search operations in intents → Use `tavily_agent`
+- User query: "Find top 10 products" + Intent shows user searched on Google → Use recorded browser operations
+- User query: "Get recent tech news" + Intent shows user browsed a news website → Use recorded browser operations
+
+```yaml
+# When user needs web search but didn't record a specific search method
+- id: search-web
+  agent: tavily_agent
+  inputs:
+    operation: search
+    query: "AI news"           # Derived from user query
+    max_results: 10
+    days: 3                    # For recent content
+    topic: news                # If searching news
+  outputs:
+    result: search_results
+```
+
+**tavily_agent output structure** - for using results in subsequent steps:
+
+```yaml
+# search_results contains:
+{
+  query: "AI news",
+  results: [                          # Array of search results
+    {
+      title: "Article Title",
+      url: "https://example.com/...",
+      content: "Snippet text...",     # Page excerpt
+      score: 0.95,                    # Relevance score
+      published_date: "2024-01-15"    # Optional
+    },
+    ...
+  ],
+  answer: "...",                      # Optional: if include_answer=true
+  images: [...]                       # Optional: if include_images=true
+}
+
+# Common access patterns:
+# - "{{search_results.results}}"        → Full results array
+# - "{{search_results.results.0.url}}"  → First result's URL
+# - "{{search_results.results.0.title}}" → First result's title
+# - "{{search_results.answer}}"         → AI-generated answer (if requested)
+```
 
 ## text_agent
 
@@ -242,7 +301,7 @@ If script generation fails for a step, modify the workflow:
 - Use original URL/href from operation, never simplify
 - For loops ("all items", "each product"), use `foreach`
 - **NEVER write `outputs: null`** - if a step doesn't need output, simply omit the `outputs` field
-- **No export/save steps needed** - scraper_agent automatically stores extracted data; the app handles export. Do NOT add `storage_agent` export steps unless user explicitly asks for it.
+- **No export steps needed** - the app handles data export. Do NOT add `storage_agent` with `operation: export` unless user explicitly asks for it. However, if you need to accumulate data across multiple iterations (e.g., in a foreach loop), you MUST use `storage_agent` with `operation: store` to persist each item.
 
 ### foreach Syntax
 

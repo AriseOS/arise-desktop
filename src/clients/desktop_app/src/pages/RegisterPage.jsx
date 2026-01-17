@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { api } from '../utils/api';
 import { auth } from '../utils/auth';
 import Icon from '../components/Icons';
@@ -9,6 +10,7 @@ import '../styles/RegisterPage.css';
  * Allows new users to create an account
  */
 function RegisterPage({ navigate, showStatus, onRegisterSuccess }) {
+  const { t } = useTranslation();
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -18,53 +20,53 @@ function RegisterPage({ navigate, showStatus, onRegisterSuccess }) {
   const validateForm = () => {
     // Username validation
     if (!username.trim()) {
-      showStatus('Please enter username', 'error');
+      showStatus(t('auth.validation.enterUsername'), 'error');
       return false;
     }
 
     if (username.length < 3) {
-      showStatus('Username must be at least 3 characters', 'error');
+      showStatus(t('auth.validation.usernameLength'), 'error');
       return false;
     }
 
     // Email validation
     if (!email.trim()) {
-      showStatus('Please enter email', 'error');
+      showStatus(t('auth.validation.enterEmail'), 'error');
       return false;
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-      showStatus('Please enter a valid email address', 'error');
+      showStatus(t('auth.validation.validEmail'), 'error');
       return false;
     }
 
     // Password validation
     if (!password) {
-      showStatus('Please enter password', 'error');
+      showStatus(t('auth.validation.enterPassword'), 'error');
       return false;
     }
 
     if (password.length < 8) {
-      showStatus('Password must be at least 8 characters', 'error');
+      showStatus(t('auth.validation.passwordLength'), 'error');
       return false;
     }
 
     // Check for uppercase letter
     if (!/[A-Z]/.test(password)) {
-      showStatus('Password must contain at least one uppercase letter', 'error');
+      showStatus(t('auth.validation.passwordUpper'), 'error');
       return false;
     }
 
     // Check for lowercase letter
     if (!/[a-z]/.test(password)) {
-      showStatus('Password must contain at least one lowercase letter', 'error');
+      showStatus(t('auth.validation.passwordLower'), 'error');
       return false;
     }
 
     // Password confirmation
     if (password !== confirmPassword) {
-      showStatus('Passwords do not match', 'error');
+      showStatus(t('auth.validation.passwordMatch'), 'error');
       return false;
     }
 
@@ -101,7 +103,7 @@ function RegisterPage({ navigate, showStatus, onRegisterSuccess }) {
         result.token // CRS JWT token (if provided)
       );
 
-      showStatus('Registration successful! Welcome to Ami!', 'success');
+      showStatus(t('auth.toasts.registerSuccess'), 'success');
 
       // Notify parent component
       if (onRegisterSuccess) {
@@ -113,7 +115,7 @@ function RegisterPage({ navigate, showStatus, onRegisterSuccess }) {
 
     } catch (error) {
       console.error('[RegisterPage] Registration failed:', error);
-      showStatus(`Registration failed: ${error.message}`, 'error');
+      showStatus(t('auth.toasts.registerFailed', { error: error.message }), 'error');
     } finally {
       setLoading(false);
     }
@@ -126,28 +128,28 @@ function RegisterPage({ navigate, showStatus, onRegisterSuccess }) {
         <div className="auth-header">
           <div className="auth-logo"><Icon icon="cpu" size={64} /></div>
           <h1 className="auth-title">Ami</h1>
-          <p className="auth-subtitle">Create your account</p>
+          <p className="auth-subtitle">{t('auth.createAccountTitle')}</p>
         </div>
 
         {/* Registration Form */}
         <form className="auth-form" onSubmit={handleRegister}>
           <div className="form-group">
-            <label htmlFor="username">Username</label>
+            <label htmlFor="username">{t('auth.usernameLabel')}</label>
             <input
               id="username"
               type="text"
               className="form-input"
-              placeholder="Choose a username"
+              placeholder={t('auth.usernamePlaceholder')}
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               disabled={loading}
               autoFocus
             />
-            <div className="form-hint">Minimum 3 characters</div>
+            <div className="form-hint">{t('auth.usernameHint')}</div>
           </div>
 
           <div className="form-group">
-            <label htmlFor="email">Email</label>
+            <label htmlFor="email">{t('auth.emailLabel')}</label>
             <input
               id="email"
               type="email"
@@ -160,26 +162,26 @@ function RegisterPage({ navigate, showStatus, onRegisterSuccess }) {
           </div>
 
           <div className="form-group">
-            <label htmlFor="password">Password</label>
+            <label htmlFor="password">{t('auth.passwordLabel')}</label>
             <input
               id="password"
               type="password"
               className="form-input"
-              placeholder="Create a strong password"
+              placeholder={t('auth.passwordPlaceholderStrong')}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               disabled={loading}
             />
-            <div className="form-hint">Minimum 8 characters, with uppercase and lowercase</div>
+            <div className="form-hint">{t('auth.passwordHint')}</div>
           </div>
 
           <div className="form-group">
-            <label htmlFor="confirmPassword">Confirm Password</label>
+            <label htmlFor="confirmPassword">{t('auth.confirmPasswordLabel')}</label>
             <input
               id="confirmPassword"
               type="password"
               className="form-input"
-              placeholder="Re-enter your password"
+              placeholder={t('auth.confirmPasswordPlaceholder')}
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               disabled={loading}
@@ -194,12 +196,12 @@ function RegisterPage({ navigate, showStatus, onRegisterSuccess }) {
             {loading ? (
               <>
                 <div className="btn-spinner"></div>
-                <span>Creating Account...</span>
+                <span>{t('auth.creatingAccount')}</span>
               </>
             ) : (
               <>
                 <Icon icon="userPlus" size={20} />
-                <span>Register</span>
+                <span>{t('auth.registerBtn')}</span>
               </>
             )}
           </button>
@@ -208,13 +210,13 @@ function RegisterPage({ navigate, showStatus, onRegisterSuccess }) {
         {/* Login Link */}
         <div className="auth-footer">
           <p className="auth-link-text">
-            Already have an account?{' '}
+            {t('auth.hasAccount')}{' '}
             <a
               className="auth-link"
               onClick={() => !loading && navigate('login')}
               style={{ cursor: loading ? 'not-allowed' : 'pointer' }}
             >
-              Login
+              {t('auth.loginLink')}
             </a>
           </p>
         </div>

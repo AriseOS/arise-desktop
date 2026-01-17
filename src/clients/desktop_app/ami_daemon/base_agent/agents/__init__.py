@@ -11,6 +11,7 @@ from .browser_agent import BrowserAgent
 from .scraper_agent import ScraperAgent
 from .storage_agent import StorageAgent
 from .autonomous_browser_agent import AutonomousBrowserAgent
+from .tavily_agent import TavilyAgent
 
 __all__ = [
     # Base classes and schema
@@ -25,6 +26,7 @@ __all__ = [
     'ScraperAgent',
     'StorageAgent',
     'AutonomousBrowserAgent',
+    'TavilyAgent',
 ]
 
 
@@ -42,4 +44,5 @@ def get_all_agent_schemas() -> dict:
         'scraper_agent': ScraperAgent.get_input_schema(),
         'storage_agent': StorageAgent.get_input_schema(),
         'autonomous_browser_agent': AutonomousBrowserAgent.get_input_schema(),
+        'tavily_agent': TavilyAgent.get_input_schema(),
     }

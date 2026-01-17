@@ -108,6 +108,7 @@ A workflow has two layers:
 | `text_agent` | LLM text generation/transform | `instruction` |
 | `variable` | Data operations (set/filter/slice) | `operation`, `data` |
 | `storage_agent` | Store/query/export data | `operation`, `collection` |
+| `tavily_agent` | Web search | `operation`, `query` |
 
 **Example - text_agent for summarization**:
 ```yaml

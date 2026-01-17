@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import Icon from '../components/Icons';
 import { api } from '../utils/api';
 import '../styles/RecordingPage.css';
 
 function RecordingPage({ session, onNavigate, showStatus, version }) {
+  const { t } = useTranslation();
   const userId = session?.username;
   const [recordUrl, setRecordUrl] = useState("https://www.google.com");
   const [recordTitle, setRecordTitle] = useState("");
@@ -52,17 +54,17 @@ function RecordingPage({ session, onNavigate, showStatus, version }) {
   // Get operation type label with icon
   const getOperationTypeLabel = (type) => {
     const typeLabels = {
-      'click': { text: '点击', icon: 'mousePointer' },
-      'input': { text: '输入', icon: 'keyboard' },
-      'navigate': { text: '导航', icon: 'globe' },
-      'scroll': { text: '滚动', icon: 'arrowDown' },
-      'select': { text: '选择', icon: 'list' },
-      'submit': { text: '提交', icon: 'checkCircle' },
-      'hover': { text: '悬停', icon: 'mousePointer' },
-      'keydown': { text: '按键', icon: 'keyboard' },
-      'change': { text: '修改', icon: 'edit' }
+      'click': { text: t('recording.ops.click'), icon: 'mousePointer' },
+      'input': { text: t('recording.ops.input'), icon: 'keyboard' },
+      'navigate': { text: t('recording.ops.navigate'), icon: 'globe' },
+      'scroll': { text: t('recording.ops.scroll'), icon: 'arrowDown' },
+      'select': { text: t('recording.ops.select'), icon: 'list' },
+      'submit': { text: t('recording.ops.submit'), icon: 'checkCircle' },
+      'hover': { text: t('recording.ops.hover'), icon: 'mousePointer' },
+      'keydown': { text: t('recording.ops.keydown'), icon: 'keyboard' },
+      'change': { text: t('recording.ops.change'), icon: 'edit' }
     };
-    const label = typeLabels[type] || { text: type || '操作', icon: 'mapPin' };
+    const label = typeLabels[type] || { text: type || t('recording.ops.op'), icon: 'mapPin' };
     return (
       <>
         <Icon icon={label.icon} size={14} />
@@ -74,12 +76,12 @@ function RecordingPage({ session, onNavigate, showStatus, version }) {
   // Start recording
   const handleStartRecording = async () => {
     if (!recordUrl || !recordTitle || !recordDescription) {
-      showStatus("请填写所有必填项", "error");
+      showStatus(t('recording.hints.required'), "error");
       return;
     }
 
     try {
-      showStatus("启动录制...", "info");
+      showStatus(t('recording.hints.starting'), "info");
 
       const result = await api.callAppBackend('/api/v1/recordings/start', {
         method: "POST",
@@ -93,27 +95,27 @@ function RecordingPage({ session, onNavigate, showStatus, version }) {
       });
       setRecording(true);
       setSessionId(result.session_id);
-      showStatus("录制已开始！请在浏览器中操作", "success");
+      showStatus(t('recording.hints.started'), "success");
     } catch (error) {
       console.error("Start recording error:", error);
-      showStatus(`启动录制失败: ${error.message}`, "error");
+      showStatus(t('recording.hints.startFailed', { error: error.message }), "error");
     }
   };
 
   // Stop recording
   const handleStopRecording = async () => {
     try {
-      showStatus("停止录制...", "info");
+      showStatus(t('recording.hints.stopping'), "info");
 
       const result = await api.callAppBackend('/api/v1/recordings/stop', {
         method: "POST"
       });
       setRecording(false);
       setOperationsCount(result.operations_count);
-      showStatus(`录制完成！捕获了 ${result.operations_count} 个操作`, "success");
+      showStatus(t('recording.hints.stopped', { count: result.operations_count }), "success");
     } catch (error) {
       console.error("Stop recording error:", error);
-      showStatus(`停止录制失败: ${error.message}`, "error");
+      showStatus(t('recording.hints.stopFailed', { error: error.message }), "error");
       setRecording(false);
     }
   };
@@ -121,13 +123,13 @@ function RecordingPage({ session, onNavigate, showStatus, version }) {
   // Upload recording
   const handleUpload = async () => {
     if (!sessionId) {
-      showStatus("没有可上传的录制", "error");
+      showStatus(t('recording.hints.noRecording'), "error");
       return;
     }
 
     try {
       setUploading(true);
-      showStatus("上传录制到云端...", "info");
+      showStatus(t('recording.hints.uploadingToast'), "info");
 
       const result = await api.callAppBackend(`/api/v1/recordings/${sessionId}/upload`, {
         method: "POST",
@@ -136,7 +138,7 @@ function RecordingPage({ session, onNavigate, showStatus, version }) {
           user_id: userId
         })
       });
-      showStatus("上传成功！录制已保存到云端", "success");
+      showStatus(t('recording.hints.uploadSuccess'), "success");
 
       // Return to main page after successful upload
       setTimeout(() => {
@@ -144,7 +146,7 @@ function RecordingPage({ session, onNavigate, showStatus, version }) {
       }, 2000);
     } catch (error) {
       console.error("Upload error:", error);
-      showStatus(`上传失败: ${error.message}`, "error");
+      showStatus(t('recording.hints.uploadFailed', { error: error.message }), "error");
     } finally {
       setUploading(false);
     }
@@ -153,7 +155,7 @@ function RecordingPage({ session, onNavigate, showStatus, version }) {
   // Navigate to generation page with recording info
   const handleQuickGenerate = () => {
     if (!sessionId) {
-      showStatus("没有可生成Workflow的录制", "error");
+      showStatus(t('recording.hints.noGenRecording'), "error");
       return;
     }
 
@@ -171,7 +173,7 @@ function RecordingPage({ session, onNavigate, showStatus, version }) {
         <button className="back-button" onClick={() => onNavigate("main")} disabled={recording}>
           <Icon icon="arrowLeft" />
         </button>
-        <div className="page-title"><Icon icon="video" size={28} /> 录制 Workflow</div>
+        <div className="page-title"><Icon icon="video" size={28} /> {t('recording.title')}</div>
       </div>
 
       <div className="record-content">
@@ -179,11 +181,11 @@ function RecordingPage({ session, onNavigate, showStatus, version }) {
           {/* Step 1: Configuration */}
           {!recording && !sessionId && (
             <div className="form-section">
-              <h3>配置录制信息</h3>
+              <h3>{t('recording.configTitle')}</h3>
 
               <div className="input-group">
                 <label>
-                  <span>起始 URL <span className="required">*</span></span>
+                  <span>{t('recording.urlLabel')} <span className="required">*</span></span>
                 </label>
                 <input
                   type="text"
@@ -195,27 +197,27 @@ function RecordingPage({ session, onNavigate, showStatus, version }) {
 
               <div className="input-group">
                 <label>
-                  <span>标题 <span className="required">*</span></span>
+                  <span>{t('recording.titleLabel')} <span className="required">*</span></span>
                   <span className="input-hint">{recordTitle.length}/50</span>
                 </label>
                 <input
                   type="text"
                   value={recordTitle}
                   onChange={(e) => setRecordTitle(e.target.value)}
-                  placeholder="例如：自动填写表单"
+                  placeholder={t('recording.titlePlaceholder')}
                   maxLength={50}
                 />
               </div>
 
               <div className="input-group">
                 <label>
-                  <span>任务描述 <span className="required">*</span></span>
+                  <span>{t('recording.descLabel')} <span className="required">*</span></span>
                   <span className="input-hint">{recordDescription.length}/500</span>
                 </label>
                 <textarea
                   value={recordDescription}
                   onChange={(e) => setRecordDescription(e.target.value)}
-                  placeholder="详细描述这个工作流要完成什么任务...&#10;&#10;例如：打开 Google，搜索 coffee，查看搜索结果"
+                  placeholder={t('recording.descPlaceholder')}
                   maxLength={500}
                   rows={6}
                 />
@@ -226,7 +228,7 @@ function RecordingPage({ session, onNavigate, showStatus, version }) {
                 onClick={handleStartRecording}
               >
                 <Icon icon="circle" size={20} fill="currentColor" />
-                <span>开始录制</span>
+                <span>{t('recording.startBtn')}</span>
               </button>
             </div>
           )}
@@ -236,21 +238,21 @@ function RecordingPage({ session, onNavigate, showStatus, version }) {
             <div className="recording-status">
               <div className="recording-indicator">
                 <div className="recording-dot"></div>
-                <span>录制中...</span>
+                <span>{t('recording.statusRecording')}</span>
               </div>
 
               {/* Operations display */}
               <div className="operations-display">
                 <div className="operations-header">
-                  <span className="operations-title">已捕获操作</span>
-                  <span className="operations-count">{capturedOperations.length} 个操作</span>
+                  <span className="operations-title">{t('recording.capturedOps')}</span>
+                  <span className="operations-count">{t('recording.opsCount', { count: capturedOperations.length })}</span>
                 </div>
                 <div className="operations-list" ref={operationsListRef}>
                   {capturedOperations.length === 0 ? (
                     <div className="empty-operations">
                       <div className="empty-icon"><Icon icon="clipboard" size={48} /></div>
-                      <div className="empty-text">等待捕获操作...</div>
-                      <div className="empty-hint">请在浏览器中执行操作</div>
+                      <div className="empty-text">{t('recording.waitingOps')}</div>
+                      <div className="empty-hint">{t('recording.performActions')}</div>
                     </div>
                   ) : (
                     capturedOperations.map((op, index) => (
@@ -267,7 +269,7 @@ function RecordingPage({ session, onNavigate, showStatus, version }) {
                             )}
                             {op.data?.value && (
                               <div className="operation-value">
-                                输入: {op.data.value.slice(0, 30)}
+                                {t('recording.ops.input')}: {op.data.value.slice(0, 30)}
                                 {op.data.value.length > 30 ? '...' : ''}
                               </div>
                             )}
@@ -295,7 +297,7 @@ function RecordingPage({ session, onNavigate, showStatus, version }) {
                 onClick={handleStopRecording}
               >
                 <Icon icon="square" size={20} />
-                <span>停止录制</span>
+                <span>{t('recording.stopBtn')}</span>
               </button>
             </div>
           )}
@@ -304,23 +306,23 @@ function RecordingPage({ session, onNavigate, showStatus, version }) {
           {sessionId && !recording && (
             <div className="recording-complete">
               <div className="complete-icon"><Icon icon="checkCircle" size={48} /></div>
-              <h3>录制完成</h3>
+              <h3>{t('recording.completeTitle')}</h3>
 
               <div className="recording-summary">
                 <div className="summary-item">
-                  <span className="label">Session ID:</span>
+                  <span className="label">{t('recording.summary.sessionId')}</span>
                   <span className="value">{sessionId}</span>
                 </div>
                 <div className="summary-item">
-                  <span className="label">标题:</span>
+                  <span className="label">{t('recording.summary.title')}</span>
                   <span className="value">{recordTitle}</span>
                 </div>
                 <div className="summary-item">
-                  <span className="label">操作数量:</span>
-                  <span className="value">{operationsCount} 个操作</span>
+                  <span className="label">{t('recording.summary.opsCount')}</span>
+                  <span className="value">{t('recording.opsCount', { count: operationsCount })}</span>
                 </div>
                 <div className="summary-item">
-                  <span className="label">任务描述:</span>
+                  <span className="label">{t('recording.summary.desc')}</span>
                   <span className="value description">{recordDescription}</span>
                 </div>
               </div>
@@ -332,7 +334,7 @@ function RecordingPage({ session, onNavigate, showStatus, version }) {
                   disabled={uploading}
                 >
                   <Icon icon="zap" size={16} />
-                  <span>快速生成 Workflow</span>
+                  <span>{t('recording.quickGenerate')}</span>
                 </button>
 
                 <button
@@ -343,12 +345,12 @@ function RecordingPage({ session, onNavigate, showStatus, version }) {
                   {uploading ? (
                     <>
                       <div className="btn-spinner"></div>
-                      <span>上传中...</span>
+                      <span>{t('recording.uploading')}</span>
                     </>
                   ) : (
                     <>
                       <Icon icon="upload" size={16} />
-                      <span>上传到云端</span>
+                      <span>{t('recording.uploadCloud')}</span>
                     </>
                   )}
                 </button>
@@ -364,13 +366,13 @@ function RecordingPage({ session, onNavigate, showStatus, version }) {
                   disabled={uploading}
                 >
                   <Icon icon="refreshCw" size={16} />
-                  <span>重新录制</span>
+                  <span>{t('recording.reRecord')}</span>
                 </button>
               </div>
 
               <p className="upload-hint">
-                ⚡ 快速生成：直接从录制操作生成可执行的Workflow<br />
-                📤 上传到云端：进入对话生成 MetaFlow 流程
+                {t('recording.hints.quickGen')}<br />
+                {t('recording.hints.upload')}
               </p>
             </div>
           )}
