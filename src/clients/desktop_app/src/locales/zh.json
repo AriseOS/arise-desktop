@@ -483,6 +483,36 @@
             "daysAgo": "{{count}} 天前"
         }
     },
+    "analysis": {
+        "title": "AI 分析完成",
+        "unnamedTask": "未命名任务",
+        "validation": "请填写任务描述和用户查询",
+        "savingMetadata": "正在保存元数据...",
+        "saveFailed": "保存元数据失败：{{error}}",
+        "loopPattern": "检测到循环模式",
+        "loopCount": "次数：{{count}}",
+        "dataExtraction": "数据提取",
+        "fields": "字段：{{fields}}",
+        "navigation": "页面导航",
+        "depth": "深度：{{depth}}",
+        "aiSummary": "AI 摘要",
+        "patternsTitle": "检测到的模式",
+        "taskDesc": "任务描述",
+        "taskDescHint": "这个工作流做什么？",
+        "taskDescPlaceholder": "例如：从搜索结果页面抓取产品列表...",
+        "userQuery": "用户查询",
+        "userQueryHint": "运行时用户需要提供什么？",
+        "userQueryPlaceholder": "例如：输入要抓取的搜索关键词...",
+        "cancel": "取消",
+        "saving": "保存中...",
+        "confirmBtn": "确认并生成工作流",
+        "tips": {
+            "title": "提示",
+            "tip1": "任务描述帮助 AI 理解工作流的用途",
+            "tip2": "用户查询定义每次运行工作流时需要的输入",
+            "tip3": "您可以稍后在工作流详情页面编辑这些内容"
+        }
+    },
     "quickStart": {
         "title": "快速开始",
         "startRecordingTitle": "开始录制",

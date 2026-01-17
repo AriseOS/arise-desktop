@@ -483,6 +483,36 @@
             "daysAgo": "{{count}} days ago"
         }
     },
+    "analysis": {
+        "title": "AI Analysis Complete",
+        "unnamedTask": "Unnamed Task",
+        "validation": "Please fill in both task description and user query",
+        "savingMetadata": "Saving metadata...",
+        "saveFailed": "Failed to save metadata: {{error}}",
+        "loopPattern": "Loop Pattern Detected",
+        "loopCount": "Count: {{count}}",
+        "dataExtraction": "Data Extraction",
+        "fields": "Fields: {{fields}}",
+        "navigation": "Navigation",
+        "depth": "Depth: {{depth}}",
+        "aiSummary": "AI Summary",
+        "patternsTitle": "Detected Patterns",
+        "taskDesc": "Task Description",
+        "taskDescHint": "What does this workflow do?",
+        "taskDescPlaceholder": "e.g., Scrape product listings from the search results page...",
+        "userQuery": "User Query",
+        "userQueryHint": "What should the user provide when running?",
+        "userQueryPlaceholder": "e.g., Enter the search keyword to scrape...",
+        "cancel": "Cancel",
+        "saving": "Saving...",
+        "confirmBtn": "Confirm & Generate Workflow",
+        "tips": {
+            "title": "Tips",
+            "tip1": "The task description helps AI understand the workflow's purpose",
+            "tip2": "The user query defines what input is needed each time the workflow runs",
+            "tip3": "You can edit these later from the workflow details page"
+        }
+    },
     "quickStart": {
         "title": "Quick Start",
         "startRecordingTitle": "Start Recording",
