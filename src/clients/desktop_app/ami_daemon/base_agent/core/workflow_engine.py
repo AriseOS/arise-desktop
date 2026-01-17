@@ -496,8 +496,17 @@ class WorkflowEngine:
                     context.variables[var_name] = agent_output.data[output_key]
                     logger.warning(f"[Legacy] Updated context variable: {var_name}")
 
-    async def _evaluate_condition(self, condition: str, context: AgentContext) -> bool:
-        """Evaluate condition expression"""
+    async def _evaluate_condition(self, condition: Any, context: AgentContext) -> bool:
+        """Evaluate condition expression.
+
+        Args:
+            condition: Can be a string expression or pre-resolved value
+                (bool, int, list, etc.) from variable resolution.
+            context: Agent context containing variables.
+
+        Returns:
+            bool: Evaluation result.
+        """
         return self.condition_evaluator.evaluate(condition, context.variables)
 
     async def _execute_if_step(

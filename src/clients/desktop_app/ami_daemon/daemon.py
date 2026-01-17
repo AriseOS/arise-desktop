@@ -56,7 +56,11 @@ config = get_config()
 # - app.log: Main system log (rotates based on config)
 # - error.log: Error-only log (WARNING and above)
 # Note: Workflow execution logs are written separately to workflow_history/
+log_level_str = config.get("logging.level", "INFO").upper()
+log_level = getattr(logging, log_level_str, logging.INFO)
 log_dir = setup_logging(
+    console_level=log_level,
+    file_level=log_level,
     max_bytes=config.get("logging.max_bytes", 10 * 1024 * 1024),
     backup_count=config.get("logging.backup_count", 5),
 )
