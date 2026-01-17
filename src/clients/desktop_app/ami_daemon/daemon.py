@@ -632,6 +632,49 @@ async def upload_diagnostic(data: dict = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/v1/app/shutdown")
+async def shutdown_app():
+    """Graceful shutdown endpoint for cross-platform process termination.
+
+    This endpoint is called by the Tauri app (especially on Windows) to trigger
+    a graceful shutdown of the daemon. It ensures all resources are properly
+    cleaned up before the process exits.
+
+    Flow:
+    1. Respond to the HTTP request immediately (so caller knows shutdown started)
+    2. Schedule cleanup and exit in background
+    3. Process exits after cleanup completes
+
+    Returns:
+        {"success": true, "message": "Shutdown initiated"}
+    """
+    import os
+    import signal
+
+    logger.info("🛑 Shutdown requested via API")
+
+    async def cleanup_and_exit():
+        """Background task to cleanup and exit"""
+        await asyncio.sleep(0.1)  # Let response be sent first
+        logger.info("Starting graceful shutdown...")
+
+        try:
+            await cleanup_resources()
+            cleanup_port_file()
+            logger.info("✅ Cleanup complete, exiting process")
+        except Exception as e:
+            logger.error(f"Error during shutdown cleanup: {e}")
+        finally:
+            # Exit the process
+            # Use os._exit to ensure immediate termination after cleanup
+            os._exit(0)
+
+    # Schedule cleanup in background so we can respond first
+    asyncio.create_task(cleanup_and_exit())
+
+    return {"success": True, "message": "Shutdown initiated"}
+
+
 # ============================================================================
 # Browser Control APIs
 # ============================================================================

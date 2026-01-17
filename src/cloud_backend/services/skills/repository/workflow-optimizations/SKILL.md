@@ -7,7 +7,8 @@ description: Optimize generated workflow by reviewing patterns.
 
 ## Goal
 
-Review generated workflow and apply optimizations where appropriate.
+你现在要给 workflow 进行优化，理解现实的网络操作，减少不必要的步骤。
+下面是一些基本原则。
 
 ## Optimization Directions
 
@@ -17,6 +18,7 @@ If scraper+navigate extracts a static URL (no dates, IDs, or dynamic parts):
 - **Can simplify** to direct `target_url` navigation
 - Examples of static: `/about`, `/products`, `/contact`
 - Examples of dynamic: `/leaderboard/weekly/2026/1`, `/product/12345`
+- If the navigation target can be formed by joining the current page URL with a suffix (e.g., `url/suffix`), consider optimizing by directly merging them into the final `target_url`.
 
 ```yaml
 # Before (scraper + navigate)
