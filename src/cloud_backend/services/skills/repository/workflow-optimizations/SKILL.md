@@ -162,6 +162,49 @@ When user hovered on an element (hover operation with DOM changes):
       url: "//nav//a"  # Direct extraction, no hover needed
 ```
 
+### 6. Copy Button → Clipboard Capture
+
+When user clicked a "Copy" button (identified by element text or class containing "copy", "clipboard"):
+- Use `browser_agent` click with `outputs` to capture clipboard content
+- The clipboard content is automatically captured after click
+- No need to use `scraper_agent` to extract visible text - clipboard may contain formatted/full data
+
+**Detection signals**:
+- `element.textContent` contains: "Copy", "复制", "Copy to clipboard"
+- `element.className` contains: "copy", "clipboard"
+- Icon buttons next to code blocks, data fields
+
+```yaml
+# User clicked copy button, intent "Copy the API key"
+# browser_agent captures clipboard automatically
+
+- id: copy-api-key
+  name: "Click copy button to get API key"
+  agent: browser_agent
+  inputs:
+    interaction_steps:
+      - task: "Click the copy button"
+        xpath_hints:
+          copy_btn: "//button[@class='copy-btn']"
+  outputs:
+    result: copy_result              # {success, clipboard_content}
+
+# clipboard_content now contains the copied data
+- id: store-api-key
+  name: "Store the API key"
+  agent: storage_agent
+  inputs:
+    operation: store
+    collection: api_keys
+    data:
+      key: "{{copy_result.clipboard_content}}"
+```
+
+**Why use clipboard instead of scraper**:
+- Clipboard may contain more data than visible (e.g., full JSON, complete code)
+- Websites often copy formatted data (with proper escaping)
+- Some data is generated on-click (e.g., one-time tokens)
+
 ## Critical Rule
 
 **Always use original URL/href from intent operations. Never simplify or guess URLs.**

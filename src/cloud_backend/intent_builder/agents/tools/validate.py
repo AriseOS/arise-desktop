@@ -57,6 +57,35 @@ AGENT_SPECIFIC_FIELDS = {
     "tavily_agent": {"step": [], "inputs": ["operation", "query"]},
 }
 
+# Agent output types for variable scope validation
+# Based on agent-specs/SKILL.md output contracts
+# Types: "list" (List[Dict]), "dict" (Dict), "any" (could be scalar from LLM)
+AGENT_OUTPUT_TYPES: Dict[str, str] = {
+    "scraper_agent": "list",      # List[Dict] - supports .0.field, .length
+    "text_agent": "any",          # LLM may return scalar in result field
+    "variable": "any",            # Depends on operation
+    "browser_agent": "dict",      # {url, title, success, clipboard_content?}
+    "storage_agent": "dict",      # {count, ...}
+    "tavily_agent": "dict",       # {query, results, answer?, images?}
+    "autonomous_browser_agent": "dict",
+}
+
+# Known fields for dict-type agent outputs (for validation hints)
+AGENT_KNOWN_FIELDS: Dict[str, Set[str]] = {
+    "browser_agent": {"url", "title", "success", "clipboard_content", "current_tab_index", "open_tabs_count"},
+    "storage_agent": {"count"},
+    "tavily_agent": {"query", "results", "answer", "images"},
+}
+
+
+@dataclass
+class VariableInfo:
+    """Information about a defined variable for scope validation"""
+    name: str
+    var_type: str  # "list", "dict", "any", "scalar", "loop_item"
+    defined_at: str  # step_id or "input" or "loop:path"
+    agent_type: Optional[str] = None
+
 
 @dataclass
 class ValidationResult:
@@ -231,38 +260,46 @@ class RuleValidator:
         return errors
 
     def _check_variables(self, workflow: Dict, is_v2: bool) -> Tuple[List[str], List[str]]:
-        """Check variable references have definitions"""
+        """Check variable references, definitions, and type-based property access"""
         errors = []
         warnings = []
-        defined_vars: Set[str] = set()
+        # Use Dict[str, VariableInfo] instead of Set[str] for type tracking
+        defined_vars: Dict[str, VariableInfo] = {}
 
         # Collect input variables
         if is_v2:
             if "input" in workflow:
                 input_name = workflow["input"]
                 if isinstance(input_name, str):
-                    defined_vars.add(input_name)
+                    defined_vars[input_name] = VariableInfo(
+                        name=input_name, var_type="any", defined_at="input"
+                    )
             if "inputs" in workflow:
                 for var_name in workflow["inputs"].keys():
-                    defined_vars.add(var_name)
+                    defined_vars[var_name] = VariableInfo(
+                        name=var_name, var_type="any", defined_at="input"
+                    )
         else:
             for var_name in workflow.get("inputs", {}).keys():
-                defined_vars.add(var_name)
+                defined_vars[var_name] = VariableInfo(
+                    name=var_name, var_type="any", defined_at="input"
+                )
 
         steps = workflow.get("steps", [])
-        self._check_steps_variables(steps, defined_vars, errors, warnings, set())
+        loop_vars: Dict[str, VariableInfo] = {}
+        self._check_steps_variables(steps, defined_vars, errors, warnings, loop_vars)
 
         return errors, warnings
 
     def _check_steps_variables(
         self,
         steps: List[Dict],
-        defined_vars: Set[str],
+        defined_vars: Dict[str, VariableInfo],
         errors: List[str],
         warnings: List[str],
-        loop_vars: Set[str]
+        loop_vars: Dict[str, VariableInfo]
     ):
-        """Recursively check variables in steps"""
+        """Recursively check variables in steps with type tracking"""
         for step in steps:
             step_id = step.get("id", "unknown")
 
@@ -276,18 +313,36 @@ class RuleValidator:
                 item_var = step.get("as", "item")
                 index_var = step.get("index_var", "index")
 
-                self._check_var_references(
+                self._check_var_references_typed(
                     {"source": source},
-                    defined_vars | loop_vars,
+                    defined_vars,
+                    loop_vars,
                     errors,
+                    warnings,
                     f"foreach source"
                 )
 
-                new_loop_vars = loop_vars | {item_var, index_var}
+                # Infer item type from source
+                item_type = "loop_item"
+                if isinstance(source, str):
+                    source_var = self._extract_base_var(source)
+                    if source_var:
+                        all_vars = {**defined_vars, **loop_vars}
+                        if source_var in all_vars and all_vars[source_var].var_type == "list":
+                            item_type = "dict"  # List items are typically Dict
+
+                new_loop_vars = dict(loop_vars)
+                new_loop_vars[item_var] = VariableInfo(
+                    name=item_var, var_type=item_type, defined_at=f"loop:{step_id}"
+                )
+                new_loop_vars[index_var] = VariableInfo(
+                    name=index_var, var_type="scalar", defined_at=f"loop:{step_id}"
+                )
+
                 sub_steps = step.get("do") or step.get("steps", [])
                 self._check_steps_variables(
                     sub_steps,
-                    defined_vars.copy(),
+                    dict(defined_vars),
                     errors,
                     warnings,
                     new_loop_vars
@@ -295,17 +350,19 @@ class RuleValidator:
 
             elif is_if:
                 condition = step["if"]
-                self._check_var_references(
+                self._check_var_references_typed(
                     condition,
-                    defined_vars | loop_vars,
+                    defined_vars,
+                    loop_vars,
                     errors,
+                    warnings,
                     f"if condition"
                 )
 
                 if "then" in step:
                     self._check_steps_variables(
                         step["then"],
-                        defined_vars.copy(),
+                        dict(defined_vars),
                         errors,
                         warnings,
                         loop_vars
@@ -313,7 +370,7 @@ class RuleValidator:
                 if "else" in step:
                     self._check_steps_variables(
                         step["else"],
-                        defined_vars.copy(),
+                        dict(defined_vars),
                         errors,
                         warnings,
                         loop_vars
@@ -321,17 +378,19 @@ class RuleValidator:
 
             elif is_while:
                 condition = step["while"]
-                self._check_var_references(
+                self._check_var_references_typed(
                     condition,
-                    defined_vars | loop_vars,
+                    defined_vars,
+                    loop_vars,
                     errors,
+                    warnings,
                     f"while condition"
                 )
 
                 sub_steps = step.get("do") or step.get("steps", [])
                 self._check_steps_variables(
                     sub_steps,
-                    defined_vars.copy(),
+                    dict(defined_vars),
                     errors,
                     warnings,
                     loop_vars
@@ -341,26 +400,44 @@ class RuleValidator:
                 # Agent step
                 agent_type = step.get("agent") or step.get("agent_type")
 
-                self._check_var_references(
+                self._check_var_references_typed(
                     step.get("inputs", {}),
-                    defined_vars | loop_vars,
+                    defined_vars,
+                    loop_vars,
                     errors,
+                    warnings,
                     f"step '{step_id}' inputs"
                 )
 
                 if "condition" in step:
-                    self._check_var_references(
+                    self._check_var_references_typed(
                         step["condition"],
-                        defined_vars | loop_vars,
+                        defined_vars,
+                        loop_vars,
                         errors,
+                        warnings,
                         f"step '{step_id}' condition"
                     )
 
-                # Add outputs to defined vars
+                # Add outputs to defined vars with type info
                 outputs = step.get("outputs") or {}
-                for var_name in outputs.values():
+                for output_key, var_name in outputs.items():
                     if isinstance(var_name, str):
-                        defined_vars.add(var_name)
+                        var_type = AGENT_OUTPUT_TYPES.get(agent_type, "any")
+                        defined_vars[var_name] = VariableInfo(
+                            name=var_name,
+                            var_type=var_type,
+                            defined_at=step_id,
+                            agent_type=agent_type
+                        )
+
+                        # Warn about text_agent output type uncertainty
+                        if agent_type == "text_agent":
+                            warnings.append(
+                                f"Variable '{var_name}' from text_agent (step '{step_id}'): "
+                                f"LLM may return scalar in 'result'. "
+                                f"Property access like '{{{{{var_name}.field}}}}' may fail."
+                            )
 
                 # v1 control flow (agent_type: foreach)
                 if agent_type == "foreach":
@@ -368,18 +445,27 @@ class RuleValidator:
                     index_var = step.get("index_var", "index")
                     source = step.get("source", "")
 
-                    self._check_var_references(
+                    self._check_var_references_typed(
                         {"source": source},
-                        defined_vars | loop_vars,
+                        defined_vars,
+                        loop_vars,
                         errors,
+                        warnings,
                         f"step '{step_id}' foreach source"
                     )
 
-                    new_loop_vars = loop_vars | {item_var, index_var}
+                    new_loop_vars = dict(loop_vars)
+                    new_loop_vars[item_var] = VariableInfo(
+                        name=item_var, var_type="loop_item", defined_at=f"loop:{step_id}"
+                    )
+                    new_loop_vars[index_var] = VariableInfo(
+                        name=index_var, var_type="scalar", defined_at=f"loop:{step_id}"
+                    )
+
                     if "steps" in step:
                         self._check_steps_variables(
                             step["steps"],
-                            defined_vars.copy(),
+                            dict(defined_vars),
                             errors,
                             warnings,
                             new_loop_vars
@@ -388,7 +474,7 @@ class RuleValidator:
                 if "then_steps" in step:
                     self._check_steps_variables(
                         step["then_steps"],
-                        defined_vars.copy(),
+                        dict(defined_vars),
                         errors,
                         warnings,
                         loop_vars
@@ -396,33 +482,117 @@ class RuleValidator:
                 if "else_steps" in step:
                     self._check_steps_variables(
                         step["else_steps"],
-                        defined_vars.copy(),
+                        dict(defined_vars),
                         errors,
                         warnings,
                         loop_vars
                     )
 
-    def _check_var_references(
+    def _extract_base_var(self, text: str) -> Optional[str]:
+        """Extract the base variable name from a reference like {{var.field}}"""
+        match = re.search(r'\{\{(\w+)', text)
+        return match.group(1) if match else None
+
+    def _check_var_references_typed(
         self,
         obj: Any,
-        defined_vars: Set[str],
+        defined_vars: Dict[str, VariableInfo],
+        loop_vars: Dict[str, VariableInfo],
         errors: List[str],
+        warnings: List[str],
         context: str
     ):
-        """Check variable references in an object"""
+        """Check variable references with type-based property access validation"""
         if isinstance(obj, str):
-            refs = re.findall(r'\{\{(\w+)(?:[\.\[\]\w]*)*\}\}', obj)
-            for var_name in refs:
-                if var_name not in defined_vars:
+            # Extract full variable references including path
+            # Pattern: {{var}} or {{var.field}} or {{var.0.field}}
+            pattern = r'\{\{([^}]+)\}\}'
+            matches = re.findall(pattern, obj)
+
+            for match in matches:
+                match = match.strip()
+                parts = match.split(".")
+                base_var = parts[0]
+                path_parts = parts[1:] if len(parts) > 1 else []
+
+                # Check if variable is defined
+                all_vars = {**defined_vars, **loop_vars}
+                if base_var not in all_vars:
                     errors.append(
-                        f"Undefined variable '{{{{{var_name}}}}}' referenced in {context}"
+                        f"Undefined variable '{{{{{base_var}}}}}' referenced in {context}"
+                    )
+                    continue
+
+                # Validate property access based on type
+                if path_parts:
+                    var_info = all_vars[base_var]
+                    self._validate_property_access(
+                        base_var, path_parts, var_info, errors, warnings, context
                     )
         elif isinstance(obj, dict):
             for value in obj.values():
-                self._check_var_references(value, defined_vars, errors, context)
+                self._check_var_references_typed(value, defined_vars, loop_vars, errors, warnings, context)
         elif isinstance(obj, list):
             for item in obj:
-                self._check_var_references(item, defined_vars, errors, context)
+                self._check_var_references_typed(item, defined_vars, loop_vars, errors, warnings, context)
+
+    def _validate_property_access(
+        self,
+        base_var: str,
+        path_parts: List[str],
+        var_info: VariableInfo,
+        errors: List[str],
+        warnings: List[str],
+        context: str
+    ):
+        """Validate property access based on inferred variable type"""
+        var_type = var_info.var_type
+        first_part = path_parts[0] if path_parts else None
+        full_path = f"{base_var}.{'.'.join(path_parts)}"
+
+        if var_type == "scalar":
+            # Scalar types (bool, int, str) do not support property access
+            errors.append(
+                f"Cannot access property '{first_part}' on variable '{base_var}' "
+                f"(type: scalar, defined at: {var_info.defined_at}) in {context}. "
+                f"Scalar types do not support property access."
+            )
+
+        elif var_type == "list":
+            # List supports .0, .length, .0.field
+            if first_part == "length":
+                pass  # OK
+            elif first_part and first_part.isdigit():
+                pass  # OK - index access like .0
+            elif first_part and not first_part.isdigit():
+                # Accessing field directly on list without index
+                warnings.append(
+                    f"Accessing '{full_path}' on list variable '{base_var}' in {context}: "
+                    f"use index like '{{{{{base_var}.0.{first_part}}}}}' to access item fields."
+                )
+
+        elif var_type == "any":
+            # Could be anything - warn about potential issues for text_agent
+            if var_info.agent_type == "text_agent":
+                warnings.append(
+                    f"Accessing '{full_path}' on text_agent output '{base_var}' in {context}: "
+                    f"may fail if LLM returns scalar instead of dict. "
+                    f"Use '{{{{{base_var}}}}}' directly if expecting bool/int/str."
+                )
+
+        elif var_type == "dict":
+            # Check if field is known for this agent type
+            known_fields = AGENT_KNOWN_FIELDS.get(var_info.agent_type, set())
+            if known_fields and first_part and first_part not in known_fields:
+                known_str = ", ".join(sorted(known_fields))
+                warnings.append(
+                    f"Accessing unknown field '{first_part}' on '{base_var}' "
+                    f"({var_info.agent_type}) in {context}. Known fields: {known_str}"
+                )
+
+        elif var_type == "loop_item":
+            # Loop items are typically dict, property access is usually fine
+            pass
 
     def _check_control_flow_structure(self, workflow: Dict) -> List[str]:
         """Check control flow structures have required fields"""

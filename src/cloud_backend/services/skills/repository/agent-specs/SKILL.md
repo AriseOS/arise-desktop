@@ -40,7 +40,7 @@ Each agent has required inputs that MUST be provided. Missing required inputs wi
 | scraper_agent | `List[Dict]` | Extracted data list |
 | text_agent | `Dict` | LLM response JSON |
 | variable | `Any` | Operation result |
-| browser_agent | `Dict` | `{url, title, success}` |
+| browser_agent | `Dict` | `{url, title, success, clipboard_content?}` |
 | storage_agent | `Dict` | `{count, ...}` |
 | tavily_agent | `Dict` | `{query, results, answer?, images?}` - see details below |
 
@@ -77,9 +77,11 @@ Each agent has required inputs that MUST be provided. Missing required inputs wi
 
 ## browser_agent
 
-Navigate and interact with pages. Does NOT extract data.
+Navigate and interact with pages. Does NOT extract data (use `scraper_agent` for extraction).
 
 **Required**: At least one of `target_url` or `interaction_steps`
+
+**Output**: `{url, title, success, clipboard_content?}` - `clipboard_content` is automatically captured when a click triggers clipboard write (e.g., "Copy" buttons).
 
 ```yaml
 # Navigate only (no outputs needed - just omit the field)
@@ -104,6 +106,74 @@ Navigate and interact with pages. Does NOT extract data.
 ```
 
 **Critical**: `xpath_hints` must be **dict** `{key: "//xpath"}`, NOT list.
+
+### Clipboard Capture (Copy Button Pattern)
+
+When a click triggers clipboard write (e.g., "Copy to clipboard" button), the content is automatically captured:
+
+```yaml
+# Click a copy button - clipboard content is auto-captured
+- id: click-copy-button
+  agent: browser_agent
+  inputs:
+    interaction_steps:
+      - task: "Click the copy button"
+        xpath_hints:
+          copy_btn: "//button[contains(@class, 'copy')]"
+  outputs:
+    result: copy_result              # {url, title, success, clipboard_content}
+
+# Use clipboard content in next step
+- id: process-copied-data
+  agent: text_agent
+  inputs:
+    instruction: "Parse the copied data"
+    data: "{{copy_result.clipboard_content}}"  # Access clipboard content
+  outputs:
+    result: parsed_data
+```
+
+**Note**: `clipboard_content` is only present when the click actually triggered a clipboard write. Check for its presence before using.
+
+### Tab Operations
+
+browser_agent supports tab operations via `action` field in interaction_steps:
+
+```yaml
+# Open URL in new tab
+- id: open-new-tab
+  name: "Open comparison site in new tab"
+  agent: browser_agent
+  inputs:
+    interaction_steps:
+      - task: "Open competitor site in new tab"
+        action: "new_tab"
+        url: "https://competitor.com/product"
+
+# Switch to tab by index (0 = first tab)
+- id: switch-back
+  name: "Switch back to original tab"
+  agent: browser_agent
+  inputs:
+    interaction_steps:
+      - task: "Switch back to original tab"
+        action: "switch_tab"
+        tab_index: 0
+
+# Close current tab (switches to previous tab automatically)
+- id: close-tab
+  name: "Close current tab"
+  agent: browser_agent
+  inputs:
+    interaction_steps:
+      - task: "Close current tab"
+        action: "close_tab"
+        # tab_index is optional; if omitted, closes current tab
+```
+
+**Output** (with tabs): `{url, title, success, clipboard_content?, current_tab_index, open_tabs_count}`
+
+**Note**: Extra tabs are automatically closed when workflow completes. Only tabs that existed before workflow started are preserved.
 
 ## scraper_agent
 

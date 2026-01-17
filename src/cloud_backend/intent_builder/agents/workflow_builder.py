@@ -83,7 +83,7 @@ When the workflow runs, it starts from scratch. If the user clicked through 3 pa
 
 **IMPORTANT**: You must write the final workflow to `workflow.yaml` file using the Write tool. Do NOT just output it in a code block - the file is required for the system to read your workflow.
 
-After writing the file, also output the complete YAML in a ```yaml code block for display.
+After writing the file, provide a high-level explanation of the workflow and summarize what changed.
 """
 
 
@@ -156,13 +156,13 @@ When user reports data extraction problems:
 1. Read the user's request carefully
 2. Make the requested changes to `workflow.yaml`
 3. Use workflow-validation skill to check your changes
-4. Output the complete updated YAML in a ```yaml code block
-5. Briefly explain what you changed
+4. Explain the workflow at a high level (what it does and key steps)
+5. Briefly summarize what you changed
 
 ## Important Rules
 
 - **For scraper issues**: Always read `scraper-fix` skill first
-- Always output the COMPLETE workflow YAML when modifying workflow.yaml
+- Keep the user response focused on behavior and changes, not the full YAML content
 - Preserve parts the user didn't ask to change
 - Every step must have: `id`, `agent`, and `inputs`
 - **Only use agents from the table above. Do NOT invent agents like `llm_agent`, `ai_agent`, etc.**
