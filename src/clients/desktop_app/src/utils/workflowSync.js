@@ -158,16 +158,23 @@ export async function autoSyncOnView(workflowId, onStatus = null) {
       return result;
     }
 
-    // If local is newer, show notification but don't auto-upload
+    // Auto-upload if local is newer (symmetric with download behavior)
     if (status.direction === 'upload') {
-      if (onStatus) {
-        onStatus({
-          type: 'local_newer',
-          message: 'Local changes detected. Click "Sync to Cloud" to upload.',
-          status
-        });
+      if (onStatus) onStatus({ type: 'uploading', message: 'Uploading local changes to cloud...' });
+
+      const result = await syncResources(workflowId, 'upload');
+
+      if (result.success) {
+        if (onStatus) {
+          onStatus({
+            type: 'uploaded',
+            message: `Uploaded ${result.synced_resources?.length || 0} resources to cloud`,
+            result
+          });
+        }
       }
-      return null;
+
+      return result;
     }
 
     return null;

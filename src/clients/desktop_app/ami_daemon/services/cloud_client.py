@@ -1,9 +1,29 @@
 """Cloud Backend API client"""
 import logging
+import os
 import httpx
 from typing import List, Optional, Dict, Any, Callable, Awaitable
 
 logger = logging.getLogger(__name__)
+
+
+def _get_proxy_from_env() -> Optional[str]:
+    """Get proxy from environment variables only (ignore system proxy settings).
+
+    This explicitly reads from environment variables and ignores system-level
+    proxy settings (e.g., macOS System Preferences) to ensure predictable behavior.
+
+    Returns:
+        Proxy URL string or None if not set
+    """
+    return (
+        os.environ.get("HTTPS_PROXY")
+        or os.environ.get("https_proxy")
+        or os.environ.get("HTTP_PROXY")
+        or os.environ.get("http_proxy")
+        or os.environ.get("ALL_PROXY")
+        or os.environ.get("all_proxy")
+    )
 
 
 class CloudClient:
@@ -34,11 +54,17 @@ class CloudClient:
             headers["Authorization"] = f"Bearer {token}"
 
         # Create HTTP client
-        # Note: httpx automatically uses system HTTP_PROXY/HTTPS_PROXY if set
+        # Note: We explicitly get proxy from env vars only, ignoring system proxy
+        # settings (e.g., Clash modifying macOS System Preferences)
+        proxy = _get_proxy_from_env()
+        if proxy:
+            logger.info(f"Using proxy from environment: {proxy}")
+
         self.client = httpx.AsyncClient(
             base_url=self.api_url,
             headers=headers,
             timeout=None,  # No timeout for long-running operations
+            proxy=proxy,  # None disables auto-detection, explicit URL enables proxy
         )
 
         logger.info(f"CloudClient initialized for {self.api_url}")
@@ -614,7 +640,8 @@ class CloudClient:
             async with httpx.AsyncClient(
                 base_url=api_proxy_url.rstrip('/'),
                 headers={"x-api-key": self.user_api_key},
-                timeout=10.0  # Short timeout for reporting
+                timeout=10.0,  # Short timeout for reporting
+                proxy=_get_proxy_from_env(),
             ) as proxy_client:
                 response = await proxy_client.post(
                     "/api/stats/workflow-execution",
@@ -657,7 +684,8 @@ class CloudClient:
             async with httpx.AsyncClient(
                 base_url=api_proxy_url.rstrip('/'),
                 headers={"x-api-key": self.user_api_key},
-                timeout=5.0
+                timeout=5.0,
+                proxy=_get_proxy_from_env(),
             ) as proxy_client:
                 response = await proxy_client.get("/api/stats/quota")
                 response.raise_for_status()
