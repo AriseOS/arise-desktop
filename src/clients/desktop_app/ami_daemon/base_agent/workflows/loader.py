@@ -113,7 +113,7 @@ class WorkflowValidator:
     VALID_AGENT_TYPES = [
         'text_agent', 'variable', 'scraper_agent',
         'browser_agent', 'storage_agent',
-        'autonomous_browser_agent',
+        'autonomous_browser_agent', 'tavily_agent',
         'if', 'while', 'foreach'
     ]
 

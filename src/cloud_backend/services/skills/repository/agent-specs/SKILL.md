@@ -17,6 +17,7 @@ Each agent has required inputs that MUST be provided. Missing required inputs wi
 | `browser_agent` | - | At least one of `target_url` or `interaction_steps` |
 | `storage_agent` | `operation`, `collection` | `data` (when operation=store), `export_format` (when operation=export) |
 | `autonomous_browser_agent` | `task` | - |
+| `tavily_agent` | `operation`, `query` | - |
 
 ### Enum Values
 
@@ -27,6 +28,8 @@ Each agent has required inputs that MUST be provided. Missing required inputs wi
 | `variable` | `operation` | `set`, `filter`, `slice`, `extend` |
 | `scraper_agent` | `extraction_method` | `script`, `llm` |
 | `scraper_agent` | `dom_scope` | `partial`, `full` |
+| `tavily_agent` | `operation` | `search` |
+| `tavily_agent` | `search_depth` | `basic`, `advanced` |
 
 ## Output Contract (IMPORTANT)
 
@@ -39,6 +42,7 @@ Each agent has required inputs that MUST be provided. Missing required inputs wi
 | variable | `Any` | Operation result |
 | browser_agent | `Dict` | `{url, title, success}` |
 | storage_agent | `Dict` | `{count, ...}` |
+| tavily_agent | `Dict` | `{query, results, answer?, images?}` - see details below |
 
 ### outputs → inputs 数据流
 
@@ -135,6 +139,11 @@ Store, query, or export data.
 
 **Required**: `operation`, `collection`
 **Conditional**: `data` (when operation=store), `export_format` (when operation=export)
+
+**Collection naming rule**: If a workflow has multiple `storage_agent` steps:
+- Same data structure + same purpose → Use the **same** `collection` name (data appends to same table)
+- Same data structure but different purpose (user needs to view separately) → Use **different** `collection` names
+- Different data structure → Use **different** `collection` names (e.g., `products`, `product_details`)
 
 ```yaml
 # Store (requires: operation, collection, data)
@@ -319,4 +328,134 @@ Generate or transform text using LLM.
 "{{products.0.name}}"                # List index access
 "{{products.length}}"                # List length
 "Total: {{products.length}} items"   # String template (converts to string)
+```
+
+## tavily_agent
+
+Web search agent powered by Tavily API.
+
+**Required**: `operation`, `query`
+
+### Operations
+
+| Operation | Use Case | Output |
+|-----------|----------|--------|
+| `search` | Basic web search, get URL list | `{query, results, answer?, images?}` |
+
+> Note: `research` operation is disabled (too expensive)
+
+### Output Structure
+
+The `search` operation returns a Dict with this structure:
+
+```yaml
+# Full response structure
+{
+  query: "original search query",
+  results: [                        # Array of search results
+    {
+      title: "Page Title",
+      url: "https://example.com/page",
+      content: "Snippet of page content...",  # Text excerpt
+      score: 0.95,                  # Relevance score (0-1)
+      published_date: "2024-01-15"  # Optional: publication date
+    },
+    ...
+  ],
+  answer: "AI-generated summary...",  # Optional: only if include_answer=true
+  images: [...]                        # Optional: only if include_images=true
+}
+```
+
+### Accessing Results in Workflow
+
+```yaml
+# Store search results
+- id: search-news
+  agent: tavily_agent
+  inputs:
+    operation: search
+    query: "AI news"
+  outputs:
+    result: search_data              # Full response object
+
+# Access fields in next step
+- id: process-results
+  agent: text_agent
+  inputs:
+    instruction: "Summarize these news articles"
+    data: "{{search_data.results}}"  # Access results array
+
+# Or access specific result
+- id: visit-first
+  agent: browser_agent
+  inputs:
+    target_url: "{{search_data.results.0.url}}"  # First result's URL
+```
+
+### search operation
+
+All Tavily SDK search parameters are supported:
+
+```yaml
+- id: search-news
+  agent: tavily_agent
+  inputs:
+    operation: search                  # Required: "search"
+    query: "AI news 2024"              # Required: search query
+    max_results: 10                    # Optional: max results (default: 10)
+    search_depth: basic                # Optional: "basic" | "advanced"
+    topic: news                        # Optional: "general" | "news" | "finance"
+    days: 3                            # Optional: limit to past N days (important for recent news!)
+    time_range: week                   # Optional: "day" | "week" | "month" | "year"
+    include_domains:                   # Optional: domain whitelist
+      - "techcrunch.com"
+    exclude_domains:                   # Optional: domain blacklist
+      - "spam.com"
+    include_answer: true               # Optional: include LLM-generated answer
+    include_images: true               # Optional: include image results
+    include_raw_content: false         # Optional: include raw page content
+    country: us                        # Optional: country code for localized results
+  outputs:
+    result: search_results             # {results: [...], answer?: "...", images?: [...]}
+```
+
+**Key parameters for time-sensitive searches**:
+- `days`: Limit to past N days (e.g., `days: 3` for "last 3 days")
+- `time_range`: Broader time filter (`day`, `week`, `month`, `year`)
+- `topic: news`: Optimizes for news content
+
+### Example: "收集过去3天的10个热门AI新闻"
+
+```yaml
+steps:
+  # 1. Search recent news with time filter
+  - id: search-ai-news
+    agent: tavily_agent
+    inputs:
+      operation: search
+      query: "AI artificial intelligence news"
+      max_results: 20
+      days: 3                          # Key: limit to past 3 days
+      topic: news                      # Optimize for news
+      include_answer: true             # Get summary answer
+    outputs:
+      result: raw_results
+
+  # 2. Filter/rank top 10 with LLM
+  - id: filter-top-news
+    agent: text_agent
+    inputs:
+      instruction: "从这些搜索结果中筛选出最重要的10条AI新闻，按重要性排序，返回 JSON 数组"
+      data: "{{raw_results.results}}"
+    outputs:
+      result: top_10_news
+
+  # 3. Store results
+  - id: store-news
+    agent: storage_agent
+    inputs:
+      operation: store
+      collection: ai_news
+      data: "{{top_10_news}}"
 ```

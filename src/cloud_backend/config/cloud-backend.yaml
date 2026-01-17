@@ -53,6 +53,11 @@ llm:
   proxy_url: "https://api.ariseos.com/api"  # CRS port (custom configuration)
   # For production, change to: https://crs.ariseos.com
 
+# Tavily Configuration
+# Web search and research via CRS Tavily endpoints
+tavily:
+  api_url: "https://api.ariseos.com/tavily"  # CRS Tavily API base URL
+
   # Anthropic Configuration
   # Note: API keys are provided by users through CRS (Claude Relay Service)
   # System API key (ANTHROPIC_API_KEY env var) is no longer used

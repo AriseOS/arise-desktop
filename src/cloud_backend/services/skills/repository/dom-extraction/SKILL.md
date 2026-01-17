@@ -254,6 +254,15 @@ python dom_tools.py container "<xpath>" --fields "name:text:h4,url:href"
 
 4. **Trust the `find` output** - If it shows children, use the child xpath. If it shows siblings, consider merging.
 
+5. **Handle None values** - `extract_single` and `extract_multi` return `None` when xpath doesn't match. Always use `(value or "")` before calling `.strip()` or other string methods:
+   ```python
+   # WRONG - crashes if value is None
+   name = data.get("name", "").strip()
+
+   # CORRECT - handles None safely
+   name = (data.get("name") or "").strip()
+   ```
+
 ## DOM Dictionary Format
 
 ```json
