@@ -1,6 +1,6 @@
 # App Version
 app:
-  version: "0.0.3"
+  version: "0.0.4"
 
 # Daemon HTTP Server Configuration
 daemon:

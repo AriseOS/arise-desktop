@@ -72,6 +72,7 @@ await session._disconnect()
 - Pre-computes scraper diagnostic context (directory structure, requirements, script output)
 - Guides Claude to read `scraper-fix` skill for extraction issues
 - Syncs modified files back to original workflow
+- Responds to users with a high-level workflow explanation and change summary (no full YAML output)
 
 ## Tools
 

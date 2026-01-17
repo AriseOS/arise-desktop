@@ -100,11 +100,51 @@ steps:
 |-----------|---------------|
 | click (no href) | `browser_agent` + `interaction_steps` |
 | click (with href) | `scraper_agent` extract URL + `browser_agent` navigate |
+| click (copy button) | `browser_agent` + `interaction_steps` (clipboard auto-captured) |
 | extract | `scraper_agent` |
 | scroll | `browser_agent` + `interaction_steps` |
 | navigate | `browser_agent` + `target_url` |
+| newtab | `browser_agent` + `interaction_steps` with `action: new_tab` |
+| closetab | `browser_agent` + `interaction_steps` with `action: close_tab` |
 | summarize/transform text | `text_agent` |
 | web search (no specific search recorded) | `tavily_agent` |
+
+### Tab Operations Mapping
+
+When recording contains `newtab` or `closetab` operations:
+
+```yaml
+# newtab operation → open URL in new tab
+- id: open-comparison-tab
+  name: "Open competitor site in new tab"
+  agent: browser_agent
+  inputs:
+    interaction_steps:
+      - task: "Open site in new tab"
+        action: "new_tab"
+        url: "{{url_from_operation}}"
+
+# After working in new tab, switch back to original
+- id: switch-to-original
+  name: "Switch back to original tab"
+  agent: browser_agent
+  inputs:
+    interaction_steps:
+      - task: "Switch to first tab"
+        action: "switch_tab"
+        tab_index: 0
+
+# closetab operation → close current tab
+- id: close-comparison-tab
+  name: "Close current tab"
+  agent: browser_agent
+  inputs:
+    interaction_steps:
+      - task: "Close tab"
+        action: "close_tab"
+```
+
+**Note**: Extra tabs are automatically cleaned up when workflow completes.
 
 ### When to use tavily_agent
 
@@ -220,6 +260,53 @@ For scroll operations, use `interaction_steps` with empty `xpath_hints`:
 - For simple scroll: use empty `xpath_hints: {}`
 - For scroll to element: provide xpath hints to locate the target element
 - `text` field: "down", "up", or pixel amount (e.g., "500")
+
+## Copy Button Pattern (Clipboard Capture)
+
+When user clicks a "Copy" button that writes to clipboard, use `browser_agent` with outputs to capture the clipboard content:
+
+**Detection**: Look for clicks on elements with:
+- `textContent` containing "Copy", "复制", "Copy to clipboard"
+- `className` containing "copy", "clipboard"
+- Or context suggests copying (e.g., clicking an icon next to a code block)
+
+```yaml
+# Step 1: Click copy button (clipboard is auto-captured)
+- id: click-copy-btn
+  name: "Click copy button to capture data"
+  agent: browser_agent
+  inputs:
+    interaction_steps:
+      - task: "Click the copy button"
+        xpath_hints:
+          copy_btn: "//button[contains(text(), 'Copy')]"  # Use xpath from operation
+  outputs:
+    result: copy_result              # IMPORTANT: must have outputs to get clipboard
+
+# Step 2: Use clipboard content
+- id: process-data
+  name: "Process copied data"
+  agent: text_agent
+  inputs:
+    instruction: "Parse the copied JSON data and extract key information"
+    data: "{{copy_result.clipboard_content}}"
+  outputs:
+    result: parsed_data
+
+# Or store it directly
+- id: store-copied-data
+  name: "Store copied data"
+  agent: storage_agent
+  inputs:
+    operation: store
+    collection: copied_items
+    data: "{{copy_result.clipboard_content}}"
+```
+
+**Important**:
+- Must include `outputs: {result: variable_name}` to access clipboard content
+- `clipboard_content` is only present if click triggered clipboard write
+- Works with `navigator.clipboard.writeText()` and `execCommand('copy')`
 
 ## Key Rule: Click with href
 

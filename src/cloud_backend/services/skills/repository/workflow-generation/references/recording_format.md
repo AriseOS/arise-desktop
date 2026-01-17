@@ -47,6 +47,57 @@ Each operation in `operations.json` has the following structure:
 | `newtab` | New tab opened | `data.target_id` |
 | `closetab` | Tab closed | `data.target_id` |
 
+### Click on Copy Button
+
+When a `click` operation targets a "Copy" button, `browser_agent` automatically captures clipboard content.
+
+**Detection signals** (in `element` field):
+- `textContent` contains: "Copy", "复制", "Copy to clipboard"
+- `className` contains: "copy", "clipboard"
+
+When generating workflow for such clicks:
+1. Use `browser_agent` with `interaction_steps`
+2. Include `outputs: {result: variable_name}` to access clipboard
+3. Access clipboard via `{{variable_name.clipboard_content}}`
+
+See `workflow-generation/SKILL.md` for full pattern.
+
+### Tab Operations (newtab, closetab)
+
+When user opens a new tab or closes a tab during recording:
+
+**newtab operation**:
+```json
+{
+  "type": "newtab",
+  "timestamp": "2026-01-17T10:30:00Z",
+  "url": "https://example.com/product",
+  "data": {
+    "target_id": "ABC123DEF456",
+    "url": "https://competitor.com/product"
+  }
+}
+```
+
+**closetab operation**:
+```json
+{
+  "type": "closetab",
+  "timestamp": "2026-01-17T10:35:00Z",
+  "url": "https://competitor.com/product",
+  "data": {
+    "target_id": "ABC123DEF456"
+  }
+}
+```
+
+When generating workflow for tab operations:
+1. `newtab` → Use `browser_agent` with `action: new_tab` and `url` from `data.url`
+2. `closetab` → Use `browser_agent` with `action: close_tab`
+3. For switching between tabs → Use `browser_agent` with `action: switch_tab` and `tab_index`
+
+See `workflow-generation/SKILL.md` for full mapping rules.
+
 ## DOM Snapshot Format
 
 Each DOM file (`{dom_id}.json`) contains:

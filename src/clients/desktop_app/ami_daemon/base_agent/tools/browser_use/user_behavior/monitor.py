@@ -18,6 +18,11 @@ class SimpleUserBehaviorMonitor:
         self.operation_list = operation_list if operation_list is not None else []  # 存储操作的列表
         self.dom_snapshots: Dict[str, dict] = {}  # URL -> DOM snapshot mapping
         self._dom_capture_enabled = False  # Whether to capture DOM on navigation
+
+        # Navigation deduplication state
+        self._last_nav_url: Optional[str] = None
+        self._last_nav_time: Optional[datetime] = None
+        self._nav_dedup_window_seconds = 2  # Dedupe window in seconds
         
     async def setup_monitoring(self, browser_session) -> None:
         """Set up user behavior monitoring"""
@@ -437,16 +442,31 @@ class SimpleUserBehaviorMonitor:
         """Process and print user behavior data"""
         try:
             data = json.loads(payload)
-            
+
             # Validate required fields
             if 'type' not in data:
                 logger.warning(f"Missing 'type' field in behavior data: {data}")
                 return
-                
+
             if 'timestamp' not in data:
                 logger.warning(f"Missing 'timestamp' field in behavior data: {data}")
                 return
-            
+
+            # Navigation event deduplication
+            # CDP frameNavigated and JS polling may both fire for the same navigation
+            if data['type'] == 'navigate':
+                nav_url = data.get('url') or data.get('data', {}).get('toUrl', '')
+                now = datetime.now()
+
+                if self._last_nav_url and self._last_nav_time:
+                    time_diff = (now - self._last_nav_time).total_seconds()
+                    if nav_url == self._last_nav_url and time_diff < self._nav_dedup_window_seconds:
+                        logger.debug(f"Duplicate navigate event filtered: {nav_url} (within {time_diff:.1f}s)")
+                        return
+
+                self._last_nav_url = nav_url
+                self._last_nav_time = now
+
             # Store operation in list
             self.operation_list.append(data.copy())
             
@@ -504,7 +524,11 @@ class SimpleUserBehaviorMonitor:
                 self._print_closetab_details(data)
             elif data['type'] == 'dataload':
                 self._print_dataload_details(data)
-            
+            elif data['type'] == 'contextmenu':
+                self._print_contextmenu_details(data)
+            elif data['type'] == 'hover':
+                self._print_hover_details(data)
+
             print("-" * 60)
             
         except Exception as e:
@@ -734,6 +758,50 @@ class SimpleUserBehaviorMonitor:
                 cls = elem.get('className', '')
                 cls_display = f' class="{cls}"' if cls else ''
                 print(f"       {i}. <{tag}>{cls_display}")
+
+    def _print_contextmenu_details(self, data):
+        """Print right-click context menu details"""
+        element = data.get('element', {})
+        user_data = data.get('data', {})
+
+        print(f"  🖱️  Right-Click on: {element.get('tagName', 'UNKNOWN')}")
+
+        if element.get('xpath'):
+            print(f"     XPath: {element['xpath']}")
+
+        if element.get('id'):
+            print(f"     ID: {element['id']}")
+        if element.get('className'):
+            print(f"     Class: {element['className']}")
+        if element.get('textContent'):
+            print(f"     Text: {element['textContent'][:50]}...")
+        if element.get('href'):
+            print(f"     Link: {element['href']}")
+
+        if 'clientX' in user_data and 'clientY' in user_data:
+            print(f"  📍 Position: ({user_data['clientX']}, {user_data['clientY']})")
+
+    def _print_hover_details(self, data):
+        """Print hover event details (only for hovers that triggered DOM changes)"""
+        element = data.get('element', {})
+        user_data = data.get('data', {})
+
+        print(f"  👆 Hover on: {element.get('tagName', 'UNKNOWN')}")
+
+        if element.get('xpath'):
+            print(f"     XPath: {element['xpath']}")
+
+        if element.get('id'):
+            print(f"     ID: {element['id']}")
+        if element.get('className'):
+            print(f"     Class: {element['className']}")
+        if element.get('textContent'):
+            print(f"     Text: {element['textContent'][:50]}...")
+
+        duration = user_data.get('duration_ms', 0)
+        mutation_count = user_data.get('mutation_count', 0)
+        print(f"  ⏱️  Duration: {duration}ms")
+        print(f"  🔄 DOM Changes: {mutation_count} mutations")
 
     def _get_monitoring_script(self) -> str:
         """Get JavaScript monitoring script from file"""
