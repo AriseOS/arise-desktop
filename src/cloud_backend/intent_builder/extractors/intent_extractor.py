@@ -306,6 +306,16 @@ class IntentExtractor:
                 simplified["data_elements"] = data.get("data_elements_count", 0)
                 simplified["height_change"] = data.get("height_change", 0)
 
+            # Add contextmenu (right-click) information
+            if op.get("type") == "contextmenu":
+                simplified["click_x"] = data.get("clientX")
+                simplified["click_y"] = data.get("clientY")
+
+            # Add hover information (only captured when DOM changes occurred)
+            if op.get("type") == "hover":
+                simplified["hover_duration_ms"] = data.get("duration_ms")
+                simplified["dom_mutation_count"] = data.get("mutation_count", 0)
+
             simplified_ops.append(simplified)
 
         # Build context from previous intents
@@ -395,9 +405,33 @@ How to Handle `dataload` Events:
 - Do NOT include `dataload` operation indices in your intent extraction
 - Only include `scroll` and actual user operations (click, select, etc.)
 
+**Contextmenu (Right-click) Operations**:
+- `contextmenu` indicates user right-clicked on an element (usually a link)
+- IMPORTANT: Check the User Query to understand the REAL intent:
+  - If User Query mentions "links", "URLs", "extract", "collect" → User wants to **extract link URLs**
+    - Intent should be: "Extract link URLs from [element description]"
+    - The workflow will use scraper to extract href attributes, NOT simulate right-click
+  - If User Query mentions "open", "navigate", "visit" → User wants to **navigate via context menu**
+    - Intent should describe the navigation goal
+- Right-click on a link is often just the user's way of showing "I want this link's URL"
+- Example: contextmenu on product link + User Query "get all product links" → Intent: "Extract product link URLs"
+- Example: contextmenu on link + User Query "open each in new tab" → Intent: "Open product links in new tabs"
+
+**Hover Operations (with DOM Changes)**:
+- `hover` is ONLY recorded when the hover triggered visible DOM changes (dropdown menus, tooltips, expanded content)
+- IMPORTANT: Check the User Query to understand the REAL intent:
+  - If User Query mentions "links", "URLs", "extract data" → User wants to **extract data from hover content**
+    - Intent should focus on WHAT data to extract, not HOW (hover is just the trigger)
+    - The workflow will handle hover → wait for DOM → scrape
+  - If User Query mentions "navigate", "click", "go to" → User wants to **navigate via hover menu**
+    - Intent should describe the navigation destination
+- `dom_mutation_count` shows how many DOM elements changed (useful context for workflow builder)
+- Example: hover on menu + click submenu + User Query "navigate to settings" → Intent: "Navigate to settings via dropdown menu"
+- Example: hover on product + User Query "extract prices shown on hover" → Intent: "Extract product prices from hover tooltips"
+
 **Key Principle**:
 - Focus on the USER'S SEMANTIC GOAL, not the mechanical operations
-- Clicks and scrolls are usually just MEANS to achieve a goal (navigate, extract, interact)
+- Clicks, scrolls, hovers, and right-clicks are usually just MEANS to achieve a goal (navigate, extract, interact)
 - The intent description should describe the GOAL, not the detailed UI operations
 
 Operations Segment:
