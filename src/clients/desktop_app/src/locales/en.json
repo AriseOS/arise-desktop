@@ -471,6 +471,8 @@
         "confirmDelete": "Confirm Delete",
         "deleteMessage": "Are you sure you want to delete \"{{name}}\"?",
         "undoneWarning": "This action cannot be undone.",
+        "cancel": "Cancel",
+        "delete": "Delete",
         "workflowDeleted": "Workflow has been deleted. You can generate a new one.",
         "deleting": "Deleting recording...",
         "deleteSuccess": "Recording deleted successfully",
