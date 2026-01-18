@@ -519,8 +519,9 @@ class WorkflowEngine:
         step_start_time = time.time()
 
         try:
-            resolved_dict = self._resolve_step_variables(step, context)
-            resolved_condition = resolved_dict.get('condition', step.condition)
+            # Only resolve the condition, not the entire step (then/else branches)
+            # Branch variables should be resolved when each sub-step executes
+            resolved_condition = self._resolve_string_with_variables(step.condition, context)
             condition_result = await self._evaluate_condition(resolved_condition, context)
             logger.info(f"If condition '{step.condition}' evaluated to: {condition_result}")
 
@@ -594,7 +595,7 @@ class WorkflowEngine:
         step_start_time = time.time()
 
         try:
-            resolved_dict = self._resolve_step_variables(step, context)
+            # Don't resolve entire step - loop body variables are resolved per-iteration
             max_iterations = step.max_iterations
             loop_timeout = step.loop_timeout  # None means no timeout
             iterations_executed = 0
@@ -612,7 +613,8 @@ class WorkflowEngine:
                     exit_reason = "timeout"
                     break
 
-                resolved_condition = resolved_dict.get('condition', step.condition)
+                # Resolve condition each iteration (variables may change during loop)
+                resolved_condition = self._resolve_string_with_variables(step.condition, context)
                 condition_result = await self._evaluate_condition(resolved_condition, context)
                 logger.info(f"While condition '{step.condition}' evaluated to: {condition_result} (iteration {iterations_executed + 1})")
 

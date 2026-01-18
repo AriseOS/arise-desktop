@@ -56,7 +56,7 @@ from src.common.script_generation.templates import (
 try:
     from browser_use import Tools
     from browser_use.browser.session import BrowserSession
-    from browser_use.browser.events import NavigateToUrlEvent, ScrollEvent
+    from browser_use.browser.events import NavigateToUrlEvent, ScrollEvent, SwitchTabEvent, CloseTabEvent
     from browser_use.agent.views import ActionResult
     from browser_use.actor.element import Element
     BROWSER_USE_AVAILABLE = True
@@ -66,6 +66,8 @@ except ImportError:
     BrowserSession = None
     NavigateToUrlEvent = None
     ScrollEvent = None
+    SwitchTabEvent = None
+    CloseTabEvent = None
     ActionResult = None
     Element = None
 
@@ -175,6 +177,9 @@ class BrowserAgent(BaseStepAgent):
 
         # Context reference
         self._context = None
+
+        # Tab management: track initial tabs for cleanup
+        self._initial_tab_ids: set = set()
 
     async def initialize(self, context: AgentContext) -> bool:
         """Initialize agent with browser session from context
@@ -454,6 +459,11 @@ class BrowserAgent(BaseStepAgent):
         try:
             steps_results = []
 
+            # Track initial tabs for cleanup at end of workflow
+            initial_tabs = await self._get_open_tabs()
+            self._initial_tab_ids = {t['tab_id'] for t in initial_tabs}
+            logger.info(f"📑 Initial tabs: {len(initial_tabs)} ({list(self._initial_tab_ids)})")
+
             # Step 1: Navigate to target URL if provided
             if target_url:
                 nav_result = await self._navigate_to_url(target_url, context)
@@ -472,24 +482,43 @@ class BrowserAgent(BaseStepAgent):
                 task = step.get('task', '')
                 xpath_hints = step.get('xpath_hints', {})
                 text = step.get('text', '')
+                action = step.get('action')  # Tab operations: new_tab, switch_tab, close_tab
 
-                logger.info(f"📍 Step {idx + 1}/{len(interaction_steps)}: {task}")
+                logger.info(f"📍 Step {idx + 1}/{len(interaction_steps)}: {task or action}")
 
-                # Execute the intelligent interaction
-                step_result = await self._execute_intelligent_interaction(
-                    task=task,
-                    xpath_hints=xpath_hints,
-                    text=text,
-                    context=context,
-                    max_retries=2
-                )
+                # Route tab operations via action field
+                if action == 'new_tab':
+                    url = step.get('url', '')
+                    if not url:
+                        step_result = {'success': False, 'error': 'new_tab action requires url'}
+                    else:
+                        step_result = await self._execute_new_tab(url, context)
+                elif action == 'switch_tab':
+                    tab_index = step.get('tab_index', 0)
+                    step_result = await self._execute_switch_tab(tab_index, context)
+                elif action == 'close_tab':
+                    tab_index = step.get('tab_index')  # None = close current tab
+                    step_result = await self._execute_close_tab(tab_index, context)
+                else:
+                    # Execute the intelligent interaction (click, fill, scroll, etc.)
+                    step_result = await self._execute_intelligent_interaction(
+                        task=task,
+                        xpath_hints=xpath_hints,
+                        text=text,
+                        context=context,
+                        max_retries=2
+                    )
 
-                steps_results.append({
+                step_info = {
                     'task': task,
                     'success': step_result['success'],
                     'verification': step_result.get('verification', ''),
                     'error': step_result.get('error', '')
-                })
+                }
+                # Include clipboard content if captured in this step
+                if step_result.get('clipboard_content'):
+                    step_info['clipboard_content'] = step_result['clipboard_content']
+                steps_results.append(step_info)
 
                 if not step_result['success']:
                     logger.error(f"❌ Step {idx + 1} failed: {step_result.get('error')}")
@@ -512,6 +541,29 @@ class BrowserAgent(BaseStepAgent):
             except Exception:
                 current_url = target_url or ""
 
+            # Get current tab info for response
+            current_tab_index = 0
+            open_tabs_count = 1
+            try:
+                tabs = await self._get_open_tabs()
+                open_tabs_count = len(tabs)
+                # Find current tab index (the active one is typically the last accessed)
+                if tabs:
+                    current_page = await self.browser_session.get_current_page()
+                    if current_page and hasattr(current_page, '_target_id'):
+                        for i, tab in enumerate(tabs):
+                            if tab['tab_id'] in current_page._target_id:
+                                current_tab_index = i
+                                break
+            except Exception as e:
+                logger.warning(f"Failed to get tab info: {e}")
+
+            # Cleanup extra tabs (close tabs opened during workflow)
+            try:
+                await self._cleanup_extra_tabs()
+            except Exception as e:
+                logger.warning(f"Failed to cleanup extra tabs: {e}")
+
             # Success response
             message = f"All {len(interaction_steps)} interaction steps completed successfully"
             if target_url:
@@ -524,7 +576,9 @@ class BrowserAgent(BaseStepAgent):
                 'message': message,
                 'current_url': current_url,
                 'steps_executed': len(interaction_steps),
-                'steps_results': steps_results
+                'steps_results': steps_results,
+                'current_tab_index': current_tab_index,
+                'open_tabs_count': open_tabs_count
             })
 
         except Exception as e:
@@ -689,13 +743,17 @@ class BrowserAgent(BaseStepAgent):
 
             if result.get('success'):
                 logger.info(f"✅ Interaction succeeded: {task}")
-                return {
+                response = {
                     'success': True,
                     'element_info': result.get('element_info', {}),
                     'interactive_index': result.get('interactive_index'),
                     'cached': result.get('cached', False),
                     'attempts': result.get('attempts', 1)
                 }
+                # Include clipboard content if captured
+                if result.get('clipboard_content'):
+                    response['clipboard_content'] = result['clipboard_content']
+                return response
             else:
                 logger.error(f"❌ Interaction failed: {result.get('error')}")
                 return {
@@ -917,13 +975,17 @@ class BrowserAgent(BaseStepAgent):
                             if op_result.get('success'):
                                 logger.info(f"⏳ Waiting 5 seconds for observation...")
                                 await asyncio.sleep(5)
-                                return {
+                                result = {
                                     'success': True,
                                     'interactive_index': interactive_index,
                                     'backend_node_id': backend_node_id,
                                     'element_info': find_result.get('element_info', {}),
                                     'cached': True
                                 }
+                                # Include clipboard content if captured
+                                if op_result.get('clipboard_content'):
+                                    result['clipboard_content'] = op_result['clipboard_content']
+                                return result
                             else:
                                 logger.warning(f"⚠️ Cached script operation failed: {op_result.get('error')}")
                         else:
@@ -1142,13 +1204,17 @@ class BrowserAgent(BaseStepAgent):
                     logger.info(f"✅ Operation '{operation}' succeeded!")
                     logger.info(f"⏳ Waiting 5 seconds for observation...")
                     await asyncio.sleep(5)
-                    return {
+                    result = {
                         'success': True,
                         'interactive_index': interactive_index,
                         'backend_node_id': backend_node_id,
                         'element_info': find_result.get('element_info', {}),
                         'attempts': attempt + 1
                     }
+                    # Include clipboard content if captured
+                    if op_result.get('clipboard_content'):
+                        result['clipboard_content'] = op_result['clipboard_content']
+                    return result
 
                 # 5. Operation failed - refresh DOM and prepare feedback
                 error_msg = op_result.get('error', 'Unknown error')
@@ -1582,6 +1648,39 @@ Example: {{"interactive_index": 42, "reason": "Button with text 'Submit' near th
         # Script failed but not fallback case - return the error
         return script_result
 
+    def _find_xpath_by_interactive_index(self, dom_dict: Dict, target_index: int) -> Optional[str]:
+        """Find xpath in dom_dict by interactive_index.
+
+        Since selector_map nodes don't have xpath attribute, we need to search
+        the dom_dict which contains xpath for each element.
+
+        Args:
+            dom_dict: DOM dictionary from _get_current_page_dom
+            target_index: The interactive_index to find
+
+        Returns:
+            xpath string if found, None otherwise
+        """
+        def search_node(node: Dict) -> Optional[str]:
+            if not isinstance(node, dict):
+                return None
+
+            # Check if this node has the target interactive_index
+            if node.get('interactive_index') == target_index:
+                return node.get('xpath')
+
+            # Recursively search children
+            children = node.get('children', [])
+            if isinstance(children, list):
+                for child in children:
+                    result = search_node(child)
+                    if result:
+                        return result
+
+            return None
+
+        return search_node(dom_dict)
+
     async def _execute_element_operation(
         self,
         backend_node_id: int,
@@ -1651,6 +1750,9 @@ Example: {{"interactive_index": 42, "reason": "Button with text 'Submit' near th
                 session_id=session_id
             )
 
+            # Track clipboard content for click operations
+            clipboard_content = None
+
             if operation == 'click':
                 # Read clipboard before click to detect if click triggers clipboard write
                 clipboard_before = await self._read_clipboard_silent()
@@ -1667,9 +1769,10 @@ Example: {{"interactive_index": 42, "reason": "Button with text 'Submit' near th
 
                 if clipboard_after and clipboard_after != clipboard_before:
                     logger.info(f"📋 Clipboard changed after click: {clipboard_after[:50]}...")
-                    # Save to context if available
+                    clipboard_content = clipboard_after
+                    # Save to context variables dict if available
                     if self._context:
-                        self._context.set_variable('_last_clipboard_content', clipboard_after)
+                        self._context.variables['_last_clipboard_content'] = clipboard_after
                         logger.info(f"   Saved to context variable: _last_clipboard_content")
                 else:
                     before_preview = clipboard_before[:30] if clipboard_before else "(empty)"
@@ -1695,15 +1798,22 @@ Example: {{"interactive_index": 42, "reason": "Button with text 'Submit' near th
             # Send general success log for click operation
             if operation == 'click' and context and context.log_callback:
                 try:
+                    log_metadata = {"operation": "click", "backend_node_id": backend_node_id}
+                    if clipboard_content:
+                        log_metadata["clipboard_content"] = clipboard_content[:100] + "..." if len(clipboard_content) > 100 else clipboard_content
                     await context.log_callback(
                         "success",
-                        f"✅ Click operation completed",
-                        {"operation": "click", "backend_node_id": backend_node_id}
+                        f"✅ Click operation completed" + (f" (clipboard captured: {len(clipboard_content)} chars)" if clipboard_content else ""),
+                        log_metadata
                     )
                 except Exception as e:
                     logger.warning(f"Failed to send log callback: {e}")
 
-            return {'success': True}
+            # Return success with clipboard content if captured
+            result = {'success': True}
+            if clipboard_content:
+                result['clipboard_content'] = clipboard_content
+            return result
 
         except Exception as e:
             logger.error(f"Failed to execute element operation: {e}")
@@ -1797,118 +1907,226 @@ Example: {{"interactive_index": 42, "reason": "Button with text 'Submit' near th
             return {'success': False, 'error': str(e)}
 
     # ==========================================================================
-    # Preset Template: find_xpath_element.py - For scroll_to_element operation
+    # Tab Operations: new_tab, switch_tab, close_tab
     # ==========================================================================
-    PRESET_FIND_XPATH_TEMPLATE = '''#!/usr/bin/env python3
-"""Find element xpath in DOM - Template for scroll_to_element operation
 
-This script searches the DOM structure to find the xpath of a target element.
-Unlike find_element.py which returns interactive_index, this returns xpath
-because scroll targets may not be interactive elements.
+    async def _get_open_tabs(self) -> List[Dict]:
+        """Get list of open tabs
 
-Usage:
-    from find_xpath_element import find_target_xpath
-    xpath = find_target_xpath(dom_dict)
-"""
-import json
+        Returns:
+            List of tab info dicts: [{'tab_id': str, 'url': str, 'title': str}, ...]
+        """
+        try:
+            tabs = await self.browser_session.get_tabs()
+            return [
+                {
+                    'tab_id': t.target_id[-8:] if t.target_id else '',  # Last 8 chars for readability
+                    'full_target_id': t.target_id,
+                    'url': t.url or '',
+                    'title': t.title or ''
+                }
+                for t in tabs
+            ]
+        except Exception as e:
+            logger.error(f"Failed to get tabs: {e}")
+            return []
 
+    async def _execute_new_tab(self, url: str, context: AgentContext = None) -> Dict:
+        """Open URL in new tab
 
-def find_by_text(node: dict, text: str, partial: bool = True) -> dict:
-    """Find element containing specific text"""
-    node_text = (node.get('text', '') or '').lower()
-    search_text = text.lower()
+        Args:
+            url: URL to open in new tab
+            context: Agent context for logging
 
-    if partial:
-        if search_text in node_text:
-            return node
-    else:
-        if search_text == node_text:
-            return node
+        Returns:
+            Dict with success status and tab info
+        """
+        try:
+            logger.info(f"📑 Opening new tab: {url}")
 
-    for child in node.get('children', []):
-        result = find_by_text(child, text, partial)
-        if result:
-            return result
-    return None
+            if context and context.log_callback:
+                try:
+                    await context.log_callback(
+                        "info",
+                        f"📑 Opening new tab: {url}",
+                        {"url": url, "action": "new_tab"}
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send log callback: {e}")
 
+            # Use NavigateToUrlEvent with new_tab=True
+            event = self.browser_session.event_bus.dispatch(
+                NavigateToUrlEvent(url=url, new_tab=True)
+            )
+            await event
+            result = await event.event_result(raise_if_any=False, raise_if_none=False)
 
-def find_by_tag(node: dict, tag: str) -> dict:
-    """Find first element with specific tag"""
-    if node.get('tag', '').lower() == tag.lower():
-        return node
+            # Wait for page stability
+            await asyncio.sleep(3)
 
-    for child in node.get('children', []):
-        result = find_by_tag(child, tag)
-        if result:
-            return result
-    return None
+            # Check for failure
+            if result and hasattr(result, 'success') and result.success is False:
+                logger.error(f"❌ New tab failed: {result.error}")
+                return {'success': False, 'error': result.error}
 
+            logger.info(f"✅ New tab opened successfully: {url}")
+            return {'success': True, 'url': url}
 
-def find_by_id(node: dict, element_id: str) -> dict:
-    """Find element by id attribute"""
-    attrs = node.get('attributes', {})
-    if attrs.get('id') == element_id:
-        return node
+        except Exception as e:
+            logger.error(f"Failed to open new tab: {e}")
+            return {'success': False, 'error': str(e)}
 
-    for child in node.get('children', []):
-        result = find_by_id(child, element_id)
-        if result:
-            return result
-    return None
+    async def _execute_switch_tab(self, tab_index: int, context: AgentContext = None) -> Dict:
+        """Switch to tab by index
 
+        Args:
+            tab_index: Index of tab to switch to (0 = first tab)
+            context: Agent context for logging
 
-def find_by_class(node: dict, class_name: str) -> dict:
-    """Find element containing specific class"""
-    attrs = node.get('attributes', {})
-    classes = attrs.get('class', '')
-    if class_name in classes:
-        return node
+        Returns:
+            Dict with success status
+        """
+        try:
+            tabs = await self.browser_session.get_tabs()
 
-    for child in node.get('children', []):
-        result = find_by_class(child, class_name)
-        if result:
-            return result
-    return None
+            if tab_index < 0 or tab_index >= len(tabs):
+                error_msg = f"Invalid tab_index {tab_index}, only {len(tabs)} tabs open"
+                logger.error(f"❌ {error_msg}")
+                return {'success': False, 'error': error_msg}
 
+            target_tab = tabs[tab_index]
+            target_id = target_tab.target_id
 
-def find_target_xpath(dom_dict: dict) -> str:
-    """Find the xpath of the target element
+            logger.info(f"📑 Switching to tab {tab_index}: {target_tab.title or target_tab.url}")
 
-    TODO: Implement your search logic here using the helper functions above.
+            if context and context.log_callback:
+                try:
+                    await context.log_callback(
+                        "info",
+                        f"📑 Switching to tab {tab_index}: {target_tab.title or target_tab.url}",
+                        {"tab_index": tab_index, "action": "switch_tab"}
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send log callback: {e}")
 
-    Args:
-        dom_dict: DOM dictionary with xpath field for each element
+            # Use SwitchTabEvent
+            event = self.browser_session.event_bus.dispatch(
+                SwitchTabEvent(target_id=target_id)
+            )
+            await event
+            await event.event_result(raise_if_any=False, raise_if_none=False)
 
-    Returns:
-        str: xpath of the target element, or empty string if not found
-    """
-    # Example: Find footer element
-    # result = find_by_tag(dom_dict, 'footer')
-    # if result and result.get('xpath'):
-    #     return result['xpath']
+            # Wait for tab to become active
+            await asyncio.sleep(1)
 
-    # Example: Find element by text
-    # result = find_by_text(dom_dict, 'References')
-    # if result and result.get('xpath'):
-    #     return result['xpath']
+            logger.info(f"✅ Switched to tab {tab_index}")
+            return {'success': True, 'tab_index': tab_index}
 
-    raise NotImplementedError("TODO: Implement find_target_xpath()")
+        except Exception as e:
+            logger.error(f"Failed to switch tab: {e}")
+            return {'success': False, 'error': str(e)}
 
+    async def _execute_close_tab(self, tab_index: int = None, context: AgentContext = None) -> Dict:
+        """Close tab by index (None = close current tab)
 
-if __name__ == "__main__":
-    # Test the script - DOM files use wrapped format: {"url": ..., "dom": {...}}
-    with open("dom_data.json", "r", encoding="utf-8") as f:
-        data = json.load(f)
-    if "dom" not in data:
-        raise ValueError("Invalid DOM format: missing 'dom' key")
-    dom_dict = data["dom"]
+        Args:
+            tab_index: Index of tab to close (None = current tab)
+            context: Agent context for logging
 
-    xpath = find_target_xpath(dom_dict)
-    if xpath:
-        print(f"SUCCESS: Found xpath: {xpath}")
-    else:
-        print("FAILED: Could not find target element")
-'''
+        Returns:
+            Dict with success status
+        """
+        try:
+            tabs = await self.browser_session.get_tabs()
+
+            if len(tabs) <= 1:
+                error_msg = "Cannot close the last tab"
+                logger.warning(f"⚠️ {error_msg}")
+                return {'success': False, 'error': error_msg}
+
+            if tab_index is not None:
+                if tab_index < 0 or tab_index >= len(tabs):
+                    error_msg = f"Invalid tab_index {tab_index}, only {len(tabs)} tabs open"
+                    logger.error(f"❌ {error_msg}")
+                    return {'success': False, 'error': error_msg}
+                target_tab = tabs[tab_index]
+                target_id = target_tab.target_id
+            else:
+                # Close current tab - get current page's target_id
+                current_page = await self.browser_session.get_current_page()
+                if current_page and hasattr(current_page, '_target_id'):
+                    target_id = current_page._target_id
+                else:
+                    # Fallback: close last tab
+                    target_tab = tabs[-1]
+                    target_id = target_tab.target_id
+
+            logger.info(f"📑 Closing tab: {target_id[-8:]}")
+
+            if context and context.log_callback:
+                try:
+                    await context.log_callback(
+                        "info",
+                        f"📑 Closing tab (index={tab_index})",
+                        {"tab_index": tab_index, "action": "close_tab"}
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send log callback: {e}")
+
+            # Use CloseTabEvent
+            event = self.browser_session.event_bus.dispatch(
+                CloseTabEvent(target_id=target_id)
+            )
+            await event
+            await event.event_result(raise_if_any=False, raise_if_none=False)
+
+            # Wait for tab to close
+            await asyncio.sleep(1)
+
+            logger.info(f"✅ Tab closed")
+            return {'success': True}
+
+        except Exception as e:
+            logger.error(f"Failed to close tab: {e}")
+            return {'success': False, 'error': str(e)}
+
+    async def _cleanup_extra_tabs(self) -> None:
+        """Close tabs that were opened during workflow execution
+
+        Uses self._initial_tab_ids to determine which tabs existed before workflow started.
+        All tabs not in that set will be closed.
+        """
+        try:
+            tabs = await self._get_open_tabs()
+            current_tab_ids = {t['tab_id'] for t in tabs}
+
+            # Find tabs to close (not in initial set)
+            tabs_to_close = current_tab_ids - self._initial_tab_ids
+
+            if not tabs_to_close:
+                logger.info("📑 No extra tabs to cleanup")
+                return
+
+            logger.info(f"📑 Cleaning up {len(tabs_to_close)} extra tabs: {tabs_to_close}")
+
+            for tab in tabs:
+                if tab['tab_id'] in tabs_to_close:
+                    try:
+                        # Close by full target_id
+                        event = self.browser_session.event_bus.dispatch(
+                            CloseTabEvent(target_id=tab['full_target_id'])
+                        )
+                        await event
+                        await event.event_result(raise_if_any=False, raise_if_none=False)
+                        logger.info(f"   Closed tab: {tab['tab_id']}")
+                        await asyncio.sleep(0.5)
+                    except Exception as e:
+                        logger.warning(f"   Failed to close tab {tab['tab_id']}: {e}")
+
+            logger.info(f"✅ Tab cleanup completed")
+
+        except Exception as e:
+            logger.warning(f"Tab cleanup failed: {e}")
 
     async def _scroll_to_element_with_claude(
         self,
@@ -1917,18 +2135,17 @@ if __name__ == "__main__":
         text: str,
         context: AgentContext
     ) -> Dict:
-        """Scroll to element using Claude Agent to generate reusable script
+        """Scroll to element using unified element-finder flow (same as click/fill)
 
-        Similar to click/fill flow, but generates find_xpath_element.py
-        that returns xpath instead of interactive_index.
+        Uses the same find_element.py script and element-finder skill as click/fill,
+        then extracts xpath from element_info to scroll.
 
         Flow:
-        1. Get DOM with xpath information
-        2. Check cached script, if exists -> execute directly
-        3. If no cache -> Claude Agent generates find_xpath_element.py
-        4. Execute script to get xpath
+        1. Get DOM with selector_map
+        2. Check cached script with cache validation
+        3. Execute script with LLM fallback support
+        4. Get xpath from element_info
         5. Use CDP to scroll to element
-        6. Cache script for reuse
 
         Args:
             task: Task description
@@ -1940,193 +2157,101 @@ if __name__ == "__main__":
             Dict with success status
         """
         try:
-            # Step 1: Get DOM with xpath
-            dom_dict, dom_llm, _ = await self._get_current_page_dom()
+            # Step 1: Get DOM with selector_map (same as click/fill)
+            dom_dict, dom_llm, selector_map = await self._get_current_page_dom()
             if not dom_dict:
                 return {'success': False, 'error': 'Failed to get DOM'}
 
-            logger.info(f"Got DOM for scroll_to_element: {len(dom_llm)} chars")
+            logger.info(f"Got DOM for scroll_to_element: {len(dom_llm)} chars, {len(selector_map)} interactive elements")
 
-            # Step 2: Setup workspace
+            # Step 2: Setup workspace (same key generation as click/fill)
             script_key = self._generate_script_key(f"scroll_to_{task}", xpath_hints)
             scripts_root = self.config_service.get_path("data.scripts")
             working_dir = scripts_root / script_key
             working_dir.mkdir(parents=True, exist_ok=True)
-            script_file = working_dir / "find_xpath_element.py"
+            script_file = working_dir / "find_element.py"  # Same as click/fill
 
             logger.info(f"BrowserAgent scroll_to_element workspace: {working_dir}")
 
-            # Save DOM data (wrapped format)
-            await self._save_dom_data(working_dir, dom_dict)
+            # Step 3: Cache validation (same as click/fill)
+            cache_valid = False
+            script_content = ""
 
-            # Step 3: Check cached script
             if script_file.exists():
-                logger.info(f"Found cached script: {script_file}")
                 script_content = script_file.read_text(encoding='utf-8')
-
-                # Execute cached script
-                xpath_result = self._execute_find_xpath_script(script_content, dom_dict)
-
-                if xpath_result.get('success'):
-                    xpath = xpath_result.get('xpath')
-                    logger.info(f"Cached script found xpath: {xpath}")
-
-                    # Execute scroll
-                    scroll_result = await self._execute_scroll_by_xpath(xpath)
-                    if scroll_result.get('success'):
-                        return {
-                            'success': True,
-                            'xpath': xpath,
-                            'cached': True,
-                            'element_info': {'xpath': xpath}
-                        }
-                    else:
-                        logger.warning(f"Cached xpath scroll failed: {scroll_result.get('error')}")
+                cache_valid = self._is_cache_valid(working_dir, task, xpath_hints)
+                if cache_valid:
+                    logger.info(f"✅ Cache valid: {script_file}")
+                    await self._save_dom_data(working_dir, dom_dict)
                 else:
-                    logger.warning(f"Cached script failed: {xpath_result.get('error')}")
-
-            # Step 4: Prepare workspace for Claude Agent
-            # Save task info
-            task_info = {
-                'task': task,
-                'xpath_hints': xpath_hints,
-                'text': text
-            }
-            (working_dir / "task.json").write_text(
-                json.dumps(task_info, indent=2, ensure_ascii=False),
-                encoding='utf-8'
-            )
-
-            # Prepare element-finder skills for Claude Agent
-            SkillManager.prepare_browser_skills(working_dir, use_symlink=True)
-
-            # Save template
-            (working_dir / "find_xpath_template.py").write_text(
-                self.PRESET_FIND_XPATH_TEMPLATE,
-                encoding='utf-8'
-            )
-
-            # Step 5: Build prompt for Claude Agent
-            xpath_hints_text = ""
-            if xpath_hints:
-                hints_list = "\n".join([f"- {name}: {xpath}" for name, xpath in xpath_hints.items()])
-                xpath_hints_text = f"\nXPath hints (reference only):\n{hints_list}"
-
-            prompt = f"""# Generate find_xpath_element.py Script
-
-## Task
-{task}
-{xpath_hints_text}
-
-## Working Directory
-{working_dir}
-
-## Available Files
-- dom_data.json: DOM structure with xpath for each element
-- find_xpath_template.py: Template with helper functions
-- task.json: Task description
-
-## Instructions
-1. Read dom_data.json to understand the page structure
-2. Read find_xpath_template.py for helper functions
-3. Create find_xpath_element.py that implements find_target_xpath()
-4. The function should return the xpath string of the target element
-5. Test your script by running: python find_xpath_element.py
-
-## Important
-- The DOM includes 'xpath' field for each element - use it directly
-- Search for elements matching the task description
-- Return the xpath string, NOT interactive_index
-- Use helper functions: find_by_text, find_by_tag, find_by_id, find_by_class
-
-## Output
-Create find_xpath_element.py that prints:
-SUCCESS: Found xpath: /html/body/...
-"""
-
-            # Step 6: Call cloud API to generate script
-            logger.info(f"Requesting cloud script generation for scroll_to_element...")
-
-            # Get context info
-            if not hasattr(self, '_context') or not self._context:
-                raise RuntimeError("Agent context not available")
-
-            user_id = getattr(self._context, 'user_id', 'default_user')
-            workflow_id = getattr(self._context, 'workflow_id', None)
-            step_id = getattr(self._context, 'step_id', None)
-
-            if not workflow_id or not step_id:
-                raise RuntimeError(f"workflow_id ({workflow_id}) and step_id ({step_id}) required for cloud script generation")
-
-            # Get cloud client from context
-            cloud_client = None
-            if self._context.agent_instance and hasattr(self._context.agent_instance, 'cloud_client'):
-                cloud_client = self._context.agent_instance.cloud_client
-
-            if not cloud_client:
-                raise RuntimeError("CloudClient not available in agent context")
-
-            # Get API key from provider
-            api_key = None
-            if self.provider and hasattr(self.provider, 'api_key') and self.provider.api_key:
-                api_key = self.provider.api_key
-
-            # Get page URL
-            page_url = dom_dict.get('page_url', '')
-
-            # Call cloud API with SSE streaming
-            result = await cloud_client.generate_script_stream(
-                workflow_id=workflow_id,
-                step_id=step_id,
-                script_type="browser",
-                page_url=page_url,
-                user_id=user_id,
-                api_key=api_key,
-                dom_data=dom_dict
-            )
-
-            if not result.get('success'):
-                error_msg = result.get('error', 'Unknown error')
-                return {'success': False, 'error': f"Cloud script generation failed: {error_msg}"}
-
-            script_content = result.get('script_content', '')
-            turns = result.get('turns', 0)
-
-            logger.info(f"✅ Cloud script generation completed in {turns} turns")
-
-            # Save script to working directory
-            script_file.write_text(script_content, encoding='utf-8')
-            logger.info(f"   Saved to: {script_file}")
-
-            # Step 7: Execute generated script
-
-            # Update DOM (may have changed)
-            dom_dict, _, _ = await self._get_current_page_dom()
-            await self._save_dom_data(working_dir, dom_dict)
-
-            xpath_result = self._execute_find_xpath_script(script_content, dom_dict)
-
-            if not xpath_result.get('success'):
-                return {'success': False, 'error': f"Script failed: {xpath_result.get('error')}"}
-
-            xpath = xpath_result.get('xpath')
-            logger.info(f"Script found xpath: {xpath}")
-
-            # Step 8: Execute scroll
-            scroll_result = await self._execute_scroll_by_xpath(xpath)
-
-            if scroll_result.get('success'):
-                return {
-                    'success': True,
-                    'xpath': xpath,
-                    'cached': False,
-                    'element_info': {'xpath': xpath}
-                }
+                    logger.info(f"🔄 Cache invalidated, regenerating script")
+                    await self._prepare_workspace(working_dir, task, 'scroll', xpath_hints, text, dom_dict)
             else:
-                return {
-                    'success': False,
-                    'error': f"Failed to scroll to xpath '{xpath}': {scroll_result.get('error')}"
-                }
+                await self._prepare_workspace(working_dir, task, 'scroll', xpath_hints, text, dom_dict)
+
+            # Step 4: Execute with LLM fallback (same as click/fill)
+            runtime_xpath = list(xpath_hints.values())[0] if xpath_hints else ""
+
+            if cache_valid and script_content:
+                # Try cached script with fallback
+                find_result = await self._find_element_with_fallback(
+                    script_content, dom_dict, runtime_xpath, task, working_dir
+                )
+
+                if find_result.get('success'):
+                    # Get xpath from element_info
+                    element_info = find_result.get('element_info', {})
+                    xpath = element_info.get('xpath')
+
+                    # Fallback: find xpath in dom_dict by interactive_index
+                    if not xpath:
+                        interactive_index = find_result.get('interactive_index')
+                        if interactive_index is not None:
+                            xpath = self._find_xpath_by_interactive_index(dom_dict, interactive_index)
+                            if xpath:
+                                logger.info(f"📍 Found xpath from dom_dict: {xpath}")
+
+                    if xpath:
+                        scroll_result = await self._execute_scroll_by_xpath(xpath)
+                        if scroll_result.get('success'):
+                            logger.info(f"✅ Cached script scroll succeeded to: {xpath}")
+                            return {
+                                'success': True,
+                                'xpath': xpath,
+                                'cached': True,
+                                'element_info': element_info
+                            }
+                        else:
+                            logger.warning(f"Cached xpath scroll failed: {scroll_result.get('error')}")
+                    else:
+                        logger.warning(f"Cached script found element but no xpath in element_info or dom_dict")
+                else:
+                    logger.warning(f"Cached script failed: {find_result.get('error')}")
+
+            # Step 5: Generate new script (same flow as click/fill)
+            logger.info(f"📝 Generating find_element.py with Claude Agent for scroll...")
+
+            if context and context.log_callback:
+                try:
+                    await context.log_callback(
+                        "info",
+                        "📝 Generating element finder script for scroll...",
+                        {"script_path": str(script_file)}
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send log callback: {e}")
+
+            result = await self._generate_and_execute_for_scroll(
+                working_dir=working_dir,
+                task=task,
+                xpath_hints=xpath_hints,
+                text=text,
+                selector_map=selector_map,
+                max_attempts=3,
+                context=context
+            )
+
+            return result
 
         except Exception as e:
             logger.error(f"Failed to scroll to element: {e}")
@@ -2134,37 +2259,137 @@ SUCCESS: Found xpath: /html/body/...
             traceback.print_exc()
             return {'success': False, 'error': str(e)}
 
-    def _execute_find_xpath_script(self, script_content: str, dom_dict: Dict) -> Dict:
-        """Execute find_xpath_element.py script to get xpath
+    async def _generate_and_execute_for_scroll(
+        self,
+        working_dir: Path,
+        task: str,
+        xpath_hints: Dict[str, str],
+        text: str,
+        selector_map: Dict,
+        max_attempts: int = 3,
+        context: AgentContext = None
+    ) -> Dict:
+        """Generate script and execute scroll (similar to _generate_and_execute_with_retry)
 
         Args:
-            script_content: Python script content
-            dom_dict: DOM dictionary
+            working_dir: Working directory
+            task: Task description
+            xpath_hints: XPath hints
+            text: Optional text hint
+            selector_map: Maps interactive_index to backend_node
+            max_attempts: Max retry attempts
+            context: Agent context
 
         Returns:
-            Dict with success status and xpath
+            Dict with success status
         """
-        try:
-            # Create execution namespace
-            namespace = {'dom_dict': dom_dict}
+        feedback = ""
 
-            # Execute script to define functions
-            exec(script_content, namespace)
+        for attempt in range(max_attempts):
+            logger.info(f"🔄 Scroll attempt {attempt + 1}/{max_attempts} for task: {task}")
 
-            # Call find_target_xpath
-            if 'find_target_xpath' not in namespace:
-                return {'success': False, 'error': 'Script does not define find_target_xpath()'}
+            try:
+                # 1. Call Claude Agent to generate find_element.py
+                claude_result = await self._call_claude_for_find_element(
+                    working_dir=working_dir,
+                    task=task,
+                    operation='scroll',
+                    text=text,
+                    feedback=feedback,
+                    context=context
+                )
 
-            xpath = namespace['find_target_xpath'](dom_dict)
+                if not claude_result.get('success'):
+                    feedback = f"Ami Coder failed: {claude_result.get('error')}"
+                    logger.warning(f"⚠️ {feedback}")
+                    continue
 
-            if xpath:
-                return {'success': True, 'xpath': xpath}
-            else:
-                return {'success': False, 'error': 'find_target_xpath() returned empty'}
+                # 2. Read and execute find_element.py
+                script_file = working_dir / "find_element.py"
+                if not script_file.exists():
+                    feedback = "find_element.py was not created"
+                    logger.warning(f"⚠️ {feedback}")
+                    continue
 
-        except Exception as e:
-            logger.error(f"Script execution error: {e}")
-            return {'success': False, 'error': str(e)}
+                script_content = script_file.read_text(encoding='utf-8')
+                dom_data = json.loads((working_dir / "dom_data.json").read_text(encoding='utf-8'))
+                dom_dict = dom_data.get("dom", dom_data)
+
+                # Get xpath from task.json
+                task_data = json.loads((working_dir / "task.json").read_text(encoding='utf-8'))
+                xpath_hints_from_file = task_data.get("xpath_hints", {})
+                runtime_xpath = list(xpath_hints_from_file.values())[0] if xpath_hints_from_file else ""
+
+                # Execute with LLM fallback
+                find_result = await self._find_element_with_fallback(
+                    script_content, dom_dict, runtime_xpath, task, working_dir
+                )
+
+                if not find_result.get('success'):
+                    feedback = f"find_element.py execution failed: {find_result.get('error')}"
+                    logger.warning(f"⚠️ {feedback}")
+                    continue
+
+                # 3. Get xpath from element_info
+                element_info = find_result.get('element_info', {})
+                xpath = element_info.get('xpath')
+
+                # Fallback: find xpath in dom_dict by interactive_index
+                if not xpath:
+                    interactive_index = find_result.get('interactive_index')
+                    if interactive_index is not None:
+                        xpath = self._find_xpath_by_interactive_index(dom_dict, interactive_index)
+                        if xpath:
+                            logger.info(f"📍 Found xpath from dom_dict: {xpath}")
+
+                if not xpath:
+                    feedback = f"Found element but could not get xpath from element_info or dom_dict"
+                    logger.warning(f"⚠️ {feedback}")
+                    await self._refresh_dom_file(working_dir)
+                    continue
+
+                logger.info(f"📍 Found element xpath: {xpath}")
+
+                # 4. Execute scroll
+                scroll_result = await self._execute_scroll_by_xpath(xpath)
+
+                if scroll_result.get('success'):
+                    logger.info(f"✅ Scroll succeeded!")
+                    return {
+                        'success': True,
+                        'xpath': xpath,
+                        'cached': False,
+                        'element_info': element_info,
+                        'attempts': attempt + 1
+                    }
+
+                # Scroll failed - refresh DOM and retry
+                error_msg = scroll_result.get('error', 'Unknown error')
+                logger.warning(f"⚠️ Scroll failed: {error_msg}")
+
+                new_dom, _, new_selector_map = await self._get_current_page_dom()
+                selector_map = new_selector_map
+                await self._save_dom_data(working_dir, new_dom)
+
+                feedback = f"""
+## Previous Attempt Failed
+- Found xpath: {xpath}
+- Operation: scroll
+- Error: {error_msg}
+
+The dom_data.json has been updated. Please analyze and fix find_element.py.
+"""
+
+            except Exception as e:
+                feedback = f"Exception during attempt: {str(e)}"
+                logger.error(f"❌ {feedback}")
+                import traceback
+                traceback.print_exc()
+
+        return {
+            'success': False,
+            'error': f'Failed to scroll after {max_attempts} attempts'
+        }
 
     async def _execute_scroll_by_xpath(self, xpath: str) -> Dict:
         """Execute scroll to element by xpath using CDP
@@ -2253,14 +2478,36 @@ SUCCESS: Found xpath: /html/body/...
 
         if isinstance(input_data, AgentInput):
             # 统一契约：输出放在 data["result"] 中
-            # browser_agent 通常不需要输出数据，但保持一致性
+            result_data = {
+                "url": response.get('current_url'),
+                "title": response.get('title'),
+                "success": response.get('success', False)
+            }
+
+            # Include tab info if present
+            if response.get('current_tab_index') is not None:
+                result_data['current_tab_index'] = response.get('current_tab_index')
+            if response.get('open_tabs_count') is not None:
+                result_data['open_tabs_count'] = response.get('open_tabs_count')
+
+            # Collect all clipboard content from steps
+            # Returns the last non-empty clipboard content captured
+            steps_results = response.get('steps_results', [])
+            clipboard_contents = []
+            for step in steps_results:
+                if step.get('clipboard_content'):
+                    clipboard_contents.append(step['clipboard_content'])
+
+            if clipboard_contents:
+                # Return the last clipboard content (most recent)
+                result_data['clipboard_content'] = clipboard_contents[-1]
+                # Also provide all clipboard contents if multiple were captured
+                if len(clipboard_contents) > 1:
+                    result_data['all_clipboard_contents'] = clipboard_contents
+
             return AgentOutput(
                 success=response.get('success', False),
-                data={"result": {
-                    "url": response.get('current_url'),
-                    "title": response.get('title'),
-                    "success": response.get('success', False)
-                }},
+                data={"result": result_data},
                 message=response.get('message', '')
             )
         return response
