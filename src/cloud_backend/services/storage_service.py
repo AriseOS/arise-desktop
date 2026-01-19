@@ -198,17 +198,21 @@ class StorageService:
         recording_id: str,
         operations: List[Dict],
         task_description: Optional[str] = None,
-        user_query: Optional[str] = None
+        user_query: Optional[str] = None,
+        graph: Optional[Dict] = None
     ) -> str:
-        """
-        Save recording data to server filesystem
+        """Save recording data to server filesystem.
 
         Args:
+            user_id: User ID
+            recording_id: Recording ID
+            operations: List of operations
             task_description: User's description of what they did
             user_query: User's description of what they want to do
+            graph: State/Action Graph (optional)
 
         Returns:
-            File path
+            File path to operations.json
         """
         recording_path = self._user_path(user_id) / "recordings" / recording_id
         recording_path.mkdir(parents=True, exist_ok=True)
@@ -230,6 +234,14 @@ class StorageService:
 
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
+
+        # Save graph separately if provided
+        if graph:
+            graph_path = recording_path / "graph.json"
+            with open(graph_path, 'w', encoding='utf-8') as f:
+                json.dump(graph, f, indent=2, ensure_ascii=False)
+            logger.info(f"  Graph saved: {len(graph.get('states', {}))} states, "
+                       f"{len(graph.get('edges', []))} edges")
 
         logger.info(f"Recording saved: {recording_id} ({len(operations)} ops)")
         if task_description:
@@ -278,7 +290,15 @@ class StorageService:
             json.dump(data, f, indent=2, ensure_ascii=False)
 
     def get_recording(self, user_id: str, recording_id: str) -> Optional[Dict]:
-        """Read recording data"""
+        """Read recording data.
+
+        Args:
+            user_id: User ID
+            recording_id: Recording ID
+
+        Returns:
+            Recording data dict with operations and optionally graph
+        """
         recording_path = self._user_path(user_id) / "recordings" / recording_id
         file_path = recording_path / "operations.json"
 
@@ -288,6 +308,12 @@ class StorageService:
 
         with open(file_path, 'r') as f:
             data = json.load(f)
+
+        # Load graph if exists
+        graph_path = recording_path / "graph.json"
+        if graph_path.exists():
+            with open(graph_path, 'r') as f:
+                data["graph"] = json.load(f)
 
         # Load metadata if exists
         metadata_path = recording_path / "metadata.json"

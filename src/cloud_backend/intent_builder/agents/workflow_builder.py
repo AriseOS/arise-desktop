@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from .tools.validate import validate_workflow_yaml, validate_workflow_dict, ValidationResult
+from .graph_to_prompt import build_user_prompt_from_graph
 
 # Skills directory relative to this module
 SKILLS_DIR = Path(__file__).parent.parent / ".claude" / "skills"
@@ -393,24 +394,40 @@ Remember: The xpath values show exactly which elements the user clicked/extracte
     async def build(
         self,
         task_description: str,
-        intent_sequence: List[Dict[str, Any]],
-        user_query: Optional[str] = None
+        intent_sequence: Optional[List[Dict[str, Any]]] = None,
+        user_query: Optional[str] = None,
+        graph: Optional[Dict[str, Any]] = None
     ) -> GenerationResult:
         """
-        Generate Workflow from Intent sequence.
+        Generate Workflow from Intent sequence or Graph.
 
         Args:
             task_description: User's task description
-            intent_sequence: List of Intent dictionaries
+            intent_sequence: List of Intent dictionaries (legacy input)
             user_query: User's goal/intent (e.g., "repeat for 10 items")
+            graph: StateActionGraph from Graph Builder (new input, preferred)
 
         Returns:
             GenerationResult with workflow or error
+
+        Note:
+            Either intent_sequence or graph must be provided.
+            If graph is provided, it takes precedence.
         """
+        if not intent_sequence and not graph:
+            return GenerationResult(
+                success=False,
+                error="Either intent_sequence or graph must be provided"
+            )
         logger.info(f"Starting workflow generation for task: {task_description}")
         if user_query:
             logger.info(f"User query: {user_query}")
-        logger.info(f"Intent count: {len(intent_sequence)}")
+
+        # Determine input type
+        if graph:
+            logger.info(f"Using graph input: {len(graph.get('states', {}))} states, {len(graph.get('edges', []))} edges")
+        else:
+            logger.info(f"Using intent_sequence input: {len(intent_sequence)} intents")
 
         try:
             from claude_agent_sdk import (
@@ -433,7 +450,12 @@ Remember: The xpath values show exactly which elements the user clicked/extracte
         try:
             # Build prompts
             system_prompt = self._build_system_prompt()
-            user_prompt = self._build_user_prompt(task_description, intent_sequence, user_query)
+
+            # Use graph or intent sequence to build user prompt
+            if graph:
+                user_prompt = build_user_prompt_from_graph(task_description, graph, user_query)
+            else:
+                user_prompt = self._build_user_prompt(task_description, intent_sequence, user_query)
 
             # Configure environment
             env_vars = dict(os.environ)
@@ -820,6 +842,7 @@ class WorkflowBuilderSession:
         self._dialogue_history: List[DialogueMessage] = []
         self._task_description: Optional[str] = None
         self._intent_sequence: Optional[List[Dict[str, Any]]] = None
+        self._graph: Optional[Dict[str, Any]] = None  # Graph input (alternative to intent_sequence)
 
         logger.info(f"WorkflowBuilderSession initialized: {self.session_id}")
 
@@ -846,10 +869,16 @@ When modifying the workflow:
     def _build_initial_prompt(
         self,
         task_description: str,
-        intent_sequence: List[Dict[str, Any]],
-        user_query: Optional[str] = None
+        intent_sequence: Optional[List[Dict[str, Any]]] = None,
+        user_query: Optional[str] = None,
+        graph: Optional[Dict[str, Any]] = None
     ) -> str:
         """Build initial prompt for workflow generation"""
+        # Use graph if provided (preferred), otherwise use intent_sequence
+        if graph:
+            return build_user_prompt_from_graph(task_description, graph, user_query)
+
+        # Legacy intent-based prompt building
         # Build intent data with full operations for Claude to understand user behavior
         enriched_intents = []
         for intent in intent_sequence:
@@ -1072,21 +1101,27 @@ Remember: The xpath values show exactly which elements the user clicked/extracte
     async def generate(
         self,
         task_description: str,
-        intent_sequence: List[Dict[str, Any]],
+        intent_sequence: Optional[List[Dict[str, Any]]] = None,
         on_progress: Optional[Callable[[StreamEvent], None]] = None,
-        user_query: Optional[str] = None
+        user_query: Optional[str] = None,
+        graph: Optional[Dict[str, Any]] = None
     ) -> GenerationResult:
         """
-        Generate initial workflow from intents.
+        Generate initial workflow from intents or graph.
 
         Args:
             task_description: User's task description
-            intent_sequence: List of Intent dictionaries
+            intent_sequence: List of Intent dictionaries (legacy input)
             on_progress: Optional callback for progress events
             user_query: User's goal/intent (e.g., "repeat for 10 items")
+            graph: StateActionGraph from Graph Builder (new input, preferred)
 
         Returns:
             GenerationResult with workflow or error
+
+        Note:
+            Either intent_sequence or graph must be provided.
+            If graph is provided, it takes precedence.
         """
         if self.state == SessionState.CLOSED:
             return GenerationResult(success=False, error="Session is closed")
@@ -1094,16 +1129,25 @@ Remember: The xpath values show exactly which elements the user clicked/extracte
         if not self._client:
             return GenerationResult(success=False, error="Session not connected")
 
+        if not intent_sequence and not graph:
+            return GenerationResult(success=False, error="Either intent_sequence or graph must be provided")
+
         self.state = SessionState.GENERATING
         self._task_description = task_description
         self._intent_sequence = intent_sequence
+        self._graph = graph
         self._user_query = user_query
 
         # Log inputs for debugging
         logger.info(f"🤖 [Session.generate] Starting workflow generation")
         logger.info(f"  📋 Task description: {task_description[:100]}...")
         logger.info(f"  🎯 User query: {user_query or '(not provided)'}")
-        logger.info(f"  📊 Intent count: {len(intent_sequence)}")
+
+        if graph:
+            logger.info(f"  📊 Graph input: {len(graph.get('states', {}))} states, {len(graph.get('edges', []))} edges")
+        else:
+            logger.info(f"  📊 Intent count: {len(intent_sequence)}")
+
         logger.info(f"  📁 Work dir: {self._work_dir}")
 
         try:
@@ -1121,7 +1165,7 @@ Remember: The xpath values show exactly which elements the user clicked/extracte
 
         try:
             # Build and send initial prompt
-            prompt = self._build_initial_prompt(task_description, intent_sequence, user_query)
+            prompt = self._build_initial_prompt(task_description, intent_sequence, user_query, graph)
             logger.info("🤖 [Session] Starting Claude Agent SDK workflow generation...")
             await self._client.query(prompt, session_id=self.session_id)
             logger.info("📤 [Session] Sent user prompt to Claude Agent")

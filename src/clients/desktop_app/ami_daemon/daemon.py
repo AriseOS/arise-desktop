@@ -1574,7 +1574,10 @@ async def generate_workflow_stream(
     if not x_ami_api_key:
         raise HTTPException(status_code=401, detail="X-Ami-API-Key header required")
 
-    # If recording_id is provided, load operations from local storage
+    # Set the API key for cloud client
+    cloud_client.set_user_api_key(x_ami_api_key)
+
+    # If recording_id is provided, upload to Cloud Backend first to build graph
     if recording_id:
         logger.info(f"Loading recording from local storage: {recording_id}")
         recording_data = storage_manager.get_recording(user_id, recording_id)
@@ -1587,23 +1590,47 @@ async def generate_workflow_stream(
 
         logger.info(f"Loaded {len(operations)} operations from local recording")
 
-        # Build request with operations instead of recording_id
-        cloud_request = {
-            "user_id": user_id,
-            "task_description": data.get("task_description"),
-            "operations": operations,
-            "user_query": data.get("user_query"),
-            "enable_dialogue": data.get("enable_dialogue", True),
-            "enable_semantic_validation": data.get("enable_semantic_validation", True),
-            "source_recording_id": recording_id
-        }
+        # Upload recording to Cloud Backend to build graph (if not already uploaded)
+        try:
+            cloud_recording_id = await cloud_client.upload_recording(
+                operations=operations,
+                task_description=data.get("task_description", ""),
+                user_query=data.get("user_query"),
+                user_id=user_id,
+                recording_id=recording_id
+            )
+            logger.info(f"📊 Recording uploaded to Cloud Backend with graph: {cloud_recording_id}")
+
+            # Build request with recording_id (Cloud Backend will use graph)
+            cloud_request = {
+                "user_id": user_id,
+                "task_description": data.get("task_description"),
+                "recording_id": cloud_recording_id,
+                "user_query": data.get("user_query"),
+                "enable_dialogue": data.get("enable_dialogue", True),
+                "enable_semantic_validation": data.get("enable_semantic_validation", True)
+            }
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to upload recording, falling back to operations: {e}")
+            # Fallback: send operations directly (will use intent extraction)
+            cloud_request = {
+                "user_id": user_id,
+                "task_description": data.get("task_description"),
+                "operations": operations,
+                "user_query": data.get("user_query"),
+                "enable_dialogue": data.get("enable_dialogue", True),
+                "enable_semantic_validation": data.get("enable_semantic_validation", True),
+                "source_recording_id": recording_id
+            }
     else:
         cloud_request = data
 
     async def stream_generator():
         try:
             logger.info(f"[Stream Debug] Starting stream to Cloud Backend: {cloud_client.api_url}/api/v1/workflows/generate-stream")
-            async with httpx.AsyncClient(timeout=300.0) as client:
+            # Use longer timeout and disable read timeout for streaming
+            timeout_config = httpx.Timeout(300.0, read=None)
+            async with httpx.AsyncClient(timeout=timeout_config) as client:
                 logger.info(f"[Stream Debug] httpx client created, sending POST request...")
                 async with client.stream(
                     "POST",
@@ -1620,13 +1647,36 @@ async def generate_workflow_stream(
 
                     logger.info(f"[Stream Debug] Starting to iterate over response lines...")
                     line_count = 0
-                    async for line in response.aiter_lines():
-                        line_count += 1
-                        logger.info(f"[Stream Debug] Received line #{line_count}: {line[:100]}..." if len(line) > 100 else f"[Stream Debug] Received line #{line_count}: {line}")
-                        if line:
-                            # SSE events need double newline to separate
-                            yield line + "\n\n"
-                    logger.info(f"[Stream Debug] Stream ended, total lines received: {line_count}")
+                    last_line = None
+                    try:
+                        async for line in response.aiter_lines():
+                            line_count += 1
+                            logger.info(f"[Stream Debug] Received line #{line_count}: {line[:100]}..." if len(line) > 100 else f"[Stream Debug] Received line #{line_count}: {line}")
+                            if line:
+                                last_line = line
+                                # SSE events need double newline to separate
+                                yield line + "\n\n"
+                                await asyncio.sleep(0.01)  # Small delay to ensure buffer flush
+                        logger.info(f"[Stream Debug] Stream ended normally, total lines received: {line_count}")
+                    except httpx.RemoteProtocolError as e:
+                        logger.warning(f"[Stream Debug] Protocol error after {line_count} lines: {e}")
+                        # This is expected when server closes connection after completion
+                        # Check if we received a completion event in the last line
+                        if last_line and '"status"' in last_line:
+                            try:
+                                # Extract JSON from SSE format (remove "data: " prefix if present)
+                                json_str = last_line.replace("data: ", "").strip()
+                                last_event = json.loads(json_str)
+                                if last_event.get("status") == "completed":
+                                    logger.info(f"[Stream Debug] Last event was completion, stream ended successfully")
+                                    # The completion event was received, but connection closed before we could yield it
+                                    # This is expected behavior - the generator ending triggers connection close
+                                    # The event should have already been yielded in the main loop
+                                else:
+                                    logger.warning(f"[Stream Debug] Last event status: {last_event.get('status')}")
+                            except Exception as parse_error:
+                                logger.warning(f"[Stream Debug] Could not parse last line as JSON: {parse_error}")
+                        logger.info(f"[Stream Debug] Total lines received before disconnect: {line_count}")
         except Exception as e:
             logger.error(f"Stream error: {e}")
             import traceback
