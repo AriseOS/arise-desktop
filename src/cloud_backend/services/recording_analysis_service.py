@@ -1,8 +1,10 @@
 """Recording Analysis Service - Analyze user operations using LLM"""
-import logging
+
 import json
+import logging
 import re
-from typing import List, Dict, Any
+from typing import Any, Dict, List
+
 from src.common.llm import AnthropicProvider
 
 logger = logging.getLogger(__name__)
@@ -18,13 +20,13 @@ class RecordingAnalysisService:
             llm_provider: LLM provider instance (must be provided with user's API key)
         """
         if llm_provider is None:
-            raise ValueError("llm_provider is required - must be created with user's API key and API Proxy URL")
+            raise ValueError(
+                "llm_provider is required - must be created with user's API key and API Proxy URL"
+            )
         self.llm_provider = llm_provider
 
     async def analyze_operations(
-        self,
-        operations: List[Dict[str, Any]],
-        user_id: str = "default_user"
+        self, operations: List[Dict[str, Any]], user_id: str = "default_user"
     ) -> Dict[str, Any]:
         """Analyze user operations and generate descriptions
 
@@ -50,7 +52,7 @@ class RecordingAnalysisService:
         logger.info("Calling LLM to analyze operations...")
         response = await self.llm_provider.generate_response(
             system_prompt="You are an AI assistant that analyzes user web operations. Return ONLY valid JSON, no additional text.",
-            user_prompt=prompt
+            user_prompt=prompt,
         )
 
         # 4. Parse response
@@ -71,7 +73,9 @@ class RecordingAnalysisService:
             result = json.loads(cleaned_response)
             logger.info("Analysis successful:")
             logger.info(f"  Name: {result.get('name', 'NOT_IN_RESULT')}")
-            logger.info(f"  Task Description: {result.get('task_description', '')[:100]}...")
+            logger.info(
+                f"  Task Description: {result.get('task_description', '')[:100]}..."
+            )
             logger.info(f"  User Query: {result.get('user_query', '')[:100]}...")
             logger.info(f"  Patterns: {result.get('patterns', {})}")
 
@@ -89,8 +93,8 @@ class RecordingAnalysisService:
                 "patterns": {
                     "loop_detected": False,
                     "extracted_fields": [],
-                    "navigation_depth": 1
-                }
+                    "navigation_depth": 1,
+                },
             }
 
     def _simplify_operations(self, operations: List[Dict]) -> List[Dict]:
@@ -102,7 +106,7 @@ class RecordingAnalysisService:
             simplified_op = {
                 "type": op_type,
                 "timestamp": op.get("timestamp", ""),
-                "url": op.get("url", "")
+                "url": op.get("url", ""),
             }
 
             # Add type-specific data
@@ -300,7 +304,7 @@ Now analyze:"""
                     escape_next = False
                     continue
 
-                if char == '\\':
+                if char == "\\":
                     result.append(char)
                     escape_next = True
                     continue
@@ -312,21 +316,20 @@ Now analyze:"""
 
                 # If we're inside a string, escape control characters
                 if in_string:
-                    if char == '\n':
-                        result.append('\\n')
-                    elif char == '\r':
-                        result.append('\\r')
-                    elif char == '\t':
-                        result.append('\\t')
+                    if char == "\n":
+                        result.append("\\n")
+                    elif char == "\r":
+                        result.append("\\r")
+                    elif char == "\t":
+                        result.append("\\t")
                     elif ord(char) < 32:  # Other control characters
-                        result.append(f'\\u{ord(char):04x}')
+                        result.append(f"\\u{ord(char):04x}")
                     else:
                         result.append(char)
                 else:
                     result.append(char)
 
-            return ''.join(result)
+            return "".join(result)
         except Exception as e:
             logger.warning(f"Failed to fix JSON control chars: {e}, returning original")
             return json_str
-

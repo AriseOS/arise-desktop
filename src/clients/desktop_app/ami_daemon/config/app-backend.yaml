@@ -35,7 +35,8 @@ llm:
   proxy_url: https://api.ariseos.com/api  # CRS production URL with /api prefix
 
 cloud:
-  api_url: https://cloud.ariseos.com
+  api_url: http://127.0.0.1:9000  # Local Cloud Backend for development
+  # api_url: https://cloud.ariseos.com  # Production Cloud Backend
   timeout: 120
   # Proxy: Only reads from environment variables (HTTPS_PROXY, HTTP_PROXY, ALL_PROXY)
   # System proxy settings (e.g., Clash modifying macOS preferences) are ignored

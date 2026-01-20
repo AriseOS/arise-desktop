@@ -45,6 +45,8 @@ config_service = CloudConfigService()
 # Global service instances
 storage_service = None
 workflow_service = None  # New WorkflowService (replaces old WorkflowGenerationService)
+workflow_memory = None  # WorkflowMemory for NL query
+reasoner = None  # Reasoner for semantic retrieval
 
 # Background task management
 cleanup_task = None
@@ -149,7 +151,7 @@ app.add_middleware(RequestContextMiddleware)
 @app.on_event("startup")
 async def startup_event():
     """Startup initialization"""
-    global storage_service, workflow_service
+    global storage_service, workflow_service, workflow_memory, reasoner
 
     print("\n" + "="*80)
     print("☁️  Ami Cloud Backend Starting...")
@@ -159,6 +161,8 @@ async def startup_event():
     try:
         from services.storage_service import StorageService
         from src.cloud_backend.intent_builder.services import WorkflowService
+        from src.cloud_backend.memgraph.graphstore.networkx_graph import NetworkXGraph
+        from src.cloud_backend.memgraph.memory.workflow_memory import WorkflowMemory
 
         # 1. CORS already configured
         print(f"✅ CORS: {len(cors_origins)} allowed origins")
@@ -168,7 +172,17 @@ async def startup_event():
         storage_service = StorageService(base_path=str(storage_base_path))
         print(f"✅ Storage: {storage_service.base_path}")
 
-        # 3. Initialize WorkflowService (new architecture using Claude Agent SDK + Skills)
+        # 3. Initialize WorkflowMemory (for NL query)
+        graph_store = NetworkXGraph()
+        workflow_memory = WorkflowMemory(graph_store)
+        print("✅ Workflow Memory (for NL query)")
+
+        # 4. Initialize Reasoner (for semantic retrieval)
+        # Note: Reasoner requires LLM client which needs user's API key
+        # It will be initialized per-request with user's API key
+        print("✅ Reasoner (ready for initialization)")
+
+        # 4. Initialize WorkflowService (new architecture using Claude Agent SDK + Skills)
         workflow_service = WorkflowService(
             config_service=config_service,
             base_url=config_service.get("llm.proxy_url")
@@ -373,8 +387,12 @@ async def register(data: dict):
 
 @app.post("/api/v1/recordings")
 async def upload_recording(data: dict):
-    """
-    Upload recording and add intents to user's Intent Memory Graph (async)
+    """Upload recording and build State/Action Graph (NO LLM).
+
+    This endpoint:
+    1. Builds State/Action Graph using deterministic rules (NO LLM)
+    2. Saves recording with graph data
+    3. Optionally runs background AI analysis (with LLM) for task description
 
     Body:
         {
@@ -389,9 +407,18 @@ async def upload_recording(data: dict):
         }
 
     Returns:
-        {"recording_id": "..."}
+        {
+            "recording_id": "...",
+            "graph": {
+                "states": {...},
+                "edges": [...],
+                "phases": [...],
+                "episodes": [...]
+            }
+        }
 
-    Note: Intent extraction happens in background. Graph is updated asynchronously.
+    Note: Graph building is deterministic and immediate (no LLM).
+          AI analysis happens in background (with LLM).
     """
     user_id = data.get("user_id")
     user_api_key = data.get("user_api_key")
@@ -411,14 +438,29 @@ async def upload_recording(data: dict):
     if not operations:
         raise HTTPException(400, "Missing operations")
 
-    # Save recording to filesystem first (with provided task_description and user_query)
+    # Build State/Action Graph (NO LLM, deterministic)
+    logger.info(f"Building graph for recording {recording_id}")
+    try:
+        from src.cloud_backend.graph_builder import GraphBuilder
+        builder = GraphBuilder()
+        graph = builder.build(operations)
+        graph_dict = graph.to_dict()
+        logger.info(f"Graph built: {len(graph.states)} states, {len(graph.edges)} edges")
+    except Exception as e:
+        logger.error(f"Failed to build graph: {e}")
+        import traceback
+        traceback.print_exc()
+        graph_dict = None
+
+    # Save recording with graph
     file_path = storage_service.save_recording(
         user_id,
         recording_id,
         operations,
         task_description=task_description,
         user_query=user_query,
-        dom_snapshots=dom_snapshots
+        dom_snapshots=dom_snapshots,
+        graph=graph_dict
     )
 
     logger.info(f"Recording uploaded: {recording_id} ({len(operations)} ops)")
@@ -428,6 +470,21 @@ async def upload_recording(data: dict):
         logger.info(f"  Task: {task_description}")
     if user_query:
         logger.info(f"  User query: {user_query}")
+
+    # Store graph to WorkflowMemory for immediate NL query availability
+    if graph_dict and workflow_memory:
+        try:
+            # Store states with intents to memory
+            for state in graph.states.values():
+                workflow_memory.create_state(state)
+
+            # Store actions to memory
+            for action in graph.actions:
+                workflow_memory.create_action(action)
+
+            logger.info(f"✅ Stored graph to memory: {len(graph.states)} states, {len(graph.actions)} actions")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to store graph to memory: {e}")
 
     # Start background task to auto-generate task_description and user_query if not provided
     if not task_description or not user_query:
@@ -453,7 +510,11 @@ async def upload_recording(data: dict):
         )
     )
 
-    return {"recording_id": recording_id}
+    response = {"recording_id": recording_id}
+    if graph_dict:
+        response["graph"] = graph_dict
+
+    return response
 
 
 async def analyze_and_update_recording_background(
@@ -1061,12 +1122,385 @@ async def delete_workflow(workflow_id: str, user_id: str):
     return {"success": True, "message": "Workflow deleted"}
 
 
+# ===== Helper Functions for NL Query =====
+
+async def _ensure_user_memory_loaded(user_id: str, session_id: Optional[str] = None):
+    """
+    Ensure user's recordings are loaded into WorkflowMemory.
+
+    This function loads States/Actions from the user's recordings into the global
+    workflow_memory for natural language querying.
+
+    Args:
+        user_id: User ID
+        session_id: Optional session ID to filter recordings
+    """
+    global workflow_memory
+
+    if not workflow_memory:
+        raise HTTPException(500, "WorkflowMemory not initialized")
+
+    logger.info(f"Loading memory for user {user_id}")
+
+    # Get user's recordings from storage
+    recordings = storage_service.list_recordings(user_id)
+
+    # Filter by session if specified
+    if session_id:
+        recordings = [r for r in recordings if r.get("session_id") == session_id]
+
+    if not recordings:
+        logger.warning(f"No recordings found for user {user_id}")
+        return
+
+    # Load each recording's graph into memory
+    loaded_count = 0
+    for recording_meta in recordings:
+        recording_id = recording_meta.get("recording_id")
+
+        # Get full recording data with graph
+        recording = storage_service.get_recording(user_id, recording_id)
+        if not recording:
+            continue
+
+        graph_dict = recording.get("graph")
+        if not graph_dict:
+            continue
+
+        # Convert graph dict to StateActionGraph
+        try:
+            from src.cloud_backend.graph_builder.models import StateActionGraph
+            graph = StateActionGraph.from_dict(graph_dict)
+
+            # Store states with intents to memory
+            for state in graph.states.values():
+                workflow_memory.create_state(state)
+
+            # Store actions to memory
+            for action in graph.actions:
+                workflow_memory.create_action(action)
+
+            loaded_count += 1
+            logger.debug(f"Loaded recording {recording_id}: {len(graph.states)} states, {len(graph.actions)} actions")
+
+        except Exception as e:
+            logger.warning(f"Failed to load recording {recording_id}: {e}")
+            continue
+
+    logger.info(f"✅ Loaded {loaded_count} recordings into memory for user {user_id}")
+
+
+async def _get_reasoner_for_user(x_ami_api_key: str):
+    """
+    Get or create a Reasoner instance with user's API key.
+
+    Args:
+        x_ami_api_key: User's API key
+
+    Returns:
+        Reasoner instance
+    """
+    from src.cloud_backend.memgraph.reasoner.reasoner import Reasoner
+    from src.common.llm.anthropic_provider import AnthropicProvider
+
+    # Create LLM client with user's API key
+    llm_client = AnthropicProvider(
+        api_key=x_ami_api_key,
+        base_url=config_service.get("llm.proxy_url", "https://api.ariseos.com/api")
+    )
+
+    # Create Reasoner with memory and LLM client
+    reasoner = Reasoner(
+        memory=workflow_memory,
+        llm_client=llm_client,
+        max_depth=3
+    )
+
+    return reasoner
+
+
+@app.post("/api/v1/workflows/query")
+async def query_workflow_from_memory(
+    data: dict,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """
+    Query Workflow from Memory using Natural Language
+
+    This endpoint allows users to retrieve workflows from memory using natural language queries.
+    It uses the Reasoner to semantically match the query against stored States/Actions/Intents.
+
+    Headers:
+        X-Ami-API-Key: User's API key (required)
+
+    Body:
+        {
+            "user_id": "user123",
+            "query": "Fill out the login form",
+            "session_id": "session_456",        // Optional: filter by session
+            "top_k": 5,                          // Optional: number of results (default: 5)
+            "min_confidence": 0.7                // Optional: minimum confidence score (default: 0.7)
+        }
+
+    Returns:
+        {
+            "workflow": {...},                   // Executable workflow JSON/YAML
+            "confidence": 0.85,
+            "matched_states": [...],
+            "matched_actions": [...],
+            "status": "success"
+        }
+    """
+    if not x_ami_api_key:
+        raise HTTPException(400, "Missing X-Ami-API-Key header")
+
+    user_id = data.get("user_id")
+    query = data.get("query")
+    session_id = data.get("session_id")
+    top_k = data.get("top_k", 5)
+    min_confidence = data.get("min_confidence", 0.7)
+
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+    if not query:
+        raise HTTPException(400, "Missing query")
+
+    try:
+        # Ensure user's memory is loaded
+        await _ensure_user_memory_loaded(user_id, session_id)
+
+        # Get Reasoner instance with user's API key
+        user_reasoner = await _get_reasoner_for_user(x_ami_api_key)
+
+        # Query memory using Reasoner
+        result = await user_reasoner.plan(query, user_id=user_id, session_id=session_id)
+
+        if not result or not result.success:
+            return {
+                "workflow": None,
+                "confidence": 0.0,
+                "matched_states": [],
+                "matched_actions": [],
+                "status": "no_match",
+                "message": "No matching workflow found in memory"
+            }
+
+        logger.info(f"✅ Workflow retrieved from memory for query: {query}")
+
+        return {
+            "workflow": result.workflow,
+            "confidence": result.confidence if hasattr(result, 'confidence') else 1.0,
+            "matched_states": [s.id for s in result.states] if hasattr(result, 'states') else [],
+            "matched_actions": [a.id for a in result.actions] if hasattr(result, 'actions') else [],
+            "status": "success"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Workflow query failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Workflow query failed: {str(e)}")
+
+
 # ===== NEW: Direct Workflow Generation API (v2) =====
 # These endpoints use the new WorkflowBuilder (Claude Agent SDK) architecture
 # They bypass the MetaFlow intermediate layer
 
 # Store active workflow builder sessions
 _workflow_sessions: dict = {}
+
+
+@app.post("/api/v1/workflows/generate")
+async def generate_workflow_direct(
+    data: dict,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """
+    Generate Workflow directly from Recording or Intent sequence (NEW v2 API)
+
+    This endpoint uses the new WorkflowBuilder architecture which:
+    - Bypasses the MetaFlow intermediate layer
+    - Uses Claude Agent SDK for generation
+    - Includes two-layer validation (rule + semantic)
+    - Supports follow-up dialogue for workflow modification
+
+    Headers:
+        X-Ami-API-Key: User's API key (required)
+
+    Body:
+        {
+            "user_id": "user123",
+            "task_description": "Extract product info from website",
+            "recording_id": "recording_xxx",           // Optional: generate from recording
+            "intent_sequence": [...],                  // Optional: provide Intent sequence directly
+            "enable_semantic_validation": true,        // Enable semantic validation (default: true)
+            "enable_dialogue": true                    // Keep session for follow-up dialogue (default: true)
+        }
+
+    Returns:
+        {
+            "workflow_id": "workflow_xxx",
+            "workflow_name": "extract-products",
+            "workflow_yaml": "...",
+            "session_id": "ws_xxx",                    // If enable_dialogue=true
+            "validation_result": {...},
+            "status": "success"
+        }
+    """
+    if not x_ami_api_key:
+        raise HTTPException(400, "Missing X-Ami-API-Key header")
+
+    user_id = data.get("user_id")
+    task_description = data.get("task_description")
+    recording_id = data.get("recording_id")
+    operations = data.get("operations")  # Direct operations from App Backend
+    source_recording_id = data.get("source_recording_id")  # For traceability
+    intent_sequence = data.get("intent_sequence")
+    enable_semantic_validation = data.get("enable_semantic_validation", True)
+    enable_dialogue = data.get("enable_dialogue", True)
+
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+    if not task_description:
+        raise HTTPException(400, "Missing task_description")
+
+    logger.info(f"🚀 [API v2] Generating Workflow directly for user {user_id}")
+    logger.info(f"📝 Task Description: {task_description}")
+
+    try:
+        # Import the new WorkflowService
+        from src.cloud_backend.intent_builder.services import (
+            WorkflowService,
+            GenerationRequest
+        )
+
+        # Try to get graph from recording first (preferred path)
+        graph = None
+        recording_data = None
+
+        if recording_id:
+            recording_data = storage_service.get_recording(user_id, recording_id)
+            if recording_data:
+                graph = recording_data.get("graph")
+                if graph:
+                    logger.info(f"📊 Using graph from recording: {len(graph.get('states', {}))} states, {len(graph.get('edges', []))} edges")
+                    operations = recording_data.get("operations", [])
+                else:
+                    logger.info("📹 Recording found but no graph, will use operations")
+                    operations = recording_data.get("operations", [])
+            else:
+                raise HTTPException(404, f"Recording not found: {recording_id}")
+
+        # If no graph yet, try to get operations and build/extract
+        if not graph and not intent_sequence:
+            # Try direct operations first (from App Backend)
+            if operations:
+                logger.info(f"📹 Using direct operations: {len(operations)} operations")
+                recording_id = source_recording_id  # Use source_recording_id for traceability
+
+            if operations:
+                # Fall back to intent extraction (legacy path)
+                from src.cloud_backend.intent_builder.extractors.intent_extractor import IntentExtractor
+                from src.common.llm import AnthropicProvider
+
+                llm = AnthropicProvider(
+                    api_key=x_ami_api_key,
+                    base_url=config_service.get("llm.proxy_url")
+                )
+                extractor = IntentExtractor(llm_provider=llm)
+
+                intents = await extractor.extract_intents(
+                    operations=operations,
+                    task_description=task_description,
+                    source_session_id=recording_id or source_recording_id
+                )
+                intent_sequence = [intent.to_dict() for intent in intents]
+                logger.info(f"✅ Extracted {len(intent_sequence)} intents (legacy path)")
+
+        if not graph and not intent_sequence:
+            raise HTTPException(400, "No graph, intent_sequence, operations, or recording_id provided")
+
+        # Create WorkflowService and generate
+        service = WorkflowService(
+            config_service=config_service,
+            api_key=x_ami_api_key,
+            base_url=config_service.get("llm.proxy_url")
+        )
+
+        # Create request with graph (preferred) or intent_sequence (legacy)
+        request = GenerationRequest(
+            recording_id=recording_id,
+            task_description=task_description,
+            user_query=data.get("user_query"),
+            graph=graph,  # NEW: Graph from Graph Builder
+            intent_sequence=intent_sequence,  # LEGACY: Intent extraction path
+            enable_semantic_validation=enable_semantic_validation
+        )
+
+        response = await service.generate(request, enable_dialogue=enable_dialogue)
+
+        if not response.success:
+            raise HTTPException(500, f"Workflow generation failed: {response.error}")
+
+        # Generate workflow_id and save
+        workflow_id = response.workflow_id or f"workflow_{uuid.uuid4().hex[:12]}"
+
+        # Extract workflow name from YAML
+        import yaml
+        workflow_dict = yaml.safe_load(response.workflow_yaml)
+        workflow_name = workflow_dict.get("metadata", {}).get("name", workflow_id)
+
+        # Save workflow to storage
+        storage_service.save_workflow(
+            user_id=user_id,
+            workflow_id=workflow_id,
+            workflow_yaml=response.workflow_yaml,
+            workflow_name=workflow_name,
+            source_recording_id=recording_id
+        )
+
+        # Link recording to workflow (reverse link)
+        if recording_id:
+            try:
+                storage_service.update_recording_workflow(user_id, recording_id, workflow_id)
+                logger.info(f"✅ Recording {recording_id} linked to Workflow {workflow_id}")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to link recording to workflow: {e}")
+
+        logger.info(f"✅ Workflow generated and saved: {workflow_id}")
+
+        result = {
+            "workflow_id": workflow_id,
+            "workflow_name": workflow_name,
+            "workflow_yaml": response.workflow_yaml,
+            "source_recording_id": recording_id,
+            "status": "success"
+        }
+
+        if response.session_id:
+            result["session_id"] = response.session_id
+            # Store session reference for later dialogue
+            _workflow_sessions[response.session_id] = {
+                "service": service,
+                "user_id": user_id,
+                "workflow_id": workflow_id,
+                "created_at": asyncio.get_event_loop().time()
+            }
+
+        if response.validation_result:
+            result["validation_result"] = response.validation_result.to_dict()
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Workflow generation failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Workflow generation failed: {str(e)}")
 
 
 @app.post("/api/v1/workflows/generate-stream")
@@ -1132,52 +1566,62 @@ async def generate_workflow_stream(
             # Initial progress
             await progress_queue.put({'status': 'pending', 'progress': 0, 'message': 'Starting...'})
 
-            # Get intent sequence or operations
+            # Try to get graph from recording first (preferred path)
+            graph = None
             local_intent_sequence = intent_sequence
             local_operations = operations
             local_recording_id = recording_id or source_recording_id
+            recording_data = None
 
-            # If we have direct operations from App Backend, use them
-            if not local_intent_sequence and local_operations:
-                await progress_queue.put({'status': 'analyzing', 'progress': 10, 'message': f'Processing {len(local_operations)} operations...'})
-
-            # If no operations yet, try to load from recording
-            elif not local_intent_sequence and recording_id:
+            # Try to load recording and get graph
+            if recording_id:
                 await progress_queue.put({'status': 'analyzing', 'progress': 10, 'message': 'Loading recording...'})
-
                 recording_data = storage_service.get_recording(user_id, recording_id)
                 if not recording_data:
                     await progress_queue.put({'status': 'failed', 'progress': 0, 'message': 'Recording not found', '_done': True})
                     return
 
-                local_operations = recording_data.get("operations", [])
+                graph = recording_data.get("graph")
+                if graph:
+                    logger.info(f"📊 [Stream] Using graph from recording: {len(graph.get('states', {}))} states, {len(graph.get('edges', []))} edges")
+                    await progress_queue.put({'status': 'analyzing', 'progress': 15, 'message': 'Using State/Action Graph'})
+                else:
+                    logger.info("📹 [Stream] Recording found but no graph, will use operations")
+                    local_operations = recording_data.get("operations", [])
 
-            # Extract intents from operations if we have them
-            intents = None
-            if local_operations and not local_intent_sequence:
-                await progress_queue.put({'status': 'analyzing', 'progress': 20, 'message': f'Extracting intents from {len(local_operations)} operations...'})
+            # If no graph yet and no intent_sequence, try to get operations
+            if not graph and not local_intent_sequence:
+                # If we have direct operations from App Backend, use them
+                if not local_operations and operations:
+                    logger.info(f"📹 [Stream] Using direct operations: {len(operations)} operations")
+                    local_operations = operations
+                    await progress_queue.put({'status': 'analyzing', 'progress': 10, 'message': f'Processing {len(local_operations)} operations...'})
 
-                from src.cloud_backend.intent_builder.extractors.intent_extractor import IntentExtractor
-                from src.common.llm import AnthropicProvider
+                # Extract intents from operations if we have them (legacy path)
+                if local_operations:
+                    await progress_queue.put({'status': 'analyzing', 'progress': 20, 'message': f'Extracting intents from {len(local_operations)} operations...'})
 
-                llm = AnthropicProvider(
-                    api_key=x_ami_api_key,
-                    base_url=config_service.get("llm.proxy_url")
-                )
-                extractor = IntentExtractor(llm_provider=llm)
+                    from src.cloud_backend.intent_builder.extractors.intent_extractor import IntentExtractor
+                    from src.common.llm import AnthropicProvider
 
-                intents = await extractor.extract_intents(
-                    operations=local_operations,
-                    task_description=task_description,
-                    source_session_id=local_recording_id,
-                    user_query=user_query
-                )
-                local_intent_sequence = [intent.to_dict() for intent in intents]
+                    llm = AnthropicProvider(
+                        api_key=x_ami_api_key,
+                        base_url=config_service.get("llm.proxy_url")
+                    )
+                    extractor = IntentExtractor(llm_provider=llm)
 
-                await progress_queue.put({'status': 'understanding', 'progress': 30, 'message': f'Extracted {len(local_intent_sequence)} intents'})
+                    intents = await extractor.extract_intents(
+                        operations=local_operations,
+                        task_description=task_description,
+                        source_session_id=local_recording_id,
+                        user_query=user_query
+                    )
+                    local_intent_sequence = [intent.to_dict() for intent in intents]
+                    await progress_queue.put({'status': 'understanding', 'progress': 30, 'message': f'Extracted {len(local_intent_sequence)} intents'})
 
-            if not local_intent_sequence:
-                await progress_queue.put({'status': 'failed', 'progress': 0, 'message': 'No intent sequence', '_done': True})
+            # Verify we have either graph or intent_sequence
+            if not graph and not local_intent_sequence:
+                await progress_queue.put({'status': 'failed', 'progress': 0, 'message': 'No graph, intent sequence, or operations', '_done': True})
                 return
 
             # Create service and generate with streaming
@@ -1194,10 +1638,12 @@ async def generate_workflow_stream(
                 if dom_snapshots:
                     logger.info(f"📸 [Background] Loaded {len(dom_snapshots)} DOM snapshots for script generation")
 
+            # Create request with graph (preferred) or intent_sequence (legacy)
             request = GenerationRequest(
                 recording_id=local_recording_id,
                 task_description=task_description,
                 user_query=user_query,
+                graph=graph,
                 intent_sequence=local_intent_sequence,
                 enable_semantic_validation=enable_semantic_validation,
                 dom_snapshots=dom_snapshots
@@ -1226,6 +1672,9 @@ async def generate_workflow_stream(
                 if progress.status.value == "completed" and progress.details:
                     if progress.details.startswith("Session ID: "):
                         session_id = progress.details.replace("Session ID: ", "")
+                        logger.info(f"✅ [Stream] Extracted session_id from completed event: {session_id}")
+                    else:
+                        logger.warning(f"⚠️ [Stream] Completed event details don't match expected format: {progress.details}")
 
                 logger.info(f"📊 [Background] Progress: {progress.status.value} - {progress.progress}%")
                 await progress_queue.put(event_data)

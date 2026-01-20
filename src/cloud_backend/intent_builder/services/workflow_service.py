@@ -55,6 +55,7 @@ class GenerationRequest:
     user_query: Optional[str] = None  # User's goal/intent (e.g., "repeat for 10 items")
     intent_sequence: Optional[List[Dict[str, Any]]] = None
     operations: Optional[List[Dict[str, Any]]] = None  # Raw operations from recording
+    graph: Optional[Dict[str, Any]] = None  # StateActionGraph from Graph Builder (preferred)
     enable_semantic_validation: bool = True
     dom_snapshots: Optional[Dict[str, Dict]] = None  # URL -> DOM dict for script generation
     workflow_dir: Optional[str] = None  # Directory to save workflow and scripts
@@ -191,7 +192,22 @@ class WorkflowService:
         """
         logger.info(f"Starting workflow generation: {request.task_description[:50]}...")
 
-        # Get intent sequence (from request or extract from operations)
+        # Prioritize graph input if provided (from Graph Builder)
+        if request.graph:
+            logger.info("Using graph input from Graph Builder")
+            if enable_dialogue:
+                return await self._generate_with_session(
+                    request=request,
+                    intent_sequence=None,
+                    graph=request.graph
+                )
+            return await self._generate_oneshot(
+                request=request,
+                intent_sequence=None,
+                graph=request.graph
+            )
+
+        # Fall back to intent sequence (legacy path)
         intent_sequence = request.intent_sequence
         if not intent_sequence and request.operations:
             # Extract intents from operations
@@ -203,20 +219,28 @@ class WorkflowService:
         if not intent_sequence:
             return GenerationResponse(
                 success=False,
-                error="No intent sequence provided and no operations to extract from"
+                error="No graph, intent sequence, or operations provided"
             )
 
         if enable_dialogue:
             # Use session-based generation for dialogue support
-            return await self._generate_with_session(request, intent_sequence)
-        else:
-            # Use one-shot generation
-            return await self._generate_oneshot(request, intent_sequence)
+            return await self._generate_with_session(
+                request=request,
+                intent_sequence=intent_sequence,
+                graph=None
+            )
+        # Use one-shot generation
+        return await self._generate_oneshot(
+            request=request,
+            intent_sequence=intent_sequence,
+            graph=None
+        )
 
     async def _generate_oneshot(
         self,
         request: GenerationRequest,
-        intent_sequence: List[Dict[str, Any]]
+        intent_sequence: Optional[List[Dict[str, Any]]],
+        graph: Optional[Dict[str, Any]]
     ) -> GenerationResponse:
         """One-shot generation without session"""
         builder = WorkflowBuilder(
@@ -228,8 +252,9 @@ class WorkflowService:
 
         result = await builder.build(
             request.task_description,
-            intent_sequence,
-            user_query=request.user_query
+            intent_sequence=intent_sequence,
+            user_query=request.user_query,
+            graph=graph
         )
 
         if not result.success:
@@ -269,7 +294,8 @@ class WorkflowService:
     async def _generate_with_session(
         self,
         request: GenerationRequest,
-        intent_sequence: List[Dict[str, Any]]
+        intent_sequence: Optional[List[Dict[str, Any]]],
+        graph: Optional[Dict[str, Any]]
     ) -> GenerationResponse:
         """Generate with session for dialogue support"""
         session_id = str(uuid.uuid4())
@@ -287,8 +313,9 @@ class WorkflowService:
 
             result = await session.generate(
                 request.task_description,
-                intent_sequence,
-                user_query=request.user_query
+                intent_sequence=intent_sequence,
+                user_query=request.user_query,
+                graph=graph
             )
 
             # If initial generation failed (e.g., rule validation failed), try to fix via dialogue
@@ -418,38 +445,52 @@ class WorkflowService:
             message="Starting workflow generation..."
         )
 
-        # Get intent sequence
-        yield GenerationProgress(
-            status=GenerationStatus.ANALYZING,
-            progress=10,
-            message="Analyzing recording content...",
-            details=f"Processing {len(request.operations or [])} operations"
-        )
-
+        # Prioritize graph input over intent extraction
+        graph = request.graph
         intent_sequence = request.intent_sequence
-        if not intent_sequence and request.operations:
-            intent_sequence = await self._extract_intents(
-                request.operations,
-                request.task_description
-            )
-            await asyncio.sleep(0.3)  # Simulated delay
 
-        if not intent_sequence:
+        if graph:
+            # Graph path (preferred, no LLM for intent extraction)
+            logger.info("📊 [Stream] Using graph input from Graph Builder")
             yield GenerationProgress(
-                status=GenerationStatus.FAILED,
-                progress=0,
-                message="Failed: No intent sequence available"
+                status=GenerationStatus.ANALYZING,
+                progress=10,
+                message="Using State/Action Graph...",
+                details=f"{len(graph.get('states', {}))} states, {len(graph.get('edges', []))} edges"
             )
-            return
+            await asyncio.sleep(0.2)
+        else:
+            # Intent/Operations path (legacy)
+            yield GenerationProgress(
+                status=GenerationStatus.ANALYZING,
+                progress=10,
+                message="Analyzing recording content...",
+                details=f"Processing {len(request.operations or [])} operations"
+            )
 
-        yield GenerationProgress(
-            status=GenerationStatus.UNDERSTANDING,
-            progress=30,
-            message="Understanding user intent...",
-            details=f"Identified {len(intent_sequence)} intents"
-        )
+            if not intent_sequence and request.operations:
+                intent_sequence = await self._extract_intents(
+                    request.operations,
+                    request.task_description
+                )
+                await asyncio.sleep(0.3)  # Simulated delay
 
-        await asyncio.sleep(0.3)  # Simulated delay
+            if not intent_sequence:
+                yield GenerationProgress(
+                    status=GenerationStatus.FAILED,
+                    progress=0,
+                    message="Failed: No graph, intent sequence, or operations available"
+                )
+                return
+
+            yield GenerationProgress(
+                status=GenerationStatus.UNDERSTANDING,
+                progress=30,
+                message="Understanding user intent...",
+                details=f"Identified {len(intent_sequence)} intents"
+            )
+
+            await asyncio.sleep(0.3)  # Simulated delay
 
         # Generate workflow
         yield GenerationProgress(
@@ -480,13 +521,15 @@ class WorkflowService:
             from pathlib import Path
             workflow_dir = Path(request.workflow_dir) if request.workflow_dir else None
 
+            # Pass graph (preferred) or intent_sequence (legacy)
             result = await session.generate(
                 request.task_description,
-                intent_sequence,
+                intent_sequence=intent_sequence,
                 user_query=request.user_query,
                 on_progress=on_progress,
                 dom_snapshots=request.dom_snapshots,
-                workflow_dir=workflow_dir
+                workflow_dir=workflow_dir,
+                graph=graph
             )
 
             # If initial generation failed (e.g., rule validation failed), try to fix via dialogue

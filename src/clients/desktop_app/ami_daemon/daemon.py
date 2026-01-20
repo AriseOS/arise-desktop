@@ -1972,7 +1972,9 @@ async def generate_workflow_stream(
     async def stream_generator():
         try:
             logger.info(f"[Stream Debug] Starting stream to Cloud Backend: {cloud_client.api_url}/api/v1/workflows/generate-stream")
-            async with httpx.AsyncClient(timeout=300.0) as client:
+            # Use longer timeout and disable read timeout for streaming
+            timeout_config = httpx.Timeout(300.0, read=None)
+            async with httpx.AsyncClient(timeout=timeout_config) as client:
                 logger.info(f"[Stream Debug] httpx client created, sending POST request...")
                 async with client.stream(
                     "POST",
@@ -1989,13 +1991,36 @@ async def generate_workflow_stream(
 
                     logger.info(f"[Stream Debug] Starting to iterate over response lines...")
                     line_count = 0
-                    async for line in response.aiter_lines():
-                        line_count += 1
-                        logger.info(f"[Stream Debug] Received line #{line_count}: {line[:100]}..." if len(line) > 100 else f"[Stream Debug] Received line #{line_count}: {line}")
-                        if line:
-                            # SSE events need double newline to separate
-                            yield line + "\n\n"
-                    logger.info(f"[Stream Debug] Stream ended, total lines received: {line_count}")
+                    last_line = None
+                    try:
+                        async for line in response.aiter_lines():
+                            line_count += 1
+                            logger.info(f"[Stream Debug] Received line #{line_count}: {line[:100]}..." if len(line) > 100 else f"[Stream Debug] Received line #{line_count}: {line}")
+                            if line:
+                                last_line = line
+                                # SSE events need double newline to separate
+                                yield line + "\n\n"
+                                await asyncio.sleep(0.01)  # Small delay to ensure buffer flush
+                        logger.info(f"[Stream Debug] Stream ended normally, total lines received: {line_count}")
+                    except httpx.RemoteProtocolError as e:
+                        logger.warning(f"[Stream Debug] Protocol error after {line_count} lines: {e}")
+                        # This is expected when server closes connection after completion
+                        # Check if we received a completion event in the last line
+                        if last_line and '"status"' in last_line:
+                            try:
+                                # Extract JSON from SSE format (remove "data: " prefix if present)
+                                json_str = last_line.replace("data: ", "").strip()
+                                last_event = json.loads(json_str)
+                                if last_event.get("status") == "completed":
+                                    logger.info(f"[Stream Debug] Last event was completion, stream ended successfully")
+                                    # The completion event was received, but connection closed before we could yield it
+                                    # This is expected behavior - the generator ending triggers connection close
+                                    # The event should have already been yielded in the main loop
+                                else:
+                                    logger.warning(f"[Stream Debug] Last event status: {last_event.get('status')}")
+                            except Exception as parse_error:
+                                logger.warning(f"[Stream Debug] Could not parse last line as JSON: {parse_error}")
+                        logger.info(f"[Stream Debug] Total lines received before disconnect: {line_count}")
         except Exception as e:
             logger.error(f"Stream error: {e}")
             import traceback
