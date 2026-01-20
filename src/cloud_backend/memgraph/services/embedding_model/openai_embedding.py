@@ -36,6 +36,7 @@ class OpenAIEmbedding(EmbeddingModel):
         dimension: int = 1536,
         api_client: Optional[Any] = None,
         api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
         """Initializes the OpenAIEmbedding model.
@@ -48,6 +49,8 @@ class OpenAIEmbedding(EmbeddingModel):
             dimension: The expected output dimension of embeddings.
             api_client: Pre-initialized OpenAI client instance (optional).
             api_key: OpenAI API key (optional, reads from env if not provided).
+            base_url: Custom API base URL for OpenAI-compatible APIs (optional).
+                If not provided, uses the default OpenAI API URL.
             **kwargs: Additional configuration parameters:
                 - timeout: Request timeout in seconds (default: 60)
                 - max_retries: Maximum number of retries (default: 3)
@@ -58,16 +61,19 @@ class OpenAIEmbedding(EmbeddingModel):
         # Get API key
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
 
+        # Store base_url for custom API endpoints
+        self.base_url = base_url
+
+        # Extract configuration (must be before _initialize_client)
+        self.timeout = kwargs.get("timeout", 60)
+        self.max_retries = kwargs.get("max_retries", 3)
+
         # Initialize client
         self.client = api_client
         self.async_client = None  # Will be initialized on first async call
 
         if self.client is None and self.api_key:
             self._initialize_client()
-
-        # Extract configuration
-        self.timeout = kwargs.get("timeout", 60)
-        self.max_retries = kwargs.get("max_retries", 3)
 
     def _initialize_client(self) -> None:
         """Initializes the OpenAI client.
@@ -91,11 +97,18 @@ class OpenAIEmbedding(EmbeddingModel):
                 "variable or provide api_key parameter."
             )
 
-        self.client = OpenAI(
-            api_key=self.api_key,
-            timeout=self.timeout,
-            max_retries=self.max_retries,
-        )
+        # Build client kwargs
+        client_kwargs = {
+            "api_key": self.api_key,
+            "timeout": self.timeout,
+            "max_retries": self.max_retries,
+        }
+
+        # Add base_url if provided (for OpenAI-compatible APIs)
+        if self.base_url:
+            client_kwargs["base_url"] = self.base_url
+
+        self.client = OpenAI(**client_kwargs)
 
     def embed(self, text: str, **kwargs: Any) -> EmbeddingResponse:
         """Generates an embedding for a single text input.
@@ -218,11 +231,14 @@ class OpenAIEmbedding(EmbeddingModel):
 
             # Create async client if needed
             if self.async_client is None:
-                self.async_client = AsyncOpenAI(
-                    api_key=self.api_key,
-                    timeout=self.timeout,
-                    max_retries=self.max_retries,
-                )
+                async_client_kwargs = {
+                    "api_key": self.api_key,
+                    "timeout": self.timeout,
+                    "max_retries": self.max_retries,
+                }
+                if self.base_url:
+                    async_client_kwargs["base_url"] = self.base_url
+                self.async_client = AsyncOpenAI(**async_client_kwargs)
 
             # Call OpenAI API (async)
             user = kwargs.get("user", None)

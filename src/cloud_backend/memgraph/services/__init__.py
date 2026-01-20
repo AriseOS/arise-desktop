@@ -63,6 +63,14 @@ from src.cloud_backend.memgraph.services.embedding_model import (
     get_available_providers as get_available_embedding_providers,
 )
 
+# Embedding Service - Singleton service for embedding operations
+from src.cloud_backend.memgraph.services.embedding_service import (
+    EmbeddingService,
+    embed_text,
+    embed_texts,
+    get_embedding_service,
+)
+
 # Core LLM client classes and utilities
 from src.cloud_backend.memgraph.services.llm import AnthropicLLMClient, ClaudeLLMClient
 from src.cloud_backend.memgraph.services.llm import ConfigValidationError as LLMConfigValidationError
@@ -136,6 +144,11 @@ __all__ = [
     "EmbeddingConfigValidationError",
     "check_all_embedding_configs",
     "get_available_embedding_providers",
+    # Embedding Service - Singleton
+    "EmbeddingService",
+    "get_embedding_service",
+    "embed_text",
+    "embed_texts",
     # Rerank Model - Core classes and types
     "RerankModel",
     "RerankProvider",

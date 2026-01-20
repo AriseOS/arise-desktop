@@ -6,7 +6,7 @@ within that state.
 """
 
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -43,6 +43,8 @@ class Intent(BaseModel):
         session_id: Session ID (optional).
         attributes: Additional metadata.
         confidence_score: Confidence score for LLM extraction (optional).
+        description: Natural language description of the intent (optional).
+        embedding_vector: Embedding vector for semantic search (optional).
     """
 
     # Unique identifier
@@ -97,6 +99,14 @@ class Intent(BaseModel):
     # Confidence (for LLM extraction)
     confidence_score: Optional[float] = Field(
         default=None, description='Confidence score', ge=0.0, le=1.0)
+
+    # Description and embedding for semantic search
+    description: Optional[str] = Field(
+        default=None,
+        description='Natural language description of the intent (e.g., "Click on Submit Order button")'
+    )
+    embedding_vector: Optional[List[float]] = Field(
+        default=None, description='Embedding vector for semantic search')
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary.

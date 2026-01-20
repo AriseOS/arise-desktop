@@ -244,9 +244,12 @@ class WorkflowProcessor:
         print(f"✓ Generated {len(manages)} manage edges")
         print()
 
-        # Stage 4.5: Generate state descriptions and embeddings
+        # Stage 4.5: Generate embeddings
         if self.embedding_model:
-            print("Stage 4.5: Generating state descriptions and embeddings...")
+            print("Stage 4.5: Generating embeddings...")
+            print("  → Generating intent embeddings...")
+            self._generate_intent_embeddings(intents)
+            print("  → Generating state embeddings...")
             self._generate_state_embeddings(states)
             print()
 
@@ -479,6 +482,95 @@ class WorkflowProcessor:
             except Exception as err:
                 print(f"Warning: Failed to store manage edge: {str(err)}")
 
+    def _generate_intent_description(self, intent: Intent) -> str:
+        """Generate a natural language description for an intent.
+
+        Combines intent type, element text, and value to create a semantic description
+        suitable for embedding and search.
+
+        Args:
+            intent: Intent object to describe
+
+        Returns:
+            Natural language description of the intent
+        """
+        parts = []
+
+        # Map intent type to readable action
+        type_mapping = {
+            "ClickElement": "Click",
+            "TypeText": "Type",
+            "SelectOption": "Select",
+            "Scroll": "Scroll",
+            "Hover": "Hover over",
+            "Submit": "Submit",
+            "Navigate": "Navigate to",
+            "Copy": "Copy",
+            "Paste": "Paste",
+        }
+
+        action = type_mapping.get(intent.type, intent.type)
+        parts.append(action)
+
+        # Add element text if available
+        if intent.text:
+            parts.append(f"'{intent.text}'")
+
+        # Add value if available (for input/select)
+        if intent.value:
+            if intent.type == "TypeText":
+                parts.append(f"with value '{intent.value}'")
+            elif intent.type == "SelectOption":
+                parts.append(f"option '{intent.value}'")
+
+        # Add element context if no text
+        if not intent.text and intent.element_tag:
+            parts.append(f"on {intent.element_tag} element")
+
+        # Add page context
+        if intent.page_title:
+            parts.append(f"on page '{intent.page_title}'")
+
+        return " ".join(parts)
+
+    def _generate_intent_embeddings(self, intents: List[Intent]):
+        """Generate embeddings for intents based on their descriptions.
+
+        This method processes intents in batches to generate embeddings efficiently.
+        For each intent, it first generates a description, then embeds it.
+
+        Args:
+            intents: List of Intent objects
+        """
+        if not self.embedding_model:
+            return
+
+        if not intents:
+            print("  Warning: No intents to embed")
+            return
+
+        # Generate descriptions for all intents
+        for intent in intents:
+            if not intent.description:
+                intent.description = self._generate_intent_description(intent)
+
+        # Extract descriptions
+        descriptions = [intent.description for intent in intents]
+
+        try:
+            # Generate embeddings in batch
+            print(f"  Generating embeddings for {len(descriptions)} intent descriptions...")
+            responses = self.embedding_model.embed_batch(descriptions)
+
+            # Assign embeddings back to intents
+            for intent, response in zip(intents, responses):
+                intent.embedding_vector = response.to_list()
+
+            print(f"  ✓ Generated {len(responses)} intent embeddings")
+
+        except Exception as err:
+            print(f"  Warning: Failed to generate intent embeddings: {str(err)}")
+
     def _generate_state_embeddings(self, states: List[State]):
         """Generate embeddings for states based on their descriptions.
 
@@ -504,18 +596,18 @@ class WorkflowProcessor:
         try:
             # Generate embeddings in batch
             print(
-                f"Generating embeddings for {len(descriptions)} state descriptions..."
+                f"  Generating embeddings for {len(descriptions)} state descriptions..."
             )
-            response = self.embedding_model.embed(descriptions)
+            responses = self.embedding_model.embed_batch(descriptions)
 
             # Assign embeddings back to states
-            for state, embedding in zip(states_with_descriptions, response.embeddings):
-                state.embedding_vector = embedding
+            for state, response in zip(states_with_descriptions, responses):
+                state.embedding_vector = response.to_list()
 
-            print(f"✓ Generated {len(response.embeddings)} embeddings")
+            print(f"  ✓ Generated {len(responses)} state embeddings")
 
         except Exception as err:
-            print(f"Warning: Failed to generate state embeddings: {str(err)}")
+            print(f"  Warning: Failed to generate state embeddings: {str(err)}")
 
     def _generate_workflow_description(
         self, workflow_data: List[Dict[str, Any]]
@@ -634,8 +726,8 @@ class WorkflowProcessor:
         # Generate embedding for phrase if embedding_model is available
         if self.embedding_model and description:
             try:
-                response = self.embedding_model.embed([description])
-                phrase.embedding_vector = response.embeddings[0]
+                response = self.embedding_model.embed(description)
+                phrase.embedding_vector = response.to_list()
             except Exception as err:
                 print(f"Warning: Failed to generate phrase embedding: {str(err)}")
 

@@ -20,6 +20,7 @@ from src.cloud_backend.memgraph.memory.memory import (
 from src.cloud_backend.memgraph.ontology.action import Action
 from src.cloud_backend.memgraph.ontology.cognitive_phrase import CognitivePhrase
 from src.cloud_backend.memgraph.ontology.domain import Domain, Manage
+from src.cloud_backend.memgraph.ontology.intent import Intent
 from src.cloud_backend.memgraph.ontology.state import State
 
 
@@ -726,6 +727,69 @@ class GraphStateManager(StateManager):
             return k_hop_states
         except Exception as e:
             print(f"Error getting k-hop neighbors: {e}")
+            return []
+
+    def search_intents_by_embedding(
+        self, query_vector: List[float], top_k: int = 10
+    ) -> List[tuple[Intent, State, float]]:
+        """Search intents by embedding vector similarity.
+
+        Since intents are embedded within states, this method searches through
+        all states and their contained intents to find the most similar ones.
+
+        Args:
+            query_vector: Query embedding vector.
+            top_k: Number of top results to return.
+
+        Returns:
+            List of tuples (Intent, State, similarity_score) for top-k similar intents,
+            where State is the parent state containing the intent.
+        """
+        def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
+            """Calculate cosine similarity between two vectors."""
+            if not vec1 or not vec2 or len(vec1) != len(vec2):
+                return 0.0
+
+            dot_product = sum(a * b for a, b in zip(vec1, vec2))
+            norm1 = math.sqrt(sum(a * a for a in vec1))
+            norm2 = math.sqrt(sum(b * b for b in vec2))
+
+            if norm1 == 0 or norm2 == 0:
+                return 0.0
+
+            return dot_product / (norm1 * norm2)
+
+        try:
+            # Get all states
+            all_states = self.list_states()
+
+            # Collect all intents with their parent states and calculate similarities
+            similarities = []
+            for state in all_states:
+                if not state.intents:
+                    continue
+
+                for intent_data in state.intents:
+                    # Convert intent data to Intent object if needed
+                    if isinstance(intent_data, dict):
+                        intent = Intent.from_dict(intent_data)
+                    elif isinstance(intent_data, Intent):
+                        intent = intent_data
+                    else:
+                        continue
+
+                    # Calculate similarity if intent has embedding
+                    if intent.embedding_vector:
+                        similarity = cosine_similarity(query_vector, intent.embedding_vector)
+                        similarities.append((intent, state, similarity))
+
+            # Sort by similarity (descending)
+            similarities.sort(key=lambda x: x[2], reverse=True)
+
+            # Return top-k
+            return similarities[:top_k]
+        except Exception as e:
+            print(f"Error searching intents by embedding: {e}")
             return []
 
 

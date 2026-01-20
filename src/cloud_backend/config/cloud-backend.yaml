@@ -116,6 +116,16 @@ cors:
   allow_headers:
     - "*"
 
+# Embedding Model Configuration
+# For semantic search in Memory system
+embedding:
+  provider: openai  # Options: openai, local_bge (openai works with OpenAI-compatible APIs)
+  model: BAAI/bge-m3  # Model name (supports Chinese/English, 8K tokens)
+  dimension: 1024  # Embedding vector dimension
+  # API configuration (for OpenAI-compatible APIs like SiliconFlow)
+  api_url: https://api.siliconflow.cn/v1  # SiliconFlow API base URL
+  api_key_env: # Environment variable for API key
+
 # Rate Limiting (optional)
 # rate_limit:
 #   enabled: true

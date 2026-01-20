@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from src.cloud_backend.memgraph.ontology.action import Action
 from src.cloud_backend.memgraph.ontology.cognitive_phrase import CognitivePhrase
 from src.cloud_backend.memgraph.ontology.domain import Domain, Manage
+from src.cloud_backend.memgraph.ontology.intent import Intent
 from src.cloud_backend.memgraph.ontology.state import State
 
 
@@ -309,6 +310,24 @@ class StateManager(ABC):
 
         Returns:
             List of State objects that are exactly k hops away.
+        """
+
+    @abstractmethod
+    def search_intents_by_embedding(
+        self, query_vector: List[float], top_k: int = 10
+    ) -> List[tuple[Intent, State, float]]:
+        """Search intents by embedding vector similarity.
+
+        Since intents are embedded within states, this method searches through
+        all states and their contained intents to find the most similar ones.
+
+        Args:
+            query_vector: Query embedding vector.
+            top_k: Number of top results to return.
+
+        Returns:
+            List of tuples (Intent, State, similarity_score) for top-k similar intents,
+            where State is the parent state containing the intent.
         """
 
 
