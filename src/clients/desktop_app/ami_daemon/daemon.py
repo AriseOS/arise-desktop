@@ -48,6 +48,7 @@ from src.clients.desktop_app.ami_daemon.services.workflow_history import Workflo
 from src.clients.desktop_app.ami_daemon.services.cdp_recorder import CDPRecorder
 from src.clients.desktop_app.ami_daemon.services.cloud_client import CloudClient
 from src.clients.desktop_app.ami_daemon.base_agent.tools.browser_use.extension_installer import ensure_extensions_installed
+from src.clients.desktop_app.ami_daemon.routers.quick_task import router as quick_task_router, configure_service as configure_quick_task
 
 # Load configuration first (needed for logging setup)
 config = get_config()
@@ -286,6 +287,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include quick task router
+app.include_router(quick_task_router)
 
 
 # ============================================================================

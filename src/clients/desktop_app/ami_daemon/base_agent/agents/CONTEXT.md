@@ -33,6 +33,7 @@ all_schemas = get_all_agent_schemas()
 | `variable_agent.py` | VariableAgent | `inputs.operation`, `inputs.data` |
 | `autonomous_browser_agent.py` | AutonomousBrowserAgent | `inputs.task` |
 | `tavily_agent.py` | TavilyAgent | `inputs.operation`, `inputs.query` |
+| `eigent_browser_agent.py` | EigentBrowserAgent | `inputs.task`, `inputs.start_url` |
 
 ### Infrastructure
 
@@ -186,3 +187,63 @@ interaction_steps:
 | `tavily_agent.py` | `src/cloud_backend/services/skills/repository/agent-specs/SKILL.md` |
 
 Also update `docs/base_app/*_agent_spec.md` (source of truth for specs).
+
+## EigentBrowserAgent
+
+LLM-guided browser automation agent ported from CAMEL-AI/Eigent project. Uses the ReAct pattern:
+1. **Observe** - Capture page snapshot (DOM → YAML-like text with `[ref=eN]` element references)
+2. **Think** - Send snapshot + task to LLM, get plan + next action
+3. **Act** - Execute action via ActionExecutor
+4. **Repeat** - Until task complete or max_steps reached
+
+### LLM Integration (CRS Proxy)
+
+EigentBrowserAgent uses the same LLM provider configuration as other agents:
+
+```
+┌─────────────────┐      ┌──────────────────────┐      ┌─────────────────┐
+│  AMI Daemon     │      │  CRS Proxy           │      │  Anthropic API  │
+│  (Desktop App)  │ ───► │  api.ariseos.com/api │ ───► │                 │
+│                 │      │                      │      │                 │
+│  X-Ami-API-Key  │      │  (validates key)     │      │                 │
+└─────────────────┘      └──────────────────────┘      └─────────────────┘
+```
+
+**Configuration Flow:**
+1. Router (`routers/quick_task.py`) reads `llm.use_proxy` and `llm.proxy_url` from `app-backend.yaml`
+2. Service (`services/quick_task_service.py`) stores `api_key`, `model`, and `base_url`
+3. Agent (`eigent_browser_agent.py`) gets config from `context.agent_instance.provider`
+4. Anthropic client is created with `base_url` pointing to CRS proxy
+
+**Required Header:** `X-Ami-API-Key` (user's AMI API key in `ami_xxxxx` format)
+
+### System Prompt
+
+Returns JSON with:
+```json
+{
+  "plan": ["Step 1", "Step 2"],
+  "action": {"type": "click", "ref": "e1"}
+}
+```
+
+### Supported Action Types
+
+| Action | Format | Description |
+|--------|--------|-------------|
+| `click` | `{"type": "click", "ref": "e1"}` | Click element by ref, text, or selector |
+| `type` | `{"type": "type", "ref": "e1", "text": "..."}` | Type text into element |
+| `select` | `{"type": "select", "ref": "e1", "value": "..."}` | Select dropdown option |
+| `wait` | `{"type": "wait", "timeout": 2000}` | Wait for timeout or element |
+| `scroll` | `{"type": "scroll", "direction": "down"}` | Scroll page |
+| `enter` | `{"type": "enter", "ref": "e1"}` | Press Enter key |
+| `navigate` | `{"type": "navigate", "url": "..."}` | Navigate to URL |
+| `back/forward` | `{"type": "back"}` | Browser navigation |
+| `finish` | `{"type": "finish", "summary": "..."}` | Task completed |
+
+### Key Components
+
+- **PageSnapshot** (`tools/eigent_browser/page_snapshot.py`) - DOM → YAML-like snapshot
+- **ActionExecutor** (`tools/eigent_browser/action_executor.py`) - Execute browser actions
+- **HybridBrowserSession** (`tools/eigent_browser/browser_session.py`) - Multi-tab browser management
+- **unified_analyzer.js** - JS script for DOM analysis and element ref assignment

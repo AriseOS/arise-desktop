@@ -79,6 +79,7 @@ All endpoints use `/api/v1/` prefix and follow RESTful conventions.
 - **Data Collections**: `/api/v1/data/collections/*` - Scraped data management
 - **Intent Builder**: `/api/v1/intent-builder/sessions/*` - AI conversation sessions
 - **Agents**: `/api/v1/agents/*` - Agent-based services (scraper-optimizer)
+- **Quick Task**: `/api/v1/quick-task/*` - Autonomous browser tasks (EigentBrowserAgent)
 
 ## Execution Flow
 
@@ -152,3 +153,46 @@ Frontend `waitForBackend()` polls every second:
 ```
 
 Magic number ensures we identify our daemon vs other services on same port.
+
+## Quick Task API
+
+Independent task execution interface for autonomous browser automation. Uses EigentBrowserAgent for LLM-guided browser control.
+
+### Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/quick-task/execute` | POST | Submit task for execution |
+| `/api/v1/quick-task/status/{task_id}` | GET | Get task status |
+| `/api/v1/quick-task/result/{task_id}` | GET | Get task result |
+| `/api/v1/quick-task/cancel/{task_id}` | POST | Cancel running task |
+| `/api/v1/quick-task/ws/{task_id}` | WebSocket | Real-time progress stream |
+
+### Execute Request
+
+```json
+{
+  "task": "Go to google.com and search for Python tutorials",
+  "start_url": "https://www.google.com",
+  "max_steps": 15,
+  "headless": false
+}
+```
+
+Headers:
+- `X-Anthropic-API-Key`: Optional, uses `ANTHROPIC_API_KEY` env var if not provided
+
+### WebSocket Events
+
+```json
+{"event": "connected", "task_id": "abc12345"}
+{"event": "task_started", "task_id": "...", "task": "..."}
+{"event": "task_completed", "output": {...}, "action_history": [...]}
+{"event": "task_failed", "error": "..."}
+{"event": "heartbeat"}
+```
+
+### Files
+
+- `routers/quick_task.py` - API router
+- `services/quick_task_service.py` - Task management service

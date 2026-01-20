@@ -33,6 +33,7 @@ import RecordingDetailPage from "./pages/RecordingDetailPage";
 import WorkflowExecutionLivePage from "./pages/WorkflowExecutionLivePage";
 import DocsPage from "./pages/DocsPage";
 import BackendErrorPage from "./pages/BackendErrorPage";
+import QuickTaskPage from "./pages/QuickTaskPage";
 
 // Import setup styles
 import "./styles/SetupPage.css";
@@ -820,6 +821,16 @@ function App() {
           />
         );
 
+      case "quick-task":
+        return (
+          <QuickTaskPage
+            session={session}
+            onNavigate={navigate}
+            showStatus={showStatus}
+            version={versionInfo?.version || '1.0.0'}
+          />
+        );
+
       default:
         return renderMainPage();
     }
@@ -828,13 +839,14 @@ function App() {
   // Bottom navigation bar
   const renderBottomNav = () => {
     // Hide navigation on certain pages
-    const hideNavPages = ["quick-start", "recording", "execution-monitor", "execution-result"];
+    const hideNavPages = ["quick-start", "recording", "execution-monitor", "execution-result", "quick-task"];
     if (hideNavPages.includes(currentPage)) {
       return null;
     }
 
     const navItems = [
       { id: "quick-start", icon: "record", label: t('nav.record') },
+      { id: "quick-task", icon: "sparkle", label: "Quick Task" },
       { id: "workflows", icon: "workflows", label: t('nav.workflows') },
       { id: "recordings-library", icon: "library", label: t('nav.library') },
     ];
