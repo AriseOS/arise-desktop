@@ -384,6 +384,8 @@ class NetworkXGraph(GraphStore):
             start_props = {k: v for k, v in start_data.items() if not k.startswith('_')}
             end_props = {k: v for k, v in end_data.items() if not k.startswith('_')}
             rel_props = {k: v for k, v in edge_data.items() if not k.startswith('_')}
+            # Include _rel_type for delete operations
+            rel_props['_rel_type'] = edge_data.get('_rel_type')
 
             results.append({
                 'start': start_props,

@@ -83,7 +83,9 @@ from src.cloud_backend.memgraph.ontology import (
     CognitivePhrase,
     Domain,
     Intent,
+    IntentSequence,
     Manage,
+    PageInstance,
     SemanticState,
     State,
     TransitionEdge,
@@ -145,16 +147,9 @@ from src.cloud_backend.memgraph.services import (
     prompt_registry,
 )
 
-# Workflow processing and semantic extraction (LLM-driven pipeline)
+# Workflow processing (URL-based pipeline)
 from src.cloud_backend.memgraph.thinker import (
-    ActionExtractor,
-    ActionExtractionResult,
-    DomainExtractor,
-    DomainExtractionResult,
-    ManageGenerator,
-    ManageGenerationResult,
-    StateIntentExtractor,
-    StateIntentExtractionResult,
+    URLSegment,
     WorkflowProcessor,
     WorkflowProcessingResult,
 )
@@ -165,6 +160,8 @@ __all__ = [
     "Manage",
     "Intent",
     "AtomicIntent",
+    "IntentSequence",
+    "PageInstance",
     "State",
     "SemanticState",
     "Action",
@@ -193,17 +190,10 @@ __all__ = [
     "TaskTool",
     "ToolResult",
     "RetrievalTool",
-    # Thinker - Workflow processing (LLM-driven pipeline)
+    # Thinker - Workflow processing (URL-based pipeline)
     "WorkflowProcessor",
     "WorkflowProcessingResult",
-    "DomainExtractor",
-    "DomainExtractionResult",
-    "StateIntentExtractor",
-    "StateIntentExtractionResult",
-    "ActionExtractor",
-    "ActionExtractionResult",
-    "ManageGenerator",
-    "ManageGenerationResult",
+    "URLSegment",
     # Services - LLM clients
     "LLMClient",
     "LLMMessage",

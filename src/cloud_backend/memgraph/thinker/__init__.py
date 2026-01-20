@@ -1,47 +1,35 @@
-"""Thinker module - LLM-driven workflow processing and semantic extraction.
+"""Thinker module - URL-based workflow processing and semantic extraction.
 
-This module provides production-grade LLM-driven functionality to process user
-workflows from web/app interactions and transform them into structured semantic
-representations:
+This module provides URL-based workflow processing functionality to transform
+user workflows from web/app interactions into structured semantic representations.
 
-Architecture (LLM-Driven):
-    1. Domain Extraction: Identify apps/websites using LLM
-    2. State+Intent Extraction: Extract pages and operations using LLM
-    3. Action Extraction: Identify state transitions using LLM
-    4. Manage Generation: Connect domains to states with visit metadata
-    5. Memory Storage: Store all structures to graph-based memory
+New Architecture (URL-based):
+    1. Parse and validate input events
+    2. Segment events by URL (split by navigate events)
+    3. For each segment:
+       - Find or create State using URL index (real-time merge)
+       - Add PageInstance (concrete URL visit)
+       - Create IntentSequence (ordered operations)
+    4. Create Actions between adjacent segments
+    5. Extract Domains and create Manage edges
+    6. Generate descriptions using LLM
+    7. Generate embeddings batch
+    8. Store all structures to memory
 
 Core Components:
     - WorkflowProcessor: Main orchestrator for the complete pipeline
-    - DomainExtractor: LLM-driven domain extraction
-    - StateIntentExtractor: LLM-driven state and intent extraction
-    - ActionExtractor: LLM-driven action (transition) extraction
-    - ManageGenerator: Domain-state connection generator
+    - URLSegment: Represents events that occurred on the same URL
+    - WorkflowProcessingResult: Contains all extracted structures
 """
 
-# LLM-driven pipeline components
-from src.cloud_backend.memgraph.thinker.action_extractor import ActionExtractor, ActionExtractionResult
-from src.cloud_backend.memgraph.thinker.domain_extractor import DomainExtractor, DomainExtractionResult
-from src.cloud_backend.memgraph.thinker.manage_generator import ManageGenerator, ManageGenerationResult
-from src.cloud_backend.memgraph.thinker.state_intent_extractor import (
-    StateIntentExtractor,
-    StateIntentExtractionResult,
-)
 from src.cloud_backend.memgraph.thinker.workflow_processor import (
+    URLSegment,
     WorkflowProcessor,
     WorkflowProcessingResult,
 )
 
 __all__ = [
-    # LLM-driven pipeline
     "WorkflowProcessor",
     "WorkflowProcessingResult",
-    "DomainExtractor",
-    "DomainExtractionResult",
-    "StateIntentExtractor",
-    "StateIntentExtractionResult",
-    "ActionExtractor",
-    "ActionExtractionResult",
-    "ManageGenerator",
-    "ManageGenerationResult",
+    "URLSegment",
 ]

@@ -80,6 +80,12 @@ class Action(BaseModel):
         le=1.0
     )
 
+    # Semantic description
+    description: Optional[str] = Field(
+        default=None,
+        description='Semantic description of the transition (e.g., "Click Team button to view team page")'
+    )
+
     @model_validator(mode='after')
     def validate_state_transition(self) -> 'Action':
         """Validate that source and target are different states.

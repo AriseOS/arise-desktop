@@ -17,10 +17,13 @@ from src.cloud_backend.memgraph.memory.memory import (
     Memory,
     StateManager,
 )
+from src.cloud_backend.memgraph.memory.url_index import URLIndex
 from src.cloud_backend.memgraph.ontology.action import Action
 from src.cloud_backend.memgraph.ontology.cognitive_phrase import CognitivePhrase
 from src.cloud_backend.memgraph.ontology.domain import Domain, Manage
 from src.cloud_backend.memgraph.ontology.intent import Intent
+from src.cloud_backend.memgraph.ontology.intent_sequence import IntentSequence
+from src.cloud_backend.memgraph.ontology.page_instance import PageInstance
 from src.cloud_backend.memgraph.ontology.state import State
 
 
@@ -198,7 +201,6 @@ class GraphManageManager(ManageManager):
                 end_node_id_value=manage.state_id,
                 rel_type=self.rel_type,
                 properties=properties,
-                upsert_nodes=False  # Nodes should already exist
             )
             return True
         except Exception as e:
@@ -829,7 +831,6 @@ class GraphActionManager(ActionManager):
                 end_node_id_value=action.target,
                 rel_type=rel_type,
                 properties=properties,
-                upsert_nodes=False,  # Assume nodes already exist
                 start_node_id_key="id",
                 end_node_id_key="id",
             )
@@ -930,22 +931,21 @@ class GraphActionManager(ActionManager):
             # Delete the first relationship found
             # Note: If there are multiple relationships, only the first is deleted
             rel_data = rels[0]['rel']
-            rel_type = rel_data.get('type')
 
-            if rel_type:
-                # Use the relationship type from properties
-                formatted_rel_type = self.rel_type_prefix + rel_type.upper().replace(" ", "_")
-            else:
-                # Fallback: try to delete with any relationship type
-                # This may not work for all GraphStore implementations
-                formatted_rel_type = None
+            # Use the actual relationship type stored in _rel_type
+            rel_type = rel_data.get('_rel_type')
+            if not rel_type:
+                # Fallback: construct from properties 'type' field
+                prop_type = rel_data.get('type')
+                if prop_type:
+                    rel_type = self.rel_type_prefix + prop_type.upper().replace(" ", "_")
 
             return self.graph_store.delete_relationship(
                 start_node_label=self.node_label,
                 start_node_id_value=source_id,
                 end_node_label=self.node_label,
                 end_node_id_value=target_id,
-                rel_type=formatted_rel_type if formatted_rel_type else ""
+                rel_type=rel_type if rel_type else ""
             )
         except Exception as e:
             print(f"Error deleting action: {e}")
@@ -1206,12 +1206,19 @@ class WorkflowMemory(Memory):
 
     Concrete implementation of Memory interface for managing workflow-based
     memory with States, Actions, and CognitivePhrases.
+
+    New Features (from memory-graph-ontology-design.md):
+        - URL Index: Fast URL to State lookup using in-memory Dict
+        - State Merge: Real-time merge when same URL is encountered
+        - PageInstance: Concrete URL instances within abstract States
+        - IntentSequence: Ordered operation sequences with semantic search
     """
 
     def __init__(
         self,
         graph_store: GraphStore,
         phrase_manager: Optional[CognitivePhraseManager] = None,
+        build_url_index: bool = True,
     ):
         """Initialize WorkflowMemory.
 
@@ -1220,6 +1227,7 @@ class WorkflowMemory(Memory):
             phrase_manager: Optional CognitivePhraseManager instance.
                 If not provided, uses InMemoryCognitivePhraseManager.
                 All cognitive phrases are stored permanently with unique IDs.
+            build_url_index: Whether to build URL index from graph on init (default True).
         """
         domain_manager = GraphDomainManager(graph_store)
         state_manager = GraphStateManager(graph_store)
@@ -1237,6 +1245,13 @@ class WorkflowMemory(Memory):
             phrase_manager
         )
         self.graph_store = graph_store
+
+        # Initialize URL index for fast URL to State lookup
+        self.url_index = URLIndex()
+        if build_url_index:
+            url_count = self.url_index.build_from_graph(graph_store)
+            if url_count > 0:
+                print(f"URLIndex: Loaded {url_count} URLs from graph")
 
     def add_workflow_step(
         self,
@@ -1450,6 +1465,296 @@ class WorkflowMemory(Memory):
             print(f"Error importing memory: {e}")
             return False
 
+    # ==================== NEW METHODS FOR ABSTRACT STATE DESIGN ====================
+
+    def find_state_by_url(self, url: str) -> Optional[State]:
+        """Find the State that contains the given URL.
+
+        This method uses the URL index for O(1) lookup to find which
+        State a URL belongs to. This is the core method for State
+        deduplication (same URL = same State).
+
+        Args:
+            url: URL to look up.
+
+        Returns:
+            State object if found, None otherwise.
+        """
+        state_id = self.url_index.find_state_by_url(url)
+        if state_id:
+            return self.get_state(state_id)
+        return None
+
+    def find_or_create_state(
+        self,
+        url: str,
+        page_title: Optional[str] = None,
+        timestamp: int = 0,
+        description: Optional[str] = None,
+        domain: Optional[str] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> tuple[State, bool]:
+        """Find existing State by URL or create a new one.
+
+        This implements the real-time merge logic from design doc 8.5:
+        - Check URL index
+        - If exists → reuse existing State
+        - If not → create new State
+
+        Args:
+            url: URL to look up or create State for.
+            page_title: Page title (used when creating new State).
+            timestamp: Timestamp (used when creating new State).
+            description: Description (used when creating new State).
+            domain: Domain this State belongs to.
+            user_id: User ID.
+            session_id: Session ID.
+
+        Returns:
+            Tuple of (State, is_new) where is_new is True if State was created.
+        """
+        # Check if URL exists in index
+        existing_state = self.find_state_by_url(url)
+        if existing_state:
+            return existing_state, False
+
+        # Create new State
+        state = State(
+            page_url=url,
+            page_title=page_title,
+            timestamp=timestamp,
+            description=description,
+            domain=domain,
+            user_id=user_id,
+            session_id=session_id,
+            instances=[],
+            intent_sequences=[],
+        )
+
+        # Save to graph
+        if self.create_state(state):
+            # Add to URL index
+            self.url_index.add_url(url, state.id)
+            return state, True
+
+        raise RuntimeError(f"Failed to create State for URL: {url}")
+
+    def add_page_instance(
+        self,
+        state_id: str,
+        instance: PageInstance,
+    ) -> bool:
+        """Add a PageInstance to an existing State.
+
+        This method adds a concrete URL instance to an abstract State,
+        and updates the URL index accordingly.
+
+        Args:
+            state_id: ID of the State to add instance to.
+            instance: PageInstance to add.
+
+        Returns:
+            True if added successfully, False otherwise.
+        """
+        try:
+            # Get existing state
+            state = self.get_state(state_id)
+            if not state:
+                print(f"Error: State {state_id} not found")
+                return False
+
+            # Add instance to state
+            state.add_instance(instance)
+
+            # Update state in graph
+            if not self.state_manager.update_state(state):
+                return False
+
+            # Update URL index
+            self.url_index.add_url(instance.url, state_id)
+
+            return True
+        except Exception as e:
+            print(f"Error adding page instance: {e}")
+            return False
+
+    def add_intent_sequence(
+        self,
+        state_id: str,
+        sequence: IntentSequence,
+    ) -> bool:
+        """Add an IntentSequence to an existing State with deduplication.
+
+        IntentSequences are deduplicated by description - if a sequence
+        with the same description already exists, it won't be added.
+
+        Args:
+            state_id: ID of the State to add sequence to.
+            sequence: IntentSequence to add.
+
+        Returns:
+            True if added (or duplicate found), False on error.
+        """
+        try:
+            # Get existing state
+            state = self.get_state(state_id)
+            if not state:
+                print(f"Error: State {state_id} not found")
+                return False
+
+            # Add sequence to state (handles deduplication)
+            added = state.add_intent_sequence(sequence)
+
+            if added:
+                # Update state in graph
+                return self.state_manager.update_state(state)
+
+            # Duplicate found - still return True (not an error)
+            return True
+        except Exception as e:
+            print(f"Error adding intent sequence: {e}")
+            return False
+
+    def search_intent_sequences_by_embedding(
+        self, query_vector: List[float], top_k: int = 10
+    ) -> List[tuple[IntentSequence, State, float]]:
+        """Search IntentSequences by embedding vector similarity.
+
+        This implements the two-level retrieval from design doc 5.6:
+        - Search through all states and their intent_sequences
+        - Return matching IntentSequences with their parent State
+
+        Args:
+            query_vector: Query embedding vector.
+            top_k: Number of top results to return.
+
+        Returns:
+            List of tuples (IntentSequence, State, similarity_score).
+        """
+        def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
+            """Calculate cosine similarity between two vectors."""
+            if not vec1 or not vec2 or len(vec1) != len(vec2):
+                return 0.0
+
+            dot_product = sum(a * b for a, b in zip(vec1, vec2))
+            norm1 = math.sqrt(sum(a * a for a in vec1))
+            norm2 = math.sqrt(sum(b * b for b in vec2))
+
+            if norm1 == 0 or norm2 == 0:
+                return 0.0
+
+            return dot_product / (norm1 * norm2)
+
+        try:
+            # Get all states
+            all_states = self.state_manager.list_states()
+
+            # Collect all intent sequences with their parent states
+            similarities = []
+            for state in all_states:
+                if not state.intent_sequences:
+                    continue
+
+                for seq_data in state.intent_sequences:
+                    # Convert to IntentSequence object if needed
+                    if isinstance(seq_data, dict):
+                        sequence = IntentSequence.from_dict(seq_data)
+                    elif isinstance(seq_data, IntentSequence):
+                        sequence = seq_data
+                    else:
+                        continue
+
+                    # Calculate similarity if sequence has embedding
+                    if sequence.embedding_vector:
+                        similarity = cosine_similarity(query_vector, sequence.embedding_vector)
+                        similarities.append((sequence, state, similarity))
+
+            # Sort by similarity (descending)
+            similarities.sort(key=lambda x: x[2], reverse=True)
+
+            # Return top-k
+            return similarities[:top_k]
+        except Exception as e:
+            print(f"Error searching intent sequences by embedding: {e}")
+            return []
+
+    def find_path(
+        self,
+        from_state_id: str,
+        to_state_id: str,
+        max_depth: int = 10,
+    ) -> Optional[List[tuple[State, Optional[Action]]]]:
+        """Find the shortest path between two States.
+
+        This implements the path finding from design doc 4.2:
+        - BFS to find shortest path
+        - Return list of (State, Action) tuples
+
+        Args:
+            from_state_id: Starting State ID.
+            to_state_id: Target State ID.
+            max_depth: Maximum number of edges (transitions) to traverse.
+
+        Returns:
+            List of (State, Action) tuples representing the path,
+            or None if no path found. Action is None for the first State.
+        """
+        if from_state_id == to_state_id:
+            state = self.get_state(from_state_id)
+            return [(state, None)] if state else None
+
+        # BFS to find shortest path
+        from collections import deque
+
+        # Queue entries: (current_state_id, path_so_far)
+        # path_so_far is a list of (state_id, action_to_reach_it)
+        queue = deque([(from_state_id, [(from_state_id, None)])])
+        visited = {from_state_id}
+
+        while queue:
+            current_id, path = queue.popleft()
+
+            # path length = number of nodes, edges = nodes - 1
+            # max_depth is edge count, so check: (len(path) - 1) >= max_depth
+            if len(path) - 1 >= max_depth:
+                continue
+
+            # Get outgoing actions from current state
+            actions = self.state_manager.get_connected_actions(current_id, direction="outgoing")
+
+            for action in actions:
+                next_id = action.target
+
+                if next_id == to_state_id:
+                    # Found the target
+                    path.append((next_id, action))
+                    # Convert to State objects
+                    result = []
+                    for state_id, action_obj in path:
+                        state = self.get_state(state_id)
+                        if state:
+                            result.append((state, action_obj))
+                    return result
+
+                if next_id not in visited:
+                    visited.add(next_id)
+                    new_path = path + [(next_id, action)]
+                    queue.append((next_id, new_path))
+
+        return None  # No path found
+
+    def rebuild_url_index(self) -> int:
+        """Rebuild the URL index from the graph store.
+
+        This can be used if the index gets out of sync or after
+        bulk operations.
+
+        Returns:
+            Number of URLs indexed.
+        """
+        return self.url_index.build_from_graph(self.graph_store)
+
 
 __all__ = [
     "GraphDomainManager",
@@ -1458,4 +1763,5 @@ __all__ = [
     "GraphActionManager",
     "InMemoryCognitivePhraseManager",
     "WorkflowMemory",
+    "URLIndex",
 ]
