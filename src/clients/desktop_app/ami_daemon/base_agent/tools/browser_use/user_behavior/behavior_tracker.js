@@ -599,6 +599,10 @@
         if (hoverState.element === e.target && hoverState.startTime) {
             const duration = Date.now() - hoverState.startTime;
 
+            // TEMPORARILY DISABLED: hover events are causing confusion in workflow generation
+            // because click → hover → navigate pattern breaks the "click followed by navigate" rule
+            // TODO: Re-enable when workflow generation can handle hover events properly
+            /*
             // Only report if:
             // 1. DOM changed during hover (triggered dropdown, tooltip, etc.)
             // 2. Hover lasted at least MIN_HOVER_DURATION ms
@@ -609,6 +613,7 @@
                     mutation_count: hoverState.mutationCount
                 });
             }
+            */
 
             // Reset state
             hoverState.element = null;

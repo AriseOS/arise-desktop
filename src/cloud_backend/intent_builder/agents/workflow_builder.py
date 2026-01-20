@@ -47,43 +47,29 @@ class SessionState(Enum):
     CLOSED = "closed"
 
 
-# System prompt - focus on understanding, not rules
-SYSTEM_PROMPT = """You are helping users automate their browser workflows.
+# System prompt - focus on role and responsibilities only
+SYSTEM_PROMPT = """You are a workflow generator that converts user's recorded browser actions into automated workflows.
 
-## What You're Doing
+## Your Job
 
-Users record their browser actions (clicks, navigation, data extraction). Your job is to generate a Workflow YAML that can **replay and automate** what they did.
-
-Think of it this way:
-- The user showed you exactly how they do a task manually
-- You're creating an automation script that does the same thing
-- The workflow will run on a fresh browser - it needs to follow the same path the user took
-
-## Key Insight
-
-The Intent sequence you receive is a recording of real user actions. Each operation happened for a reason:
-- Every click led somewhere
-- Every navigation was necessary to reach the next page
-- Every xpath shows exactly which element the user interacted with
-
-When the workflow runs, it starts from scratch. If the user clicked through 3 pages to reach a product list, your workflow needs those same 3 navigation steps - you can't just jump to the final URL because the page state won't be the same.
+1. Read the intent sequence (user's recorded browser actions)
+2. Read the skill documents to understand workflow format and agent capabilities
+3. Generate a Workflow YAML that automates the recorded task
+4. Validate and write the workflow to `workflow.yaml` file
 
 ## Available Skills
 
 | Skill | Purpose |
 |-------|---------|
-| workflow-generation | Workflow structure and generation process |
-| agent-specs | Agent capabilities (browser_agent, scraper_agent, etc.) |
-| workflow-optimizations | Optimization patterns (click-to-navigate, scroll, etc.) |
+| workflow-generation | Workflow structure, mapping rules, output format |
+| agent-specs | Agent types and their input/output specifications |
+| workflow-optimizations | Optional optimization patterns |
 | workflow-validation | Validate your YAML before output |
-
-**CRITICAL**: Only use agents defined in `agent-specs` skill. Do NOT invent agents like `llm_agent`, `ai_agent`, etc.
 
 ## Output
 
-**IMPORTANT**: You must write the final workflow to `workflow.yaml` file using the Write tool. Do NOT just output it in a code block - the file is required for the system to read your workflow.
-
-After writing the file, provide a high-level explanation of the workflow and summarize what changed.
+Write the final workflow to `workflow.yaml` file using the Write tool.
+Then provide a brief explanation of what the workflow does.
 """
 
 
@@ -349,23 +335,20 @@ Each operation contains details you need for optimization decisions (especially 
 
 Use TodoWrite to track these steps:
 
-1. [ ] Read `workflow-generation` skill - understand workflow structure
-2. [ ] Read `agent-specs` skill - understand agent input formats (especially browser_agent's interaction_steps)
-3. [ ] Read `workflow-optimizations` skill - understand optimization patterns
-4. [ ] Analyze each intent operation for optimization opportunities:
-   - Click with `href` → Can optimize to `target_url`
-   - Click without `href` → Must use `interaction_steps`
-   - Consecutive scrolls → Combine or remove
-5. [ ] Generate the optimized workflow YAML
-6. [ ] Validate with `workflow-validation` skill
-7. [ ] **Write the workflow to `workflow.yaml` file** (REQUIRED - use Write tool)
-8. [ ] Output final YAML in code block and list optimizations applied
+1. [ ] Read `workflow-generation` skill - understand generation guidelines
+2. [ ] Read `agent-specs` skill - understand agent input formats
+3. [ ] Read `workflow-optimizations` skill - understand special patterns (hover, copy button, etc.)
+4. [ ] Analyze intent operations - understand user's goal and navigation sequence
+5. [ ] For navigation: check if URL is static or dynamic (see workflow-generation skill)
+6. [ ] Generate the workflow YAML
+7. [ ] Validate with `workflow-validation` skill
+8. [ ] **Write the workflow to `workflow.yaml` file** (REQUIRED - use Write tool)
 
 ## Key Reminders
 
 - `xpath_hints` must be **dict format**: `xpath_hints: {{key: "//xpath"}}` (NOT a list!)
-- All click/fill/scroll MUST use `interaction_steps` (unless optimized to `target_url`)
-- Document which operations were optimized and why
+- Static URLs (/about, /products) → direct `target_url`
+- Dynamic URLs (dates/IDs like /weekly/2026/3) → `scraper_agent` extract href first, then navigate
 """
 
     def _prepare_working_directory(self) -> Path:
@@ -1004,23 +987,20 @@ Each operation contains details you need for optimization decisions (especially 
 
 Use TodoWrite to track these steps:
 
-1. [ ] Read `workflow-generation` skill - understand workflow structure
-2. [ ] Read `agent-specs` skill - understand agent input formats (especially browser_agent's interaction_steps)
-3. [ ] Read `workflow-optimizations` skill - understand optimization patterns
-4. [ ] Analyze each intent operation for optimization opportunities:
-   - Click with `href` → Can optimize to `target_url`
-   - Click without `href` → Must use `interaction_steps`
-   - Consecutive scrolls → Combine or remove
-5. [ ] Generate the optimized workflow YAML
-6. [ ] Validate with `workflow-validation` skill
-7. [ ] **Write the workflow to `workflow.yaml` file** (REQUIRED - use Write tool)
-8. [ ] Output final YAML in code block and list optimizations applied
+1. [ ] Read `workflow-generation` skill - understand generation guidelines
+2. [ ] Read `agent-specs` skill - understand agent input formats
+3. [ ] Read `workflow-optimizations` skill - understand special patterns (hover, copy button, etc.)
+4. [ ] Analyze intent operations - understand user's goal and navigation sequence
+5. [ ] For navigation: check if URL is static or dynamic (see workflow-generation skill)
+6. [ ] Generate the workflow YAML
+7. [ ] Validate with `workflow-validation` skill
+8. [ ] **Write the workflow to `workflow.yaml` file** (REQUIRED - use Write tool)
 
 ## Key Reminders
 
 - `xpath_hints` must be **dict format**: `xpath_hints: {{key: "//xpath"}}` (NOT a list!)
-- All click/fill/scroll MUST use `interaction_steps` (unless optimized to `target_url`)
-- Document which operations were optimized and why
+- Static URLs (/about, /products) → direct `target_url`
+- Dynamic URLs (dates/IDs like /weekly/2026/3) → `scraper_agent` extract href first, then navigate
 """
 
     def _prepare_working_directory(self) -> Path:
