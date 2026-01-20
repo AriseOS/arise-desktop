@@ -338,7 +338,7 @@ Use TodoWrite to track these steps:
 1. [ ] Read `workflow-generation` skill - understand generation guidelines
 2. [ ] Read `agent-specs` skill - understand agent input formats
 3. [ ] Read `workflow-optimizations` skill - understand special patterns (hover, copy button, etc.)
-4. [ ] Analyze intent operations - understand user's goal, skip meaningless actions
+4. [ ] Analyze intent operations - understand user's goal and navigation sequence
 5. [ ] For navigation: check if URL is static or dynamic (see workflow-generation skill)
 6. [ ] Generate the workflow YAML
 7. [ ] Validate with `workflow-validation` skill
@@ -990,7 +990,7 @@ Use TodoWrite to track these steps:
 1. [ ] Read `workflow-generation` skill - understand generation guidelines
 2. [ ] Read `agent-specs` skill - understand agent input formats
 3. [ ] Read `workflow-optimizations` skill - understand special patterns (hover, copy button, etc.)
-4. [ ] Analyze intent operations - understand user's goal, skip meaningless actions
+4. [ ] Analyze intent operations - understand user's goal and navigation sequence
 5. [ ] For navigation: check if URL is static or dynamic (see workflow-generation skill)
 6. [ ] Generate the workflow YAML
 7. [ ] Validate with `workflow-validation` skill

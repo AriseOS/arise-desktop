@@ -7,27 +7,24 @@ description: Generate workflows from user's recorded browser actions.
 
 ## Core Principle
 
-**Understand the user's goal, not just replay every action.**
-
-The recording shows what the user did, but not every action is meaningful:
-- Some clicks are navigation → need to reproduce
-- Some clicks are meaningless (clicking blank area) → skip
-- Some scrolls trigger lazy loading → need to reproduce
-- Some scrolls are just for viewing → skip (scraper gets full DOM)
-- Select/extract shows what data user wants → use scraper_agent
+**Understand the user's goal and intent operations with real-world web interaction logic to generate a workflow that accomplishes the task.**
 
 ## Generation Guidelines
 
 ### 1. Navigation Steps
 
-**Click + navigate to target page:**
-- Understand if this navigation is necessary for the goal
-- Check the href/target URL:
-  - **Static URL** (`/about`, `/products`, `/contact`) → use direct `target_url`
-  - **Dynamic URL** (contains dates/IDs like `/weekly/2026/3`, `/product/123`) → use `scraper_agent` to extract href, then `browser_agent` to navigate
+**Web navigation is sequential.** Each page provides the context for the next action.
 
-**Meaningless clicks:**
-- Clicks on blank areas, accidental clicks → skip
+Note: Intermediate pages may be required because the target element only exists there, or the page provides necessary context.
+
+**Click followed by navigate:**
+- This is a navigation action. Check the **navigate's target URL**:
+  - **Static URL** (`/about`, `/products`, `/makers`) → use direct `target_url`
+  - **Dynamic URL** (contains dates/IDs like `/weekly/2026/3`, `/product/123`) → use `scraper_agent` to extract href from click element, then `browser_agent` to navigate
+
+**Click without navigate following:**
+- Page interaction (expand button, toggle) → use `interaction_steps`
+- Meaningless click (blank area) → skip
 
 ### 2. Data Extraction
 
@@ -57,6 +54,13 @@ The recording shows what the user did, but not every action is meaningful:
 | Dynamic | Contains date | `/weekly/2026/3`, `/news/2026-01-20` | Extract via scraper |
 | Dynamic | Contains ID | `/product/12345`, `/user/abc` | Extract via scraper |
 | Dynamic | Query params that change | `/search?q=xxx` | Extract via scraper |
+
+**With existing URL variable:** When you have a base URL variable (e.g., `{{product.url}}`), check only the **new path segment** being added:
+- Static suffix (`/makers`, `/team`, `/reviews`) → **directly concatenate**: `"{{product.url}}/makers"` (do NOT extract)
+- Dynamic suffix (contains new ID/date) → extract via scraper
+
+Example: If `{{product.url}}` = `/products/noodle-seed` and user clicks Team tab with href `/products/noodle-seed/makers`:
+- The new segment is just `/makers` (static) → use `"{{product.url}}/makers"`
 
 ## Output Format
 
