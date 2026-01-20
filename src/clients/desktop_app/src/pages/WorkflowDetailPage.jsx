@@ -169,10 +169,16 @@ function WorkflowDetailPage({ session, workflowId, autoRun, onNavigate, showStat
     }
   }, [autoRun, workflowData, loading])
 
-  // Auto-scroll modification log
+  // Auto-scroll modification log - only when on chat tab and content changes
+  const prevLogLengthRef = useRef(modificationLog.length)
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [modificationLog, currentToolUse])
+    // Only scroll if: on chat tab AND new messages added (not initial load)
+    const isNewMessage = modificationLog.length > prevLogLengthRef.current
+    if (activeTab === 'chat' && (isNewMessage || currentToolUse)) {
+      logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
+    prevLogLengthRef.current = modificationLog.length
+  }, [modificationLog, currentToolUse, activeTab])
 
   const loadWorkflowData = async () => {
     // Only show loading spinner if we don't have cached data

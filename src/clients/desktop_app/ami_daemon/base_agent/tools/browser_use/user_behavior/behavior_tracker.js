@@ -352,7 +352,15 @@
         // For click: no additional data needed (element info is enough)
         collector.report('click', e.target, {});
     }, true);
-    
+
+    // Monitor right-click (context menu)
+    document.addEventListener('contextmenu', function(e) {
+        collector.report('contextmenu', e.target, {
+            clientX: e.clientX,
+            clientY: e.clientY
+        });
+    }, true);
+
     // Smart input monitoring: debounced + sensitive field filtering
     let inputTimeouts = new Map();
     const INPUT_DEBOUNCE_DELAY = 1500; // 1.5 seconds after input stops
@@ -525,6 +533,97 @@
             }
         }, 100); // 100ms throttle
     });
+
+    // Hover detection with DOM change monitoring
+    // Only reports hover when it triggers visible DOM changes (dropdowns, tooltips, etc.)
+    const hoverState = {
+        element: null,
+        startTime: null,
+        domChanged: false,
+        mutationCount: 0
+    };
+
+    // MutationObserver to detect DOM changes during hover
+    const hoverMutationObserver = new MutationObserver((mutations) => {
+        if (hoverState.element) {
+            // Count meaningful mutations (not just text changes in unrelated elements)
+            let meaningfulMutations = 0;
+            mutations.forEach(mutation => {
+                // Attribute changes (display, class, style) are most relevant for hover effects
+                if (mutation.type === 'attributes') {
+                    const attrName = mutation.attributeName;
+                    if (['style', 'class', 'hidden', 'aria-expanded', 'aria-hidden'].includes(attrName)) {
+                        meaningfulMutations++;
+                    }
+                }
+                // New elements added (dropdowns, tooltips)
+                if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+                    meaningfulMutations += mutation.addedNodes.length;
+                }
+            });
+
+            if (meaningfulMutations > 0) {
+                hoverState.domChanged = true;
+                hoverState.mutationCount += meaningfulMutations;
+            }
+        }
+    });
+
+    // Start observing DOM for hover-related changes
+    function startHoverObserver() {
+        if (!document.body) {
+            setTimeout(startHoverObserver, 100);
+            return;
+        }
+        hoverMutationObserver.observe(document.body, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['style', 'class', 'hidden', 'aria-expanded', 'aria-hidden']
+        });
+        console.log('👆 Hover mutation observer initialized');
+    }
+
+    // Minimum hover duration to be considered intentional (ms)
+    const MIN_HOVER_DURATION = 200;
+
+    document.addEventListener('mouseenter', function(e) {
+        // Reset hover state for new element
+        hoverState.element = e.target;
+        hoverState.startTime = Date.now();
+        hoverState.domChanged = false;
+        hoverState.mutationCount = 0;
+    }, true);
+
+    document.addEventListener('mouseleave', function(e) {
+        if (hoverState.element === e.target && hoverState.startTime) {
+            const duration = Date.now() - hoverState.startTime;
+
+            // Only report if:
+            // 1. DOM changed during hover (triggered dropdown, tooltip, etc.)
+            // 2. Hover lasted at least MIN_HOVER_DURATION ms
+            if (hoverState.domChanged && duration >= MIN_HOVER_DURATION) {
+                collector.report('hover', e.target, {
+                    duration_ms: duration,
+                    triggered_dom_change: true,
+                    mutation_count: hoverState.mutationCount
+                });
+            }
+
+            // Reset state
+            hoverState.element = null;
+            hoverState.startTime = null;
+            hoverState.domChanged = false;
+            hoverState.mutationCount = 0;
+        }
+    }, true);
+
+    // Initialize hover observer when DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', startHoverObserver);
+    } else {
+        startHoverObserver();
+    }
 
     // Initialize DataLoadDetector after DOM is ready
     let detector;

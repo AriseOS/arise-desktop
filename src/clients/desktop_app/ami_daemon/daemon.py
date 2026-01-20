@@ -47,6 +47,7 @@ from src.clients.desktop_app.ami_daemon.services.workflow_executor import Workfl
 from src.clients.desktop_app.ami_daemon.services.workflow_history import WorkflowHistoryManager
 from src.clients.desktop_app.ami_daemon.services.cdp_recorder import CDPRecorder
 from src.clients.desktop_app.ami_daemon.services.cloud_client import CloudClient
+from src.clients.desktop_app.ami_daemon.base_agent.tools.browser_use.extension_installer import ensure_extensions_installed
 
 # Load configuration first (needed for logging setup)
 config = get_config()
@@ -55,7 +56,11 @@ config = get_config()
 # - app.log: Main system log (rotates based on config)
 # - error.log: Error-only log (WARNING and above)
 # Note: Workflow execution logs are written separately to workflow_history/
+log_level_str = config.get("logging.level", "INFO").upper()
+log_level = getattr(logging, log_level_str, logging.INFO)
 log_dir = setup_logging(
+    console_level=log_level,
+    file_level=log_level,
     max_bytes=config.get("logging.max_bytes", 10 * 1024 * 1024),
     backup_count=config.get("logging.backup_count", 5),
 )
@@ -202,6 +207,12 @@ async def lifespan(app: FastAPI):
             # Store result but continue startup - frontend will handle blocking
         else:
             logger.info(f"✓ Version {APP_VERSION} is compatible")
+
+        # Install bundled browser extensions to browser-use cache (avoids Google download in China)
+        if ensure_extensions_installed():
+            logger.info("✓ Browser extensions installed")
+        else:
+            logger.warning("⚠️ Browser extensions not available (may need to download from Google)")
 
         # Initialize browser manager (but do NOT start browser yet - on-demand startup)
         browser_manager = BrowserManager(config_service=config)
@@ -619,6 +630,49 @@ async def upload_diagnostic(data: dict = None):
     except Exception as e:
         logger.error(f"Failed to collect/upload diagnostic: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/app/shutdown")
+async def shutdown_app():
+    """Graceful shutdown endpoint for cross-platform process termination.
+
+    This endpoint is called by the Tauri app (especially on Windows) to trigger
+    a graceful shutdown of the daemon. It ensures all resources are properly
+    cleaned up before the process exits.
+
+    Flow:
+    1. Respond to the HTTP request immediately (so caller knows shutdown started)
+    2. Schedule cleanup and exit in background
+    3. Process exits after cleanup completes
+
+    Returns:
+        {"success": true, "message": "Shutdown initiated"}
+    """
+    import os
+    import signal
+
+    logger.info("🛑 Shutdown requested via API")
+
+    async def cleanup_and_exit():
+        """Background task to cleanup and exit"""
+        await asyncio.sleep(0.1)  # Let response be sent first
+        logger.info("Starting graceful shutdown...")
+
+        try:
+            await cleanup_resources()
+            cleanup_port_file()
+            logger.info("✅ Cleanup complete, exiting process")
+        except Exception as e:
+            logger.error(f"Error during shutdown cleanup: {e}")
+        finally:
+            # Exit the process
+            # Use os._exit to ensure immediate termination after cleanup
+            os._exit(0)
+
+    # Schedule cleanup in background so we can respond first
+    asyncio.create_task(cleanup_and_exit())
+
+    return {"success": True, "message": "Shutdown initiated"}
 
 
 # ============================================================================

@@ -3,7 +3,7 @@
 
 # App Version Control
 app:
-  minimum_version: "0.0.3"  # Minimum required client app version (force upgrade if below)
+  minimum_version: "0.0.4"  # Minimum required client app version (force upgrade if below)
 
 # Server Configuration
 server:
@@ -52,6 +52,11 @@ llm:
   use_proxy: true  # Always use CRS for LLM calls
   proxy_url: "https://api.ariseos.com/api"  # CRS port (custom configuration)
   # For production, change to: https://crs.ariseos.com
+
+# Tavily Configuration
+# Web search and research via CRS Tavily endpoints
+tavily:
+  api_url: "https://api.ariseos.com/tavily"  # CRS Tavily API base URL
 
   # Anthropic Configuration
   # Note: API keys are provided by users through CRS (Claude Relay Service)

@@ -5,6 +5,17 @@ description: Generate workflows from user's recorded browser actions.
 
 # Workflow Generation
 
+## Context: App Environment
+
+Workflows run inside a desktop app. Understanding this environment helps you generate correct workflows:
+
+- **User records browser actions** → converted to intent operations (your input)
+- **You generate a workflow YAML** → the app executes it
+- **`storage_agent` stores data** → user can view and export data directly in the app UI
+- **No export steps needed in workflow** → the app provides export functionality (CSV, Excel, etc.)
+
+This means: use `storage_agent` with `operation: store` to save extracted data. The user will access and export it through the app interface.
+
 ## IMPORTANT: Output Contract
 
 **All agents output to `result` key**. Always use `outputs: {result: variable_name}`:
@@ -38,12 +49,7 @@ description: Generate workflows from user's recorded browser actions.
 
 Convert user's recorded browser actions (intent operations) into a replayable Workflow YAML.
 
-**Key principle**: The workflow **replays** the user's recorded actions and **stores extracted data**. The app automatically handles data export/download - you do NOT need to add export steps.
-
-**What the workflow does:**
-1. Replay browser navigation and interactions
-2. Extract data from pages (scraper_agent stores data automatically)
-3. That's it! No export/save steps needed.
+**Key principle**: The workflow **replays** the user's recorded actions. Use the available agents to navigate, interact, extract data, and store results.
 
 ## Input: Intent Operations
 
@@ -94,10 +100,103 @@ steps:
 |-----------|---------------|
 | click (no href) | `browser_agent` + `interaction_steps` |
 | click (with href) | `scraper_agent` extract URL + `browser_agent` navigate |
+| click (copy button) | `browser_agent` + `interaction_steps` (clipboard auto-captured) |
 | extract | `scraper_agent` |
 | scroll | `browser_agent` + `interaction_steps` |
 | navigate | `browser_agent` + `target_url` |
+| newtab | `browser_agent` + `interaction_steps` with `action: new_tab` |
+| closetab | `browser_agent` + `interaction_steps` with `action: close_tab` |
 | summarize/transform text | `text_agent` |
+| web search (no specific search recorded) | `tavily_agent` |
+
+### Tab Operations Mapping
+
+When recording contains `newtab` or `closetab` operations:
+
+```yaml
+# newtab operation → open URL in new tab
+- id: open-comparison-tab
+  name: "Open competitor site in new tab"
+  agent: browser_agent
+  inputs:
+    interaction_steps:
+      - task: "Open site in new tab"
+        action: "new_tab"
+        url: "{{url_from_operation}}"
+
+# After working in new tab, switch back to original
+- id: switch-to-original
+  name: "Switch back to original tab"
+  agent: browser_agent
+  inputs:
+    interaction_steps:
+      - task: "Switch to first tab"
+        action: "switch_tab"
+        tab_index: 0
+
+# closetab operation → close current tab
+- id: close-comparison-tab
+  name: "Close current tab"
+  agent: browser_agent
+  inputs:
+    interaction_steps:
+      - task: "Close tab"
+        action: "close_tab"
+```
+
+**Note**: Extra tabs are automatically cleaned up when workflow completes.
+
+### When to use tavily_agent
+
+Use `tavily_agent` when:
+- User query requires searching/retrieving information from the web
+- BUT the intent operations do NOT show a specific search approach (e.g., no Google search, no website search box interaction recorded)
+
+**Example scenarios:**
+- User query: "Search for the latest AI news" + No search operations in intents → Use `tavily_agent`
+- User query: "Find top 10 products" + Intent shows user searched on Google → Use recorded browser operations
+- User query: "Get recent tech news" + Intent shows user browsed a news website → Use recorded browser operations
+
+```yaml
+# When user needs web search but didn't record a specific search method
+- id: search-web
+  agent: tavily_agent
+  inputs:
+    operation: search
+    query: "AI news"           # Derived from user query
+    max_results: 10
+    days: 3                    # For recent content
+    topic: news                # If searching news
+  outputs:
+    result: search_results
+```
+
+**tavily_agent output structure** - for using results in subsequent steps:
+
+```yaml
+# search_results contains:
+{
+  query: "AI news",
+  results: [                          # Array of search results
+    {
+      title: "Article Title",
+      url: "https://example.com/...",
+      content: "Snippet text...",     # Page excerpt
+      score: 0.95,                    # Relevance score
+      published_date: "2024-01-15"    # Optional
+    },
+    ...
+  ],
+  answer: "...",                      # Optional: if include_answer=true
+  images: [...]                       # Optional: if include_images=true
+}
+
+# Common access patterns:
+# - "{{search_results.results}}"        → Full results array
+# - "{{search_results.results.0.url}}"  → First result's URL
+# - "{{search_results.results.0.title}}" → First result's title
+# - "{{search_results.answer}}"         → AI-generated answer (if requested)
+```
 
 ## text_agent
 
@@ -161,6 +260,53 @@ For scroll operations, use `interaction_steps` with empty `xpath_hints`:
 - For simple scroll: use empty `xpath_hints: {}`
 - For scroll to element: provide xpath hints to locate the target element
 - `text` field: "down", "up", or pixel amount (e.g., "500")
+
+## Copy Button Pattern (Clipboard Capture)
+
+When user clicks a "Copy" button that writes to clipboard, use `browser_agent` with outputs to capture the clipboard content:
+
+**Detection**: Look for clicks on elements with:
+- `textContent` containing "Copy", "复制", "Copy to clipboard"
+- `className` containing "copy", "clipboard"
+- Or context suggests copying (e.g., clicking an icon next to a code block)
+
+```yaml
+# Step 1: Click copy button (clipboard is auto-captured)
+- id: click-copy-btn
+  name: "Click copy button to capture data"
+  agent: browser_agent
+  inputs:
+    interaction_steps:
+      - task: "Click the copy button"
+        xpath_hints:
+          copy_btn: "//button[contains(text(), 'Copy')]"  # Use xpath from operation
+  outputs:
+    result: copy_result              # IMPORTANT: must have outputs to get clipboard
+
+# Step 2: Use clipboard content
+- id: process-data
+  name: "Process copied data"
+  agent: text_agent
+  inputs:
+    instruction: "Parse the copied JSON data and extract key information"
+    data: "{{copy_result.clipboard_content}}"
+  outputs:
+    result: parsed_data
+
+# Or store it directly
+- id: store-copied-data
+  name: "Store copied data"
+  agent: storage_agent
+  inputs:
+    operation: store
+    collection: copied_items
+    data: "{{copy_result.clipboard_content}}"
+```
+
+**Important**:
+- Must include `outputs: {result: variable_name}` to access clipboard content
+- `clipboard_content` is only present if click triggered clipboard write
+- Works with `navigator.clipboard.writeText()` and `execCommand('copy')`
 
 ## Key Rule: Click with href
 
@@ -242,7 +388,7 @@ If script generation fails for a step, modify the workflow:
 - Use original URL/href from operation, never simplify
 - For loops ("all items", "each product"), use `foreach`
 - **NEVER write `outputs: null`** - if a step doesn't need output, simply omit the `outputs` field
-- **No export/save steps needed** - scraper_agent automatically stores extracted data; the app handles export. Do NOT add `storage_agent` export steps unless user explicitly asks for it.
+- **No export steps needed** - the app handles data export. Do NOT add `storage_agent` with `operation: export` unless user explicitly asks for it. However, if you need to accumulate data across multiple iterations (e.g., in a foreach loop), you MUST use `storage_agent` with `operation: store` to persist each item.
 
 ### foreach Syntax
 

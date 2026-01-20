@@ -483,6 +483,36 @@
             "daysAgo": "{{count}} 天前"
         }
     },
+    "analysis": {
+        "title": "AI 分析完成",
+        "unnamedTask": "未命名任务",
+        "validation": "请填写任务描述和用户查询",
+        "savingMetadata": "正在保存元数据...",
+        "saveFailed": "保存元数据失败：{{error}}",
+        "loopPattern": "检测到循环模式",
+        "loopCount": "次数：{{count}}",
+        "dataExtraction": "数据提取",
+        "fields": "字段：{{fields}}",
+        "navigation": "页面导航",
+        "depth": "深度：{{depth}}",
+        "aiSummary": "AI 摘要",
+        "patternsTitle": "检测到的模式",
+        "taskDesc": "任务描述",
+        "taskDescHint": "这个工作流做什么？",
+        "taskDescPlaceholder": "例如：从搜索结果页面抓取产品列表...",
+        "userQuery": "用户查询",
+        "userQueryHint": "运行时用户需要提供什么？",
+        "userQueryPlaceholder": "例如：输入要抓取的搜索关键词...",
+        "cancel": "取消",
+        "saving": "保存中...",
+        "confirmBtn": "确认并生成工作流",
+        "tips": {
+            "title": "提示",
+            "tip1": "任务描述帮助 AI 理解工作流的用途",
+            "tip2": "用户查询定义每次运行工作流时需要的输入",
+            "tip3": "您可以稍后在工作流详情页面编辑这些内容"
+        }
+    },
     "quickStart": {
         "title": "快速开始",
         "startRecordingTitle": "开始录制",
@@ -566,6 +596,80 @@
             "closetab": "关闭标签",
             "copy_action": "复制",
             "paste_action": "粘贴"
+        }
+    },
+    "auth": {
+        "loginTitle": "登录您的账户",
+        "createAccountTitle": "创建新账户",
+        "emailLabel": "邮箱",
+        "emailPlaceholder": "输入您的邮箱",
+        "emailHint": "使用您注册时的邮箱",
+        "passwordLabel": "密码",
+        "passwordPlaceholder": "输入密码",
+        "passwordPlaceholderStrong": "输入强密码",
+        "passwordHint": "至少8位，包含大小写字母",
+        "usernameLabel": "用户名",
+        "usernamePlaceholder": "输入用户名",
+        "usernameHint": "至少3个字符",
+        "confirmPasswordLabel": "确认密码",
+        "confirmPasswordPlaceholder": "再次输入密码",
+        "loginBtn": "登录",
+        "registerBtn": "注册",
+        "loggingIn": "登录中...",
+        "creatingAccount": "创建中...",
+        "noAccount": "还没有账户？",
+        "registerLink": "立即注册",
+        "hasAccount": "已有账户？",
+        "loginLink": "立即登录",
+        "validation": {
+            "enterEmail": "请输入邮箱",
+            "enterPassword": "请输入密码",
+            "enterUsername": "请输入用户名",
+            "usernameLength": "用户名至少3个字符",
+            "validEmail": "请输入有效的邮箱地址",
+            "passwordLength": "密码至少8个字符",
+            "passwordUpper": "密码需包含大写字母",
+            "passwordLower": "密码需包含小写字母",
+            "passwordMatch": "两次输入的密码不一致"
+        },
+        "toasts": {
+            "loginSuccess": "登录成功！",
+            "loginFailed": "登录失败：{{error}}",
+            "registerSuccess": "注册成功！",
+            "registerFailed": "注册失败：{{error}}"
+        }
+    },
+    "generation": {
+        "title": "AI 工作流生成",
+        "describeTask": "描述您的任务",
+        "whatToDo": "您想让 AI 做什么？",
+        "placeholder": "例如：从亚马逊搜索结果页面抓取前10个产品的名称、价格和链接...",
+        "generateBtn": "生成工作流",
+        "stepDescription": "AI 将分析您的描述并生成一个可执行的自动化工作流。",
+        "tips": {
+            "title": "提示",
+            "tip1": "描述越详细，生成的工作流越准确",
+            "tip2": "明确指出需要提取的数据字段",
+            "tip3": "说明是否需要翻页或滚动加载",
+            "tip4": "如果需要登录，请先在录制模式下完成登录"
+        },
+        "stages": {
+            "analyzing": "分析中",
+            "understanding": "理解中",
+            "generating": "生成中",
+            "validating": "验证中",
+            "complete": "完成",
+            "failed": "失败"
+        },
+        "hints": {
+            "enterDescription": "请输入任务描述",
+            "initEngine": "正在初始化 AI 引擎...",
+            "loadedRecording": "已加载录制：{{name}}",
+            "startAnalysis": "开始分析任务...",
+            "genSuccess": "工作流生成成功！",
+            "genFinalized": "工作流已准备就绪！",
+            "genFailed": "生成失败：{{error}}",
+            "cancelled": "生成已取消"
         }
     }
 }

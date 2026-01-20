@@ -43,6 +43,7 @@ class WorkflowEngine:
         from ..agents.scraper_agent import ScraperAgent
         from ..agents.storage_agent import StorageAgent
         from ..agents.autonomous_browser_agent import AutonomousBrowserAgent
+        from ..agents.tavily_agent import TavilyAgent
 
         cls._AGENT_TYPES = {
             'text_agent': TextAgent,
@@ -51,6 +52,7 @@ class WorkflowEngine:
             'storage_agent': StorageAgent,
             'browser_agent': BrowserAgent,
             'autonomous_browser_agent': AutonomousBrowserAgent,
+            'tavily_agent': TavilyAgent,
         }
         cls._agent_types_loaded = True
 
@@ -357,6 +359,7 @@ class WorkflowEngine:
                     "items_found": resolved_input.get('items_found', None),
                     "items": resolved_input.get('items', None),
                     "start": resolved_input.get('start', None),
+                    "end": resolved_input.get('end', None),
                     "start_value": resolved_input.get('start_value', None),
                     "match_field": resolved_input.get('match_field', None),
                     "contains": resolved_input.get('contains', None),
@@ -493,8 +496,17 @@ class WorkflowEngine:
                     context.variables[var_name] = agent_output.data[output_key]
                     logger.warning(f"[Legacy] Updated context variable: {var_name}")
 
-    async def _evaluate_condition(self, condition: str, context: AgentContext) -> bool:
-        """Evaluate condition expression"""
+    async def _evaluate_condition(self, condition: Any, context: AgentContext) -> bool:
+        """Evaluate condition expression.
+
+        Args:
+            condition: Can be a string expression or pre-resolved value
+                (bool, int, list, etc.) from variable resolution.
+            context: Agent context containing variables.
+
+        Returns:
+            bool: Evaluation result.
+        """
         return self.condition_evaluator.evaluate(condition, context.variables)
 
     async def _execute_if_step(
@@ -507,8 +519,9 @@ class WorkflowEngine:
         step_start_time = time.time()
 
         try:
-            resolved_dict = self._resolve_step_variables(step, context)
-            resolved_condition = resolved_dict.get('condition', step.condition)
+            # Only resolve the condition, not the entire step (then/else branches)
+            # Branch variables should be resolved when each sub-step executes
+            resolved_condition = self._resolve_string_with_variables(step.condition, context)
             condition_result = await self._evaluate_condition(resolved_condition, context)
             logger.info(f"If condition '{step.condition}' evaluated to: {condition_result}")
 
@@ -582,7 +595,7 @@ class WorkflowEngine:
         step_start_time = time.time()
 
         try:
-            resolved_dict = self._resolve_step_variables(step, context)
+            # Don't resolve entire step - loop body variables are resolved per-iteration
             max_iterations = step.max_iterations
             loop_timeout = step.loop_timeout  # None means no timeout
             iterations_executed = 0
@@ -600,7 +613,8 @@ class WorkflowEngine:
                     exit_reason = "timeout"
                     break
 
-                resolved_condition = resolved_dict.get('condition', step.condition)
+                # Resolve condition each iteration (variables may change during loop)
+                resolved_condition = self._resolve_string_with_variables(step.condition, context)
                 condition_result = await self._evaluate_condition(resolved_condition, context)
                 logger.info(f"While condition '{step.condition}' evaluated to: {condition_result} (iteration {iterations_executed + 1})")
 

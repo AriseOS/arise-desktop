@@ -1,8 +1,12 @@
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
+#[cfg(windows)]
+use std::path::PathBuf;
 
 pub struct PythonDaemon {
     process: Option<Child>,
+    #[cfg(windows)]
+    daemon_port: Option<u16>,
 }
 
 impl PythonDaemon {
@@ -12,9 +16,67 @@ impl PythonDaemon {
         // and Python will exit with an error, which is the correct behavior
         let (process, _pid) = Self::start_daemon_process()?;
 
-        Ok(Self {
-            process: Some(process),
-        })
+        #[cfg(windows)]
+        {
+            // On Windows, wait for port file and store port for HTTP shutdown
+            let daemon_port = Self::wait_for_daemon_port(Duration::from_secs(30))?;
+            println!("Daemon port discovered: {}", daemon_port);
+
+            Ok(Self {
+                process: Some(process),
+                daemon_port: Some(daemon_port),
+            })
+        }
+
+        #[cfg(not(windows))]
+        {
+            Ok(Self {
+                process: Some(process),
+            })
+        }
+    }
+
+    /// Get the path to the daemon port file (Windows only)
+    #[cfg(windows)]
+    fn get_port_file_path() -> PathBuf {
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_else(|_| String::from("~"));
+        PathBuf::from(home).join(".ami").join("daemon.port")
+    }
+
+    /// Wait for daemon to write its port file (Windows only)
+    #[cfg(windows)]
+    fn wait_for_daemon_port(timeout: Duration) -> Result<u16, Box<dyn std::error::Error>> {
+        use std::thread;
+
+        let port_file = Self::get_port_file_path();
+        let start = std::time::Instant::now();
+
+        println!("Waiting for daemon port file: {}", port_file.display());
+
+        loop {
+            if port_file.exists() {
+                match std::fs::read_to_string(&port_file) {
+                    Ok(content) => {
+                        if let Ok(port) = content.trim().parse::<u16>() {
+                            return Ok(port);
+                        }
+                    }
+                    Err(_) => {
+                        // File might still be written, continue waiting
+                    }
+                }
+            }
+
+            if start.elapsed() >= timeout {
+                // Return default port if timeout
+                println!("⚠️  Timeout waiting for port file, using default port 8765");
+                return Ok(8765);
+            }
+
+            thread::sleep(Duration::from_millis(100));
+        }
     }
 
     /// Get Python script path for development mode
@@ -253,13 +315,14 @@ impl Drop for PythonDaemon {
         // Since we removed setsid() (方案1), daemon.py is a direct child process
         if let Some(mut process) = self.process.take() {
             let pid = process.id();
-            println!("Sending SIGTERM to daemon process (PID: {})...", pid);
 
-            // Send SIGTERM (graceful shutdown signal)
+            // Unix: Use SIGTERM for graceful shutdown
             #[cfg(unix)]
             {
                 use nix::sys::signal::{self, Signal};
                 use nix::unistd::Pid;
+
+                println!("Sending SIGTERM to daemon process (PID: {})...", pid);
 
                 match signal::kill(Pid::from_raw(pid as i32), Signal::SIGTERM) {
                     Ok(_) => {
@@ -285,19 +348,71 @@ impl Drop for PythonDaemon {
                 }
             }
 
-            #[cfg(not(unix))]
+            // Windows: Use HTTP shutdown for graceful cleanup, then force kill
+            #[cfg(windows)]
             {
-                // Windows: use kill() which terminates the process
-                match process.kill() {
-                    Ok(_) => {
-                        println!("Termination signal sent, waiting for process to exit...");
-                        match process.wait() {
-                            Ok(status) => println!("✅ Daemon exited with status: {}", status),
-                            Err(e) => println!("⚠️  Error waiting for daemon: {}", e),
+                println!("Windows: Using HTTP shutdown for graceful termination (PID: {})...", pid);
+
+                let mut http_shutdown_success = false;
+
+                // Try HTTP shutdown first
+                if let Some(port) = self.daemon_port {
+                    let shutdown_url = format!("http://127.0.0.1:{}/api/v1/app/shutdown", port);
+                    println!("Sending HTTP shutdown request to: {}", shutdown_url);
+
+                    // Use reqwest blocking client with short timeout
+                    match reqwest::blocking::Client::builder()
+                        .timeout(Duration::from_secs(2))
+                        .build()
+                    {
+                        Ok(client) => {
+                            match client.post(&shutdown_url).send() {
+                                Ok(response) => {
+                                    if response.status().is_success() {
+                                        println!("✅ HTTP shutdown request accepted");
+                                        http_shutdown_success = true;
+                                    } else {
+                                        println!("⚠️  HTTP shutdown returned status: {}", response.status());
+                                    }
+                                }
+                                Err(e) => {
+                                    println!("⚠️  HTTP shutdown request failed: {}", e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            println!("⚠️  Failed to create HTTP client: {}", e);
                         }
                     }
+                } else {
+                    println!("⚠️  No daemon port available for HTTP shutdown");
+                }
+
+                // Wait for process to exit (longer timeout if HTTP shutdown was sent)
+                let wait_timeout = if http_shutdown_success {
+                    Duration::from_secs(10) // Give more time for graceful cleanup
+                } else {
+                    Duration::from_secs(1)
+                };
+
+                match Self::wait_with_timeout(&mut process, wait_timeout) {
+                    Ok(status) => {
+                        println!("✅ Daemon exited with status: {}", status);
+                    }
                     Err(e) => {
-                        println!("❌ Failed to terminate daemon: {}", e);
+                        println!("⚠️  Daemon did not exit within timeout: {}", e);
+                        println!("   Force killing process...");
+                        match process.kill() {
+                            Ok(_) => {
+                                match process.wait() {
+                                    Ok(status) => println!("✅ Daemon force killed with status: {}", status),
+                                    Err(e) => println!("⚠️  Error waiting for daemon: {}", e),
+                                }
+                            }
+                            Err(e) => {
+                                println!("❌ Failed to kill daemon: {}", e);
+                            }
+                        }
                     }
                 }
             }

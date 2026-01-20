@@ -483,6 +483,36 @@
             "daysAgo": "{{count}} days ago"
         }
     },
+    "analysis": {
+        "title": "AI Analysis Complete",
+        "unnamedTask": "Unnamed Task",
+        "validation": "Please fill in both task description and user query",
+        "savingMetadata": "Saving metadata...",
+        "saveFailed": "Failed to save metadata: {{error}}",
+        "loopPattern": "Loop Pattern Detected",
+        "loopCount": "Count: {{count}}",
+        "dataExtraction": "Data Extraction",
+        "fields": "Fields: {{fields}}",
+        "navigation": "Navigation",
+        "depth": "Depth: {{depth}}",
+        "aiSummary": "AI Summary",
+        "patternsTitle": "Detected Patterns",
+        "taskDesc": "Task Description",
+        "taskDescHint": "What does this workflow do?",
+        "taskDescPlaceholder": "e.g., Scrape product listings from the search results page...",
+        "userQuery": "User Query",
+        "userQueryHint": "What should the user provide when running?",
+        "userQueryPlaceholder": "e.g., Enter the search keyword to scrape...",
+        "cancel": "Cancel",
+        "saving": "Saving...",
+        "confirmBtn": "Confirm & Generate Workflow",
+        "tips": {
+            "title": "Tips",
+            "tip1": "The task description helps AI understand the workflow's purpose",
+            "tip2": "The user query defines what input is needed each time the workflow runs",
+            "tip3": "You can edit these later from the workflow details page"
+        }
+    },
     "quickStart": {
         "title": "Quick Start",
         "startRecordingTitle": "Start Recording",
@@ -566,6 +596,80 @@
             "closetab": "Close Tab",
             "copy_action": "Copy",
             "paste_action": "Paste"
+        }
+    },
+    "auth": {
+        "loginTitle": "Login to your account",
+        "createAccountTitle": "Create a new account",
+        "emailLabel": "Email",
+        "emailPlaceholder": "Enter your email",
+        "emailHint": "Use the email you registered with",
+        "passwordLabel": "Password",
+        "passwordPlaceholder": "Enter password",
+        "passwordPlaceholderStrong": "Enter a strong password",
+        "passwordHint": "At least 8 characters with uppercase and lowercase",
+        "usernameLabel": "Username",
+        "usernamePlaceholder": "Enter username",
+        "usernameHint": "At least 3 characters",
+        "confirmPasswordLabel": "Confirm Password",
+        "confirmPasswordPlaceholder": "Enter password again",
+        "loginBtn": "Login",
+        "registerBtn": "Register",
+        "loggingIn": "Logging in...",
+        "creatingAccount": "Creating...",
+        "noAccount": "Don't have an account?",
+        "registerLink": "Register now",
+        "hasAccount": "Already have an account?",
+        "loginLink": "Login now",
+        "validation": {
+            "enterEmail": "Please enter your email",
+            "enterPassword": "Please enter your password",
+            "enterUsername": "Please enter a username",
+            "usernameLength": "Username must be at least 3 characters",
+            "validEmail": "Please enter a valid email address",
+            "passwordLength": "Password must be at least 8 characters",
+            "passwordUpper": "Password must contain an uppercase letter",
+            "passwordLower": "Password must contain a lowercase letter",
+            "passwordMatch": "Passwords do not match"
+        },
+        "toasts": {
+            "loginSuccess": "Login successful!",
+            "loginFailed": "Login failed: {{error}}",
+            "registerSuccess": "Registration successful!",
+            "registerFailed": "Registration failed: {{error}}"
+        }
+    },
+    "generation": {
+        "title": "AI Workflow Generation",
+        "describeTask": "Describe Your Task",
+        "whatToDo": "What do you want AI to do?",
+        "placeholder": "e.g., Scrape the top 10 products' names, prices, and links from Amazon search results...",
+        "generateBtn": "Generate Workflow",
+        "stepDescription": "AI will analyze your description and generate an executable automation workflow.",
+        "tips": {
+            "title": "Tips",
+            "tip1": "The more detailed your description, the more accurate the workflow",
+            "tip2": "Clearly specify the data fields you need to extract",
+            "tip3": "Mention if pagination or scroll loading is needed",
+            "tip4": "If login is required, complete it first in recording mode"
+        },
+        "stages": {
+            "analyzing": "Analyzing",
+            "understanding": "Understanding",
+            "generating": "Generating",
+            "validating": "Validating",
+            "complete": "Complete",
+            "failed": "Failed"
+        },
+        "hints": {
+            "enterDescription": "Please enter a task description",
+            "initEngine": "Initializing AI engine...",
+            "loadedRecording": "Loaded recording: {{name}}",
+            "startAnalysis": "Starting task analysis...",
+            "genSuccess": "Workflow generated successfully!",
+            "genFinalized": "Workflow is ready!",
+            "genFailed": "Generation failed: {{error}}",
+            "cancelled": "Generation cancelled"
         }
     }
 }

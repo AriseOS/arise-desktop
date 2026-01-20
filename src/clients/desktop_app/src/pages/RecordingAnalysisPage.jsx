@@ -22,7 +22,7 @@ function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
     }
 
     try {
-      setIsGenerating(true); // Assuming setIsSaving was meant to be setIsGenerating or similar, keeping logic but internationalizing messages
+      setIsSaving(true);
 
       // Save metadata first
       showStatus(t('analysis.savingMetadata'), "info");

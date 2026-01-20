@@ -49,6 +49,13 @@ class ConditionEvaluator:
 
     Supports operators: ==, !=, >, <, >=, <=, and, or, not
     Supports variable references: {{var}}, {{item.field}}
+
+    The expression parameter can be:
+    - str: Expression to evaluate (e.g., "{{var}} > 0", "{{flag}}")
+    - bool: Already resolved boolean value (from workflow variable resolution)
+    - int/float: Numeric values (truthy evaluation)
+    - list/dict: Collection values (truthy if non-empty)
+    - None: Evaluates to False
     """
 
     SAFE_BUILTINS = {
@@ -62,8 +69,34 @@ class ConditionEvaluator:
         "bool": bool,
     }
 
-    def evaluate(self, expression: str, variables: Dict[str, Any]) -> bool:
-        """Evaluate a condition expression."""
+    def evaluate(self, expression: Any, variables: Dict[str, Any]) -> bool:
+        """Evaluate a condition expression.
+
+        Args:
+            expression: Condition to evaluate. Can be a string expression,
+                or a pre-resolved value (bool, int, list, etc.) from
+                workflow variable resolution.
+            variables: Context variables for resolving {{var}} references.
+
+        Returns:
+            bool: Evaluation result.
+        """
+        # Handle pre-resolved values (from _resolve_step_variables)
+        if isinstance(expression, bool):
+            return expression
+
+        if expression is None:
+            return False
+
+        if not isinstance(expression, str):
+            # int, float, list, dict, etc. - use Python truthy rules
+            return bool(expression)
+
+        # Empty or whitespace-only string
+        if not expression.strip():
+            return False
+
+        # String expression - resolve variables and evaluate
         try:
             resolved = self._resolve_variables(expression, variables)
             result = eval(resolved, {"__builtins__": {}}, {**self.SAFE_BUILTINS, **variables})
@@ -113,7 +146,7 @@ class WorkflowValidator:
     VALID_AGENT_TYPES = [
         'text_agent', 'variable', 'scraper_agent',
         'browser_agent', 'storage_agent',
-        'autonomous_browser_agent',
+        'autonomous_browser_agent', 'tavily_agent',
         'if', 'while', 'foreach'
     ]
 

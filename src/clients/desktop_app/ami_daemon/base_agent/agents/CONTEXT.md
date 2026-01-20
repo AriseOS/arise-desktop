@@ -32,6 +32,7 @@ all_schemas = get_all_agent_schemas()
 | `storage_agent.py` | StorageAgent | `inputs.operation`, `inputs.collection` |
 | `variable_agent.py` | VariableAgent | `inputs.operation`, `inputs.data` |
 | `autonomous_browser_agent.py` | AutonomousBrowserAgent | `inputs.task` |
+| `tavily_agent.py` | TavilyAgent | `inputs.operation`, `inputs.query` |
 
 ### Infrastructure
 
@@ -120,6 +121,51 @@ ScraperAgent calls **cloud API** to generate Python extraction scripts that pars
 
 **Note**: Output key is always `result` for consistent workflow mapping.
 
+## BrowserAgent Tab Operations
+
+BrowserAgent supports multi-tab workflows via the `action` field in `interaction_steps`:
+
+### Supported Tab Actions
+
+| Action | Required Fields | Description |
+|--------|-----------------|-------------|
+| `new_tab` | `url` | Open URL in a new browser tab |
+| `switch_tab` | `tab_index` | Switch to tab by index (0 = first tab) |
+| `close_tab` | `tab_index` (optional) | Close tab by index, or current tab if not specified |
+
+### Usage Example
+
+```yaml
+interaction_steps:
+  - task: "Open competitor site in new tab"
+    action: "new_tab"
+    url: "https://competitor.com/product"
+
+  - task: "Switch back to original tab"
+    action: "switch_tab"
+    tab_index: 0
+
+  - task: "Close current tab"
+    action: "close_tab"
+```
+
+### Implementation Details
+
+- **Tab Tracking**: Initial tabs are recorded at workflow start (`_initial_tab_ids`)
+- **Auto Cleanup**: Extra tabs opened during workflow are automatically closed on completion
+- **Output**: Response includes `current_tab_index` and `open_tabs_count`
+- **Events Used**: `NavigateToUrlEvent(new_tab=True)`, `SwitchTabEvent`, `CloseTabEvent` from browser-use
+
+### Key Methods
+
+| Method | Purpose |
+|--------|---------|
+| `_get_open_tabs()` | Returns list of open tabs with tab_id, url, title |
+| `_execute_new_tab(url, context)` | Opens URL in new tab |
+| `_execute_switch_tab(tab_index, context)` | Switches to tab by index |
+| `_execute_close_tab(tab_index, context)` | Closes tab (None = current tab) |
+| `_cleanup_extra_tabs()` | Closes tabs not in initial set |
+
 ## See Also
 
 - `scraper_agent.py` - Main implementation
@@ -137,5 +183,6 @@ ScraperAgent calls **cloud API** to generate Python extraction scripts that pars
 | `browser_agent.py` | `src/cloud_backend/intent_builder/.claude/skills/agent-specs/references/browser_agent.md` |
 | `scraper_agent.py` | `src/cloud_backend/intent_builder/.claude/skills/agent-specs/references/scraper_agent.md` |
 | `storage_agent.py` | `src/cloud_backend/intent_builder/.claude/skills/agent-specs/references/storage_agent.md` |
+| `tavily_agent.py` | `src/cloud_backend/services/skills/repository/agent-specs/SKILL.md` |
 
 Also update `docs/base_app/*_agent_spec.md` (source of truth for specs).

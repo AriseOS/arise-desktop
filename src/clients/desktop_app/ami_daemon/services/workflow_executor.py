@@ -254,6 +254,11 @@ class WorkflowExecutor:
                     'base_url': proxy_url
                 }
                 logger.info(f"Using user API key with API Proxy: {proxy_url}")
+
+                # Set user API key on cloud_client for TavilyAgent and other cloud-dependent agents
+                if self.cloud_client:
+                    self.cloud_client.set_user_api_key(user_api_key)
+                    logger.info(f"Set user API key on cloud_client: {user_api_key[:10]}...")
             else:
                 # No user API key - let BaseAgent auto-load from config_service
                 logger.info("No user API key provided, BaseAgent will use config_service defaults")

@@ -153,6 +153,10 @@ class VariableAgent(BaseStepAgent):
             else:
                 raise ValueError(f"Unsupported operation: {operation}. Supported: set, filter, slice, extend")
 
+            # Log result summary
+            result_summary = self._get_result_summary(result)
+            self.logger.info(f"✅ Variable '{operation}' completed | {result_summary}")
+
             # 统一契约：所有操作都输出到 {"result": ...}
             return AgentOutput(
                 success=True,
@@ -403,3 +407,25 @@ class VariableAgent(BaseStepAgent):
                 return re.sub(pattern, replace_var, value)
 
         return value
+
+    def _get_result_summary(self, result: Any) -> str:
+        """Generate a summary string for logging"""
+        if result is None:
+            return "result=None"
+        elif isinstance(result, list):
+            if len(result) == 0:
+                return "result=[] (empty list)"
+            elif len(result) <= 3:
+                # Show preview of small lists
+                preview = str(result)[:100]
+                return f"result=[{len(result)} items] {preview}..."
+            else:
+                # Show first item preview for larger lists
+                first_item = str(result[0])[:50]
+                return f"result=[{len(result)} items] first: {first_item}..."
+        elif isinstance(result, dict):
+            keys = list(result.keys())[:5]
+            return f"result={{dict with {len(result)} keys: {keys}}}"
+        else:
+            preview = str(result)[:80]
+            return f"result={preview}"

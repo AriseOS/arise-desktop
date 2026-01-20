@@ -138,7 +138,8 @@ class WorkflowYAMLValidator:
             "storage_agent",
             "code_agent",
             "text_agent",
-            "autonomous_browser_agent"
+            "autonomous_browser_agent",
+            "tavily_agent",
         ]
         agent = step.get("agent")
         if agent not in valid_agent_types:
