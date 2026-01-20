@@ -46,7 +46,6 @@ from .base_agent import BaseStepAgent, AgentMetadata, InputSchema, FieldSchema
 from ..core.schemas import AgentContext
 
 # Import script templates from common module
-from src.cloud_backend.services.skills import SkillManager
 from src.common.script_generation.templates import (
     BROWSER_TEST_OPERATION,
     BROWSER_FIND_ELEMENT_TEMPLATE,
@@ -1087,8 +1086,8 @@ class BrowserAgent(BaseStepAgent):
         # 3. Save dom_data.json (use _save_dom_data for consistent wrapped format)
         await self._save_dom_data(working_dir, dom_dict)
 
-        # 4. Prepare .claude/skills directory for element finder tools
-        SkillManager.prepare_browser_skills(working_dir, use_symlink=True)
+        # Note: .claude/skills is prepared by Cloud during script generation
+        # element_tools.py is downloaded after script generation
 
         dom_file = working_dir / "dom_data.json"
         logger.info(f"Workspace prepared: task.json, dom_data.json ({dom_file.stat().st_size} bytes)")
@@ -1368,6 +1367,19 @@ Please analyze and fix find_element.py.
             script_file.write_text(script_content, encoding='utf-8')
             logger.info(f"   Saved to: {script_file}")
 
+            # 8. Download element_tools.py from cloud (required for script execution)
+            try:
+                element_tools_content = await cloud_client.download_workflow_file(
+                    workflow_id=workflow_id,
+                    file_path=f"{step_id}/element_tools.py",
+                    user_id=user_id
+                )
+                element_tools_file = working_dir / "element_tools.py"
+                element_tools_file.write_bytes(element_tools_content)
+                logger.info(f"   Downloaded element_tools.py to: {element_tools_file}")
+            except Exception as e:
+                logger.warning(f"   Failed to download element_tools.py: {e}")
+
             # Send completion status
             if context and context.log_callback:
                 try:
@@ -1403,28 +1415,28 @@ Please analyze and fix find_element.py.
         logger.info(f"📄 Refreshed dom_data.json")
         return new_selector_map
 
-    def _execute_find_element_script(self, code: str, dom_dict: Dict, xpath: str = "") -> Dict:
+    def _execute_find_element_script(self, code: str, dom_dict: Dict, xpath: str = "", script_dir: Path = None) -> Dict:
         """Execute find_element.py to get target element info
 
         Args:
             code: Generated Python code
             dom_dict: DOM dictionary
             xpath: Runtime xpath from xpath_hints (for dynamic element finding)
+            script_dir: Directory containing element_tools.py (synced from cloud)
 
         Returns:
             Dict with success, interactive_index, element_info
         """
         try:
             # Import analyze_xpath_hint from element_tools
-            # Use SkillManager to get the skill path (avoids hardcoded relative paths)
+            # element_tools.py is synced from cloud to script_dir
             import importlib.util
             import sys
 
-            skill_path = SkillManager.get_skill_path("element-finder")
-            if not skill_path:
-                return {'success': False, 'error': 'element-finder skill not found'}
+            if not script_dir:
+                return {'success': False, 'error': 'script_dir not provided'}
 
-            element_tools_path = skill_path / "tools" / "element_tools.py"
+            element_tools_path = Path(script_dir) / "element_tools.py"
             if not element_tools_path.exists():
                 return {'success': False, 'error': f'element_tools.py not found at {element_tools_path}'}
 
@@ -1630,8 +1642,8 @@ Example: {{"interactive_index": 42, "reason": "Button with text 'Submit' near th
             logger.info(f"🤖 Fallback mode: Using LLM directly")
             return await self._llm_find_element(dom_dict, xpath, task, working_dir)
 
-        # Try script first
-        script_result = self._execute_find_element_script(script_content, dom_dict, xpath)
+        # Try script first (working_dir contains element_tools.py synced from cloud)
+        script_result = self._execute_find_element_script(script_content, dom_dict, xpath, script_dir=working_dir)
 
         if script_result.get('success'):
             return script_result
