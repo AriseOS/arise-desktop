@@ -7,33 +7,60 @@ description: Generate workflows from user's recorded browser actions.
 
 ## Core Principle
 
-**The workflow should replay the user's recorded actions.** Do not skip steps or optimize away navigation - the user recorded those steps for a reason.
+**Understand the user's goal, not just replay every action.**
 
-## App Environment
+The recording shows what the user did, but not every action is meaningful:
+- Some clicks are navigation → need to reproduce
+- Some clicks are meaningless (clicking blank area) → skip
+- Some scrolls trigger lazy loading → need to reproduce
+- Some scrolls are just for viewing → skip (scraper gets full DOM)
+- Select/extract shows what data user wants → use scraper_agent
 
-- User records browser actions → converted to intent operations (your input)
-- You generate a workflow YAML → the app executes it
-- `storage_agent` stores data → user exports via app UI (no export steps needed in workflow)
+## Generation Guidelines
 
-## Output Contract
+### 1. Navigation Steps
 
-**All agents output to `result` key**:
+**Click + navigate to target page:**
+- Understand if this navigation is necessary for the goal
+- Check the href/target URL:
+  - **Static URL** (`/about`, `/products`, `/contact`) → use direct `target_url`
+  - **Dynamic URL** (contains dates/IDs like `/weekly/2026/3`, `/product/123`) → use `scraper_agent` to extract href, then `browser_agent` to navigate
 
-```yaml
-outputs:
-  result: variable_name    # → context.variables["variable_name"]
-```
+**Meaningless clicks:**
+- Clicks on blank areas, accidental clicks → skip
 
-Reference in inputs: `"{{variable_name}}"` or `"{{variable_name.0.field}}"`
+### 2. Data Extraction
 
-## Input: Intent Operations
+**Select/extract operations** indicate what data the user wants:
+- Use `scraper_agent` with the xpath from the operation
+- Group related extractions into one scraper step when on same page
 
-Each operation has:
-- `type`: click, scroll, extract, navigate, input, select, newtab, closetab
-- `url`: Page URL when action occurred
-- `element`: Contains `xpath`, `href`, `tagName`, `textContent`
+### 3. Scroll Operations
 
-## Output: Workflow YAML (v2)
+**Usually skip** - `scraper_agent` can access full DOM without scrolling.
+
+**Keep scroll when:**
+- Page has lazy loading (look for `dataload` operations after scroll)
+- Need to trigger content to load
+
+### 4. Form Interactions
+
+**Input/fill operations:**
+- Use `browser_agent` with `interaction_steps`
+- Include `text` field with the value
+
+### 5. Static vs Dynamic URL
+
+| Type | Pattern | Example | Action |
+|------|---------|---------|--------|
+| Static | Fixed path, no variables | `/about`, `/products` | Direct `target_url` |
+| Dynamic | Contains date | `/weekly/2026/3`, `/news/2026-01-20` | Extract via scraper |
+| Dynamic | Contains ID | `/product/12345`, `/user/abc` | Extract via scraper |
+| Dynamic | Query params that change | `/search?q=xxx` | Extract via scraper |
+
+## Output Format
+
+### Workflow YAML (v2)
 
 ```yaml
 apiVersion: "ami.io/v2"
@@ -49,54 +76,78 @@ steps:
       result: variable_name
 ```
 
-## Mapping Rules
+### Output Contract
 
-| Operation | Workflow Step |
-|-----------|---------------|
-| navigate | `browser_agent` with `target_url` |
-| click (no href) | `browser_agent` with `interaction_steps` |
-| click (with href) | `scraper_agent` extract URL → `browser_agent` navigate |
-| click (copy button) | `browser_agent` with `interaction_steps` + outputs |
-| extract | `scraper_agent` |
-| scroll | `browser_agent` with `interaction_steps` |
-| input/fill | `browser_agent` with `interaction_steps` + `text` |
-| newtab | `browser_agent` with `action: new_tab` |
-| closetab | `browser_agent` with `action: close_tab` |
-
-For Agent input details, see `agent-specs` skill.
-
-## Key Rule: Click with href
-
-When click element has `href`, use **two steps** (extract URL then navigate):
+**All agents output to `result` key**:
 
 ```yaml
-# Step 1: Extract link URL using xpath from operation
-- id: extract-link
+outputs:
+  result: variable_name    # → context.variables["variable_name"]
+```
+
+Reference in inputs: `"{{variable_name}}"` or `"{{variable_name.0.field}}"`
+
+## Examples
+
+### Static URL Navigation
+
+```yaml
+# User clicked "About" link with href="/about"
+# Static URL → direct navigation
+- id: go-to-about
+  agent: browser_agent
+  inputs:
+    target_url: "https://example.com/about"
+```
+
+### Dynamic URL Navigation
+
+```yaml
+# User clicked "Weekly" tab with href="/leaderboard/weekly/2026/3"
+# Dynamic URL (contains date) → extract first
+
+- id: extract-weekly-link
   agent: scraper_agent
   inputs:
     extraction_method: script
     data_requirements:
-      user_description: "Extract link URL"
+      user_description: "Extract weekly leaderboard link"
       output_format:
-        url: "Link href"
+        url: "Link URL"
       xpath_hints:
-        url: "//*[@id='nav']/a[2]"  # Use exact xpath from operation
+        url: "//a[contains(@class, 'navTab')]"  # xpath from operation
   outputs:
-    result: link_info
+    result: weekly_link
 
-# Step 2: Navigate to extracted URL
-- id: navigate-to-link
+- id: navigate-to-weekly
   agent: browser_agent
   inputs:
-    target_url: "{{link_info.0.url}}"
+    target_url: "{{weekly_link.0.url}}"
 ```
 
-**Do NOT** hardcode URLs or skip navigation steps.
+### Data Extraction
+
+```yaml
+# User selected product names on the page
+- id: extract-products
+  agent: scraper_agent
+  inputs:
+    extraction_method: script
+    data_requirements:
+      user_description: "Extract product list"
+      output_format:
+        name: "Product name"
+        url: "Product URL"
+      xpath_hints:
+        name: "//div[@class='product']/h3"  # xpath from select operation
+  outputs:
+    result: products
+```
 
 ## Critical Constraints
 
 1. **xpath_hints must be dict**: `{key: "//xpath"}`, NOT list
-2. **Use exact xpath from operation** - never construct or invent new xpaths
+2. **Use xpath from operations** - don't invent new xpaths
 3. **Never write `outputs: null`** - omit the field if not needed
 4. **foreach value must be YAML list**: `[1,2,3]` NOT `"[1,2,3]"`
 

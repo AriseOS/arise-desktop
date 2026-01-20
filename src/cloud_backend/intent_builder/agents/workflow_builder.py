@@ -335,23 +335,20 @@ Each operation contains details you need for optimization decisions (especially 
 
 Use TodoWrite to track these steps:
 
-1. [ ] Read `workflow-generation` skill - understand workflow structure
-2. [ ] Read `agent-specs` skill - understand agent input formats (especially browser_agent's interaction_steps)
-3. [ ] Read `workflow-optimizations` skill - understand optimization patterns
-4. [ ] Analyze each intent operation for optimization opportunities:
-   - Click with `href` → Can optimize to `target_url`
-   - Click without `href` → Must use `interaction_steps`
-   - Consecutive scrolls → Combine or remove
-5. [ ] Generate the optimized workflow YAML
-6. [ ] Validate with `workflow-validation` skill
-7. [ ] **Write the workflow to `workflow.yaml` file** (REQUIRED - use Write tool)
-8. [ ] Output final YAML in code block and list optimizations applied
+1. [ ] Read `workflow-generation` skill - understand generation guidelines
+2. [ ] Read `agent-specs` skill - understand agent input formats
+3. [ ] Read `workflow-optimizations` skill - understand special patterns (hover, copy button, etc.)
+4. [ ] Analyze intent operations - understand user's goal, skip meaningless actions
+5. [ ] For navigation: check if URL is static or dynamic (see workflow-generation skill)
+6. [ ] Generate the workflow YAML
+7. [ ] Validate with `workflow-validation` skill
+8. [ ] **Write the workflow to `workflow.yaml` file** (REQUIRED - use Write tool)
 
 ## Key Reminders
 
 - `xpath_hints` must be **dict format**: `xpath_hints: {{key: "//xpath"}}` (NOT a list!)
-- All click/fill/scroll MUST use `interaction_steps` (unless optimized to `target_url`)
-- Document which operations were optimized and why
+- Static URLs (/about, /products) → direct `target_url`
+- Dynamic URLs (dates/IDs like /weekly/2026/3) → `scraper_agent` extract href first, then navigate
 """
 
     def _prepare_working_directory(self) -> Path:
@@ -990,23 +987,20 @@ Each operation contains details you need for optimization decisions (especially 
 
 Use TodoWrite to track these steps:
 
-1. [ ] Read `workflow-generation` skill - understand workflow structure
-2. [ ] Read `agent-specs` skill - understand agent input formats (especially browser_agent's interaction_steps)
-3. [ ] Read `workflow-optimizations` skill - understand optimization patterns
-4. [ ] Analyze each intent operation for optimization opportunities:
-   - Click with `href` → Can optimize to `target_url`
-   - Click without `href` → Must use `interaction_steps`
-   - Consecutive scrolls → Combine or remove
-5. [ ] Generate the optimized workflow YAML
-6. [ ] Validate with `workflow-validation` skill
-7. [ ] **Write the workflow to `workflow.yaml` file** (REQUIRED - use Write tool)
-8. [ ] Output final YAML in code block and list optimizations applied
+1. [ ] Read `workflow-generation` skill - understand generation guidelines
+2. [ ] Read `agent-specs` skill - understand agent input formats
+3. [ ] Read `workflow-optimizations` skill - understand special patterns (hover, copy button, etc.)
+4. [ ] Analyze intent operations - understand user's goal, skip meaningless actions
+5. [ ] For navigation: check if URL is static or dynamic (see workflow-generation skill)
+6. [ ] Generate the workflow YAML
+7. [ ] Validate with `workflow-validation` skill
+8. [ ] **Write the workflow to `workflow.yaml` file** (REQUIRED - use Write tool)
 
 ## Key Reminders
 
 - `xpath_hints` must be **dict format**: `xpath_hints: {{key: "//xpath"}}` (NOT a list!)
-- All click/fill/scroll MUST use `interaction_steps` (unless optimized to `target_url`)
-- Document which operations were optimized and why
+- Static URLs (/about, /products) → direct `target_url`
+- Dynamic URLs (dates/IDs like /weekly/2026/3) → `scraper_agent` extract href first, then navigate
 """
 
     def _prepare_working_directory(self) -> Path:

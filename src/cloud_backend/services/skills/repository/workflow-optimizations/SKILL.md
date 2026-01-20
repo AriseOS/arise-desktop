@@ -1,75 +1,59 @@
 ---
 name: workflow-optimizations
-description: Optional patterns for optimizing generated workflows.
+description: Patterns for handling special interaction cases.
 ---
 
-# Workflow Optimizations
+# Special Interaction Patterns
 
-These are **optional** patterns. The default behavior is to replay user's recorded actions faithfully.
+## 1. Right-click → Extract Link
 
-## 1. URL Navigation Optimization
-
-**Can simplify** (use direct `target_url`):
-- Static paths: `/about`, `/products`, `/contact`
-- Concatenated URLs: `base_url + "/settings"` → just use full URL
-
-**Cannot simplify** (must extract via `scraper_agent`):
-- URLs with dates: `/leaderboard/weekly/2026/3`
-- URLs with IDs: `/product/12345`, `/user/abc123`
-- URLs that may change between runs
-
-```yaml
-# Static URL - can simplify to direct navigation
-- id: go-to-about
-  agent: browser_agent
-  inputs:
-    target_url: "https://example.com/about"
-
-# Dynamic URL - must extract first
-- id: extract-product-url
-  agent: scraper_agent
-  inputs:
-    data_requirements:
-      user_description: "Extract product URL"
-      output_format:
-        url: "Product link"
-      xpath_hints:
-        url: "//a[@class='product']"
-  outputs:
-    result: product_link
-
-- id: navigate-to-product
-  agent: browser_agent
-  inputs:
-    target_url: "{{product_link.0.url}}"
-```
-
-## 2. Scroll Consolidation
-
-Multiple consecutive scrolls → combine into one step with multiple scroll actions.
-
-## 3. Scroll Before Extract
-
-Scroll followed by extract → usually remove scroll.
-`scraper_agent` gets full DOM, doesn't need element in viewport.
-
-## 4. Right-click → Extract Link
-
-When user right-clicked (contextmenu) but intent says "extract links/URLs":
+When user right-clicked (contextmenu) but intent is to extract links/URLs:
 - Don't simulate right-click
 - Use `scraper_agent` to extract `href` directly
 
-## 5. Hover Handling
+## 2. Hover Handling
 
-| Intent | Action |
-|--------|--------|
+| User Intent | Action |
+|-------------|--------|
 | Extract data from revealed tooltip | `browser_agent` hover → `scraper_agent` extract |
 | Navigate via dropdown menu | `browser_agent` hover + click in `interaction_steps` |
 | Just want link URL (element has href) | Skip hover, `scraper_agent` extract href |
 
-## 6. Copy Button → Clipboard Capture
+## 3. Copy Button → Clipboard Capture
 
-When user clicked a "Copy" button:
+When user clicked a "Copy" button (text contains "Copy", "复制", class contains "copy", "clipboard"):
 - Use `browser_agent` click with `outputs: {result: ...}`
 - Access clipboard: `{{result.clipboard_content}}`
-- Don't use `scraper_agent` for visible text - clipboard may have full data
+- Don't use `scraper_agent` for visible text - clipboard may have full/formatted data
+
+```yaml
+- id: click-copy
+  agent: browser_agent
+  inputs:
+    interaction_steps:
+      - task: "Click copy button"
+        xpath_hints:
+          btn: "//button[@class='copy']"
+  outputs:
+    result: copy_result    # Access: {{copy_result.clipboard_content}}
+```
+
+## 4. Tab Operations
+
+When recording contains `newtab` or `closetab`:
+
+```yaml
+# Open URL in new tab
+- task: "Open in new tab"
+  action: "new_tab"
+  url: "https://example.com"
+
+# Switch tab (0 = first tab)
+- task: "Switch to first tab"
+  action: "switch_tab"
+  tab_index: 0
+
+# Close current tab
+- task: "Close tab"
+  action: "close_tab"
+```
