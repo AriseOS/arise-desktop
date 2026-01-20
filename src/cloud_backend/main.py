@@ -21,7 +21,7 @@ import sys
 import uuid
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Header, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -1459,7 +1459,7 @@ async def create_workflow_session(
             "session": session,
             "user_id": user_id,
             "workflow_id": workflow_id,
-            "created_at": datetime.now().isoformat()
+            "created_at": datetime.now(timezone.utc).isoformat()
         }
 
         history_restored = bool(chat_history and len(chat_history) > 0)
@@ -2523,7 +2523,7 @@ async def generate_script_stream(
                 metadata["generated_scripts"][request.step_id] = {
                     "script_type": request.script_type,
                     "script_path": script_path,
-                    "generated_at": datetime.utcnow().isoformat(),
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
                     "turns": result.turns
                 }
 
@@ -2555,7 +2555,7 @@ async def generate_script_stream(
                 metadata["resources"][resource_type].append(resource_entry)
 
                 # Update timestamp
-                metadata["updated_at"] = datetime.utcnow().isoformat()
+                metadata["updated_at"] = datetime.now(timezone.utc).isoformat()
 
                 await storage_service.save_workflow_metadata(x_user_id, workflow_id, metadata)
                 logger.info(f"[{request_id}] Updated metadata with resources: {files_to_sync}")

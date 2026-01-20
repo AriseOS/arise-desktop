@@ -24,9 +24,10 @@ def parse_timestamp(timestamp_str: str) -> Optional[datetime]:
     """
     Parse ISO 8601 timestamp string to datetime object
 
-    Handles both formats:
+    Handles formats:
     - "2025-12-07T10:16:08.360031Z" (Z suffix)
     - "2025-12-07T10:16:08.360031+00:00" (+00:00 suffix)
+    - "2025-12-07T10:16:08.360031" (no timezone - assumes UTC)
 
     Args:
         timestamp_str: ISO 8601 timestamp string
@@ -42,7 +43,13 @@ def parse_timestamp(timestamp_str: str) -> Optional[datetime]:
         if timestamp_str.endswith('Z'):
             timestamp_str = timestamp_str[:-1] + '+00:00'
 
-        return datetime.fromisoformat(timestamp_str)
+        dt = datetime.fromisoformat(timestamp_str)
+
+        # If no timezone info, assume UTC
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+
+        return dt
     except (ValueError, AttributeError):
         return None
 
