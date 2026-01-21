@@ -53,17 +53,12 @@ llm:
   proxy_url: "https://api.ariseos.com/api"  # CRS port (custom configuration)
   # For production, change to: https://crs.ariseos.com
 
-# Tavily Configuration
-# Web search and research via CRS Tavily endpoints
-tavily:
-  api_url: "https://api.ariseos.com/tavily"  # CRS Tavily API base URL
-
   # Anthropic Configuration
   # Note: API keys are provided by users through CRS (Claude Relay Service)
   # System API key (ANTHROPIC_API_KEY env var) is no longer used
   anthropic:
     model: claude-sonnet-4-5-20250929  # Default model for complex tasks
-    simple_model: claude-haiku-4-20250514  # Light model for description generation (optional, falls back to default)
+    simple_model: claude-haiku-4-5-20251001  # Light model for description generation (optional, falls back to default)
     max_tokens: 4096
     temperature: 0.0
 
@@ -74,6 +69,11 @@ tavily:
     model: gpt-4
     max_tokens: 4096
     temperature: 0.0
+
+# Tavily Configuration
+# Web search and research via CRS Tavily endpoints
+tavily:
+  api_url: "https://api.ariseos.com/tavily"  # CRS Tavily API base URL
 
 # Workflow Generation Configuration
 workflow_generation:

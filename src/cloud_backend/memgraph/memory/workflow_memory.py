@@ -603,8 +603,8 @@ class GraphStateManager(StateManager):
                 )
                 for rel_data in rels:
                     rel_props = rel_data['rel']
-                    start_node = rel_data['start_node']
-                    end_node = rel_data['end_node']
+                    start_node = rel_data['start']
+                    end_node = rel_data['end']
 
                     # Create Action object
                     action_dict = dict(rel_props)
@@ -624,8 +624,8 @@ class GraphStateManager(StateManager):
                 )
                 for rel_data in rels:
                     rel_props = rel_data['rel']
-                    start_node = rel_data['start_node']
-                    end_node = rel_data['end_node']
+                    start_node = rel_data['start']
+                    end_node = rel_data['end']
 
                     # Avoid duplicates when direction is "both"
                     if direction == "both" and start_node.get('id') == state_id:
@@ -847,8 +847,8 @@ class GraphActionManager(ActionManager):
             if rels and len(rels) > 0:
                 # Get the first relationship
                 rel_data = rels[0]['rel']
-                start_node = rels[0]['start_node']
-                end_node = rels[0]['end_node']
+                start_node = rels[0]['start']
+                end_node = rels[0]['end']
 
                 # Build Action object
                 action_dict = dict(rel_data)
@@ -968,8 +968,8 @@ class GraphActionManager(ActionManager):
             actions = []
             for rel_data_dict in rels:
                 rel_props = rel_data_dict['rel']
-                start_node = rel_data_dict['start_node']
-                end_node = rel_data_dict['end_node']
+                start_node = rel_data_dict['start']
+                end_node = rel_data_dict['end']
 
                 # Build Action object
                 action_dict = dict(rel_props)

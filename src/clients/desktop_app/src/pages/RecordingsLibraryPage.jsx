@@ -13,6 +13,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
   const [loading, setLoading] = useState(true);
   const [deleteConfirm, setDeleteConfirm] = useState(null); // { sessionId, recordingName }
   const [workflowIds, setWorkflowIds] = useState({}); // { sessionId: workflowId }
+  const [addingToMemory, setAddingToMemory] = useState({}); // { sessionId: boolean }
 
   // Fetch recordings from API
   useEffect(() => {
@@ -152,6 +153,34 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
 
   const handleDeleteCancel = () => {
     setDeleteConfirm(null);
+  };
+
+  const handleAddToMemory = async (sessionId) => {
+    if (addingToMemory[sessionId]) return;
+
+    setAddingToMemory(prev => ({ ...prev, [sessionId]: true }));
+    try {
+      const result = await api.addToMemory(userId, {
+        recordingId: sessionId,
+        generateEmbeddings: true
+      });
+
+      if (result.success) {
+        const message = t('recordingDetail.addedToMemory', {
+          states: result.states_added,
+          merged: result.states_merged,
+          sequences: result.intent_sequences_added
+        }) || `Added to memory: ${result.states_added} states, ${result.states_merged} merged, ${result.intent_sequences_added} sequences`;
+        showStatus(message, 'success');
+      } else {
+        showStatus(t('recordingDetail.addToMemoryFailed') || 'Failed to add to memory', 'error');
+      }
+    } catch (error) {
+      console.error('Error adding to memory:', error);
+      showStatus(`${t('recordingDetail.addToMemoryFailed') || 'Failed to add to memory'}: ${error.message}`, 'error');
+    } finally {
+      setAddingToMemory(prev => ({ ...prev, [sessionId]: false }));
+    }
   };
 
   const formatDate = (timestamp) => {
@@ -300,6 +329,16 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
                     {t('recordingsLibrary.generateWorkflow')}
                   </button>
                 )}
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => handleAddToMemory(recording.session_id)}
+                  disabled={addingToMemory[recording.session_id]}
+                >
+                  <Icon name={addingToMemory[recording.session_id] ? 'loader' : 'database'} />
+                  {addingToMemory[recording.session_id]
+                    ? (t('recordingDetail.addingToMemory') || 'Adding...')
+                    : (t('recordingDetail.addToMemory') || 'Add to Memory')}
+                </button>
                 <button
                   className="btn-icon-danger"
                   onClick={(e) => {
