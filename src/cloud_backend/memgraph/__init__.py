@@ -106,9 +106,7 @@ from src.cloud_backend.memgraph.reasoner import (
 
 # Services layer (LLM, Embedding, Rerank)
 from src.cloud_backend.memgraph.services import (
-    AnthropicLLMClient,
     BasePrompt,
-    ClaudeLLMClient,
     EmbeddingConfigValidationError,
     EmbeddingModel,
     EmbeddingModelConfigChecker,
@@ -123,7 +121,6 @@ from src.cloud_backend.memgraph.services import (
     LocalBGEModel,
     LocalBGERerankModel,
     MaaSRerankModel,
-    MockLLMClient,
     OpenAIEmbedding,
     OpenAILLMClient,
     PromptInput,
@@ -140,7 +137,6 @@ from src.cloud_backend.memgraph.services import (
     check_all_llm_configs,
     check_all_rerank_configs,
     create_embedding_model,
-    create_llm_client,
     create_rerank_model,
     get_available_embedding_providers,
     get_available_rerank_providers,
@@ -200,10 +196,6 @@ __all__ = [
     "LLMProvider",
     "LLMResponse",
     "OpenAILLMClient",
-    "ClaudeLLMClient",
-    "AnthropicLLMClient",
-    "MockLLMClient",
-    "create_llm_client",
     "LLMConfigChecker",
     "LLMConfigValidationError",
     "check_all_llm_configs",

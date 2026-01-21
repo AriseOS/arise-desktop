@@ -72,7 +72,6 @@ from src.cloud_backend.memgraph.services.embedding_service import (
 )
 
 # Core LLM client classes and utilities
-from src.cloud_backend.memgraph.services.llm import AnthropicLLMClient, ClaudeLLMClient
 from src.cloud_backend.memgraph.services.llm import ConfigValidationError as LLMConfigValidationError
 from src.cloud_backend.memgraph.services.llm import (
     LLMClient,
@@ -80,11 +79,9 @@ from src.cloud_backend.memgraph.services.llm import (
     LLMMessage,
     LLMProvider,
     LLMResponse,
-    MockLLMClient,
     OpenAILLMClient,
 )
 from src.cloud_backend.memgraph.services.llm import check_all_env_configs as check_all_llm_configs
-from src.cloud_backend.memgraph.services.llm import create_llm_client
 
 # Prompt management classes
 from src.cloud_backend.memgraph.services.prompt_base import (
@@ -123,11 +120,7 @@ __all__ = [
     "LLMResponse",
     # LLM Client - Implementations
     "OpenAILLMClient",
-    "ClaudeLLMClient",
-    "AnthropicLLMClient",
-    "MockLLMClient",
-    # LLM Client - Factory and utilities
-    "create_llm_client",
+    # LLM Client - Configuration utilities
     "LLMConfigChecker",
     "LLMConfigValidationError",
     "check_all_llm_configs",

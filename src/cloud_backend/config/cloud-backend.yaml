@@ -62,7 +62,8 @@ tavily:
   # Note: API keys are provided by users through CRS (Claude Relay Service)
   # System API key (ANTHROPIC_API_KEY env var) is no longer used
   anthropic:
-    model: claude-sonnet-4-5-20250929
+    model: claude-sonnet-4-5-20250929  # Default model for complex tasks
+    simple_model: claude-haiku-4-20250514  # Light model for description generation (optional, falls back to default)
     max_tokens: 4096
     temperature: 0.0
 
@@ -124,7 +125,7 @@ embedding:
   dimension: 1024  # Embedding vector dimension
   # API configuration (for OpenAI-compatible APIs like SiliconFlow)
   api_url: https://api.siliconflow.cn/v1  # SiliconFlow API base URL
-  api_key_env: # Environment variable for API key
+  api_key: sk-vxxklefwjnzavfejyrgotghjhzweekcahsxdjfaiebafxlzc # Environment variable for API key
 
 # Rate Limiting (optional)
 # rate_limit:

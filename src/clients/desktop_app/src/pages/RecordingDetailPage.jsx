@@ -12,6 +12,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
   const [activeTab, setActiveTab] = useState('timeline'); // 'timeline', 'doms', or 'yaml'
   const [isEditingQuery, setIsEditingQuery] = useState(false);
   const [editedQuery, setEditedQuery] = useState('');
+  const [addingToMemory, setAddingToMemory] = useState(false);
 
   const handleSaveQuery = async () => {
     if (!editedQuery.trim()) {
@@ -77,6 +78,34 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
       taskDescription: recording?.task_metadata?.task_description || '',
       userQuery: recording?.task_metadata?.user_query || ''
     });
+  };
+
+  const handleAddToMemory = async () => {
+    if (addingToMemory) return;
+
+    setAddingToMemory(true);
+    try {
+      const result = await api.addToMemory(userId, {
+        recordingId: sessionId,
+        generateEmbeddings: true
+      });
+
+      if (result.success) {
+        const message = t('recordingDetail.addedToMemory', {
+          states: result.states_added,
+          merged: result.states_merged,
+          sequences: result.intent_sequences_added
+        }) || `Added to memory: ${result.states_added} states, ${result.states_merged} merged, ${result.intent_sequences_added} sequences`;
+        showStatus(message, 'success');
+      } else {
+        showStatus(t('recordingDetail.addToMemoryFailed') || 'Failed to add to memory', 'error');
+      }
+    } catch (error) {
+      console.error('Error adding to memory:', error);
+      showStatus(`${t('recordingDetail.addToMemoryFailed') || 'Failed to add to memory'}: ${error.message}`, 'error');
+    } finally {
+      setAddingToMemory(false);
+    }
   };
 
   const formatTimestamp = (timestamp) => {
@@ -563,12 +592,24 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
           </div>
         )}
 
-        {/* Generate Workflow Button */}
+        {/* Action Buttons */}
         <div className="action-section">
-          <button className="btn-generate-workflow" onClick={handleGenerateWorkflow}>
-            <Icon icon="zap" />
-            {t('recordingDetail.generateWorkflow')}
-          </button>
+          <div className="action-buttons-row">
+            <button className="btn-generate-workflow" onClick={handleGenerateWorkflow}>
+              <Icon icon="zap" />
+              {t('recordingDetail.generateWorkflow')}
+            </button>
+            <button
+              className="btn-add-to-memory"
+              onClick={handleAddToMemory}
+              disabled={addingToMemory}
+            >
+              <Icon icon={addingToMemory ? 'loader' : 'database'} />
+              {addingToMemory
+                ? (t('recordingDetail.addingToMemory') || 'Adding...')
+                : (t('recordingDetail.addToMemory') || 'Add to Memory')}
+            </button>
+          </div>
           <p className="action-hint">
             {t('recordingDetail.generateHint')}
           </p>

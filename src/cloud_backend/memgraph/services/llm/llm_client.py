@@ -17,13 +17,11 @@ class LLMProvider(Enum):
         OPENAI: OpenAI GPT models (gpt-4, gpt-3.5-turbo, etc.)
         ANTHROPIC: Anthropic Claude models (claude-3-opus, etc.)
         GOOGLE: Google Gemini models
-        MOCK: Mock client for testing purposes
     """
 
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
     GOOGLE = "google"
-    MOCK = "mock"
 
 
 class LLMMessage:
@@ -305,45 +303,3 @@ class LLMClient(ABC):
         raise NotImplementedError("Subclass must implement check_config()")
 
 
-def create_llm_client(
-    provider: Union[str, LLMProvider],
-    api_client: Any = None,
-    model_name: Optional[str] = None,
-    **kwargs: Any,
-) -> "LLMClient":
-    """Factory function for creating LLM clients.
-
-    Args:
-        provider: The LLM provider (string or LLMProvider enum).
-        api_client: The API client instance (provider-specific).
-        model_name: The model name to use. If None, uses provider default.
-        **kwargs: Additional configuration parameters.
-
-    Returns:
-        An instance of the appropriate LLM client.
-
-    Raises:
-        ValueError: If the provider is not supported.
-    """
-    # Import here to avoid circular dependencies
-    # NOTE: claude_client.py is missing - commented out
-    # from src.cloud_backend.memgraph.services.llm.claude_client import ClaudeLLMClient
-    from src.services.llm.mock_client import MockLLMClient
-    from src.services.llm.openai_client import OpenAILLMClient
-
-    if isinstance(provider, str):
-        provider = LLMProvider(provider)
-
-    if provider == LLMProvider.OPENAI:
-        model_name = model_name or "gpt-4"
-        return OpenAILLMClient(api_client, model_name, **kwargs)
-
-    if provider == LLMProvider.ANTHROPIC:
-        model_name = model_name or "claude-3-opus-20240229"
-        return ClaudeLLMClient(api_client, model_name, **kwargs)
-
-    if provider == LLMProvider.MOCK:
-        model_name = model_name or "mock-model"
-        return MockLLMClient(model_name, **kwargs)
-
-    raise ValueError(f"Unsupported LLM provider: {provider}")

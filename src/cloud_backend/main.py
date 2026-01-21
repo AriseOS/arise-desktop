@@ -177,6 +177,26 @@ async def startup_event():
         workflow_memory = WorkflowMemory(graph_store)
         print("✅ Workflow Memory (for NL query)")
 
+        # 3.1 Initialize EmbeddingService (for semantic search) - REQUIRED
+        from src.cloud_backend.memgraph.services.embedding_service import EmbeddingService
+        embedding_config = config_service.get("embedding", {})
+        if not embedding_config:
+            print("❌ FATAL: embedding config not found in cloud-backend.yaml")
+            print("   Memory features require embedding service to function.")
+            import sys
+            sys.exit(1)
+
+        EmbeddingService.configure_from_dict(embedding_config)
+        if not EmbeddingService.is_available():
+            print("❌ FATAL: EmbeddingService not available")
+            print("   Check embedding config in cloud-backend.yaml:")
+            print("   - api_key: must be set directly, OR")
+            print("   - api_key_env: must be a valid environment variable name")
+            import sys
+            sys.exit(1)
+
+        print(f"✅ Embedding Service: {embedding_config.get('provider', 'openai')} / {embedding_config.get('model', 'unknown')}")
+
         # 4. Initialize Reasoner (for semantic retrieval)
         # Note: Reasoner requires LLM client which needs user's API key
         # It will be initialized per-request with user's API key
@@ -393,6 +413,7 @@ async def upload_recording(data: dict):
     1. Builds State/Action Graph using deterministic rules (NO LLM)
     2. Saves recording with graph data
     3. Optionally runs background AI analysis (with LLM) for task description
+    4. Optionally adds to workflow memory for semantic search
 
     Body:
         {
@@ -403,7 +424,9 @@ async def upload_recording(data: dict):
             "dom_snapshots": {  # Optional: DOM snapshots captured during recording
                 "https://example.com/page1": {...dom_dict...},
                 "https://example.com/page2": {...dom_dict...}
-            }
+            },
+            "add_to_memory": true,  # Optional: auto-add to workflow memory (default: true)
+            "generate_embeddings": true  # Generate embeddings for semantic search (default: true, required for query)
         }
 
     Returns:
@@ -414,11 +437,17 @@ async def upload_recording(data: dict):
                 "edges": [...],
                 "phases": [...],
                 "episodes": [...]
+            },
+            "memory": {  # Only if add_to_memory=true
+                "states_added": 3,
+                "states_merged": 1,
+                "intent_sequences_added": 5
             }
         }
 
     Note: Graph building is deterministic and immediate (no LLM).
           AI analysis happens in background (with LLM).
+          Memory addition is synchronous but fast (no LLM unless generate_embeddings=true).
     """
     user_id = data.get("user_id")
     user_api_key = data.get("user_api_key")
@@ -428,6 +457,9 @@ async def upload_recording(data: dict):
     dom_snapshots = data.get("dom_snapshots")  # URL -> DOM dict mapping
     # Allow client to provide recording_id (e.g., App Backend's session_id)
     recording_id = data.get("recording_id") or str(uuid.uuid4())
+    # Memory options
+    add_to_memory = data.get("add_to_memory", True)  # Default: auto-add to memory
+    generate_embeddings = data.get("generate_embeddings", True)
 
     if not user_id:
         raise HTTPException(400, "Missing user_id")
@@ -471,20 +503,68 @@ async def upload_recording(data: dict):
     if user_query:
         logger.info(f"  User query: {user_query}")
 
-    # Store graph to WorkflowMemory for immediate NL query availability
-    if graph_dict and workflow_memory:
+    # Add to workflow memory if requested
+    memory_result = None
+    if add_to_memory and workflow_memory:
         try:
-            # Store states with intents to memory
-            for state in graph.states.values():
-                workflow_memory.create_state(state)
+            from src.cloud_backend.memgraph.thinker.workflow_processor import WorkflowProcessor
 
-            # Store actions to memory
-            for action in graph.actions:
-                workflow_memory.create_action(action)
+            # Setup embedding model if requested
+            embedding_model = None
+            if generate_embeddings and user_api_key:
+                from src.cloud_backend.memgraph.services import EmbeddingService
+                if EmbeddingService.is_available():
+                    embedding_model = EmbeddingService.get_model()
 
-            logger.info(f"✅ Stored graph to memory: {len(graph.states)} states, {len(graph.actions)} actions")
+            # Setup LLM providers for description generation (only if embeddings requested)
+            llm_provider = None
+            simple_llm_provider = None
+            if generate_embeddings and user_api_key:
+                from src.common.llm import AnthropicProvider
+                llm_provider = AnthropicProvider(
+                    api_key=user_api_key,
+                    model_name=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
+                    base_url=config_service.get("llm.proxy_url")
+                )
+                # Create simple provider if configured
+                simple_model = config_service.get("llm.anthropic.simple_model")
+                if simple_model:
+                    simple_llm_provider = AnthropicProvider(
+                        api_key=user_api_key,
+                        model_name=simple_model,
+                        base_url=config_service.get("llm.proxy_url")
+                    )
+
+            # Create processor and process
+            processor = WorkflowProcessor(
+                llm_provider=llm_provider,
+                memory=workflow_memory,
+                embedding_model=embedding_model,
+                simple_llm_provider=simple_llm_provider,
+            )
+
+            result = await processor.process_workflow(
+                workflow_data={"operations": operations},
+                user_id=user_id,
+                session_id=recording_id,
+                store_to_memory=True,
+            )
+
+            memory_result = {
+                "states_added": result.metadata.get("new_states", 0),
+                "states_merged": result.metadata.get("reused_states", 0),
+                "page_instances_added": len(result.page_instances),
+                "intent_sequences_added": len(result.intent_sequences),
+                "actions_added": len(result.actions),
+            }
+
+            logger.info(f"✅ Added to memory: {memory_result['states_added']} new states, "
+                       f"{memory_result['states_merged']} merged")
+
         except Exception as e:
-            logger.warning(f"⚠️ Failed to store graph to memory: {e}")
+            logger.warning(f"⚠️ Failed to add to memory: {e}")
+            import traceback
+            traceback.print_exc()
 
     # Start background task to auto-generate task_description and user_query if not provided
     if not task_description or not user_query:
@@ -513,6 +593,8 @@ async def upload_recording(data: dict):
     response = {"recording_id": recording_id}
     if graph_dict:
         response["graph"] = graph_dict
+    if memory_result:
+        response["memory"] = memory_result
 
     return response
 
@@ -1122,6 +1204,567 @@ async def delete_workflow(workflow_id: str, user_id: str):
     return {"success": True, "message": "Workflow deleted"}
 
 
+# ===== Memory API =====
+# Endpoints for managing user's Workflow Memory (States, Actions, IntentSequences)
+# See docs/api/memory-api.md for detailed documentation
+
+@app.post("/api/v1/memory/add")
+async def add_to_memory(
+    data: dict,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """
+    Add Recording to User's Workflow Memory
+
+    This endpoint processes a recording and adds its States, Actions, and IntentSequences
+    to the user's workflow memory. Unlike POST /api/v1/recordings, this endpoint focuses
+    solely on memory management without storing the recording itself.
+
+    The processing pipeline:
+    1. Parse recording operations
+    2. Segment by URL (each unique URL becomes a State)
+    3. Deduplicate States (same URL reuses existing State)
+    4. Create PageInstances for each URL visit
+    5. Create IntentSequences from operations within each State
+    6. Create Actions for state transitions
+    7. Optionally generate embeddings for semantic search
+
+    Headers:
+        X-Ami-API-Key: User's API key (required for embedding generation)
+
+    Body:
+        {
+            "user_id": "user123",                    // Required: User identifier
+            "recording_id": "recording_xxx",        // Optional: Load from existing recording
+            "operations": [...],                     // Optional: Direct operations array
+            "session_id": "session_xxx",            // Optional: Session identifier
+            "generate_embeddings": true             // Generate embeddings (default: true, required for query)
+        }
+
+    Note: Either recording_id or operations must be provided.
+
+    Returns:
+        {
+            "success": true,
+            "states_added": 3,                      // New States created
+            "states_merged": 1,                     // Existing States reused
+            "page_instances_added": 4,              // PageInstances created
+            "intent_sequences_added": 5,            // IntentSequences created
+            "actions_added": 2,                     // Actions created
+            "processing_time_ms": 150
+        }
+
+    Errors:
+        400: Missing user_id, or neither recording_id nor operations provided
+        404: Recording not found (when using recording_id)
+        500: Processing failed
+    """
+    import time
+    start_time = time.time()
+
+    user_id = data.get("user_id")
+    recording_id = data.get("recording_id")
+    operations = data.get("operations")
+    session_id = data.get("session_id")
+    generate_embeddings = data.get("generate_embeddings", True)
+
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+
+    if not recording_id and not operations:
+        raise HTTPException(400, "Either recording_id or operations must be provided")
+
+    # Load operations from recording if recording_id provided
+    if recording_id and not operations:
+        recording = storage_service.get_recording(user_id, recording_id)
+        if not recording:
+            raise HTTPException(404, f"Recording not found: {recording_id}")
+        operations = recording.get("operations", [])
+        if not session_id:
+            session_id = recording.get("session_id")
+
+    if not operations:
+        raise HTTPException(400, "No operations to process")
+
+    try:
+        # Import WorkflowProcessor
+        from src.cloud_backend.memgraph.thinker.workflow_processor import WorkflowProcessor
+
+        # Setup embedding model if requested
+        embedding_model = None
+        if generate_embeddings and x_ami_api_key:
+            from src.cloud_backend.memgraph.services import EmbeddingService
+            if EmbeddingService.is_available():
+                embedding_model = EmbeddingService.get_model()
+
+        # Setup LLM providers for description generation
+        llm_provider = None
+        simple_llm_provider = None
+        if generate_embeddings and x_ami_api_key:
+            from src.common.llm import AnthropicProvider
+            llm_provider = AnthropicProvider(
+                api_key=x_ami_api_key,
+                model_name=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
+                base_url=config_service.get("llm.proxy_url")
+            )
+            # Create simple provider if configured
+            simple_model = config_service.get("llm.anthropic.simple_model")
+            if simple_model:
+                simple_llm_provider = AnthropicProvider(
+                    api_key=x_ami_api_key,
+                    model_name=simple_model,
+                    base_url=config_service.get("llm.proxy_url")
+                )
+
+        # Create processor
+        processor = WorkflowProcessor(
+            llm_provider=llm_provider,
+            memory=workflow_memory,
+            embedding_model=embedding_model,
+            simple_llm_provider=simple_llm_provider,
+        )
+
+        # Process workflow (async)
+        result = await processor.process_workflow(
+            workflow_data={"operations": operations},
+            user_id=user_id,
+            session_id=session_id,
+            store_to_memory=True,
+        )
+
+        processing_time_ms = int((time.time() - start_time) * 1000)
+
+        logger.info(f"✅ Added to memory for user {user_id}: "
+                   f"{result.metadata.get('new_states', 0)} new states, "
+                   f"{result.metadata.get('reused_states', 0)} merged, "
+                   f"{len(result.intent_sequences)} sequences")
+
+        return {
+            "success": True,
+            "states_added": result.metadata.get("new_states", 0),
+            "states_merged": result.metadata.get("reused_states", 0),
+            "page_instances_added": len(result.page_instances),
+            "intent_sequences_added": len(result.intent_sequences),
+            "actions_added": len(result.actions),
+            "processing_time_ms": processing_time_ms
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Failed to add to memory: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Failed to add to memory: {str(e)}")
+
+
+@app.post("/api/v1/memory/query")
+async def query_memory(
+    data: dict,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """
+    Query User's Workflow Memory using Natural Language
+
+    This endpoint performs intelligent semantic search on the user's workflow memory.
+    The system automatically analyzes the query and returns the most relevant operation paths.
+
+    Query Processing:
+    1. Generate embedding for query text
+    2. Find matching States using semantic similarity
+    3. Search paths between States on graph (if applicable)
+    4. For each State, find relevant IntentSequences
+    5. Return complete operation paths
+
+    Headers:
+        X-Ami-API-Key: User's API key (required for embedding generation)
+
+    Body:
+        {
+            "user_id": "user123",                    // Required: User identifier
+            "query": "通过榜单查看产品团队信息",        // Required: Natural language query
+            "top_k": 3,                              // Optional: Number of paths to return (default: 3)
+            "min_score": 0.5,                        // Optional: Minimum similarity score (default: 0.5)
+            "domain": "producthunt.com"              // Optional: Filter by domain
+        }
+
+    Returns:
+        {
+            "success": true,
+            "query": "通过榜单查看产品团队信息",
+            "paths": [...],
+            "total_paths": 1
+        }
+
+    Errors:
+        400: Missing user_id or query
+        503: Memory service not initialized
+        500: Query failed
+    """
+    logger.info(f"🔍 Memory query request received: data={data}")
+
+    if workflow_memory is None:
+        raise HTTPException(503, "Memory service not initialized")
+
+    if not x_ami_api_key:
+        raise HTTPException(400, "Missing X-Ami-API-Key header")
+
+    user_id = data.get("user_id")
+    query = data.get("query")
+    top_k = data.get("top_k", 3)
+    min_score = data.get("min_score", 0.5)
+    domain = data.get("domain")
+    max_depth = data.get("max_depth", 10)
+
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+    if not query:
+        raise HTTPException(400, "Missing query")
+
+    try:
+        # Import EmbeddingService
+        from src.cloud_backend.memgraph.services.embedding_service import EmbeddingService
+
+        if not EmbeddingService.is_available():
+            logger.warning("EmbeddingService not available")
+            raise HTTPException(500, "Embedding service not available")
+
+        # Step 1: Generate embedding for query
+        query_embedding = EmbeddingService.embed(query)
+        if not query_embedding:
+            raise HTTPException(500, "Failed to generate query embedding")
+
+        # Step 2: Find matching States by embedding similarity
+        state_results = workflow_memory.state_manager.search_states_by_embedding(
+            query_vector=query_embedding,
+            top_k=top_k * 2,  # Get more candidates
+            user_id=user_id,
+        )
+
+        # Filter by min_score and domain
+        matching_states = []
+        for state, score in state_results:
+            if score < min_score:
+                continue
+            if domain and state.domain != domain:
+                continue
+            matching_states.append((state, score))
+
+        if not matching_states:
+            logger.info(f"No matching states found for query: {query}")
+            return {
+                "success": True,
+                "query": query,
+                "paths": [],
+                "total_paths": 0,
+                "message": "No matching states found"
+            }
+
+        # Step 3: Build paths
+        # For now, we treat each matching state as a potential endpoint
+        # and try to find paths to it from other states
+        paths = []
+
+        for target_state, target_score in matching_states[:top_k]:
+            # Find the best IntentSequence for this state
+            best_intent_seq = None
+            best_seq_score = 0.0
+
+            if target_state.intent_sequences:
+                # Search within this state's IntentSequences
+                for seq in target_state.intent_sequences:
+                    if seq.embedding_vector:
+                        # Calculate cosine similarity with query
+                        import math
+                        dot = sum(a * b for a, b in zip(query_embedding, seq.embedding_vector))
+                        norm1 = math.sqrt(sum(a * a for a in query_embedding))
+                        norm2 = math.sqrt(sum(b * b for b in seq.embedding_vector))
+                        seq_score = dot / (norm1 * norm2) if norm1 > 0 and norm2 > 0 else 0.0
+                        if seq_score > best_seq_score:
+                            best_seq_score = seq_score
+                            best_intent_seq = seq
+
+            # Format intents for response
+            intents_data = []
+            if best_intent_seq and best_intent_seq.intents:
+                for intent in best_intent_seq.intents[:10]:  # Limit to 10 intents
+                    if hasattr(intent, "to_dict"):
+                        intent_dict = intent.to_dict()
+                    else:
+                        intent_dict = intent
+                    intents_data.append({
+                        "type": intent_dict.get("type"),
+                        "text": intent_dict.get("text"),
+                        "value": intent_dict.get("value"),
+                    })
+
+            # Build step for this state
+            step = {
+                "state": {
+                    "id": target_state.id,
+                    "description": target_state.description,
+                    "page_title": target_state.page_title,
+                    "page_url": target_state.page_url,
+                    "domain": target_state.domain,
+                },
+                "action": None,  # No action for single-point query
+                "intent_sequence": {
+                    "id": best_intent_seq.id if best_intent_seq else None,
+                    "description": best_intent_seq.description if best_intent_seq else None,
+                    "intents": intents_data,
+                } if best_intent_seq else None,
+            }
+
+            # Try to find incoming paths to this state
+            # Get all user states and try to find paths
+            all_states = workflow_memory.state_manager.list_states()
+            user_states = [s for s in all_states if getattr(s, 'user_id', None) == user_id]
+
+            # Find the best path to this target state
+            best_path = None
+            best_path_length = float('inf')
+
+            for source_state in user_states:
+                if source_state.id == target_state.id:
+                    continue
+                path = workflow_memory.find_path(
+                    from_state_id=source_state.id,
+                    to_state_id=target_state.id,
+                    max_depth=max_depth,
+                )
+                if path and len(path) > 1 and len(path) < best_path_length:
+                    best_path = path
+                    best_path_length = len(path)
+
+            if best_path and len(best_path) > 1:
+                # Format full path with IntentSequences
+                path_steps = []
+                for i, (state, action) in enumerate(best_path):
+                    # Find best IntentSequence for this state
+                    state_intent_seq = None
+                    if state.intent_sequences:
+                        # Use first non-empty IntentSequence
+                        for seq in state.intent_sequences:
+                            if seq.intents:
+                                state_intent_seq = seq
+                                break
+
+                    # Format intents
+                    state_intents = []
+                    if state_intent_seq and state_intent_seq.intents:
+                        for intent in state_intent_seq.intents[:5]:
+                            if hasattr(intent, "to_dict"):
+                                intent_dict = intent.to_dict()
+                            else:
+                                intent_dict = intent
+                            state_intents.append({
+                                "type": intent_dict.get("type"),
+                                "text": intent_dict.get("text"),
+                                "value": intent_dict.get("value"),
+                            })
+
+                    path_step = {
+                        "state": {
+                            "id": state.id,
+                            "description": state.description,
+                            "page_title": state.page_title,
+                            "page_url": state.page_url,
+                            "domain": state.domain,
+                        },
+                        "action": {
+                            "id": action.id,
+                            "description": action.description,
+                            "type": action.type,
+                        } if action else None,
+                        "intent_sequence": {
+                            "id": state_intent_seq.id if state_intent_seq else None,
+                            "description": state_intent_seq.description if state_intent_seq else None,
+                            "intents": state_intents,
+                        } if state_intent_seq else None,
+                    }
+                    path_steps.append(path_step)
+
+                paths.append({
+                    "score": round(target_score, 4),
+                    "description": f"从 {best_path[0][0].description or best_path[0][0].page_title} 到 {target_state.description or target_state.page_title}",
+                    "steps": path_steps,
+                })
+            else:
+                # No path found, return single state as result
+                paths.append({
+                    "score": round(target_score, 4),
+                    "description": target_state.description or target_state.page_title,
+                    "steps": [step],
+                })
+
+        # Sort by score and limit to top_k
+        paths.sort(key=lambda x: x["score"], reverse=True)
+        paths = paths[:top_k]
+
+        logger.info(f"✅ Memory query for user {user_id}: '{query}' -> {len(paths)} paths")
+
+        return {
+            "success": True,
+            "query": query,
+            "paths": paths,
+            "total_paths": len(paths),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        logger.error(f"❌ Memory query failed: {e}\n{error_trace}")
+        print(f"❌ Memory query error:\n{error_trace}")
+        raise HTTPException(500, f"Memory query failed: {str(e)}")
+
+
+@app.get("/api/v1/memory/stats")
+async def get_memory_stats(
+    user_id: str,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """
+    Get User's Workflow Memory Statistics
+
+    This endpoint returns statistics about the user's workflow memory,
+    including counts of States, IntentSequences, PageInstances, and Actions.
+
+    Headers:
+        X-Ami-API-Key: User's API key (optional)
+
+    Query Parameters:
+        user_id: User identifier (required)
+
+    Returns:
+        {
+            "success": true,
+            "user_id": "user123",
+            "stats": {
+                "total_states": 10,
+                "total_intent_sequences": 25,
+                "total_page_instances": 15,
+                "total_actions": 8,
+                "domains": ["producthunt.com", "google.com"],
+                "url_index_size": 12
+            }
+        }
+
+    Errors:
+        400: Missing user_id
+        500: Failed to get stats
+    """
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+
+    try:
+        # Get all states for user
+        all_states = workflow_memory.state_manager.list_states(user_id=user_id)
+
+        # Calculate statistics
+        total_intent_sequences = 0
+        total_page_instances = 0
+        domains = set()
+
+        for state in all_states:
+            total_intent_sequences += len(state.intent_sequences)
+            total_page_instances += len(state.instances)
+            if state.domain:
+                domains.add(state.domain)
+
+        # Get actions count
+        total_actions = len(workflow_memory.action_manager.list_actions(user_id=user_id))
+
+        # Get URL index stats
+        url_index_stats = workflow_memory.url_index.get_stats()
+
+        logger.info(f"✅ Memory stats for user {user_id}: {len(all_states)} states")
+
+        return {
+            "success": True,
+            "user_id": user_id,
+            "stats": {
+                "total_states": len(all_states),
+                "total_intent_sequences": total_intent_sequences,
+                "total_page_instances": total_page_instances,
+                "total_actions": total_actions,
+                "domains": sorted(list(domains)),
+                "url_index_size": url_index_stats.get("total_urls", 0),
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Failed to get memory stats: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Failed to get memory stats: {str(e)}")
+
+
+@app.delete("/api/v1/memory")
+async def clear_memory(
+    user_id: str,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """
+    Clear User's Workflow Memory
+
+    This endpoint deletes all States, Actions, and related data from the user's
+    workflow memory. This operation is irreversible.
+
+    Headers:
+        X-Ami-API-Key: User's API key (optional)
+
+    Query Parameters:
+        user_id: User identifier (required)
+
+    Returns:
+        {
+            "success": true,
+            "deleted_states": 10,
+            "deleted_actions": 8
+        }
+
+    Errors:
+        400: Missing user_id
+        500: Failed to clear memory
+    """
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+
+    try:
+        # Get counts before deletion
+        all_states = workflow_memory.state_manager.list_states(user_id=user_id)
+        all_actions = workflow_memory.action_manager.list_actions(user_id=user_id)
+        states_count = len(all_states)
+        actions_count = len(all_actions)
+
+        # Delete all actions first (they reference states)
+        for action in all_actions:
+            workflow_memory.delete_action(action.source, action.target)
+
+        # Delete all states
+        for state in all_states:
+            workflow_memory.delete_state(state.id)
+
+        # Clear URL index for user
+        workflow_memory.url_index.clear()
+
+        logger.info(f"✅ Memory cleared for user {user_id}: {states_count} states, {actions_count} actions")
+
+        return {
+            "success": True,
+            "deleted_states": states_count,
+            "deleted_actions": actions_count,
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Failed to clear memory: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Failed to clear memory: {str(e)}")
+
+
 # ===== Helper Functions for NL Query =====
 
 async def _ensure_user_memory_loaded(user_id: str, session_id: Optional[str] = None):
@@ -1203,16 +1846,16 @@ async def _get_reasoner_for_user(x_ami_api_key: str):
     from src.cloud_backend.memgraph.reasoner.reasoner import Reasoner
     from src.common.llm.anthropic_provider import AnthropicProvider
 
-    # Create LLM client with user's API key
-    llm_client = AnthropicProvider(
+    # Create LLM provider with user's API key
+    llm_provider = AnthropicProvider(
         api_key=x_ami_api_key,
         base_url=config_service.get("llm.proxy_url", "https://api.ariseos.com/api")
     )
 
-    # Create Reasoner with memory and LLM client
+    # Create Reasoner with memory and LLM provider
     reasoner = Reasoner(
         memory=workflow_memory,
-        llm_client=llm_client,
+        llm_provider=llm_provider,
         max_depth=3
     )
 

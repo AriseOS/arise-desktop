@@ -260,7 +260,11 @@
         "copiedText": "Copied Text",
         "direction": "Direction",
         "message": "Message",
-        "page": "Page"
+        "page": "Page",
+        "addToMemory": "Add to Memory",
+        "addingToMemory": "Adding...",
+        "addedToMemory": "Added to memory: {{states}} states, {{merged}} merged, {{sequences}} sequences",
+        "addToMemoryFailed": "Failed to add to memory"
     },
     "myWorkflows": {
         "pageTitle": "Workflow Management",

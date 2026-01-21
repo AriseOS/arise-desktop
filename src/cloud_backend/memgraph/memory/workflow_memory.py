@@ -514,55 +514,37 @@ class GraphStateManager(StateManager):
             return False
 
     def search_states_by_embedding(
-        self, query_vector: List[float], top_k: int = 10
-    ) -> List[State]:
+        self, query_vector: List[float], top_k: int = 10, user_id: Optional[str] = None
+    ) -> List[tuple[State, float]]:
         """Search states by embedding vector similarity.
 
         Args:
             query_vector: Query embedding vector.
             top_k: Number of top results to return.
+            user_id: Filter by user ID (optional).
 
         Returns:
-            List of top-k similar State objects.
+            List of tuples (State, similarity_score).
         """
-        try:
-            # Use GraphStore's vector_search method
-            results = self.graph_store.vector_search(
-                label=self.node_label,
-                property_key="embedding_vector",
-                query_text_or_vector=query_vector,
-                topk=top_k
-            )
-
-            states = []
-            if results:
-                for result in results:
-                    # Extract node data from search result
-                    node_data = result if isinstance(result, dict) else result.get("node", {})
-                    if node_data:
-                        states.append(State.from_dict(node_data))
-
-            return states
-        except Exception as e:
-            print(f"Error searching states by embedding: {e}")
-            # Fallback to simple in-memory cosine similarity if vector search fails
-            return self._fallback_embedding_search(query_vector, top_k)
+        # Use fallback in-memory search which supports user_id filtering
+        return self._fallback_embedding_search(query_vector, top_k, user_id)
 
     def _fallback_embedding_search(
-        self, query_vector: List[float], top_k: int
-    ) -> List[State]:
+        self, query_vector: List[float], top_k: int, user_id: Optional[str] = None
+    ) -> List[tuple[State, float]]:
         """Fallback embedding search using in-memory cosine similarity.
 
         Args:
             query_vector: Query embedding vector.
             top_k: Number of top results to return.
+            user_id: Filter by user ID (optional).
 
         Returns:
-            List of top-k similar State objects.
+            List of tuples (State, similarity_score).
         """
         def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
             """Calculate cosine similarity between two vectors."""
-            if len(vec1) != len(vec2):
+            if not vec1 or not vec2 or len(vec1) != len(vec2):
                 return 0.0
 
             dot_product = sum(a * b for a, b in zip(vec1, vec2))
@@ -580,6 +562,10 @@ class GraphStateManager(StateManager):
         # Calculate similarities
         similarities = []
         for state in all_states:
+            # Filter by user_id if provided
+            if user_id and state.user_id != user_id:
+                continue
+
             if state.embedding_vector:
                 similarity = cosine_similarity(query_vector, state.embedding_vector)
                 similarities.append((state, similarity))
@@ -587,8 +573,8 @@ class GraphStateManager(StateManager):
         # Sort by similarity (descending)
         similarities.sort(key=lambda x: x[1], reverse=True)
 
-        # Return top-k
-        return [state for state, _ in similarities[:top_k]]
+        # Return top-k with scores
+        return similarities[:top_k]
 
     def get_connected_actions(
         self,
@@ -1617,7 +1603,7 @@ class WorkflowMemory(Memory):
             return False
 
     def search_intent_sequences_by_embedding(
-        self, query_vector: List[float], top_k: int = 10
+        self, query_vector: List[float], top_k: int = 10, user_id: Optional[str] = None
     ) -> List[tuple[IntentSequence, State, float]]:
         """Search IntentSequences by embedding vector similarity.
 
@@ -1628,6 +1614,7 @@ class WorkflowMemory(Memory):
         Args:
             query_vector: Query embedding vector.
             top_k: Number of top results to return.
+            user_id: Filter by user ID (optional).
 
         Returns:
             List of tuples (IntentSequence, State, similarity_score).
@@ -1653,6 +1640,10 @@ class WorkflowMemory(Memory):
             # Collect all intent sequences with their parent states
             similarities = []
             for state in all_states:
+                # Filter by user_id if provided
+                if user_id and state.user_id != user_id:
+                    continue
+
                 if not state.intent_sequences:
                     continue
 

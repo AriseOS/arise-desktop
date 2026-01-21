@@ -15,7 +15,6 @@ from src.cloud_backend.memgraph.reasoner.prompts.state_satisfaction_prompt impor
     StateSatisfactionPrompt,
 )
 from src.cloud_backend.memgraph.reasoner.tools.task_tool import TaskTool, ToolResult
-from src.cloud_backend.memgraph.services.llm import LLMClient, LLMMessage
 
 
 class RetrievalTool(TaskTool):
@@ -24,7 +23,7 @@ class RetrievalTool(TaskTool):
     def __init__(
         self,
         memory: Memory,
-        llm_client: Optional[LLMClient] = None,
+        llm_provider: Optional[Any] = None,
         embedding_service=None,
         max_depth: int = 3,
     ):
@@ -32,7 +31,7 @@ class RetrievalTool(TaskTool):
 
         Args:
             memory: Memory instance.
-            llm_client: LLM client for evaluation.
+            llm_provider: LLM provider (AnthropicProvider) for evaluation.
             embedding_service: Embedding service for vector search.
             max_depth: Maximum neighbor exploration depth.
         """
@@ -41,12 +40,12 @@ class RetrievalTool(TaskTool):
             description="Retrieve states and actions from memory based on target",
         )
         self.memory = memory
-        self.llm_client = llm_client
+        self.llm_provider = llm_provider
         self.embedding_service = embedding_service
         self.max_depth = max_depth
         self.satisfaction_prompt = StateSatisfactionPrompt()
 
-    def execute(
+    async def execute(
         self, target: str, parameters: Optional[Dict[str, Any]] = None
     ) -> ToolResult:
         """Execute retrieval for the target.
@@ -79,7 +78,7 @@ class RetrievalTool(TaskTool):
 
         # Step b: Check if initial state satisfies target
         for state in initial_states:
-            if self._check_satisfaction(target, [state]):
+            if await self._check_satisfaction(target, [state]):
                 return ToolResult(
                     True,
                     states=[state],
@@ -90,7 +89,7 @@ class RetrievalTool(TaskTool):
 
         # Step c: Explore neighbors
         best_state = initial_states[0]
-        result = self._explore_neighbors(target, best_state, max_depth)
+        result = await self._explore_neighbors(target, best_state, max_depth)
         return result
 
     def _find_states_by_embedding(self, target: str, top_k: int = 10) -> List[State]:
@@ -107,9 +106,9 @@ class RetrievalTool(TaskTool):
         # Fallback to listing states
         return self.memory.state_manager.list_states(limit=top_k)
 
-    def _check_satisfaction(self, target: str, states: List[State]) -> bool:
+    async def _check_satisfaction(self, target: str, states: List[State]) -> bool:
         """Check if states satisfy target using LLM."""
-        if not self.llm_client:
+        if not self.llm_provider:
             # Rule-based fallback
             return len(states) > 0
 
@@ -123,13 +122,11 @@ class RetrievalTool(TaskTool):
             prompt_text = self.satisfaction_prompt.build_prompt(input_data)
             system_prompt = self.satisfaction_prompt.get_system_prompt()
 
-            # Call LLM
-            messages = [
-                LLMMessage(role="system", content=system_prompt),
-                LLMMessage(role="user", content=prompt_text),
-            ]
-
-            response = self.llm_client.generate(messages=messages, temperature=0.1)
+            # Call LLM using AnthropicProvider
+            response = await self.llm_provider.generate_response(
+                system_prompt=system_prompt,
+                user_prompt=prompt_text
+            )
 
             # Parse response
             output = self.satisfaction_prompt.parse_response(response)
@@ -140,7 +137,7 @@ class RetrievalTool(TaskTool):
             print(f"LLM satisfaction check failed: {exc}")
             return False
 
-    def _explore_neighbors(
+    async def _explore_neighbors(
         self, target: str, initial_state: State, max_depth: int
     ) -> ToolResult:
         """Explore neighbors up to max_depth."""
@@ -160,7 +157,7 @@ class RetrievalTool(TaskTool):
             current_path_actions = path_actions
 
             # Check if current path satisfies target
-            if self._check_satisfaction(target, current_path_states):
+            if await self._check_satisfaction(target, current_path_states):
                 return ToolResult(True,
                     states=current_path_states,
                     actions=current_path_actions,

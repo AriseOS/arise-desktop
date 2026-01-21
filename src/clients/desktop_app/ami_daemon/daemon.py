@@ -3177,6 +3177,223 @@ async def export_workflow_collection(workflow_id: str, collection_name: str, use
 # Intent Builder Agent APIs (SSE Streaming Proxy)
 # ============================================================================
 
+# ============================================================================
+# Memory API Endpoints
+# ============================================================================
+
+class AddToMemoryRequest(BaseModel):
+    """Request model for adding to memory"""
+    user_id: str
+    recording_id: Optional[str] = None
+    operations: Optional[List[Dict[str, Any]]] = None
+    session_id: Optional[str] = None
+    generate_embeddings: bool = True
+
+
+class QueryMemoryRequest(BaseModel):
+    """Request model for querying memory
+
+    The system automatically analyzes the query and returns the most relevant
+    operation paths with States, Actions, and IntentSequences.
+    """
+    user_id: str
+    query: str
+    top_k: int = 3
+    min_score: float = 0.5
+    domain: Optional[str] = None
+
+
+@app.post("/api/v1/memory/add")
+async def add_to_memory(
+    request: AddToMemoryRequest,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """
+    Add Recording to User's Workflow Memory
+
+    This endpoint processes a recording and adds its States, Actions, and IntentSequences
+    to the user's workflow memory for semantic search.
+
+    Headers:
+        X-Ami-API-Key: User's API key (required for embedding generation)
+
+    Returns:
+        {
+            "success": true,
+            "states_added": 3,
+            "states_merged": 1,
+            "page_instances_added": 4,
+            "intent_sequences_added": 5,
+            "actions_added": 2,
+            "processing_time_ms": 150
+        }
+    """
+    try:
+        logger.info(f"Adding to memory for user: {request.user_id}")
+
+        # Set user API key on cloud client
+        if x_ami_api_key:
+            cloud_client.set_user_api_key(x_ami_api_key)
+
+        # Forward to Cloud Backend
+        result = await cloud_client.add_to_memory(
+            user_id=request.user_id,
+            recording_id=request.recording_id,
+            operations=request.operations,
+            session_id=request.session_id,
+            generate_embeddings=request.generate_embeddings
+        )
+
+        logger.info(f"Memory add result: {result.get('states_added')} added, "
+                   f"{result.get('states_merged')} merged")
+        return result
+
+    except Exception as e:
+        logger.error(f"Failed to add to memory: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/memory/query")
+async def query_memory(
+    request: QueryMemoryRequest,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """
+    Query User's Workflow Memory using Natural Language
+
+    This endpoint performs intelligent semantic search on the user's workflow memory.
+    The system automatically analyzes the query and returns the most relevant
+    operation paths with States, Actions, and IntentSequences.
+
+    Headers:
+        X-Ami-API-Key: User's API key (required)
+
+    Returns:
+        {
+            "success": true,
+            "query": "通过榜单查看产品团队信息",
+            "paths": [
+                {
+                    "score": 0.85,
+                    "description": "从榜单页到团队页的操作路径",
+                    "steps": [
+                        {"state": {...}, "action": {...}, "intent_sequence": {...}},
+                        ...
+                    ]
+                }
+            ],
+            "total_paths": 1
+        }
+    """
+    if not x_ami_api_key:
+        raise HTTPException(status_code=400, detail="X-Ami-API-Key header is required")
+
+    try:
+        logger.info(f"Querying memory for user: {request.user_id}, query: {request.query[:50]}...")
+
+        # Set user API key on cloud client
+        cloud_client.set_user_api_key(x_ami_api_key)
+
+        # Forward to Cloud Backend
+        result = await cloud_client.query_memory(
+            user_id=request.user_id,
+            query=request.query,
+            top_k=request.top_k,
+            min_score=request.min_score,
+            domain=request.domain
+        )
+
+        logger.info(f"Memory query result: {result.get('total_paths')} paths")
+        return result
+
+    except Exception as e:
+        logger.error(f"Failed to query memory: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/memory/stats")
+async def get_memory_stats(
+    user_id: str,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """
+    Get User's Workflow Memory Statistics
+
+    Query Parameters:
+        user_id: User identifier
+
+    Returns:
+        {
+            "success": true,
+            "user_id": "user123",
+            "stats": {
+                "total_states": 10,
+                "total_intent_sequences": 25,
+                "total_page_instances": 15,
+                "total_actions": 8,
+                "domains": ["producthunt.com"],
+                "url_index_size": 12
+            }
+        }
+    """
+    try:
+        logger.info(f"Getting memory stats for user: {user_id}")
+
+        # Set user API key on cloud client
+        if x_ami_api_key:
+            cloud_client.set_user_api_key(x_ami_api_key)
+
+        # Forward to Cloud Backend
+        result = await cloud_client.get_memory_stats(user_id=user_id)
+
+        logger.info(f"Memory stats: {result.get('stats', {}).get('total_states', 0)} states")
+        return result
+
+    except Exception as e:
+        logger.error(f"Failed to get memory stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/v1/memory")
+async def clear_memory(
+    user_id: str,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """
+    Clear User's Workflow Memory
+
+    Query Parameters:
+        user_id: User identifier
+
+    Returns:
+        {
+            "success": true,
+            "deleted_states": 10,
+            "deleted_actions": 8
+        }
+    """
+    try:
+        logger.info(f"Clearing memory for user: {user_id}")
+
+        # Set user API key on cloud client
+        if x_ami_api_key:
+            cloud_client.set_user_api_key(x_ami_api_key)
+
+        # Forward to Cloud Backend
+        result = await cloud_client.clear_memory(user_id=user_id)
+
+        logger.info(f"Memory cleared: {result.get('deleted_states')} states")
+        return result
+
+    except Exception as e:
+        logger.error(f"Failed to clear memory: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Intent Builder API Endpoints
+# ============================================================================
+
 class StartIntentBuilderRequest(BaseModel):
     """Request model for starting Intent Builder session"""
     user_id: str

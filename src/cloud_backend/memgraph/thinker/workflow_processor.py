@@ -30,7 +30,7 @@ from src.cloud_backend.memgraph.ontology.intent_sequence import IntentSequence
 from src.cloud_backend.memgraph.ontology.page_instance import PageInstance
 from src.cloud_backend.memgraph.ontology.state import State
 from src.cloud_backend.memgraph.services.embedding_model import EmbeddingModel
-from src.cloud_backend.memgraph.services.llm import LLMClient, LLMMessage
+from src.common.llm import AnthropicProvider
 
 
 class URLSegment:
@@ -147,31 +147,28 @@ class WorkflowProcessor:
 
     def __init__(
         self,
-        llm_client: LLMClient,
+        llm_provider: Optional[AnthropicProvider] = None,
         memory: Optional[WorkflowMemory] = None,
-        model_name: str = "gpt-4",
         embedding_model: Optional[EmbeddingModel] = None,
+        simple_llm_provider: Optional[AnthropicProvider] = None,
     ):
         """Initialize WorkflowProcessor.
 
         Args:
-            llm_client: LLM client for description generation.
+            llm_provider: AnthropicProvider for complex LLM tasks.
+                         If None, descriptions will use default values.
             memory: WorkflowMemory instance for storage.
-            model_name: Name of LLM model to use.
             embedding_model: Embedding model for vector generation.
-
-        Raises:
-            ValueError: If llm_client is None.
+            simple_llm_provider: Light AnthropicProvider for description generation.
+                                If None, uses llm_provider.
         """
-        if not llm_client:
-            raise ValueError("LLM client is required for WorkflowProcessor")
-
-        self.llm_client = llm_client
+        self.llm_provider = llm_provider
         self.memory = memory
-        self.model_name = model_name
         self.embedding_model = embedding_model
+        # Use simple provider for descriptions, fall back to main provider
+        self.simple_llm_provider = simple_llm_provider or llm_provider
 
-    def process_workflow(
+    async def process_workflow(
         self,
         workflow_data: Union[List[Dict[str, Any]], str],
         user_id: Optional[str] = None,
@@ -213,6 +210,7 @@ class WorkflowProcessor:
         # Stage 2: Process segments - find/create States, PageInstances, IntentSequences
         print("Stage 2: Processing segments...")
         states = []
+        valid_segments = []  # Track segments that have valid URLs (same order as states)
         state_is_new_flags = []  # Track which states are new
         page_instances = []
         intent_sequences = []
@@ -232,6 +230,7 @@ class WorkflowProcessor:
                 session_id=session_id,
             )
             states.append(state)
+            valid_segments.append(segment)  # Keep track of valid segments
             state_is_new_flags.append(is_new)
 
             if is_new:
@@ -267,7 +266,7 @@ class WorkflowProcessor:
         # Stage 3: Create Actions between consecutive States
         print("Stage 3: Creating Actions...")
         actions = self._create_actions(
-            segments=segments,
+            segments=valid_segments,  # Use valid_segments (same order as states)
             states=states,
             user_id=user_id,
             session_id=session_id,
@@ -286,7 +285,7 @@ class WorkflowProcessor:
         print("Stage 5: Generating descriptions...")
         # Only generate descriptions for newly created states
         new_states = [s for s, is_new in zip(states, state_is_new_flags) if is_new]
-        self._generate_descriptions(
+        await self._generate_descriptions(
             states=new_states,
             intent_sequences=intent_sequences,
             actions=actions,
@@ -316,7 +315,7 @@ class WorkflowProcessor:
             print("  Stored all structures to memory")
 
             # Create cognitive phrase
-            cognitive_phrase = self._create_cognitive_phrase(
+            cognitive_phrase = await self._create_cognitive_phrase(
                 states=states,
                 actions=actions,
                 workflow_data=events,
@@ -344,7 +343,7 @@ class WorkflowProcessor:
             "new_states": new_state_count,
             "reused_states": reused_state_count,
             "stored_to_memory": store_to_memory and self.memory is not None,
-            "llm_model": self.model_name,
+            "llm_model": getattr(self.simple_llm_provider, 'model_name', 'unknown'),
             "processing_time_ms": processing_time_ms,
         }
 
@@ -859,13 +858,13 @@ class WorkflowProcessor:
 
         return list(domain_map.values()), manages
 
-    def _generate_descriptions(
+    async def _generate_descriptions(
         self,
         states: List[State],
         intent_sequences: List[IntentSequence],
         actions: List[Action],
     ) -> None:
-        """Generate descriptions using LLM.
+        """Generate descriptions using LLM (async).
 
         Args:
             states: States that need descriptions.
@@ -875,21 +874,28 @@ class WorkflowProcessor:
         # Generate State descriptions
         for state in states:
             if not state.description:
-                state.description = self._generate_state_description(state)
+                state.description = await self._generate_state_description(state)
                 print(f"    Generated State description: {state.description[:50]}...")
 
         # Generate IntentSequence descriptions
         for sequence in intent_sequences:
             if not sequence.description:
-                sequence.description = self._generate_intent_sequence_description(sequence)
+                sequence.description = await self._generate_intent_sequence_description(sequence)
                 print(f"    Generated IntentSequence description: {sequence.description[:50]}...")
 
-        # Generate Action descriptions
+        # Generate Action descriptions (need state info for context)
+        state_map = {s.id: s for s in states}
         for action in actions:
             if not action.description:
-                action.description = self._generate_action_description(action)
+                source_state = state_map.get(action.source)
+                target_state = state_map.get(action.target)
+                action.description = await self._generate_action_description(
+                    action, source_state, target_state
+                )
+                if action.description:
+                    print(f"    Generated Action description: {action.description[:50]}...")
 
-    def _generate_state_description(self, state: State) -> str:
+    async def _generate_state_description(self, state: State) -> str:
         """Generate description for a State using LLM.
 
         Args:
@@ -898,6 +904,10 @@ class WorkflowProcessor:
         Returns:
             Description string.
         """
+        # If no LLM provider, return default description
+        if not self.simple_llm_provider:
+            return f"页面: {state.page_title or state.page_url}"
+
         prompt = f"""请用简洁的中文描述这个页面的类型和用途。
 
 URL: {state.page_url}
@@ -913,16 +923,16 @@ URL: {state.page_url}
 描述:"""
 
         try:
-            messages = [LLMMessage(role="user", content=prompt)]
-            response = self.llm_client.generate(
-                messages, temperature=0.3, max_tokens=100
+            response = await self.simple_llm_provider.generate_response(
+                system_prompt="",
+                user_prompt=prompt
             )
-            return response.content.strip()
+            return response.strip()
         except Exception as e:
             print(f"Warning: Failed to generate state description: {e}")
             return f"页面: {state.page_title or state.page_url}"
 
-    def _generate_intent_sequence_description(self, sequence: IntentSequence) -> str:
+    async def _generate_intent_sequence_description(self, sequence: IntentSequence) -> str:
         """Generate description for an IntentSequence using LLM.
 
         Args:
@@ -950,6 +960,10 @@ URL: {state.page_url}
             else:
                 intent_summary.append(intent_type)
 
+        # If no LLM provider, return default description
+        if not self.simple_llm_provider:
+            return f"操作序列 ({len(sequence.intents)} 个操作)"
+
         intents_str = "\n".join(f"- {s}" for s in intent_summary[:10])
 
         prompt = f"""请用简洁的中文描述这组操作的目的。
@@ -967,25 +981,68 @@ URL: {state.page_url}
 描述:"""
 
         try:
-            messages = [LLMMessage(role="user", content=prompt)]
-            response = self.llm_client.generate(
-                messages, temperature=0.3, max_tokens=100
+            response = await self.simple_llm_provider.generate_response(
+                system_prompt="",
+                user_prompt=prompt
             )
-            return response.content.strip()
+            return response.strip()
         except Exception as e:
             print(f"Warning: Failed to generate sequence description: {e}")
             return f"操作序列 ({len(sequence.intents)} 个操作)"
 
-    def _generate_action_description(self, action: Action) -> str:
-        """Generate description for an Action.
+    async def _generate_action_description(
+        self,
+        action: Action,
+        source_state: Optional[State] = None,
+        target_state: Optional[State] = None,
+    ) -> str:
+        """Generate description for an Action using LLM.
 
         Args:
             action: Action to describe.
+            source_state: Source State of the action.
+            target_state: Target State of the action.
 
         Returns:
             Description string.
         """
-        return f"从页面导航到下一页面"
+        if not source_state or not target_state:
+            return "页面跳转"
+
+        # If no LLM provider, return default description
+        if not self.simple_llm_provider:
+            return f"从 {source_state.page_title or '页面'} 跳转到 {target_state.page_title or '页面'}"
+
+        source_info = f"页面: {source_state.page_title or source_state.page_url}"
+        target_info = f"页面: {target_state.page_title or target_state.page_url}"
+
+        prompt = f"""请用简洁的中文描述这个页面跳转操作。
+
+来源页面: {source_info}
+来源URL: {source_state.page_url}
+
+目标页面: {target_info}
+目标URL: {target_state.page_url}
+
+要求:
+1. 用一句话描述从来源页面到目标页面的跳转
+2. 描述可能的操作方式（如"点击XX按钮"、"点击XX链接"等）
+3. 不要包含具体的URL
+4. 只返回描述文本
+
+示例: "点击产品列表项进入产品详情页"
+
+描述:"""
+
+        try:
+            response = await self.simple_llm_provider.generate_response(
+                system_prompt="",
+                user_prompt=prompt
+            )
+            return response.strip()
+        except Exception as e:
+            print(f"Warning: Failed to generate action description: {e}")
+            return f"从 {source_state.page_title or '页面'} 跳转到 {target_state.page_title or '页面'}"
 
     def _generate_embeddings(
         self,
@@ -1001,17 +1058,19 @@ URL: {state.page_url}
         if not self.embedding_model:
             return
 
-        # Collect all descriptions
+        # Collect all descriptions (only for items without embedding)
         texts = []
         items = []
 
         for state in states:
-            if state.description:
+            # Only generate embedding if state has description but no embedding yet
+            if state.description and not state.embedding_vector:
                 texts.append(state.description)
                 items.append(("state", state))
 
         for sequence in intent_sequences:
-            if sequence.description:
+            # Only generate embedding if sequence has description but no embedding yet
+            if sequence.description and not sequence.embedding_vector:
                 texts.append(sequence.description)
                 items.append(("sequence", sequence))
 
@@ -1092,7 +1151,7 @@ URL: {state.page_url}
             except Exception as e:
                 print(f"Warning: Failed to store manage edge: {e}")
 
-    def _create_cognitive_phrase(
+    async def _create_cognitive_phrase(
         self,
         states: List[State],
         actions: List[Action],
@@ -1100,7 +1159,7 @@ URL: {state.page_url}
         user_id: Optional[str],
         session_id: Optional[str],
     ) -> Optional[CognitivePhrase]:
-        """Create a cognitive phrase from the workflow.
+        """Create a cognitive phrase from the workflow (async).
 
         Args:
             states: List of State objects.
@@ -1134,15 +1193,18 @@ URL: {state.page_url}
         end_timestamp = sorted_states[-1].end_timestamp or sorted_states[-1].timestamp
         duration = end_timestamp - start_timestamp
 
-        # Generate description
-        description = self._generate_workflow_description(workflow_data)
+        # Generate description (async)
+        description = await self._generate_workflow_description(workflow_data)
 
         current_time = int(time.time() * 1000)
+
+        # Generate default session_id if not provided
+        effective_session_id = session_id or f"session_{current_time}"
 
         phrase = CognitivePhrase(
             description=description,
             user_id=user_id,
-            session_id=session_id,
+            session_id=effective_session_id,
             start_timestamp=start_timestamp,
             end_timestamp=end_timestamp,
             duration=duration,
@@ -1161,7 +1223,7 @@ URL: {state.page_url}
 
         return phrase
 
-    def _generate_workflow_description(
+    async def _generate_workflow_description(
         self, workflow_data: List[Dict[str, Any]]
     ) -> str:
         """Generate description for the workflow using LLM.
@@ -1172,6 +1234,10 @@ URL: {state.page_url}
         Returns:
             Description string.
         """
+        # If no LLM provider, return default description
+        if not self.simple_llm_provider:
+            return f"用户工作流包含{len(workflow_data)}个操作事件"
+
         workflow_summary = json.dumps(workflow_data[:20], ensure_ascii=False, indent=2)
 
         prompt = f"""请根据以下用户操作事件序列生成一个简洁的自然语言描述。
@@ -1190,11 +1256,11 @@ URL: {state.page_url}
 描述:"""
 
         try:
-            messages = [LLMMessage(role="user", content=prompt)]
-            response = self.llm_client.generate(
-                messages, temperature=0.3, max_tokens=200
+            response = await self.simple_llm_provider.generate_response(
+                system_prompt="",
+                user_prompt=prompt
             )
-            return response.content.strip()
+            return response.strip()
         except Exception as e:
             print(f"Warning: Failed to generate workflow description: {e}")
             return f"用户工作流包含{len(workflow_data)}个操作事件"

@@ -406,6 +406,13 @@
   padding: 40px 20px;
 }
 
+.action-buttons-row {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
 .btn-generate-workflow {
   display: inline-flex;
   align-items: center;
@@ -431,6 +438,48 @@
 .btn-generate-workflow svg {
   width: 20px;
   height: 20px;
+}
+
+.btn-add-to-memory {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 32px;
+  background: linear-gradient(135deg, var(--color-secondary-500, #6366f1) 0%, var(--color-secondary-600, #4f46e5) 100%);
+  color: white;
+  border: none;
+  border-radius: var(--radius-xl);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s;
+  box-shadow: var(--shadow-md);
+}
+
+.btn-add-to-memory:hover:not(:disabled) {
+  background: linear-gradient(135deg, var(--color-secondary-600, #4f46e5) 0%, var(--color-secondary-500, #6366f1) 100%);
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-lg);
+}
+
+.btn-add-to-memory:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-add-to-memory svg {
+  width: 18px;
+  height: 18px;
+}
+
+.btn-add-to-memory svg.spinning {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .action-hint {

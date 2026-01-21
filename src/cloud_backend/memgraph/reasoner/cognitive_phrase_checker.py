@@ -1,6 +1,6 @@
 """Cognitive Phrase Checker - Checks if cognitive phrases can satisfy target."""
 
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Any
 
 from src.cloud_backend.memgraph.memory.memory import Memory
 from src.cloud_backend.memgraph.ontology.cognitive_phrase import CognitivePhrase
@@ -8,24 +8,23 @@ from src.cloud_backend.memgraph.reasoner.prompts.cognitive_phrase_match_prompt i
     CognitivePhraseMatchInput,
     CognitivePhraseMatchPrompt,
 )
-from src.cloud_backend.memgraph.services.llm import LLMClient, LLMMessage
 
 
 class CognitivePhraseChecker:
     """Checks if cognitive phrases can satisfy target."""
 
-    def __init__(self, memory: Memory, llm_client: Optional[LLMClient] = None):
+    def __init__(self, memory: Memory, llm_provider: Optional[Any] = None):
         """Initialize checker.
 
         Args:
             memory: Memory instance.
-            llm_client: LLM client for evaluation.
+            llm_provider: LLM provider (AnthropicProvider) for evaluation.
         """
         self.memory = memory
-        self.llm_client = llm_client
+        self.llm_provider = llm_provider
         self.prompt = CognitivePhraseMatchPrompt()
 
-    def check(self, target: str) -> Tuple[bool, List[CognitivePhrase], str]:
+    async def check(self, target: str) -> Tuple[bool, List[CognitivePhrase], str]:
         """Check if cognitive phrases can satisfy target.
 
         Args:
@@ -40,7 +39,7 @@ class CognitivePhraseChecker:
         if not phrases:
             return False, [], "No cognitive phrases available"
 
-        if not self.llm_client:
+        if not self.llm_provider:
             # Fallback to simple text matching
             matches = self._text_match(target, phrases)
             if matches:
@@ -48,7 +47,7 @@ class CognitivePhraseChecker:
             return False, [], "No text matches found"
 
         # Use LLM to check if phrases can directly match or be combined
-        can_satisfy, matches, reasoning = self._llm_check(target, phrases)
+        can_satisfy, matches, reasoning = await self._llm_check(target, phrases)
         return can_satisfy, matches, reasoning
 
     def _text_match(
@@ -67,7 +66,7 @@ class CognitivePhraseChecker:
         scored.sort(key=lambda x: x[1], reverse=True)
         return [p for p, _ in scored[:top_k]]
 
-    def _llm_check(
+    async def _llm_check(
         self, target: str, phrases: List[CognitivePhrase]
     ) -> Tuple[bool, List[CognitivePhrase], str]:
         """Use LLM to check if phrases can satisfy target."""
@@ -82,23 +81,21 @@ class CognitivePhraseChecker:
             prompt_text = self.prompt.build_prompt(input_data)
             system_prompt = self.prompt.get_system_prompt()
 
-            # Call LLM
-            messages = [
-                LLMMessage(role="system", content=system_prompt),
-                LLMMessage(role="user", content=prompt_text),
-            ]
-
-            response = self.llm_client.generate(messages=messages, temperature=0.1)
+            # Call LLM using AnthropicProvider
+            response = await self.llm_provider.generate_response(
+                system_prompt=system_prompt,
+                user_prompt=prompt_text
+            )
 
             # Print raw LLM response for debugging
             print("\n" + "=" * 80)
             print("COGNITIVE PHRASE CHECKER - RAW LLM RESPONSE:")
             print("=" * 80)
-            print(response.content)
+            print(response)
             print("=" * 80 + "\n")
 
             # Parse response
-            output = self.prompt.parse_response(response.content)
+            output = self.prompt.parse_response(response)
 
             # Find matching phrases
             matching_phrases = []

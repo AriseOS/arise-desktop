@@ -34,6 +34,7 @@ import WorkflowExecutionLivePage from "./pages/WorkflowExecutionLivePage";
 import DocsPage from "./pages/DocsPage";
 import BackendErrorPage from "./pages/BackendErrorPage";
 import QuickTaskPage from "./pages/QuickTaskPage";
+import MemoryPage from "./pages/MemoryPage";
 
 // Import setup styles
 import "./styles/SetupPage.css";
@@ -427,6 +428,13 @@ function App() {
           </button>
           <button
             className="btn-icon"
+            title="Memory Explorer"
+            onClick={() => navigate("memory")}
+          >
+            <Icon name="database" size={24} />
+          </button>
+          <button
+            className="btn-icon"
             title="Settings"
             onClick={() => navigate("settings")}
           >
@@ -640,6 +648,14 @@ function App() {
           />
         );
 
+      case "memory":
+        return (
+          <MemoryPage
+            session={session}
+            showStatus={showStatus}
+          />
+        );
+
       case "main":
         return renderMainPage();
 
@@ -849,6 +865,7 @@ function App() {
       { id: "quick-task", icon: "sparkle", label: "Quick Task" },
       { id: "workflows", icon: "workflows", label: t('nav.workflows') },
       { id: "recordings-library", icon: "library", label: t('nav.library') },
+      { id: "memory", icon: "database", label: "Memory" },
     ];
 
     return (

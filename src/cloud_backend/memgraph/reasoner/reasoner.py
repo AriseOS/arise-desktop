@@ -13,7 +13,7 @@ The Reasoner is responsible for orchestrating the entire retrieval process:
 """
 
 import uuid
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from src.cloud_backend.memgraph.memory.memory import Memory
 from src.cloud_backend.memgraph.reasoner.cognitive_phrase_checker import CognitivePhraseChecker
@@ -27,7 +27,6 @@ from src.cloud_backend.memgraph.reasoner.task_dag import TaskDAG
 from src.cloud_backend.memgraph.reasoner.tools.retrieval_tool import RetrievalTool
 from src.cloud_backend.memgraph.reasoner.tools.task_tool import TaskTool
 from src.cloud_backend.memgraph.reasoner.workflow_converter import WorkflowConverter
-from src.cloud_backend.memgraph.services.llm import LLMClient, LLMMessage
 
 
 class Reasoner:
@@ -43,7 +42,7 @@ class Reasoner:
     def __init__(
         self,
         memory: Memory,
-        llm_client: Optional[LLMClient] = None,
+        llm_provider: Optional[Any] = None,
         embedding_service=None,
         max_depth: int = 3,
     ):
@@ -51,17 +50,17 @@ class Reasoner:
 
         Args:
             memory: Memory instance.
-            llm_client: LLM client for various LLM operations.
+            llm_provider: LLM provider (AnthropicProvider) for various LLM operations.
             embedding_service: Embedding service for vector search.
             max_depth: Maximum neighbor exploration depth.
         """
         self.memory = memory
-        self.llm_client = llm_client
+        self.llm_provider = llm_provider
         self.embedding_service = embedding_service
         self.max_depth = max_depth
 
         # Initialize components
-        self.phrase_checker = CognitivePhraseChecker(memory, llm_client)
+        self.phrase_checker = CognitivePhraseChecker(memory, llm_provider)
         self.workflow_converter = WorkflowConverter()
         self.decomposition_prompt = TaskDecompositionPrompt()
 
@@ -74,7 +73,7 @@ class Reasoner:
         # Register retrieval tool
         retrieval_tool = RetrievalTool(
             self.memory,
-            self.llm_client,
+            self.llm_provider,
             self.embedding_service,
             self.max_depth,
         )
@@ -180,19 +179,23 @@ class Reasoner:
             }
         )
 
-    def plan(self, target: str) -> WorkflowResult:
+    async def plan(
+        self, target: str, user_id: Optional[str] = None, session_id: Optional[str] = None
+    ) -> WorkflowResult:
         """Plan and retrieve workflow for target.
 
         This is the main entry point.
 
         Args:
             target: Target description (natural language).
+            user_id: Optional user ID for filtering (not yet implemented).
+            session_id: Optional session ID for filtering (not yet implemented).
 
         Returns:
             WorkflowResult with workflow JSON if successful.
         """
         # Step 1: Check cognitive phrases
-        can_satisfy, phrases, reasoning = self.phrase_checker.check(target)
+        can_satisfy, phrases, reasoning = await self.phrase_checker.check(target)
 
         if can_satisfy and phrases:
             # Direct match found - retrieve actual State and Action objects from memory
@@ -242,7 +245,7 @@ class Reasoner:
                 )
 
         # Step 2: Decompose into TaskDAG
-        dag = self._decompose_target(target)
+        dag = await self._decompose_target(target)
 
         # Step 3: Execute tasks in topological order
         topological_order = dag.topological_order()
@@ -276,8 +279,8 @@ class Reasoner:
                     },
                 )
 
-            # Execute tool
-            result = tool.execute(task_target, tool_parameters)
+            # Execute tool (async)
+            result = await tool.execute(task_target, tool_parameters)
 
             if not result.success:
                 return WorkflowResult(
@@ -311,7 +314,7 @@ class Reasoner:
             },
         )
 
-    def _decompose_target(self, target: str) -> TaskDAG:
+    async def _decompose_target(self, target: str) -> TaskDAG:
         """Decompose target into TaskDAG using LLM.
 
         Args:
@@ -320,7 +323,7 @@ class Reasoner:
         Returns:
             TaskDAG with atomic tasks.
         """
-        if not self.llm_client:
+        if not self.llm_provider:
             # Fallback: create simple single-task DAG
             return self._create_simple_dag(target)
 
@@ -344,23 +347,21 @@ class Reasoner:
             prompt_text = self.decomposition_prompt.build_prompt(input_data)
             system_prompt = self.decomposition_prompt.get_system_prompt()
 
-            # Call LLM
-            messages = [
-                LLMMessage(role="system", content=system_prompt),
-                LLMMessage(role="user", content=prompt_text),
-            ]
-
-            response = self.llm_client.generate(messages=messages, temperature=0.1)
+            # Call LLM using AnthropicProvider
+            response = await self.llm_provider.generate_response(
+                system_prompt=system_prompt,
+                user_prompt=prompt_text
+            )
 
             # Print raw LLM response for debugging
             print("\n" + "=" * 80)
             print("TASK DECOMPOSITION - RAW LLM RESPONSE:")
             print("=" * 80)
-            print(response.content)
+            print(response)
             print("=" * 80 + "\n")
 
             # Parse response
-            output = self.decomposition_prompt.parse_response(response.content)
+            output = self.decomposition_prompt.parse_response(response)
 
             # Convert to TaskDAG format
             dag_id = str(uuid.uuid4())

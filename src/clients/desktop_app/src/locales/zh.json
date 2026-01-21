@@ -260,7 +260,11 @@
         "copiedText": "已复制文本",
         "direction": "方向",
         "message": "消息",
-        "page": "页面"
+        "page": "页面",
+        "addToMemory": "添加到记忆",
+        "addingToMemory": "添加中...",
+        "addedToMemory": "已添加到记忆: {{states}} 个状态, {{merged}} 个合并, {{sequences}} 个意图序列",
+        "addToMemoryFailed": "添加到记忆失败"
     },
     "myWorkflows": {
         "pageTitle": "Workflow 管理",

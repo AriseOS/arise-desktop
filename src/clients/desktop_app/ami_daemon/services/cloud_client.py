@@ -1315,6 +1315,188 @@ class CloudClient:
             response.raise_for_status()
             return response.json()
 
+    # ============================================================================
+    # Memory API Methods
+    # ============================================================================
+
+    async def add_to_memory(
+        self,
+        user_id: str,
+        recording_id: Optional[str] = None,
+        operations: Optional[List[Dict[str, Any]]] = None,
+        session_id: Optional[str] = None,
+        generate_embeddings: bool = True
+    ) -> Dict[str, Any]:
+        """Add recording to user's workflow memory
+
+        Args:
+            user_id: User ID
+            recording_id: Recording ID to load operations from (optional)
+            operations: Direct operations array (optional)
+            session_id: Session identifier (optional)
+            generate_embeddings: Whether to generate embeddings for semantic search
+
+        Returns:
+            dict with:
+                - success: bool
+                - states_added: int
+                - states_merged: int
+                - page_instances_added: int
+                - intent_sequences_added: int
+                - actions_added: int
+                - processing_time_ms: int
+        """
+        if not recording_id and not operations:
+            raise ValueError("Either recording_id or operations must be provided")
+
+        payload = {
+            "user_id": user_id,
+            "generate_embeddings": generate_embeddings,
+        }
+        if recording_id:
+            payload["recording_id"] = recording_id
+        if operations:
+            payload["operations"] = operations
+        if session_id:
+            payload["session_id"] = session_id
+
+        headers = {}
+        if self.user_api_key:
+            headers["X-Ami-API-Key"] = self.user_api_key
+
+        logger.info(f"[CloudClient] Adding to memory for user {user_id}")
+
+        response = await self.client.post(
+            "/api/v1/memory/add",
+            json=payload,
+            headers=headers
+        )
+        response.raise_for_status()
+        result = response.json()
+
+        logger.info(f"[CloudClient] Memory add result: {result.get('states_added')} added, "
+                   f"{result.get('states_merged')} merged")
+        return result
+
+    async def query_memory(
+        self,
+        user_id: str,
+        query: str,
+        top_k: int = 3,
+        min_score: float = 0.5,
+        domain: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Query user's workflow memory using natural language
+
+        The system automatically analyzes the query and returns the most relevant
+        operation paths with States, Actions, and IntentSequences.
+
+        Args:
+            user_id: User ID
+            query: Natural language query describing the task
+            top_k: Number of paths to return (default: 3)
+            min_score: Minimum similarity score (0.0-1.0)
+            domain: Filter by domain (optional)
+
+        Returns:
+            dict with:
+                - success: bool
+                - query: str
+                - paths: list of matching operation paths
+                - total_paths: int
+
+            Each path contains:
+                - score: float (relevance score)
+                - description: str (auto-generated path description)
+                - steps: list of {state, action, intent_sequence}
+        """
+        if not self.user_api_key:
+            raise ValueError("User API key is required for memory query")
+
+        payload = {
+            "user_id": user_id,
+            "query": query,
+            "top_k": top_k,
+            "min_score": min_score,
+        }
+        if domain:
+            payload["domain"] = domain
+
+        logger.info(f"[CloudClient] Querying memory for user {user_id}: {query[:50]}...")
+
+        response = await self.client.post(
+            "/api/v1/memory/query",
+            json=payload,
+            headers={"X-Ami-API-Key": self.user_api_key}
+        )
+        response.raise_for_status()
+        result = response.json()
+
+        logger.info(f"[CloudClient] Memory query result: {result.get('total_paths')} paths")
+        return result
+
+    async def get_memory_stats(
+        self,
+        user_id: str
+    ) -> Dict[str, Any]:
+        """Get user's workflow memory statistics
+
+        Args:
+            user_id: User ID
+
+        Returns:
+            dict with:
+                - success: bool
+                - user_id: str
+                - stats: dict with counts and domains
+        """
+        headers = {}
+        if self.user_api_key:
+            headers["X-Ami-API-Key"] = self.user_api_key
+
+        logger.info(f"[CloudClient] Getting memory stats for user {user_id}")
+
+        response = await self.client.get(
+            "/api/v1/memory/stats",
+            params={"user_id": user_id},
+            headers=headers
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def clear_memory(
+        self,
+        user_id: str
+    ) -> Dict[str, Any]:
+        """Clear user's workflow memory
+
+        Args:
+            user_id: User ID
+
+        Returns:
+            dict with:
+                - success: bool
+                - deleted_states: int
+                - deleted_actions: int
+        """
+        headers = {}
+        if self.user_api_key:
+            headers["X-Ami-API-Key"] = self.user_api_key
+
+        logger.info(f"[CloudClient] Clearing memory for user {user_id}")
+
+        response = await self.client.delete(
+            "/api/v1/memory",
+            params={"user_id": user_id},
+            headers=headers
+        )
+        response.raise_for_status()
+        result = response.json()
+
+        logger.info(f"[CloudClient] Memory cleared: {result.get('deleted_states')} states, "
+                   f"{result.get('deleted_actions')} actions")
+        return result
+
     async def close(self):
         """Close HTTP client"""
         await self.client.aclose()

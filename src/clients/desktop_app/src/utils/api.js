@@ -917,5 +917,82 @@ export const api = {
    */
   async getWorkflowRunDetail(workflowId, runId, userId) {
     return await this.callAppBackend(`/api/v1/workflows/${workflowId}/history/${runId}?user_id=${userId}`);
+  },
+
+  // ============================================================================
+  // Memory APIs
+  // ============================================================================
+
+  /**
+   * Add recording to user's workflow memory
+   *
+   * @param {string} userId - User ID
+   * @param {object} options - Options
+   * @param {string} options.recordingId - Recording ID to load operations from
+   * @param {Array} options.operations - Direct operations array (alternative to recordingId)
+   * @param {string} options.sessionId - Session identifier
+   * @param {boolean} options.generateEmbeddings - Whether to generate embeddings for semantic search
+   * @returns {Promise<object>} Result with states_added, states_merged, etc.
+   */
+  async addToMemory(userId, { recordingId = null, operations = null, sessionId = null, generateEmbeddings = false } = {}) {
+    return await this.callAppBackend('/api/v1/memory/add', {
+      method: 'POST',
+      body: JSON.stringify({
+        user_id: userId,
+        recording_id: recordingId,
+        operations: operations,
+        session_id: sessionId,
+        generate_embeddings: generateEmbeddings
+      })
+    });
+  },
+
+  /**
+   * Query user's workflow memory using natural language
+   *
+   * The system automatically analyzes the query and returns the most relevant
+   * operation paths with States, Actions, and IntentSequences.
+   *
+   * @param {string} userId - User ID
+   * @param {string} query - Natural language query describing the task
+   * @param {object} options - Query options
+   * @param {number} options.topK - Number of paths to return (default: 3)
+   * @param {number} options.minScore - Minimum similarity score 0-1 (default: 0.5)
+   * @param {string} options.domain - Filter by domain (optional)
+   * @returns {Promise<object>} Response with paths array, each containing steps with state/action/intent_sequence
+   */
+  async queryMemory(userId, query, { topK = 3, minScore = 0.5, domain = null } = {}) {
+    return await this.callAppBackend('/api/v1/memory/query', {
+      method: 'POST',
+      body: JSON.stringify({
+        user_id: userId,
+        query: query,
+        top_k: topK,
+        min_score: minScore,
+        domain: domain
+      })
+    });
+  },
+
+  /**
+   * Get user's workflow memory statistics
+   *
+   * @param {string} userId - User ID
+   * @returns {Promise<object>} Memory statistics (states, sequences, actions, domains)
+   */
+  async getMemoryStats(userId) {
+    return await this.callAppBackend(`/api/v1/memory/stats?user_id=${userId}`);
+  },
+
+  /**
+   * Clear user's workflow memory
+   *
+   * @param {string} userId - User ID
+   * @returns {Promise<object>} Result with deleted counts
+   */
+  async clearMemory(userId) {
+    return await this.callAppBackend(`/api/v1/memory?user_id=${userId}`, {
+      method: 'DELETE'
+    });
   }
 };

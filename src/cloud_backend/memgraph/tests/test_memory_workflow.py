@@ -18,8 +18,9 @@ Usage:
 import json
 import os
 import sys
+import asyncio
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 # Add project root to path
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))))
@@ -32,11 +33,8 @@ from src.cloud_backend.memgraph.ontology.intent_sequence import IntentSequence
 from src.cloud_backend.memgraph.ontology.page_instance import PageInstance
 from src.cloud_backend.memgraph.ontology.state import State
 from src.cloud_backend.memgraph.ontology.intent import Intent
-from src.cloud_backend.memgraph.services import (
-    EmbeddingService,
-    create_llm_client,
-    LLMProvider,
-)
+from src.cloud_backend.memgraph.services import EmbeddingService
+from src.common.llm import AnthropicProvider
 from src.cloud_backend.memgraph.thinker.workflow_processor import (
     WorkflowProcessor,
     URLSegment,
@@ -187,27 +185,17 @@ def setup_embedding_service():
         return None
 
 
-def setup_llm_client():
-    """Configure the LLM client."""
+def setup_llm_provider() -> Optional[AnthropicProvider]:
+    """Configure the LLM provider for description generation."""
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
-        api_key = os.getenv("OPENAI_API_KEY")
-        if api_key:
-            return create_llm_client(
-                provider=LLMProvider.OPENAI,
-                model_name="gpt-4",
-                api_key=api_key,
-            )
-    else:
-        return create_llm_client(
-            provider=LLMProvider.ANTHROPIC,
-            model_name="claude-sonnet-4-5-20250929",
-            api_key=api_key,
-        )
+        print("Warning: ANTHROPIC_API_KEY not set, LLM descriptions will be skipped")
+        return None
 
-    print("Warning: No LLM API key found, using mock client")
-    from src.cloud_backend.memgraph.services import MockLLMClient
-    return MockLLMClient()
+    return AnthropicProvider(
+        api_key=api_key,
+        model_name="claude-sonnet-4-5-20250929",
+    )
 
 
 def print_section(title: str):
@@ -489,22 +477,22 @@ def test_url_segment():
     print("\n  URLSegment tests passed!")
 
 
-def test_workflow_processing():
+async def test_workflow_processing():
     """Test the complete workflow processing pipeline."""
     print_section("Full Workflow Processing Test")
 
     # Setup
     print("Setting up services...")
     embedding_model = setup_embedding_service()
-    llm_client = setup_llm_client()
-    print(f"  LLM client: {type(llm_client).__name__}")
+    llm_provider = setup_llm_provider()
+    print(f"  LLM provider: {type(llm_provider).__name__ if llm_provider else 'None'}")
 
     graph_store = NetworkXGraph()
     memory = WorkflowMemory(graph_store)
     print("  Memory system initialized")
 
     processor = WorkflowProcessor(
-        llm_client=llm_client,
+        llm_provider=llm_provider,
         memory=memory,
         embedding_model=embedding_model,
     )
@@ -512,7 +500,7 @@ def test_workflow_processing():
 
     # Process first workflow
     print("\n--- Processing First Workflow ---")
-    result1 = processor.process_workflow(
+    result1 = await processor.process_workflow(
         workflow_data=SAMPLE_WORKFLOW,
         user_id="test_user",
         session_id="session_001",
@@ -528,7 +516,7 @@ def test_workflow_processing():
 
     # Process second workflow (should reuse some States)
     print("\n--- Processing Second Workflow (State Reuse Test) ---")
-    result2 = processor.process_workflow(
+    result2 = await processor.process_workflow(
         workflow_data=SECOND_WORKFLOW,
         user_id="test_user",
         session_id="session_002",
@@ -608,7 +596,7 @@ def test_quick():
     print_section("All Quick Tests Passed!")
 
 
-def test_recording_workflow():
+async def test_recording_workflow():
     """Test workflow processing with real recording data."""
     print_section("Recording Workflow Test")
 
@@ -640,15 +628,15 @@ def test_recording_workflow():
     # Setup services
     print("\nSetting up services...")
     embedding_model = setup_embedding_service()
-    llm_client = setup_llm_client()
-    print(f"  LLM client: {type(llm_client).__name__}")
+    llm_provider = setup_llm_provider()
+    print(f"  LLM provider: {type(llm_provider).__name__ if llm_provider else 'None'}")
 
     graph_store = NetworkXGraph()
     memory = WorkflowMemory(graph_store)
     print("  Memory system initialized")
 
     processor = WorkflowProcessor(
-        llm_client=llm_client,
+        llm_provider=llm_provider,
         memory=memory,
         embedding_model=embedding_model,
     )
@@ -656,7 +644,7 @@ def test_recording_workflow():
 
     # Process recording
     print("\n--- Processing Recording ---")
-    result = processor.process_workflow(
+    result = await processor.process_workflow(
         workflow_data=recording_data,
         user_id="test_user",
         session_id=session_id,
@@ -735,9 +723,9 @@ if __name__ == "__main__":
     if args.quick:
         test_quick()
     elif args.full:
-        test_workflow_processing()
+        asyncio.run(test_workflow_processing())
     elif args.recording:
-        test_recording_workflow()
+        asyncio.run(test_recording_workflow())
     else:
         # Default: run quick tests
         test_quick()
