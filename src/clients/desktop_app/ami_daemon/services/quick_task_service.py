@@ -3,9 +3,14 @@ Quick Task Service
 
 Manages autonomous task execution, status tracking, and result storage.
 Uses EigentBrowserAgent for LLM-guided browser automation.
+
+Memory-Guided Planning:
+- Before executing a task, queries the memory system for similar workflow paths
+- Provides retrieved paths to the agent as planning reference
+- Agent uses memory paths to generate more accurate plans
 """
 
-from typing import Optional, Dict, Any, AsyncGenerator
+from typing import Optional, Dict, Any, AsyncGenerator, List
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -61,19 +66,33 @@ class QuickTaskService:
     - Status tracking
     - Result storage
     - Progress streaming
+    - Memory-guided planning (query memory for similar workflow paths)
     """
 
-    def __init__(self):
+    def __init__(self, cloud_client=None):
+        """Initialize QuickTaskService.
+
+        Args:
+            cloud_client: CloudClient instance for memory API calls.
+                         If None, memory query will be skipped.
+        """
         self._tasks: Dict[str, TaskState] = {}
         self._llm_api_key: Optional[str] = None
         self._llm_model: Optional[str] = None
         self._llm_base_url: Optional[str] = None
+        self._cloud_client = cloud_client
+        self._user_id: Optional[str] = None
+
+    def set_cloud_client(self, cloud_client):
+        """Set CloudClient for memory API calls."""
+        self._cloud_client = cloud_client
 
     def configure_llm(
         self,
         api_key: str,
         model: Optional[str] = None,
-        base_url: Optional[str] = None
+        base_url: Optional[str] = None,
+        user_id: Optional[str] = None
     ):
         """Configure LLM credentials for the service.
 
@@ -81,18 +100,19 @@ class QuickTaskService:
             api_key: User's Ami API key (ami_xxxxx format)
             model: LLM model name (optional)
             base_url: CRS proxy URL (e.g., https://api.ariseos.com/api)
+            user_id: User ID for memory queries (optional)
         """
         self._llm_api_key = api_key
         if model:
             self._llm_model = model
         if base_url:
             self._llm_base_url = base_url
+        if user_id:
+            self._user_id = user_id
 
     async def submit_task(
         self,
         task: str,
-        start_url: Optional[str] = None,
-        max_steps: int = 15,
         headless: bool = False,
     ) -> str:
         """
@@ -100,8 +120,6 @@ class QuickTaskService:
 
         Args:
             task: Task description in natural language
-            start_url: Starting URL for the browser
-            max_steps: Maximum number of steps the agent can take
             headless: Whether to run browser in headless mode
 
         Returns:
@@ -112,14 +130,14 @@ class QuickTaskService:
         state = TaskState(
             task_id=task_id,
             task=task,
-            start_url=start_url,
+            start_url=None,
             status=TaskStatus.PENDING
         )
         self._tasks[task_id] = state
 
         # Execute task asynchronously
         asyncio.create_task(
-            self._execute_task(task_id, max_steps=max_steps, headless=headless)
+            self._execute_task(task_id, headless=headless)
         )
 
         logger.info(f"Task submitted: {task_id}")
@@ -220,13 +238,52 @@ class QuickTaskService:
                 # Send heartbeat
                 yield {"event": "heartbeat"}
 
+    async def _query_memory(self, task: str) -> List[Dict[str, Any]]:
+        """Query memory for similar workflow paths.
+
+        Args:
+            task: Task description to query
+
+        Returns:
+            List of memory paths, empty if no results or error
+        """
+        logger.info(f"_query_memory called: cloud_client={self._cloud_client is not None}, user_id={self._user_id}")
+        if not self._cloud_client or not self._user_id:
+            logger.info(f"Memory query skipped: cloud_client={self._cloud_client is not None}, user_id={self._user_id}")
+            return []
+
+        try:
+            logger.info(f"Querying memory for task: {task[:50]}...")
+            result = await self._cloud_client.query_memory(
+                user_id=self._user_id,
+                query=task,
+                top_k=3,
+                min_score=0.3  # Lower threshold to get more potential matches
+            )
+
+            if result.get("success") and result.get("paths"):
+                paths = result["paths"]
+                logger.info(f"Memory query returned {len(paths)} paths")
+                for i, path in enumerate(paths):
+                    logger.info(f"  Path {i+1}: score={path.get('score', 0):.3f}, "
+                              f"steps={path.get('path_length', 0)}, "
+                              f"desc={path.get('description', '')[:50]}")
+                return paths
+            else:
+                logger.info("Memory query returned no paths")
+                return []
+
+        except Exception as e:
+            logger.warning(f"Memory query failed: {e}")
+            return []
+
     async def _execute_task(
         self,
         task_id: str,
-        max_steps: int = 15,
         headless: bool = False,
     ):
         """Execute a task using EigentBrowserAgent."""
+        logger.info(f"[Task {task_id}] _execute_task started, cloud_client={self._cloud_client is not None}, user_id={self._user_id}")
         state = self._tasks[task_id]
         state.status = TaskStatus.RUNNING
         state.started_at = datetime.now()
@@ -240,6 +297,11 @@ class QuickTaskService:
         })
 
         try:
+            # Query memory for similar workflow paths
+            logger.info(f"[Task {task_id}] Starting memory query for task: {state.task[:50]}...")
+            memory_paths = await self._query_memory(state.task)
+            logger.info(f"[Task {task_id}] Memory query returned {len(memory_paths)} paths")
+
             # Import EigentBrowserAgent
             from ..base_agent.agents.eigent_browser_agent import EigentBrowserAgent
             from ..base_agent.core.schemas import AgentContext, AgentInput
@@ -322,13 +384,12 @@ class QuickTaskService:
             if not init_success:
                 raise Exception("Failed to initialize EigentBrowserAgent")
 
-            # Prepare input
+            # Prepare input with memory paths
             input_data = AgentInput(
                 data={
                     "task": state.task,
-                    "start_url": state.start_url or "https://www.google.com",
-                    "max_steps": max_steps,
                     "headless": headless,
+                    "memory_paths": memory_paths,  # Memory-guided planning
                 }
             )
 

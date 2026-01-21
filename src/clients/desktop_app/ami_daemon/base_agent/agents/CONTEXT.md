@@ -196,6 +196,36 @@ LLM-guided browser automation agent ported from CAMEL-AI/Eigent project. Uses th
 3. **Act** - Execute action via ActionExecutor
 4. **Repeat** - Until task complete or max_steps reached
 
+### Memory-Guided Planning
+
+EigentBrowserAgent integrates with the workflow memory system to improve plan generation:
+
+1. **Memory Query** - Before plan generation, QuickTaskService queries `/api/v1/memory/query` for similar workflow paths
+2. **Path Reference** - Retrieved paths are formatted and included in the LLM prompt
+3. **Plan with path_ref** - LLM generates plan steps with optional `path_ref` indicating correspondence to memory path steps
+4. **Intent Reference** - During action generation, intents from referenced path steps are provided as hints
+
+```
+┌──────────────────┐     ┌─────────────────┐     ┌───────────────────┐
+│ QuickTaskService │     │  Cloud Backend  │     │ EigentBrowserAgent│
+│                  │────►│ /memory/query   │     │                   │
+│                  │◄────│ returns paths   │     │                   │
+│                  │──────────────────────────►│ memory_paths      │
+└──────────────────┘                           └───────────────────┘
+```
+
+**Plan Output Format (with memory reference):**
+```json
+{
+  "plan": [
+    {"step": "Click product card", "path_ref": 0},
+    {"step": "Click Team tab", "path_ref": 1},
+    {"step": "View members", "path_ref": null}
+  ],
+  "action": {"type": "click", "ref": "e1"}
+}
+```
+
 ### LLM Integration (CRS Proxy)
 
 EigentBrowserAgent uses the same LLM provider configuration as other agents:
@@ -211,18 +241,24 @@ EigentBrowserAgent uses the same LLM provider configuration as other agents:
 
 **Configuration Flow:**
 1. Router (`routers/quick_task.py`) reads `llm.use_proxy` and `llm.proxy_url` from `app-backend.yaml`
-2. Service (`services/quick_task_service.py`) stores `api_key`, `model`, and `base_url`
-3. Agent (`eigent_browser_agent.py`) gets config from `context.agent_instance.provider`
-4. Anthropic client is created with `base_url` pointing to CRS proxy
+2. Service (`services/quick_task_service.py`) stores `api_key`, `model`, `base_url`, and `user_id`
+3. Service queries memory via CloudClient before task execution
+4. Agent (`eigent_browser_agent.py`) gets config from `context.agent_instance.provider`
+5. Anthropic client is created with `base_url` pointing to CRS proxy
 
-**Required Header:** `X-Ami-API-Key` (user's AMI API key in `ami_xxxxx` format)
+**Required Headers:**
+- `X-Ami-API-Key` (user's AMI API key in `ami_xxxxx` format)
+- `X-User-Id` (optional but recommended for memory queries)
 
 ### System Prompt
 
 Returns JSON with:
 ```json
 {
-  "plan": ["Step 1", "Step 2"],
+  "plan": [
+    {"step": "Step 1", "path_ref": 0},
+    {"step": "Step 2", "path_ref": null}
+  ],
   "action": {"type": "click", "ref": "e1"}
 }
 ```

@@ -469,13 +469,26 @@ export const api = {
   // ============================================================================
 
   /**
-   * Start browser
+   * Start browser (browser-use BrowserSession)
    *
    * @param {boolean} headless - Whether to run in headless mode
    * @returns {Promise<object>} Browser status
    */
   async startBrowser(headless = false) {
     return await this.callAppBackend('/api/v1/browser/start', {
+      method: 'POST',
+      body: JSON.stringify({ headless })
+    });
+  },
+
+  /**
+   * Start browser 2 (HybridBrowserSession with Playwright launch)
+   *
+   * @param {boolean} headless - Whether to run in headless mode
+   * @returns {Promise<object>} Browser status
+   */
+  async startBrowser2(headless = false) {
+    return await this.callAppBackend('/api/v1/browser/start2', {
       method: 'POST',
       body: JSON.stringify({ headless })
     });

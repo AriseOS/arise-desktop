@@ -156,6 +156,7 @@ class HybridBrowserSession:
         self._browser: Optional[Browser] = None
         self._context: Optional[BrowserContext] = None
         self._page: Optional[Page] = None
+        self._browser_launcher: Optional[Any] = None
 
         # Dictionary-based tab management with monotonic IDs
         self._pages: Dict[str, Page] = {}
@@ -173,6 +174,45 @@ class HybridBrowserSession:
         self._stealth_config: Optional[Dict[str, Any]] = None
         if self._stealth:
             self._stealth_config = ConfigLoader.get_browser_config().get_stealth_config()
+
+    def _find_chrome_executable(self) -> Optional[str]:
+        """Find system Chrome executable path.
+
+        Returns path to Chrome or None if not found.
+        Priority: System Chrome > Playwright bundled Chromium
+        """
+        import platform
+        import os
+
+        system = platform.system()
+
+        if system == "Darwin":  # macOS
+            paths = [
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                os.path.expanduser("~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+            ]
+        elif system == "Windows":
+            paths = [
+                "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+                "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+                os.path.expandvars("%LOCALAPPDATA%\\Google\\Chrome\\Application\\chrome.exe"),
+            ]
+        else:  # Linux
+            paths = [
+                "/usr/bin/google-chrome",
+                "/usr/bin/google-chrome-stable",
+                "/usr/bin/chromium",
+                "/usr/bin/chromium-browser",
+            ]
+
+        for path in paths:
+            if os.path.exists(path):
+                logger.info(f"Found system Chrome: {path}")
+                return path
+
+        # Fallback: let Playwright use its bundled Chromium
+        logger.warning("System Chrome not found, will use Playwright bundled Chromium")
+        return None
 
     # ------------------------------------------------------------------
     # Multi-tab management methods
@@ -350,46 +390,51 @@ class HybridBrowserSession:
             await self._ensure_browser_inner()
 
     async def _ensure_browser_inner(self) -> None:
-        """Internal browser initialization logic."""
+        """Internal browser initialization logic.
+
+        Uses subprocess to launch Chrome, then connects via Playwright CDP.
+        This avoids Playwright's launch fingerprints.
+        """
         from playwright.async_api import async_playwright
+        from .browser_launcher import BrowserLauncher
 
         if self._page is not None:
             return
 
+        # Launch browser via subprocess (no Playwright launch fingerprints)
+        self._browser_launcher = BrowserLauncher(
+            headless=self._headless,
+            user_data_dir=self._user_data_dir,
+            enable_stealth=self._stealth,
+            enable_extensions=self._stealth and not self._headless,
+        )
+        cdp_url = await self._browser_launcher.launch()
+        logger.info(f"Browser launched via subprocess, CDP URL: {cdp_url}")
+
+        # Connect to browser via Playwright's CDP connection
         self._playwright = await async_playwright().start()
+        self._browser = await self._playwright.chromium.connect_over_cdp(cdp_url)
+        logger.info("Playwright connected via CDP")
 
-        launch_options: Dict[str, Any] = {"headless": self._headless}
-        context_options: Dict[str, Any] = {}
-        if self._stealth and self._stealth_config:
-            launch_options['args'] = self._stealth_config['launch_args']
-            context_options.update(self._stealth_config['context_options'])
-
-        if self._user_data_dir:
-            context = await self._playwright.chromium.launch_persistent_context(
-                user_data_dir=self._user_data_dir,
-                **launch_options,
-                **context_options,
-            )
-            self._context = context
-            pages = context.pages
-            if pages:
-                self._page = pages[0]
-                initial_tab_id = await TabIdGenerator.generate_tab_id()
-                await self._register_new_page(initial_tab_id, pages[0])
-                self._current_tab_id = initial_tab_id
-                for page in pages[1:]:
-                    tab_id = await TabIdGenerator.generate_tab_id()
-                    await self._register_new_page(tab_id, page)
-            else:
-                self._page = await context.new_page()
-                initial_tab_id = await TabIdGenerator.generate_tab_id()
-                await self._register_new_page(initial_tab_id, self._page)
-                self._current_tab_id = initial_tab_id
+        # Get the default context (created by Chrome)
+        contexts = self._browser.contexts
+        if contexts:
+            self._context = contexts[0]
         else:
-            self._browser = await self._playwright.chromium.launch(**launch_options)
-            self._context = await self._browser.new_context(**context_options)
-            self._page = await self._context.new_page()
+            self._context = await self._browser.new_context()
 
+        # Get existing pages or create new one
+        pages = self._context.pages
+        if pages:
+            self._page = pages[0]
+            initial_tab_id = await TabIdGenerator.generate_tab_id()
+            await self._register_new_page(initial_tab_id, pages[0])
+            self._current_tab_id = initial_tab_id
+            for page in pages[1:]:
+                tab_id = await TabIdGenerator.generate_tab_id()
+                await self._register_new_page(tab_id, page)
+        else:
+            self._page = await self._context.new_page()
             initial_tab_id = await TabIdGenerator.generate_tab_id()
             await self._register_new_page(initial_tab_id, self._page)
             self._current_tab_id = initial_tab_id
@@ -405,7 +450,7 @@ class HybridBrowserSession:
             short_timeout=self._short_timeout,
         )
 
-        logger.info("Browser session initialized successfully")
+        logger.info("Browser session initialized successfully (subprocess + CDP)")
 
     async def close(self) -> None:
         """Close browser session and clean up resources."""
@@ -491,7 +536,7 @@ class HybridBrowserSession:
                 finally:
                     self._browser = None
 
-            # Step 4: Stop playwright last
+            # Step 4: Stop playwright
             if self._playwright:
                 try:
                     await self._playwright.stop()
@@ -499,6 +544,15 @@ class HybridBrowserSession:
                     logger.warning(f"Error stopping playwright: {e}")
                 finally:
                     self._playwright = None
+
+            # Step 5: Close browser launcher (kills subprocess)
+            if self._browser_launcher:
+                try:
+                    await self._browser_launcher.close()
+                except Exception as e:
+                    logger.warning(f"Error closing browser launcher: {e}")
+                finally:
+                    self._browser_launcher = None
 
         except Exception as e:
             logger.error(f"Error during session cleanup: {e}")
@@ -509,6 +563,7 @@ class HybridBrowserSession:
             self._context = None
             self._browser = None
             self._playwright = None
+            self._browser_launcher = None
 
     @classmethod
     async def close_all_sessions(cls) -> None:

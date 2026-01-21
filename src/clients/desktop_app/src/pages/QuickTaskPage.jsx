@@ -16,9 +16,6 @@ function QuickTaskPage({ session, onNavigate, showStatus, version }) {
 
   // Task input state
   const [task, setTask] = useState('');
-  const [startUrl, setStartUrl] = useState('');
-  const [maxSteps, setMaxSteps] = useState(15);
-  const [headless, setHeadless] = useState(false);
 
   // Execution state
   const [taskId, setTaskId] = useState(null);
@@ -30,7 +27,6 @@ function QuickTaskPage({ session, onNavigate, showStatus, version }) {
   // Real-time progress state
   const [plan, setPlan] = useState([]);
   const [currentStep, setCurrentStep] = useState(0);
-  const [currentMaxSteps, setCurrentMaxSteps] = useState(15);
   const [currentAction, setCurrentAction] = useState(null);
   const [executionPhase, setExecutionPhase] = useState('initializing'); // initializing, planning, executing
 
@@ -61,10 +57,7 @@ function QuickTaskPage({ session, onNavigate, showStatus, version }) {
       const response = await api.callAppBackend('/api/v1/quick-task/execute', {
         method: 'POST',
         body: JSON.stringify({
-          task: task.trim(),
-          start_url: startUrl.trim() || null,
-          max_steps: maxSteps,
-          headless: headless
+          task: task.trim()
         })
       });
 
@@ -143,7 +136,6 @@ function QuickTaskPage({ session, onNavigate, showStatus, version }) {
       case 'step_started':
         // A step is about to execute
         setCurrentStep(event.step || 0);
-        setCurrentMaxSteps(event.max_steps || maxSteps);
         setCurrentAction(event.action);
         break;
 
@@ -213,7 +205,6 @@ function QuickTaskPage({ session, onNavigate, showStatus, version }) {
   // Reset to start new task
   const handleReset = () => {
     setTask('');
-    setStartUrl('');
     setTaskId(null);
     setStatus('idle');
     setActionHistory([]);
@@ -263,18 +254,9 @@ function QuickTaskPage({ session, onNavigate, showStatus, version }) {
 
   // Example tasks
   const exampleTasks = [
-    {
-      task: 'Go to google.com and search for "AI news 2024"',
-      url: 'https://www.google.com'
-    },
-    {
-      task: 'Navigate to GitHub trending and find the top 3 repositories',
-      url: 'https://github.com'
-    },
-    {
-      task: 'Go to Wikipedia and search for "Machine Learning"',
-      url: 'https://www.wikipedia.org'
-    }
+    'Go to google.com and search for "AI news 2024"',
+    'Navigate to GitHub trending and find the top 3 repositories',
+    'Go to Wikipedia and search for "Machine Learning"'
   ];
 
   // Render action history item
@@ -346,42 +328,6 @@ function QuickTaskPage({ session, onNavigate, showStatus, version }) {
               />
             </div>
 
-            <div className="input-row">
-              <div className="input-group flex-1">
-                <label>Start URL (optional)</label>
-                <input
-                  type="text"
-                  value={startUrl}
-                  onChange={(e) => setStartUrl(e.target.value)}
-                  placeholder="https://www.google.com"
-                  className="task-input"
-                />
-              </div>
-
-              <div className="input-group">
-                <label>Max Steps</label>
-                <input
-                  type="number"
-                  value={maxSteps}
-                  onChange={(e) => setMaxSteps(parseInt(e.target.value) || 15)}
-                  min={1}
-                  max={50}
-                  className="task-input steps-input"
-                />
-              </div>
-            </div>
-
-            <div className="input-row">
-              <label className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={headless}
-                  onChange={(e) => setHeadless(e.target.checked)}
-                />
-                <span>Run in headless mode (no browser window)</span>
-              </label>
-            </div>
-
             <div className="button-row">
               <button
                 className="btn btn-primary"
@@ -402,13 +348,10 @@ function QuickTaskPage({ session, onNavigate, showStatus, version }) {
                 <button
                   key={i}
                   className="example-btn"
-                  onClick={() => {
-                    setTask(example.task);
-                    setStartUrl(example.url);
-                  }}
+                  onClick={() => setTask(example)}
                 >
                   <Icon name="sparkle" size={16} />
-                  <span>{example.task.slice(0, 50)}...</span>
+                  <span>{example.slice(0, 50)}...</span>
                 </button>
               ))}
             </div>
@@ -425,7 +368,7 @@ function QuickTaskPage({ session, onNavigate, showStatus, version }) {
               <p>{task}</p>
             </div>
 
-            {/* Progress Bar */}
+            {/* Progress Section */}
             <div className="progress-section">
               <div className="progress-header">
                 <div className="status-indicator running">
@@ -433,7 +376,7 @@ function QuickTaskPage({ session, onNavigate, showStatus, version }) {
                   <span>
                     {executionPhase === 'initializing' && 'Starting browser...'}
                     {executionPhase === 'planning' && 'Analyzing page...'}
-                    {executionPhase === 'executing' && `Step ${currentStep} of ${currentMaxSteps}`}
+                    {executionPhase === 'executing' && `Step ${currentStep}`}
                   </span>
                 </div>
                 <button
@@ -443,12 +386,6 @@ function QuickTaskPage({ session, onNavigate, showStatus, version }) {
                   Cancel
                 </button>
               </div>
-              <div className="progress-bar-container">
-                <div
-                  className="progress-bar"
-                  style={{ width: `${(currentStep / currentMaxSteps) * 100}%` }}
-                />
-              </div>
             </div>
 
             {/* Plan Display */}
@@ -456,12 +393,16 @@ function QuickTaskPage({ session, onNavigate, showStatus, version }) {
               <div className="plan-section">
                 <h4>Plan</h4>
                 <div className="plan-list">
-                  {plan.map((step, i) => (
-                    <div key={i} className="plan-item">
-                      <span className="plan-number">{i + 1}.</span>
-                      <span className="plan-text">{step}</span>
-                    </div>
-                  ))}
+                  {plan.map((step, i) => {
+                    // Handle both formats: string or {step, path_ref} object
+                    const stepText = typeof step === 'string' ? step : step.step;
+                    return (
+                      <div key={i} className="plan-item">
+                        <span className="plan-number">{i + 1}.</span>
+                        <span className="plan-text">{stepText}</span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}

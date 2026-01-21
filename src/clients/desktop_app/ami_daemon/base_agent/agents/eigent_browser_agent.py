@@ -44,15 +44,43 @@ def _get_browser_data_dir() -> Optional[str]:
 
 
 # System prompt ported from Eigent's PlaywrightLLMAgent
+# Updated to support memory-guided planning
 EIGENT_SYSTEM_PROMPT = """
 You are a web automation assistant.
 
 Analyse the page snapshot and create a short high-level plan, then output the FIRST action to start with.
 
+## Memory Reference
+
+You may receive a "Reference Path" from the user's workflow memory. This path shows how similar tasks were accomplished before.
+
+Guidelines for using Reference Path:
+- Use the reference path as guidance, but adapt to the actual page state
+- The reference may not be relevant if this is a new type of task (check the score)
+- For each plan step, indicate which path step it corresponds to (path_ref), or null if no correspondence
+- Intent sequences show specific actions that worked before - use them as hints for your actions
+
+## Output Format
+
 Return a JSON object in *exactly* this shape:
-Action format json_object examples:
+
+Initial response (with plan):
 {
-  "plan": ["Step 1", "Step 2"],
+  "plan": [
+    {"step": "Step 1 description", "path_ref": 0},
+    {"step": "Step 2 description", "path_ref": 1},
+    {"step": "Step 3 description", "path_ref": null}
+  ],
+  "current_plan_step": 0,
+  "action": {
+    "type": "click",
+    "ref": "e1"
+  }
+}
+
+Subsequent responses (action only):
+{
+  "current_plan_step": 1,
   "action": {
     "type": "click",
     "ref": "e1"
@@ -62,6 +90,7 @@ Action format json_object examples:
 If task is already complete:
 {
   "plan": [],
+  "current_plan_step": null,
   "action": {
     "type": "finish",
     "ref": null,
@@ -69,7 +98,9 @@ If task is already complete:
   }
 }
 
-Available action types:
+IMPORTANT: Always include "current_plan_step" to indicate which plan step you are working on. This helps track progress accurately.
+
+## Available action types:
 - 'click': {"type": "click", "ref": "e1"} or {"type": "click", "text": "Button Text"} or {"type": "click", "selector": "button"}
 - 'type': {"type": "type", "ref": "e1", "text": "search text"} or {"type": "type", "selector": "input", "text": "search text"}
 - 'select': {"type": "select", "ref": "e1", "value": "option"} or {"type": "select", "selector": "select", "value": "option"}
@@ -81,7 +112,7 @@ Available action types:
 - 'forward': {"type": "forward"}
 - 'finish': {"type": "finish", "ref": null, "summary": "task completion summary"}
 
-IMPORTANT:
+## IMPORTANT:
 - For 'click': Use 'ref' from snapshot, or 'text' for visible text, or 'selector' for CSS selectors
 - For 'type'/'select': Use 'ref' from snapshot or 'selector' for CSS selectors
 - Only use 'ref' values that exist in the snapshot (e.g., ref=e1, ref=e2, etc.)
@@ -112,18 +143,6 @@ class EigentBrowserAgent(BaseStepAgent):
                 required=True,
                 description="Task description in natural language"
             ),
-            "start_url": FieldSchema(
-                type="str",
-                required=False,
-                default="https://www.google.com",
-                description="Starting URL for the browser"
-            ),
-            "max_steps": FieldSchema(
-                type="int",
-                required=False,
-                default=15,
-                description="Maximum number of steps the agent can take"
-            ),
             "headless": FieldSchema(
                 type="bool",
                 required=False,
@@ -134,13 +153,9 @@ class EigentBrowserAgent(BaseStepAgent):
         examples=[
             {
                 "task": "Go to google.com and search for 'Python tutorials'",
-                "start_url": "https://www.google.com",
-                "max_steps": 10
             },
             {
                 "task": "Navigate to GitHub and find the trending repositories",
-                "start_url": "https://github.com",
-                "max_steps": 15
             }
         ]
     )
@@ -159,7 +174,10 @@ class EigentBrowserAgent(BaseStepAgent):
         self._llm_base_url: Optional[str] = None
         self.action_history: List[Dict[str, Any]] = []
         self._progress_callback: Optional[Callable] = None
-        self._current_plan: List[str] = []
+        self._current_plan: List[Dict[str, Any]] = []  # Plan steps with path_ref
+        # Memory-guided planning
+        self._memory_paths: List[Dict[str, Any]] = []  # Retrieved memory paths
+        self._current_plan_step: int = 0  # Current execution step index
 
     def set_progress_callback(self, callback: Callable):
         """Set callback for progress updates.
@@ -245,21 +263,22 @@ class EigentBrowserAgent(BaseStepAgent):
         try:
             # Parse input
             task = ""
-            start_url = "https://www.google.com"
-            max_steps = 15
             headless = False
+            memory_paths = []
 
             if isinstance(input_data, AgentInput):
                 if input_data.data:
                     task = input_data.data.get("task", "")
-                    start_url = input_data.data.get("start_url", start_url)
-                    max_steps = input_data.data.get("max_steps", max_steps)
-                    headless = input_data.data.get("headless", headless)
+                    headless = input_data.data.get("headless", False)
+                    memory_paths = input_data.data.get("memory_paths", [])
             elif isinstance(input_data, dict):
                 task = input_data.get("task", "")
-                start_url = input_data.get("start_url", start_url)
-                max_steps = input_data.get("max_steps", max_steps)
-                headless = input_data.get("headless", headless)
+                headless = input_data.get("headless", False)
+                memory_paths = input_data.get("memory_paths", [])
+
+            # Store memory paths for later use
+            self._memory_paths = memory_paths
+            self._current_plan_step = 0
 
             if not task:
                 return AgentOutput(
@@ -284,19 +303,14 @@ class EigentBrowserAgent(BaseStepAgent):
                 user_data_dir=browser_data_dir,
             )
 
-            # Navigate to start URL
-            logger.info(f"Navigating to: {start_url}")
-            await self._session.visit(start_url)
-
-            # Process the command
-            result = await self._process_command(task, max_steps)
+            # Process the command (no start_url - LLM decides where to navigate)
+            result = await self._process_command(task)
 
             return AgentOutput(
                 success=True,
                 data={
                     "result": result,
                     "task": task,
-                    "start_url": start_url,
                     "steps_taken": len(self.action_history),
                     "action_history": self.action_history,
                 },
@@ -314,31 +328,184 @@ class EigentBrowserAgent(BaseStepAgent):
                 data={"action_history": self.action_history}
             )
 
-    async def _process_command(self, prompt: str, max_steps: int = 15) -> str:
-        """Process a command using LLM-guided browser automation."""
+    def _format_memory_paths(self) -> str:
+        """Format memory paths for inclusion in prompt.
+
+        Returns:
+            Formatted string describing the reference path, or empty string if no paths.
+        """
+        if not self._memory_paths:
+            return ""
+
+        # Use the best (first) path
+        path = self._memory_paths[0]
+        score = path.get("score", 0)
+        steps = path.get("steps", [])
+
+        if not steps:
+            return ""
+
+        lines = []
+        lines.append(f"\n## Reference Path (score: {score:.2f})")
+        lines.append("Note: Retrieved from memory based on similar tasks. May not be relevant for new task types.\n")
+
+        for i, step in enumerate(steps):
+            state = step.get("state") or {}
+            action = step.get("action") or {}
+            intent_seq = step.get("intent_sequence") or {}
+
+            state_desc = state.get("description", "Unknown page")
+            state_url = state.get("page_url", "")
+            action_desc = action.get("description", "No action")
+            action_type = action.get("type", "")
+
+            lines.append(f"Path Step {i}: {state_desc}")
+            if state_url:
+                lines.append(f"  URL: {state_url}")
+            if action_desc and action_desc != "No action":
+                lines.append(f"  Action: {action_desc} (type: {action_type})")
+
+            # Format intents
+            intents = intent_seq.get("intents", [])
+            if intents:
+                intent_strs = []
+                for intent in intents:
+                    intent_type = intent.get("type", "unknown")
+                    intent_text = intent.get("text", "")
+                    intent_value = intent.get("value", "")
+                    if intent_text:
+                        intent_strs.append(f'{intent_type} on "{intent_text}"')
+                    elif intent_value:
+                        intent_strs.append(f'{intent_type} value "{intent_value}"')
+                    else:
+                        intent_strs.append(intent_type)
+                lines.append(f"  Intents: [{', '.join(intent_strs)}]")
+
+            lines.append("")  # Blank line between steps
+
+        return "\n".join(lines)
+
+    def _get_current_intent_reference(self) -> str:
+        """Get intent reference for current plan step based on path_ref.
+
+        Returns:
+            Formatted string with intent hints, or empty string if no reference.
+        """
+        if not self._memory_paths or not self._current_plan:
+            return ""
+
+        # Get current plan step
+        if self._current_plan_step >= len(self._current_plan):
+            return ""
+
+        plan_step = self._current_plan[self._current_plan_step]
+
+        # Handle both new format (dict with path_ref) and legacy format (string)
+        if isinstance(plan_step, str):
+            return ""
+
+        path_ref = plan_step.get("path_ref")
+        if path_ref is None:
+            return ""
+
+        # Get the referenced path step
+        path = self._memory_paths[0]
+        steps = path.get("steps", [])
+
+        if path_ref >= len(steps):
+            logger.warning(f"path_ref {path_ref} out of bounds (path has {len(steps)} steps)")
+            return ""
+
+        path_step = steps[path_ref]
+        intent_seq = path_step.get("intent_sequence", {})
+        intents = intent_seq.get("intents", [])
+
+        if not intents:
+            return ""
+
+        # Format intents
+        intent_strs = []
+        for intent in intents:
+            intent_type = intent.get("type", "unknown")
+            intent_text = intent.get("text", "")
+            intent_value = intent.get("value", "")
+            if intent_text:
+                intent_strs.append(f'{intent_type} on "{intent_text}"')
+            elif intent_value:
+                intent_strs.append(f'{intent_type} value "{intent_value}"')
+            else:
+                intent_strs.append(intent_type)
+
+        step_desc = plan_step.get("step", f"Plan step {self._current_plan_step}")
+        return f'\nCurrent Plan Step: "{step_desc}" (path_ref: {path_ref})\nReference Intents: [{", ".join(intent_strs)}]\n'
+
+    def _normalize_plan(self, plan: List) -> List[Dict[str, Any]]:
+        """Normalize plan to consistent format with path_ref.
+
+        Args:
+            plan: Plan from LLM response (either list of strings or list of dicts)
+
+        Returns:
+            List of dicts with 'step' and 'path_ref' keys
+        """
+        normalized = []
+        for item in plan:
+            if isinstance(item, str):
+                normalized.append({"step": item, "path_ref": None})
+            elif isinstance(item, dict):
+                normalized.append({
+                    "step": item.get("step", str(item)),
+                    "path_ref": item.get("path_ref")
+                })
+            else:
+                normalized.append({"step": str(item), "path_ref": None})
+        return normalized
+
+    async def _process_command(self, prompt: str) -> str:
+        """Process a command using LLM-guided browser automation.
+
+        The agent will keep executing until the LLM returns a 'finish' action.
+        """
         # Get initial full snapshot
         full_snapshot = await self._session.get_snapshot()
         logger.info("Initial snapshot captured")
         logger.debug(f"Full snapshot:\n{full_snapshot}")
 
+        # Format memory reference for initial plan generation
+        memory_reference = self._format_memory_paths()
+        if memory_reference:
+            logger.info("Including memory reference in plan generation")
+            logger.info(f"Memory reference content:\n{memory_reference}")
+
         # Get initial plan from LLM
-        plan_resp = self._llm_call(prompt, full_snapshot or "", is_initial=True)
+        plan_resp = self._llm_call(
+            prompt,
+            full_snapshot or "",
+            is_initial=True,
+            memory_reference=memory_reference
+        )
         plan = plan_resp.get("plan", [])
         action = plan_resp.get("action")
-        self._current_plan = plan
 
-        logger.info(f"Plan generated: {json.dumps(plan, ensure_ascii=False)}")
+        # Normalize and store plan
+        self._current_plan = self._normalize_plan(plan)
+        # Use LLM's current_plan_step if provided, otherwise default to 0
+        self._current_plan_step = plan_resp.get("current_plan_step", 0) or 0
 
-        # Notify plan generated
+        # Log plan with path references
+        logger.info(f"Plan generated: {json.dumps(self._current_plan, ensure_ascii=False)}")
+
+        # Notify plan generated (send normalized format)
         await self._notify_progress("plan_generated", {
-            "plan": plan,
+            "plan": self._current_plan,
             "first_action": action,
+            "memory_path_used": bool(memory_reference),
         })
 
         steps = 0
         final_summary = ""
 
-        while action and steps < max_steps:
+        while action:
             if action.get("type") == "finish":
                 final_summary = action.get("summary", "Task completed")
                 logger.info(f"Task finished: {final_summary}")
@@ -347,9 +514,9 @@ class EigentBrowserAgent(BaseStepAgent):
             # Notify step started
             await self._notify_progress("step_started", {
                 "step": steps + 1,
-                "max_steps": max_steps,
                 "action": action,
                 "action_type": action.get("type"),
+                "plan_step": self._current_plan_step,
             })
 
             # Execute the action
@@ -374,6 +541,7 @@ class EigentBrowserAgent(BaseStepAgent):
                 "action": action,
                 "result": result_for_history,
                 "success": success,
+                "plan_step": self._current_plan_step,
             }
             self.action_history.append(action_record)
 
@@ -381,18 +549,18 @@ class EigentBrowserAgent(BaseStepAgent):
             if success:
                 await self._notify_progress("step_completed", {
                     "step": steps + 1,
-                    "max_steps": max_steps,
                     "action": action,
                     "result": result_for_history,
                     "action_history": self.action_history.copy(),
+                    "plan_step": self._current_plan_step,
                 })
             else:
                 await self._notify_progress("step_failed", {
                     "step": steps + 1,
-                    "max_steps": max_steps,
                     "action": action,
                     "error": result_for_history,
                     "action_history": self.action_history.copy(),
+                    "plan_step": self._current_plan_step,
                 })
 
             # Get diff snapshot
@@ -407,13 +575,23 @@ class EigentBrowserAgent(BaseStepAgent):
                 if meta["is_diff"] and not diff_snapshot.startswith("- Page Snapshot (no structural changes)"):
                     full_snapshot = self._session.snapshot.snapshot_data or ""
 
+            # Get intent reference for current plan step
+            intent_reference = self._get_current_intent_reference()
+
             # Get next action from LLM
-            action = self._llm_call(
+            llm_resp = self._llm_call(
                 prompt,
                 full_snapshot or "",
                 is_initial=False,
                 history=self.action_history,
-            ).get("action")
+                intent_reference=intent_reference,
+            )
+            action = llm_resp.get("action")
+
+            # Update current_plan_step from LLM response
+            if "current_plan_step" in llm_resp and llm_resp["current_plan_step"] is not None:
+                self._current_plan_step = llm_resp["current_plan_step"]
+
             steps += 1
 
         logger.info(f"Process completed with {steps} steps")
@@ -425,21 +603,36 @@ class EigentBrowserAgent(BaseStepAgent):
         snapshot: str,
         is_initial: bool,
         history: Optional[List[Dict[str, Any]]] = None,
+        memory_reference: str = "",
+        intent_reference: str = "",
     ) -> Dict[str, Any]:
-        """Call the LLM to get plan & next action."""
+        """Call the LLM to get plan & next action.
+
+        Args:
+            prompt: The task description
+            snapshot: Current page snapshot
+            is_initial: Whether this is the initial call (plan generation)
+            history: Action history for subsequent calls
+            memory_reference: Formatted memory path for plan generation
+            intent_reference: Intent hints for current action generation
+        """
         # Build user message
         if is_initial:
-            user_content = f"Snapshot:\n{snapshot}\n\nTask: {prompt}"
+            # Initial call: include full memory reference for plan generation
+            user_content = f"Snapshot:\n{snapshot}"
+            if memory_reference:
+                user_content += f"\n{memory_reference}"
+            user_content += f"\n\nTask: {prompt}"
         else:
+            # Subsequent calls: include history and optional intent reference
             hist_lines = [
                 f"{i + 1}. {'✅' if h['success'] else '❌'} {h['action']['type']} -> {h['result']}"
                 for i, h in enumerate(history or [])
             ]
-            user_content = (
-                f"Snapshot:\n{snapshot}\n\nHistory:\n"
-                + "\n".join(hist_lines)
-                + f"\n\nTask: {prompt}"
-            )
+            user_content = f"Snapshot:\n{snapshot}\n\nHistory:\n" + "\n".join(hist_lines)
+            if intent_reference:
+                user_content += f"\n{intent_reference}"
+            user_content += f"\n\nTask: {prompt}"
 
         # Call Anthropic API
         try:
@@ -523,11 +716,15 @@ class EigentBrowserAgent(BaseStepAgent):
         return await self._session.exec_action(action)
 
     async def cleanup(self, context: AgentContext):
-        """Clean up browser session."""
+        """Clean up browser session and reset state."""
         if self._session:
             try:
                 await self._session.close()
             except Exception as e:
                 logger.warning(f"Error closing browser session: {e}")
             self._session = None
+        # Reset all state
         self.action_history = []
+        self._current_plan = []
+        self._memory_paths = []
+        self._current_plan_step = 0

@@ -3,6 +3,10 @@ Quick Task API
 
 Independent task execution interface, separate from Workflow.
 Users input natural language tasks, and the Agent completes them autonomously.
+
+Memory-Guided Planning:
+- Queries memory for similar workflow paths before execution
+- Uses retrieved paths to guide plan generation
 """
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Header
@@ -22,19 +26,27 @@ config = get_config()
 
 # Service instance
 _service: Optional[QuickTaskService] = None
+# CloudClient reference (set by daemon.py)
+_cloud_client = None
 
 
 def get_service() -> QuickTaskService:
-    global _service
+    global _service, _cloud_client
     if _service is None:
-        _service = QuickTaskService()
+        _service = QuickTaskService(cloud_client=_cloud_client)
     return _service
 
 
-def configure_service(api_key: str, model: Optional[str] = None):
-    """Configure the service with LLM credentials."""
-    service = get_service()
-    service.configure_llm(api_key, model)
+def set_cloud_client(cloud_client):
+    """Set CloudClient for memory API calls.
+
+    Called by daemon.py during startup to inject the CloudClient instance.
+    """
+    global _cloud_client, _service
+    _cloud_client = cloud_client
+    if _service is not None:
+        _service.set_cloud_client(cloud_client)
+    logger.info("QuickTask router: CloudClient configured for memory queries")
 
 
 # ============== Request/Response Models ==============
@@ -42,8 +54,6 @@ def configure_service(api_key: str, model: Optional[str] = None):
 class TaskRequest(BaseModel):
     """Task execution request"""
     task: str = Field(..., description="Task description", min_length=1, max_length=2000)
-    start_url: Optional[str] = Field(None, description="Optional starting URL")
-    max_steps: int = Field(15, description="Maximum steps", ge=1, le=50)
     headless: bool = Field(False, description="Run browser in headless mode")
 
 
@@ -82,13 +92,15 @@ class TaskResultResponse(BaseModel):
 @router.post("/execute", response_model=TaskResponse)
 async def execute_task(
     request: TaskRequest,
-    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
+    x_ami_api_key: Optional[str] = Header(default=None, alias="X-Ami-API-Key"),
+    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
 ):
     """
     Submit task for execution.
 
     Headers:
     - X-Ami-API-Key: User's Ami API key (ami_xxxxx format). Required for LLM calls via CRS.
+    - X-User-Id: User ID for memory queries (optional but recommended).
 
     Returns task_id, which can be used for:
     - GET /status/{task_id} to check status
@@ -102,34 +114,41 @@ async def execute_task(
     proxy_url = config.get('llm.proxy_url', 'https://api.ariseos.com/api')
     llm_model = config.get('llm.model', 'claude-sonnet-4-5-20250929')
 
+    # TODO: Temporarily hardcode user_id for memory queries
+    # Will add proper user_id from frontend later
+    user_id = x_user_id or "shenyouren"
+
     # Configure LLM - use X-Ami-API-Key with CRS proxy
     if x_ami_api_key:
+        # Set API key on cloud_client for memory queries (same as daemon.py pattern)
+        if _cloud_client:
+            _cloud_client.set_user_api_key(x_ami_api_key)
+
         if use_proxy:
             # Use CRS (Claude Relay Service) proxy
             service.configure_llm(
                 api_key=x_ami_api_key,
                 model=llm_model,
-                base_url=proxy_url
+                base_url=proxy_url,
+                user_id=user_id
             )
-            logger.info(f"Quick Task using CRS proxy: {proxy_url}")
+            logger.info(f"Quick Task using CRS proxy: {proxy_url}, user_id: {user_id}")
         else:
             # Direct API call (not recommended for production)
-            service.configure_llm(api_key=x_ami_api_key, model=llm_model)
-            logger.info("Quick Task using direct Anthropic API")
+            service.configure_llm(api_key=x_ami_api_key, model=llm_model, user_id=user_id)
+            logger.info(f"Quick Task using direct Anthropic API, user_id: {user_id}")
     else:
         # Fallback to environment variable (for local development)
         env_api_key = os.environ.get("ANTHROPIC_API_KEY")
         if env_api_key:
-            service.configure_llm(api_key=env_api_key, model=llm_model)
-            logger.warning("Using ANTHROPIC_API_KEY env var (no X-Ami-API-Key header)")
+            service.configure_llm(api_key=env_api_key, model=llm_model, user_id=user_id)
+            logger.warning(f"Using ANTHROPIC_API_KEY env var (no X-Ami-API-Key header), user_id: {user_id}")
         else:
             logger.warning("No API key provided - LLM calls will fail")
 
     try:
         task_id = await service.submit_task(
             task=request.task,
-            start_url=request.start_url,
-            max_steps=request.max_steps,
             headless=request.headless,
         )
 

@@ -48,7 +48,7 @@ from src.clients.desktop_app.ami_daemon.services.workflow_history import Workflo
 from src.clients.desktop_app.ami_daemon.services.cdp_recorder import CDPRecorder
 from src.clients.desktop_app.ami_daemon.services.cloud_client import CloudClient
 from src.clients.desktop_app.ami_daemon.base_agent.tools.browser_use.extension_installer import ensure_extensions_installed
-from src.clients.desktop_app.ami_daemon.routers.quick_task import router as quick_task_router, configure_service as configure_quick_task
+from src.clients.desktop_app.ami_daemon.routers.quick_task import router as quick_task_router
 
 # Load configuration first (needed for logging setup)
 config = get_config()
@@ -245,6 +245,11 @@ async def lifespan(app: FastAPI):
         # Initialize CDP recorder
         cdp_recorder = CDPRecorder(storage_manager, browser_manager)
         logger.info("✓ CDP recorder initialized")
+
+        # Inject cloud_client into quick_task router for memory queries
+        from src.clients.desktop_app.ami_daemon.routers.quick_task import set_cloud_client
+        set_cloud_client(cloud_client)
+        logger.info("✓ Quick Task service configured with CloudClient for memory queries")
 
         logger.info(f"  API Proxy URL: {config.get('api_proxy.url', 'http://localhost:8080')}")
 
@@ -707,6 +712,101 @@ async def start_browser(headless: bool = False):
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         logger.error(f"Unexpected error starting browser: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Global reference for browser2 session
+_browser2_session = None
+
+
+@app.post("/api/v1/browser/start2")
+async def start_browser2(headless: bool = False):
+    """Start browser using HybridBrowserSession (eigent_browser)
+
+    This uses subprocess + CDP launch mode.
+
+    Args:
+        headless: Whether to run in headless mode (default: False)
+
+    Returns:
+        Browser status
+    """
+    global _browser2_session
+
+    try:
+        from src.clients.desktop_app.ami_daemon.base_agent.tools.eigent_browser import (
+            HybridBrowserSession
+        )
+
+        # Check if already running
+        if _browser2_session is not None:
+            logger.info("Browser2 already running")
+            return {
+                "status": "already_running",
+                "session_id": "browser2_test",
+                "message": "Browser2 already running"
+            }
+
+        logger.info(f"API: Starting browser2 (HybridBrowserSession, headless={headless})")
+
+        # Get user data dir from config
+        user_data_dir = None
+        config = get_config()
+        if config:
+            user_data_dir = str(config.get_path("data.browser_data")) + "_browser2"
+
+        # Create HybridBrowserSession instance
+        session = HybridBrowserSession(
+            session_id="browser2_test",
+            headless=headless,
+            stealth=True,
+            user_data_dir=user_data_dir
+        )
+
+        # Ensure browser is started
+        await session.ensure_browser()
+
+        # Store reference for cleanup
+        _browser2_session = session
+
+        return {
+            "status": "started",
+            "session_id": "browser2_test",
+            "message": "Browser started via HybridBrowserSession (subprocess + CDP)"
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to start browser2: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/browser/stop2")
+async def stop_browser2():
+    """Stop browser2 (HybridBrowserSession)
+
+    Returns:
+        Browser status
+    """
+    global _browser2_session
+
+    try:
+        if _browser2_session is None:
+            return {
+                "status": "not_running",
+                "message": "Browser2 is not running"
+            }
+
+        logger.info("API: Stopping browser2")
+        await _browser2_session.close()
+        _browser2_session = None
+
+        return {
+            "status": "stopped",
+            "message": "Browser2 stopped"
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to stop browser2: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -3546,7 +3646,7 @@ async def cleanup_resources():
     This function is called by the lifespan shutdown context manager
     when uvicorn receives SIGTERM/SIGINT from the parent process (Tauri).
     """
-    global browser_manager, workflow_executor, cdp_recorder, cloud_client
+    global browser_manager, workflow_executor, cdp_recorder, cloud_client, _browser2_session
 
     logger.info("🧹 Cleaning up resources...")
 
@@ -3584,7 +3684,21 @@ async def cleanup_resources():
             else:
                 logger.info("✓ No running tasks")
 
-        # 3. Stop all browser sessions through BrowserManager
+        # 3. Stop browser2 session (HybridBrowserSession)
+        if _browser2_session:
+            logger.info("Stopping browser2 session...")
+            try:
+                await asyncio.wait_for(_browser2_session.close(), timeout=5.0)
+                _browser2_session = None
+                logger.info("✓ Browser2 session stopped")
+            except asyncio.TimeoutError:
+                logger.warning("⚠️  Browser2 session close timeout")
+                cleanup_errors.append("Browser2: timeout")
+            except Exception as e:
+                logger.error(f"⚠️  Browser2 session close error: {e}")
+                cleanup_errors.append(f"Browser2: {e}")
+
+        # 4. Stop all browser sessions through BrowserManager
         # BrowserManager now manages ALL sessions (recording + workflows)
         if browser_manager:
             try:
@@ -3608,7 +3722,7 @@ async def cleanup_resources():
                 logger.error(f"⚠️  Browser manager cleanup error: {e}")
                 cleanup_errors.append(f"Browser manager: {e}")
 
-        # 4. Close cloud client connection
+        # 5. Close cloud client connection
         if cloud_client:
             logger.info("Closing cloud client...")
             try:
@@ -3621,7 +3735,7 @@ async def cleanup_resources():
                 logger.error(f"⚠️  Failed to close cloud client: {e}")
                 cleanup_errors.append(f"Cloud: {e}")
 
-        # 5. Summary
+        # 6. Summary
         if cleanup_errors:
             logger.warning(f"⚠️  Cleanup completed with {len(cleanup_errors)} errors: {cleanup_errors}")
         else:

@@ -5,6 +5,7 @@ Server-side services for Ami platform. Handles workflow generation, intent extra
 ## Directories
 
 - `intent_builder/` - Intent-based workflow generation system
+- `memgraph/` - Memory system for learning and querying operation paths (see `memgraph/CONTEXT.md`)
 - `api/` - REST API endpoints (auth, etc.)
 - `core/` - Core services (config, logging, middleware)
 - `database/` - SQLAlchemy models
@@ -32,6 +33,7 @@ All endpoints use `/api/v1/` prefix and follow RESTful conventions.
 - **Executions**: `/api/v1/executions/*` - Execution reporting
 - **Logs**: `/api/v1/logs/*` - Workflow log and diagnostic upload
 - **Intent Builder**: `/api/v1/intent-builder/sessions/*` - AI conversation sessions (SSE)
+- **Memory**: `/api/v1/memory/*` - Operation memory (add, query, stats, clear)
 
 ## Logging System
 

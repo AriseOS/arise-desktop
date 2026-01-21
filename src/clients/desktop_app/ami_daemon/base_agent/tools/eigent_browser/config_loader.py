@@ -2,10 +2,47 @@
 Configuration for browser automation including stealth mode and timeouts.
 
 Ported from CAMEL-AI/Eigent project.
+Enhanced with browser-use library anti-detection techniques.
 """
 
 import os
+import platform
 from typing import Any, Dict, List, Optional
+
+
+# Disabled Chrome features for stealth mode (from browser-use library)
+CHROME_DISABLED_COMPONENTS = [
+    # Playwright defaults
+    'AcceptCHFrame',
+    'AutoExpandDetailsElement',
+    'AvoidUnnecessaryBeforeUnloadCheckSync',
+    'CertificateTransparencyComponentUpdater',
+    'DestroyProfileOnBrowserClose',
+    'DialMediaRouteProvider',
+    'ExtensionManifestV2Disabled',
+    'GlobalMediaControls',
+    'HttpsUpgrades',
+    'ImprovedCookieControls',
+    'LazyFrameLoading',
+    'LensOverlay',
+    'MediaRouter',
+    'PaintHolding',
+    'ThirdPartyStoragePartitioning',
+    'Translate',
+    # Anti-detection additions
+    'AutomationControlled',
+    'BackForwardCache',
+    'OptimizationHints',
+    'ProcessPerSiteUpToMainFrameThreshold',
+    'InterestFeedContentSuggestions',
+    'CalculateNativeWinOcclusion',
+    'HeavyAdPrivacyMitigations',
+    'PrivacySandboxSettings4',
+    'AutofillServerCommunication',
+    'CrashReporting',
+    'OverscrollHistoryNavigation',
+    'InfiniteSessionRestore',
+]
 
 
 class BrowserConfig:
@@ -163,47 +200,180 @@ class BrowserConfig:
 
     @staticmethod
     def get_launch_args() -> List[str]:
-        """Get Chrome launch arguments for stealth mode."""
-        return [
+        """Get Chrome launch arguments for stealth mode.
+
+        Based on browser-use library's comprehensive anti-detection args.
+        These args hide automation indicators while maintaining browser functionality.
+        """
+        system = platform.system()
+
+        args = [
+            # Core anti-detection
             '--disable-blink-features=AutomationControlled',
-            '--disable-features=VizDisplayCompositor',
-            '--disable-ipc-flooding-protection',
-            '--disable-renderer-backgrounding',
+            f'--disable-features={",".join(CHROME_DISABLED_COMPONENTS)}',
+
+            # Hide automation indicators
+            '--disable-infobars',  # Hide "Chrome is being controlled by automated software"
+            '--disable-background-networking',
+            '--disable-background-timer-throttling',
             '--disable-backgrounding-occluded-windows',
-            '--disable-dev-shm-usage',
-            '--disable-extensions',
-            '--disable-plugins',
-            '--disable-default-apps',
-            '--disable-sync',
-            '--no-default-browser-check',
-            '--no-first-run',
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-web-security',
-            '--disable-features=TranslateUI',
-            '--disable-features=BlinkGenPropertyTrees',
+            '--disable-back-forward-cache',  # Avoid surprises during navigation
+            '--disable-breakpad',
+            '--disable-client-side-phishing-detection',
             '--disable-component-extensions-with-background-pages',
+            '--disable-component-update',
+            '--disable-hang-monitor',
+            '--disable-ipc-flooding-protection',
+            '--disable-popup-blocking',
+            '--disable-prompt-on-repost',
+            '--disable-renderer-backgrounding',
+            '--disable-sync',
+            '--disable-domain-reliability',
+            '--disable-field-trial-config',  # Disable field trials
+            '--disable-window-activation',  # Don't steal focus
+
+            # Performance and stability
+            '--metrics-recording-only',
+            '--no-first-run',
+            '--no-default-browser-check',
+            '--no-service-autorun',
+            '--no-pings',
+
+            # Network features
+            '--enable-features=NetworkService,NetworkServiceInProcess',
+            '--enable-network-information-downlink-max',
+
+            # GPU/rendering - important for fingerprint
+            '--test-type=gpu',
+
+            # Extension support
+            '--allow-legacy-extension-manifests',
+            '--extensions-on-chrome-urls',
+            '--disable-extensions-http-throttling',
+            '--disable-default-apps',
+
+            # Miscellaneous
+            '--export-tagged-pdf',
+            '--disable-search-engine-choice-screen',
+            '--unsafely-disable-devtools-self-xss-warnings',
+            '--allow-pre-commit-input',
+            '--disable-focus-on-load',
+            '--generate-pdf-document-outline',
+            '--ash-no-nudges',
+            '--hide-crash-restore-bubble',
+            '--suppress-message-center-popups',
+            '--disable-datasaver-prompt',
+            '--disable-speech-synthesis-api',
+            '--disable-speech-api',
+            '--disable-print-preview',
+            '--safebrowsing-disable-auto-update',
+            '--disable-external-intent-requests',
+            '--disable-desktop-notifications',
+            '--noerrdialogs',
+            '--silent-debugger-extension-api',
+            '--log-level=2',
+
+            # Simulate outdated browser (no auto-update prompts)
+            '--simulate-outdated-no-au=Tue, 31 Dec 2099 23:59:59 GMT',
         ]
+
+        # Platform-specific args
+        if system == "Linux":
+            # Linux/Docker specific
+            args.extend([
+                '--no-sandbox',
+                '--disable-gpu-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--no-zygote',
+            ])
+        elif system == "Darwin":
+            # macOS specific - minimal extra args
+            pass
+        elif system == "Windows":
+            # Windows specific
+            args.append('--disable-dev-shm-usage')
+
+        return args
+
+    @staticmethod
+    def get_ignore_default_args() -> List[str]:
+        """Get args that should be ignored from Playwright's defaults.
+
+        These are args that Playwright adds by default that reveal automation
+        or conflict with our custom settings.
+
+        Based on browser-use library's configuration.
+        """
+        args = [
+            # Critical! This is what shows the automation banner
+            '--enable-automation',
+            # Allow browser extensions (we load our own)
+            '--disable-extensions',
+            # Keep scrollbars visible for more realistic fingerprint
+            '--hide-scrollbars',
+            # We set our own --disable-features, ignore Playwright's version
+            '--disable-features=AcceptCHFrame,AutoExpandDetailsElement,AvoidUnnecessaryBeforeUnloadCheckSync,CertificateTransparencyComponentUpdater,DeferRendererTasksAfterInput,DestroyProfileOnBrowserClose,DialMediaRouteProvider,ExtensionManifestV2Disabled,GlobalMediaControls,HttpsUpgrades,ImprovedCookieControls,LazyFrameLoading,LensOverlay,MediaRouter,PaintHolding,ThirdPartyStoragePartitioning,Translate',
+        ]
+
+        # On macOS, --no-sandbox is not supported and causes warnings
+        if platform.system() == "Darwin":
+            args.append('--no-sandbox')
+
+        return args
 
     @staticmethod
     def get_context_options() -> Dict[str, Any]:
-        """Get browser context options for stealth mode."""
-        return {
-            'user_agent': (
+        """Get browser context options for stealth mode.
+
+        Uses platform-appropriate user agent. Matching platform is important.
+        """
+        system = platform.system()
+
+        if system == "Darwin":
+            user_agent = (
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+                'AppleWebKit/537.36 (KHTML, like Gecko) '
+                'Chrome/131.0.0.0 Safari/537.36'
+            )
+            sec_ch_ua_platform = '"macOS"'
+        elif system == "Windows":
+            user_agent = (
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
                 'AppleWebKit/537.36 (KHTML, like Gecko) '
                 'Chrome/131.0.0.0 Safari/537.36'
-            ),
+            )
+            sec_ch_ua_platform = '"Windows"'
+        else:
+            user_agent = (
+                'Mozilla/5.0 (X11; Linux x86_64) '
+                'AppleWebKit/537.36 (KHTML, like Gecko) '
+                'Chrome/131.0.0.0 Safari/537.36'
+            )
+            sec_ch_ua_platform = '"Linux"'
+
+        return {
+            'user_agent': user_agent,
             'viewport': {'width': 1920, 'height': 1080},
             'locale': 'en-US',
-            'timezone_id': 'America/New_York',
-            'geolocation': {'latitude': 40.7128, 'longitude': -74.0060},
-            'permissions': ['geolocation'],
+            'extra_http_headers': {
+                'Sec-Ch-Ua-Platform': sec_ch_ua_platform,
+            },
+            # Don't set timezone/geolocation - let it use system defaults
         }
 
     @staticmethod
     def get_http_headers() -> Dict[str, str]:
         """Get HTTP headers for stealth mode."""
+        system = platform.system()
+
+        if system == "Darwin":
+            sec_ch_ua_platform = '"macOS"'
+        elif system == "Windows":
+            sec_ch_ua_platform = '"Windows"'
+        else:
+            sec_ch_ua_platform = '"Linux"'
+
         return {
             'Accept': (
                 'text/html,application/xhtml+xml,application/xml;q=0.9,'
@@ -218,7 +388,7 @@ class BrowserConfig:
                 '"Not=A?Brand";v="24"'
             ),
             'Sec-Ch-Ua-Mobile': '?0',
-            'Sec-Ch-Ua-Platform': '"Windows"',
+            'Sec-Ch-Ua-Platform': sec_ch_ua_platform,
             'Sec-Fetch-Dest': 'document',
             'Sec-Fetch-Mode': 'navigate',
             'Sec-Fetch-Site': 'none',
@@ -227,13 +397,42 @@ class BrowserConfig:
         }
 
     @staticmethod
-    def get_stealth_config() -> Dict[str, Any]:
-        """Get stealth configuration."""
-        return {
+    def get_stealth_script() -> Optional[str]:
+        """Get JavaScript to inject for hiding automation detection.
+
+        Returns None - stealth is fully handled by Chrome launch args
+        (--disable-blink-features=AutomationControlled, etc.).
+        JS injection can actually trigger detection.
+        """
+        return None
+
+    @staticmethod
+    def get_stealth_config(enable_extensions: bool = True) -> Dict[str, Any]:
+        """Get stealth configuration.
+
+        Args:
+            enable_extensions: Whether to enable extension loading for anti-detection.
+        """
+        config = {
             'launch_args': BrowserConfig.get_launch_args(),
+            'ignore_default_args': BrowserConfig.get_ignore_default_args(),
             'context_options': BrowserConfig.get_context_options(),
             'http_headers': BrowserConfig.get_http_headers(),
+            'stealth_script': BrowserConfig.get_stealth_script(),
+            'enable_extensions': enable_extensions,
         }
+
+        # Add extension args if enabled
+        if enable_extensions:
+            from .extension_manager import get_extension_manager
+            ext_manager = get_extension_manager()
+            extension_paths = ext_manager.ensure_extensions_downloaded()
+            if extension_paths:
+                extension_args = ext_manager.get_extension_args(extension_paths)
+                config['launch_args'].extend(extension_args)
+                config['extension_paths'] = extension_paths
+
+        return config
 
     @staticmethod
     def get_all_config() -> Dict[str, Any]:
