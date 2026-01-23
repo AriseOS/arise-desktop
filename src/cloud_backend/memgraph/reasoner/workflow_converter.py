@@ -41,6 +41,21 @@ class WorkflowConverter:
 
         # Build steps from states and actions
         for i, state in enumerate(states):
+            # Build intent_sequences from state (new structure)
+            intent_sequences_data = []
+            if state.intent_sequences:
+                for seq in state.intent_sequences:
+                    seq_data = seq.to_dict() if hasattr(seq, "to_dict") else seq
+                    intent_sequences_data.append(seq_data)
+
+            # Fallback to old intents if intent_sequences is empty (backward compatibility)
+            intents_data = []
+            if not intent_sequences_data and state.intents:
+                intents_data = [
+                    intent.to_dict() if hasattr(intent, "to_dict") else intent
+                    for intent in state.intents
+                ]
+
             step = {
                 "step_id": f"step_{i + 1}",
                 "state_id": state.id,
@@ -48,10 +63,8 @@ class WorkflowConverter:
                 "page_title": state.page_title,
                 "description": state.description,
                 "timestamp": state.timestamp,
-                "intents": [
-                    intent.to_dict() if hasattr(intent, "to_dict") else intent
-                    for intent in state.intents
-                ],
+                "intent_sequences": intent_sequences_data,  # New: full intent sequences
+                "intents": intents_data,  # Backward compatibility
             }
 
             # Add action if exists

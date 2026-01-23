@@ -43,13 +43,30 @@ class BrowserLauncher:
         self._process: Optional[asyncio.subprocess.Process] = None
         self._cdp_port: Optional[int] = None
         self._temp_user_data_dir: Optional[Path] = None
+        self._reused_existing: bool = False  # Track if we reused an existing Chrome instance
 
     async def launch(self) -> str:
         """Launch browser and return CDP URL.
 
+        If an existing Chrome instance is found using the same profile with CDP enabled,
+        it will be reused instead of launching a new one.
+
         Returns:
             CDP URL (e.g., "http://127.0.0.1:9222")
         """
+        # Check for existing Chrome processes using the same user data dir
+        if self.user_data_dir:
+            existing_cdp_url = await self._check_and_cleanup_existing_chrome()
+            if existing_cdp_url:
+                logger.info(f"Reusing existing Chrome instance at {existing_cdp_url}")
+                # Extract port from URL for our tracking
+                import re
+                port_match = re.search(r':(\d+)$', existing_cdp_url)
+                if port_match:
+                    self._cdp_port = int(port_match.group(1))
+                self._reused_existing = True
+                return existing_cdp_url
+
         # Find Chrome executable
         chrome_path = self._find_chrome_executable()
         if not chrome_path:
@@ -86,7 +103,15 @@ class BrowserLauncher:
         return cdp_url
 
     async def close(self) -> None:
-        """Close the browser process."""
+        """Close the browser process.
+
+        If we reused an existing Chrome instance, we don't terminate it.
+        """
+        if self._reused_existing:
+            logger.info("Skipping browser termination (reused existing instance)")
+            self._process = None
+            return
+
         if self._process:
             try:
                 self._process.terminate()
@@ -110,6 +135,128 @@ class BrowserLauncher:
             except Exception as e:
                 logger.warning(f"Failed to clean up temp dir: {e}")
             self._temp_user_data_dir = None
+
+    async def _check_and_cleanup_existing_chrome(self) -> Optional[str]:
+        """Check for existing Chrome processes using the same user data dir.
+
+        If an existing Chrome instance is found with a CDP port, return that CDP URL
+        so we can reuse it. Otherwise, clean up and return None to launch a new instance.
+
+        Returns:
+            CDP URL if existing instance can be reused, None otherwise.
+        """
+        import subprocess
+        import signal
+        import re
+
+        if not self.user_data_dir:
+            return None
+
+        try:
+            system = platform.system()
+            if system not in ("Darwin", "Linux"):
+                return None
+
+            # Find Chrome processes with this user-data-dir
+            result = subprocess.run(
+                ["pgrep", "-f", f"--user-data-dir={self.user_data_dir}"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+
+            if not result.stdout.strip():
+                logger.debug("No existing Chrome process found for this profile")
+                return None
+
+            pids = result.stdout.strip().split('\n')
+            logger.info(f"Found {len(pids)} Chrome process(es) using this profile")
+
+            # Try to find the main Chrome process with remote-debugging-port
+            for pid in pids:
+                try:
+                    pid_int = int(pid.strip())
+                    # Get the command line of this process
+                    cmd_result = subprocess.run(
+                        ["ps", "-p", str(pid_int), "-o", "args="],
+                        capture_output=True,
+                        text=True,
+                        timeout=5
+                    )
+                    cmdline = cmd_result.stdout.strip()
+
+                    # Check if it has remote-debugging-port
+                    port_match = re.search(r'--remote-debugging-port=(\d+)', cmdline)
+                    if port_match:
+                        existing_port = int(port_match.group(1))
+                        cdp_url = f"http://127.0.0.1:{existing_port}"
+
+                        # Verify the CDP is responding
+                        try:
+                            async with aiohttp.ClientSession() as session:
+                                async with session.get(f"{cdp_url}/json/version", timeout=2) as resp:
+                                    if resp.status == 200:
+                                        data = await resp.json()
+                                        logger.info(f"Found existing Chrome instance at {cdp_url} (PID {pid_int}): {data.get('Browser', 'unknown')}")
+                                        return cdp_url
+                        except Exception as e:
+                            logger.debug(f"Existing Chrome CDP not responding: {e}")
+
+                except (ValueError, subprocess.TimeoutExpired) as e:
+                    continue
+
+            # No reusable instance found - kill existing processes
+            logger.info("No reusable Chrome instance found, cleaning up existing processes...")
+
+            for pid in pids:
+                try:
+                    pid_int = int(pid.strip())
+                    logger.info(f"Killing Chrome process {pid_int}")
+                    os.kill(pid_int, signal.SIGTERM)
+                except (ValueError, OSError) as e:
+                    logger.warning(f"Failed to kill process {pid}: {e}")
+
+            # Wait for processes to terminate
+            await asyncio.sleep(1.0)
+
+            # Force kill if still running
+            result = subprocess.run(
+                ["pgrep", "-f", f"--user-data-dir={self.user_data_dir}"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.stdout.strip():
+                pids = result.stdout.strip().split('\n')
+                for pid in pids:
+                    try:
+                        pid_int = int(pid.strip())
+                        logger.warning(f"Force killing Chrome process {pid_int}")
+                        os.kill(pid_int, signal.SIGKILL)
+                    except (ValueError, OSError):
+                        pass
+                await asyncio.sleep(0.5)
+
+            # Clean up SingletonLock if it exists
+            singleton_lock = Path(self.user_data_dir) / "SingletonLock"
+            if singleton_lock.exists():
+                try:
+                    singleton_lock.unlink()
+                    logger.info("Removed stale SingletonLock file")
+                except OSError as e:
+                    logger.warning(f"Could not remove SingletonLock: {e}")
+
+            return None
+
+        except subprocess.TimeoutExpired:
+            logger.warning("Timeout while checking for existing Chrome processes")
+            return None
+        except FileNotFoundError:
+            logger.debug("pgrep not available")
+            return None
+        except Exception as e:
+            logger.warning(f"Error checking for existing Chrome: {e}")
+            return None
 
     def _find_chrome_executable(self) -> Optional[str]:
         """Find Chrome executable path."""
@@ -197,20 +344,64 @@ class BrowserLauncher:
         """Wait for CDP to be ready."""
         version_url = f"{cdp_url}/json/version"
         start_time = asyncio.get_event_loop().time()
+        attempt = 0
+
+        logger.info(f"Waiting for CDP to be ready at {version_url} (timeout={timeout}s)")
 
         while asyncio.get_event_loop().time() - start_time < timeout:
+            attempt += 1
             try:
+                # Check if process is still running
+                if self._process and self._process.returncode is not None:
+                    logger.error(f"Browser process exited with code {self._process.returncode}")
+                    # Try to get stderr
+                    if self._process.stderr:
+                        try:
+                            stderr = await asyncio.wait_for(
+                                self._process.stderr.read(4096),
+                                timeout=1.0
+                            )
+                            if stderr:
+                                logger.error(f"Browser stderr: {stderr.decode('utf-8', errors='ignore')[:500]}")
+                        except Exception:
+                            pass
+                    raise RuntimeError(f"Browser process exited unexpectedly with code {self._process.returncode}")
+
                 async with aiohttp.ClientSession() as session:
                     async with session.get(version_url, timeout=2) as resp:
                         if resp.status == 200:
                             data = await resp.json()
-                            logger.debug(f"CDP version: {data.get('Browser', 'unknown')}")
+                            browser_version = data.get('Browser', 'unknown')
+                            logger.info(f"CDP ready after {attempt} attempts. Browser: {browser_version}")
                             return
-            except Exception:
-                pass
+                        else:
+                            if attempt % 10 == 0:  # Log every 10 attempts
+                                logger.debug(f"CDP attempt {attempt}: status={resp.status}")
+            except aiohttp.ClientConnectorError as e:
+                if attempt % 10 == 0:
+                    logger.debug(f"CDP attempt {attempt}: connection refused (browser may still be starting)")
+            except asyncio.TimeoutError:
+                if attempt % 10 == 0:
+                    logger.debug(f"CDP attempt {attempt}: timeout")
+            except RuntimeError:
+                raise  # Re-raise browser exit error
+            except Exception as e:
+                if attempt % 10 == 0:
+                    logger.debug(f"CDP attempt {attempt}: {type(e).__name__}: {e}")
             await asyncio.sleep(0.1)
 
-        raise TimeoutError(f"CDP not ready after {timeout}s")
+        # Timeout - collect diagnostic info
+        elapsed = asyncio.get_event_loop().time() - start_time
+        logger.error(f"CDP not ready after {elapsed:.1f}s ({attempt} attempts)")
+
+        # Check process state
+        if self._process:
+            if self._process.returncode is not None:
+                logger.error(f"Browser process has exited with code: {self._process.returncode}")
+            else:
+                logger.error(f"Browser process still running (PID: {self._process.pid})")
+
+        raise TimeoutError(f"CDP not ready after {timeout}s ({attempt} attempts)")
 
     @property
     def cdp_url(self) -> Optional[str]:

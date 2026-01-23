@@ -283,7 +283,6 @@ class HybridBrowserSession:
         try:
             self._current_tab_id = tab_id
             self._page = page
-            await page.bring_to_front()
 
             self.executor = ActionExecutor(
                 page,
@@ -402,19 +401,52 @@ class HybridBrowserSession:
             return
 
         # Launch browser via subprocess (no Playwright launch fingerprints)
+        logger.info(f"Creating BrowserLauncher (headless={self._headless}, user_data_dir={self._user_data_dir})")
         self._browser_launcher = BrowserLauncher(
             headless=self._headless,
             user_data_dir=self._user_data_dir,
             enable_stealth=self._stealth,
             enable_extensions=self._stealth and not self._headless,
         )
-        cdp_url = await self._browser_launcher.launch()
-        logger.info(f"Browser launched via subprocess, CDP URL: {cdp_url}")
+
+        try:
+            cdp_url = await self._browser_launcher.launch()
+            logger.info(f"Browser launched via subprocess, CDP URL: {cdp_url}")
+        except Exception as e:
+            logger.error(f"Failed to launch browser: {e}")
+            # Clean up launcher on failure
+            if self._browser_launcher:
+                try:
+                    await self._browser_launcher.close()
+                except Exception:
+                    pass
+                self._browser_launcher = None
+            raise
 
         # Connect to browser via Playwright's CDP connection
+        logger.info("Starting Playwright...")
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.connect_over_cdp(cdp_url)
-        logger.info("Playwright connected via CDP")
+        logger.info(f"Playwright started, connecting to CDP at {cdp_url}...")
+
+        try:
+            self._browser = await self._playwright.chromium.connect_over_cdp(cdp_url)
+            logger.info("Playwright connected via CDP successfully")
+        except Exception as e:
+            logger.error(f"Failed to connect Playwright to CDP: {e}")
+            # Clean up on connection failure
+            if self._playwright:
+                try:
+                    await self._playwright.stop()
+                except Exception:
+                    pass
+                self._playwright = None
+            if self._browser_launcher:
+                try:
+                    await self._browser_launcher.close()
+                except Exception:
+                    pass
+                self._browser_launcher = None
+            raise
 
         # Get the default context (created by Chrome)
         contexts = self._browser.contexts

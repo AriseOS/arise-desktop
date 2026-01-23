@@ -3,10 +3,11 @@ Base LLM Provider abstract class
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import json
 import logging
 import re
+from dataclasses import dataclass
 
 try:
     from json_repair import repair_json
@@ -15,6 +16,52 @@ except ImportError:
     HAS_JSON_REPAIR = False
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ToolUseBlock:
+    """Represents a tool use request from the LLM."""
+    id: str
+    name: str
+    input: Dict[str, Any]
+    type: str = "tool_use"
+
+
+@dataclass
+class TextBlock:
+    """Represents a text block from the LLM."""
+    text: str
+    type: str = "text"
+
+
+@dataclass
+class ToolResultBlock:
+    """Represents a tool result to send back to the LLM."""
+    tool_use_id: str
+    content: str
+    type: str = "tool_result"
+
+
+@dataclass
+class ToolCallResponse:
+    """Response from generate_with_tools() containing content blocks and stop reason."""
+    content: List[Any]  # List of TextBlock or ToolUseBlock
+    stop_reason: str  # "end_turn", "tool_use", "max_tokens", etc.
+
+    def get_tool_uses(self) -> List[ToolUseBlock]:
+        """Extract all tool use blocks from content."""
+        return [block for block in self.content if isinstance(block, ToolUseBlock)]
+
+    def get_text(self) -> str:
+        """Extract all text content concatenated."""
+        texts = [block.text for block in self.content if isinstance(block, TextBlock)]
+        return "\n".join(texts) if texts else ""
+
+    def has_tool_use(self) -> bool:
+        """Check if response contains tool use requests."""
+        return self.stop_reason == "tool_use" or any(
+            isinstance(block, ToolUseBlock) for block in self.content
+        )
 
 
 class BaseProvider(ABC):
@@ -67,6 +114,36 @@ class BaseProvider(ABC):
     def set_model_name(self, model_name: str) -> None:
         """Set the model name"""
         self.model_name = model_name
+
+    async def generate_with_tools(
+        self,
+        system_prompt: str,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        max_tokens: int = 4096,
+    ) -> ToolCallResponse:
+        """
+        Generate a response with tool calling support.
+
+        This method supports multi-turn tool calling conversations.
+        Override this method in subclasses to provide tool calling support.
+
+        Args:
+            system_prompt: System instruction for the LLM
+            messages: Conversation messages in provider-specific format
+            tools: List of tool definitions in provider-specific format
+            max_tokens: Maximum tokens in response
+
+        Returns:
+            ToolCallResponse containing content blocks and stop reason
+
+        Raises:
+            NotImplementedError: If the provider doesn't support tool calling
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support tool calling. "
+            "Override generate_with_tools() to add support."
+        )
 
     async def generate_json_response(
         self,

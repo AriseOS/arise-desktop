@@ -79,7 +79,7 @@ export const api = {
    */
   async healthCheck() {
     try {
-      const response = await fetch(`${getBackendBase()}/health`, {
+      const response = await fetch(`${getBackendBase()}/api/v1/health`, {
         method: 'GET',
         // Short timeout to avoid long hangs
         signal: AbortSignal.timeout(2000)
@@ -316,34 +316,39 @@ export const api = {
    * @returns {Promise<object>} Quota status
    */
   async getQuotaStatus() {
-    try {
-      // CRS uses JWT token for quota endpoint
-      const session = await auth.getSession();
-      if (!session || !session.token) {
-        throw new Error('Not logged in');
-      }
+    // TODO: CRS quota endpoint not yet implemented, return null for now
+    console.log('[API] Quota status: CRS endpoint not implemented, skipping');
+    return null;
 
-      console.log('[API] Fetching quota status from CRS');
-
-      const response = await fetch(`${CRS_BASE}/api/users/quota`, {
-        headers: {
-          'Authorization': `Bearer ${session.token}`
-        }
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to get quota status');
-      }
-
-      const result = await response.json();
-      console.log('[API] Quota status retrieved (CRS)');
-
-      // CRS returns: { success, data: { current_usage, limit, remaining, percent_used, quota_exceeded, reset_date } }
-      return result.data;
-    } catch (error) {
-      console.error('[API] Quota status error:', error);
-      throw error;
-    }
+    // Uncomment when CRS implements /api/users/quota endpoint:
+    // try {
+    //   // CRS uses JWT token for quota endpoint
+    //   const session = await auth.getSession();
+    //   if (!session || !session.token) {
+    //     throw new Error('Not logged in');
+    //   }
+    //
+    //   console.log('[API] Fetching quota status from CRS');
+    //
+    //   const response = await fetch(`${CRS_BASE}/api/users/quota`, {
+    //     headers: {
+    //       'Authorization': `Bearer ${session.token}`
+    //     }
+    //   });
+    //
+    //   if (!response.ok) {
+    //     throw new Error('Failed to get quota status');
+    //   }
+    //
+    //   const result = await response.json();
+    //   console.log('[API] Quota status retrieved (CRS)');
+    //
+    //   // CRS returns: { success, data: { current_usage, limit, remaining, percent_used, quota_exceeded, reset_date } }
+    //   return result.data;
+    // } catch (error) {
+    //   console.error('[API] Quota status error:', error);
+    //   throw error;
+    // }
   },
 
   // ============================================================================

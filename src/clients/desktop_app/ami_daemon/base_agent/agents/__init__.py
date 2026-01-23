@@ -3,6 +3,13 @@ Agent-as-Step implementation module
 
 This module provides step agents for workflow execution.
 Each agent defines an INPUT_SCHEMA that specifies its input requirements.
+
+Agent Types (from Eigent):
+- browser_agent: Web automation and browser interactions
+- developer_agent: Coding, debugging, git operations
+- document_agent: Document creation, Google Drive, Notion
+- social_medium_agent: Email, calendar, communication
+- question_confirm_agent: Human-in-the-loop confirmations
 """
 from .base_agent import BaseStepAgent, AgentMetadata, InputSchema, FieldSchema
 from .text_agent import TextAgent
@@ -13,6 +20,13 @@ from .storage_agent import StorageAgent
 from .autonomous_browser_agent import AutonomousBrowserAgent
 from .tavily_agent import TavilyAgent
 from .eigent_browser_agent import EigentBrowserAgent
+from .eigent_style_browser_agent import EigentStyleBrowserAgent
+
+# New specialized agents (from Eigent migration)
+from .question_confirm_agent import QuestionConfirmAgent
+from .developer_agent import DeveloperAgent
+from .document_agent import DocumentAgent
+from .social_medium_agent import SocialMediumAgent
 
 __all__ = [
     # Base classes and schema
@@ -20,7 +34,8 @@ __all__ = [
     'AgentMetadata',
     'InputSchema',
     'FieldSchema',
-    # Agents
+
+    # Original agents
     'TextAgent',
     'VariableAgent',
     'BrowserAgent',
@@ -29,6 +44,13 @@ __all__ = [
     'AutonomousBrowserAgent',
     'TavilyAgent',
     'EigentBrowserAgent',
+    'EigentStyleBrowserAgent',
+
+    # New specialized agents (Eigent migration)
+    'QuestionConfirmAgent',
+    'DeveloperAgent',
+    'DocumentAgent',
+    'SocialMediumAgent',
 ]
 
 
@@ -40,6 +62,7 @@ def get_all_agent_schemas() -> dict:
         Useful for workflow builders and documentation generation.
     """
     return {
+        # Original agents
         'text_agent': TextAgent.get_input_schema(),
         'variable': VariableAgent.get_input_schema(),
         'browser_agent': BrowserAgent.get_input_schema(),
@@ -48,4 +71,11 @@ def get_all_agent_schemas() -> dict:
         'autonomous_browser_agent': AutonomousBrowserAgent.get_input_schema(),
         'tavily_agent': TavilyAgent.get_input_schema(),
         'eigent_browser_agent': EigentBrowserAgent.get_input_schema(),
+        'eigent_style_browser_agent': EigentStyleBrowserAgent.get_input_schema(),
+
+        # New specialized agents
+        'question_confirm_agent': QuestionConfirmAgent.get_input_schema(),
+        'developer_agent': DeveloperAgent.get_input_schema(),
+        'document_agent': DocumentAgent.get_input_schema(),
+        'social_medium_agent': SocialMediumAgent.get_input_schema(),
     }

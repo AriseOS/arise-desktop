@@ -19,27 +19,35 @@ from ..tools.eigent_browser.action_executor import ActionExecutor
 logger = logging.getLogger(__name__)
 
 
-def _get_browser_data_dir() -> Optional[str]:
-    """Get browser data directory for Quick Task.
+def _get_browser_data_dir(explicit_dir: Optional[str] = None) -> Optional[str]:
+    """Get browser data directory for the agent.
 
-    Uses a separate subdirectory from AMI's main browser_data to avoid
-    conflicts when both Quick Task and AMI recording are running.
+    Uses user-level directory to preserve login sessions across tasks.
 
-    Note: Chrome doesn't allow two processes to use the same user_data_dir,
-    so Quick Task uses ~/.ami/browser_data_quicktask/ instead of
-    ~/.ami/browser_data/ (which is used by AMI's browser-use).
+    Args:
+        explicit_dir: Explicit directory path (from input_data).
+            If provided, uses this directory.
+            Otherwise, tries current task manager, then falls back to global.
     """
     try:
         from pathlib import Path
+        from ..workspace.directory_manager import get_current_manager
 
-        # Use a separate directory for Quick Task to avoid conflicts
-        # with AMI's browser-use sessions
-        quicktask_path = Path.home() / ".ami" / "browser_data_quicktask"
-        quicktask_path.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Quick Task browser_data: {quicktask_path}")
-        return str(quicktask_path)
+        if explicit_dir:
+            path = Path(explicit_dir)
+        else:
+            # Try to get from current task manager (user-level)
+            manager = get_current_manager()
+            if manager:
+                path = manager.browser_data_dir
+            else:
+                # Fallback to global directory
+                path = Path.home() / ".ami" / "browser_data_quicktask"
+
+        path.mkdir(parents=True, exist_ok=True)
+        return str(path)
     except Exception as e:
-        logger.warning(f"Failed to create quicktask browser_data dir: {e}")
+        logger.warning(f"Failed to create browser_data dir: {e}")
         return None
 
 
@@ -48,17 +56,22 @@ def _get_browser_data_dir() -> Optional[str]:
 EIGENT_SYSTEM_PROMPT = """
 You are a web automation assistant.
 
-Analyse the page snapshot and create a short high-level plan, then output the FIRST action to start with.
+Analyse the page snapshot and create a plan, then output the FIRST action to start with.
+If a Reference Path is provided, your plan should follow it (see Memory Reference section below).
 
 ## Memory Reference
 
-You may receive a "Reference Path" from the user's workflow memory. This path shows how similar tasks were accomplished before.
+You may receive a "Reference Path" - this is a VERIFIED SUCCESSFUL execution path from a past workflow that actually completed successfully.
 
-Guidelines for using Reference Path:
-- Use the reference path as guidance, but adapt to the actual page state
-- The reference may not be relevant if this is a new type of task (check the score)
-- For each plan step, indicate which path step it corresponds to (path_ref), or null if no correspondence
-- Intent sequences show specific actions that worked before - use them as hints for your actions
+How to use the Reference Path:
+1. The path is FACTUAL - it represents real actions that worked on this website
+2. Analyze which parts of the path are relevant to the current task
+3. If relevant parts exist, use those path segments to build your plan
+4. CRITICAL: You may trim irrelevant steps from the beginning or end, but NEVER skip steps in the middle
+   - Valid: Use steps 2-5 from a 7-step path (trimmed front and back)
+   - Valid: Use steps 0-3 from a 7-step path (trimmed back only)
+   - INVALID: Use steps 0, 1, 3, 5 (skipping step 2 and 4 breaks the flow)
+5. For each plan step, indicate the corresponding path_ref or null if it's a new step not from the path
 
 ## Output Format
 
@@ -67,9 +80,10 @@ Return a JSON object in *exactly* this shape:
 Initial response (with plan):
 {
   "plan": [
-    {"step": "Step 1 description", "path_ref": 0},
-    {"step": "Step 2 description", "path_ref": 1},
-    {"step": "Step 3 description", "path_ref": null}
+    {"step": "Step description based on path step 2", "path_ref": 2},
+    {"step": "Step description based on path step 3", "path_ref": 3},
+    {"step": "Step description based on path step 4", "path_ref": 4},
+    {"step": "Additional step not in path", "path_ref": null}
   ],
   "current_plan_step": 0,
   "action": {
@@ -77,6 +91,9 @@ Initial response (with plan):
     "ref": "e1"
   }
 }
+
+Note on path_ref: The example above uses path steps 2,3,4 (a continuous segment). This is valid.
+Using path_ref 2,4,5 would be INVALID because it skips step 3.
 
 Subsequent responses (action only):
 {
@@ -86,6 +103,8 @@ Subsequent responses (action only):
     "ref": "e1"
   }
 }
+
+Note: For subsequent responses, you may receive "Reference Intents" showing what actions worked before for the current step. Use these as hints.
 
 If task is already complete:
 {
@@ -346,8 +365,8 @@ class EigentBrowserAgent(BaseStepAgent):
             return ""
 
         lines = []
-        lines.append(f"\n## Reference Path (score: {score:.2f})")
-        lines.append("Note: Retrieved from memory based on similar tasks. May not be relevant for new task types.\n")
+        lines.append(f"\n## Reference Path (similarity: {score:.2f})")
+        lines.append("This is a VERIFIED SUCCESSFUL PATH from a completed task. Analyze which steps are relevant to the current task.\n")
 
         for i, step in enumerate(steps):
             state = step.get("state") or {}

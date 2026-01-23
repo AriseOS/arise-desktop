@@ -7,16 +7,23 @@ Users input natural language tasks, and the Agent completes them autonomously.
 Memory-Guided Planning:
 - Queries memory for similar workflow paths before execution
 - Uses retrieved paths to guide plan generation
+
+Streaming:
+- SSE endpoint for typed event streaming
+- WebSocket for bidirectional communication (human interaction)
 """
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Header
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Header, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
+import asyncio
 import logging
 import os
 
 from ..services.quick_task_service import QuickTaskService, TaskStatus
 from ..core.config_service import get_config
+from ..base_agent.events import sse_action, sse_heartbeat, Action, EndData
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/quick-task", tags=["Quick Task"])
@@ -87,7 +94,107 @@ class TaskResultResponse(BaseModel):
     action_history: List = []
 
 
+class WorkspaceFilesResponse(BaseModel):
+    """Workspace files listing response"""
+    task_id: str
+    workspace: str
+    files: List[str]
+    total_size_bytes: int
+
+
+class WorkspaceCleanupResponse(BaseModel):
+    """Workspace cleanup response"""
+    task_id: str
+    cleaned: bool
+    message: str
+    freed_bytes: Optional[int] = None
+
+
+class TaskListItem(BaseModel):
+    """Single task in the task list"""
+    task_id: str
+    task: str
+    status: str
+    progress: float = 0.0
+    created_at: str
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    user_id: Optional[str] = None
+    project_id: Optional[str] = None
+
+
+class TaskListResponse(BaseModel):
+    """Task list response"""
+    tasks: List[TaskListItem]
+    total: int
+    running: int
+    completed: int
+    failed: int
+
+
 # ============== REST Endpoints ==============
+
+@router.get("/tasks", response_model=TaskListResponse)
+async def list_tasks(
+    status: Optional[str] = None,
+    limit: int = 50,
+):
+    """
+    List all tasks with optional status filter.
+
+    Query params:
+    - status: Filter by status (pending, running, completed, failed, cancelled)
+    - limit: Maximum number of tasks to return (default 50)
+
+    Returns list of tasks sorted by creation time (newest first).
+    """
+    service = get_service()
+    tasks_dict = service._tasks
+
+    task_list = []
+    running_count = 0
+    completed_count = 0
+    failed_count = 0
+
+    for task_id, state in tasks_dict.items():
+        # Count by status
+        if state.status == TaskStatus.RUNNING:
+            running_count += 1
+        elif state.status == TaskStatus.COMPLETED:
+            completed_count += 1
+        elif state.status == TaskStatus.FAILED:
+            failed_count += 1
+
+        # Filter by status if provided
+        if status and state.status.value != status:
+            continue
+
+        task_list.append(TaskListItem(
+            task_id=state.task_id,
+            task=state.task[:200] if state.task else "",  # Truncate long task descriptions
+            status=state.status.value,
+            progress=state.progress,
+            created_at=state.created_at.isoformat() if state.created_at else "",
+            started_at=state.started_at.isoformat() if state.started_at else None,
+            completed_at=state.completed_at.isoformat() if state.completed_at else None,
+            user_id=state.user_id,
+            project_id=state.project_id,
+        ))
+
+    # Sort by created_at (newest first)
+    task_list.sort(key=lambda x: x.created_at, reverse=True)
+
+    # Apply limit
+    task_list = task_list[:limit]
+
+    return TaskListResponse(
+        tasks=task_list,
+        total=len(tasks_dict),
+        running=running_count,
+        completed=completed_count,
+        failed=failed_count,
+    )
+
 
 @router.post("/execute", response_model=TaskResponse)
 async def execute_task(
@@ -199,39 +306,463 @@ async def cancel_task(task_id: str):
     return {"message": "Task cancelled"}
 
 
+class MessageRequest(BaseModel):
+    """Message from client to server (used with SSE for bidirectional communication)."""
+    type: str = Field(..., description="Message type")
+    response: Optional[str] = Field(None, description="Human response text")
+
+
+@router.post("/message/{task_id}")
+async def send_message(task_id: str, request: MessageRequest):
+    """
+    Send a message to a running task.
+
+    Used with SSE streaming to provide bidirectional communication.
+    Currently supports:
+    - human_response: Provide human response to agent question
+
+    Args:
+        task_id: Task ID
+        request: Message data with type and payload
+    """
+    service = get_service()
+    state = service._tasks.get(task_id)
+
+    if not state:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if request.type == "human_response":
+        if request.response is None:
+            raise HTTPException(status_code=400, detail="Response text required")
+
+        success = await service.provide_human_response(task_id, request.response)
+        if success:
+            logger.info(f"Human response received for task {task_id}")
+            return {"success": True, "message": "Response delivered"}
+        else:
+            raise HTTPException(status_code=400, detail="Failed to deliver response - no pending question")
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown message type: {request.type}")
+
+
+# ============== Subtask Confirmation Endpoints (Eigent Migration) ==============
+
+class SubtaskConfirmRequest(BaseModel):
+    """Request to confirm subtask execution."""
+    subtasks: List[Dict[str, Any]] = Field(..., description="Edited subtasks to confirm")
+
+
+@router.post("/{task_id}/confirm-subtasks")
+async def confirm_subtasks(task_id: str, request: SubtaskConfirmRequest):
+    """
+    Confirm subtask execution plan.
+
+    After task decomposition, the frontend displays subtasks for user review.
+    This endpoint confirms the plan and allows execution to proceed.
+
+    Args:
+        task_id: Task ID
+        request: Confirmed subtasks (may be edited by user)
+    """
+    service = get_service()
+    state = service._tasks.get(task_id)
+
+    if not state:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Store confirmed subtasks in state
+    state.plan = request.subtasks
+    logger.info(f"Subtasks confirmed for task {task_id}: {len(request.subtasks)} subtasks")
+
+    return {"success": True, "message": "Subtasks confirmed", "subtask_count": len(request.subtasks)}
+
+
+@router.post("/{task_id}/cancel-subtasks")
+async def cancel_subtasks(task_id: str):
+    """
+    Cancel subtask execution plan.
+
+    User rejected the proposed plan. Task continues without decomposition
+    or may be cancelled entirely.
+    """
+    service = get_service()
+    state = service._tasks.get(task_id)
+
+    if not state:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Clear plan and mark as user-rejected
+    state.plan = []
+    logger.info(f"Subtasks cancelled for task {task_id}")
+
+    return {"success": True, "message": "Subtasks cancelled"}
+
+
+# ============== Workspace File Endpoints ==============
+
+@router.get("/workspace/{task_id}/file/{file_path:path}")
+async def get_workspace_file(task_id: str, file_path: str):
+    """
+    Get contents of a file in task's directory.
+
+    Supports files in workspace/, notes/, and other task directories.
+
+    Args:
+        task_id: Task ID
+        file_path: Relative path to file within task directory (e.g., "notes/task_plan.md" or "workspace/output/result.txt")
+    """
+    import os
+    
+    service = get_service()
+    state = service._tasks.get(task_id)
+
+    if not state:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if not state._dir_manager:
+        raise HTTPException(status_code=404, detail="Task has no directory manager")
+
+    task_root = state._dir_manager.task_root
+
+    # Resolve file path relative to task_root
+    full_path = os.path.join(task_root, file_path)
+
+    # Security: ensure path is within task_root
+    real_task_root = os.path.realpath(task_root)
+    real_file = os.path.realpath(full_path)
+    if not real_file.startswith(real_task_root):
+        raise HTTPException(status_code=403, detail="Access denied - path outside task directory")
+
+    if not os.path.exists(full_path):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    if not os.path.isfile(full_path):
+        raise HTTPException(status_code=400, detail="Path is not a file")
+
+    try:
+        # Try to read as text first
+        with open(full_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        return {
+            "task_id": task_id,
+            "file_path": file_path,
+            "content": content,
+            "encoding": "utf-8",
+            "size_bytes": len(content.encode('utf-8'))
+        }
+    except UnicodeDecodeError:
+        # Binary file - return as base64
+        import base64
+        with open(full_path, 'rb') as f:
+            content = base64.b64encode(f.read()).decode('ascii')
+        return {
+            "task_id": task_id,
+            "file_path": file_path,
+            "content": content,
+            "encoding": "base64",
+            "size_bytes": os.path.getsize(full_path)
+        }
+
+
+@router.get("/workspace/{task_id}/files", response_model=WorkspaceFilesResponse)
+async def list_workspace_files(task_id: str):
+    """
+    List files in task's working directory and notes directory.
+
+    Returns list of files created by the task with total size.
+    Includes both workspace/ and notes/ directories.
+    """
+    import os
+
+    service = get_service()
+    state = service._tasks.get(task_id)
+
+    if not state:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if not state._dir_manager:
+        raise HTTPException(status_code=404, detail="Task has no directory manager")
+
+    task_root = state._dir_manager.task_root
+    files = []
+    total_size = 0
+
+    # Scan both workspace/ and notes/ directories
+    directories_to_scan = [
+        task_root / "workspace",
+        task_root / "notes",
+    ]
+
+    try:
+        for dir_path in directories_to_scan:
+            if not dir_path.exists():
+                continue
+                
+            for root, dirs, filenames in os.walk(dir_path):
+                # Skip hidden directories
+                dirs[:] = [d for d in dirs if not d.startswith('.')]
+                for filename in filenames:
+                    if not filename.startswith('.'):
+                        file_path = os.path.join(root, filename)
+                        # Use path relative to task_root to show directory structure
+                        rel_path = os.path.relpath(file_path, task_root)
+                        files.append(rel_path)
+                        try:
+                            total_size += os.path.getsize(file_path)
+                        except OSError:
+                            pass
+    except Exception as e:
+        logger.error(f"Error listing workspace files: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return WorkspaceFilesResponse(
+        task_id=task_id,
+        workspace=str(task_root),
+        files=sorted(files),
+        total_size_bytes=total_size
+    )
+
+
+@router.delete("/workspace/{task_id}", response_model=WorkspaceCleanupResponse)
+async def cleanup_workspace(task_id: str, force: bool = False):
+    """
+    Clean up task's directory (workspace, notes, logs, browser data).
+
+    Removes all files created by the task.
+    By default, only allows cleanup after task completion.
+    Use force=true to cleanup while task is still running.
+
+    Args:
+        task_id: Task ID
+        force: If true, allows cleanup of running tasks
+    """
+    service = get_service()
+    state = service._tasks.get(task_id)
+
+    if not state:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if not state._dir_manager:
+        return WorkspaceCleanupResponse(
+            task_id=task_id,
+            cleaned=True,
+            message="Task has no directory to clean"
+        )
+
+    # Check if task is still running
+    if state.status in (TaskStatus.PENDING, TaskStatus.RUNNING) and not force:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot cleanup task directory while task is running. Use force=true to override."
+        )
+
+    task_root = state._dir_manager.task_root
+    freed_bytes = 0
+
+    try:
+        # Calculate size before cleanup (scan entire task_root)
+        freed_bytes = state._dir_manager.get_disk_usage()
+
+        # Perform cleanup (removes entire task directory)
+        state._dir_manager.cleanup_all()
+
+        return WorkspaceCleanupResponse(
+            task_id=task_id,
+            cleaned=True,
+            message=f"Task directory cleaned: {task_root}",
+            freed_bytes=freed_bytes
+        )
+
+    except Exception as e:
+        logger.error(f"Error cleaning up workspace: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============== SSE Streaming Endpoint ==============
+
+SSE_TIMEOUT_SECONDS = 300  # 5 minutes
+SSE_HEARTBEAT_INTERVAL = 30  # 30 seconds
+
+
+async def sse_stream_wrapper(
+    state,
+    request: Request,
+    timeout_seconds: int = SSE_TIMEOUT_SECONDS,
+    heartbeat_interval: int = SSE_HEARTBEAT_INTERVAL,
+):
+    """
+    Wrap event queue as SSE stream with timeout handling.
+
+    Yields SSE-formatted events from the typed event queue.
+    Closes the connection on:
+    - Total timeout reached
+    - Client disconnect
+    - End/completed/failed/cancelled events
+    """
+    import time
+    start_time = time.time()
+
+    try:
+        while True:
+            # Check total timeout
+            elapsed = time.time() - start_time
+            if elapsed >= timeout_seconds:
+                logger.info(f"SSE stream timeout for task {state.task_id}")
+                yield sse_action(EndData(
+                    task_id=state.task_id,
+                    status="timeout",
+                    message="Stream timeout"
+                ))
+                break
+
+            # Check client disconnection
+            if await request.is_disconnected():
+                logger.info(f"SSE client disconnected for task {state.task_id}")
+                break
+
+            try:
+                # Wait for event with heartbeat interval timeout
+                event = await asyncio.wait_for(
+                    state.get_event(),
+                    timeout=heartbeat_interval
+                )
+
+                # Yield SSE-formatted event
+                yield sse_action(event)
+
+                # Check for terminal events
+                action = event.action
+                if hasattr(action, 'value'):
+                    action = action.value
+                if action in ("end", "task_completed", "task_failed", "task_cancelled"):
+                    break
+
+            except asyncio.TimeoutError:
+                # No event within interval, send heartbeat
+                yield sse_heartbeat()
+
+    except asyncio.CancelledError:
+        logger.info(f"SSE stream cancelled for task {state.task_id}")
+    except Exception as e:
+        logger.error(f"SSE stream error for task {state.task_id}: {e}")
+        yield sse_action(EndData(
+            task_id=state.task_id,
+            status="error",
+            message=str(e)
+        ))
+
+
+@router.get("/stream/{task_id}")
+async def stream_task_events(task_id: str, request: Request):
+    """
+    SSE endpoint for streaming task events.
+
+    Returns Server-Sent Events stream with real-time typed events.
+    Event format: data: {"step": "action_type", "data": {...}}
+
+    Terminal events that close the stream:
+    - end
+    - task_completed
+    - task_failed
+    - task_cancelled
+    """
+    service = get_service()
+    state = service._tasks.get(task_id)
+
+    if not state:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    return StreamingResponse(
+        sse_stream_wrapper(state, request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        }
+    )
+
+
 # ============== WebSocket Endpoint ==============
 
 @router.websocket("/ws/{task_id}")
 async def task_progress_websocket(websocket: WebSocket, task_id: str):
     """
-    Real-time task progress WebSocket.
+    Real-time task progress WebSocket (bidirectional).
 
-    Message format:
+    Server -> Client messages:
     - {"event": "connected", "task_id": "..."}
     - {"event": "task_started", "task_id": "...", "task": "..."}
     - {"event": "task_completed", "output": {...}}
     - {"event": "task_failed", "error": "..."}
     - {"event": "task_cancelled"}
     - {"event": "heartbeat"}
+    - {"event": "human_question", "question": "...", "context": "..."}
+    - {"event": "human_message", "title": "...", "description": "..."}
+
+    Client -> Server messages:
+    - {"type": "human_response", "response": "..."}
     """
     await websocket.accept()
 
     service = get_service()
 
+    async def receive_messages():
+        """Handle incoming messages from client."""
+        try:
+            while True:
+                data = await websocket.receive_json()
+                msg_type = data.get("type")
+
+                if msg_type == "human_response":
+                    response = data.get("response", "")
+                    success = await service.provide_human_response(task_id, response)
+                    if success:
+                        logger.info(f"Human response received for task {task_id}")
+                    else:
+                        logger.warning(f"Failed to deliver human response for task {task_id}")
+
+        except WebSocketDisconnect:
+            logger.info(f"WebSocket receive loop ended for task {task_id}")
+        except Exception as e:
+            logger.debug(f"WebSocket receive error for task {task_id}: {e}")
+
+    async def send_progress():
+        """Send progress updates to client."""
+        try:
+            # Send connection confirmation
+            await websocket.send_json({
+                "event": "connected",
+                "task_id": task_id
+            })
+
+            # Subscribe to progress updates
+            async for event in service.subscribe_progress(task_id):
+                await websocket.send_json(event)
+
+                # If task ended, break
+                if event.get("event") in ["task_completed", "task_failed", "task_cancelled"]:
+                    break
+
+        except WebSocketDisconnect:
+            logger.info(f"WebSocket send loop ended for task {task_id}")
+        except Exception as e:
+            logger.debug(f"WebSocket send error for task {task_id}: {e}")
+
     try:
-        # Send connection confirmation
-        await websocket.send_json({
-            "event": "connected",
-            "task_id": task_id
-        })
+        # Run send and receive concurrently
+        send_task = asyncio.create_task(send_progress())
+        receive_task = asyncio.create_task(receive_messages())
 
-        # Subscribe to progress updates
-        async for event in service.subscribe_progress(task_id):
-            await websocket.send_json(event)
+        # Wait for send task to complete (ends when task finishes)
+        await send_task
 
-            # If task ended, close connection
-            if event.get("event") in ["task_completed", "task_failed", "task_cancelled"]:
-                break
+        # Cancel receive task when done
+        receive_task.cancel()
+        try:
+            await receive_task
+        except asyncio.CancelledError:
+            pass
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected for task {task_id}")

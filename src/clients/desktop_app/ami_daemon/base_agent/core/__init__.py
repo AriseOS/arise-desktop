@@ -18,6 +18,57 @@ from .schemas import (
     ExecutionContext, StepResult, StepType, ErrorHandling
 )
 
+# Budget management
+from .token_usage import TokenUsage, SessionTokenUsage
+from .cost_calculator import (
+    MODEL_PRICING,
+    calculate_cost,
+    calculate_cost_breakdown,
+    estimate_tokens,
+    get_pricing,
+    get_model_tier,
+    get_cheaper_model,
+)
+from .budget_controller import (
+    BudgetConfig,
+    BudgetController,
+    BudgetExceedAction,
+    BudgetExceededException,
+)
+
+# Agent registry and routing
+from .agent_registry import (
+    AgentType,
+    AgentInfo,
+    AgentRegistry,
+    get_registry,
+    register_agent,
+    get_agent,
+    create_agent,
+    register_default_agents,
+    BROWSER_AGENT,
+    DEVELOPER_AGENT,
+    DOCUMENT_AGENT,
+    SOCIAL_MEDIUM_AGENT,
+    QUESTION_CONFIRM_AGENT,
+)
+from .task_router import (
+    TaskRouter,
+    RoutingResult,
+    get_router,
+    route_task,
+)
+
+# Task orchestrator for multi-agent coordination
+from .task_orchestrator import (
+    TaskOrchestrator,
+    OrchestratorConfig,
+    OrchestratorResult,
+    OrchestratorState,
+    SubTask,
+    SubTaskState,
+)
+
 # Lazy import for WorkflowEngine to avoid circular imports
 def __getattr__(name):
     if name == "WorkflowEngine":
@@ -50,5 +101,47 @@ __all__ = [
     "ExecutionContext",
     "StepResult",
     "StepType",
-    "ErrorHandling"
+    "ErrorHandling",
+
+    # Budget management
+    "TokenUsage",
+    "SessionTokenUsage",
+    "MODEL_PRICING",
+    "calculate_cost",
+    "calculate_cost_breakdown",
+    "estimate_tokens",
+    "get_pricing",
+    "get_model_tier",
+    "get_cheaper_model",
+    "BudgetConfig",
+    "BudgetController",
+    "BudgetExceedAction",
+    "BudgetExceededException",
+
+    # Agent registry and routing
+    "AgentType",
+    "AgentInfo",
+    "AgentRegistry",
+    "get_registry",
+    "register_agent",
+    "get_agent",
+    "create_agent",
+    "register_default_agents",
+    "BROWSER_AGENT",
+    "DEVELOPER_AGENT",
+    "DOCUMENT_AGENT",
+    "SOCIAL_MEDIUM_AGENT",
+    "QUESTION_CONFIRM_AGENT",
+    "TaskRouter",
+    "RoutingResult",
+    "get_router",
+    "route_task",
+
+    # Task orchestrator
+    "TaskOrchestrator",
+    "OrchestratorConfig",
+    "OrchestratorResult",
+    "OrchestratorState",
+    "SubTask",
+    "SubTaskState",
 ]

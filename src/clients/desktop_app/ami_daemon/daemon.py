@@ -2,9 +2,16 @@
 """
 App Backend Daemon - HTTP API Version
 Provides REST API endpoints for desktop app communication
+
+Usage:
+    python daemon.py [--debug]
+
+Options:
+    --debug    Enable debug mode for browser operations and other diagnostics
 """
 import sys
 import os
+import argparse
 import asyncio
 import logging
 from pathlib import Path
@@ -19,6 +26,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 import json
+
+# Parse command line arguments early (before imports that might use AMI_DEBUG)
+def parse_args():
+    parser = argparse.ArgumentParser(description="Ami Daemon - Backend service for Ami desktop app")
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode for browser operations")
+    parser.add_argument("--port", type=int, default=8765, help="Port to listen on (default: 8765)")
+    return parser.parse_args()
+
+# Parse args and set AMI_DEBUG environment variable if --debug is specified
+_args = parse_args()
+if _args.debug:
+    os.environ["AMI_DEBUG"] = "1"
+    print("[DEBUG MODE ENABLED] Browser operations will log detailed information")
 
 # Detect if running in PyInstaller bundle
 def get_project_root() -> Path:
@@ -49,6 +69,8 @@ from src.clients.desktop_app.ami_daemon.services.cdp_recorder import CDPRecorder
 from src.clients.desktop_app.ami_daemon.services.cloud_client import CloudClient
 from src.clients.desktop_app.ami_daemon.base_agent.tools.browser_use.extension_installer import ensure_extensions_installed
 from src.clients.desktop_app.ami_daemon.routers.quick_task import router as quick_task_router
+from src.clients.desktop_app.ami_daemon.routers.integrations import router as integrations_router
+from src.clients.desktop_app.ami_daemon.routers.settings import router as settings_router
 
 # Load configuration first (needed for logging setup)
 config = get_config()
@@ -293,8 +315,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include quick task router
+# Include routers
 app.include_router(quick_task_router)
+app.include_router(integrations_router)
+app.include_router(settings_router)
 
 
 # ============================================================================
@@ -482,7 +506,7 @@ def update_cloud_client_api_key(api_key: Optional[str]):
 # Health Check & Version Info
 # ============================================================================
 
-@app.get("/health")
+@app.get("/api/v1/health")
 async def health_check():
     """Health check endpoint with magic identifier for daemon detection"""
     return {
@@ -3778,7 +3802,7 @@ def check_existing_daemon(host: str, port: int, timeout: float = 2.0) -> tuple[b
     import urllib.request
     import urllib.error
 
-    url = f"http://{host}:{port}/health"
+    url = f"http://{host}:{port}/api/v1/health"
     try:
         req = urllib.request.Request(url, method='GET')
         with urllib.request.urlopen(req, timeout=timeout) as response:
@@ -3896,8 +3920,15 @@ def find_available_port(host: str, start_port: int, max_attempts: int = 10) -> i
 
 def main():
     """Start HTTP server with single-instance support"""
-    start_port = config.get("daemon.port", 8765)
+    # Use command line port if specified, otherwise use config
+    start_port = _args.port if _args.port != 8765 else config.get("daemon.port", 8765)
     host = config.get("daemon.host", "127.0.0.1")
+
+    if _args.debug:
+        logger.info("=" * 60)
+        logger.info("DEBUG MODE ENABLED")
+        logger.info("Browser operations will log detailed diagnostic information")
+        logger.info("=" * 60)
 
     # Check if another daemon is already running (from port file)
     existing_port = read_port_file()

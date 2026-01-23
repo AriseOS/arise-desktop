@@ -10,7 +10,45 @@ tools/
 ├── browser_session_manager.py # Browser session lifecycle
 ├── browser_use/              # Browser automation (based on browser-use library)
 ├── eigent_browser/           # Eigent browser automation (ported from CAMEL-AI/Eigent)
+├── toolkits/                 # LLM tool-calling toolkits (Eigent migration)
 └── android_use/              # Android automation (TODO)
+```
+
+## Toolkits (toolkits/)
+
+LLM function-calling toolkits ported from Eigent/CAMEL-AI:
+
+| File | Purpose |
+|------|---------|
+| `base_toolkit.py` | BaseToolkit and FunctionTool base classes |
+| `mcp_base.py` | MCP client for local/remote MCP servers |
+| `gmail_mcp_toolkit.py` | Gmail via MCP (@gongrzhe/server-gmail-autoauth-mcp) |
+| `gdrive_mcp_toolkit.py` | Google Drive via MCP (@modelcontextprotocol/server-gdrive) |
+| `calendar_toolkit.py` | Google Calendar via direct API |
+| `notion_mcp_toolkit.py` | Notion via remote MCP (https://mcp.notion.com/mcp) |
+| `browser_toolkit.py` | Browser automation tools |
+| `terminal_toolkit.py` | Shell command execution |
+| `search_toolkit.py` | Web search (Google/DuckDuckGo) |
+| `human_toolkit.py` | Human-in-the-loop interaction |
+| `memory_toolkit.py` | Query workflow memory |
+| `note_taking_toolkit.py` | Markdown note management |
+
+### MCP Integration
+
+MCP (Model Context Protocol) enables integration with external services:
+
+```python
+from .toolkits import GmailMCPToolkit, GoogleDriveMCPToolkit
+
+# Gmail
+gmail = GmailMCPToolkit()
+await gmail.initialize()
+await gmail.send_email("user@example.com", "Subject", "Body")
+
+# Google Drive
+gdrive = GoogleDriveMCPToolkit()
+await gdrive.initialize()
+files = await gdrive.list_files()
 ```
 
 ## BaseTool Interface

@@ -33,7 +33,7 @@ import RecordingDetailPage from "./pages/RecordingDetailPage";
 import WorkflowExecutionLivePage from "./pages/WorkflowExecutionLivePage";
 import DocsPage from "./pages/DocsPage";
 import BackendErrorPage from "./pages/BackendErrorPage";
-import QuickTaskPage from "./pages/QuickTaskPage";
+import AgentPage from "./pages/AgentPage";
 import MemoryPage from "./pages/MemoryPage";
 
 // Import setup styles
@@ -880,9 +880,9 @@ function App() {
           />
         );
 
-      case "quick-task":
+      case "agent":
         return (
-          <QuickTaskPage
+          <AgentPage
             session={session}
             onNavigate={navigate}
             showStatus={showStatus}
@@ -898,14 +898,14 @@ function App() {
   // Bottom navigation bar
   const renderBottomNav = () => {
     // Hide navigation on certain pages
-    const hideNavPages = ["quick-start", "recording", "execution-monitor", "execution-result", "quick-task"];
+    const hideNavPages = ["quick-start", "recording", "execution-monitor", "execution-result"];
     if (hideNavPages.includes(currentPage)) {
       return null;
     }
 
     const navItems = [
       { id: "quick-start", icon: "record", label: t('nav.record') },
-      { id: "quick-task", icon: "sparkle", label: "Quick Task" },
+      { id: "agent", icon: "sparkle", label: "Agent" },
       { id: "workflows", icon: "workflows", label: t('nav.workflows') },
       { id: "recordings-library", icon: "library", label: t('nav.library') },
       { id: "memory", icon: "database", label: "Memory" },
@@ -952,7 +952,7 @@ function App() {
       )}
 
       {/* Page Content */}
-      <div className="app-content">
+      <div className={`app-content ${["agent", "workflow-execution-live"].includes(currentPage) ? 'full-width-page' : ''}`}>
         {renderPage()}
       </div>
 

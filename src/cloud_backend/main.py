@@ -1366,18 +1366,19 @@ async def query_memory(
     """
     Query User's Workflow Memory using Natural Language
 
-    This endpoint performs intelligent semantic search on the user's workflow memory.
-    The system automatically analyzes the query and returns the most relevant operation paths.
+    This endpoint performs intelligent semantic search on the user's workflow memory
+    using the Reasoner module for cognitive phrase matching and semantic retrieval.
 
-    Query Processing:
-    1. Generate embedding for query text
-    2. Find matching States using semantic similarity
-    3. Search paths between States on graph (if applicable)
-    4. For each State, find relevant IntentSequences
-    5. Return complete operation paths
+    Query Processing (Reasoner):
+    1. Check cognitive phrases for direct/combinable matches
+    2. If no match, decompose target into TaskDAG
+    3. Use embedding to find candidate states
+    4. Use LLM to check state satisfaction
+    5. Explore neighbor states up to max_depth
+    6. Return complete operation paths
 
     Headers:
-        X-Ami-API-Key: User's API key (required for embedding generation)
+        X-Ami-API-Key: User's API key (required)
 
     Body:
         {
@@ -1414,7 +1415,6 @@ async def query_memory(
     top_k = data.get("top_k", 3)
     min_score = data.get("min_score", 0.5)
     domain = data.get("domain")
-    max_depth = data.get("max_depth", 10)
 
     if not user_id:
         raise HTTPException(400, "Missing user_id")
@@ -1422,12 +1422,52 @@ async def query_memory(
         raise HTTPException(400, "Missing query")
 
     try:
-        # Import EmbeddingService
-        from src.cloud_backend.memgraph.services.embedding_service import EmbeddingService
+        # Ensure user's memory is loaded
+        await _ensure_user_memory_loaded(user_id)
 
-        if not EmbeddingService.is_available():
-            logger.warning("EmbeddingService not available")
-            raise HTTPException(500, "Embedding service not available")
+        # Get Reasoner instance with user's API key
+        user_reasoner = await _get_reasoner_for_user(x_ami_api_key)
+
+        # Query memory using Reasoner
+        result = await user_reasoner.plan(query, user_id=user_id)
+
+        if not result or not result.success:
+            logger.info(f"No matching paths found for query: {query}")
+            return {
+                "success": True,
+                "query": query,
+                "paths": [],
+                "total_paths": 0,
+                "message": "No matching paths found"
+            }
+
+        # Convert Reasoner result to simplified paths format
+        # Each state becomes a "path" entry for backward compatibility
+        paths = []
+        for i, state in enumerate(result.states[:top_k]):
+            state_dict = state.to_dict() if hasattr(state, 'to_dict') else state
+            paths.append({
+                "score": 1.0 - (i * 0.1),  # Decreasing score based on order
+                "description": state_dict.get("description", ""),
+                "domain": state_dict.get("domain", ""),
+                "page_url": state_dict.get("page_url", ""),
+                "page_title": state_dict.get("page_title", ""),
+                "path_length": len(state_dict.get("intent_sequences", [])),
+                "state": state_dict,
+            })
+
+        method = result.metadata.get("method", "reasoner") if result.metadata else "reasoner"
+        logger.info(f"✅ Memory query for user {user_id}: '{query}' -> {len(paths)} paths (via Reasoner, method={method})")
+
+        return {
+            "success": True,
+            "query": query,
+            "paths": paths,
+            "total_paths": len(paths),
+            "method": method,
+            "workflow": result.workflow,
+            "metadata": result.metadata,
+        }
 
         # Step 1: LLM decomposes query into page concepts
         async def decompose_query(query: str) -> dict:
@@ -2139,6 +2179,104 @@ async def query_workflow_from_memory(
         import traceback
         traceback.print_exc()
         raise HTTPException(500, f"Workflow query failed: {str(e)}")
+
+
+@app.post("/api/v1/reasoner/plan")
+async def reasoner_plan(
+    data: dict,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """
+    Reasoner Plan API - Get a workflow plan from memory using Reasoner.
+
+    This endpoint is designed for EigentStyleBrowserAgent's Reasoner-first mode.
+    It returns a complete workflow that can be executed directly without LLM reasoning.
+
+    Headers:
+        X-Ami-API-Key: User's API key (required)
+
+    Body:
+        {
+            "target": "Search for product on Taobao",  // Task description
+            "user_id": "user123",                       // User ID for memory isolation
+            "session_id": "session_456"                 // Optional: filter by session
+        }
+
+    Returns:
+        {
+            "success": true,
+            "workflow": {...},                          // Workflow JSON
+            "states": [...],                            // List of State objects
+            "actions": [...],                           // List of Action objects
+            "metadata": {
+                "method": "cognitive_phrase_match" | "task_dag",
+                "reasoning": "...",
+                "cognitive_phrases": [...]
+            }
+        }
+    """
+    if not x_ami_api_key:
+        raise HTTPException(400, "Missing X-Ami-API-Key header")
+
+    target = data.get("target")
+    user_id = data.get("user_id")
+    session_id = data.get("session_id")
+
+    if not target:
+        raise HTTPException(400, "Missing target (task description)")
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+
+    try:
+        # Ensure user's memory is loaded
+        await _ensure_user_memory_loaded(user_id, session_id)
+
+        # Get Reasoner instance with user's API key
+        user_reasoner = await _get_reasoner_for_user(x_ami_api_key)
+
+        # Call Reasoner to get workflow plan
+        logger.info(f"🧠 Reasoner planning for target: {target[:50]}...")
+        result = await user_reasoner.plan(target, user_id=user_id, session_id=session_id)
+
+        if not result or not result.success:
+            logger.info(f"🧠 Reasoner returned no workflow for target: {target[:50]}")
+            return {
+                "success": False,
+                "workflow": None,
+                "states": [],
+                "actions": [],
+                "metadata": {},
+                "message": "No matching workflow found in memory"
+            }
+
+        # Convert State and Action objects to dicts
+        states_data = []
+        for state in result.states:
+            state_dict = state.to_dict() if hasattr(state, 'to_dict') else state
+            states_data.append(state_dict)
+
+        actions_data = []
+        for action in result.actions:
+            action_dict = action.to_dict() if hasattr(action, 'to_dict') else action
+            actions_data.append(action_dict)
+
+        logger.info(f"✅ Reasoner returned workflow with {len(states_data)} states, {len(actions_data)} actions")
+
+        return {
+            "success": True,
+            "workflow": result.workflow,
+            "states": states_data,
+            "actions": actions_data,
+            "metadata": result.metadata or {}
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Reasoner plan failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Reasoner plan failed: {str(e)}")
 
 
 # ===== NEW: Direct Workflow Generation API (v2) =====

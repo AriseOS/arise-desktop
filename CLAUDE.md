@@ -79,6 +79,17 @@ isort . --profile black
 - No over-engineering or premature optimization
 - No backward compatibility unless explicitly requested
 
+**Fail-Fast Philosophy ("Let It Crash"):**
+- Never mock data or interfaces in production code
+- Problems should fail immediately and loudly
+- Avoid defensive fallbacks that hide issues
+- Prefer explicit errors over silent degradation
+- Examples:
+  - ✅ `raise RuntimeError("WorkingDirectoryManager required")`
+  - ❌ `workspace = fallback_path or default_path or global_path`
+  - ✅ `if not api_key: raise ValueError("API key required")`
+  - ❌ `api_key = provided_key or env_key or mock_key or "default"`
+
 **Testing:**
 - DO NOT automatically run tests
 - Only create test scripts when explicitly requested

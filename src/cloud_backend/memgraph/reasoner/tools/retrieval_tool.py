@@ -83,7 +83,7 @@ class RetrievalTool(TaskTool):
                     True,
                     states=[state],
                     actions=[],
-                    reasoning=f"State {state.label} directly satisfies target",
+                    reasoning=f"State {state.id} directly satisfies target",
                     metadata={"method": "direct_match"},
                 )
 

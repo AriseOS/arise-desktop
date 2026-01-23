@@ -199,28 +199,36 @@ class Reasoner:
 
         if can_satisfy and phrases:
             # Direct match found - retrieve actual State and Action objects from memory
-            states = []
-            actions = []
+            # Use ordered dict to preserve order while deduplicating by ID
+            states_by_id = {}
+            actions_by_key = {}  # key = (source_id, target_id)
 
             for phrase in phrases:
-                # Retrieve states from state_path
+                # Retrieve states from state_path (deduplicate by ID)
                 for state_id in phrase.state_path:
-                    state = self.memory.get_state(state_id)
-                    if state:
-                        states.append(state)
-                    else:
-                        print(f"Warning: State '{state_id}' not found in phrase {phrase.id}")
+                    if state_id not in states_by_id:
+                        state = self.memory.get_state(state_id)
+                        if state:
+                            states_by_id[state_id] = state
+                        else:
+                            print(f"Warning: State '{state_id}' not found in phrase {phrase.id}")
 
-                # Retrieve actions based on state transitions
+                # Retrieve actions based on state transitions (deduplicate by source+target)
                 for i in range(len(phrase.state_path) - 1):
                     source_id = phrase.state_path[i]
                     target_id = phrase.state_path[i + 1]
+                    action_key = (source_id, target_id)
 
-                    action = self.memory.get_action(source_id, target_id)
-                    if action:
-                        actions.append(action)
-                    else:
-                        print(f"Warning: Action from '{source_id}' to '{target_id}' not found in phrase {phrase.id}")
+                    if action_key not in actions_by_key:
+                        action = self.memory.get_action(source_id, target_id)
+                        if action:
+                            actions_by_key[action_key] = action
+                        else:
+                            print(f"Warning: Action from '{source_id}' to '{target_id}' not found in phrase {phrase.id}")
+
+            # Convert back to lists
+            states = list(states_by_id.values())
+            actions = list(actions_by_key.values())
 
             if not states:
                 # No valid states found, fall back to task decomposition

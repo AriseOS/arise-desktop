@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from "react-i18next";
+import { useStore } from 'zustand';
 import { auth } from '../utils/auth';
 import { api } from '../utils/api';
 import Icon from '../components/Icons';
+import IntegrationList from '../components/IntegrationList';
+import settingsStore from '../store/settingsStore';
 import '../styles/SettingsPage.css';
 
 /**
@@ -16,6 +19,14 @@ function SettingsPage({ navigate, showStatus, onLogout, language, onLanguageChan
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+
+  // Theme/appearance settings from store
+  const appearance = useStore(settingsStore, (state) => state.appearance);
+  const setAppearance = useStore(settingsStore, (state) => state.setAppearance);
+  const autoConfirmDelay = useStore(settingsStore, (state) => state.autoConfirmDelay);
+  const setAutoConfirmDelay = useStore(settingsStore, (state) => state.setAutoConfirmDelay);
+  const showTokenUsage = useStore(settingsStore, (state) => state.showTokenUsage);
+  const setShowTokenUsage = useStore(settingsStore, (state) => state.setShowTokenUsage);
 
   useEffect(() => {
     loadData();
@@ -175,6 +186,112 @@ function SettingsPage({ navigate, showStatus, onLogout, language, onLanguageChan
                 简体中文
               </button>
             </div>
+          </div>
+        </section>
+
+        {/* Appearance Section */}
+        <section className="settings-section">
+          <h2 className="section-title">{t('settings.appearance') || 'Appearance'}</h2>
+          <div className="info-card">
+            <p style={{ marginBottom: '12px' }}>{t('settings.appearanceDesc') || 'Choose your preferred theme'}</p>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className={`btn ${appearance === 'light' ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => setAppearance('light')}
+              >
+                <Icon name="sun" size={16} />
+                {t('settings.themeLight') || 'Light'}
+              </button>
+              <button
+                type="button"
+                className={`btn ${appearance === 'dark' ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => setAppearance('dark')}
+              >
+                <Icon name="moon" size={16} />
+                {t('settings.themeDark') || 'Dark'}
+              </button>
+              <button
+                type="button"
+                className={`btn ${appearance === 'system' ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => setAppearance('system')}
+              >
+                <Icon name="monitor" size={16} />
+                {t('settings.themeSystem') || 'System'}
+              </button>
+              <button
+                type="button"
+                className={`btn ${appearance === 'transparent' ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => setAppearance('transparent')}
+              >
+                <Icon name="layers" size={16} />
+                {t('settings.themeTransparent') || 'Transparent'}
+              </button>
+            </div>
+          </div>
+        </section>
+
+        {/* Agent Settings Section */}
+        <section className="settings-section">
+          <h2 className="section-title">{t('settings.agentSettings') || 'Agent Settings'}</h2>
+          <div className="info-card">
+            {/* Auto-confirm delay */}
+            <div className="info-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '8px' }}>
+              <span className="info-label">{t('settings.autoConfirmDelay') || 'Auto-confirm Delay'}</span>
+              <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-tertiary)' }}>
+                {t('settings.autoConfirmDelayDesc') || 'Automatically confirm task decomposition after this delay (0 to disable)'}
+              </p>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px' }}>
+                <input
+                  type="number"
+                  min="0"
+                  max="300"
+                  value={autoConfirmDelay}
+                  onChange={(e) => setAutoConfirmDelay(Math.max(0, Math.min(300, parseInt(e.target.value) || 0)))}
+                  style={{
+                    width: '80px',
+                    padding: '8px 12px',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--border-color)',
+                    background: 'var(--bg-secondary)',
+                    color: 'var(--text-primary)',
+                    fontSize: '14px',
+                  }}
+                />
+                <span style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
+                  {t('settings.seconds') || 'seconds'}
+                </span>
+              </div>
+            </div>
+
+            {/* Show token usage toggle */}
+            <div className="info-row" style={{ alignItems: 'center' }}>
+              <div>
+                <span className="info-label">{t('settings.showTokenUsage') || 'Show Token Usage'}</span>
+                <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: 'var(--text-tertiary)' }}>
+                  {t('settings.showTokenUsageDesc') || 'Display token consumption during task execution'}
+                </p>
+              </div>
+              <label className="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={showTokenUsage}
+                  onChange={(e) => setShowTokenUsage(e.target.checked)}
+                />
+                <span className="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+        </section>
+
+        {/* Integrations Section */}
+        <section className="settings-section">
+          <h2 className="section-title">{t('settings.integrations') || 'Integrations'}</h2>
+          <div className="info-card integrations-card">
+            <p style={{ marginBottom: '16px', color: 'var(--text-secondary)' }}>
+              {t('settings.integrationsDesc') || 'Connect cloud services to enhance automation capabilities'}
+            </p>
+            <IntegrationList showTitle={false} />
           </div>
         </section>
 

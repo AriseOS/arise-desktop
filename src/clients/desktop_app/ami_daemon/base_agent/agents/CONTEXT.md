@@ -35,6 +35,17 @@ all_schemas = get_all_agent_schemas()
 | `tavily_agent.py` | TavilyAgent | `inputs.operation`, `inputs.query` |
 | `eigent_browser_agent.py` | EigentBrowserAgent | `inputs.task`, `inputs.start_url` |
 
+### Specialized Agents (Eigent Migration)
+
+| File | Agent | Purpose |
+|------|-------|---------|
+| `question_confirm_agent.py` | QuestionConfirmAgent | Human-in-the-loop confirmations and Q&A |
+| `developer_agent.py` | DeveloperAgent | Coding, debugging, git operations |
+| `document_agent.py` | DocumentAgent | Google Drive, Notion, document creation |
+| `social_medium_agent.py` | SocialMediumAgent | Email (Gmail), calendar, communication |
+
+These agents are used by `TaskOrchestrator` for multi-agent coordination.
+
 ### Infrastructure
 
 | File | Purpose |

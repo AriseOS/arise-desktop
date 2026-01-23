@@ -7,6 +7,7 @@ Supports actions based on element references [ref=eN].
 
 import asyncio
 import logging
+import os
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from .config_loader import ConfigLoader
@@ -15,6 +16,9 @@ if TYPE_CHECKING:
     from playwright.async_api import Page
 
 logger = logging.getLogger(__name__)
+
+# Debug mode - enabled via AMI_DEBUG environment variable
+DEBUG_MODE = os.environ.get("AMI_DEBUG", "").lower() in ("1", "true", "yes")
 
 
 class ActionExecutor:
@@ -27,14 +31,22 @@ class ActionExecutor:
         default_timeout: Optional[int] = None,
         short_timeout: Optional[int] = None,
         max_scroll_amount: Optional[int] = None,
+        debug: bool = False,
     ):
         self.page = page
         self.session = session  # Browser session instance for tab management
+        self.debug = debug or DEBUG_MODE
 
         # Configure timeouts using the config file with optional overrides
         self.default_timeout = ConfigLoader.get_action_timeout(default_timeout)
         self.short_timeout = ConfigLoader.get_short_timeout(short_timeout)
         self.max_scroll_amount = ConfigLoader.get_max_scroll_amount(max_scroll_amount)
+
+    def _debug_log(self, message: str, **kwargs) -> None:
+        """Log debug message if debug mode is enabled."""
+        if self.debug:
+            extra_info = " ".join(f"{k}={v}" for k, v in kwargs.items()) if kwargs else ""
+            logger.info(f"[DEBUG] {message} {extra_info}".strip())
 
     # ------------------------------------------------------------------
     # Public helpers
@@ -98,7 +110,14 @@ class ActionExecutor:
     # Internal handlers
     # ------------------------------------------------------------------
     async def _click(self, action: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle click actions with new tab support for any clickable element."""
+        """Handle click actions with new tab support.
+
+        Click strategy (following Eigent's design):
+        1. Always try Ctrl+Click first - this opens links in new tabs
+        2. If new tab opens → automatically switch to it (LLM sees new page)
+        3. If no new tab (timeout) → click succeeded on same page
+        4. If Ctrl+Click fails → fallback to normal force click
+        """
         ref = action.get("ref")
         text = action.get("text")
         selector = action.get("selector")
@@ -130,12 +149,15 @@ class ActionExecutor:
         # Find the first valid selector
         found_selector = None
         for sel in strategies:
-            if await self.page.locator(sel).count() > 0:
+            count = await self.page.locator(sel).count()
+            self._debug_log(f"Trying selector: {sel}", count=count)
+            if count > 0:
                 found_selector = sel
                 break
 
         if not found_selector:
             details['error'] = "Element not found with any strategy"
+            self._debug_log("Click failed: element not found", strategies=strategies)
             return {
                 "message": "Error: Click failed, element not found",
                 "details": details,
@@ -144,13 +166,16 @@ class ActionExecutor:
         element = self.page.locator(found_selector).first
         details['successful_strategy'] = found_selector
 
-        # Attempt ctrl+click first (always)
-        try:
-            if self.session:
+        # Strategy 1: Always try Ctrl+Click first (Eigent's approach)
+        # This handles links that open in new tabs AND regular clicks
+        if self.session:
+            try:
+                self._debug_log("Attempting ctrl+click (always try first)")
                 async with self.page.context.expect_page(
                     timeout=self.short_timeout
                 ) as new_page_info:
                     await element.click(modifiers=["ControlOrMeta"])
+                # New tab was created
                 new_page = await new_page_info.value
                 await new_page.wait_for_load_state('domcontentloaded')
                 new_tab_index = await self.session.register_page(new_page)
@@ -164,51 +189,45 @@ class ActionExecutor:
                         "new_tab_index": new_tab_index,
                     }
                 )
+                self._debug_log("Ctrl+click opened new tab, auto-switched", tab=new_tab_index)
                 return {
-                    "message": f"Clicked element (ctrl click), opened in new "
-                    f"tab {new_tab_index}",
+                    "message": f"Clicked element, opened in new tab {new_tab_index}",
                     "details": details,
                 }
-            else:
-                await element.click(modifiers=["ControlOrMeta"])
-                details["click_method"] = "ctrl_click_no_session"
-                return {
-                    "message": f"Clicked element (ctrl click, no"
-                    f" session): {found_selector}",
-                    "details": details,
-                }
-        except asyncio.TimeoutError:
-            # No new tab was opened, click may have still worked
-            details["click_method"] = "ctrl_click_same_tab"
-            return {
-                "message": f"Clicked element (ctrl click, "
-                f"same tab): {found_selector}",
-                "details": details,
-            }
-        except Exception as e:
-            details['strategies_tried'].append(
-                {
+            except asyncio.TimeoutError:
+                # No new tab was opened - Ctrl+Click may not have triggered JS handlers
+                # Fall through to try normal click for JavaScript-based navigation links
+                self._debug_log("Ctrl+click didn't open new tab, trying normal click")
+                details['strategies_tried'].append({
+                    'selector': found_selector,
+                    'method': 'ctrl_click',
+                    'result': 'no_new_tab_timeout',
+                })
+            except Exception as e:
+                self._debug_log(f"Ctrl+click failed: {e}")
+                details['strategies_tried'].append({
                     'selector': found_selector,
                     'method': 'ctrl_click',
                     'error': str(e),
-                }
-            )
-            # Fall through to fallback
+                })
+                # Fall through to fallback
 
-        # Fallback to normal force click if ctrl+click fails
+        # Strategy 2: Fallback to normal force click if ctrl+click fails
         try:
+            self._debug_log("Attempting force click (fallback)")
             await element.click(force=True, timeout=self.default_timeout)
-            details["click_method"] = "playwright_force_click"
+            details["click_method"] = "force_click"
+            self._debug_log("Force click succeeded")
             return {
-                "message": f"Fallback clicked element: {found_selector}",
+                "message": f"Clicked element (fallback): {found_selector}",
                 "details": details,
             }
         except Exception as e:
-            details["click_method"] = "playwright_force_click_failed"
+            self._debug_log(f"Force click failed: {e}")
+            details["click_method"] = "all_failed"
             details["error"] = str(e)
             return {
-                "message": f"Error: All click strategies "
-                f"failed for {found_selector}",
+                "message": f"Error: All click strategies failed for {found_selector}",
                 "details": details,
             }
 
