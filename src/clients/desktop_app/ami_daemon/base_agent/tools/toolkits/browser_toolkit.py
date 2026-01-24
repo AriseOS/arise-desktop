@@ -105,23 +105,38 @@ class BrowserToolkit(BaseToolkit):
             logger.debug(f"Failed to get page context: {e}")
             return ""
 
-    async def _wait_for_page_stability(self, timeout_ms: int = 1500) -> None:
+    async def _wait_for_page_stability(self, timeout_ms: int = 3000) -> None:
         """Wait for page to become stable after an action.
 
         This is important after click/type actions that may trigger:
         - Page navigation
         - New tab opening
         - AJAX content loading
+        - SPA re-rendering
 
-        Following Eigent's pattern for page stability.
+        Following Eigent's pattern for page stability:
+        1. First wait for DOM content loaded
+        2. Then try to wait for network idle (SPA apps need this)
         """
         if not self._session:
             return
 
         try:
             page = await self._session.get_page()
-            # Wait for network to be idle (no pending requests)
+
+            # Step 1: Wait for DOM content to be loaded
             await page.wait_for_load_state('domcontentloaded', timeout=timeout_ms)
+            logger.debug("DOM content loaded")
+
+            # Step 2: Try to wait for network idle (important for SPA)
+            # This gives time for React/Vue/etc to finish rendering
+            try:
+                await page.wait_for_load_state('networkidle', timeout=timeout_ms)
+                logger.debug("Network idle achieved")
+            except Exception:
+                # Network idle timeout is acceptable - SPA might keep connections open
+                logger.debug("Network idle timeout - continuing anyway")
+
         except Exception as e:
             logger.debug(f"Page stability wait interrupted: {e}")
 
@@ -312,23 +327,6 @@ class BrowserToolkit(BaseToolkit):
             return "Error: Must provide ref, element_text, or selector"
 
         try:
-            # Get element description before clicking (for debugging)
-            element_desc = ""
-            if ref:
-                try:
-                    before_snapshot = await self._session.get_snapshot()
-                    # Parse snapshot to find the element description
-                    # Format: - link "Text" [ref=e17] or - button "Text" [ref=e17]
-                    import re
-                    pattern = rf'- (\w+) "([^"]*)"[^\[]*\[ref={ref}\]'
-                    match = re.search(pattern, before_snapshot)
-                    if match:
-                        element_type, element_text_found = match.groups()
-                        element_desc = f'{element_type} "{element_text_found}"'
-                        logger.info(f"[Click] Clicking {element_desc} (ref={ref})")
-                except Exception as e:
-                    logger.debug(f"Could not get element description: {e}")
-
             action = {"type": "click"}
             if ref:
                 action["ref"] = ref
@@ -340,22 +338,15 @@ class BrowserToolkit(BaseToolkit):
             result = await self._session.exec_action(action)
 
             if result.get("success"):
-                # Extract details about the click result
                 details = result.get("details", {})
                 new_tab_created = details.get("new_tab_created", False)
                 new_tab_index = details.get("new_tab_index")
-                click_method = details.get("click_method", "unknown")
 
-                # Build informative click message
                 if new_tab_created and new_tab_index:
-                    click_info = f"Clicked {element_desc}, opened new tab (now on tab {new_tab_index})" if element_desc else f"Clicked, opened new tab (now on tab {new_tab_index})"
-                    logger.info(f"[Click] New tab created: {new_tab_index}, auto-switched")
+                    click_info = f"Clicked, opened new tab (now on tab {new_tab_index})"
                 else:
-                    click_info = f"Clicked {element_desc}" if element_desc else "Clicked successfully"
+                    click_info = "Clicked successfully"
 
-                # Wait for page stability and include tab info in result
-                # This ensures LLM sees the new page content after navigation/tab switch
-                # Force refresh aria-ref if a new tab was created (each tab has its own window object)
                 return await self._build_action_result(
                     click_info,
                     wait_for_stability=True,

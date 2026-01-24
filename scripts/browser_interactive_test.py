@@ -40,11 +40,22 @@ import asyncio
 import sys
 import os
 import argparse
+import logging
 from pathlib import Path
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
+
+# Enable debug mode by default for interactive testing
+os.environ["AMI_DEBUG"] = "1"
+
+# Configure logging to show debug messages
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S"
+)
 
 from src.clients.desktop_app.ami_daemon.base_agent.tools.eigent_browser.browser_session import HybridBrowserSession
 from src.clients.desktop_app.ami_daemon.base_agent.tools.toolkits.browser_toolkit import BrowserToolkit
@@ -371,7 +382,12 @@ class InteractiveBrowserTester:
 async def main():
     parser = argparse.ArgumentParser(description="Interactive Browser Test")
     parser.add_argument("--headless", action="store_true", help="Run browser in headless mode")
+    parser.add_argument("--no-debug", action="store_true", help="Disable debug logging")
     args = parser.parse_args()
+
+    if args.no_debug:
+        os.environ["AMI_DEBUG"] = ""
+        logging.getLogger().setLevel(logging.INFO)
 
     tester = InteractiveBrowserTester(headless=args.headless)
     await tester.run()
