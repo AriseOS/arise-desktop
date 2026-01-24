@@ -29,6 +29,10 @@ from .action_types import (
     EndData,
     ErrorData,
     NoticeData,
+    # Task decomposition
+    TaskDecomposedData,
+    SubtaskStateData,
+    TaskReplannedData,
 )
 
 if TYPE_CHECKING:
@@ -420,6 +424,72 @@ class SSEEmitter:
             status=status,
             message=message,
             result=result,
+            task_id=self._task_id,
+        ))
+
+    # ===== Task Decomposition Events =====
+
+    async def emit_task_decomposed(
+        self,
+        subtasks: list,
+        summary_task: Optional[str] = None,
+        original_task_id: Optional[str] = None,
+    ) -> None:
+        """Emit task decomposed event (from TaskPlanningToolkit).
+
+        Args:
+            subtasks: List of subtask dicts with id, content, state
+            summary_task: Main task summary
+            original_task_id: ID of the parent task
+        """
+        await self.emit(TaskDecomposedData(
+            subtasks=subtasks,
+            summary_task=summary_task,
+            original_task_id=original_task_id,
+            total_subtasks=len(subtasks),
+            task_id=self._task_id,
+        ))
+
+    async def emit_subtask_state(
+        self,
+        subtask_id: str,
+        state: str,
+        result: Optional[str] = None,
+        failure_count: int = 0,
+    ) -> None:
+        """Emit subtask state change event.
+
+        Args:
+            subtask_id: ID of the subtask
+            state: New state (OPEN, RUNNING, DONE, FAILED, DELETED)
+            result: Optional result message
+            failure_count: Number of failures
+        """
+        await self.emit(SubtaskStateData(
+            subtask_id=subtask_id,
+            state=state,
+            result=result,
+            failure_count=failure_count,
+            task_id=self._task_id,
+        ))
+
+    async def emit_task_replanned(
+        self,
+        subtasks: list,
+        original_task_id: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> None:
+        """Emit task re-planned event.
+
+        Args:
+            subtasks: New list of subtasks
+            original_task_id: ID of the parent task
+            reason: Why the task was re-planned
+        """
+        await self.emit(TaskReplannedData(
+            subtasks=subtasks,
+            original_task_id=original_task_id,
+            reason=reason,
             task_id=self._task_id,
         ))
 

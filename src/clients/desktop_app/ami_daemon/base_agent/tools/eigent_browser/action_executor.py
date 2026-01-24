@@ -6,8 +6,10 @@ Supports actions based on element references [ref=eN].
 """
 
 import asyncio
+import datetime
 import logging
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from .config_loader import ConfigLoader
@@ -19,6 +21,9 @@ logger = logging.getLogger(__name__)
 
 # Debug mode - enabled via AMI_DEBUG environment variable
 DEBUG_MODE = os.environ.get("AMI_DEBUG", "").lower() in ("1", "true", "yes")
+
+# Debug screenshot directory
+DEBUG_SCREENSHOT_DIR = Path.home() / ".ami" / "debug_screenshots"
 
 
 class ActionExecutor:
@@ -46,7 +51,28 @@ class ActionExecutor:
         """Log debug message if debug mode is enabled."""
         if self.debug:
             extra_info = " ".join(f"{k}={v}" for k, v in kwargs.items()) if kwargs else ""
-            logger.info(f"[DEBUG] {message} {extra_info}".strip())
+            msg = f"[DEBUG ActionExecutor] {message} {extra_info}".strip()
+            print(msg)  # Print to terminal
+            logger.info(msg)  # Also log to file
+
+    async def _save_debug_screenshot(self, action_type: str, ref: str = "", error: str = "") -> Optional[str]:
+        """Save a debug screenshot when an action fails."""
+        if not self.debug:
+            return None
+
+        try:
+            DEBUG_SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{timestamp}_{action_type}_{ref}_{error[:20]}.png".replace(" ", "_").replace(":", "_")
+            filepath = DEBUG_SCREENSHOT_DIR / filename
+            await self.page.screenshot(path=str(filepath))
+            msg = f"[DEBUG] Screenshot saved: {filepath}"
+            print(msg)
+            logger.info(msg)
+            return str(filepath)
+        except Exception as e:
+            logger.warning(f"Failed to save debug screenshot: {e}")
+            return None
 
     # ------------------------------------------------------------------
     # Public helpers
@@ -136,10 +162,15 @@ class ActionExecutor:
         if text:
             strategies.append(f'text="{text}"')
 
+        # Log current page info
+        current_url = self.page.url
+        self._debug_log(f"Click action started", url=current_url, ref=ref, text=text)
+
         details: Dict[str, Any] = {
             "ref": ref,
             "selector": selector,
             "text": text,
+            "page_url": current_url,
             "strategies_tried": [],
             "successful_strategy": None,
             "click_method": None,
@@ -151,20 +182,59 @@ class ActionExecutor:
         for sel in strategies:
             count = await self.page.locator(sel).count()
             self._debug_log(f"Trying selector: {sel}", count=count)
+            details['strategies_tried'].append({
+                'selector': sel,
+                'count': count,
+            })
             if count > 0:
                 found_selector = sel
                 break
 
         if not found_selector:
-            details['error'] = "Element not found with any strategy"
-            self._debug_log("Click failed: element not found", strategies=strategies)
+            details['error'] = "element_not_found"
+            details['failure_reason'] = "No matching element found with any strategy"
+
+            # If searching by ref, collect available refs on the page for debugging
+            if ref:
+                available_refs = await self._get_available_refs_sample()
+                details['available_refs_sample'] = available_refs
+                self._debug_log(
+                    f"Click failed: ref '{ref}' not found",
+                    available_refs_count=available_refs.get('total_count', 0),
+                    sample=available_refs.get('sample', [])[:5]
+                )
+            else:
+                self._debug_log("Click failed: element not found", strategies=strategies)
+
+            # If searching by text, try to find similar text on page
+            if text:
+                similar_texts = await self._find_similar_texts(text)
+                if similar_texts:
+                    details['similar_texts_on_page'] = similar_texts
+                    self._debug_log(f"Similar texts found on page", similar=similar_texts[:3])
+
+            await self._save_debug_screenshot("click", ref or text or "", "element_not_found")
             return {
-                "message": "Error: Click failed, element not found",
+                "message": f"Error: Click failed - element not found. Tried: {strategies}",
                 "details": details,
             }
 
         element = self.page.locator(found_selector).first
         details['successful_strategy'] = found_selector
+
+        # Get element info for debugging
+        try:
+            element_info = await self._get_element_debug_info(element)
+            details['element_info'] = element_info
+            self._debug_log(f"Element found", **element_info)
+        except Exception as e:
+            self._debug_log(f"Could not get element info: {e}")
+
+        # Check for blocking modals before clicking
+        modal_info = await self._detect_blocking_modal()
+        if modal_info['has_modal']:
+            details['blocking_modal'] = modal_info
+            self._debug_log(f"Blocking modal detected", **modal_info)
 
         # Strategy 1: Always try Ctrl+Click first (Eigent's approach)
         # This handles links that open in new tabs AND regular clicks
@@ -197,18 +267,22 @@ class ActionExecutor:
             except asyncio.TimeoutError:
                 # No new tab was opened - Ctrl+Click may not have triggered JS handlers
                 # Fall through to try normal click for JavaScript-based navigation links
-                self._debug_log("Ctrl+click didn't open new tab, trying normal click")
+                self._debug_log("Ctrl+click timeout - no new tab opened (likely SPA link)")
                 details['strategies_tried'].append({
                     'selector': found_selector,
                     'method': 'ctrl_click',
-                    'result': 'no_new_tab_timeout',
+                    'result': 'timeout_no_new_tab',
+                    'reason': 'SPA/JavaScript link does not open new tab with Ctrl+Click',
                 })
             except Exception as e:
-                self._debug_log(f"Ctrl+click failed: {e}")
+                error_msg = str(e)
+                failure_reason = self._analyze_click_error(error_msg)
+                self._debug_log(f"Ctrl+click failed: {failure_reason}", error=error_msg[:200])
                 details['strategies_tried'].append({
                     'selector': found_selector,
                     'method': 'ctrl_click',
-                    'error': str(e),
+                    'error': error_msg[:500],
+                    'failure_reason': failure_reason,
                 })
                 # Fall through to fallback
 
@@ -217,19 +291,284 @@ class ActionExecutor:
             self._debug_log("Attempting force click (fallback)")
             await element.click(force=True, timeout=self.default_timeout)
             details["click_method"] = "force_click"
-            self._debug_log("Force click succeeded")
+
+            # Check if URL changed after click
+            new_url = self.page.url
+            url_changed = new_url != current_url
+            details['url_changed'] = url_changed
+            details['new_url'] = new_url if url_changed else None
+
+            self._debug_log("Force click succeeded", url_changed=url_changed)
             return {
                 "message": f"Clicked element (fallback): {found_selector}",
                 "details": details,
             }
         except Exception as e:
-            self._debug_log(f"Force click failed: {e}")
+            error_msg = str(e)
+            failure_reason = self._analyze_click_error(error_msg)
+            self._debug_log(f"Force click failed: {failure_reason}", error=error_msg[:200])
+            await self._save_debug_screenshot("click", ref or text or "", "all_failed")
             details["click_method"] = "all_failed"
-            details["error"] = str(e)
+            details["error"] = error_msg[:500]
+            details["failure_reason"] = failure_reason
             return {
-                "message": f"Error: All click strategies failed for {found_selector}",
+                "message": f"Error: Click failed - {failure_reason}",
                 "details": details,
             }
+
+    async def _get_element_debug_info(self, element) -> Dict[str, Any]:
+        """Get debug information about an element."""
+        info = {}
+        try:
+            # Get bounding box
+            box = await element.bounding_box()
+            if box:
+                info['bounding_box'] = {
+                    'x': round(box['x'], 1),
+                    'y': round(box['y'], 1),
+                    'width': round(box['width'], 1),
+                    'height': round(box['height'], 1),
+                }
+                info['is_visible'] = box['width'] > 0 and box['height'] > 0
+            else:
+                info['is_visible'] = False
+                info['bounding_box'] = None
+
+            # Check if element is in viewport
+            if box:
+                viewport = self.page.viewport_size
+                if viewport:
+                    in_viewport = (
+                        box['x'] >= 0 and
+                        box['y'] >= 0 and
+                        box['x'] + box['width'] <= viewport['width'] and
+                        box['y'] + box['height'] <= viewport['height']
+                    )
+                    info['in_viewport'] = in_viewport
+
+            # Get tag name and some attributes
+            tag_name = await element.evaluate("el => el.tagName.toLowerCase()")
+            info['tag_name'] = tag_name
+
+            # Get href if it's a link
+            if tag_name == 'a':
+                href = await element.get_attribute('href')
+                info['href'] = href
+
+            # Check if element is enabled/disabled
+            is_disabled = await element.is_disabled()
+            info['is_disabled'] = is_disabled
+
+        except Exception as e:
+            info['error'] = str(e)
+
+        return info
+
+    async def _detect_blocking_modal(self) -> Dict[str, Any]:
+        """Detect if there's a modal/dialog blocking the page."""
+        modal_selectors = [
+            '[role="dialog"]',
+            '[role="alertdialog"]',
+            '[aria-modal="true"]',
+            '.modal',
+            '.popup',
+            '[data-state="open"]',
+        ]
+
+        result = {
+            'has_modal': False,
+            'modal_type': None,
+            'modal_selector': None,
+        }
+
+        for selector in modal_selectors:
+            try:
+                count = await self.page.locator(selector).count()
+                if count > 0:
+                    # Check if the modal is actually visible
+                    modal = self.page.locator(selector).first
+                    is_visible = await modal.is_visible()
+                    if is_visible:
+                        result['has_modal'] = True
+                        result['modal_selector'] = selector
+
+                        # Try to get modal info
+                        try:
+                            box = await modal.bounding_box()
+                            if box:
+                                result['modal_size'] = {
+                                    'width': round(box['width'], 1),
+                                    'height': round(box['height'], 1),
+                                }
+                        except:
+                            pass
+
+                        # Check for close button
+                        close_selectors = [
+                            f'{selector} button[aria-label*="close"]',
+                            f'{selector} button[aria-label*="Close"]',
+                            f'{selector} button:has-text("×")',
+                            f'{selector} button:has-text("Close")',
+                            f'{selector} [aria-label*="dismiss"]',
+                        ]
+                        for close_sel in close_selectors:
+                            try:
+                                close_count = await self.page.locator(close_sel).count()
+                                if close_count > 0:
+                                    result['has_close_button'] = True
+                                    result['close_button_selector'] = close_sel
+                                    break
+                            except:
+                                pass
+
+                        break
+            except:
+                pass
+
+        return result
+
+    def _analyze_click_error(self, error_msg: str) -> str:
+        """Analyze click error message and return a human-readable reason."""
+        error_lower = error_msg.lower()
+
+        if "intercepts pointer events" in error_lower:
+            # Extract the intercepting element info
+            if "dialog" in error_lower:
+                return "BLOCKED_BY_MODAL: A dialog/modal is blocking the element"
+            elif "overlay" in error_lower or "backdrop" in error_lower:
+                return "BLOCKED_BY_OVERLAY: An overlay/backdrop is blocking the element"
+            else:
+                return "BLOCKED_BY_ELEMENT: Another element is blocking the click target"
+
+        if "timeout" in error_lower:
+            if "waiting for element" in error_lower:
+                return "TIMEOUT_ELEMENT_NOT_READY: Element not ready within timeout"
+            elif "waiting for event" in error_lower:
+                return "TIMEOUT_NO_NEW_TAB: Ctrl+click didn't open new tab (likely SPA)"
+            else:
+                return "TIMEOUT_GENERAL: Operation timed out"
+
+        if "element is not visible" in error_lower:
+            return "ELEMENT_NOT_VISIBLE: Element exists but is not visible"
+
+        if "element is not enabled" in error_lower or "disabled" in error_lower:
+            return "ELEMENT_DISABLED: Element is disabled"
+
+        if "detached" in error_lower:
+            return "ELEMENT_DETACHED: Element was removed from DOM"
+
+        if "outside" in error_lower and "viewport" in error_lower:
+            return "ELEMENT_OUTSIDE_VIEWPORT: Element is outside the visible area"
+
+        return f"UNKNOWN_ERROR: {error_msg[:100]}"
+
+    async def _get_available_refs_sample(self) -> Dict[str, Any]:
+        """Get a sample of available aria-ref elements on the page for debugging."""
+        result = {
+            'total_count': 0,
+            'sample': [],
+            'ref_range': None,
+        }
+
+        try:
+            # Get all elements with aria-ref attribute
+            refs_data = await self.page.evaluate("""
+                () => {
+                    const elements = document.querySelectorAll('[aria-ref]');
+                    const refs = [];
+                    const allRefNumbers = [];
+
+                    elements.forEach((el, idx) => {
+                        const ref = el.getAttribute('aria-ref');
+                        const refNum = parseInt(ref.replace('e', ''), 10);
+                        if (!isNaN(refNum)) {
+                            allRefNumbers.push(refNum);
+                        }
+
+                        // Only collect sample (first 20 and last 10)
+                        if (idx < 20 || idx >= elements.length - 10) {
+                            refs.push({
+                                ref: ref,
+                                tag: el.tagName.toLowerCase(),
+                                text: (el.textContent || '').trim().substring(0, 50),
+                                visible: el.offsetParent !== null,
+                            });
+                        }
+                    });
+
+                    // Sort ref numbers to get range
+                    allRefNumbers.sort((a, b) => a - b);
+
+                    return {
+                        total: elements.length,
+                        sample: refs,
+                        minRef: allRefNumbers.length > 0 ? allRefNumbers[0] : null,
+                        maxRef: allRefNumbers.length > 0 ? allRefNumbers[allRefNumbers.length - 1] : null,
+                    };
+                }
+            """)
+
+            result['total_count'] = refs_data.get('total', 0)
+            result['sample'] = refs_data.get('sample', [])
+            if refs_data.get('minRef') is not None:
+                result['ref_range'] = f"e{refs_data['minRef']} - e{refs_data['maxRef']}"
+
+        except Exception as e:
+            result['error'] = str(e)
+            self._debug_log(f"Failed to get available refs: {e}")
+
+        return result
+
+    async def _find_similar_texts(self, target_text: str, max_results: int = 5) -> list:
+        """Find similar text content on the page when exact match fails."""
+        try:
+            # Normalize the target text
+            target_lower = target_text.lower().strip()
+
+            # Search for elements containing parts of the text
+            similar_texts = await self.page.evaluate("""
+                (args) => {
+                    const { targetLower, maxResults } = args;
+                    const results = [];
+
+                    // Get all text-containing elements
+                    const textElements = document.querySelectorAll('a, button, [role="button"], [role="link"], h1, h2, h3, h4, p, span, div');
+
+                    for (const el of textElements) {
+                        if (results.length >= maxResults) break;
+
+                        const text = (el.textContent || '').trim();
+                        if (!text || text.length > 200) continue;
+
+                        const textLower = text.toLowerCase();
+
+                        // Check for partial matches
+                        const targetWords = targetLower.split(/\\s+/).filter(w => w.length > 2);
+                        const matchedWords = targetWords.filter(word => textLower.includes(word));
+
+                        if (matchedWords.length > 0 && matchedWords.length >= targetWords.length * 0.3) {
+                            results.push({
+                                text: text.substring(0, 100),
+                                tag: el.tagName.toLowerCase(),
+                                ref: el.getAttribute('aria-ref'),
+                                matchedWords: matchedWords,
+                                matchRatio: matchedWords.length / targetWords.length,
+                            });
+                        }
+                    }
+
+                    // Sort by match ratio
+                    results.sort((a, b) => b.matchRatio - a.matchRatio);
+
+                    return results.slice(0, maxResults);
+                }
+            """, {'targetLower': target_lower, 'maxResults': max_results})
+
+            return similar_texts
+
+        except Exception as e:
+            self._debug_log(f"Failed to find similar texts: {e}")
+            return []
 
     async def _type(self, action: Dict[str, Any]) -> Dict[str, Any]:
         """Handle typing text into input fields."""

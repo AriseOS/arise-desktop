@@ -109,6 +109,12 @@ export const SSEEventTypes = {
 
 /**
  * SSE Client class for managing Server-Sent Events connections
+ *
+ * Reconnection Strategy (following Eigent's pattern):
+ * - Auto-retry on connection errors (network issues, connection refused, etc.)
+ * - Exponential backoff with max 10 attempts for network errors
+ * - Immediate retry for transient errors (up to 3 times)
+ * - Stop retrying for fatal errors (HTTP 4xx, parse errors, etc.)
  */
 export class SSEClient {
   constructor() {
@@ -118,8 +124,9 @@ export class SSEClient {
     this.handlers = new Map();
     this.isConnected = false;
     this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 3;
+    this.maxReconnectAttempts = 10; // Increased from 3 to handle longer network issues
     this.reconnectDelay = 1000;
+    this.options = null; // Store options for reconnection
   }
 
   /**
@@ -139,6 +146,7 @@ export class SSEClient {
     this.disconnect();
 
     this.taskId = taskId;
+    this.options = options; // Store for reconnection
     this.abortController = new AbortController();
 
     const apiKey = await auth.getApiKey();
@@ -160,7 +168,10 @@ export class SSEClient {
       });
 
       if (!response.ok) {
-        throw new Error(`SSE connection failed: ${response.status} ${response.statusText}`);
+        // HTTP errors (4xx, 5xx) - check if retriable
+        const error = new Error(`SSE connection failed: ${response.status} ${response.statusText}`);
+        error.status = response.status;
+        throw error;
       }
 
       this.isConnected = true;
@@ -173,37 +184,99 @@ export class SSEClient {
     } catch (error) {
       if (error.name === 'AbortError') {
         console.log('[SSE] Connection aborted');
+        // Don't call onClose here, it was intentionally aborted
+        return;
+      }
+
+      console.error('[SSE] Connection error:', error);
+
+      // Check if this is a retriable error (following Eigent's pattern)
+      if (this._isRetriableError(error)) {
+        console.warn('[SSE] Retriable error detected, will attempt reconnection...');
+        this._handleReconnect(taskId, options);
       } else {
-        console.error('[SSE] Connection error:', error);
+        // Fatal error - don't retry
+        console.error('[SSE] Fatal error, stopping reconnection attempts:', error.message);
         if (onError) {
           onError(error);
         }
-        // Try to reconnect
-        this._handleReconnect(taskId, options);
+        if (onClose) {
+          onClose();
+        }
       }
-    } finally {
-      this.isConnected = false;
-      if (onClose) {
-        onClose();
+      return;
+    }
+
+    // Normal stream end
+    this.isConnected = false;
+    if (onClose) {
+      onClose();
+    }
+  }
+
+  /**
+   * Check if an error is retriable (following Eigent's pattern)
+   * @private
+   */
+  _isRetriableError(error) {
+    // Network errors are retriable
+    if (error instanceof TypeError) {
+      return true;
+    }
+
+    // Check error message for common retriable patterns
+    const retriablePatterns = [
+      'Failed to fetch',
+      'ECONNREFUSED',
+      'ECONNRESET',
+      'ETIMEDOUT',
+      'NetworkError',
+      'network error',
+      'Network request failed',
+      'ERR_NETWORK',
+      'ERR_CONNECTION_REFUSED',
+      'ERR_CONNECTION_RESET',
+      'ERR_INTERNET_DISCONNECTED',
+    ];
+
+    const errorMessage = error.message || '';
+    for (const pattern of retriablePatterns) {
+      if (errorMessage.includes(pattern)) {
+        return true;
       }
     }
+
+    // HTTP 5xx errors are retriable (server errors)
+    if (error.status && error.status >= 500 && error.status < 600) {
+      return true;
+    }
+
+    // HTTP 4xx errors are NOT retriable (client errors like 404, 401, etc.)
+    if (error.status && error.status >= 400 && error.status < 500) {
+      return false;
+    }
+
+    // Default: retry for unknown errors
+    return true;
   }
 
   /**
    * Process SSE stream
    * @private
+   * @returns {Promise<{streamEnded: boolean, error: Error|null}>}
    */
   async _processStream(body, onEvent, onError) {
     const reader = body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    let streamError = null;
 
     try {
       while (true) {
         const { done, value } = await reader.read();
 
         if (done) {
-          console.log('[SSE] Stream ended');
+          console.log('[SSE] Stream ended normally');
           break;
         }
 
@@ -266,15 +339,34 @@ export class SSEClient {
         }
       }
     } catch (error) {
-      if (error.name !== 'AbortError') {
-        console.error('[SSE] Stream processing error:', error);
+      if (error.name === 'AbortError') {
+        console.log('[SSE] Stream aborted');
+        throw error; // Re-throw abort errors
+      }
+
+      console.error('[SSE] Stream processing error:', error);
+      streamError = error;
+
+      // Check if this is a retriable error
+      if (this._isRetriableError(error)) {
+        console.warn('[SSE] Stream error is retriable, will attempt reconnection...');
+        // Attempt reconnection
+        this._handleReconnect(this.taskId, this.options);
+      } else {
+        // Non-retriable error
         if (onError) {
           onError(error);
         }
       }
     } finally {
-      reader.releaseLock();
+      try {
+        reader.releaseLock();
+      } catch (e) {
+        // Ignore errors when releasing lock
+      }
     }
+
+    return { streamEnded: !streamError, error: streamError };
   }
 
   /**
@@ -298,20 +390,62 @@ export class SSEClient {
   }
 
   /**
-   * Handle reconnection
+   * Handle reconnection with exponential backoff
    * @private
+   *
+   * Following Eigent's pattern:
+   * - Auto-retry on connection errors
+   * - Exponential backoff (1s, 2s, 4s, 8s, 16s, 32s, 64s, 128s, 256s, 512s)
+   * - Max delay capped at 30 seconds
+   * - 10 total attempts before giving up
    */
   _handleReconnect(taskId, options) {
+    if (!taskId || !options) {
+      console.error('[SSE] Cannot reconnect: missing taskId or options');
+      return;
+    }
+
     if (this.reconnectAttempts < this.maxReconnectAttempts) {
       this.reconnectAttempts++;
-      const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
+
+      // Exponential backoff with max delay of 30 seconds
+      const baseDelay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
+      const delay = Math.min(baseDelay, 30000);
+
       console.log(`[SSE] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
 
-      setTimeout(() => {
+      // Clear any existing reconnection timer
+      if (this._reconnectTimer) {
+        clearTimeout(this._reconnectTimer);
+      }
+
+      this._reconnectTimer = setTimeout(() => {
+        this._reconnectTimer = null;
+
+        // Check if we've been disconnected manually
+        if (!this.taskId) {
+          console.log('[SSE] Reconnection cancelled: client was disconnected');
+          return;
+        }
+
+        console.log(`[SSE] Attempting reconnection (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
         this.connect(taskId, options);
       }, delay);
     } else {
-      console.error('[SSE] Max reconnection attempts reached');
+      console.error('[SSE] Max reconnection attempts reached, giving up');
+
+      // Notify about connection failure
+      const { onError, onClose } = options;
+      if (onError) {
+        onError(new Error('SSE connection failed after max reconnection attempts'));
+      }
+      if (onClose) {
+        onClose();
+      }
+
+      // Reset state
+      this.isConnected = false;
+      this.taskId = null;
     }
   }
 
@@ -376,12 +510,21 @@ export class SSEClient {
    * Disconnect from SSE stream
    */
   disconnect() {
+    // Clear any pending reconnection timer
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
+
     if (this.abortController) {
       this.abortController.abort();
       this.abortController = null;
     }
+
     this.isConnected = false;
     this.taskId = null;
+    this.options = null;
+    this.reconnectAttempts = 0;
     this.handlers.clear();
     console.log('[SSE] Disconnected');
   }

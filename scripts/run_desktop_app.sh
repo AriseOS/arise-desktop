@@ -3,10 +3,15 @@
 
 # Parse arguments
 USE_LOCAL_CLOUD=false
+AMI_DEBUG_MODE=false
 for arg in "$@"; do
     case $arg in
         --local)
             USE_LOCAL_CLOUD=true
+            shift
+            ;;
+        --debug)
+            AMI_DEBUG_MODE=true
             shift
             ;;
     esac
@@ -51,11 +56,18 @@ fi
 echo "✅ Starting Tauri app (Development Mode)..."
 echo "   AMI_DEV_MODE=1 → Using Python source code"
 
+# Build environment variables
+ENV_VARS="AMI_DEV_MODE=1"
+if [ "$AMI_DEBUG_MODE" = true ]; then
+    ENV_VARS="$ENV_VARS AMI_DEBUG=1"
+    echo "   Debug Mode: ENABLED"
+fi
+
 if [ "$USE_LOCAL_CLOUD" = true ]; then
     echo "   APP_BACKEND_CLOUD_API_URL=http://localhost:9000"
     echo ""
-    AMI_DEV_MODE=1 APP_BACKEND_CLOUD_API_URL=http://localhost:9000 npm run tauri dev
+    eval "$ENV_VARS APP_BACKEND_CLOUD_API_URL=http://localhost:9000 npm run tauri dev"
 else
     echo ""
-    AMI_DEV_MODE=1 npm run tauri dev
+    eval "$ENV_VARS npm run tauri dev"
 fi

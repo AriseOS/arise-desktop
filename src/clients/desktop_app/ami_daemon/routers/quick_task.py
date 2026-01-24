@@ -121,6 +121,11 @@ class TaskListItem(BaseModel):
     completed_at: Optional[str] = None
     user_id: Optional[str] = None
     project_id: Optional[str] = None
+    # New fields for history display
+    loop_iterations: int = 0
+    tools_called_count: int = 0
+    has_result: bool = False
+    has_error: bool = False
 
 
 class TaskListResponse(BaseModel):
@@ -179,6 +184,11 @@ async def list_tasks(
             completed_at=state.completed_at.isoformat() if state.completed_at else None,
             user_id=state.user_id,
             project_id=state.project_id,
+            # New fields
+            loop_iterations=state.loop_iteration,
+            tools_called_count=len(state.tools_called) if state.tools_called else 0,
+            has_result=state.result is not None,
+            has_error=state.error is not None,
         ))
 
     # Sort by created_at (newest first)
@@ -304,6 +314,150 @@ async def cancel_task(task_id: str):
         raise HTTPException(status_code=404, detail="Task not found or already completed")
 
     return {"message": "Task cancelled"}
+
+
+# ============== Task Detail Endpoint (Eigent Migration) ==============
+
+class ConversationEntryResponse(BaseModel):
+    """Single conversation entry"""
+    role: str
+    content: Any
+    timestamp: str
+
+
+class ToolkitEventResponse(BaseModel):
+    """Toolkit event for history display"""
+    toolkit_name: str
+    method_name: str
+    status: str  # running, completed, failed
+    input_preview: Optional[str] = None
+    output_preview: Optional[str] = None
+    timestamp: str
+    duration_ms: Optional[int] = None
+
+
+class ThinkingLogResponse(BaseModel):
+    """Agent thinking/reasoning log"""
+    content: str
+    step: int
+    agent_name: str
+    timestamp: str
+
+
+class TaskDetailResponse(BaseModel):
+    """
+    Complete task detail for restoration/replay.
+
+    Contains all data needed to restore a task in the frontend:
+    - Basic task info
+    - Conversation history (messages)
+    - Toolkit events (tool calls)
+    - Thinking logs (agent reasoning)
+    - Execution results
+    """
+    task_id: str
+    task: str
+    status: str
+    progress: float
+
+    # Timestamps
+    created_at: str
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+
+    # Execution state
+    loop_iterations: int
+    current_step: Optional[Dict] = None
+
+    # Conversation history
+    messages: List[ConversationEntryResponse]
+
+    # Toolkit events (for AgentTab timeline)
+    toolkit_events: List[ToolkitEventResponse]
+
+    # Thinking logs (for AgentTab timeline)
+    thinking_logs: List[ThinkingLogResponse]
+
+    # Results
+    result: Optional[Any] = None
+    error: Optional[str] = None
+    notes_content: Optional[str] = None
+
+    # User/Project info
+    user_id: str
+    project_id: str
+
+
+@router.get("/{task_id}/detail", response_model=TaskDetailResponse)
+async def get_task_detail(task_id: str):
+    """
+    Get complete task detail for restoration/replay.
+
+    This endpoint returns all data needed to restore a task in the frontend,
+    similar to Eigent's replay functionality.
+
+    Used when:
+    - User clicks on a history task that's not in memory
+    - Page refresh and need to restore task state
+    - Viewing completed task details
+    """
+    service = get_service()
+    state = service._tasks.get(task_id)
+
+    if not state:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Convert conversation history to response format
+    messages = []
+    for entry in state.conversation_history:
+        messages.append(ConversationEntryResponse(
+            role=entry.role,
+            content=entry.content,
+            timestamp=entry.timestamp,
+        ))
+
+    # Use persisted toolkit_events from state (detailed format)
+    toolkit_events = []
+    for event in state.toolkit_events:
+        toolkit_events.append(ToolkitEventResponse(
+            toolkit_name=event.get("toolkit_name", "Unknown"),
+            method_name=event.get("method_name", "unknown"),
+            status=event.get("status", "completed"),
+            input_preview=event.get("input_preview"),
+            output_preview=event.get("output_preview"),
+            timestamp=event.get("timestamp", state.created_at.isoformat()),
+            duration_ms=event.get("duration_ms"),
+        ))
+
+    # Use persisted thinking_logs from state
+    thinking_logs = []
+    for log in state.thinking_logs:
+        thinking_logs.append(ThinkingLogResponse(
+            content=log.get("content", ""),
+            step=log.get("step", 0),
+            agent_name=log.get("agent_name", "browser_agent"),
+            timestamp=log.get("timestamp", state.created_at.isoformat()),
+        ))
+
+    return TaskDetailResponse(
+        task_id=state.task_id,
+        task=state.task,
+        status=state.status.value,
+        progress=state.progress,
+        created_at=state.created_at.isoformat(),
+        started_at=state.started_at.isoformat() if state.started_at else None,
+        completed_at=state.completed_at.isoformat() if state.completed_at else None,
+        loop_iterations=state.loop_iteration,
+        current_step=state.current_step,
+        messages=messages,
+        toolkit_events=toolkit_events,
+        thinking_logs=thinking_logs,
+        result=state.result,
+        error=state.error,
+        notes_content=state.notes_content,
+        user_id=state.user_id,
+        project_id=state.project_id,
+    )
 
 
 class MessageRequest(BaseModel):
@@ -580,38 +734,42 @@ async def cleanup_workspace(task_id: str, force: bool = False):
 
 # ============== SSE Streaming Endpoint ==============
 
-SSE_TIMEOUT_SECONDS = 300  # 5 minutes
+SSE_IDLE_TIMEOUT_SECONDS = 600  # 10 minutes idle timeout (no data received)
 SSE_HEARTBEAT_INTERVAL = 30  # 30 seconds
 
 
 async def sse_stream_wrapper(
     state,
     request: Request,
-    timeout_seconds: int = SSE_TIMEOUT_SECONDS,
+    idle_timeout_seconds: int = SSE_IDLE_TIMEOUT_SECONDS,
     heartbeat_interval: int = SSE_HEARTBEAT_INTERVAL,
 ):
     """
-    Wrap event queue as SSE stream with timeout handling.
+    Wrap event queue as SSE stream with idle timeout handling.
+
+    Following Eigent's pattern: timeout is based on idle time (no data received),
+    not total connection time. This allows long-running tasks to stream indefinitely
+    as long as data keeps flowing.
 
     Yields SSE-formatted events from the typed event queue.
     Closes the connection on:
-    - Total timeout reached
+    - Idle timeout reached (no data for idle_timeout_seconds)
     - Client disconnect
     - End/completed/failed/cancelled events
     """
     import time
-    start_time = time.time()
+    last_data_time = time.time()  # Track last data received time
 
     try:
         while True:
-            # Check total timeout
-            elapsed = time.time() - start_time
-            if elapsed >= timeout_seconds:
-                logger.info(f"SSE stream timeout for task {state.task_id}")
+            # Check idle timeout (time since last data)
+            elapsed_since_data = time.time() - last_data_time
+            if elapsed_since_data >= idle_timeout_seconds:
+                logger.info(f"SSE stream idle timeout for task {state.task_id} (no data for {idle_timeout_seconds}s)")
                 yield sse_action(EndData(
                     task_id=state.task_id,
                     status="timeout",
-                    message="Stream timeout"
+                    message="Stream idle timeout"
                 ))
                 break
 
@@ -627,6 +785,9 @@ async def sse_stream_wrapper(
                     timeout=heartbeat_interval
                 )
 
+                # Reset idle timer on data received
+                last_data_time = time.time()
+
                 # Yield SSE-formatted event
                 yield sse_action(event)
 
@@ -639,6 +800,7 @@ async def sse_stream_wrapper(
 
             except asyncio.TimeoutError:
                 # No event within interval, send heartbeat
+                # Note: heartbeat doesn't reset idle timer - only actual data does
                 yield sse_heartbeat()
 
     except asyncio.CancelledError:

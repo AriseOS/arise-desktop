@@ -65,6 +65,57 @@ const AGENT_CONFIGS = {
   },
 };
 
+/**
+ * Get agent configuration by type.
+ * Maps agent_type strings to config objects.
+ */
+export function getAgentConfig(agentType) {
+  if (!agentType) return AGENT_CONFIGS.default;
+
+  // Normalize agent type string
+  const normalized = agentType.toLowerCase()
+    .replace(/_agent$/, '')
+    .replace(/agent$/, '')
+    .trim();
+
+  // Direct match
+  if (AGENT_CONFIGS[normalized]) {
+    return AGENT_CONFIGS[normalized];
+  }
+
+  // Partial match
+  if (normalized.includes('browser')) return AGENT_CONFIGS.browser;
+  if (normalized.includes('reason')) return AGENT_CONFIGS.reasoner;
+  if (normalized.includes('code') || normalized.includes('developer')) return AGENT_CONFIGS.coder;
+  if (normalized.includes('doc')) return AGENT_CONFIGS.document;
+  if (normalized.includes('social') || normalized.includes('medium')) return AGENT_CONFIGS.social;
+
+  return AGENT_CONFIGS.default;
+}
+
+/**
+ * AgentBadge - Simple badge displaying agent type with icon.
+ */
+export function AgentBadge({ agentType, size = 'md', showName = true, className = '' }) {
+  const config = getAgentConfig(agentType);
+  const sizeClass = size === 'sm' ? 'agent-badge-sm' : size === 'lg' ? 'agent-badge-lg' : 'agent-badge-md';
+
+  return (
+    <span
+      className={`agent-badge ${sizeClass} ${className}`}
+      style={{
+        background: config.bgColor,
+        borderColor: config.borderColor,
+        color: config.color,
+      }}
+      title={config.name}
+    >
+      <span className="agent-badge-icon">{config.icon}</span>
+      {showName && <span className="agent-badge-name">{config.name}</span>}
+    </span>
+  );
+}
+
 // Toolkit icon mapping
 const TOOLKIT_ICONS = {
   browser_control: '🌐',

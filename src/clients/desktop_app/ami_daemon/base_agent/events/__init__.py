@@ -18,6 +18,10 @@ from .action_types import (
     PlanStartedData,
     PlanProgressData,
     PlanGeneratedData,
+    # Task decomposition
+    TaskDecomposedData,
+    SubtaskStateData,
+    TaskReplannedData,
     # Agent lifecycle
     ActivateAgentData,
     DeactivateAgentData,
@@ -78,6 +82,10 @@ __all__ = [
     "PlanStartedData",
     "PlanProgressData",
     "PlanGeneratedData",
+    # Task decomposition
+    "TaskDecomposedData",
+    "SubtaskStateData",
+    "TaskReplannedData",
     # Agent lifecycle
     "ActivateAgentData",
     "DeactivateAgentData",

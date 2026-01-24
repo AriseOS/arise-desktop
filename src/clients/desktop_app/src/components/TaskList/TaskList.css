@@ -111,6 +111,26 @@
   padding: 8px;
 }
 
+/* Loading state */
+.task-list-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--text-tertiary);
+}
+
+.task-list-loading p {
+  margin: 12px 0 0;
+  font-size: 13px;
+}
+
+.task-list-loading .spinning {
+  animation: spin 1s linear infinite;
+}
+
 /* Empty state */
 .task-list-empty {
   display: flex;

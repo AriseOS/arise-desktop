@@ -87,12 +87,37 @@
   --bg-primary: var(--bg-surface);
   --bg-secondary: var(--color-gray-50);
   --bg-tertiary: var(--color-gray-100);
+  --bg-hover: var(--bg-surface-hover);
+  --bg-disabled: var(--color-gray-200);
 
   --border-color: var(--border-subtle);
   --error-color: var(--status-error-text);
   --error-bg: var(--status-error-bg);
   --success-color: var(--status-success-text);
   --warning-color: var(--status-warning-text);
+
+  /* Surface/Border mappings for Workspace components */
+  --surface-primary: var(--bg-surface);
+  --surface-secondary: var(--color-gray-50);
+  --surface-tertiary: var(--color-gray-100);
+  --surface-hover: var(--bg-surface-hover);
+
+  --border-primary: var(--border-subtle);
+
+  --accent-primary: var(--color-primary-500);
+  --accent-light: var(--color-primary-100);
+
+  --success: var(--status-success-text);
+  --success-light: var(--status-success-bg);
+  --error: var(--status-error-text);
+  --error-light: var(--status-error-bg);
+
+  --log-default: var(--color-gray-50);
+  --log-hover: var(--color-gray-100);
+  --thinking-bg: #fef9c3;
+
+  --scrollbar-thumb: var(--color-gray-300);
+  --scrollbar-thumb-hover: var(--color-gray-400);
 
   /* Spacing Aliases */
   --spacing-xs: var(--space-1);

@@ -131,7 +131,9 @@ class TaskState:
     completed_at: Optional[datetime] = None
 
     # Tool-calling specific state
-    tools_called: List[Dict] = field(default_factory=list)  # History of tool calls
+    tools_called: List[Dict] = field(default_factory=list)  # History of tool calls (legacy, simple format)
+    toolkit_events: List[Dict] = field(default_factory=list)  # Detailed toolkit events for restoration
+    thinking_logs: List[Dict] = field(default_factory=list)  # Agent thinking/reasoning logs
     notes_content: Optional[str] = None  # Notes created during execution
     loop_iteration: int = 0  # Current iteration in the agent loop
 
@@ -872,6 +874,9 @@ class QuickTaskService:
         state.started_at = datetime.now()
         state.updated_at = state.started_at
 
+        # Record user's task as first conversation entry (for restoration)
+        state.add_conversation("user", state.task)
+
         # Set current working directory manager for this task
         set_current_manager(state.dir_manager)
         logger.info(f"[Task {task_id}] Working directory: {state.working_directory}")
@@ -1005,10 +1010,25 @@ class QuickTaskService:
                     tool_name = data.get("tool", "unknown")
                     tool_input = data.get("input", {})
                     input_preview = str(tool_input)[:200] if tool_input else None
+                    toolkit_name = tool_name.split(".")[0] if "." in tool_name else tool_name
+                    method_name = tool_name.split(".")[-1] if "." in tool_name else tool_name
+                    timestamp = datetime.now().isoformat()
+
+                    # Save to state for persistence
+                    state.toolkit_events.append({
+                        "toolkit_name": toolkit_name,
+                        "method_name": method_name,
+                        "status": "running",
+                        "input_preview": input_preview,
+                        "output_preview": None,
+                        "timestamp": timestamp,
+                        "agent_name": agent_name,
+                    })
+
                     await state.put_event(ActivateToolkitData(
                         task_id=task_id,
-                        toolkit_name=tool_name.split(".")[0] if "." in tool_name else tool_name,
-                        method_name=tool_name.split(".")[-1] if "." in tool_name else tool_name,
+                        toolkit_name=toolkit_name,
+                        method_name=method_name,
                         input_preview=input_preview,
                         agent_name=agent_name,
                     ))
@@ -1017,10 +1037,20 @@ class QuickTaskService:
                     tool_name = data.get("tool", "unknown")
                     result = str(data.get("result", ""))
                     result_preview = result[:200]
+                    toolkit_name = tool_name.split(".")[0] if "." in tool_name else tool_name
+                    method_name = tool_name.split(".")[-1] if "." in tool_name else tool_name
+
+                    # Update the last running event with same toolkit/method
+                    for evt in reversed(state.toolkit_events):
+                        if evt["toolkit_name"] == toolkit_name and evt["method_name"] == method_name and evt["status"] == "running":
+                            evt["status"] = "completed"
+                            evt["output_preview"] = result_preview
+                            break
+
                     await state.put_event(DeactivateToolkitData(
                         task_id=task_id,
-                        toolkit_name=tool_name.split(".")[0] if "." in tool_name else tool_name,
-                        method_name=tool_name.split(".")[-1] if "." in tool_name else tool_name,
+                        toolkit_name=toolkit_name,
+                        method_name=method_name,
                         output_preview=result_preview,
                         success=True,
                         agent_name=agent_name,
@@ -1052,10 +1082,20 @@ class QuickTaskService:
                 elif event == "tool_failed":
                     tool_name = data.get("tool", "unknown")
                     error = data.get("error", "unknown")
+                    toolkit_name = tool_name.split(".")[0] if "." in tool_name else tool_name
+                    method_name = tool_name.split(".")[-1] if "." in tool_name else tool_name
+
+                    # Update the last running event with same toolkit/method
+                    for evt in reversed(state.toolkit_events):
+                        if evt["toolkit_name"] == toolkit_name and evt["method_name"] == method_name and evt["status"] == "running":
+                            evt["status"] = "failed"
+                            evt["output_preview"] = f"Error: {error}"
+                            break
+
                     await state.put_event(DeactivateToolkitData(
                         task_id=task_id,
-                        toolkit_name=tool_name.split(".")[0] if "." in tool_name else tool_name,
-                        method_name=tool_name.split(".")[-1] if "." in tool_name else tool_name,
+                        toolkit_name=toolkit_name,
+                        method_name=method_name,
                         output_preview=f"Error: {error}",
                         success=False,
                         agent_name=agent_name,
@@ -1095,12 +1135,29 @@ class QuickTaskService:
                     ))
 
                 elif event == "llm_reasoning":
-                    await state.put_event(AgentThinkingData(
+                    reasoning_text = data.get("reasoning", "")
+                    step = data.get("step", state.loop_iteration)
+                    timestamp = datetime.now().isoformat()
+                    logger.info(f"[Task {task_id}] on_agent_progress received llm_reasoning event")
+                    logger.info(f"[Task {task_id}] Emitting agent_thinking event: {reasoning_text[:100]}...")
+
+                    # Save to state for persistence
+                    state.thinking_logs.append({
+                        "content": reasoning_text[:500],  # Truncate for storage
+                        "step": step,
+                        "agent_name": agent_name,
+                        "timestamp": timestamp,
+                    })
+
+                    thinking_event = AgentThinkingData(
                         task_id=task_id,
                         agent_name=agent_name,
-                        thinking=data.get("reasoning", ""),
-                        step=data.get("step"),
-                    ))
+                        thinking=reasoning_text,
+                        step=step,
+                    )
+                    logger.info(f"[Task {task_id}] AgentThinkingData created: action={thinking_event.action}")
+                    await state.put_event(thinking_event)
+                    logger.info(f"[Task {task_id}] agent_thinking event put to queue")
 
                 elif event == "agent_completed":
                     state.progress = 1.0

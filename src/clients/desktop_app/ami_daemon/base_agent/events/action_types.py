@@ -42,6 +42,11 @@ class Action(str, Enum):
     plan_progress = "plan_progress"         # Planning progress update
     plan_generated = "plan_generated"       # Plan complete
 
+    # Task decomposition (from TaskPlanningToolkit)
+    task_decomposed = "task_decomposed"       # Task broken into subtasks
+    subtask_state = "subtask_state"           # Subtask state changed
+    task_replanned = "task_replanned"         # Task re-planned with new subtasks
+
     # Agent lifecycle
     activate_agent = "activate_agent"       # Agent started working
     deactivate_agent = "deactivate_agent"   # Agent finished
@@ -192,6 +197,37 @@ class PlanGeneratedData(BaseActionData):
     method: Optional[str] = None  # "memory", "llm", etc.
 
 
+# ===== Task Decomposition Events =====
+
+class TaskDecomposedData(BaseActionData):
+    """Task decomposed into subtasks event (from TaskPlanningToolkit)."""
+
+    action: Literal[Action.task_decomposed] = Action.task_decomposed
+    subtasks: List[Dict]  # List of subtask dicts with id, content, state
+    summary_task: Optional[str] = None  # Main task summary
+    original_task_id: Optional[str] = None
+    total_subtasks: int = 0
+
+
+class SubtaskStateData(BaseActionData):
+    """Subtask state changed event."""
+
+    action: Literal[Action.subtask_state] = Action.subtask_state
+    subtask_id: str
+    state: str  # OPEN, RUNNING, DONE, FAILED, DELETED
+    result: Optional[str] = None
+    failure_count: int = 0
+
+
+class TaskReplannedData(BaseActionData):
+    """Task re-planned with new subtasks event."""
+
+    action: Literal[Action.task_replanned] = Action.task_replanned
+    subtasks: List[Dict]  # New subtask list
+    original_task_id: Optional[str] = None
+    reason: Optional[str] = None  # Why re-planned
+
+
 # ===== Agent Lifecycle Events =====
 
 class ActivateAgentData(BaseActionData):
@@ -330,6 +366,20 @@ class WriteFileData(BaseActionData):
     mime_type: Optional[str] = None
 
 
+class ScreenshotData(BaseActionData):
+    """Browser screenshot event.
+
+    Sent when a browser screenshot is captured, allowing the frontend
+    to display the current browser state in the BrowserTab.
+    """
+
+    action: Literal[Action.screenshot] = Action.screenshot
+    screenshot: str  # Base64-encoded image data (with data URI prefix)
+    url: Optional[str] = None  # Current page URL
+    page_title: Optional[str] = None  # Current page title
+    tab_id: Optional[str] = None  # Tab ID if multiple tabs
+
+
 # ===== User Interaction Events =====
 
 class AskData(BaseActionData):
@@ -432,6 +482,10 @@ ActionData = Union[
     PlanStartedData,
     PlanProgressData,
     PlanGeneratedData,
+    # Task decomposition
+    TaskDecomposedData,
+    SubtaskStateData,
+    TaskReplannedData,
     # Agent lifecycle
     ActivateAgentData,
     DeactivateAgentData,
@@ -448,6 +502,7 @@ ActionData = Union[
     TerminalData,
     BrowserActionData,
     WriteFileData,
+    ScreenshotData,
     # User interaction
     AskData,
     NoticeData,

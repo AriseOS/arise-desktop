@@ -1,8 +1,10 @@
 /**
  * Agent Message Component
  *
- * Displays agent/assistant messages in the chat interface.
- * Supports markdown rendering and various content types.
+ * Displays agent/assistant final response messages in the chat interface.
+ * Following Eigent pattern - only shows conversation responses, not execution details.
+ *
+ * Supports markdown rendering for rich content display.
  */
 
 import React from 'react';
@@ -10,7 +12,7 @@ import ReactMarkdown from 'react-markdown';
 import Icon from '../../Icons';
 
 function AgentMessage({ message }) {
-  const { content, timestamp, step, thinking } = message;
+  const { content, timestamp, step, attaches } = message;
 
   // Format timestamp
   const formatTime = (ts) => {
@@ -21,9 +23,8 @@ function AgentMessage({ message }) {
 
   // Determine message style based on step type
   const getMessageClass = () => {
-    if (step === 'thinking' || thinking) return 'thinking-message';
     if (step === 'error') return 'error-message';
-    if (step === 'tool_result') return 'tool-result-message';
+    if (step === 'end') return 'final-response';
     return '';
   };
 
@@ -39,19 +40,20 @@ function AgentMessage({ message }) {
         )}
       </div>
       <div className="message-content">
-        {thinking && (
-          <div className="thinking-indicator">
-            <span className="thinking-dots">
-              <span></span>
-              <span></span>
-              <span></span>
-            </span>
-            <span className="thinking-text">Thinking...</span>
-          </div>
-        )}
         {content && (
           <div className="message-text markdown-content">
             <ReactMarkdown>{content}</ReactMarkdown>
+          </div>
+        )}
+        {/* File attachments from agent response (Eigent pattern) */}
+        {attaches && attaches.length > 0 && (
+          <div className="message-attachments">
+            {attaches.map((file, index) => (
+              <div key={`attach-${index}`} className="attachment-item">
+                <Icon name="file" size={14} />
+                <span className="attachment-name">{file.fileName || file.name}</span>
+              </div>
+            ))}
           </div>
         )}
       </div>

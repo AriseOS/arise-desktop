@@ -3,7 +3,8 @@ import { useTranslation } from 'react-i18next';
 import Icon from '../components/Icons';
 import ChatBox from '../components/ChatBox';
 import { TaskCard } from '../components/TaskBox';
-import { FileBrowser, FilePreview, TerminalOutput } from '../components/Workspace';
+// Workspace Tabs - New unified workspace component (Eigent-style)
+import { WorkspaceTabs } from '../components/Workspace';
 // Eigent Migration: Multi-agent and advanced UI components
 import { AgentsPanel, AgentStatusBar } from '../components/AgentNode';
 import { TokenUsage, BudgetConfigDialog } from '../components/TokenUsage';
@@ -11,8 +12,9 @@ import { HumanInteractionModal, HumanMessagesContainer } from '../components/Hum
 import { TaskList } from '../components/TaskList';
 import { useAgentStore } from '../store';
 import { api } from '../utils/api';
-// Note: TaskDecomposition and IntegrationList components are not yet implemented
-// import TaskDecomposition, { DecompositionSummary } from '../components/TaskDecomposition';
+// Task decomposition panel for task planning
+import TaskDecomposition from '../components/TaskDecomposition';
+// Note: IntegrationList component is not yet implemented
 // import IntegrationList, { IntegrationStatusBar } from '../components/IntegrationList';
 import '../styles/AgentPage.css';
 
@@ -57,6 +59,8 @@ function AgentPage({ session, onNavigate, showStatus, version }) {
   // Derive display values from active task
   const taskId = activeTaskId;
   const backendTaskId = activeTask?.backendTaskId || null;  // Backend task ID for API calls
+  // For display purposes, prefer backendTaskId if available, otherwise use local taskId
+  const displayTaskId = backendTaskId || taskId;
   const status = activeTask?.status || 'idle';
   const taskDescription = activeTask?.taskDescription || '';
   const messages = activeTask?.messages || [];
@@ -66,6 +70,9 @@ function AgentPage({ session, onNavigate, showStatus, version }) {
   const toolkitEvents = activeTask?.toolkitEvents || [];
   const terminalOutput = activeTask?.terminalOutput || [];
   const memoryPaths = activeTask?.memoryPaths || [];
+  const thinkingLogs = activeTask?.thinkingLogs || [];
+  const browserScreenshot = activeTask?.browserScreenshot || null;
+  const browserUrl = activeTask?.browserUrl || '';
   const progressValue = activeTask?.progressValue || 0;
   const executionPhase = activeTask?.executionPhase || 'initializing';
   const loopIteration = activeTask?.loopIteration || 0;
@@ -84,6 +91,14 @@ function AgentPage({ session, onNavigate, showStatus, version }) {
   const subtasks = activeTask?.subtasks || [];
   const showDecomposition = activeTask?.showDecomposition || false;
   const confirmedSubtasks = activeTask?.confirmedSubtasks || [];
+  // Eigent: Additional task state for ChatBox BottomBox state machine
+  const taskInfo = activeTask?.taskInfo || [];
+  const taskRunning = activeTask?.taskRunning || [];
+  const summaryTask = activeTask?.summaryTask || '';
+  const streamingDecomposeText = activeTask?.streamingDecomposeText || '';
+  const isTaskEdit = activeTask?.isTaskEdit || false;
+  const taskTime = activeTask?.taskTime || null;
+  const elapsed = activeTask?.elapsed || 0;
 
   // ============ Local UI State (not task-specific) ============
   const [showTaskList, setShowTaskList] = useState(true);
@@ -92,8 +107,9 @@ function AgentPage({ session, onNavigate, showStatus, version }) {
   const [showBudgetConfig, setShowBudgetConfig] = useState(false);
   const [budget, setBudget] = useState({ maxCostUsd: null, warningThreshold: 0.8 });
   const [humanResponseInput, setHumanResponseInput] = useState('');
-  const [rightPanelWidth, setRightPanelWidth] = useState(380); // Default 380px
+  const [rightPanelWidth, setRightPanelWidth] = useState(480); // Default 480px (increased for tabs)
   const [isResizing, setIsResizing] = useState(false);
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState('agent'); // Workspace tab state
 
   // Right panel resize handler
   const handleMouseDown = (e) => {
@@ -174,6 +190,18 @@ function AgentPage({ session, onNavigate, showStatus, version }) {
   const handleDecompositionCancel = async () => {
     if (!activeTaskId) return;
     await cancelDecomposition(activeTaskId);
+  };
+
+  // Handle entering task edit mode (Eigent pattern: opens Modal for detailed editing)
+  const handleEditTask = () => {
+    if (!activeTaskId) return;
+    setTaskEdit(activeTaskId, true);
+  };
+
+  // Handle exiting task edit mode
+  const handleCloseEditTask = () => {
+    if (!activeTaskId) return;
+    setTaskEdit(activeTaskId, false);
   };
 
   // Handle budget configuration save
@@ -388,147 +416,45 @@ function AgentPage({ session, onNavigate, showStatus, version }) {
             </div>
           )}
 
-          {/* Running/Completed/Failed State */}
+          {/* Running/Completed/Failed State - New Eigent-style Layout */}
           {status !== 'idle' && (
             <div
               className={`execution-layout ${isResizing ? 'resizing' : ''}`}
               style={{ '--right-panel-width': `${rightPanelWidth}px` }}
             >
-              {/* Left Panel - Chat & Progress */}
+              {/* Left Panel - Pure ChatBox (Eigent Pattern) */}
               <div className="left-panel">
-                {/* Compact Task Status Bar */}
-                <div className="task-status-bar">
-                  <div className="task-status-left">
-                    {status === 'running' && (
-                      <div className="status-badge running">
-                        <span className="status-dot"></span>
-                        <span>{getPhaseText()}</span>
-                      </div>
-                    )}
-                    {status === 'completed' && (
-                      <div className="status-badge completed">
-                        <Icon name="check" size={14} />
-                        <span>Completed</span>
-                      </div>
-                    )}
-                    {status === 'failed' && (
-                      <div className="status-badge failed">
-                        <Icon name="alert" size={14} />
-                        <span>Failed</span>
-                      </div>
-                    )}
-                    <span className="task-description-brief" title={taskDescription}>
-                      {taskDescription.length > 50 ? taskDescription.slice(0, 50) + '...' : taskDescription}
-                    </span>
-                  </div>
-                  <div className="task-status-right">
-                    {status === 'running' && (
-                      <button className="btn-text-danger" onClick={handleCancel}>
-                        Cancel
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Collapsible Tool Activity */}
-                {toolkitEvents.length > 0 && (
-                  <details className="tool-activity-panel" open>
-                    <summary className="tool-activity-header">
-                      <span className="tool-activity-title">
-                        <Icon name="tool" size={14} />
-                        Tool Activity
-                      </span>
-                      <span className="tool-activity-count">{toolkitEvents.length}</span>
-                    </summary>
-                    <div className="tool-activity-list">
-                      {toolkitEvents.slice(-30).map((event, index) => (
-                        <div key={event.id || index} className={`tool-activity-item ${event.status || ''}`}>
-                          <span className="tool-status-icon">
-                            {event.status === 'running' && <span className="spinner-tiny"></span>}
-                            {event.status === 'completed' && '✓'}
-                            {event.status === 'failed' && '✗'}
-                          </span>
-                          <span className="tool-name">{event.toolkit_name}</span>
-                          <span className="tool-method">.{event.method_name}()</span>
-                          {event.input_preview && (
-                            <span className="tool-input" title={event.input_preview}>
-                              {event.input_preview.length > 60
-                                ? event.input_preview.slice(0, 60) + '...'
-                                : event.input_preview}
-                            </span>
-                          )}
-                          {event.page_url && (
-                            <a
-                              href={event.page_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="tool-url"
-                              title={event.page_url}
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              {new URL(event.page_url).hostname}
-                            </a>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </details>
-                )}
-
-                {/* Memory Paths */}
-                {memoryPaths.length > 0 && (
-                  <div className="memory-paths-card">
-                    <h4>
-                      <span className="memory-icon">🧠</span>
-                      Memory Reference ({memoryPaths.length} paths)
-                    </h4>
-                    <div className="memory-paths-list">
-                      {memoryPaths.map((path, i) => (
-                        <div key={i} className="memory-path-item">
-                          <span className="path-score">{(path.score * 100).toFixed(0)}%</span>
-                          <span className="path-description">{path.description || path.domain}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* ChatBox */}
+                {/* ChatBox - Conversation messages + BottomBox state machine (Eigent pattern) */}
                 <div className="chatbox-container">
                   <ChatBox
                     messages={messages}
                     notices={notices}
+                    // Eigent pattern: Pass complete task object for BottomBox state machine
+                    task={{
+                      taskInfo: taskInfo,
+                      taskRunning: taskRunning,
+                      status: status,
+                      streamingDecomposeText: streamingDecomposeText,
+                      summaryTask: summaryTask,
+                      progressValue: progressValue,
+                      isTaskEdit: isTaskEdit,
+                      taskTime: taskTime,
+                      elapsed: elapsed,
+                      tokens: tokenUsage?.inputTokens + tokenUsage?.outputTokens || 0,
+                    }}
+                    // Input control
+                    inputValue={taskInput}
+                    onInputChange={(e) => setTaskInput(e.target.value)}
+                    onSendMessage={handleSubmit}
+                    // Task actions
+                    onStartTask={() => handleDecompositionConfirm(subtasks)}
+                    onEditTask={handleEditTask}
+                    onPauseResume={() => console.log('Pause/Resume not implemented')}
+                    // Loading states
+                    isLoading={status === 'running'}
+                    disabled={status === 'running'}
                   />
                 </div>
-
-                {/* Result Section */}
-                {status === 'completed' && result && (
-                  <div className="result-card">
-                    <h4>Result</h4>
-                    <pre className="result-content">
-                      {typeof result === 'object' ? JSON.stringify(result, null, 2) : result}
-                    </pre>
-                  </div>
-                )}
-
-                {/* Error Section */}
-                {status === 'failed' && error && (
-                  <div className="error-card">
-                    <h4>Error</h4>
-                    <pre className="error-content">{error}</pre>
-                  </div>
-                )}
-
-                {/* Notes Section */}
-                {notesContent && (
-                  <div className="notes-card">
-                    <h4>
-                      <span className="notes-icon">📝</span>
-                      Research Notes
-                    </h4>
-                    <pre className="notes-content">{notesContent}</pre>
-                  </div>
-                )}
 
                 {/* Action Buttons */}
                 {(status === 'completed' || status === 'failed') && (
@@ -548,60 +474,73 @@ function AgentPage({ session, onNavigate, showStatus, version }) {
                 title="Drag to resize"
               />
 
-              {/* Right Panel - Workspace */}
+              {/* Right Panel - WorkspaceTabs (Eigent Pattern) */}
               <div className="right-panel" style={{ width: rightPanelWidth }}>
-                {/* Multi-Agent Panel */}
-                {agents.length > 0 && (
-                  <div className="workspace-section agents-section">
-                    <AgentsPanel
-                      agents={agents}
-                      activeAgentId={activeAgentId}
-                      onAgentClick={(agentId) => {
-                        if (activeTaskId) {
-                          updateTask(activeTaskId, { activeAgentId: agentId });
-                        }
-                      }}
-                    />
+                <WorkspaceTabs
+                  activeTab={activeWorkspaceTab}
+                  onTabChange={setActiveWorkspaceTab}
+                  taskId={displayTaskId}
+                  taskStatus={status}
+                  // AgentTab data
+                  toolkitEvents={toolkitEvents}
+                  thinkingLogs={thinkingLogs}
+                  memoryPaths={memoryPaths}
+                  notices={notices}
+                  loopIteration={loopIteration}
+                  currentTools={currentTools}
+                  result={result}
+                  error={error}
+                  notes={notesContent}
+                  // BrowserTab data
+                  browserScreenshot={browserScreenshot}
+                  browserUrl={browserUrl}
+                  // FilesTab data
+                  workspaceFiles={[]}
+                  workspacePath=""
+                  // TerminalTab data
+                  terminalOutput={terminalOutput}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Status Bar - Bottom (Eigent Pattern) */}
+          {status !== 'idle' && (
+            <div className="task-status-bar bottom">
+              <div className="task-status-left">
+                {status === 'running' && (
+                  <div className="status-badge running">
+                    <span className="status-dot"></span>
+                    <span>{getPhaseText()}</span>
                   </div>
                 )}
-
-                {/* Task Decomposition Summary - Not yet implemented */}
-                {/* {confirmedSubtasks.length > 0 && (
-                <div className="workspace-section decomposition-section">
-                  <DecompositionSummary
-                    subtasks={confirmedSubtasks}
-                    status={status}
-                  />
-                </div>
-              )} */}
-
-                {/* File Browser and Preview */}
-                <div className="workspace-section file-browser-section">
-                  <FileBrowser
-                    taskId={backendTaskId}
-                    onFileSelect={setSelectedFile}
-                    selectedFile={selectedFile}
-                  />
-                </div>
-
-                {/* File Preview */}
-                {selectedFile && (
-                  <div className="workspace-section file-preview-section">
-                    <FilePreview
-                      taskId={backendTaskId}
-                      filePath={selectedFile}
-                      onClose={() => setSelectedFile(null)}
-                    />
+                {status === 'completed' && (
+                  <div className="status-badge completed">
+                    <Icon name="check" size={14} />
+                    <span>Completed</span>
                   </div>
                 )}
-
-                {/* Terminal Output */}
-                <div className="workspace-section terminal-section">
-                  <TerminalOutput
-                    output={terminalOutput}
-                    title="Terminal Output"
-                  />
-                </div>
+                {status === 'failed' && (
+                  <div className="status-badge failed">
+                    <Icon name="alert" size={14} />
+                    <span>Failed</span>
+                  </div>
+                )}
+                <span className="task-description-brief" title={taskDescription}>
+                  {taskDescription.length > 60 ? taskDescription.slice(0, 60) + '...' : taskDescription}
+                </span>
+              </div>
+              <div className="task-status-right">
+                {status === 'running' && (
+                  <>
+                    <button className="btn-text" onClick={() => console.log('Pause not implemented')}>
+                      Pause
+                    </button>
+                    <button className="btn-text-danger" onClick={handleCancel}>
+                      Cancel
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -651,19 +590,22 @@ function AgentPage({ session, onNavigate, showStatus, version }) {
         maxVisible={3}
       />
 
-      {/* Task Decomposition Modal - Not yet implemented */}
-      {/* {showDecomposition && (
+      {/* Task Decomposition Modal - Only show when editing (Eigent pattern: inline TaskCard in ChatBox for normal view) */}
+      {isTaskEdit && subtasks.length > 0 && (
         <div className="task-decomposition-overlay">
           <TaskDecomposition
             subtasks={subtasks}
-            onConfirm={handleDecompositionConfirm}
-            onCancel={handleDecompositionCancel}
-            autoConfirmDelay={30}
-            isVisible={showDecomposition}
-            title="Task Plan"
+            onConfirm={(editedSubtasks) => {
+              handleDecompositionConfirm(editedSubtasks);
+              handleCloseEditTask();
+            }}
+            onCancel={handleCloseEditTask}
+            autoConfirmDelay={0}
+            isVisible={isTaskEdit}
+            title="Edit Task Plan"
           />
         </div>
-      )} */}
+      )}
 
       {/* Budget Configuration Dialog (Eigent Migration) */}
       <BudgetConfigDialog

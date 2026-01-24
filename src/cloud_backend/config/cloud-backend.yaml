@@ -127,7 +127,7 @@ embedding:
   dimension: 1024  # Embedding vector dimension
   # API configuration (for OpenAI-compatible APIs like SiliconFlow)
   api_url: https://api.siliconflow.cn/v1  # SiliconFlow API base URL
-  api_key: # Environment variable for API key
+  api_key: sk-nfveshrtleyiscbeivhxltvvlvbzelohzdwqgkozttaslmdu # Environment variable for API key
 
 # Rate Limiting (optional)
 # rate_limit:

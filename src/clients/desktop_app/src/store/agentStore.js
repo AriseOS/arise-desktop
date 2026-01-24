@@ -91,6 +91,13 @@ const createInitialTaskState = (taskDescription = '', type = 'normal') => ({
   // Memory
   memoryPaths: [],
 
+  // Thinking/Reasoning (for AgentTab display)
+  thinkingLogs: [],  // Agent reasoning history
+
+  // Browser state (for BrowserTab display)
+  browserScreenshot: null,  // Current browser screenshot (base64 image)
+  browserUrl: '',           // Current browser URL
+
   // Workspace
   terminalOutput: [],
   notesContent: null,
@@ -120,6 +127,7 @@ const createInitialTaskState = (taskDescription = '', type = 'normal') => ({
   subtasks: [],
   showDecomposition: false,
   confirmedSubtasks: [],
+  streamingDecomposeText: '',  // Eigent: streaming task decomposition text
 
   // Eigent flags
   isPending: false,
@@ -338,17 +346,33 @@ export const useAgentStore = create((set, get) => ({
 
   /**
    * Add toolkit event
+   * Includes deduplication to prevent duplicate entries from multiple event sources
    */
   addToolkitEvent: (taskId, event) => {
     set((state) => {
       if (!state.tasks[taskId]) return state;
+
+      const existingEvents = state.tasks[taskId].toolkitEvents;
+
+      // Deduplicate: Check if there's already a running event with same toolkit+method
+      // This prevents duplicate entries when both activate_toolkit and browser_action fire
+      const isDuplicate = existingEvents.some(e =>
+        e.toolkit_name === event.toolkit_name &&
+        e.method_name === event.method_name &&
+        e.status === 'running'
+      );
+
+      if (isDuplicate) {
+        console.log('[AgentStore] Skipping duplicate toolkit event:', event.toolkit_name, event.method_name);
+        return state;
+      }
 
       return {
         tasks: {
           ...state.tasks,
           [taskId]: {
             ...state.tasks[taskId],
-            toolkitEvents: [...state.tasks[taskId].toolkitEvents, {
+            toolkitEvents: [...existingEvents, {
               ...event,
               timestamp: new Date().toISOString(),
             }],
@@ -738,6 +762,19 @@ export const useAgentStore = create((set, get) => ({
         addNotice('info', 'Human Input Required', event.question || event.content);
         break;
 
+      // Eigent: streaming_decompose event for real-time task decomposition text
+      case 'streaming_decompose':
+      case 'decomposing':
+        {
+          const text = event.text || event.content || '';
+          if (text) {
+            updateTask({
+              streamingDecomposeText: text,
+            });
+          }
+        }
+        break;
+
       case 'task_decomposed':
       case 'to_sub_tasks':
         {
@@ -752,6 +789,7 @@ export const useAgentStore = create((set, get) => ({
           }
 
           // Update task with decomposition data (Eigent pattern)
+          // Clear streamingDecomposeText when decomposition is complete
           updateTask({
             subtasks: newSubtasks,
             taskInfo: newSubtasks,
@@ -759,6 +797,7 @@ export const useAgentStore = create((set, get) => ({
             summaryTask: summaryTask,
             showDecomposition: true,
             isTaskEdit: false,
+            streamingDecomposeText: '',  // Clear streaming text on completion
           });
 
           addNotice('info', 'Task Decomposed', `${newSubtasks.length} subtasks planned`);
@@ -781,20 +820,49 @@ export const useAgentStore = create((set, get) => ({
 
       // Eigent: task_state event for subtask progress tracking
       case 'task_state':
+      // TaskPlanningToolkit: subtask_state event (from update_task_state)
+      case 'subtask_state':
         {
-          const { state, task_id: subTaskId, result: subTaskResult, failure_count } = event.data || event;
-          if (!subTaskId) break;
+          const { state, task_id: subTaskId, subtask_id, result: subTaskResult, failure_count } = event.data || event;
+          const effectiveSubTaskId = subTaskId || subtask_id;
+          if (!effectiveSubTaskId) break;
 
           const currentTask = store.tasks[taskId];
           if (!currentTask) break;
 
+          // Map TaskPlanningToolkit states to UI states
+          const mapState = (s) => {
+            if (!s) return 'pending';
+            const stateUpper = s.toUpperCase();
+            if (stateUpper === 'DONE') return 'completed';
+            if (stateUpper === 'FAILED') return 'failed';
+            if (stateUpper === 'RUNNING') return 'running';
+            if (stateUpper === 'DELETED') return 'deleted';
+            return 'pending'; // OPEN -> pending
+          };
+
           // Update taskRunning status
           const updatedTaskRunning = (currentTask.taskRunning || []).map(t => {
-            if (t.id === subTaskId) {
+            if (t.id === effectiveSubTaskId) {
               return {
                 ...t,
-                status: state === 'DONE' ? 'completed' : state === 'FAILED' ? 'failed' : t.status,
+                status: mapState(state),
                 failure_count: failure_count || 0,
+                result: subTaskResult || t.result,
+              };
+            }
+            return t;
+          });
+
+          // Update subtasks as well (for TaskDecomposition component)
+          const updatedSubtasks = (currentTask.subtasks || []).map(t => {
+            if (t.id === effectiveSubTaskId) {
+              return {
+                ...t,
+                status: mapState(state),
+                state: state,
+                failure_count: failure_count || 0,
+                result: subTaskResult || t.result,
               };
             }
             return t;
@@ -802,12 +870,12 @@ export const useAgentStore = create((set, get) => ({
 
           // Update taskAssigning (agent task status)
           const updatedTaskAssigning = (currentTask.taskAssigning || []).map(agent => {
-            const taskIndex = agent.tasks?.findIndex(t => t.id === subTaskId);
+            const taskIndex = agent.tasks?.findIndex(t => t.id === effectiveSubTaskId);
             if (taskIndex !== -1 && agent.tasks) {
               const updatedTasks = [...agent.tasks];
               updatedTasks[taskIndex] = {
                 ...updatedTasks[taskIndex],
-                status: state === 'DONE' ? 'completed' : state === 'FAILED' ? 'failed' : updatedTasks[taskIndex].status,
+                status: mapState(state),
                 failure_count: failure_count || 0,
               };
               return { ...agent, tasks: updatedTasks };
@@ -817,6 +885,7 @@ export const useAgentStore = create((set, get) => ({
 
           updateTask({
             taskRunning: updatedTaskRunning,
+            subtasks: updatedSubtasks,
             taskAssigning: updatedTaskAssigning,
           });
 
@@ -824,6 +893,27 @@ export const useAgentStore = create((set, get) => ({
           if (state === 'FAILED' && failure_count >= 3 && subTaskResult) {
             addMessage('agent', subTaskResult, { step: 'failed' });
           }
+        }
+        break;
+
+      // TaskPlanningToolkit: task_replanned event
+      case 'task_replanned':
+        {
+          const newSubtasks = event.subtasks || event.data?.subtasks || [];
+          const reason = event.reason || event.data?.reason || '';
+
+          const currentTask = store.tasks[taskId];
+          if (!currentTask) break;
+
+          // Replace subtasks with new plan
+          updateTask({
+            subtasks: newSubtasks,
+            taskInfo: newSubtasks,
+            taskRunning: newSubtasks.map(t => ({ ...t, status: 'pending' })),
+            showDecomposition: true,
+          });
+
+          addNotice('info', 'Task Re-planned', `${newSubtasks.length} new subtasks${reason ? `: ${reason}` : ''}`);
         }
         break;
 
@@ -980,13 +1070,28 @@ export const useAgentStore = create((set, get) => ({
           const thinking = event.thinking || event.reasoning || event.content || '';
           const step = event.step || store.tasks[taskId]?.loopIteration || 0;
           const agentName = event.agent_name || 'Agent';
+          const timestamp = event.timestamp || new Date().toISOString();
 
-          // Add thinking as a message for display
           if (thinking) {
+            // Add to thinkingLogs for AgentTab display
+            const thinkingLog = {
+              id: `thinking_${Date.now()}`,
+              content: thinking,
+              step,
+              agentName,
+              timestamp,
+            };
+
+            const currentTask = store.tasks[taskId];
+            updateTask({
+              thinkingLogs: [...(currentTask?.thinkingLogs || []), thinkingLog],
+            });
+
+            // Also add as message for backward compatibility
             addMessage('thinking', thinking, {
               step,
               agentName,
-              timestamp: event.timestamp,
+              timestamp,
             });
           }
 
@@ -1050,27 +1155,18 @@ export const useAgentStore = create((set, get) => ({
         break;
 
       // ===== Browser Action Events =====
+      // Note: browser_action events are supplementary - toolkit events are already
+      // handled by activate_toolkit/deactivate_toolkit from @listen_toolkit decorator.
+      // We only use browser_action for additional context, NOT for adding toolkit events.
       case 'browser_action':
         {
-          const actionType = event.action_type || 'action';
-          const target = event.target || '';
-          const success = event.success !== false;
+          // Do NOT add toolkit events here - they are already added by
+          // activate_toolkit/deactivate_toolkit events from the @listen_toolkit decorator.
+          // This prevents duplicate entries in the timeline.
 
-          // Add to toolkit events for display
-          store.addToolkitEvent(taskId, {
-            toolkit_name: 'browser',
-            method_name: actionType,
-            input_preview: target,
-            status: success ? 'completed' : 'failed',
-            page_url: event.page_url,
-            page_title: event.page_title,
-          });
-
-          // Add notice for user visibility
-          if (success) {
-            addNotice('info', `Browser: ${actionType}`, target || event.page_title || '');
-          } else {
-            addNotice('warning', `Browser ${actionType} failed`, target || '');
+          // Only update browser URL if provided (for BrowserTab display)
+          if (event.page_url) {
+            updateTask({ browserUrl: event.page_url });
           }
         }
         break;
@@ -1117,6 +1213,32 @@ export const useAgentStore = create((set, get) => ({
 
       case 'heartbeat':
         // Ignore heartbeats
+        break;
+
+      // ===== Browser Screenshot Events (for BrowserTab) =====
+      case 'screenshot':
+      case 'browser_screenshot':
+        {
+          const screenshot = event.screenshot || event.image || event.data;
+          const url = event.url || event.page_url || '';
+
+          if (screenshot) {
+            updateTask({
+              browserScreenshot: screenshot,
+              browserUrl: url,
+            });
+          }
+        }
+        break;
+
+      case 'browser_navigated':
+      case 'webview_url':
+        {
+          const url = event.url || event.page_url || '';
+          if (url) {
+            updateTask({ browserUrl: url });
+          }
+        }
         break;
 
       default:
@@ -1299,6 +1421,163 @@ export const useAgentStore = create((set, get) => ({
    */
   setTakeControl: (taskId, isTakeControl) => {
     get().updateTask(taskId, { isTakeControl });
+  },
+
+  // ============ History & Task Restoration (Eigent Migration) ============
+
+  /**
+   * History tasks from backend (metadata only, not full state)
+   */
+  historyTasks: [],
+  historyLoading: false,
+  historyError: null,
+
+  /**
+   * Load history tasks from backend
+   * Similar to Eigent's fetchHistoryTasks
+   */
+  loadHistoryTasks: async () => {
+    set({ historyLoading: true, historyError: null });
+
+    try {
+      const response = await api.callAppBackend('/api/v1/quick-task/tasks', {
+        method: 'GET',
+      });
+
+      set({
+        historyTasks: response.tasks || [],
+        historyLoading: false,
+      });
+
+      console.log('[AgentStore] Loaded history tasks:', response.tasks?.length || 0);
+      return response.tasks || [];
+    } catch (error) {
+      console.error('[AgentStore] Failed to load history tasks:', error);
+      set({
+        historyError: error.message,
+        historyLoading: false,
+      });
+      throw error;
+    }
+  },
+
+  /**
+   * Restore a task from backend
+   * Similar to Eigent's replay function
+   *
+   * @param {string} taskId - Backend task ID to restore
+   * @param {string} taskDescription - Task description (for display)
+   */
+  restoreTask: async (taskId, taskDescription) => {
+    const store = get();
+
+    // Check if task already in memory
+    if (store.tasks[taskId]) {
+      console.log('[AgentStore] Task already in memory, activating:', taskId);
+      set({ activeTaskId: taskId });
+      return store.tasks[taskId];
+    }
+
+    console.log('[AgentStore] Restoring task from backend:', taskId);
+
+    // Fetch task detail from backend
+    const detail = await api.callAppBackend(`/api/v1/quick-task/${taskId}/detail`, {
+      method: 'GET',
+    });
+
+    // Create task with restored data
+    const taskState = {
+      ...createInitialTaskState(detail.task, 'replay'),
+
+      // IMPORTANT: Set backendTaskId for proper event routing and display
+      backendTaskId: taskId,  // taskId here is the backend task ID
+
+      // Override with backend data
+      taskDescription: detail.task,
+      status: detail.status,
+      progressValue: detail.progress * 100,
+      executionPhase: detail.status === 'running' ? 'executing' : detail.status,
+
+      // Timestamps
+      createdAt: detail.created_at,
+      startedAt: detail.started_at,
+      completedAt: detail.completed_at,
+
+      // Execution state
+      loopIteration: detail.loop_iterations,
+      currentStep: detail.current_step,
+
+      // Results
+      result: detail.result,
+      error: detail.error,
+      notesContent: detail.notes_content,
+
+      // Convert backend messages to frontend format
+      // Use 'role' field to match addMessage() format
+      messages: detail.messages.map((msg, index) => ({
+        id: `msg_${index}`,
+        role: msg.role,
+        content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
+        timestamp: msg.timestamp,
+      })),
+
+      // Convert backend toolkit events
+      toolkitEvents: detail.toolkit_events.map((event, index) => ({
+        id: `toolkit_${index}`,
+        toolkit_name: event.toolkit_name,
+        method_name: event.method_name,
+        status: event.status,
+        input_preview: event.input_preview,
+        output_preview: event.output_preview,
+        timestamp: event.timestamp,
+        duration_ms: event.duration_ms,
+      })),
+
+      // Convert backend thinking logs
+      thinkingLogs: detail.thinking_logs.map((log, index) => ({
+        id: `thinking_${index}`,
+        content: log.content,
+        step: log.step,
+        agentName: log.agent_name,
+        timestamp: log.timestamp,
+      })),
+    };
+
+    // Add task to store
+    set((state) => ({
+      activeTaskId: taskId,
+      tasks: {
+        ...state.tasks,
+        [taskId]: taskState,
+      },
+    }));
+
+    console.log('[AgentStore] Task restored:', taskId, 'status:', detail.status);
+
+    // If task is still running, reconnect SSE
+    if (detail.status === 'running') {
+      console.log('[AgentStore] Task is running, reconnecting SSE...');
+      store.connectSSE(taskId, taskId);
+    }
+
+    return taskState;
+  },
+
+  /**
+   * Handle task selection from history list
+   * Similar to Eigent's handleSetActive
+   */
+  selectHistoryTask: async (taskId, taskDescription) => {
+    const store = get();
+
+    // If task in memory, just activate it
+    if (store.tasks[taskId]) {
+      set({ activeTaskId: taskId });
+      return;
+    }
+
+    // Otherwise restore from backend
+    await store.restoreTask(taskId, taskDescription);
   },
 
   // ============ Selectors (for convenience) ============

@@ -7,11 +7,13 @@ browser operations. Ported from CAMEL-AI/Eigent project architecture.
 All methods are async to work properly in async execution contexts.
 """
 
+import base64
 import logging
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from .base_toolkit import BaseToolkit, FunctionTool
 from ...events import listen_toolkit
+from ...events.action_types import ScreenshotData
 
 if TYPE_CHECKING:
     from ..eigent_browser.browser_session import HybridBrowserSession
@@ -67,12 +69,17 @@ class BrowserToolkit(BaseToolkit):
             return False
         return True
 
-    async def _get_snapshot(self) -> str:
-        """Get current page snapshot if enabled."""
+    async def _get_snapshot(self, force_refresh: bool = False) -> str:
+        """Get current page snapshot if enabled.
+
+        Args:
+            force_refresh: If True, forces re-injection of aria-ref attributes.
+                          Use after switching tabs or when refs may be stale.
+        """
         if not self._return_snapshot or not self._session:
             return ""
         try:
-            snapshot = await self._session.get_snapshot()
+            snapshot = await self._session.get_snapshot(force_refresh=force_refresh)
             return snapshot
         except Exception as e:
             logger.error(f"Failed to get snapshot: {e}")
@@ -150,6 +157,41 @@ class BrowserToolkit(BaseToolkit):
             logger.debug(f"Failed to get tab info: {e}")
             return ""
 
+    async def _send_screenshot_event(self) -> None:
+        """Capture and send screenshot to frontend via SSE.
+
+        Following Eigent's pattern of sending browser screenshots for
+        real-time display in the BrowserTab component.
+        """
+        if not self._session or not hasattr(self, '_task_state') or self._task_state is None:
+            return
+
+        try:
+            page = await self._session.get_page()
+            url = page.url
+            title = await page.title()
+            tab_id = await self._session.get_current_tab_id()
+
+            # Capture screenshot as PNG bytes
+            screenshot_bytes = await page.screenshot(type='jpeg', quality=80)
+            screenshot_base64 = base64.b64encode(screenshot_bytes).decode('utf-8')
+            screenshot_data_uri = f"data:image/jpeg;base64,{screenshot_base64}"
+
+            # Send screenshot event to frontend
+            state = self._task_state
+            if hasattr(state, 'put_event'):
+                await state.put_event(ScreenshotData(
+                    task_id=getattr(state, 'task_id', None),
+                    screenshot=screenshot_data_uri,
+                    url=url,
+                    page_title=title,
+                    tab_id=tab_id,
+                ))
+                logger.debug(f"Screenshot event sent for {url}")
+
+        except Exception as e:
+            logger.warning(f"Failed to send screenshot event: {e}")
+
     async def _build_action_result(
         self,
         result_message: str,
@@ -157,6 +199,7 @@ class BrowserToolkit(BaseToolkit):
         include_page_context: bool = True,
         include_tab_info: bool = True,
         wait_for_stability: bool = False,
+        force_refresh: bool = False,
     ) -> str:
         """Build a standardized action result with page context and snapshot.
 
@@ -166,12 +209,16 @@ class BrowserToolkit(BaseToolkit):
         3. Current page context (URL and title)
         4. Page snapshot (interactive elements)
 
+        Additionally, sends a screenshot event to the frontend for BrowserTab display.
+
         Args:
             result_message: The main result message from the action.
             include_snapshot: Whether to include the page snapshot.
             include_page_context: Whether to include page URL/title.
             include_tab_info: Whether to include tab information.
             wait_for_stability: Whether to wait for page stability first.
+            force_refresh: Whether to force re-injection of aria-ref attributes.
+                          Use when switching tabs or after tab creation.
 
         Returns:
             Formatted result string with all components.
@@ -196,9 +243,16 @@ class BrowserToolkit(BaseToolkit):
 
         # Add snapshot
         if include_snapshot:
-            snapshot = await self._get_snapshot()
+            snapshot = await self._get_snapshot(force_refresh=force_refresh)
             if snapshot:
                 parts.append(snapshot)
+
+        # Send screenshot event to frontend for BrowserTab display
+        # This is async but we don't wait for it to complete
+        try:
+            await self._send_screenshot_event()
+        except Exception as e:
+            logger.debug(f"Screenshot event send failed (non-critical): {e}")
 
         return "\n\n".join(parts)
 
@@ -301,10 +355,12 @@ class BrowserToolkit(BaseToolkit):
 
                 # Wait for page stability and include tab info in result
                 # This ensures LLM sees the new page content after navigation/tab switch
+                # Force refresh aria-ref if a new tab was created (each tab has its own window object)
                 return await self._build_action_result(
                     click_info,
                     wait_for_stability=True,
                     include_tab_info=True,
+                    force_refresh=new_tab_created,
                 )
             else:
                 return await self._build_action_result(
@@ -552,31 +608,6 @@ class BrowserToolkit(BaseToolkit):
             logger.error(f"browser_get_page_snapshot error: {e}")
             return f"Error getting snapshot: {e}"
 
-    @listen_toolkit(
-        inputs=lambda self: "Getting page info",
-        return_msg=lambda r: r[:100] if r else "Got page info"
-    )
-    async def browser_get_page_info(self) -> str:
-        """Get basic information about the current page (URL, title).
-
-        This is a lightweight call that doesn't capture the full DOM snapshot.
-        Useful for loop iterations to quickly check which page you're on.
-
-        Returns:
-            Page URL and title.
-        """
-        if not self._ensure_session():
-            return "Error: Browser session not initialized"
-
-        try:
-            page = await self._session.get_page()
-            url = page.url
-            title = await page.title()
-            return f"URL: {url}\nTitle: {title}"
-        except Exception as e:
-            logger.error(f"browser_get_page_info error: {e}")
-            return f"Error getting page info: {e}"
-
     async def _format_tab_info(self) -> str:
         """Format tab information for display."""
         try:
@@ -601,6 +632,103 @@ class BrowserToolkit(BaseToolkit):
         except Exception as e:
             logger.error(f"Error formatting tab info: {e}")
             return f"[Tab info unavailable: {e}]"
+
+    @listen_toolkit(
+        inputs=lambda self, keys: f"Pressing keys: {keys}",
+        return_msg=lambda r: "Keys pressed" if "Pressed" in r else r[:100]
+    )
+    async def browser_press_key(self, keys: List[str]) -> str:
+        """Press key or key combinations.
+
+        Supports single key press or combination of keys. For combinations,
+        provide multiple keys in the list (e.g., ["Control", "c"] for Ctrl+C).
+
+        Common keys: Enter, Escape, Tab, Backspace, Delete, ArrowUp, ArrowDown,
+        ArrowLeft, ArrowRight, Home, End, PageUp, PageDown, F1-F12,
+        Control, Shift, Alt, Meta (Command on Mac).
+
+        Args:
+            keys: List of keys to press. For combinations, all keys are pressed
+                together. Examples:
+                - ["Enter"] - Press Enter
+                - ["Escape"] - Press Escape
+                - ["Control", "a"] - Select all (Ctrl+A)
+                - ["Control", "c"] - Copy (Ctrl+C)
+                - ["Control", "v"] - Paste (Ctrl+V)
+                - ["Shift", "Tab"] - Shift+Tab
+
+        Returns:
+            Result message with current page info and updated page snapshot.
+        """
+        if not self._ensure_session():
+            return "Error: Browser session not initialized"
+
+        if not keys or not isinstance(keys, list):
+            return "Error: keys must be a non-empty list of strings"
+
+        try:
+            action = {"type": "press_key", "keys": keys}
+            result = await self._session.exec_action(action)
+
+            if result.get("success"):
+                key_combo = "+".join(keys)
+                return await self._build_action_result(f"Pressed keys: {key_combo}")
+            else:
+                return await self._build_action_result(f"Press key failed: {result.get('message')}")
+        except Exception as e:
+            logger.error(f"browser_press_key error: {e}")
+            return f"Error pressing keys: {e}"
+
+    @listen_toolkit(
+        inputs=lambda self, x, y, click_type="click": f"Mouse {click_type} at ({x}, {y})",
+        return_msg=lambda r: "Mouse action done" if "performed" in r.lower() or "Mouse" in r else r[:100]
+    )
+    async def browser_mouse_control(
+        self,
+        x: float,
+        y: float,
+        click_type: str = "click",
+    ) -> str:
+        """Control the mouse to interact with browser using x, y coordinates.
+
+        Use this when you cannot locate an element by ref or selector.
+        Coordinates are relative to the viewport (visible area).
+
+        Args:
+            x: X-coordinate for the mouse action (pixels from left).
+            y: Y-coordinate for the mouse action (pixels from top).
+            click_type: Type of click action. Options:
+                - "click" (default): Single left click
+                - "dblclick": Double click
+                - "right_click": Right click (context menu)
+
+        Returns:
+            Result message with current page info and updated page snapshot.
+        """
+        if not self._ensure_session():
+            return "Error: Browser session not initialized"
+
+        if click_type not in ("click", "dblclick", "right_click"):
+            return f"Error: click_type must be 'click', 'dblclick', or 'right_click', got '{click_type}'"
+
+        try:
+            action = {
+                "type": "mouse_control",
+                "control": click_type,
+                "x": x,
+                "y": y,
+            }
+            result = await self._session.exec_action(action)
+
+            if result.get("success"):
+                return await self._build_action_result(
+                    f"Mouse {click_type} at coordinates ({x}, {y})"
+                )
+            else:
+                return await self._build_action_result(f"Mouse control failed: {result.get('message')}")
+        except Exception as e:
+            logger.error(f"browser_mouse_control error: {e}")
+            return f"Error with mouse control: {e}"
 
     @listen_toolkit(
         inputs=lambda self: "Getting tab info",
@@ -653,7 +781,9 @@ class BrowserToolkit(BaseToolkit):
 
             page_context = await self._get_page_context()
             tab_info = await self._format_tab_info()
-            snapshot = await self._get_snapshot()
+            # Force refresh to re-inject aria-ref attributes on the new tab
+            # This is critical because each tab has its own window object
+            snapshot = await self._get_snapshot(force_refresh=True)
 
             parts = [f"Switched to tab '{tab_id}'"]
             if page_context:
@@ -693,7 +823,8 @@ class BrowserToolkit(BaseToolkit):
             tab_id = await self._session.create_new_tab(url)
             page_context = await self._get_page_context()
             tab_info = await self._format_tab_info()
-            snapshot = await self._get_snapshot()
+            # Force refresh because new tab has its own window object
+            snapshot = await self._get_snapshot(force_refresh=True)
 
             if url:
                 result_msg = f"Opened new tab '{tab_id}' and navigated to {url}"
@@ -726,7 +857,7 @@ class BrowserToolkit(BaseToolkit):
         After closing, the browser will automatically switch to another tab if available.
 
         Args:
-            tab_id: The tab ID to close (e.g., "tab_1", "tab_2").
+            tab_id: The tab ID to close (e.g., "tab-001", "tab-002").
 
         Returns:
             Result message with current page info (URL, title), tab list, and page snapshot.
@@ -741,7 +872,8 @@ class BrowserToolkit(BaseToolkit):
 
             page_context = await self._get_page_context()
             tab_info = await self._format_tab_info()
-            snapshot = await self._get_snapshot()
+            # Force refresh because we might have switched to a different tab
+            snapshot = await self._get_snapshot(force_refresh=True)
 
             parts = [f"Closed tab '{tab_id}'"]
             if page_context:
@@ -756,332 +888,6 @@ class BrowserToolkit(BaseToolkit):
         except Exception as e:
             logger.error(f"browser_close_tab error: {e}")
             return f"Error closing tab: {e}"
-
-    @listen_toolkit(
-        inputs=lambda self: "Viewing console logs",
-        return_msg=lambda r: f"Got {r.count(chr(10))} log entries" if "Console logs" in r else r[:100]
-    )
-    async def browser_console_view(self) -> str:
-        """View current page console logs.
-
-        Returns console messages that have been logged by the webpage,
-        useful for debugging or extracting dynamically generated data.
-
-        Returns:
-            Formatted string with console log messages.
-        """
-        if not self._ensure_session():
-            return "Error: Browser session not initialized"
-
-        try:
-            logs = await self._session.get_console_logs()
-            if not logs:
-                return "No console messages captured."
-
-            # Format logs for display
-            output = "Console logs:\n\n"
-            log_list = list(logs) if hasattr(logs, '__iter__') else [logs]
-            for i, log in enumerate(log_list[-50:], 1):  # Last 50 logs
-                if hasattr(log, 'type') and hasattr(log, 'text'):
-                    output += f"{i}. [{log.type}] {log.text}\n"
-                elif isinstance(log, dict):
-                    log_type = log.get('type', 'log')
-                    log_text = log.get('text', str(log))
-                    output += f"{i}. [{log_type}] {log_text}\n"
-                else:
-                    output += f"{i}. {str(log)}\n"
-            return output
-        except Exception as e:
-            logger.error(f"browser_console_view error: {e}")
-            return f"Error viewing console: {e}"
-
-    @listen_toolkit(
-        inputs=lambda self, code: f"Executing JS: {code[:50]}{'...' if len(code) > 50 else ''}",
-        return_msg=lambda r: "JS executed" if "successfully" in r.lower() else r[:100]
-    )
-    async def browser_console_exec(self, code: str) -> str:
-        """Execute JavaScript code in the browser console.
-
-        Run custom JavaScript code in the context of the current page.
-        Useful for extracting data, manipulating the page, or debugging.
-
-        Args:
-            code: JavaScript code to execute in the browser console.
-
-        Returns:
-            Result message with JS result, current page info (URL, title), and page snapshot.
-        """
-        if not self._ensure_session():
-            return "Error: Browser session not initialized"
-
-        try:
-            page = await self._session.get_page()
-            result = await page.evaluate(code)
-
-            # Format the result
-            if result is None:
-                result_str = "(no return value)"
-            elif isinstance(result, (dict, list)):
-                import json
-                result_str = json.dumps(result, indent=2, ensure_ascii=False)
-            else:
-                result_str = str(result)
-
-            result_msg = f"JavaScript executed successfully.\n\nResult:\n{result_str}"
-            return await self._build_action_result(result_msg)
-        except Exception as e:
-            logger.error(f"browser_console_exec error: {e}")
-            return f"JavaScript execution error: {e}"
-
-    @listen_toolkit(
-        inputs=lambda self, keys: f"Pressing keys: {keys}",
-        return_msg=lambda r: "Keys pressed" if "successfully" in r.lower() else r[:100]
-    )
-    async def browser_press_key(self, keys: List[str]) -> str:
-        """Press key or key combinations.
-
-        Supports single key press or combination of keys. For combinations,
-        provide multiple keys in the list (e.g., ["Control", "c"] for Ctrl+C).
-
-        Common keys: Enter, Escape, Tab, Backspace, Delete, ArrowUp, ArrowDown,
-        ArrowLeft, ArrowRight, Home, End, PageUp, PageDown, F1-F12,
-        Control, Shift, Alt, Meta (Command on Mac).
-
-        Args:
-            keys: List of keys to press. For combinations, all keys are pressed
-                together. Examples:
-                - ["Enter"] - Press Enter
-                - ["Escape"] - Press Escape
-                - ["Control", "a"] - Select all (Ctrl+A)
-                - ["Control", "c"] - Copy (Ctrl+C)
-                - ["Control", "v"] - Paste (Ctrl+V)
-                - ["Shift", "Tab"] - Shift+Tab
-
-        Returns:
-            Result message with current page info and updated page snapshot.
-        """
-        if not self._ensure_session():
-            return "Error: Browser session not initialized"
-
-        if not keys or not isinstance(keys, list):
-            return "Error: keys must be a non-empty list of strings"
-
-        try:
-            # Build the key combination string for Playwright
-            # Playwright expects format like "Control+a" or "Shift+Tab"
-            key_combo = "+".join(keys)
-
-            page = await self._session.get_page()
-            await page.keyboard.press(key_combo)
-
-            return await self._build_action_result(f"Pressed keys: {key_combo}")
-        except Exception as e:
-            logger.error(f"browser_press_key error: {e}")
-            return f"Error pressing keys: {e}"
-
-    @listen_toolkit(
-        inputs=lambda self, x, y, click_type="click": f"Mouse {click_type} at ({x}, {y})",
-        return_msg=lambda r: "Mouse action done" if "successfully" in r.lower() or "Mouse" in r else r[:100]
-    )
-    async def browser_mouse_control(
-        self,
-        x: float,
-        y: float,
-        click_type: str = "click",
-    ) -> str:
-        """Control the mouse to interact with browser using x, y coordinates.
-
-        Use this when you cannot locate an element by ref or selector.
-        Coordinates are relative to the viewport (visible area).
-
-        Args:
-            x: X-coordinate for the mouse action (pixels from left).
-            y: Y-coordinate for the mouse action (pixels from top).
-            click_type: Type of click action. Options:
-                - "click" (default): Single left click
-                - "dblclick": Double click
-                - "right_click": Right click (context menu)
-
-        Returns:
-            Result message with current page info and updated page snapshot.
-        """
-        if not self._ensure_session():
-            return "Error: Browser session not initialized"
-
-        if click_type not in ("click", "dblclick", "right_click"):
-            return f"Error: click_type must be 'click', 'dblclick', or 'right_click', got '{click_type}'"
-
-        try:
-            page = await self._session.get_page()
-
-            # Move mouse to position
-            await page.mouse.move(x, y)
-
-            # Perform the click action
-            if click_type == "click":
-                await page.mouse.click(x, y)
-            elif click_type == "dblclick":
-                await page.mouse.dblclick(x, y)
-            elif click_type == "right_click":
-                await page.mouse.click(x, y, button="right")
-
-            return await self._build_action_result(
-                f"Mouse {click_type} at coordinates ({x}, {y})"
-            )
-        except Exception as e:
-            logger.error(f"browser_mouse_control error: {e}")
-            return f"Error with mouse control: {e}"
-
-    @listen_toolkit(
-        inputs=lambda self, refs: f"Getting URLs for refs: {refs}",
-        return_msg=lambda r: f"Found {r.count('URL:')} links" if "URL:" in r else r[:100]
-    )
-    async def browser_get_page_links(self, refs: List[str]) -> str:
-        """Get the destination URLs for a list of link elements.
-
-        This is useful to know where a link goes before clicking it.
-        Only works for anchor (<a>) elements with href attributes.
-
-        Args:
-            refs: List of ref IDs for link elements (e.g., ["e1", "e5", "e12"]).
-
-        Returns:
-            List of links with their text, ref, and destination URL.
-        """
-        if not self._ensure_session():
-            return "Error: Browser session not initialized"
-
-        if not refs or not isinstance(refs, list):
-            return "Error: refs must be a non-empty list of ref IDs"
-
-        try:
-            page = await self._session.get_page()
-
-            # Get link information for each ref
-            links_info = []
-            for ref in refs:
-                try:
-                    # Use JavaScript to find the element and get its href
-                    link_data = await page.evaluate(f"""
-                        (() => {{
-                            const elements = document.querySelectorAll('[data-ref="{ref}"], [ref="{ref}"]');
-                            for (const el of elements) {{
-                                if (el.tagName === 'A' && el.href) {{
-                                    return {{
-                                        ref: "{ref}",
-                                        text: el.textContent?.trim() || '',
-                                        url: el.href
-                                    }};
-                                }}
-                            }}
-                            // Try finding by aria-label or other attributes
-                            const allLinks = document.querySelectorAll('a[href]');
-                            // This is a fallback - in practice, the snapshot ref system should work
-                            return null;
-                        }})()
-                    """)
-
-                    if link_data:
-                        links_info.append(link_data)
-                    else:
-                        links_info.append({
-                            "ref": ref,
-                            "text": "(not found or not a link)",
-                            "url": None
-                        })
-                except Exception as e:
-                    links_info.append({
-                        "ref": ref,
-                        "text": f"(error: {e})",
-                        "url": None
-                    })
-
-            # Format output
-            if not links_info:
-                return "No links found for the provided refs."
-
-            lines = ["**Link URLs:**"]
-            for link in links_info:
-                ref = link.get("ref", "?")
-                text = link.get("text", "")[:50]
-                url = link.get("url", "N/A")
-                lines.append(f"- [{ref}] \"{text}\"")
-                lines.append(f"  URL: {url}")
-
-            return "\n".join(lines)
-        except Exception as e:
-            logger.error(f"browser_get_page_links error: {e}")
-            return f"Error getting page links: {e}"
-
-    @listen_toolkit(
-        inputs=lambda self, message="Please complete the required action": f"Waiting for user: {message[:50]}",
-        return_msg=lambda r: "User action completed" if "completed" in r.lower() else r[:100]
-    )
-    async def browser_wait_user(
-        self,
-        message: str = "Please complete the required action (e.g., solve CAPTCHA, login)",
-        timeout_seconds: int = 300,
-    ) -> str:
-        """Pause execution and wait for human intervention.
-
-        Use this when encountering situations that require manual user action:
-        - CAPTCHA challenges
-        - Two-factor authentication
-        - Manual login required
-        - Complex verification steps
-
-        The agent will pause and wait for the user to complete the action
-        in the browser, then continue.
-
-        Args:
-            message: Message to display to the user explaining what action is needed.
-            timeout_seconds: Maximum time to wait in seconds (default: 300 = 5 minutes).
-
-        Returns:
-            Result message with current page info and updated page snapshot after user action.
-        """
-        if not self._ensure_session():
-            return "Error: Browser session not initialized"
-
-        try:
-            # Notify that we're waiting for user action
-            logger.info(f"[Wait User] {message}")
-
-            # Use the human toolkit if available to notify the user
-            # For now, we'll use a simple polling approach
-            import asyncio
-
-            # Get initial page state
-            page = await self._session.get_page()
-            initial_url = page.url
-
-            # Wait and poll for page changes or timeout
-            # In a real implementation, this would integrate with the human_toolkit
-            # to send a notification to the frontend
-            wait_interval = 2  # Check every 2 seconds
-            elapsed = 0
-
-            while elapsed < timeout_seconds:
-                await asyncio.sleep(wait_interval)
-                elapsed += wait_interval
-
-                # Check if the page has changed (user took action)
-                current_url = page.url
-                if current_url != initial_url:
-                    logger.info(f"[Wait User] Page changed from {initial_url} to {current_url}")
-                    break
-
-            if elapsed >= timeout_seconds:
-                return await self._build_action_result(
-                    f"Wait timed out after {timeout_seconds} seconds. User action may not have completed."
-                )
-
-            return await self._build_action_result(
-                f"User action completed. Page changed from {initial_url} to {current_url}"
-            )
-        except Exception as e:
-            logger.error(f"browser_wait_user error: {e}")
-            return f"Error waiting for user: {e}"
 
     def get_tools(self) -> List[FunctionTool]:
         """Return a list of FunctionTool objects for this toolkit.
@@ -1104,18 +910,11 @@ class BrowserToolkit(BaseToolkit):
             FunctionTool(self.browser_mouse_control),
             # Page info
             FunctionTool(self.browser_get_page_snapshot),
-            FunctionTool(self.browser_get_page_info),
-            FunctionTool(self.browser_get_page_links),
             # Tab management
             FunctionTool(self.browser_get_tab_info),
-            FunctionTool(self.browser_new_tab),
             FunctionTool(self.browser_switch_tab),
+            FunctionTool(self.browser_new_tab),
             FunctionTool(self.browser_close_tab),
-            # Console
-            FunctionTool(self.browser_console_view),
-            FunctionTool(self.browser_console_exec),
-            # User interaction
-            FunctionTool(self.browser_wait_user),
         ]
 
     @classmethod

@@ -12,6 +12,7 @@ Available Toolkits:
 - HumanToolkit: Human-in-the-loop interaction
 - BrowserToolkit: Browser automation (click, type, navigate, etc.)
 - MemoryToolkit: Query workflow memory for task guidance
+- TaskPlanningToolkit: Task decomposition and re-planning (from CAMEL)
 
 MCP-based Toolkits (Eigent migration):
 - GmailMCPToolkit: Gmail via MCP server (@gongrzhe/server-gmail-autoauth-mcp)
@@ -29,6 +30,7 @@ from .terminal_toolkit import TerminalToolkit
 from .human_toolkit import HumanToolkit
 from .browser_toolkit import BrowserToolkit
 from .memory_toolkit import MemoryToolkit
+from .task_planning_toolkit import TaskPlanningToolkit, Task, TaskState
 
 # MCP base classes and toolkits
 from .mcp_base import MCPClient, MCPTool, BaseMCPToolkit
@@ -51,6 +53,11 @@ __all__ = [
     "HumanToolkit",
     "BrowserToolkit",
     "MemoryToolkit",
+
+    # Task planning (from CAMEL)
+    "TaskPlanningToolkit",
+    "Task",
+    "TaskState",
 
     # MCP base classes
     "MCPClient",

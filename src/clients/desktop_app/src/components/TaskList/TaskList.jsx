@@ -1,14 +1,20 @@
 /**
  * TaskList Component - Displays list of tasks in sidebar
  *
- * Similar to Eigent's task list pattern.
- * Shows all tasks with status indicators and allows switching between them.
+ * Similar to Eigent's task list + history pattern.
+ * Shows:
+ * - In-memory tasks (current session)
+ * - Backend history tasks (persisted, can be restored)
+ *
+ * Features:
+ * - Auto-load history on mount
+ * - Click to restore history task from backend
+ * - Visual indicators for running/completed/failed status
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import Icon from '../Icons';
 import { useAgentStore } from '../../store';
-import { api } from '../../utils/api';
 import './TaskList.css';
 
 // Status icon mapping
@@ -91,17 +97,95 @@ function TaskList({ onNewTask, collapsed = false }) {
     removeTask,
     getTaskList,
     getRunningTasksCount,
+    // History (Eigent migration)
+    historyTasks,
+    historyLoading,
+    loadHistoryTasks,
+    selectHistoryTask,
   } = useAgentStore();
 
   const [isCollapsed, setIsCollapsed] = useState(collapsed);
 
-  // Get sorted task list
-  const taskList = getTaskList();
+  // Load history on mount
+  useEffect(() => {
+    loadHistoryTasks();
+  }, [loadHistoryTasks]);
+
+  // Merge in-memory tasks with backend history
+  // In-memory tasks take precedence (fresher state)
+  // Key insight: frontend uses local taskId, backend uses backendTaskId
+  // We need to match by backendTaskId to avoid duplicates
+  const taskList = useMemo(() => {
+    const taskMap = new Map();
+
+    // Add history tasks first (backend data)
+    // Key = backend task_id
+    historyTasks.forEach(task => {
+      taskMap.set(task.task_id, {
+        id: task.task_id,  // Use backend ID for consistency
+        backendTaskId: task.task_id,
+        taskDescription: task.task,
+        status: task.status,
+        createdAt: task.created_at,
+        startedAt: task.started_at,
+        completedAt: task.completed_at,
+        loopIteration: task.loop_iterations,
+        toolsCount: task.tools_called_count,
+        source: 'history',
+      });
+    });
+
+    // Override with in-memory tasks (current session, fresher data)
+    // Use backendTaskId as key to match with history
+    Object.entries(tasks).forEach(([localTaskId, task]) => {
+      // Use backendTaskId if available, otherwise use local taskId
+      const effectiveId = task.backendTaskId || localTaskId;
+
+      taskMap.set(effectiveId, {
+        id: localTaskId,  // Keep local ID for store operations
+        backendTaskId: task.backendTaskId,
+        taskDescription: task.taskDescription,
+        status: task.status,
+        createdAt: task.createdAt,
+        startedAt: task.startedAt,
+        completedAt: task.completedAt,
+        loopIteration: task.loopIteration,
+        toolsCount: task.toolkitEvents?.length || 0,
+        source: 'memory',
+      });
+    });
+
+    // Sort by createdAt (newest first)
+    return Array.from(taskMap.values())
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  }, [tasks, historyTasks]);
+
   const runningCount = getRunningTasksCount();
 
-  // Handle task selection
-  const handleTaskClick = (taskId) => {
-    setActiveTaskId(taskId);
+  // Handle task selection (supports both memory and history tasks)
+  // task.id = local taskId (for memory tasks) or backendTaskId (for history-only tasks)
+  const handleTaskClick = async (task) => {
+    const { id, backendTaskId, taskDescription, source } = task;
+
+    // If task is from memory, use its local ID
+    if (source === 'memory' && tasks[id]) {
+      setActiveTaskId(id);
+      return;
+    }
+
+    // If task has backendTaskId, check if any in-memory task matches
+    if (backendTaskId) {
+      const memoryTask = Object.entries(tasks).find(
+        ([_, t]) => t.backendTaskId === backendTaskId
+      );
+      if (memoryTask) {
+        setActiveTaskId(memoryTask[0]);
+        return;
+      }
+    }
+
+    // Task not in memory, restore from backend
+    await selectHistoryTask(backendTaskId || id, taskDescription);
   };
 
   // Handle task deletion
@@ -156,7 +240,12 @@ function TaskList({ onNewTask, collapsed = false }) {
 
       {/* Task List */}
       <div className="task-list-content">
-        {taskList.length === 0 ? (
+        {historyLoading && taskList.length === 0 ? (
+          <div className="task-list-loading">
+            <Icon name="loader" size={24} className="spinning" />
+            <p>Loading tasks...</p>
+          </div>
+        ) : taskList.length === 0 ? (
           <div className="task-list-empty">
             <Icon name="inbox" size={32} />
             <p>No tasks yet</p>
@@ -167,10 +256,10 @@ function TaskList({ onNewTask, collapsed = false }) {
         ) : (
           taskList.map((task) => (
             <TaskListItem
-              key={task.id}
+              key={task.backendTaskId || task.id}
               task={task}
-              isActive={task.id === activeTaskId}
-              onClick={() => handleTaskClick(task.id)}
+              isActive={task.id === activeTaskId || task.backendTaskId === tasks[activeTaskId]?.backendTaskId}
+              onClick={() => handleTaskClick(task)}
               onDelete={handleDeleteTask}
             />
           ))

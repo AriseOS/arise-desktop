@@ -1,15 +1,18 @@
 /**
  * ChatBox Component
  *
- * Main chat interface component that combines message list and BottomBox.
- * Handles conversation state, task lifecycle, and SSE event integration.
+ * Main chat interface component - displays ONLY conversation messages.
+ * Following Eigent pattern: ChatBox = pure conversation, WorkspaceTabs = execution details.
  *
- * Features:
- * - Message list display
+ * This component handles:
+ * - User messages display
+ * - Agent final responses (step: 'end' or regular replies)
  * - BottomBox state machine (input/splitting/confirm/running/finished)
  * - File attachments
- * - Task replay and pause/resume
- * - Token usage display
+ * - Task lifecycle control
+ *
+ * Execution details (thinking, toolkit events, browser view) are displayed
+ * in WorkspaceTabs (AgentTab, BrowserTab, etc.), NOT here.
  *
  * Ported from Eigent's ChatBox component.
  */
@@ -212,8 +215,14 @@ function ChatBox({
 
   return (
     <div className="chat-box">
-      {/* Message List */}
-      <MessageList messages={messages} notices={notices} />
+      {/* Message List with inline TaskCard (Eigent pattern) */}
+      <MessageList
+        messages={messages}
+        notices={notices}
+        task={task}
+        onStartTask={onStartTask}
+        onEditTask={onEditTask}
+      />
 
       {/* BottomBox */}
       <BottomBox

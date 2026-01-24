@@ -31,7 +31,47 @@ LLM function-calling toolkits ported from Eigent/CAMEL-AI:
 | `search_toolkit.py` | Web search (Google/DuckDuckGo) |
 | `human_toolkit.py` | Human-in-the-loop interaction |
 | `memory_toolkit.py` | Query workflow memory |
-| `note_taking_toolkit.py` | Markdown note management |
+| `note_taking_toolkit.py` | Markdown note management (for data storage) |
+| `task_planning_toolkit.py` | Task decomposition and re-planning (from CAMEL) |
+
+### Task Planning Toolkit
+
+Enables agents to manage their own task execution via decomposition and re-planning:
+
+```python
+from .toolkits import TaskPlanningToolkit
+
+toolkit = TaskPlanningToolkit(task_id="my_task")
+
+# Decompose a complex task
+subtasks = toolkit.decompose_task(
+    original_task_content="Research AI companies and create report",
+    sub_task_contents=[
+        "Search for top AI companies",
+        "Extract product info from each company",
+        "Compile findings into summary"
+    ]
+)
+
+# Update task progress
+toolkit.update_task_state("task.main.1", "RUNNING")
+# ... execute subtask ...
+toolkit.update_task_state("task.main.1", "DONE", result="Found 5 companies")
+
+# Re-plan if needed
+new_subtasks = toolkit.replan_tasks(
+    original_task_content="Research AI companies and create report",
+    sub_task_contents=[
+        "Focus on GenAI companies only",
+        "Get funding information",
+        "Write executive summary"
+    ]
+)
+```
+
+**Key distinction:**
+- `TaskPlanningToolkit`: For managing task plans (decomposition, progress, re-planning)
+- `NoteTakingToolkit`: For storing extracted data and findings
 
 ### MCP Integration
 
