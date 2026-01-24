@@ -64,6 +64,10 @@ dependencies = [
     # Browser automation
     "browser-use>=0.1.0",
     "playwright>=1.40.0",
+
+    # Multi-agent framework
+    "camel-ai>=0.2.0",
+
 ]
 
 [project.optional-dependencies]

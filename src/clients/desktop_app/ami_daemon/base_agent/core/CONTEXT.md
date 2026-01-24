@@ -15,6 +15,10 @@ Core framework components for BaseAgent.
 | `agent_registry.py` | Central agent registration and lookup |
 | `task_router.py` | Routes tasks to appropriate specialized agents |
 | `task_orchestrator.py` | Multi-agent task coordination (Eigent Workforce pattern) |
+| `ami_workforce.py` | CAMEL-based Workforce (task decomposition + worker management) |
+| `ami_worker.py` | Worker wrapper for agents (AMISingleAgentWorker) |
+| `listen_chat_agent.py` | ChatAgent with SSE event emission (ported from Eigent) |
+| `agent_factories.py` | Factory functions to create configured agents (browser_agent, etc.) |
 
 ## Key Concepts
 
@@ -143,3 +147,62 @@ result = await engine.execute_workflow_from(
     variables={"category_url": "https://example.com/products"}
 )
 ```
+
+## AMIWorkforce (CAMEL-based)
+
+CAMEL Workforce integration for multi-agent task coordination.
+Ported from Eigent's Workforce pattern.
+
+### Architecture
+
+```
+AMIWorkforce (extends CAMEL Workforce)
+├── task_agent: LLM for task decomposition
+├── pending_tasks: CAMEL TaskChannel
+├── workers:
+│   └── AMISingleAgentWorker → ListenChatAgent (with toolkits)
+└── failure_handling: retry + replan (CAMEL built-in)
+```
+
+### Usage
+
+```python
+from .ami_workforce import AMIWorkforce
+from .ami_worker import AMISingleAgentWorker
+from .agent_factories import create_browser_agent
+
+# Create Workforce
+workforce = AMIWorkforce(task_id, task_state, ...)
+
+# Create browser agent using factory (Eigent pattern)
+browser_agent = create_browser_agent(
+    task_state=state,
+    task_id=task_id,
+    working_directory=working_directory,
+    ...
+)
+
+# Create worker wrapping the ListenChatAgent
+worker = AMISingleAgentWorker(
+    description="Web research",
+    worker=browser_agent,
+    task_state=state,
+)
+workforce.add_single_agent_worker(worker)
+
+# Decompose and execute
+subtasks = await workforce.decompose_task(task)
+await workforce.start_with_subtasks(subtasks)
+```
+
+### SSE Events
+
+| Event | Trigger |
+|-------|---------|
+| `streaming_decompose` | During task decomposition |
+| `task_decomposed` | After decomposition complete |
+| `subtask_state` | Subtask state change (RUNNING/DONE/FAILED) |
+| `workforce_started` | Workforce begins |
+| `workforce_completed` | All tasks done |
+| `worker_assigned` | Task assigned to worker |
+| `dynamic_tasks_added` | New subtasks discovered |

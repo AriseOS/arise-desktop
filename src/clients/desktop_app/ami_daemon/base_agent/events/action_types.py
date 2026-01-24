@@ -42,10 +42,21 @@ class Action(str, Enum):
     plan_progress = "plan_progress"         # Planning progress update
     plan_generated = "plan_generated"       # Plan complete
 
-    # Task decomposition (from TaskPlanningToolkit)
+    # Task decomposition (from TaskPlanningToolkit / Workforce)
     task_decomposed = "task_decomposed"       # Task broken into subtasks
     subtask_state = "subtask_state"           # Subtask state changed
     task_replanned = "task_replanned"         # Task re-planned with new subtasks
+    streaming_decompose = "streaming_decompose"  # Streaming decomposition text
+
+    # Workforce events (CAMEL-based multi-agent coordination)
+    workforce_started = "workforce_started"           # Workforce started processing
+    workforce_completed = "workforce_completed"       # Workforce finished all tasks
+    workforce_stopped = "workforce_stopped"           # Workforce stopped/cancelled
+    worker_assigned = "worker_assigned"               # Task assigned to a worker
+    worker_started = "worker_started"                 # Worker started processing
+    worker_completed = "worker_completed"             # Worker finished task
+    worker_failed = "worker_failed"                   # Worker failed task
+    dynamic_tasks_added = "dynamic_tasks_added"       # New tasks discovered during execution
 
     # Agent lifecycle
     activate_agent = "activate_agent"       # Agent started working
@@ -226,6 +237,13 @@ class TaskReplannedData(BaseActionData):
     subtasks: List[Dict]  # New subtask list
     original_task_id: Optional[str] = None
     reason: Optional[str] = None  # Why re-planned
+
+
+class StreamingDecomposeData(BaseActionData):
+    """Streaming decomposition text event."""
+
+    action: Literal[Action.streaming_decompose] = Action.streaming_decompose
+    text: str  # Accumulated decomposition text
 
 
 # ===== Agent Lifecycle Events =====
@@ -470,6 +488,88 @@ class ContextWarningData(BaseActionData):
     entries_count: int = 0  # Number of conversation entries
 
 
+# ===== Workforce Events (CAMEL-based multi-agent) =====
+
+class WorkforceStartedData(BaseActionData):
+    """Workforce started processing event."""
+
+    action: Literal[Action.workforce_started] = Action.workforce_started
+    total_tasks: int
+    workers_count: int
+    description: Optional[str] = None
+
+
+class WorkforceCompletedData(BaseActionData):
+    """Workforce completed all tasks event."""
+
+    action: Literal[Action.workforce_completed] = Action.workforce_completed
+    completed_count: int
+    failed_count: int
+    total_count: int
+    duration_seconds: Optional[float] = None
+
+
+class WorkforceStoppedData(BaseActionData):
+    """Workforce stopped/cancelled event."""
+
+    action: Literal[Action.workforce_stopped] = Action.workforce_stopped
+    reason: Optional[str] = None
+    completed_count: int = 0
+    pending_count: int = 0
+
+
+class WorkerAssignedData(BaseActionData):
+    """Task assigned to a worker event."""
+
+    action: Literal[Action.worker_assigned] = Action.worker_assigned
+    worker_name: str
+    worker_id: Optional[str] = None
+    subtask_id: str
+    subtask_content: str
+
+
+class WorkerStartedData(BaseActionData):
+    """Worker started processing event."""
+
+    action: Literal[Action.worker_started] = Action.worker_started
+    worker_name: str
+    worker_id: Optional[str] = None
+    subtask_id: str
+
+
+class WorkerCompletedData(BaseActionData):
+    """Worker completed task event."""
+
+    action: Literal[Action.worker_completed] = Action.worker_completed
+    worker_name: str
+    worker_id: Optional[str] = None
+    subtask_id: str
+    result_preview: Optional[str] = None  # Truncated result
+    duration_seconds: Optional[float] = None
+
+
+class WorkerFailedData(BaseActionData):
+    """Worker failed task event."""
+
+    action: Literal[Action.worker_failed] = Action.worker_failed
+    worker_name: str
+    worker_id: Optional[str] = None
+    subtask_id: str
+    error: str
+    retry_count: int = 0
+    will_retry: bool = False
+
+
+class DynamicTasksAddedData(BaseActionData):
+    """New tasks discovered and added during execution."""
+
+    action: Literal[Action.dynamic_tasks_added] = Action.dynamic_tasks_added
+    new_tasks: List[Dict]  # List of {id, content, status}
+    added_by_worker: Optional[str] = None
+    reason: Optional[str] = None
+    total_tasks_now: int = 0
+
+
 # ===== Type Alias for All Action Data Types =====
 
 ActionData = Union[
@@ -515,6 +615,15 @@ ActionData = Union[
     ErrorData,
     EndData,
     ContextWarningData,
+    # Workforce events
+    WorkforceStartedData,
+    WorkforceCompletedData,
+    WorkforceStoppedData,
+    WorkerAssignedData,
+    WorkerStartedData,
+    WorkerCompletedData,
+    WorkerFailedData,
+    DynamicTasksAddedData,
     # Fallback
     BaseActionData,
 ]

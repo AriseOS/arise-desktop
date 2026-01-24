@@ -195,6 +195,25 @@ class AnthropicProvider(BaseProvider):
         except Exception as e:
             logger.warning(f"Failed to emit usage event: {e}")
     
+    def _get_proxy_from_env(self) -> Optional[str]:
+        """Get proxy from environment variables only (ignore system proxy settings).
+
+        This explicitly reads from environment variables and ignores system-level
+        proxy settings (e.g., macOS System Preferences / Clash) to ensure
+        predictable behavior when connecting to CRS proxy.
+
+        Returns:
+            Proxy URL string or None if not set
+        """
+        return (
+            os.environ.get("HTTPS_PROXY")
+            or os.environ.get("https_proxy")
+            or os.environ.get("HTTP_PROXY")
+            or os.environ.get("http_proxy")
+            or os.environ.get("ALL_PROXY")
+            or os.environ.get("all_proxy")
+        )
+
     async def _initialize_client(self) -> None:
         """Initialize the Anthropic client"""
 
@@ -207,10 +226,26 @@ class AnthropicProvider(BaseProvider):
         if not self.model_name:
             self.model_name = "claude-sonnet-4-5-20250929"
 
-        # Initialize client with timeout
+        # Create custom httpx client to bypass system proxy detection
+        # Anthropic SDK uses urllib.request.getproxies() which reads macOS System Preferences
+        # This causes issues when Clash/V2Ray modifies system proxy settings
+        # We explicitly get proxy from env vars only (like cloud_client.py does)
+        import httpx
+        proxy = self._get_proxy_from_env()
+        if proxy:
+            logger.info(f"Using proxy from environment: {proxy}")
+        else:
+            logger.info("No proxy from environment, bypassing system proxy settings")
+
+        http_client = httpx.Client(
+            timeout=120.0,  # 2 minute timeout for API calls
+            proxy=proxy,  # None disables auto-detection, explicit URL enables proxy
+        )
+
+        # Initialize client with custom http_client
         client_kwargs = {
             "api_key": self.api_key,
-            "timeout": 120.0,  # 2 minute timeout for API calls
+            "http_client": http_client,
         }
 
         # Add custom base_url if provided (for API proxy)
@@ -385,13 +420,19 @@ class AnthropicProvider(BaseProvider):
             logger.info(f"  Messages count: {len(messages)}")
 
             # Use asyncio.to_thread() to run sync client in thread pool
+            # Only include tools parameter if there are tools (Anthropic may reject empty list)
+            create_kwargs = {
+                "model": self.model_name,
+                "max_tokens": max_tokens,
+                "system": system_prompt,
+                "messages": messages,
+            }
+            if tools:
+                create_kwargs["tools"] = tools
+
             response = await asyncio.to_thread(
                 self._client.messages.create,
-                model=self.model_name,
-                max_tokens=max_tokens,
-                system=system_prompt,
-                messages=messages,
-                tools=tools,
+                **create_kwargs,
             )
 
             logger.info(f"Anthropic API call successful")

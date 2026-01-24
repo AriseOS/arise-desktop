@@ -156,6 +156,7 @@ def setup_logging(
         "urllib3",           # URL library
         "asyncio",           # Async I/O internals
         "playwright",        # Playwright browser automation
+        "camel.base_model",  # CAMEL model backend - logs full Tools/Messages (very verbose)
     ]
     for logger_name in noisy_loggers:
         logging.getLogger(logger_name).setLevel(logging.WARNING)

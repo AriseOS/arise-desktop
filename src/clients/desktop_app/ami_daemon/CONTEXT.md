@@ -166,7 +166,8 @@ Independent task execution interface for autonomous browser automation. Uses Eig
 | `/api/v1/quick-task/status/{task_id}` | GET | Get task status |
 | `/api/v1/quick-task/result/{task_id}` | GET | Get task result |
 | `/api/v1/quick-task/cancel/{task_id}` | POST | Cancel running task |
-| `/api/v1/quick-task/ws/{task_id}` | WebSocket | Real-time progress stream |
+| `/api/v1/quick-task/stream/{task_id}` | GET (SSE) | Real-time event stream |
+| `/api/v1/quick-task/message/{task_id}` | POST | Send human response |
 
 ### Execute Request
 
@@ -180,19 +181,77 @@ Independent task execution interface for autonomous browser automation. Uses Eig
 ```
 
 Headers:
-- `X-Anthropic-API-Key`: Optional, uses `ANTHROPIC_API_KEY` env var if not provided
+- `X-Ami-API-Key`: Ami API key for LLM calls via CRS proxy
+- `X-User-Id`: User ID for memory queries (optional)
 
-### WebSocket Events
+### SSE Events
 
-```json
-{"event": "connected", "task_id": "abc12345"}
-{"event": "task_started", "task_id": "...", "task": "..."}
-{"event": "task_completed", "output": {...}, "action_history": [...]}
-{"event": "task_failed", "error": "..."}
-{"event": "heartbeat"}
+Events are streamed as Server-Sent Events (SSE) via `/stream/{task_id}`.
+
+```
+event: task_started
+data: {"task_id": "abc12345", "task": "..."}
+
+event: toolkit
+data: {"toolkit_name": "Browser Toolkit", "method": "Click", "status": "active"}
+
+event: agent_thinking
+data: {"task_id": "...", "thinking": "..."}
+
+event: task_completed
+data: {"output": {...}, "action_history": [...]}
+
+event: end
+data: {}
 ```
 
 ### Files
 
 - `routers/quick_task.py` - API router
 - `services/quick_task_service.py` - Task management service
+
+## Workforce Architecture (CAMEL-based)
+
+Multi-agent task coordination system based on CAMEL Workforce.
+
+### Core Components
+
+| Component | Location | Description |
+|-----------|----------|-------------|
+| `AMIWorkforce` | `base_agent/core/ami_workforce.py` | Task coordinator with decomposition and worker management |
+| `AMISingleAgentWorker` | `base_agent/core/ami_worker.py` | Worker wrapper for AMI agents |
+| `BrowserAgentAdapter` | `base_agent/core/agent_adapter.py` | Adapter for EigentStyleBrowserAgent |
+
+### Architecture
+
+```
+AMIWorkforce
+├── task_agent: LLM for task decomposition
+├── pending_tasks: CAMEL TaskChannel
+├── workers:
+│   └── BrowserWorker → AMISingleAgentWorker → BrowserAgentAdapter
+└── failure_handling: retry + replan (CAMEL built-in)
+```
+
+### Workforce SSE Events
+
+| Event | Description |
+|-------|-------------|
+| `workforce_started` | Workforce started processing |
+| `workforce_completed` | Workforce finished all tasks |
+| `workforce_stopped` | Workforce stopped/cancelled |
+| `worker_assigned` | Task assigned to a worker |
+| `worker_started` | Worker started processing |
+| `worker_completed` | Worker finished task |
+| `worker_failed` | Worker failed task |
+| `dynamic_tasks_added` | New tasks discovered during execution |
+
+### Usage
+
+```python
+# Use submit_task_workforce() for CAMEL-based execution
+task_id = await service.submit_task_workforce(
+    task="Research competitors and summarize findings",
+    headless=False,
+)
+```

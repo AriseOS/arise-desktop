@@ -29,16 +29,63 @@ class BrowserToolkit(BaseToolkit):
 
     All methods are async for proper integration with async agent loops.
     Uses @listen_toolkit for automatic event emission on public methods.
+
+    Tool Filtering:
+        Use `enabled_tools` parameter to control which tools are exposed to the LLM.
+        This reduces request payload size and focuses the LLM on relevant actions.
+
+        Example:
+            toolkit = BrowserToolkit(enabled_tools=[
+                "browser_visit_page",
+                "browser_click",
+                "browser_type",
+                "browser_enter",
+                "browser_get_page_snapshot",
+            ])
     """
 
     # Agent name for event tracking
     agent_name: str = "browser_agent"
+
+    # Default tools to enable (matches Eigent's enabled_tools for browser_agent)
+    DEFAULT_ENABLED_TOOLS = [
+        "browser_visit_page",
+        "browser_click",
+        "browser_type",
+        "browser_back",
+        "browser_forward",
+        "browser_select",
+        "browser_switch_tab",
+        "browser_enter",
+        "browser_get_page_snapshot",
+        "browser_scroll",
+    ]
+
+    # All available tools
+    ALL_TOOLS = [
+        "browser_visit_page",
+        "browser_back",
+        "browser_forward",
+        "browser_scroll",
+        "browser_click",
+        "browser_type",
+        "browser_enter",
+        "browser_select",
+        "browser_press_key",
+        "browser_mouse_control",
+        "browser_get_page_snapshot",
+        "browser_get_tab_info",
+        "browser_switch_tab",
+        "browser_new_tab",
+        "browser_close_tab",
+    ]
 
     def __init__(
         self,
         session: Optional["HybridBrowserSession"] = None,
         timeout: Optional[float] = 30.0,
         return_snapshot: bool = True,
+        enabled_tools: Optional[List[str]] = None,
     ) -> None:
         """Initialize the BrowserToolkit.
 
@@ -47,11 +94,24 @@ class BrowserToolkit(BaseToolkit):
                 If not provided, tools will return errors until set.
             timeout: Default timeout for browser operations.
             return_snapshot: Whether to return page snapshot after each action.
+            enabled_tools: List of tool names to enable. If None, uses DEFAULT_ENABLED_TOOLS.
+                Only tools in this list will be returned by get_tools().
         """
         super().__init__(timeout=timeout)
         self._session = session
         self._return_snapshot = return_snapshot
-        logger.info(f"BrowserToolkit initialized (session={'set' if session else 'None'})")
+
+        # Set enabled tools
+        if enabled_tools is None:
+            self._enabled_tools = self.DEFAULT_ENABLED_TOOLS.copy()
+        else:
+            # Validate tool names
+            invalid_tools = [t for t in enabled_tools if t not in self.ALL_TOOLS]
+            if invalid_tools:
+                logger.warning(f"Unknown tool names will be ignored: {invalid_tools}")
+            self._enabled_tools = [t for t in enabled_tools if t in self.ALL_TOOLS]
+
+        logger.info(f"BrowserToolkit initialized (session={'set' if session else 'None'}, enabled_tools={len(self._enabled_tools)})")
 
     def set_session(self, session: "HybridBrowserSession") -> None:
         """Set or update the browser session.
@@ -890,32 +950,41 @@ class BrowserToolkit(BaseToolkit):
             return f"Error closing tab: {e}"
 
     def get_tools(self) -> List[FunctionTool]:
-        """Return a list of FunctionTool objects for this toolkit.
+        """Return a list of FunctionTool objects for enabled tools only.
+
+        Only returns tools that are in the `enabled_tools` list.
+        This reduces the request payload size sent to the LLM.
 
         Returns:
-            List of FunctionTool objects.
+            List of FunctionTool objects for enabled tools.
         """
-        return [
-            # Navigation
-            FunctionTool(self.browser_visit_page),
-            FunctionTool(self.browser_back),
-            FunctionTool(self.browser_forward),
-            FunctionTool(self.browser_scroll),
-            # Interaction
-            FunctionTool(self.browser_click),
-            FunctionTool(self.browser_type),
-            FunctionTool(self.browser_enter),
-            FunctionTool(self.browser_select),
-            FunctionTool(self.browser_press_key),
-            FunctionTool(self.browser_mouse_control),
-            # Page info
-            FunctionTool(self.browser_get_page_snapshot),
-            # Tab management
-            FunctionTool(self.browser_get_tab_info),
-            FunctionTool(self.browser_switch_tab),
-            FunctionTool(self.browser_new_tab),
-            FunctionTool(self.browser_close_tab),
-        ]
+        # Map tool names to their methods
+        tool_map = {
+            "browser_visit_page": self.browser_visit_page,
+            "browser_back": self.browser_back,
+            "browser_forward": self.browser_forward,
+            "browser_scroll": self.browser_scroll,
+            "browser_click": self.browser_click,
+            "browser_type": self.browser_type,
+            "browser_enter": self.browser_enter,
+            "browser_select": self.browser_select,
+            "browser_press_key": self.browser_press_key,
+            "browser_mouse_control": self.browser_mouse_control,
+            "browser_get_page_snapshot": self.browser_get_page_snapshot,
+            "browser_get_tab_info": self.browser_get_tab_info,
+            "browser_switch_tab": self.browser_switch_tab,
+            "browser_new_tab": self.browser_new_tab,
+            "browser_close_tab": self.browser_close_tab,
+        }
+
+        # Return only enabled tools
+        enabled_tools = []
+        for tool_name in self._enabled_tools:
+            if tool_name in tool_map:
+                enabled_tools.append(FunctionTool(tool_map[tool_name]))
+
+        logger.info(f"Returning {len(enabled_tools)} enabled browser tools")
+        return enabled_tools
 
     @classmethod
     def toolkit_name(cls) -> str:

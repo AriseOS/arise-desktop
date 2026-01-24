@@ -441,6 +441,7 @@ function AgentPage({ session, onNavigate, showStatus, version }) {
                       taskTime: taskTime,
                       elapsed: elapsed,
                       tokens: tokenUsage?.inputTokens + tokenUsage?.outputTokens || 0,
+                      showDecomposition: showDecomposition,  // Eigent: Flag to show confirm UI
                     }}
                     // Input control
                     inputValue={taskInput}

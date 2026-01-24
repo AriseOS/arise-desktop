@@ -10,10 +10,10 @@ Memory-Guided Planning:
 
 Streaming:
 - SSE endpoint for typed event streaming
-- WebSocket for bidirectional communication (human interaction)
+- HTTP POST for client-to-server messages (human responses)
 """
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Header, Request
+from fastapi import APIRouter, HTTPException, Header, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
@@ -222,7 +222,7 @@ async def execute_task(
     Returns task_id, which can be used for:
     - GET /status/{task_id} to check status
     - GET /result/{task_id} to get result
-    - WebSocket /ws/{task_id} for real-time progress
+    - GET /stream/{task_id} for real-time SSE event streaming
     """
     service = get_service()
 
@@ -509,46 +509,57 @@ class SubtaskConfirmRequest(BaseModel):
 @router.post("/{task_id}/confirm-subtasks")
 async def confirm_subtasks(task_id: str, request: SubtaskConfirmRequest):
     """
-    Confirm subtask execution plan.
+    Confirm subtask execution plan (Eigent-style).
 
     After task decomposition, the frontend displays subtasks for user review.
-    This endpoint confirms the plan and allows execution to proceed.
+    This endpoint confirms the plan and signals the waiting _execute_task
+    to proceed with agent execution.
 
     Args:
         task_id: Task ID
         request: Confirmed subtasks (may be edited by user)
     """
     service = get_service()
-    state = service._tasks.get(task_id)
 
-    if not state:
-        raise HTTPException(status_code=404, detail="Task not found")
+    # Use service method to signal confirmation
+    success = await service.confirm_task_plan(task_id, request.subtasks)
 
-    # Store confirmed subtasks in state
-    state.plan = request.subtasks
+    if not success:
+        # Task not found or not awaiting confirmation
+        state = service._tasks.get(task_id)
+        if not state:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if not state.awaiting_confirmation:
+            raise HTTPException(status_code=400, detail="Task is not awaiting confirmation")
+        raise HTTPException(status_code=500, detail="Failed to confirm task plan")
+
     logger.info(f"Subtasks confirmed for task {task_id}: {len(request.subtasks)} subtasks")
-
     return {"success": True, "message": "Subtasks confirmed", "subtask_count": len(request.subtasks)}
 
 
 @router.post("/{task_id}/cancel-subtasks")
 async def cancel_subtasks(task_id: str):
     """
-    Cancel subtask execution plan.
+    Cancel subtask execution plan (Eigent-style).
 
-    User rejected the proposed plan. Task continues without decomposition
-    or may be cancelled entirely.
+    User rejected the proposed plan. This signals the waiting _execute_task
+    to abort and mark the task as cancelled.
     """
     service = get_service()
-    state = service._tasks.get(task_id)
 
-    if not state:
-        raise HTTPException(status_code=404, detail="Task not found")
+    # Use service method to signal cancellation
+    success = await service.cancel_task_plan(task_id)
 
-    # Clear plan and mark as user-rejected
-    state.plan = []
+    if not success:
+        # Task not found or not awaiting confirmation
+        state = service._tasks.get(task_id)
+        if not state:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if not state.awaiting_confirmation:
+            raise HTTPException(status_code=400, detail="Task is not awaiting confirmation")
+        raise HTTPException(status_code=500, detail="Failed to cancel task plan")
+
     logger.info(f"Subtasks cancelled for task {task_id}")
-
     return {"success": True, "message": "Subtasks cancelled"}
 
 
@@ -747,25 +758,25 @@ async def sse_stream_wrapper(
     """
     Wrap event queue as SSE stream with idle timeout handling.
 
-    Following Eigent's pattern: timeout is based on idle time (no data received),
-    not total connection time. This allows long-running tasks to stream indefinitely
-    as long as data keeps flowing.
+    Idle timeout tracks time since last SSE data was sent (including heartbeats).
+    This prevents timeout during long operations like waiting for user input,
+    as heartbeats keep the connection alive.
 
     Yields SSE-formatted events from the typed event queue.
     Closes the connection on:
-    - Idle timeout reached (no data for idle_timeout_seconds)
+    - Idle timeout reached (no SSE data sent for idle_timeout_seconds)
     - Client disconnect
     - End/completed/failed/cancelled events
     """
     import time
-    last_data_time = time.time()  # Track last data received time
+    last_activity_time = time.time()  # Track last SSE data sent time
 
     try:
         while True:
-            # Check idle timeout (time since last data)
-            elapsed_since_data = time.time() - last_data_time
-            if elapsed_since_data >= idle_timeout_seconds:
-                logger.info(f"SSE stream idle timeout for task {state.task_id} (no data for {idle_timeout_seconds}s)")
+            # Check idle timeout (time since last SSE data sent)
+            elapsed_since_activity = time.time() - last_activity_time
+            if elapsed_since_activity >= idle_timeout_seconds:
+                logger.info(f"SSE stream idle timeout for task {state.task_id} (no activity for {idle_timeout_seconds}s)")
                 yield sse_action(EndData(
                     task_id=state.task_id,
                     status="timeout",
@@ -785,8 +796,8 @@ async def sse_stream_wrapper(
                     timeout=heartbeat_interval
                 )
 
-                # Reset idle timer on data received
-                last_data_time = time.time()
+                # Reset activity timer on event
+                last_activity_time = time.time()
 
                 # Yield SSE-formatted event
                 yield sse_action(event)
@@ -799,8 +810,10 @@ async def sse_stream_wrapper(
                     break
 
             except asyncio.TimeoutError:
-                # No event within interval, send heartbeat
-                # Note: heartbeat doesn't reset idle timer - only actual data does
+                # No event within interval, send heartbeat to keep connection alive
+                # Heartbeat also resets activity timer to prevent timeout during
+                # long operations (e.g., waiting for user input)
+                last_activity_time = time.time()
                 yield sse_heartbeat()
 
     except asyncio.CancelledError:
@@ -843,102 +856,3 @@ async def stream_task_events(task_id: str, request: Request):
             "X-Accel-Buffering": "no",  # Disable nginx buffering
         }
     )
-
-
-# ============== WebSocket Endpoint ==============
-
-@router.websocket("/ws/{task_id}")
-async def task_progress_websocket(websocket: WebSocket, task_id: str):
-    """
-    Real-time task progress WebSocket (bidirectional).
-
-    Server -> Client messages:
-    - {"event": "connected", "task_id": "..."}
-    - {"event": "task_started", "task_id": "...", "task": "..."}
-    - {"event": "task_completed", "output": {...}}
-    - {"event": "task_failed", "error": "..."}
-    - {"event": "task_cancelled"}
-    - {"event": "heartbeat"}
-    - {"event": "human_question", "question": "...", "context": "..."}
-    - {"event": "human_message", "title": "...", "description": "..."}
-
-    Client -> Server messages:
-    - {"type": "human_response", "response": "..."}
-    """
-    await websocket.accept()
-
-    service = get_service()
-
-    async def receive_messages():
-        """Handle incoming messages from client."""
-        try:
-            while True:
-                data = await websocket.receive_json()
-                msg_type = data.get("type")
-
-                if msg_type == "human_response":
-                    response = data.get("response", "")
-                    success = await service.provide_human_response(task_id, response)
-                    if success:
-                        logger.info(f"Human response received for task {task_id}")
-                    else:
-                        logger.warning(f"Failed to deliver human response for task {task_id}")
-
-        except WebSocketDisconnect:
-            logger.info(f"WebSocket receive loop ended for task {task_id}")
-        except Exception as e:
-            logger.debug(f"WebSocket receive error for task {task_id}: {e}")
-
-    async def send_progress():
-        """Send progress updates to client."""
-        try:
-            # Send connection confirmation
-            await websocket.send_json({
-                "event": "connected",
-                "task_id": task_id
-            })
-
-            # Subscribe to progress updates
-            async for event in service.subscribe_progress(task_id):
-                await websocket.send_json(event)
-
-                # If task ended, break
-                if event.get("event") in ["task_completed", "task_failed", "task_cancelled"]:
-                    break
-
-        except WebSocketDisconnect:
-            logger.info(f"WebSocket send loop ended for task {task_id}")
-        except Exception as e:
-            logger.debug(f"WebSocket send error for task {task_id}: {e}")
-
-    try:
-        # Run send and receive concurrently
-        send_task = asyncio.create_task(send_progress())
-        receive_task = asyncio.create_task(receive_messages())
-
-        # Wait for send task to complete (ends when task finishes)
-        await send_task
-
-        # Cancel receive task when done
-        receive_task.cancel()
-        try:
-            await receive_task
-        except asyncio.CancelledError:
-            pass
-
-    except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected for task {task_id}")
-    except Exception as e:
-        logger.exception(f"WebSocket error for task {task_id}: {e}")
-        try:
-            await websocket.send_json({
-                "event": "error",
-                "message": str(e)
-            })
-        except:
-            pass
-    finally:
-        try:
-            await websocket.close()
-        except:
-            pass

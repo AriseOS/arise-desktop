@@ -37,7 +37,6 @@ from ..tools.toolkits import (
     HumanToolkit,
     BrowserToolkit,
     MemoryToolkit,
-    TaskPlanningToolkit,
 )
 from ..workspace import get_working_directory, get_current_manager
 from ..events import set_process_task
@@ -538,13 +537,8 @@ Remember: This is a GUIDE. Adapt to your actual task goal.
             self._memory_toolkit = None
             logger.info("MemoryToolkit not configured (missing api_base_url, api_key, or user_id)")
 
-        # Initialize TaskPlanningToolkit for task decomposition
-        # Uses task_id from context for proper event emission
-        # Note: task_state is set later via set_task_state() along with other toolkits
-        self._task_planning_toolkit = TaskPlanningToolkit(
-            task_id=self._context.task_id if self._context else "default",
-        )
-        logger.info("TaskPlanningToolkit initialized")
+        # Note: TaskPlanningToolkit removed - task decomposition moved to Workforce layer
+        # See AMIWorkforce for task decomposition functionality
 
         # Collect all tools
         self._tools = [
@@ -553,7 +547,6 @@ Remember: This is a GUIDE. Adapt to your actual task goal.
             *self._terminal_toolkit.get_tools(),
             *self._human_toolkit.get_tools(),
             *self._browser_toolkit.get_tools(),
-            *self._task_planning_toolkit.get_tools(),  # Task planning tools
         ]
 
         # Add memory tools if available
@@ -576,14 +569,13 @@ Remember: This is a GUIDE. Adapt to your actual task goal.
                 self._human_toolkit,
                 self._browser_toolkit,
                 self._memory_toolkit,
-                self._task_planning_toolkit,  # Include task planning toolkit
             ]
             for toolkit in all_toolkits:
                 if toolkit and hasattr(toolkit, 'set_task_state'):
                     toolkit.set_task_state(self._task_state)
             logger.info("Task state propagated to all toolkits for event emission")
 
-        toolkit_count = 7 if self._memory_toolkit else 6  # +1 for task planning
+        toolkit_count = 6 if self._memory_toolkit else 5
         logger.info(f"Initialized {len(self._tools)} tools from {toolkit_count} toolkits")
 
     def _build_tools_schema(self) -> List[Dict[str, Any]]:

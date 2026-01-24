@@ -138,6 +138,21 @@ const createInitialTaskState = (taskDescription = '', type = 'normal') => ({
   // Timing (Eigent: for statistics)
   taskTime: null,  // When task started
   elapsed: 0,      // Task duration in ms
+
+  // Workforce state (CAMEL-based multi-agent coordination)
+  workforce: {
+    workers: [],          // Array of worker objects with status
+    pendingTasks: 0,      // Count of pending tasks
+    runningTasks: 0,      // Count of currently running tasks
+    completedTasks: 0,    // Count of completed tasks
+    failedTasks: 0,       // Count of failed tasks
+    totalTasks: 0,        // Total task count
+    isActive: false,      // Whether workforce is currently active
+  },
+
+  // Subtask to worker assignment mapping
+  // Format: { subtask_id: { workerId, workerName, status } }
+  subtaskAssignments: {},
 });
 
 /**
@@ -1238,6 +1253,246 @@ export const useAgentStore = create((set, get) => ({
           if (url) {
             updateTask({ browserUrl: url });
           }
+        }
+        break;
+
+      // ===== Workforce Events (CAMEL-based multi-agent coordination) =====
+      case 'workforce_started':
+        {
+          updateTask({
+            workforce: {
+              ...store.tasks[taskId]?.workforce,
+              isActive: true,
+              pendingTasks: event.total_tasks || 0,
+              totalTasks: event.total_tasks || 0,
+              runningTasks: 0,
+              completedTasks: 0,
+              failedTasks: 0,
+            },
+          });
+          addNotice('info', 'Workforce Started', 'Multi-agent coordination active');
+        }
+        break;
+
+      case 'workforce_completed':
+        {
+          const currentWorkforce = store.tasks[taskId]?.workforce || {};
+          updateTask({
+            workforce: {
+              ...currentWorkforce,
+              isActive: false,
+            },
+          });
+          addNotice('success', 'Workforce Completed', `${currentWorkforce.completedTasks || 0} tasks completed`);
+        }
+        break;
+
+      case 'workforce_stopped':
+        {
+          updateTask({
+            workforce: {
+              ...store.tasks[taskId]?.workforce,
+              isActive: false,
+            },
+          });
+          addNotice('warning', 'Workforce Stopped', event.message || 'Coordination stopped');
+        }
+        break;
+
+      case 'worker_assigned':
+        {
+          const { worker_id, worker_name, subtask_id, subtask_content } = event;
+          if (!subtask_id) break;
+
+          const currentTask = store.tasks[taskId];
+          if (!currentTask) break;
+
+          // Update subtaskAssignments
+          const updatedAssignments = {
+            ...currentTask.subtaskAssignments,
+            [subtask_id]: {
+              workerId: worker_id,
+              workerName: worker_name,
+              status: 'assigned',
+            },
+          };
+
+          // Update workforce workers list
+          const existingWorkers = currentTask.workforce?.workers || [];
+          let updatedWorkers = [...existingWorkers];
+          const workerIndex = updatedWorkers.findIndex(w => w.id === worker_id);
+          if (workerIndex === -1) {
+            updatedWorkers.push({
+              id: worker_id,
+              name: worker_name,
+              status: 'idle',
+              currentTaskId: null,
+            });
+          }
+
+          updateTask({
+            subtaskAssignments: updatedAssignments,
+            workforce: {
+              ...currentTask.workforce,
+              workers: updatedWorkers,
+            },
+          });
+        }
+        break;
+
+      case 'worker_started':
+        {
+          const { worker_id, worker_name, subtask_id } = event;
+          const currentTask = store.tasks[taskId];
+          if (!currentTask) break;
+
+          // Update worker status
+          const workers = (currentTask.workforce?.workers || []).map(w =>
+            w.id === worker_id
+              ? { ...w, status: 'running', currentTaskId: subtask_id }
+              : w
+          );
+
+          // Update subtask assignment status
+          const assignments = { ...currentTask.subtaskAssignments };
+          if (subtask_id && assignments[subtask_id]) {
+            assignments[subtask_id] = {
+              ...assignments[subtask_id],
+              status: 'running',
+            };
+          }
+
+          // Update workforce counts
+          const workforce = currentTask.workforce || {};
+          updateTask({
+            workforce: {
+              ...workforce,
+              workers,
+              runningTasks: (workforce.runningTasks || 0) + 1,
+              pendingTasks: Math.max(0, (workforce.pendingTasks || 0) - 1),
+            },
+            subtaskAssignments: assignments,
+          });
+
+          addNotice('info', 'Worker Started', `${worker_name} started task`);
+        }
+        break;
+
+      case 'worker_completed':
+        {
+          const { worker_id, worker_name, subtask_id, result } = event;
+          const currentTask = store.tasks[taskId];
+          if (!currentTask) break;
+
+          // Update worker status
+          const workers = (currentTask.workforce?.workers || []).map(w =>
+            w.id === worker_id
+              ? { ...w, status: 'idle', currentTaskId: null }
+              : w
+          );
+
+          // Update subtask assignment status
+          const assignments = { ...currentTask.subtaskAssignments };
+          if (subtask_id && assignments[subtask_id]) {
+            assignments[subtask_id] = {
+              ...assignments[subtask_id],
+              status: 'completed',
+              result: result,
+            };
+          }
+
+          // Update workforce counts
+          const workforce = currentTask.workforce || {};
+          updateTask({
+            workforce: {
+              ...workforce,
+              workers,
+              runningTasks: Math.max(0, (workforce.runningTasks || 0) - 1),
+              completedTasks: (workforce.completedTasks || 0) + 1,
+            },
+            subtaskAssignments: assignments,
+          });
+
+          addNotice('success', 'Worker Completed', `${worker_name} completed task`);
+        }
+        break;
+
+      case 'worker_failed':
+        {
+          const { worker_id, worker_name, subtask_id, error, failure_count } = event;
+          const currentTask = store.tasks[taskId];
+          if (!currentTask) break;
+
+          // Update worker status
+          const workers = (currentTask.workforce?.workers || []).map(w =>
+            w.id === worker_id
+              ? { ...w, status: 'idle', currentTaskId: null }
+              : w
+          );
+
+          // Update subtask assignment status
+          const assignments = { ...currentTask.subtaskAssignments };
+          if (subtask_id && assignments[subtask_id]) {
+            assignments[subtask_id] = {
+              ...assignments[subtask_id],
+              status: 'failed',
+              error: error,
+              failureCount: failure_count,
+            };
+          }
+
+          // Update workforce counts
+          const workforce = currentTask.workforce || {};
+          updateTask({
+            workforce: {
+              ...workforce,
+              workers,
+              runningTasks: Math.max(0, (workforce.runningTasks || 0) - 1),
+              failedTasks: (workforce.failedTasks || 0) + 1,
+            },
+            subtaskAssignments: assignments,
+          });
+
+          addNotice('error', 'Worker Failed', `${worker_name} failed: ${error || 'Unknown error'}`);
+        }
+        break;
+
+      case 'dynamic_tasks_added':
+        {
+          const { new_tasks, total_tasks } = event;
+          const currentTask = store.tasks[taskId];
+          if (!currentTask) break;
+
+          // Add new tasks to subtasks list
+          const existingSubtasks = currentTask.subtasks || [];
+          const newSubtasksList = new_tasks || [];
+          const updatedSubtasks = [...existingSubtasks, ...newSubtasksList.map(t => ({
+            id: t.id,
+            content: t.content,
+            status: 'pending',
+          }))];
+
+          // Update taskRunning as well
+          const existingTaskRunning = currentTask.taskRunning || [];
+          const updatedTaskRunning = [...existingTaskRunning, ...newSubtasksList.map(t => ({
+            id: t.id,
+            content: t.content,
+            status: 'pending',
+          }))];
+
+          // Update workforce counts
+          const workforce = currentTask.workforce || {};
+          updateTask({
+            subtasks: updatedSubtasks,
+            taskRunning: updatedTaskRunning,
+            workforce: {
+              ...workforce,
+              totalTasks: total_tasks || updatedSubtasks.length,
+              pendingTasks: (workforce.pendingTasks || 0) + newSubtasksList.length,
+            },
+          });
+
+          addNotice('info', 'Tasks Added', `${newSubtasksList.length} new tasks discovered`);
         }
         break;
 

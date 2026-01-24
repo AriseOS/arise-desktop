@@ -69,6 +69,18 @@ from .task_orchestrator import (
     SubTaskState,
 )
 
+# Workforce components (CAMEL-based)
+from .ami_workforce import AMIWorkforce
+from .ami_worker import AMISingleAgentWorker
+from .listen_chat_agent import ListenChatAgent
+from .ami_model_backend import AMIModelBackend
+from .agent_factories import (
+    create_model_backend,
+    create_browser_agent,
+    create_developer_agent,
+    create_document_agent,
+)
+
 # Lazy import for WorkflowEngine to avoid circular imports
 def __getattr__(name):
     if name == "WorkflowEngine":
@@ -144,4 +156,14 @@ __all__ = [
     "OrchestratorState",
     "SubTask",
     "SubTaskState",
+
+    # Workforce (CAMEL-based)
+    "AMIWorkforce",
+    "AMISingleAgentWorker",
+    "ListenChatAgent",
+    "AMIModelBackend",
+    "create_model_backend",
+    "create_browser_agent",
+    "create_developer_agent",
+    "create_document_agent",
 ]

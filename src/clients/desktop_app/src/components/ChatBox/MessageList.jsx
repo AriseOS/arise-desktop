@@ -171,6 +171,7 @@ function MessageList({
                 taskType={taskType}
                 showToolkits={false}
                 editable={task.isTaskEdit}
+                subtaskAssignments={task.subtaskAssignments || {}}
               />
             </div>
           )}

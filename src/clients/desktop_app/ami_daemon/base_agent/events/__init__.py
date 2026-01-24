@@ -22,6 +22,7 @@ from .action_types import (
     TaskDecomposedData,
     SubtaskStateData,
     TaskReplannedData,
+    StreamingDecomposeData,
     # Agent lifecycle
     ActivateAgentData,
     DeactivateAgentData,
@@ -50,6 +51,15 @@ from .action_types import (
     ErrorData,
     EndData,
     ContextWarningData,
+    # Workforce events
+    WorkforceStartedData,
+    WorkforceCompletedData,
+    WorkforceStoppedData,
+    WorkerAssignedData,
+    WorkerStartedData,
+    WorkerCompletedData,
+    WorkerFailedData,
+    DynamicTasksAddedData,
 )
 
 from .sse import (
@@ -114,6 +124,15 @@ __all__ = [
     "ErrorData",
     "EndData",
     "ContextWarningData",
+    # Workforce events
+    "WorkforceStartedData",
+    "WorkforceCompletedData",
+    "WorkforceStoppedData",
+    "WorkerAssignedData",
+    "WorkerStartedData",
+    "WorkerCompletedData",
+    "WorkerFailedData",
+    "DynamicTasksAddedData",
     # SSE utilities
     "sse_json",
     "sse_action",

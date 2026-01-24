@@ -217,8 +217,12 @@ class TaskPlanningToolkit(BaseToolkit):
         """
         if self._task_state and hasattr(self._task_state, 'put_event'):
             try:
+                # Build the event dict with event type and data
+                # TaskState.put_event expects a single dict with 'event' key
+                event_dict = {"event": event_type, **data}
+
                 # put_event may be sync or async
-                result = self._task_state.put_event(event_type, data)
+                result = self._task_state.put_event(event_dict)
                 if asyncio.iscoroutine(result):
                     # Schedule async call if we're in an event loop
                     try:
@@ -227,7 +231,7 @@ class TaskPlanningToolkit(BaseToolkit):
                     except RuntimeError:
                         # No running loop, run synchronously
                         asyncio.run(result)
-                logger.debug(f"Emitted event: {event_type}")
+                logger.info(f"Emitted event: {event_type} with data keys: {list(data.keys())}")
             except Exception as e:
                 logger.warning(f"Failed to emit {event_type} event: {e}")
 

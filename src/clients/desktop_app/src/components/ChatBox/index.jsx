@@ -20,6 +20,7 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import MessageList from './MessageList';
 import BottomBox from './BottomBox';
+import { WorkforceStatusPanel } from '../Workforce';
 import './ChatBox.css';
 
 /**
@@ -43,17 +44,24 @@ function formatElapsedTime(elapsed, taskTime) {
 
 /**
  * Map task status to BottomBox state
+ *
+ * State priority (Eigent pattern):
+ * 1. splitting - Task is being decomposed (streamingDecomposeText active)
+ * 2. confirm - Task decomposed, waiting for user confirmation (showDecomposition=true)
+ * 3. running/finished - Task is executing or completed
+ * 4. input - Default state
  */
 function getBottomBoxState(task) {
   if (!task) return 'input';
 
-  // If decomposing tasks
+  // If decomposing tasks (streaming text active)
   if (task.streamingDecomposeText || task.status === 'decomposing') {
     return 'splitting';
   }
 
-  // If waiting for confirmation
-  if (task.taskInfo?.length > 0 && !task.status?.includes('running')) {
+  // Eigent pattern: If showDecomposition is true, show confirm UI
+  // This takes priority over status because decomposition happens before execution
+  if (task.showDecomposition && task.taskInfo?.length > 0) {
     return 'confirm';
   }
 
@@ -215,6 +223,12 @@ function ChatBox({
 
   return (
     <div className="chat-box">
+      {/* Workforce Status Panel - shows when workforce is active */}
+      <WorkforceStatusPanel
+        workforce={task?.workforce}
+        subtaskAssignments={task?.subtaskAssignments}
+      />
+
       {/* Message List with inline TaskCard (Eigent pattern) */}
       <MessageList
         messages={messages}

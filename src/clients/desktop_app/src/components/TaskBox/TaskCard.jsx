@@ -19,6 +19,8 @@ function TaskCard({
   summaryTask = '',
   progressValue = 0,
   taskType = 1, // 1: manual tasks, 2: agent-assigned tasks
+  // Worker assignments (from agentStore.subtaskAssignments)
+  subtaskAssignments = {},
   // Interaction
   isExpanded: initialExpanded = true,
   onTaskClick,
@@ -28,6 +30,7 @@ function TaskCard({
   // Display options
   showToolkits = true,
   showProgress = true,
+  showWorkerAssignments = true,
   maxToolkitEvents = 5,
   editable = false,
 }) {
@@ -139,6 +142,27 @@ function TaskCard({
     return parts.map(p => Number(p)).join('.');
   };
 
+  // Get worker assignment for a task
+  const getWorkerAssignment = useCallback((taskId) => {
+    if (!showWorkerAssignments || !subtaskAssignments) return null;
+    return subtaskAssignments[taskId] || null;
+  }, [showWorkerAssignments, subtaskAssignments]);
+
+  // Get worker status icon
+  const getWorkerStatusIcon = (status) => {
+    switch (status) {
+      case 'running':
+        return <span className="worker-status-icon running"><span className="spinner small"></span></span>;
+      case 'completed':
+        return <span className="worker-status-icon completed">✓</span>;
+      case 'failed':
+        return <span className="worker-status-icon failed">✗</span>;
+      case 'assigned':
+      default:
+        return <span className="worker-status-icon assigned">→</span>;
+    }
+  };
+
   return (
     <div className={`task-card task-type-${taskType}`}>
       {/* Progress bar */}
@@ -213,6 +237,19 @@ function TaskCard({
                   {task.id && (
                     <span className="task-number">No. {formatTaskId(task.id)}</span>
                   )}
+                  {/* Worker assignment badge */}
+                  {(() => {
+                    const assignment = getWorkerAssignment(task.id);
+                    if (assignment) {
+                      return (
+                        <span className={`task-badge worker-badge ${assignment.status || 'assigned'}`}>
+                          {getWorkerStatusIcon(assignment.status)}
+                          <span className="worker-name">{assignment.workerName || assignment.workerId}</span>
+                        </span>
+                      );
+                    }
+                    return null;
+                  })()}
                   {task.reAssignTo && (
                     <span className="task-badge reassigned">
                       Reassigned to {task.reAssignTo}
