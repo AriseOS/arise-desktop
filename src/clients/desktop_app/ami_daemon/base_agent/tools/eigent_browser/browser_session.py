@@ -255,6 +255,33 @@ class HybridBrowserSession:
 
         new_page.on(event="close", f=handle_page_close)
 
+    def _on_new_page(self, page: "Page") -> None:
+        """Callback for context 'page' event - auto-register new tabs/popups.
+
+        This catches all new pages opened by any means:
+        - JavaScript window.open()
+        - Links with target="_blank"
+        - Popups
+        - Force clicks on links
+        """
+        import asyncio
+        import time
+        logger.debug(f"[PAGE EVENT] Received at {time.strftime('%H:%M:%S')}, page.url={page.url}")
+
+        async def register():
+            # Check if already registered
+            for existing_page in self._pages.values():
+                if existing_page is page:
+                    logger.debug("Page already registered, skipping")
+                    return
+
+            tab_id = await TabIdGenerator.generate_tab_id()
+            await self._register_new_page(tab_id, page)
+            logger.info(f"[Auto] Registered new tab {tab_id} (opened by page event). Total tabs: {len(self._pages)}")
+
+        # Schedule the async registration
+        asyncio.create_task(register())
+
     async def register_page(self, new_page: "Page") -> str:
         """Register a page that was created externally (e.g., by a click)."""
         for tab_id, page in self._pages.items():
@@ -454,6 +481,9 @@ class HybridBrowserSession:
             self._context = contexts[0]
         else:
             self._context = await self._browser.new_context()
+
+        # Listen for new pages (tabs/popups) opened by any means (JS, target="_blank", etc.)
+        self._context.on("page", self._on_new_page)
 
         # Get existing pages or create new one
         pages = self._context.pages

@@ -43,6 +43,11 @@ import argparse
 import logging
 from pathlib import Path
 
+from prompt_toolkit import PromptSession
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+from prompt_toolkit.completion import WordCompleter
+
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -64,10 +69,28 @@ from src.clients.desktop_app.ami_daemon.base_agent.tools.toolkits.browser_toolki
 class InteractiveBrowserTester:
     """Interactive browser testing interface."""
 
+    # Available commands for auto-completion
+    COMMANDS = [
+        "visit", "click", "click_text", "type", "enter", "scroll",
+        "snapshot", "tabs", "switch", "new_tab", "close_tab", "links",
+        "console", "exec", "back", "forward", "info", "help",
+        "debug_session", "debug_click", "debug_snapshot",
+        "raw_click", "raw_ctrl_click",
+        "quit", "exit", "q"
+    ]
+
     def __init__(self, headless: bool = False):
         self.headless = headless
         self.session: HybridBrowserSession = None
         self.toolkit: BrowserToolkit = None
+
+        # Setup prompt_toolkit with history and auto-completion
+        history_file = Path.home() / ".browser_interactive_history"
+        self.prompt_session = PromptSession(
+            history=FileHistory(str(history_file)),
+            auto_suggest=AutoSuggestFromHistory(),
+            completer=WordCompleter(self.COMMANDS, ignore_case=True),
+        )
 
     async def setup(self):
         """Initialize browser session and toolkit."""
@@ -360,6 +383,10 @@ class InteractiveBrowserTester:
         print("="*60)
         print("\nThis simulates what the LLM can see and do with the browser.")
         print("Every result shows exactly what would be returned to the LLM.\n")
+        print("Features:")
+        print("  - Arrow keys: navigate command history (up/down) and edit (left/right)")
+        print("  - Tab: auto-complete commands")
+        print("  - History is saved across sessions\n")
         print("Tips:")
         print("  - Use 'debug_click <ref>' to see raw click results")
         print("  - Use 'debug_session' to see internal tab state")
@@ -368,7 +395,8 @@ class InteractiveBrowserTester:
         try:
             while True:
                 try:
-                    cmd = input("browser> ").strip()
+                    cmd = await self.prompt_session.prompt_async("browser> ")
+                    cmd = cmd.strip()
                     if not await self.run_command(cmd):
                         break
                 except EOFError:

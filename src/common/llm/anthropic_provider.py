@@ -13,6 +13,10 @@ from typing import Optional, List, Dict, Any, Callable
 
 from anthropic import Anthropic, APIStatusError, APIConnectionError
 
+# Retry configuration
+MAX_RETRIES = 3
+RETRY_DELAY_SECONDS = 2.0
+
 from .base_provider import (
     BaseProvider,
     ToolCallResponse,
@@ -243,113 +247,123 @@ class AnthropicProvider(BaseProvider):
     ) -> str:
         """
         Generate a response using Anthropic API
-        
+
         Args:
             system_prompt: System instruction for the model
             user_prompt: User's input prompt
-            
+
         Returns:
             Generated response text
         """
         if self._client is None:
             await self._initialize_client()
-        
-        try:
-            messages = [
-                {"role": "user", "content": user_prompt}
-            ]
 
-            logger.info(f"Calling Anthropic API...")
-            logger.info(f"  Client type: {type(self._client)}")
-            logger.info(f"  Client base_url: {self._client.base_url}")
+        messages = [
+            {"role": "user", "content": user_prompt}
+        ]
 
-            # Make the API call and catch any errors
+        last_exception = None
+        for attempt in range(MAX_RETRIES):
             try:
-                response = await asyncio.to_thread(
-                    self._client.messages.create,
-                    model=self.model_name,
-                    system=system_prompt,  # Claude uses separate system parameter
-                    messages=messages,
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens
-                )
+                logger.info(f"Calling Anthropic API... (attempt {attempt + 1}/{MAX_RETRIES})")
+                logger.info(f"  Client type: {type(self._client)}")
+                logger.info(f"  Client base_url: {self._client.base_url}")
 
-                logger.info(f"Anthropic API call successful, model: {self.model_name}")
-                logger.info(f"Response type: {type(response)}")
-                logger.info(f"Response: {response}")
+                # Make the API call and catch any errors
+                try:
+                    response = await asyncio.to_thread(
+                        self._client.messages.create,
+                        model=self.model_name,
+                        system=system_prompt,  # Claude uses separate system parameter
+                        messages=messages,
+                        temperature=self.temperature,
+                        max_tokens=self.max_tokens
+                    )
 
-                # Record token usage (Eigent Migration)
-                self._record_usage(response)
+                    logger.info(f"Anthropic API call successful, model: {self.model_name}")
+                    logger.info(f"Response type: {type(response)}")
+                    logger.info(f"Response: {response}")
 
-                return response.content[0].text
+                    # Record token usage (Eigent Migration)
+                    self._record_usage(response)
 
-            except json.JSONDecodeError as json_err:
-                logger.error(f"JSONDecodeError caught! {json_err}")
-                logger.error(f"  This means API Proxy returned invalid/empty JSON")
+                    return response.content[0].text
 
-                # The JSONDecodeError is raised from httpx response.json()
-                # Let's trace back through the exception to find the response
+                except json.JSONDecodeError as json_err:
+                    logger.error(f"JSONDecodeError caught! {json_err}")
+                    logger.error(f"  This means API Proxy returned invalid/empty JSON")
+
+                    # The JSONDecodeError is raised from httpx response.json()
+                    # Let's trace back through the exception to find the response
+                    import sys
+                    tb = sys.exc_info()[2]
+
+                    # Walk up the traceback to find local variables
+                    logger.error("Searching for httpx response in exception traceback...")
+                    frame = tb.tb_frame
+                    while frame:
+                        local_vars = frame.f_locals
+                        logger.error(f"  Frame: {frame.f_code.co_name}, locals: {list(local_vars.keys())[:10]}")
+
+                        # Look for 'response' or 'self' that might be httpx.Response
+                        if 'response' in local_vars:
+                            resp = local_vars['response']
+                            logger.error(f"  Found 'response': {type(resp)}")
+
+                            # If it's httpx.Response, print its content
+                            if hasattr(resp, 'content'):
+                                logger.error(f"  ✅ Found httpx Response!")
+                                logger.error(f"    Status: {resp.status_code}")
+                                logger.error(f"    Headers: {dict(resp.headers)}")
+                                logger.error(f"    Content length: {len(resp.content)}")
+                                logger.error(f"    Content (bytes): {resp.content}")
+                                logger.error(f"    Content (text): {resp.text}")
+                                break
+
+                        frame = frame.f_back
+
+                    raise
+
+            except APIStatusError as e:
+                logger.error(f"Anthropic API Status Error: {e.status_code}")
+                logger.error(f"Response body: {e.body}")
+                raise
+            except APIConnectionError as e:
+                last_exception = e
+                logger.error(f"Anthropic API Connection Error (attempt {attempt + 1}/{MAX_RETRIES}): {e}")
+                if attempt < MAX_RETRIES - 1:
+                    logger.info(f"Retrying in {RETRY_DELAY_SECONDS} seconds...")
+                    await asyncio.sleep(RETRY_DELAY_SECONDS)
+                continue
+            except Exception as e:
+                logger.error(f"Error calling Anthropic API: {e}")
+                logger.error(f"Error type: {type(e).__name__}")
+
+                # Try to get the underlying httpx response
+                if hasattr(e, '__cause__'):
+                    logger.error(f"Underlying cause: {e.__cause__}")
+
+                # For JSONDecodeError, the httpx response should be in the exception chain
+                # Try to extract it
                 import sys
-                tb = sys.exc_info()[2]
+                exc_info = sys.exc_info()
+                logger.error(f"Exception chain: {exc_info}")
 
-                # Walk up the traceback to find local variables
-                logger.error("Searching for httpx response in exception traceback...")
-                frame = tb.tb_frame
-                while frame:
-                    local_vars = frame.f_locals
-                    logger.error(f"  Frame: {frame.f_code.co_name}, locals: {list(local_vars.keys())[:10]}")
-
-                    # Look for 'response' or 'self' that might be httpx.Response
-                    if 'response' in local_vars:
-                        resp = local_vars['response']
-                        logger.error(f"  Found 'response': {type(resp)}")
-
-                        # If it's httpx.Response, print its content
-                        if hasattr(resp, 'content'):
-                            logger.error(f"  ✅ Found httpx Response!")
-                            logger.error(f"    Status: {resp.status_code}")
-                            logger.error(f"    Headers: {dict(resp.headers)}")
-                            logger.error(f"    Content length: {len(resp.content)}")
-                            logger.error(f"    Content (bytes): {resp.content}")
-                            logger.error(f"    Content (text): {resp.text}")
-                            break
-
-                    frame = frame.f_back
+                # Try to access the httpx response from Anthropic SDK internals
+                try:
+                    # The response might be stored in the exception or somewhere in the SDK
+                    import traceback
+                    tb_lines = traceback.format_exception(*exc_info)
+                    for line in tb_lines:
+                        logger.error(f"  {line.strip()}")
+                except:
+                    pass
 
                 raise
-            
-        except APIStatusError as e:
-            logger.error(f"Anthropic API Status Error: {e.status_code}")
-            logger.error(f"Response body: {e.body}")
-            raise
-        except APIConnectionError as e:
-            logger.error(f"Anthropic API Connection Error: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Error calling Anthropic API: {e}")
-            logger.error(f"Error type: {type(e).__name__}")
 
-            # Try to get the underlying httpx response
-            if hasattr(e, '__cause__'):
-                logger.error(f"Underlying cause: {e.__cause__}")
-
-            # For JSONDecodeError, the httpx response should be in the exception chain
-            # Try to extract it
-            import sys
-            exc_info = sys.exc_info()
-            logger.error(f"Exception chain: {exc_info}")
-
-            # Try to access the httpx response from Anthropic SDK internals
-            try:
-                # The response might be stored in the exception or somewhere in the SDK
-                import traceback
-                tb_lines = traceback.format_exception(*exc_info)
-                for line in tb_lines:
-                    logger.error(f"  {line.strip()}")
-            except:
-                pass
-
-            raise
+        # All retries exhausted
+        logger.error(f"All {MAX_RETRIES} retry attempts failed for generate_response")
+        raise last_exception
 
     async def generate_with_tools(
         self,
@@ -378,55 +392,65 @@ class AnthropicProvider(BaseProvider):
         if self._client is None:
             await self._initialize_client()
 
-        try:
-            logger.info(f"Calling Anthropic API with tools...")
-            logger.info(f"  Model: {self.model_name}")
-            logger.info(f"  Tools count: {len(tools)}")
-            logger.info(f"  Messages count: {len(messages)}")
+        last_exception = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                logger.info(f"Calling Anthropic API with tools... (attempt {attempt + 1}/{MAX_RETRIES})")
+                logger.info(f"  Model: {self.model_name}")
+                logger.info(f"  Tools count: {len(tools)}")
+                logger.info(f"  Messages count: {len(messages)}")
 
-            # Use asyncio.to_thread() to run sync client in thread pool
-            response = await asyncio.to_thread(
-                self._client.messages.create,
-                model=self.model_name,
-                max_tokens=max_tokens,
-                system=system_prompt,
-                messages=messages,
-                tools=tools,
-            )
+                # Use asyncio.to_thread() to run sync client in thread pool
+                response = await asyncio.to_thread(
+                    self._client.messages.create,
+                    model=self.model_name,
+                    max_tokens=max_tokens,
+                    system=system_prompt,
+                    messages=messages,
+                    tools=tools,
+                )
 
-            logger.info(f"Anthropic API call successful")
-            logger.info(f"  Stop reason: {response.stop_reason}")
-            logger.info(f"  Content blocks: {len(response.content)}")
+                logger.info(f"Anthropic API call successful")
+                logger.info(f"  Stop reason: {response.stop_reason}")
+                logger.info(f"  Content blocks: {len(response.content)}")
 
-            # Record token usage (Eigent Migration)
-            self._record_usage(response)
+                # Record token usage (Eigent Migration)
+                self._record_usage(response)
 
-            # Convert response to our dataclass format
-            content_blocks = []
-            for block in response.content:
-                if hasattr(block, 'type'):
-                    if block.type == "text":
-                        content_blocks.append(TextBlock(text=block.text))
-                    elif block.type == "tool_use":
-                        content_blocks.append(ToolUseBlock(
-                            id=block.id,
-                            name=block.name,
-                            input=block.input,
-                        ))
+                # Convert response to our dataclass format
+                content_blocks = []
+                for block in response.content:
+                    if hasattr(block, 'type'):
+                        if block.type == "text":
+                            content_blocks.append(TextBlock(text=block.text))
+                        elif block.type == "tool_use":
+                            content_blocks.append(ToolUseBlock(
+                                id=block.id,
+                                name=block.name,
+                                input=block.input,
+                            ))
 
-            return ToolCallResponse(
-                content=content_blocks,
-                stop_reason=response.stop_reason,
-            )
+                return ToolCallResponse(
+                    content=content_blocks,
+                    stop_reason=response.stop_reason,
+                )
 
-        except APIStatusError as e:
-            logger.error(f"Anthropic API Status Error: {e.status_code}")
-            logger.error(f"Response body: {e.body}")
-            raise
-        except APIConnectionError as e:
-            logger.error(f"Anthropic API Connection Error: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Error calling Anthropic API with tools: {e}")
-            logger.error(f"Error type: {type(e).__name__}")
-            raise
+            except APIStatusError as e:
+                logger.error(f"Anthropic API Status Error: {e.status_code}")
+                logger.error(f"Response body: {e.body}")
+                raise
+            except APIConnectionError as e:
+                last_exception = e
+                logger.error(f"Anthropic API Connection Error (attempt {attempt + 1}/{MAX_RETRIES}): {e}")
+                if attempt < MAX_RETRIES - 1:
+                    logger.info(f"Retrying in {RETRY_DELAY_SECONDS} seconds...")
+                    await asyncio.sleep(RETRY_DELAY_SECONDS)
+                continue
+            except Exception as e:
+                logger.error(f"Error calling Anthropic API with tools: {e}")
+                logger.error(f"Error type: {type(e).__name__}")
+                raise
+
+        # All retries exhausted
+        logger.error(f"All {MAX_RETRIES} retry attempts failed for generate_with_tools")
+        raise last_exception

@@ -105,7 +105,7 @@ class BrowserToolkit(BaseToolkit):
             logger.debug(f"Failed to get page context: {e}")
             return ""
 
-    async def _wait_for_page_stability(self, timeout_ms: int = 3000) -> None:
+    async def _wait_for_page_stability(self, timeout_ms: Optional[int] = None) -> None:
         """Wait for page to become stable after an action.
 
         This is important after click/type actions that may trigger:
@@ -117,9 +117,16 @@ class BrowserToolkit(BaseToolkit):
         Following Eigent's pattern for page stability:
         1. First wait for DOM content loaded
         2. Then try to wait for network idle (SPA apps need this)
+
+        Args:
+            timeout_ms: Timeout in milliseconds. If None, uses session's network_idle_timeout.
         """
         if not self._session:
             return
+
+        # Use session's configured timeout if not specified
+        if timeout_ms is None:
+            timeout_ms = self._session._network_idle_timeout or 5000
 
         try:
             page = await self._session.get_page()
@@ -135,7 +142,7 @@ class BrowserToolkit(BaseToolkit):
                 logger.debug("Network idle achieved")
             except Exception:
                 # Network idle timeout is acceptable - SPA might keep connections open
-                logger.debug("Network idle timeout - continuing anyway")
+                logger.debug(f"Network idle timeout after {timeout_ms}ms - continuing anyway")
 
         except Exception as e:
             logger.debug(f"Page stability wait interrupted: {e}")

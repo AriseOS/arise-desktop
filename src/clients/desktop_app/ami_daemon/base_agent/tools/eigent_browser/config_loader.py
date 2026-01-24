@@ -50,7 +50,7 @@ class BrowserConfig:
 
     # Default timeout values (in milliseconds)
     DEFAULT_ACTION_TIMEOUT = 3000
-    DEFAULT_SHORT_TIMEOUT = 1000
+    DEFAULT_SHORT_TIMEOUT = 5000  # Increased from 1000 to allow more time for new tab detection
     DEFAULT_NAVIGATION_TIMEOUT = 10000
     DEFAULT_NETWORK_IDLE_TIMEOUT = 5000
     DEFAULT_SCREENSHOT_TIMEOUT = 15000

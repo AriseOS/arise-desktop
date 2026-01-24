@@ -539,10 +539,10 @@ Remember: This is a GUIDE. Adapt to your actual task goal.
             logger.info("MemoryToolkit not configured (missing api_base_url, api_key, or user_id)")
 
         # Initialize TaskPlanningToolkit for task decomposition
-        # Uses task_id from context for proper event emission
+        # Uses task_id from _initialize_toolkits parameter for proper event emission
         # Note: task_state is set later via set_task_state() along with other toolkits
         self._task_planning_toolkit = TaskPlanningToolkit(
-            task_id=self._context.task_id if self._context else "default",
+            task_id=task_id,
         )
         logger.info("TaskPlanningToolkit initialized")
 

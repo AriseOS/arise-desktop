@@ -151,20 +151,32 @@ class ActionExecutor:
         element = self.page.locator(found_selector).first
         details['successful_strategy'] = found_selector
 
+        # Log current tab count before click
+        if self.session:
+            tab_count_before = len(self.session._pages)
+            logger.debug(f"Click starting: selector={found_selector}, tabs_before={tab_count_before}, short_timeout={self.short_timeout}ms")
+
         # Strategy 1: Ctrl+Click (always try first)
         try:
             if self.session:
-                async with self.page.context.expect_page(
+                context = self.page.context
+                context_pages_before = len(context.pages)
+                logger.debug(f"Attempting Ctrl+Click with expect_page... context={context}, context_pages_before={context_pages_before}")
+                async with context.expect_page(
                     timeout=self.short_timeout
                 ) as new_page_info:
                     await element.click(modifiers=["ControlOrMeta"])
+                    logger.debug("Click executed, waiting for page event...")
                 # New tab was created
+                logger.debug("expect_page succeeded - new tab detected")
                 new_page = await new_page_info.value
                 await new_page.wait_for_load_state('domcontentloaded')
                 new_tab_index = await self.session.register_page(new_page)
                 if new_tab_index is not None:
                     await self.session.switch_to_tab(new_tab_index)
                     self.page = new_page
+                tab_count_after = len(self.session._pages)
+                logger.debug(f"New tab registered: {new_tab_index}, tabs_after={tab_count_after}")
                 details.update({
                     "click_method": "ctrl_click_new_tab",
                     "new_tab_created": True,
@@ -181,14 +193,20 @@ class ActionExecutor:
                     "message": f"Clicked element (ctrl click): {found_selector}",
                     "details": details,
                 }
-        except asyncio.TimeoutError:
-            # No new tab was opened, click may have still worked
+        except (asyncio.TimeoutError, TimeoutError) as e:
+            # No new tab was opened within timeout, click may have still worked
+            # Note: Playwright raises TimeoutError (builtin), not asyncio.TimeoutError
+            tab_count_after = len(self.session._pages) if self.session else 0
+            context_pages_after = len(self.page.context.pages) if self.page else 0
+            logger.debug(f"[TIMEOUT CAUGHT] expect_page timeout after {self.short_timeout}ms - session_tabs={tab_count_after}, context_pages={context_pages_after}")
             details["click_method"] = "ctrl_click_same_tab"
             return {
                 "message": f"Clicked element (same tab): {found_selector}",
                 "details": details,
             }
         except Exception as e:
+            # Log full exception info to understand why it's not caught above
+            logger.debug(f"[EXCEPTION CAUGHT] type={type(e)}, mro={type(e).__mro__}, name={type(e).__name__}: {e}")
             details['strategies_tried'].append({
                 'selector': found_selector,
                 'method': 'ctrl_click',
@@ -197,14 +215,18 @@ class ActionExecutor:
             # Fall through to fallback
 
         # Strategy 2: Force click as fallback
+        logger.debug("Falling back to force click...")
         try:
             await element.click(force=True, timeout=self.default_timeout)
+            tab_count_after = len(self.session._pages) if self.session else 0
+            logger.debug(f"Force click succeeded, tabs_after={tab_count_after}")
             details["click_method"] = "force_click"
             return {
                 "message": f"Clicked element (force): {found_selector}",
                 "details": details,
             }
         except Exception as e:
+            logger.debug(f"Force click also failed: {e}")
             details["click_method"] = "all_failed"
             details["error"] = str(e)
             return {
