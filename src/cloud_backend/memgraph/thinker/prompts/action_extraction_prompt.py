@@ -23,6 +23,16 @@ class ActionData(BaseModel):
     source_index: int = Field(..., description="Index of source state (0-based)")
     target_index: int = Field(..., description="Index of target state (0-based)")
     type: str = Field(..., description="Action type (PascalCase, e.g., ClickLink)")
+    description: str = Field(
+        ...,
+        description="Human-readable description of the action, e.g., 'Click Leaderboard link in nav'"
+    )
+    element_text: Optional[str] = Field(
+        default=None, description="Text of the clicked element"
+    )
+    element_selector: Optional[str] = Field(
+        default=None, description="CSS selector or identifier of the clicked element"
+    )
     timestamp: Optional[int] = Field(default=None, description="When transition occurred (milliseconds)")
     trigger_intent_id: Optional[str] = Field(
         default=None, description="ID of intent that triggered this action"
@@ -93,31 +103,37 @@ class ActionExtractionPrompt(BasePrompt[ActionExtractionInput, ActionExtractionO
       "source_index": 0,
       "target_index": 1,
       "type": "ClickLink",
+      "description": "Click 'Leaderboard' link in navigation bar",
+      "element_text": "Leaderboard",
+      "element_selector": "nav a.leaderboard-link",
       "timestamp": 1000000005000,
       "trigger_intent_id": "intent_abc123",
-      "attributes": {{
-        "link_text": "查看详情",
-        "navigation_type": "same_tab"
-      }}
+      "attributes": {{}}
     }}
   ]
 }}
 ```
 
-## 字段说明
-- **source_index**: 源State在序列中的索引（从0开始）
-- **target_index**: 目标State在序列中的索引
-- **type**: Action类型（参考上述类型示例）
-- **timestamp**: 转换发生的时间（通常是target_state的timestamp）
-- **trigger_intent_id**: 触发此转换的Intent ID（可选）
-- **attributes**: 额外属性（可选）
+## 字段说明（按重要性排序）
+- **source_index**: 源State在序列中的索引（从0开始）【必填】
+- **target_index**: 目标State在序列中的索引【必填】
+- **type**: Action类型（参考上述类型示例）【必填】
+- **description**: 简洁的操作描述，格式：动作 + 元素【必填】
+  - 好的例子：`"Click 'Leaderboard' link"`, `"Click product card 'iPhone 15'"`, `"Submit search form"`
+  - 不好的例子：`"点击导航栏的排行榜链接进入2026年1月19日精选页面"` (太长，包含具体日期)
+  - **重要**：description应该是通用的，不要包含具体日期、ID等会变化的信息
+- **element_text**: 被点击元素的文本内容（如链接文字、按钮文字）【推荐】
+- **element_selector**: 元素的CSS选择器或标识符（如有）【推荐】
+- **timestamp**: 转换发生的时间（通常是target_state的timestamp）【可选】
+- **trigger_intent_id**: 触发此转换的Intent ID【可选】
+- **attributes**: 额外属性【可选】
 
 ## 注意事项
 
 1. **必须不同**：source_index和target_index必须不同
-2. **时序性**：Action的timestamp应该合理（在source和target的时间范围内）
-3. **完整性**：识别所有可能的状态转换
-4. **准确性**：type字段应准确描述转换类型
+2. **description要通用**：不要包含具体日期、具体产品名等会变化的信息
+3. **提取元素信息**：从Intent中提取被点击元素的text和selector
+4. **时序性**：Action的timestamp应该合理
 5. **格式**：严格遵循JSON格式
 
 请开始分析并输出结果。

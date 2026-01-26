@@ -15,6 +15,7 @@ Server-side services for Ami platform. Handles workflow generation, intent extra
 ## Key Files
 
 - `main.py` - FastAPI application entry point with all API routes
+- `main.py` uses `llm.anthropic.model` from config when creating AnthropicProvider instances
 - `core/logging_config.py` - Structured JSON logging with context injection
 - `core/middleware.py` - Request context middleware for logging
 

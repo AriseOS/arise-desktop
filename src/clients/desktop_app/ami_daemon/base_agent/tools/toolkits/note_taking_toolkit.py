@@ -285,12 +285,13 @@ class NoteTakingToolkit(BaseToolkit):
             logger.error(f"Error reading note: {e}")
             return f"Error reading note: {e}"
 
-    # ========== Internal methods for task plan management ==========
+    # ========== Internal methods for workflow hints ==========
 
     def _create_workflow_hints_note(self, hints: List[dict]) -> str:
         """Create the workflow_hints.md note with Memory guidance.
 
         This is called internally at the start of a task to store workflow hints.
+        Task planning is handled separately by TaskPlanningToolkit.
 
         Args:
             hints: List of workflow hint dicts from Memory/Reasoner.
@@ -316,104 +317,6 @@ class NoteTakingToolkit(BaseToolkit):
 
         self.create_note("workflow_hints", content, overwrite=True)
         return content
-
-    def _create_task_plan_note(self, task: str, hints: List[dict]) -> str:
-        """Create the task_plan.md note with task breakdown.
-
-        This is called internally at the start of a task.
-
-        Args:
-            task: The user's task description.
-            hints: List of workflow hints (if any).
-
-        Returns:
-            The content of the created note.
-        """
-        content = "# Task Plan\n\n"
-        content += f"## Goal\n{task}\n\n"
-        content += "## Status: IN_PROGRESS\n\n"
-        content += "## Steps\n\n"
-
-        if hints:
-            # Generate plan based on workflow hints
-            for i, hint in enumerate(hints):
-                desc = hint.get("description", hint.get("type", "Unknown action"))
-                content += f"- [ ] Step {i + 1}: {desc}\n"
-        else:
-            # No hints - LLM will need to create its own plan
-            content += "- [ ] Step 1: Analyze task and create detailed plan\n"
-            content += "- [ ] Step 2: Execute plan steps\n"
-            content += "- [ ] Step 3: Verify completion and summarize results\n"
-
-        content += "\n## Progress Log\n\n"
-        content += "_No progress yet._\n"
-
-        self.create_note("task_plan", content, overwrite=True)
-        return content
-
-    def _update_task_plan_step(self, step_num: int, status: str = "done", note: str = "") -> str:
-        """Update a step in the task plan.
-
-        Args:
-            step_num: The step number (1-based).
-            status: "done", "in_progress", or "skipped".
-            note: Optional note about the step completion.
-
-        Returns:
-            Confirmation message.
-        """
-        try:
-            content = self.read_note("task_plan")
-            if content.startswith("Error:"):
-                return content
-
-            # Update the checkbox for this step
-            lines = content.split("\n")
-            updated_lines = []
-            step_pattern = f"- [ ] Step {step_num}:"
-            done_pattern = f"- [x] Step {step_num}:"
-
-            for line in lines:
-                if step_pattern in line:
-                    if status == "done":
-                        line = line.replace("- [ ]", "- [x]")
-                    elif status == "in_progress":
-                        line = line.replace("- [ ]", "- [>]")
-                updated_lines.append(line)
-
-            # Add to progress log
-            import datetime
-            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            progress_entry = f"- [{timestamp}] Step {step_num} {status}"
-            if note:
-                progress_entry += f": {note}"
-
-            # Find progress log section and add entry
-            final_lines = []
-            in_progress_section = False
-            for line in updated_lines:
-                final_lines.append(line)
-                if "## Progress Log" in line:
-                    in_progress_section = True
-                elif in_progress_section and line.strip() == "_No progress yet._":
-                    final_lines[-1] = progress_entry
-                    in_progress_section = False
-                elif in_progress_section and line.startswith("- ["):
-                    continue  # Will add after this section
-                elif in_progress_section and not line.startswith("- [") and line.strip():
-                    # End of progress section, insert our entry before
-                    final_lines.insert(-1, progress_entry)
-                    in_progress_section = False
-
-            if in_progress_section:
-                final_lines.append(progress_entry)
-
-            new_content = "\n".join(final_lines)
-            self.create_note("task_plan", new_content, overwrite=True)
-            return f"Task plan updated: Step {step_num} marked as {status}"
-        except Exception as e:
-            logger.error(f"Error updating task plan: {e}")
-            return f"Error updating task plan: {e}"
 
     def _create_loop_tracking_note(self, loop_id: str, items: List[str]) -> str:
         """Create a loop tracking note for iterative tasks.

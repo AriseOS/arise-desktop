@@ -1,191 +1,53 @@
 """
-TaskPlanningToolkit - Task decomposition and re-planning for agents.
+TaskPlanningToolkit - LLM Tool Interface for TaskOrchestrator.
 
-Ported from CAMEL-AI/Eigent project.
-Provides tools for decomposing complex tasks into subtasks and re-planning
-when the original plan is insufficient.
+This toolkit provides LLM-callable tools for managing task execution:
+- complete_subtask: Mark a subtask as done and proceed to next
+- replan_task: Adjust the plan based on new information
+- get_current_plan: Get the current plan summary
 
-This toolkit enables agents to dynamically manage their own task execution,
-similar to Eigent's TaskPlanningToolkit.
+The toolkit delegates all state management to TaskOrchestrator,
+which handles:
+- Subtask state tracking
+- Dependency management
+- SSE event emission
+- Failure handling and auto-replan
 
-When used with an agent that has set_task_state(), this toolkit will
-emit SSE events for frontend display:
-- task_decomposed: When a task is broken into subtasks
-- subtask_state: When a subtask's state changes
-- task_replanned: When a task is re-planned with new subtasks
+Based on Eigent's task planning patterns and CAMEL's TaskPlanningToolkit.
 
 References:
-- CAMEL: camel/toolkits/task_planning_toolkit.py
-- Eigent: third-party/eigent/backend/app/utils/workforce.py
+- TaskOrchestrator: base_agent/core/task_orchestrator.py
+- Design Doc: docs/task-planning-system.md
 """
 
-import asyncio
 import logging
-import uuid
-from dataclasses import dataclass, field
-from datetime import datetime
-from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from .base_toolkit import BaseToolkit, FunctionTool
 from ...events import listen_toolkit
 
+if TYPE_CHECKING:
+    from ...core.task_orchestrator import TaskOrchestrator
+
 logger = logging.getLogger(__name__)
 
 
-class TaskState(str, Enum):
-    """State of a task in the planning system.
-
-    Aligned with CAMEL's TaskState enum.
-    """
-    OPEN = "OPEN"
-    RUNNING = "RUNNING"
-    DONE = "DONE"
-    FAILED = "FAILED"
-    DELETED = "DELETED"
-
-
-@dataclass
-class Task:
-    """Represents a task that can be decomposed and tracked.
-
-    Simplified port of CAMEL's Task class, focused on the essentials
-    needed for task planning within a single agent.
-
-    Attributes:
-        content: The task description/content.
-        id: Unique identifier for the task.
-        state: Current state of the task.
-        parent: Parent task (if this is a subtask).
-        subtasks: List of child subtasks.
-        result: The result/output of the task.
-        failure_count: Number of times this task has failed.
-        additional_info: Extra metadata for the task.
-    """
-    content: str
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    state: TaskState = TaskState.OPEN
-    parent: Optional["Task"] = None
-    subtasks: List["Task"] = field(default_factory=list)
-    result: Optional[str] = None
-    failure_count: int = 0
-    additional_info: Optional[Dict[str, Any]] = None
-    created_at: datetime = field(default_factory=datetime.now)
-    completed_at: Optional[datetime] = None
-
-    def __repr__(self) -> str:
-        """Return a string representation of the task."""
-        content_preview = self.content[:50] + "..." if len(self.content) > 50 else self.content
-        return f"Task(id='{self.id}', content='{content_preview}', state='{self.state.value}')"
-
-    def set_state(self, state: TaskState) -> None:
-        """Set the state of the task.
-
-        If setting to DONE, also propagates to subtasks.
-        If setting to RUNNING, propagates up to parent.
-
-        Args:
-            state: The new state for the task.
-        """
-        self.state = state
-        if state == TaskState.DONE:
-            self.completed_at = datetime.now()
-            for subtask in self.subtasks:
-                if subtask.state != TaskState.DELETED:
-                    subtask.set_state(state)
-        elif state == TaskState.RUNNING and self.parent:
-            self.parent.set_state(state)
-
-    def update_result(self, result: str) -> None:
-        """Set task result and mark as DONE.
-
-        Args:
-            result: The task result.
-        """
-        self.result = result
-        self.set_state(TaskState.DONE)
-
-    def add_subtask(self, task: "Task") -> None:
-        """Add a subtask to this task.
-
-        Args:
-            task: The subtask to add.
-        """
-        task.parent = self
-        self.subtasks.append(task)
-
-    def remove_subtask(self, task_id: str) -> None:
-        """Remove a subtask by ID.
-
-        Args:
-            task_id: The ID of the subtask to remove.
-        """
-        self.subtasks = [t for t in self.subtasks if t.id != task_id]
-
-    def get_running_task(self) -> Optional["Task"]:
-        """Get the currently running task (deepest level).
-
-        Returns:
-            The running task or None.
-        """
-        for sub in self.subtasks:
-            if sub.state == TaskState.RUNNING:
-                return sub.get_running_task()
-        if self.state == TaskState.RUNNING:
-            return self
-        return None
-
-    def to_string(self, indent: str = "", include_state: bool = False) -> str:
-        """Convert task tree to a string representation.
-
-        Args:
-            indent: Indentation prefix for hierarchical display.
-            include_state: Whether to include task state.
-
-        Returns:
-            String representation of the task tree.
-        """
-        if include_state:
-            result = f"{indent}[{self.state.value}] Task {self.id}: {self.content}\n"
-        else:
-            result = f"{indent}Task {self.id}: {self.content}\n"
-        for subtask in self.subtasks:
-            result += subtask.to_string(indent + "  ", include_state)
-        return result
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert task to dictionary.
-
-        Returns:
-            Dictionary representation of the task.
-        """
-        return {
-            "id": self.id,
-            "content": self.content,
-            "state": self.state.value,
-            "result": self.result,
-            "failure_count": self.failure_count,
-            "subtasks": [st.to_dict() for st in self.subtasks],
-            "additional_info": self.additional_info,
-        }
-
-
 class TaskPlanningToolkit(BaseToolkit):
-    """A toolkit for task decomposition and re-planning.
+    """LLM tool interface for TaskOrchestrator.
 
-    Enables agents to break down complex tasks into subtasks and
-    re-plan when the original decomposition is insufficient.
+    This toolkit exposes task planning capabilities as LLM-callable tools.
+    It acts as a thin wrapper around TaskOrchestrator, which manages
+    all the actual state and event emission.
 
-    This is a direct port of CAMEL's TaskPlanningToolkit, adapted
-    for AMI's architecture.
+    Tools:
+    - complete_subtask: Mark current subtask as done
+    - replan_task: Adjust plan based on new information
+    - get_current_plan: View current plan and progress
 
-    Features:
-    - decompose_task: Break a task into subtasks
-    - replan_tasks: Re-decompose when original plan fails
-    - get_current_plan: View current task tree
-    - update_task_state: Update task progress
-
-    Uses @listen_toolkit for automatic event emission.
+    Usage:
+        orchestrator = TaskOrchestrator(task_id="123", emitter=sse_emitter)
+        toolkit = TaskPlanningToolkit(orchestrator=orchestrator)
+        agent.add_toolkit(toolkit)
     """
 
     # Agent name for event tracking
@@ -193,347 +55,303 @@ class TaskPlanningToolkit(BaseToolkit):
 
     def __init__(
         self,
+        orchestrator: Optional["TaskOrchestrator"] = None,
         task_id: Optional[str] = None,
         timeout: Optional[float] = None,
     ) -> None:
         """Initialize the TaskPlanningToolkit.
 
         Args:
-            task_id: Optional root task ID for the session.
+            orchestrator: The TaskOrchestrator to delegate to.
+                If not provided, toolkit operates in standalone mode (legacy).
+            task_id: Optional task ID (used if no orchestrator provided).
             timeout: Optional timeout for toolkit operations.
         """
         super().__init__(timeout=timeout)
-        self.task_id = task_id or str(uuid.uuid4())
-        self._tasks: Dict[str, Task] = {}
-        self._root_task: Optional[Task] = None
-        logger.info(f"TaskPlanningToolkit initialized with task_id={self.task_id}")
+        self._orchestrator = orchestrator
+        self._task_id = task_id or (orchestrator.task_id if orchestrator else None)
+        logger.info(f"TaskPlanningToolkit initialized with task_id={self._task_id}")
 
-    def _emit_event(self, event_type: str, data: Dict[str, Any]) -> None:
-        """Emit an SSE event if task_state is available.
-
-        Args:
-            event_type: The event type (e.g., 'task_decomposed')
-            data: Event data dictionary
-        """
-        if self._task_state and hasattr(self._task_state, 'put_event'):
-            try:
-                # put_event may be sync or async
-                result = self._task_state.put_event(event_type, data)
-                if asyncio.iscoroutine(result):
-                    # Schedule async call if we're in an event loop
-                    try:
-                        loop = asyncio.get_running_loop()
-                        loop.create_task(result)
-                    except RuntimeError:
-                        # No running loop, run synchronously
-                        asyncio.run(result)
-                logger.debug(f"Emitted event: {event_type}")
-            except Exception as e:
-                logger.warning(f"Failed to emit {event_type} event: {e}")
-
-    def _register_task(self, task: Task) -> None:
-        """Register a task in the internal registry.
+    def set_orchestrator(self, orchestrator: "TaskOrchestrator") -> None:
+        """Set the TaskOrchestrator to delegate to.
 
         Args:
-            task: The task to register.
+            orchestrator: The TaskOrchestrator instance.
         """
-        self._tasks[task.id] = task
-
-    def _get_task(self, task_id: str) -> Optional[Task]:
-        """Get a task by ID.
-
-        Args:
-            task_id: The task ID.
-
-        Returns:
-            The task or None if not found.
-        """
-        return self._tasks.get(task_id)
+        self._orchestrator = orchestrator
+        self._task_id = orchestrator.task_id
+        logger.info(f"TaskPlanningToolkit linked to orchestrator {self._task_id}")
 
     @listen_toolkit(
-        inputs=lambda self, original_task_content, sub_task_contents, **kw:
-            f"Decomposing task into {len(sub_task_contents)} subtasks",
-        return_msg=lambda r: f"Created {len(r)} subtasks"
+        inputs=lambda self, subtask_id, result, **kw: f"Completing subtask {subtask_id}",
+        return_msg=lambda r: r[:200] if r else "Subtask completed"
     )
-    def decompose_task(
+    def complete_subtask(
         self,
-        original_task_content: str,
-        sub_task_contents: List[str],
-        original_task_id: Optional[str] = None,
-    ) -> List[Task]:
-        """Decompose an original task into several sub-tasks.
+        subtask_id: str,
+        result: str,
+    ) -> str:
+        """Mark a subtask as completed and get the updated plan.
 
-        Use this tool when a task is complex and needs to be broken down
-        into smaller, manageable pieces. Each subtask should be specific
-        and actionable.
+        Call this tool when you have finished executing the current subtask.
+        The system will automatically determine the next subtask to execute.
 
         Args:
-            original_task_content: The content of the task to be decomposed.
-            sub_task_contents: A list of strings, where each string is the
-                content for a new sub-task.
-            original_task_id: The ID of the task to be decomposed. If not
-                provided, a new ID will be generated.
+            subtask_id: The ID of the subtask to mark as completed (e.g., "1.1", "1.2").
+            result: A summary of what was accomplished in this subtask.
 
         Returns:
-            List of newly created sub-task objects.
+            The updated plan summary showing progress and next task.
 
         Example:
-            decompose_task(
-                original_task_content="Research and summarize AI trends",
-                sub_task_contents=[
-                    "Search for recent AI news articles",
-                    "Extract key trends from articles",
-                    "Write a summary document"
-                ]
+            complete_subtask(
+                subtask_id="1.1",
+                result="Successfully visited website and found 25 products listed"
             )
         """
-        # Create or get the original task
-        task_id = original_task_id or f"{self.task_id}.main"
+        if not self._orchestrator:
+            return "Error: No TaskOrchestrator configured. Cannot track subtask state."
 
-        if task_id in self._tasks:
-            original_task = self._tasks[task_id]
-            # Clear existing subtasks for re-decomposition
-            original_task.subtasks = []
-        else:
-            original_task = Task(
-                content=original_task_content,
-                id=task_id,
-            )
-            self._register_task(original_task)
-            if self._root_task is None:
-                self._root_task = original_task
+        # Mark the subtask as completed
+        self._orchestrator.mark_completed(subtask_id, result)
 
-        # Create subtasks
-        new_tasks: List[Task] = []
-        for i, content in enumerate(sub_task_contents):
-            new_task = Task(
-                content=content,
-                id=f"{original_task.id}.{i + 1}",
-                parent=original_task,
-            )
-            new_tasks.append(new_task)
-            original_task.subtasks.append(new_task)
-            self._register_task(new_task)
-
-        logger.info(
-            f"Decomposed task '{original_task.content[:50]}...' (id={original_task.id}) "
-            f"into {len(new_tasks)} sub-tasks: {[t.id for t in new_tasks]}"
-        )
-
-        # Emit task_decomposed event for frontend
-        self._emit_event("task_decomposed", {
-            "subtasks": [t.to_dict() for t in new_tasks],
-            "summary_task": original_task_content,
-            "original_task_id": original_task.id,
-            "total_subtasks": len(new_tasks),
-        })
-
-        return new_tasks
+        # Return updated plan summary
+        return self._orchestrator.get_plan_summary()
 
     @listen_toolkit(
-        inputs=lambda self, original_task_content, sub_task_contents, **kw:
-            f"Re-planning task into {len(sub_task_contents)} new subtasks",
-        return_msg=lambda r: f"Re-planned into {len(r)} subtasks"
+        inputs=lambda self, reason, **kw: f"Replanning: {reason[:50]}...",
+        return_msg=lambda r: r[:200] if r else "Plan updated"
     )
-    def replan_tasks(
+    def replan_task(
         self,
-        original_task_content: str,
-        sub_task_contents: List[str],
-        original_task_id: Optional[str] = None,
-    ) -> List[Task]:
-        """Re-decompose a task into new sub-tasks.
+        reason: str,
+        new_subtasks: List[Dict[str, Any]],
+        cancelled_subtask_ids: Optional[List[str]] = None,
+    ) -> str:
+        """Replan the current task based on new information.
 
-        Use this tool when the original task decomposition is not working
-        well and a new plan is needed. This will replace the existing
-        subtasks with the new ones.
+        Call this tool when you discover that the current plan needs adjustment:
+        - The website structure is different than expected
+        - There are more/fewer items to process than anticipated
+        - A better approach becomes apparent
+        - The current subtask is no longer valid or needed
 
         Args:
-            original_task_content: The content of the task to be re-planned.
-            sub_task_contents: A list of strings for the new sub-tasks.
-            original_task_id: The ID of the task to be re-planned.
+            reason: Why the replan is needed (for logging and context).
+            new_subtasks: List of new subtasks to add. Each subtask is a dict:
+                {
+                    "id": "1.3",  # Optional, will be auto-generated if not provided
+                    "content": "Description of what to do",
+                    "dependencies": ["1.1", "1.2"]  # Optional, list of subtask IDs
+                }
+            cancelled_subtask_ids: Optional list of subtask IDs to cancel.
+                Cancelled subtasks are marked as DELETED, not FAILED.
 
         Returns:
-            List of newly created sub-task objects.
+            The updated plan summary showing the new plan.
 
         Example:
-            replan_tasks(
-                original_task_content="Research AI trends",
-                sub_task_contents=[
-                    "Focus on generative AI specifically",
-                    "Look at industry applications",
-                    "Summarize findings"
+            replan_task(
+                reason="Website has pagination, need to iterate through 10 pages",
+                new_subtasks=[
+                    {"id": "1.2.1", "content": "Extract products from page 1-5"},
+                    {"id": "1.2.2", "content": "Extract products from page 6-10", "dependencies": ["1.2.1"]}
                 ],
-                original_task_id="task.main"
+                cancelled_subtask_ids=["1.2"]
             )
         """
-        task_id = original_task_id or f"{self.task_id}.main"
+        if not self._orchestrator:
+            return "Error: No TaskOrchestrator configured. Cannot replan."
 
-        # Get existing task or create new one
-        if task_id in self._tasks:
-            original_task = self._tasks[task_id]
-            # Mark old subtasks as deleted
-            for subtask in original_task.subtasks:
-                subtask.set_state(TaskState.DELETED)
-            original_task.subtasks = []
-            # Update content if different
-            if original_task.content != original_task_content:
-                original_task.content = original_task_content
-        else:
-            original_task = Task(
-                content=original_task_content,
-                id=task_id,
-            )
-            self._register_task(original_task)
-
-        # Create new subtasks
-        new_tasks: List[Task] = []
-        for i, content in enumerate(sub_task_contents):
-            new_task = Task(
-                content=content,
-                id=f"{original_task.id}.r{i + 1}",  # 'r' prefix indicates replan
-                parent=original_task,
-            )
-            new_tasks.append(new_task)
-            original_task.subtasks.append(new_task)
-            self._register_task(new_task)
-
-        logger.info(
-            f"Re-planned task '{original_task.content[:50]}...' (id={original_task.id}) "
-            f"into {len(new_tasks)} new sub-tasks: {[t.id for t in new_tasks]}"
+        # Delegate replan to orchestrator
+        return self._orchestrator.replan(
+            reason=reason,
+            new_subtasks=new_subtasks,
+            cancelled_task_ids=cancelled_subtask_ids,
         )
-
-        # Emit task_replanned event for frontend
-        self._emit_event("task_replanned", {
-            "subtasks": [t.to_dict() for t in new_tasks],
-            "original_task_id": original_task.id,
-            "reason": "Re-planned by agent",
-        })
-
-        return new_tasks
 
     @listen_toolkit(
         inputs=lambda self, **kw: "Getting current task plan",
         return_msg=lambda r: f"Plan retrieved ({len(r)} chars)"
     )
-    def get_current_plan(self, include_state: bool = True) -> str:
-        """Get the current task plan as a formatted string.
+    def get_current_plan(self) -> str:
+        """Get the current task plan with progress status.
 
-        Use this tool to review the current task decomposition and
-        progress. Helpful for tracking what has been done and what
-        remains.
-
-        Args:
-            include_state: Whether to include task states in output.
+        Use this tool to review the current task plan and see:
+        - Which subtasks are completed
+        - Which subtask is currently being worked on
+        - Which subtasks are remaining
 
         Returns:
-            Formatted string showing the task tree with states.
+            Formatted plan summary showing progress.
 
         Example output:
-            [RUNNING] Task main: Research AI trends
-              [DONE] Task main.1: Search for articles
-              [RUNNING] Task main.2: Extract key points
-              [OPEN] Task main.3: Write summary
-        """
-        if not self._root_task:
-            return "No task plan created yet. Use decompose_task to create one."
+            ## Current Task Plan
+            - [x] 1.1: Visit website and get product list ✓
+            - [→] 1.2: Extract product details ← CURRENT
+            - [ ] 1.3: Generate summary report
 
-        return self._root_task.to_string(include_state=include_state)
+            **Current task (1.2)**: Extract product details
+            Complete this task, then call `complete_subtask()` to proceed.
+        """
+        if not self._orchestrator:
+            return "No task plan created yet."
+
+        return self._orchestrator.get_plan_summary()
 
     @listen_toolkit(
-        inputs=lambda self, task_id, state, **kw: f"Updating task {task_id} to {state}",
-        return_msg=lambda r: r
+        inputs=lambda self, subtask_id, error, **kw: f"Reporting failure for {subtask_id}",
+        return_msg=lambda r: r[:100] if r else "Failure reported"
     )
-    def update_task_state(
+    async def report_subtask_failure(
         self,
-        task_id: str,
-        state: str,
-        result: Optional[str] = None,
+        subtask_id: str,
+        error: str,
     ) -> str:
-        """Update the state of a task.
+        """Report that a subtask has failed.
 
-        Use this tool to mark tasks as in-progress, completed, or failed.
-        This helps track overall progress through the task plan.
+        Call this tool when you encounter an unrecoverable error while
+        executing a subtask. The system will:
+        - Mark the subtask as failed
+        - Handle dependency failures (block dependent tasks)
+        - Trigger automatic replan if configured
+
+        Note: Unlike internal failures, agent-reported failures do NOT trigger
+        automatic retry, since the agent has already determined the task cannot
+        be completed.
 
         Args:
-            task_id: The ID of the task to update.
-            state: The new state. One of: OPEN, RUNNING, DONE, FAILED, DELETED.
-            result: Optional result message (typically for DONE state).
+            subtask_id: The ID of the failed subtask.
+            error: Description of what went wrong.
+
+        Returns:
+            Status message indicating next steps.
+        """
+        if not self._orchestrator:
+            return "Error: No TaskOrchestrator configured."
+
+        # Mark the subtask as failed
+        self._orchestrator.mark_failed(subtask_id, error)
+
+        # Get the subtask for further processing
+        subtask = self._orchestrator.subtasks.get(subtask_id)
+        if not subtask:
+            return f"Error: Subtask {subtask_id} not found."
+
+        # Handle dependency failures - notify blocked tasks
+        blocked_tasks = self._orchestrator.handle_dependency_failure(subtask_id)
+        blocked_msg = ""
+        if blocked_tasks:
+            blocked_msg = f" Blocked dependent tasks: {blocked_tasks}."
+            logger.warning(f"Subtask {subtask_id} failure blocks {len(blocked_tasks)} tasks: {blocked_tasks}")
+
+        # Trigger automatic replan if configured
+        replan_msg = ""
+        if self._orchestrator.config.failure_config.auto_replan_on_failure:
+            logger.info(f"Triggering auto-replan for agent-reported failure: {subtask_id}")
+            replan_success = await self._orchestrator.auto_replan_failed_subtask(subtask, error)
+            if replan_success:
+                replan_msg = " Plan has been automatically adjusted."
+            else:
+                replan_msg = " Auto-replan was attempted but did not succeed."
+
+        # Build response message
+        if self._orchestrator.all_done():
+            return f"Subtask {subtask_id} failed.{blocked_msg}{replan_msg} No more subtasks to execute."
+        else:
+            return f"Subtask {subtask_id} failed.{blocked_msg}{replan_msg} Continuing with remaining subtasks.\n\n{self._orchestrator.get_plan_summary()}"
+
+    @listen_toolkit(
+        inputs=lambda self, subtask_id, reason, **kw: f"Abandoning subtask {subtask_id}",
+        return_msg=lambda r: r[:100] if r else "Subtask abandoned"
+    )
+    def abandon_subtask(
+        self,
+        subtask_id: str,
+        reason: str,
+    ) -> str:
+        """Abandon a subtask that cannot be completed.
+
+        Call this tool when you determine that a specific subtask CANNOT be
+        completed after trying multiple approaches. Unlike report_subtask_failure
+        (which may trigger retries), abandon_subtask permanently marks the subtask
+        as impossible and moves on.
+
+        Use this when:
+        - The subtask's goal is fundamentally impossible (e.g., "find X" but X doesn't exist)
+        - You've tried multiple approaches and all failed
+        - The required resource/element doesn't exist
+        - Continuing to retry would be pointless
+
+        The task will continue with other subtasks. Dependent subtasks will be
+        skipped unless you replan them.
+
+        Args:
+            subtask_id: The ID of the subtask to abandon.
+            reason: Clear explanation of why the subtask cannot be completed.
+
+        Returns:
+            Updated plan summary.
+
+        Example:
+            abandon_subtask(
+                subtask_id="1.2",
+                reason="Product page has no team tab - this information is not available"
+            )
+        """
+        if not self._orchestrator:
+            return "Error: No TaskOrchestrator configured."
+
+        # Mark the subtask as failed with abandon reason
+        self._orchestrator.mark_abandoned(subtask_id, reason)
+
+        return f"Subtask {subtask_id} abandoned: {reason}\n\n{self._orchestrator.get_plan_summary()}"
+
+    @listen_toolkit(
+        inputs=lambda self, reason, **kw: f"Abandoning entire task: {reason[:50]}...",
+        return_msg=lambda r: r[:100] if r else "Task abandoned"
+    )
+    def abandon_task(
+        self,
+        reason: str,
+    ) -> str:
+        """Abandon the entire task when it's impossible to complete.
+
+        Call this tool ONLY when the entire task cannot be completed, not just
+        a single subtask. For individual subtask issues, use abandon_subtask instead.
+
+        Use this for situations like:
+        - The target website/resource fundamentally doesn't exist
+        - ALL critical subtasks have failed with no alternatives
+        - The main task goal conflicts with reality
+        - Required permissions cannot be obtained for the entire workflow
+
+        IMPORTANT: Before abandoning the entire task, consider:
+        1. Can you complete partial results with remaining subtasks?
+        2. Is only one subtask impossible? Use abandon_subtask instead.
+        3. Have you tried alternative approaches via replan_task?
+
+        Args:
+            reason: Clear explanation of why the entire task cannot be completed.
+                   This will be shown to the user.
 
         Returns:
             Confirmation message.
 
         Example:
-            update_task_state(
-                task_id="task.main.1",
-                state="DONE",
-                result="Found 5 relevant articles"
+            abandon_task(
+                reason="The target website (example.com) is completely down and "
+                       "has been unreachable for the past 5 attempts. Cannot "
+                       "complete any part of the task."
             )
         """
-        task = self._get_task(task_id)
-        if not task:
-            return f"Error: Task '{task_id}' not found."
+        if not self._orchestrator:
+            return "Error: No TaskOrchestrator configured."
 
-        try:
-            new_state = TaskState(state.upper())
-        except ValueError:
-            valid_states = [s.value for s in TaskState]
-            return f"Error: Invalid state '{state}'. Valid states: {valid_states}"
+        # Call orchestrator's abandon method
+        self._orchestrator.abandon(reason)
 
-        task.set_state(new_state)
-
-        if result and new_state == TaskState.DONE:
-            task.result = result
-
-        logger.info(f"Updated task {task_id} to state {new_state.value}")
-
-        # Emit subtask_state event for frontend
-        self._emit_event("subtask_state", {
-            "subtask_id": task_id,
-            "state": new_state.value,
-            "result": result,
-            "failure_count": task.failure_count,
-        })
-
-        return f"Task '{task_id}' updated to {new_state.value}"
-
-    @listen_toolkit(
-        inputs=lambda self, **kw: "Getting task progress summary",
-        return_msg=lambda r: r[:100] + "..." if len(r) > 100 else r
-    )
-    def get_progress_summary(self) -> str:
-        """Get a summary of task progress.
-
-        Use this tool to get a quick overview of how many tasks are
-        complete, in progress, and remaining.
-
-        Returns:
-            Summary string with task counts by state.
-
-        Example output:
-            Task Progress Summary:
-            - Total tasks: 4
-            - Completed (DONE): 2
-            - In Progress (RUNNING): 1
-            - Pending (OPEN): 1
-            - Failed: 0
-        """
-        if not self._tasks:
-            return "No tasks created yet."
-
-        counts = {state: 0 for state in TaskState}
-        for task in self._tasks.values():
-            counts[task.state] += 1
-
-        total = len(self._tasks)
-        summary = f"""Task Progress Summary:
-- Total tasks: {total}
-- Completed (DONE): {counts[TaskState.DONE]}
-- In Progress (RUNNING): {counts[TaskState.RUNNING]}
-- Pending (OPEN): {counts[TaskState.OPEN]}
-- Failed: {counts[TaskState.FAILED]}
-- Deleted: {counts[TaskState.DELETED]}"""
-
-        return summary
+        return f"Task abandoned: {reason}\n\nAll remaining subtasks have been cancelled."
 
     def get_tools(self) -> List[FunctionTool]:
         """Return a list of FunctionTool objects for this toolkit.
@@ -542,11 +360,12 @@ class TaskPlanningToolkit(BaseToolkit):
             List of FunctionTool objects.
         """
         return [
-            FunctionTool(self.decompose_task),
-            FunctionTool(self.replan_tasks),
+            FunctionTool(self.complete_subtask),
+            FunctionTool(self.replan_task),
             FunctionTool(self.get_current_plan),
-            FunctionTool(self.update_task_state),
-            FunctionTool(self.get_progress_summary),
+            FunctionTool(self.report_subtask_failure),
+            FunctionTool(self.abandon_subtask),
+            FunctionTool(self.abandon_task),
         ]
 
     @classmethod

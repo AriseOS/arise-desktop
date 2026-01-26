@@ -47,30 +47,30 @@ function formatElapsedTime(elapsed, taskTime) {
 function getBottomBoxState(task) {
   if (!task) return 'input';
 
+  // Task status mapping - check terminal states first
+  switch (task.status) {
+    case 'finished':
+    case 'completed':
+    case 'failed':
+    case 'cancelled':
+      return 'finished';
+    case 'running':
+      return 'running';
+    case 'pause':
+      return 'running'; // Keep running UI, just change pause button state
+  }
+
   // If decomposing tasks
   if (task.streamingDecomposeText || task.status === 'decomposing') {
     return 'splitting';
   }
 
-  // If waiting for confirmation
-  if (task.taskInfo?.length > 0 && !task.status?.includes('running')) {
+  // If waiting for confirmation (only in pending/waiting states)
+  if (task.taskInfo?.length > 0 && task.status === 'waiting_confirmation') {
     return 'confirm';
   }
 
-  // Task status mapping
-  switch (task.status) {
-    case 'running':
-      return 'running';
-    case 'pause':
-      return 'running'; // Keep running UI, just change pause button state
-    case 'finished':
-    case 'completed':
-      return 'finished';
-    case 'failed':
-      return 'finished';
-    default:
-      return 'input';
-  }
+  return 'input';
 }
 
 /**

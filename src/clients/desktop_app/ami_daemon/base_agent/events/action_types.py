@@ -84,6 +84,7 @@ class Action(str, Enum):
     memory_query = "memory_query"           # Memory query started
     memory_result = "memory_result"         # Memory query result
     memory_loaded = "memory_loaded"         # Memory paths loaded
+    memory_level = "memory_level"           # Memory level determination (L1/L2/L3)
 
     # Reasoner events
     reasoner_query_started = "reasoner_query_started"
@@ -214,7 +215,7 @@ class SubtaskStateData(BaseActionData):
 
     action: Literal[Action.subtask_state] = Action.subtask_state
     subtask_id: str
-    state: str  # OPEN, RUNNING, DONE, FAILED, DELETED
+    state: str  # OPEN, RUNNING, DONE, FAILED, DELETED, ABANDONED
     result: Optional[str] = None
     failure_count: int = 0
 
@@ -431,6 +432,23 @@ class MemoryResultData(BaseActionData):
     method: Optional[str] = None
 
 
+class MemoryLevelData(BaseActionData):
+    """Memory level determination event.
+
+    Indicates which level of memory guidance is available for the current task:
+    - L1: Complete path from CognitivePhrase (full workflow match)
+    - L2: Partial match from TaskDAG (some subtasks have memory support)
+    - L3: No path match, will use real-time per-loop queries
+    """
+
+    action: Literal[Action.memory_level] = Action.memory_level
+    level: str  # "L1" | "L2" | "L3"
+    reason: str  # Human-readable explanation of the level determination
+    states_count: int = 0  # Number of states found in memory
+    method: str = ""  # "cognitive_phrase_match" | "task_dag" | "none"
+    paths: Optional[List[Dict]] = None  # Optional workflow path info (for L1)
+
+
 # ===== System Events =====
 
 class HeartbeatData(BaseActionData):
@@ -510,6 +528,7 @@ ActionData = Union[
     # Memory events
     MemoryQueryData,
     MemoryResultData,
+    MemoryLevelData,
     # System events
     HeartbeatData,
     ErrorData,

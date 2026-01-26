@@ -17,6 +17,40 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _parse_snapshot_format(value: str) -> Dict[str, Optional[str]]:
+    """Parse snapshot format like '[listitem "Best Products" [ref=e17]' into usable parts.
+
+    LLM sometimes mistakenly passes snapshot representation as selector.
+    This function extracts ref and text from such formats.
+
+    Args:
+        value: The possibly malformed selector string.
+
+    Returns:
+        Dict with 'ref' and 'text' keys (values may be None if not found).
+    """
+    import re
+
+    result: Dict[str, Optional[str]] = {"ref": None, "text": None}
+
+    if not value:
+        return result
+
+    # Check if this looks like a snapshot format (contains [ref=...] or starts with [tagname)
+    if "[ref=" in value or (value.startswith("[") and not value.startswith("[aria-")):
+        # Extract ref like [ref=e17] or ref=e17]
+        ref_match = re.search(r'\[?ref=([a-zA-Z0-9]+)\]?', value)
+        if ref_match:
+            result["ref"] = ref_match.group(1)
+
+        # Extract quoted text like "Best Products"
+        text_match = re.search(r'"([^"]+)"', value)
+        if text_match:
+            result["text"] = text_match.group(1)
+
+    return result
+
+
 class ActionExecutor:
     """Executes high-level actions (click, type, etc.) on a Playwright Page."""
 
@@ -109,6 +143,21 @@ class ActionExecutor:
         ref = action.get("ref")
         text = action.get("text")
         selector = action.get("selector")
+
+        # Fix: LLM sometimes passes snapshot format as selector
+        # e.g., '[listitem "Best Products" [ref=e17]' instead of proper args
+        if selector and not ref:
+            parsed = _parse_snapshot_format(selector)
+            if parsed["ref"]:
+                logger.info(f"Parsed ref '{parsed['ref']}' from malformed selector: {selector}")
+                ref = parsed["ref"]
+            if parsed["text"] and not text:
+                logger.info(f"Parsed text '{parsed['text']}' from malformed selector: {selector}")
+                text = parsed["text"]
+            # Clear invalid selector to avoid CSS syntax error
+            if parsed["ref"] or parsed["text"]:
+                selector = None
+
         if not (ref or text or selector):
             return {
                 "message": "Error: click requires ref/text/selector",
@@ -239,6 +288,15 @@ class ActionExecutor:
         ref = action.get("ref")
         selector = action.get("selector")
         text = action.get("text", "")
+
+        # Fix: LLM sometimes passes snapshot format as selector
+        if selector and not ref:
+            parsed = _parse_snapshot_format(selector)
+            if parsed["ref"]:
+                logger.info(f"Parsed ref '{parsed['ref']}' from malformed selector: {selector}")
+                ref = parsed["ref"]
+                selector = None
+
         if not (ref or selector):
             return {
                 "message": "Error: type requires ref/selector",
@@ -269,6 +327,15 @@ class ActionExecutor:
         ref = action.get("ref")
         selector = action.get("selector")
         value = action.get("value", "")
+
+        # Fix: LLM sometimes passes snapshot format as selector
+        if selector and not ref:
+            parsed = _parse_snapshot_format(selector)
+            if parsed["ref"]:
+                logger.info(f"Parsed ref '{parsed['ref']}' from malformed selector: {selector}")
+                ref = parsed["ref"]
+                selector = None
+
         if not (ref or selector):
             return {
                 "message": "Error: select requires ref/selector",

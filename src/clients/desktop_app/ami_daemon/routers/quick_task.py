@@ -524,8 +524,9 @@ async def confirm_subtasks(task_id: str, request: SubtaskConfirmRequest):
     if not state:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    # Store confirmed subtasks in state
+    # Store confirmed subtasks in state and trigger the confirmation event
     state.plan = request.subtasks
+    state.confirm_subtasks(request.subtasks)  # This unblocks the agent
     logger.info(f"Subtasks confirmed for task {task_id}: {len(request.subtasks)} subtasks")
 
     return {"success": True, "message": "Subtasks confirmed", "subtask_count": len(request.subtasks)}
@@ -536,8 +537,11 @@ async def cancel_subtasks(task_id: str):
     """
     Cancel subtask execution plan.
 
-    User rejected the proposed plan. Task continues without decomposition
-    or may be cancelled entirely.
+    User rejected the proposed plan. This will:
+    1. Clear the plan
+    2. Mark subtasks as cancelled
+    3. Unblock the agent's wait_for_subtask_confirmation() call
+    4. Agent will see cancelled=True and stop execution
     """
     service = get_service()
     state = service._tasks.get(task_id)
@@ -545,9 +549,17 @@ async def cancel_subtasks(task_id: str):
     if not state:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    # Clear plan and mark as user-rejected
+    # Clear plan
     state.plan = []
-    logger.info(f"Subtasks cancelled for task {task_id}")
+
+    # Mark subtasks as cancelled (agent will check this flag)
+    state._subtasks_cancelled = True
+
+    # Set the confirmation event to unblock wait_for_subtask_confirmation()
+    # The agent will check _subtasks_cancelled flag and stop execution
+    state._subtask_confirmation_event.set()
+
+    logger.info(f"Subtasks cancelled for task {task_id} - agent will be unblocked")
 
     return {"success": True, "message": "Subtasks cancelled"}
 

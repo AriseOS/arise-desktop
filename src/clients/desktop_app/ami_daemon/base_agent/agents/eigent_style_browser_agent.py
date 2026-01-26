@@ -39,6 +39,7 @@ from ..tools.toolkits import (
     MemoryToolkit,
     TaskPlanningToolkit,
 )
+from ..core.task_orchestrator import TaskOrchestrator, OrchestratorConfig, SubTaskState
 from ..workspace import get_working_directory, get_current_manager
 from ..events import set_process_task
 
@@ -127,6 +128,35 @@ You must use the search/browser tools to get the information you need.
 </operating_environment>
 
 <mandatory_instructions>
+## Task Planning (CRITICAL - TRACK YOUR PROGRESS)
+You will receive a pre-decomposed task plan. Use the task planning tools to track progress:
+
+1. **Check current plan**: Call `get_current_plan()` to see the task breakdown and current progress
+
+2. **After completing a subtask**: Call `complete_subtask(subtask_id, result)` to mark it done
+   - subtask_id: The ID of the completed subtask (e.g., "1.1", "1.2")
+   - result: A brief summary of what was accomplished
+
+3. **If a subtask fails**: Call `report_subtask_failure(subtask_id, error)` to report the failure
+   - The system may trigger automatic replanning
+
+4. **If plan needs adjustment**: Call `replan_task(reason, new_subtasks, cancelled_subtask_ids)` to modify the plan
+   - reason: Why the replan is needed
+   - new_subtasks: List of new subtasks to add
+   - cancelled_subtask_ids: Optional list of subtask IDs to cancel
+
+Example workflow:
+```
+get_current_plan()
+# Review the plan, then start working on current subtask
+# ... execute the subtask ...
+complete_subtask("1.1", "Found 5 competitor sites via Google search")
+# ... work on next subtask ...
+complete_subtask("1.2", "Extracted pricing from all 5 sites")
+# ... and so on
+```
+
+## Note-Taking (CRITICAL FOR PROGRESS TRACKING)
 - You MUST use the note-taking tools to record your findings. This is a
   critical part of your role. Your notes are the primary source of
   information for your teammates. To avoid information loss, you must not
@@ -140,6 +170,30 @@ You must use the search/browser tools to get the information you need.
   Your notes should be a detailed and complete record of the information
   you have discovered.
 
+## Processing Multiple Items (USE REPLAN!)
+- When you discover multiple items to process (e.g., 10 products on a page):
+  1. **IMMEDIATELY call `replan_task`** to create a subtask for EACH item
+  2. The system will track progress for you - no need to remember manually
+  3. Complete each subtask with `complete_subtask` when done
+
+  Example: You're on a leaderboard with 10 products to analyze:
+  ```
+  # When you see 10 products, call replan_task:
+  replan_task(
+      reason="Found 10 products to analyze individually",
+      new_subtasks=[
+          {{"id": "2.1", "content": "Analyze Product A: visit detail page, check team"}},
+          {{"id": "2.2", "content": "Analyze Product B: visit detail page, check team"}},
+          ... # one subtask per product
+          {{"id": "2.10", "content": "Analyze Product J: visit detail page, check team"}},
+      ],
+      cancelled_subtask_ids=["1.2"]  # Cancel the vague "analyze all products" task
+  )
+  ```
+
+  **DO NOT** try to process all items in a single subtask - you will lose track!
+
+## URL Policy
 - CRITICAL URL POLICY: You are STRICTLY FORBIDDEN from inventing,
   guessing, or constructing URLs yourself. You MUST only use URLs from
   trusted sources:
@@ -148,6 +202,7 @@ You must use the search/browser tools to get the information you need.
   3. URLs provided by the user in their request
   Fabricating or guessing URLs is considered a critical error.
 
+## Other Requirements
 - You MUST NOT answer from your own knowledge. All information
   MUST be sourced from the web using the available tools.
 
@@ -169,6 +224,11 @@ You must use the search/browser tools to get the information you need.
 
 <capabilities>
 Your capabilities include:
+- **Task Planning Tools** (TRACK YOUR PROGRESS):
+  * `get_current_plan`: View current task breakdown and progress
+  * `complete_subtask`: Mark a subtask as done with result summary
+  * `report_subtask_failure`: Report when a subtask fails
+  * `replan_task`: Adjust plan when new information emerges
 - Search and get information from the web using the search tools.
 - Use the rich browser related toolset to investigate websites.
 - Use the terminal tools to perform local operations. You can leverage
@@ -184,18 +244,56 @@ Your capabilities include:
   * Common patterns for similar tasks
 </capabilities>
 
-<memory_guided_workflow>
-**Before starting a task**, consider using the memory toolkit:
-1. Call `query_similar_workflows` with a description of your task
-2. If similar workflows are found, review the suggested steps and URLs
-3. Use the memory guidance to inform your navigation strategy
-4. Adapt the suggestions based on the current page state
+<workflow_guide>
+## Workflow Guide (Navigation Reference)
 
-This is especially useful for:
-- Navigating complex multi-step workflows (e.g., checkout processes)
-- Finding specific information on familiar websites
-- Repeating tasks that have been done before
-</memory_guided_workflow>
+A **workflow_guide** note may be available that contains a navigation path from previous
+successful workflows. This is a REFERENCE, not a script.
+
+### How to Use the Workflow Guide
+
+1. **Check if it exists**: Call `read_note("workflow_guide")` when you need navigation help
+2. **Interpret the content**:
+   - **States**: Represent page TYPES (not fixed URLs). Example: "产品详情页" means any product detail page
+   - **Actions**: Show HOW to navigate between page types
+   - **URLs**: Are REFERENCE examples only - actual URLs may differ (e.g., /weekly/2026/3 vs /weekly/2026/4)
+3. **Follow the path**: Use the navigation steps to reach your target page type
+4. **Adapt to your task**: Once at the target page, focus on YOUR task goals
+
+### When to Read the Workflow Guide
+
+- When you need to navigate to a specific type of page
+- When you're unsure how to reach a certain section of a website
+- When you want to follow a proven navigation path
+
+### Important Notes
+
+- The workflow_guide is a GUIDE, not exact instructions
+- URLs in the guide are examples - adapt to current context
+- Focus on reaching the right PAGE TYPE, not matching exact URLs
+</workflow_guide>
+
+<batch_processing>
+## Efficient Batch Processing
+
+When dealing with multiple items (e.g., a list of products on a leaderboard):
+
+### Strategy 1: Extract All Items First
+1. Use `browser_get_page_snapshot(include_url=True)` to see all items on the page
+2. The snapshot shows all links with [ref=eN] markers
+3. Plan which items to process before clicking into each one
+
+### Strategy 2: Use Replan for Dynamic Discovery
+When you discover multiple items to process:
+1. Call `replan_task` to create a subtask for EACH item
+2. This ensures systematic tracking and prevents loops
+3. Complete each subtask with `complete_subtask` when done
+
+### Avoid Common Mistakes
+- DON'T process items one-by-one without tracking
+- DON'T forget which items you've already processed
+- DO use the task planning tools to track progress
+</batch_processing>
 
 <web_search_workflow>
 Your approach depends on available search tools:
@@ -322,9 +420,16 @@ class EigentStyleBrowserAgent(BaseStepAgent):
         self._step_count: int = 0
         self._max_steps: int = 1000
 
+        # Cancellation support
+        self._cancel_event: Optional[asyncio.Event] = None
+
         # Workflow hints (from Reasoner/Memory)
         self._workflow_hints: List[Dict[str, Any]] = []
         self._current_hint_index: int = 0
+
+        # Workflow guide content (from CognitivePhrase or Path)
+        # Stored for injection into each LLM call
+        self._workflow_guide_content: Optional[str] = None
 
     def set_progress_callback(self, callback: Callable):
         """Set callback for progress updates."""
@@ -363,11 +468,29 @@ class EigentStyleBrowserAgent(BaseStepAgent):
         This enables @listen_toolkit decorators to emit events through
         the task's event queue for real-time progress tracking.
 
+        Also extracts the cancel_event from TaskState for cancellation support.
+
         Args:
             task_state: TaskState instance with put_event() method.
         """
         self._task_state = task_state
+
+        # Extract cancel event from TaskState for cancellation support
+        if hasattr(task_state, '_cancel_event'):
+            self._cancel_event = task_state._cancel_event
+            logger.info("Cancel event linked from TaskState")
+
         logger.info(f"Task state set for event emission")
+
+    def is_cancelled(self) -> bool:
+        """Check if the task has been cancelled.
+
+        Returns:
+            True if cancellation was requested.
+        """
+        if self._cancel_event is not None:
+            return self._cancel_event.is_set()
+        return False
 
     async def _notify_progress(self, event: str, data: Dict[str, Any]):
         """Notify progress to callback if set."""
@@ -538,13 +661,30 @@ Remember: This is a GUIDE. Adapt to your actual task goal.
             self._memory_toolkit = None
             logger.info("MemoryToolkit not configured (missing api_base_url, api_key, or user_id)")
 
-        # Initialize TaskPlanningToolkit for task decomposition
-        # Uses task_id from _initialize_toolkits parameter for proper event emission
-        # Note: task_state is set later via set_task_state() along with other toolkits
+        # Initialize TaskOrchestrator for task management (single-agent mode)
+        # This handles task decomposition, state tracking, and SSE events
+        # Note: Pass _sse_emitter from TaskState, not TaskState itself
+        sse_emitter = None
+        if self._task_state and hasattr(self._task_state, '_sse_emitter'):
+            sse_emitter = self._task_state._sse_emitter
+        self._task_orchestrator = TaskOrchestrator(
+            task_id=task_id,
+            emitter=sse_emitter,
+            llm_client=self._llm_provider if hasattr(self, '_llm_provider') else None,
+            config=OrchestratorConfig(
+                single_agent_mode=True,
+                max_retries_per_subtask=3,
+            ),
+        )
+        logger.info(f"TaskOrchestrator initialized for task {task_id}")
+
+        # Initialize TaskPlanningToolkit as interface to TaskOrchestrator
+        # This provides LLM-callable tools: complete_subtask, replan_task, etc.
         self._task_planning_toolkit = TaskPlanningToolkit(
+            orchestrator=self._task_orchestrator,
             task_id=task_id,
         )
-        logger.info("TaskPlanningToolkit initialized")
+        logger.info("TaskPlanningToolkit initialized with orchestrator")
 
         # Collect all tools
         self._tools = [
@@ -738,12 +878,18 @@ Remember: This is a GUIDE. Adapt to your actual task goal.
 
         Before sending to LLM, cleans historical snapshots to reduce token usage.
         """
+        logger.info("[_call_llm] Building system prompt...")
         system_prompt = self._build_system_prompt()
+
+        logger.info("[_call_llm] Building tools schema...")
         tools_schema = self._build_tools_schema()
+        logger.info(f"[_call_llm] Tools schema count: {len(tools_schema)}")
 
         # Clean historical messages to reduce token count
         # This removes old snapshot content while preserving context
+        logger.info("[_call_llm] Estimating message size...")
         original_size = self._estimate_message_size(self._messages)
+        logger.info("[_call_llm] Cleaning historical messages...")
         cleaned_messages = self._clean_historical_messages(self._messages)
         cleaned_size = self._estimate_message_size(cleaned_messages)
 
@@ -752,12 +898,14 @@ Remember: This is a GUIDE. Adapt to your actual task goal.
             reduction_pct = (reduction / original_size * 100) if original_size > 0 else 0
             logger.info(f"[Snapshot Clean] Reduced message size: {original_size:,} -> {cleaned_size:,} chars ({reduction_pct:.1f}% reduction)")
 
+        logger.info(f"[_call_llm] Calling LLM with {len(cleaned_messages)} messages...")
         response = await self._llm_provider.generate_with_tools(
             system_prompt=system_prompt,
             messages=cleaned_messages,
             tools=tools_schema,
             max_tokens=4096,
         )
+        logger.info("[_call_llm] LLM call completed successfully")
 
         return response
 
@@ -965,8 +1113,169 @@ Remember: This is a GUIDE. Adapt to your actual task goal.
 
         return hints
 
+    def _format_paths_for_sse(self, reasoner_result: Optional[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
+        """Format workflow paths for SSE event (L1 memory_level event).
+
+        Args:
+            reasoner_result: The Reasoner API result.
+
+        Returns:
+            Simplified path info for SSE event, or None if no result.
+        """
+        if not reasoner_result:
+            return None
+
+        states = reasoner_result.get("states", [])
+        actions = reasoner_result.get("actions", [])
+
+        if not states:
+            return None
+
+        paths = []
+        for i, state in enumerate(states):
+            # Extract state info (handle both dict and object)
+            if isinstance(state, dict):
+                state_desc = state.get("description", "")
+                state_url = state.get("page_url", "")
+            else:
+                state_desc = getattr(state, "description", "") or ""
+                state_url = getattr(state, "page_url", "") or ""
+
+            path_entry = {
+                "step": i + 1,
+                "description": state_desc[:100],  # Truncate for SSE
+                "url_pattern": state_url[:100] if state_url else None,
+            }
+
+            # Add action to next state if available
+            if i < len(actions):
+                action = actions[i]
+                if isinstance(action, dict):
+                    action_desc = action.get("description", "")
+                else:
+                    action_desc = getattr(action, "description", "") or ""
+                path_entry["action"] = action_desc[:80] if action_desc else None
+
+            paths.append(path_entry)
+
+        return paths
+
+    def _format_workflow_hints_for_prompt(
+        self,
+        reasoner_result: Optional[Dict[str, Any]],
+        memory_level: str,
+    ) -> str:
+        """Format Memory/Reasoner result into prompt context for LLM.
+
+        This creates a structured memory guidance section that helps the LLM
+        understand and use the workflow hints appropriately.
+
+        Args:
+            reasoner_result: The Reasoner API result containing states and actions.
+            memory_level: The determined memory level ("L1", "L2", or "L3").
+
+        Returns:
+            Formatted string for injection into LLM prompt.
+        """
+        if not reasoner_result or memory_level == "L3":
+            return """## Memory Guidance [L3]
+No complete path found in memory. You will receive real-time page information as you navigate.
+Use your judgment to complete the task step by step."""
+
+        states = reasoner_result.get("states", [])
+        actions = reasoner_result.get("actions", [])
+        method = reasoner_result.get("metadata", {}).get("method", "unknown")
+
+        if memory_level == "L1":
+            # L1: Complete path guidance
+            header = f"""## Memory Guidance [L1 - Complete Path]
+**Source**: CognitivePhrase match (previously recorded workflow)
+**Confidence**: High - this exact workflow pattern was successful before
+
+**IMPORTANT**: This path is a GUIDE, not a script. You must:
+- Follow the general navigation pattern
+- Adapt to current page content (items may have changed)
+- Make decisions based on the user's specific task goal
+
+### Suggested Navigation Path ({len(states)} steps):
+"""
+        else:
+            # L2: Partial match guidance
+            header = f"""## Memory Guidance [L2 - Partial Match]
+**Source**: TaskDAG analysis found {len(states)} relevant page states
+**Confidence**: Medium - some steps have memory support
+
+### Available Page Information:
+"""
+
+        # Build path description
+        path_lines = []
+        for i, state in enumerate(states):
+            # Extract state info
+            if isinstance(state, dict):
+                state_desc = state.get("description", "Unknown page")
+                state_url = state.get("page_url", "")
+                intent_sequences = state.get("intent_sequences", [])
+            else:
+                state_desc = getattr(state, "description", "Unknown page") or "Unknown page"
+                state_url = getattr(state, "page_url", "") or ""
+                intent_sequences = getattr(state, "intent_sequences", []) or []
+
+            step_line = f"\n**Step {i + 1}**: {state_desc}"
+            if state_url:
+                step_line += f"\n  URL Pattern: {state_url}"
+
+            # Add available operations from intent_sequences
+            if intent_sequences:
+                step_line += "\n  Available operations:"
+                for seq in intent_sequences[:3]:  # Limit to 3 operations
+                    if isinstance(seq, dict):
+                        seq_desc = seq.get("description", "")
+                        intents = seq.get("intents", [])
+                    else:
+                        seq_desc = getattr(seq, "description", "") or ""
+                        intents = getattr(seq, "intents", []) or []
+
+                    if seq_desc:
+                        step_line += f"\n    - {seq_desc}"
+                        # Add selector hints for first intent
+                        if intents:
+                            intent = intents[0]
+                            if isinstance(intent, dict):
+                                selector = intent.get("css_selector") or intent.get("xpath", "")
+                            else:
+                                selector = getattr(intent, "css_selector", "") or getattr(intent, "xpath", "") or ""
+                            if selector:
+                                step_line += f" (selector: {selector})"
+
+            # Add action to next state
+            if i < len(actions):
+                action = actions[i]
+                if isinstance(action, dict):
+                    action_desc = action.get("description", "")
+                    action_type = action.get("type", "")
+                else:
+                    action_desc = getattr(action, "description", "") or ""
+                    action_type = getattr(action, "type", "") or ""
+
+                if action_desc:
+                    step_line += f"\n  → Next: {action_desc}"
+                elif action_type:
+                    step_line += f"\n  → Next: {action_type}"
+
+            path_lines.append(step_line)
+
+        return header + "\n".join(path_lines)
+
     def _build_task_message(self, task: str) -> str:
-        """Build the initial task message with notes-based task management.
+        """Build the initial task message (legacy notes-based approach).
+
+        DEPRECATED: Use _build_task_message_with_plan() instead.
+        This method is kept for backward compatibility but is no longer
+        the primary way to build task messages.
+
+        The new approach uses TaskOrchestrator for task decomposition and
+        tracking instead of notes-based task_plan.md files.
 
         Args:
             task: The user's task description.
@@ -974,62 +1283,149 @@ Remember: This is a GUIDE. Adapt to your actual task goal.
         Returns:
             Formatted message string with task and notes instructions.
         """
+        # Redirect to new method if orchestrator is available
+        if hasattr(self, '_task_orchestrator') and self._task_orchestrator:
+            plan_summary = self._task_orchestrator.get_plan_summary()
+            return self._build_task_message_with_plan(task, plan_summary)
+
+        # Legacy fallback for cases without orchestrator
         message = f"""## Your Task
 {task}
 
-## Task Management System
+## Workflow Guidance
 
-I have created the following notes for this task:
-
-1. **workflow_hints.md** - Contains navigation guidance from similar past workflows.
-   - Read this to understand HOW to navigate (what to click, where to go)
-   - These are GUIDES, not scripts - adapt them to your actual task
-
-2. **task_plan.md** - Contains your task plan with checkboxes.
-   - Read this at the START of each step to know what to do next
-   - Update checkboxes when you complete steps: `- [ ]` → `- [x]`
-   - Add progress notes using append_note
-
-## Critical Rules
-
-**Before EVERY action:**
-1. Read `task_plan` to know your current step
-2. If needed, read `workflow_hints` for navigation guidance
-
-**For iterative tasks (collecting "all items", "every product", etc.):**
-1. First, identify all items to process on the list page
-2. Use `browser_get_page_info` to get each item's URL/title before clicking
-3. Create a loop tracking note: `loop_<name>.md` with all items and their URLs
-4. Process each item one by one:
-   - Click to enter item detail page
-   - Use `browser_get_page_info` to confirm and record the URL
-   - Collect the data you need
-   - Use `browser_back` to return to list
-5. Mark each item complete in the loop note: `- [ ] 1. Item` → `- [x] 1. Item`
-6. Continue until ALL items in the loop note are checked
-
-**After completing a step:**
-1. Update task_plan.md to mark the step done
-2. Record any collected data using append_note
-
-**Example loop note format:**
-```
-# Loop: product_collection
-
-## Items (with URLs for reference)
-- [ ] 1. Product A | https://example.com/product-a
-- [ ] 2. Product B | https://example.com/product-b
-- [ ] 3. Product C | https://example.com/product-c
-
-## Collected Data
-_Results will be added here_
-```
+If available, read `workflow_hints.md` for navigation guidance from similar past workflows.
 
 ## Starting Point
 
-Read `task_plan` now to see your steps, then begin execution.
+Begin executing the task step by step.
 """
         return message
+
+    def _build_task_message_with_plan(
+        self,
+        task: str,
+        plan_summary: str,
+    ) -> str:
+        """Build initial task message with plan summary.
+
+        Args:
+            task: The user's task description.
+            plan_summary: Current plan summary from TaskOrchestrator.
+
+        Returns:
+            Formatted message string with task and plan.
+        """
+        message = f"""## Your Task
+{task}
+
+{plan_summary}
+
+## How to Progress Through the Plan
+
+For each subtask:
+1. Execute the actions needed to complete the subtask
+2. When done, call `complete_subtask(subtask_id, result)` to mark it complete
+3. The system will show you the next subtask
+
+## Important Tools
+
+- `complete_subtask(subtask_id, result)` - Mark a subtask as done
+- `replan_task(reason, new_subtasks, cancelled_ids)` - Adjust the plan if needed
+- `get_current_plan()` - View current plan and progress
+- `read_note("workflow_guide")` - Read navigation guidance if available
+
+## When to Replan
+
+Call `replan_task()` when you discover:
+- The website structure is different than expected
+- There are more/fewer items than anticipated
+- A better approach becomes apparent
+
+## Starting Point
+
+Look at the current task in the plan above, and begin execution.
+If you need navigation help, check the `workflow_guide` note.
+"""
+        return message
+
+    def _inject_plan_summary_to_messages(self, plan_summary: str) -> None:
+        """Inject updated plan summary and workflow hints into the message history.
+
+        This modifies the last user message (if it's a tool_result) to include
+        a plan status reminder and workflow guidance, ensuring LLM sees current
+        progress and navigation hints at every step.
+
+        Args:
+            plan_summary: Current plan summary from TaskOrchestrator.
+        """
+        # Only inject after first iteration (initial message already has plan)
+        if len(self._messages) < 3:
+            return
+
+        # Build the injection content: plan summary + workflow hints
+        workflow_hint_section = ""
+        if self._workflow_guide_content:
+            workflow_hint_section = f"""
+
+## Workflow Guide (Navigation Reference)
+The following is a previously successful navigation path for a similar task:
+
+{self._workflow_guide_content}
+
+## Decision Guide
+To determine your NEXT ACTION, follow this process:
+1. **Check current page**: Look at the page snapshot above - what page type are you on?
+2. **Find your position in workflow**: Match your current page to a step in the workflow guide
+3. **Identify next step**: According to the workflow, what action should come AFTER your current position?
+4. **Execute the action**: Find the matching element on the CURRENT page and interact with it
+
+Example thinking:
+- "Current page shows a product list (matches Step 2 in workflow)"
+- "Workflow says after product list, I should click a product detail link"
+- "I see [ref=e15] is a product link on current page, I'll click that"
+"""
+
+        injection_text = f"\n\n---\n{plan_summary}{workflow_hint_section}\n\nContinue with the current subtask. When done, call `complete_subtask()` to proceed."
+
+        # Find the last user message
+        for i in range(len(self._messages) - 1, -1, -1):
+            msg = self._messages[i]
+            if msg.get("role") == "user":
+                content = msg.get("content", "")
+
+                # If it's a list (tool_result), append plan reminder
+                if isinstance(content, list):
+                    # Add plan summary as a text content block
+                    plan_reminder = {
+                        "type": "text",
+                        "text": injection_text,
+                    }
+                    content.append(plan_reminder)
+                    msg["content"] = content
+                    logger.debug(f"Injected plan summary and workflow hints into tool_result message")
+
+                # If it's a string, append plan summary
+                elif isinstance(content, str):
+                    # Don't re-inject if already contains plan marker
+                    if "## Current Task Plan" not in content:
+                        msg["content"] = f"{content}{injection_text}"
+                        logger.debug(f"Appended plan summary and workflow hints to user message")
+
+                break  # Only modify the last user message
+
+    def _inject_memory_context_to_messages(self, memory_context: str) -> None:
+        """DEPRECATED: Memory context is now saved as workflow_guide note.
+
+        This method is kept for backward compatibility but is no longer used.
+        The LLM can now read the workflow_guide note directly using read_note().
+
+        Args:
+            memory_context: Formatted memory context string.
+        """
+        logger.warning("_inject_memory_context_to_messages is deprecated. Use workflow_guide note instead.")
+        # No-op: Memory context is now saved as workflow_guide note
+        pass
 
     def _get_current_hint_context(self) -> str:
         """Get context string for the current workflow hint.
@@ -1399,46 +1795,135 @@ Execute the appropriate browser action now."""
     async def _run_agent_loop(
         self,
         task: str,
-        workflow_hints: Optional[List[Dict[str, Any]]] = None,
+        cognitive_phrase: Optional[Any] = None,
+        path: Optional[Any] = None,
         conversation_context: Optional[str] = None,
     ) -> str:
-        """Main Tool-calling loop with optional workflow hints and conversation context.
+        """Main Tool-calling loop with task orchestration and plan tracking.
 
-        This implements the Eigent/CAMEL ChatAgent.step() pattern:
-        1. Send user message to LLM
-        2. If LLM returns tool_use blocks, execute tools
-        3. Add tool results to messages
-        4. Repeat until LLM returns text-only response
+        This implements an enhanced Eigent/CAMEL pattern with:
+        1. Task decomposition at start (using TaskOrchestrator with Memory context)
+        2. Loop continues until all subtasks are done (orchestrator.all_done())
+        3. Plan summary injected into context each iteration
+        4. LLM calls complete_subtask() to progress through subtasks
+        5. MessageHistoryManager compresses old messages when token limit approached
+        6. SnapshotManager creates periodic snapshots for very long tasks
 
-        Key notes mechanism:
-        - workflow_hints.md: Stores Memory guidance for reference
-        - task_plan.md: Tracks task steps and completion status
-        - loop_*.md: Tracks iterative operations (created by LLM when needed)
+        Memory-first strategy:
+        - cognitive_phrase: User-recorded complete workflow (highest value)
+        - path: Retrieved navigation path from memory graph
 
         Args:
             task: The user's task description.
-            workflow_hints: Optional list of action hints from Memory/Reasoner.
-                Each hint is a dict with 'description', 'type', 'target_description', etc.
-                These are GUIDES, not scripts - LLM adapts them to the actual task.
-            conversation_context: Optional conversation history context from previous tasks.
-                Injected into prompt for multi-turn task continuation.
+            cognitive_phrase: Optional CognitivePhrase from memory.
+            path: Optional Path from memory.
+            conversation_context: Optional conversation history context.
         """
-        # Track current workflow hint index
-        self._current_hint_index = 0
-        self._workflow_hints = workflow_hints or []
+        # Import memory types
+        from ..tools.toolkits.memory_toolkit import MemoryToolkit
 
-        # === Initialize task notes ===
-        # Create workflow_hints.md and task_plan.md at the start
-        if self._note_toolkit:
-            logger.info("[Agent Loop] Initializing task notes...")
-            self._note_toolkit._create_workflow_hints_note(self._workflow_hints)
-            self._note_toolkit._create_task_plan_note(task, self._workflow_hints)
-            logger.info(f"[Agent Loop] Task notes created at {self._note_toolkit.working_directory}")
+        # === Initialize Message History and Snapshot Managers ===
+        from ..core.task_orchestrator import MessageHistoryManager, SnapshotManager
+        history_manager = MessageHistoryManager(max_tokens=100000)
+        snapshot_manager = SnapshotManager(snapshot_interval=10)
 
-        # Build initial message with workflow context and conversation history
-        initial_message = self._build_task_message(task)
+        # === Store workflow guide as a note (before task decomposition) ===
+        memory_source = "none"
+        if cognitive_phrase:
+            memory_source = "cognitive_phrase"
+            workflow_guide_content = MemoryToolkit.format_cognitive_phrase(cognitive_phrase)
+            logger.info(f"[Agent Loop] Using CognitivePhrase with {len(cognitive_phrase.states)} states")
+        elif path:
+            memory_source = "path"
+            workflow_guide_content = MemoryToolkit.format_path(path)
+            logger.info(f"[Agent Loop] Using Path with {len(path.states)} states, {len(path.actions)} actions")
+            # Log path details for debugging
+            for i, state in enumerate(path.states):
+                action_desc = "N/A"
+                if i < len(path.actions):
+                    action = path.actions[i]
+                    action_desc = getattr(action, 'description', None) or (action.get('description') if isinstance(action, dict) else "N/A")
+                state_desc = getattr(state, 'description', str(state))[:50] if state else "N/A"
+                state_url = getattr(state, 'page_url', None) or (state.get('page_url') if isinstance(state, dict) else None)
+                logger.info(f"[Path] Step {i+1}: {state_desc}... | URL: {state_url or 'N/A'} | Action: {action_desc}")
+        else:
+            workflow_guide_content = None
+            logger.info("[Agent Loop] No memory guidance available")
 
-        # Inject conversation context if available (for multi-turn tasks)
+        # Store workflow guide content for injection into each LLM call
+        self._workflow_guide_content = workflow_guide_content
+
+        # Save workflow guide to note if available
+        if workflow_guide_content and self._note_toolkit:
+            try:
+                result = self._note_toolkit.create_note(
+                    note_name="workflow_guide",
+                    content=workflow_guide_content,
+                    overwrite=True
+                )
+                logger.info(f"[Agent Loop] Workflow guide saved as note: {result}")
+            except Exception as e:
+                logger.warning(f"[Agent Loop] Failed to save workflow guide note: {e}")
+
+        # === Decompose task into subtasks using TaskOrchestrator ===
+        # Pass memory context to help guide decomposition
+        logger.info("[Agent Loop] Decomposing task into subtasks...")
+        try:
+            subtasks = await self._task_orchestrator._decompose_task(
+                task,
+                cognitive_phrase=cognitive_phrase,
+                path=path,
+            )
+            logger.info(f"[Agent Loop] Task decomposed into {len(subtasks)} subtasks")
+        except Exception as e:
+            logger.warning(f"[Agent Loop] Task decomposition failed: {e}, proceeding without decomposition")
+            # Create a single subtask for the entire task
+            from ..core.task_orchestrator import SubTask
+            subtask = SubTask(id="1.1", content=task)
+            self._task_orchestrator.subtasks["1.1"] = subtask
+
+        # ========== Wait for user confirmation before proceeding ==========
+        # Emit subtasks to frontend for user review
+        subtask_list = [
+            {"id": st.id, "content": st.content, "state": st.state.value}
+            for st in self._task_orchestrator.subtasks.values()
+        ]
+        await self._notify_progress("subtasks_pending_confirmation", {
+            "task": task,
+            "subtasks": subtask_list,
+            "memory_source": memory_source,
+        })
+        logger.info(f"[Agent Loop] Waiting for subtask confirmation ({len(subtask_list)} subtasks)...")
+
+        # Wait for confirmation from frontend (with 30s timeout for auto-confirm)
+        if self._task_state and hasattr(self._task_state, 'wait_for_subtask_confirmation'):
+            confirmed = await self._task_state.wait_for_subtask_confirmation(timeout=30.0)
+            if not confirmed:
+                logger.info("[Agent Loop] Subtask confirmation cancelled, exiting")
+                return "Task cancelled: subtasks not confirmed."
+
+            # Check if user edited the subtasks
+            edited_subtasks = self._task_state.get_confirmed_subtasks()
+            if edited_subtasks:
+                # Update orchestrator with user-edited subtasks
+                logger.info(f"[Agent Loop] Applying {len(edited_subtasks)} user-edited subtasks")
+                self._task_orchestrator.update_subtasks_from_confirmation(edited_subtasks)
+        else:
+            # No task state available, proceed immediately (fallback)
+            logger.warning("[Agent Loop] No task state for confirmation, proceeding immediately")
+
+        logger.info("[Agent Loop] Subtasks confirmed, proceeding with execution")
+        # ==================================================================
+
+        # Build initial message with plan summary (workflow_guide is now in notes)
+        plan_summary = self._task_orchestrator.get_plan_summary()
+        # Add a hint about workflow_guide if it was saved
+        workflow_hint = ""
+        if workflow_guide_content and self._note_toolkit:
+            workflow_hint = "\n\n**Tip**: A `workflow_guide` note is available with navigation guidance. Use `read_note(\"workflow_guide\")` if you need help navigating."
+        initial_message = self._build_task_message_with_plan(task, plan_summary) + workflow_hint
+
+        # Inject conversation context if available
         if conversation_context:
             initial_message = f"""{conversation_context}
 
@@ -1449,22 +1934,137 @@ Execute the appropriate browser action now."""
         self._messages = [{"role": "user", "content": initial_message}]
         self._step_count = 0
 
+        # Debug: Log the initial message sent to LLM
+        logger.info("=" * 80)
+        logger.info("[Agent Loop] INITIAL MESSAGE TO LLM:")
+        logger.info("=" * 80)
+        # Log in chunks to avoid truncation
+        for i in range(0, len(initial_message), 2000):
+            logger.info(f"[Initial Message Part {i//2000 + 1}]\n{initial_message[i:i+2000]}")
+        logger.info("=" * 80)
+
         await self._notify_progress("agent_started", {
             "task": task,
-            "has_workflow_hints": bool(workflow_hints),
+            "has_cognitive_phrase": cognitive_phrase is not None,
+            "has_path": path is not None,
             "has_conversation_context": bool(conversation_context),
-            "num_hints": len(self._workflow_hints),
+            "num_subtasks": len(self._task_orchestrator.subtasks),
             "notes_dir": str(self._note_toolkit.working_directory) if self._note_toolkit else None,
+            "memory_source": memory_source,
         })
 
+        # Main loop: continue until all subtasks are done OR max steps reached OR cancelled
         while self._step_count < self._max_steps:
             self._step_count += 1
+
+            # Check if task was cancelled
+            if self.is_cancelled():
+                logger.info("[Agent Loop] Task cancelled, exiting loop")
+                await self._notify_progress("agent_cancelled", {
+                    "steps": self._step_count,
+                    "reason": "Task cancelled by user",
+                })
+                return "Task cancelled by user."
+
+            # Check if all subtasks are done (exit condition)
+            if self._task_orchestrator.all_done():
+                logger.info("[Agent Loop] All subtasks completed, exiting loop")
+                final_result = self._task_orchestrator.get_plan_summary()
+                await self._notify_progress("agent_completed", {
+                    "steps": self._step_count,
+                    "response": "All subtasks completed successfully.",
+                    "plan_summary": final_result,
+                })
+                return f"Task completed successfully.\n\n{final_result}"
+
+            # Mark current subtask as RUNNING if not already
+            current_subtask = self._task_orchestrator.get_next_subtask()
+            if current_subtask and current_subtask.state == SubTaskState.OPEN:
+                self._task_orchestrator.mark_running(current_subtask.id)
+                logger.info(f"[Agent Loop] Started subtask {current_subtask.id}: {current_subtask.content[:50]}")
+
+                # === Query Memory for subtask guidance (only if no global workflow_guide) ===
+                # If we already have workflow_guide saved at task level, skip per-subtask queries.
+                # The model can read the workflow_guide note when needed.
+                if memory_source == "none" and self._memory_toolkit and self._memory_toolkit.is_available():
+                    subtask_phrase = await self._memory_toolkit.query_cognitive_phrase(
+                        current_subtask.content
+                    )
+                    if subtask_phrase:
+                        # Found workflow for this subtask - save as note
+                        subtask_guide = MemoryToolkit.format_cognitive_phrase(subtask_phrase)
+                        if self._note_toolkit:
+                            try:
+                                self._note_toolkit.create_note(
+                                    note_name="workflow_guide",
+                                    content=subtask_guide,
+                                    overwrite=True
+                                )
+                                logger.info(
+                                    f"[Memory] Saved CognitivePhrase as workflow_guide for subtask {current_subtask.id}"
+                                )
+                            except Exception as e:
+                                logger.warning(f"[Memory] Failed to save workflow_guide: {e}")
+                    else:
+                        # Try path
+                        subtask_path = await self._memory_toolkit.query_path(
+                            current_subtask.content
+                        )
+                        if subtask_path and self._note_toolkit:
+                            subtask_guide = MemoryToolkit.format_path(subtask_path)
+                            try:
+                                self._note_toolkit.create_note(
+                                    note_name="workflow_guide",
+                                    content=subtask_guide,
+                                    overwrite=True
+                                )
+                                logger.info(
+                                    f"[Memory] Saved Path as workflow_guide for subtask {current_subtask.id}"
+                                )
+                            except Exception as e:
+                                logger.warning(f"[Memory] Failed to save workflow_guide: {e}")
+                elif memory_source != "none":
+                    logger.debug(
+                        f"[Memory] Skipping per-subtask query - using global {memory_source}"
+                    )
+
+            # === Check if we should create a snapshot (for very long tasks) ===
+            logger.info("[Agent Loop] Checking snapshot...")
+            if snapshot_manager.maybe_create_snapshot(self._task_orchestrator):
+                # Reset message history, keep only snapshot context
+                snapshot_context = snapshot_manager.get_context_from_snapshots()
+                plan_summary = self._task_orchestrator.get_plan_summary()
+                fresh_message = f"""{snapshot_context}
+
+{plan_summary}
+
+Continue with the current subtask. When done, call `complete_subtask()` to proceed."""
+                self._messages = [{"role": "user", "content": fresh_message}]
+                logger.info("[Agent Loop] Message history reset after snapshot")
+
+            # === Compress message history if approaching token limit ===
+            logger.info("[Agent Loop] Managing history...")
+            current_subtask_for_history = self._task_orchestrator.get_current_subtask()
+            self._messages = history_manager.manage_history(
+                self._messages,
+                current_subtask_id=current_subtask_for_history.id if current_subtask_for_history else None,
+                completed_subtask_ids=self._task_orchestrator.completed_tasks,
+            )
+            logger.info("[Agent Loop] History managed")
+
+            # Get updated plan summary and inject into messages
+            logger.info("[Agent Loop] Injecting plan summary...")
+            plan_summary = self._task_orchestrator.get_plan_summary()
+            self._inject_plan_summary_to_messages(plan_summary)
+            logger.info("[Agent Loop] Plan summary injected")
 
             # Call LLM
             try:
                 response = await self._call_llm()
             except Exception as e:
+                import traceback
                 logger.error(f"LLM call failed: {e}")
+                logger.error(f"LLM call traceback:\n{traceback.format_exc()}")
                 return f"Error: LLM call failed - {str(e)}"
 
             # Check for tool_use blocks using ToolCallResponse API
@@ -1480,16 +2080,35 @@ Execute the appropriate browser action now."""
                 })
 
             if not response.has_tool_use():
-                # No tool calls - return final response
-                await self._notify_progress("agent_completed", {
-                    "steps": self._step_count,
-                    "response": llm_reasoning[:500] if llm_reasoning else "",
-                })
-                return llm_reasoning or "Task completed."
+                # No tool calls - check if this is intentional completion or LLM forgot
+                if self._task_orchestrator.all_done():
+                    await self._notify_progress("agent_completed", {
+                        "steps": self._step_count,
+                        "response": llm_reasoning[:500] if llm_reasoning else "",
+                    })
+                    return llm_reasoning or "Task completed."
+                else:
+                    # LLM stopped but tasks remain - remind it to continue
+                    logger.warning("[Agent Loop] LLM stopped but subtasks remain, prompting to continue")
+                    remaining = self._task_orchestrator.get_plan_summary()
+                    self._messages.append({
+                        "role": "user",
+                        "content": f"You stopped but there are still subtasks to complete. Please continue.\n\n{remaining}",
+                    })
+                    continue  # Re-enter loop
 
             # Execute all tools and collect results
             tool_results = []
             for tool_use in tool_uses:
+                # Check for cancellation before executing each tool
+                if self.is_cancelled():
+                    logger.info("[Agent Loop] Task cancelled during tool execution")
+                    await self._notify_progress("agent_cancelled", {
+                        "steps": self._step_count,
+                        "reason": "Task cancelled by user",
+                    })
+                    return "Task cancelled by user."
+
                 # Log why LLM decided to use this tool
                 logger.info(f"[Tool Call] {tool_use.name}: {tool_use.input}")
 
@@ -1536,6 +2155,8 @@ Execute the appropriate browser action now."""
             await self._notify_progress("loop_iteration", {
                 "step": self._step_count,
                 "tools_called": [t.name for t in tool_uses],
+                "subtasks_completed": len(self._task_orchestrator.completed_tasks),
+                "subtasks_total": len(self._task_orchestrator.subtasks),
             })
 
         # Max steps reached
@@ -1618,38 +2239,64 @@ Execute the appropriate browser action now."""
                 notes_directory=notes_directory,
             )
 
-            # === UNIFIED AGENT LOOP WITH OPTIONAL WORKFLOW HINTS ===
-            # Both modes now use the same agent loop, with workflow hints as guidance
-            workflow_hints = None
+            # === PHASE 1: MANDATORY MEMORY QUERY ===
+            # Query Memory before task decomposition (Memory-first strategy)
+            # 1. First try cognitive_phrase (user-recorded workflow)
+            # 2. If not found, try path (retrieved navigation path)
+            cognitive_phrase = None
+            path = None
+            memory_source = "none"
             execution_mode = "agent_loop"
 
-            # Get workflow hints from Reasoner result if available
-            if reasoner_result:
-                logger.info("[Agent Loop] Using pre-fetched Reasoner result as workflow hints")
-                workflow_hints = self._build_workflow_hints(reasoner_result)
-                execution_mode = "agent_loop_with_hints"
-                logger.info(f"[Agent Loop] Built {len(workflow_hints)} workflow hints")
-            elif use_reasoner:
-                # Call Reasoner API to get hints
-                logger.info("[Agent Loop] Calling Reasoner API for workflow hints...")
-                await self._notify_progress("reasoner_query_started", {"task": task})
+            if self._memory_toolkit and self._memory_toolkit.is_available():
+                logger.info("[Memory] Querying Memory before task decomposition...")
+                await self._notify_progress("memory_query_started", {"task": task})
 
-                reasoner_result = await self._call_reasoner(task)
+                # Step 1: Query cognitive_phrase (highest value)
+                cognitive_phrase = await self._memory_toolkit.query_cognitive_phrase(task)
 
-                if reasoner_result:
-                    workflow_hints = self._build_workflow_hints(reasoner_result)
-                    execution_mode = "agent_loop_with_hints"
-                    logger.info(f"[Agent Loop] Reasoner returned {len(workflow_hints)} workflow hints")
+                if cognitive_phrase:
+                    memory_source = "cognitive_phrase"
+                    execution_mode = "agent_loop_with_workflow"
+                    logger.info(
+                        f"[Memory] Found CognitivePhrase: {cognitive_phrase.id} "
+                        f"with {len(cognitive_phrase.states)} states"
+                    )
                 else:
-                    logger.info("[Agent Loop] Reasoner returned no workflow, running without hints")
-                    await self._notify_progress("reasoner_fallback", {
-                        "reason": "No workflow returned by Reasoner"
-                    })
+                    # Step 2: Query path (if no cognitive_phrase)
+                    path = await self._memory_toolkit.query_path(task)
+                    if path:
+                        memory_source = "path"
+                        execution_mode = "agent_loop_with_path"
+                        logger.info(
+                            f"[Memory] Found Path with {len(path.states)} states"
+                        )
+                    else:
+                        logger.info("[Memory] No workflow or path found")
+            else:
+                logger.info("[Memory] Memory not available, skipping query")
 
-            # Run unified agent loop (with or without hints)
+            # Emit memory_query_result SSE event
+            await self._notify_progress("memory_query_result", {
+                "source": memory_source,
+                "has_cognitive_phrase": cognitive_phrase is not None,
+                "has_path": path is not None,
+                "states_count": (
+                    len(cognitive_phrase.states) if cognitive_phrase
+                    else len(path.states) if path
+                    else 0
+                ),
+            })
+
+            # Store memory context for later use
+            self._cognitive_phrase = cognitive_phrase
+            self._memory_path = path
+
+            # Run agent loop with memory context
             result = await self._run_agent_loop(
                 task,
-                workflow_hints=workflow_hints,
+                cognitive_phrase=cognitive_phrase,
+                path=path,
                 conversation_context=conversation_context,
             )
 
@@ -1670,7 +2317,7 @@ Execute the appropriate browser action now."""
                     "notes": notes_content,
                     "messages": self._messages,
                     "execution_mode": execution_mode,
-                    "reasoner_used": reasoner_result is not None,
+                    "memory_source": memory_source,
                 },
                 message=f"Task completed ({execution_mode}): {task[:100]}"
             )

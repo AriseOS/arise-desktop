@@ -158,17 +158,25 @@ class ActionExtractor:
                 print(f"Warning: Source and target are the same ({source_idx})")
                 continue
 
-            # Create Action
+            # Create Action with description and element info
             try:
+                # Build attributes with element info
+                attrs = action_data.attributes.copy() if action_data.attributes else {}
+                if action_data.element_text:
+                    attrs["element_text"] = action_data.element_text
+                if action_data.element_selector:
+                    attrs["element_selector"] = action_data.element_selector
+
                 action = Action(
                     source=state_id_map[source_idx],
                     target=state_id_map[target_idx],
                     type=action_data.type,
+                    description=action_data.description,  # Now required
                     timestamp=action_data.timestamp,
                     trigger_intent_id=action_data.trigger_intent_id,
                     user_id=user_id,
                     session_id=session_id,
-                    attributes=action_data.attributes
+                    attributes=attrs
                 )
                 actions.append(action)
 
@@ -193,26 +201,62 @@ class ActionExtractor:
         )
 
     def _format_states_for_prompt(self, states: List[State]) -> str:
-        """Format states for LLM prompt.
+        """Format states for LLM prompt, including Intent details.
 
         Args:
             states: List of State objects
 
         Returns:
-            Formatted states string
+            Formatted states string with intent information
         """
         lines = []
         for i, state in enumerate(states):
-            intent_count = len(state.intents) if state.intents else 0
             duration = state.duration if state.duration else "unknown"
 
             state_desc = (
                 f"{i}. {state.page_url}\n"
                 f"   - Title: {state.page_title or 'N/A'}\n"
                 f"   - Timestamp: {state.timestamp}\n"
-                f"   - Duration: {duration}ms\n"
-                f"   - Intents: {intent_count} operations"
+                f"   - Duration: {duration}ms"
             )
+
+            # Include Intent details so LLM knows what elements were clicked
+            intents_to_show = []
+
+            # Check intent_sequences first (preferred)
+            if hasattr(state, 'intent_sequences') and state.intent_sequences:
+                for seq in state.intent_sequences:
+                    if hasattr(seq, 'intents') and seq.intents:
+                        for intent in seq.intents:
+                            intents_to_show.append(intent)
+
+            # Fallback to legacy intents field
+            elif state.intents:
+                intents_to_show = state.intents
+
+            if intents_to_show:
+                state_desc += f"\n   - Operations ({len(intents_to_show)}):"
+                for intent in intents_to_show[:5]:  # Limit to 5 intents
+                    if hasattr(intent, 'to_dict'):
+                        intent_data = intent.to_dict()
+                    elif isinstance(intent, dict):
+                        intent_data = intent
+                    else:
+                        continue
+
+                    intent_type = intent_data.get('type', 'unknown')
+                    intent_text = intent_data.get('text', '')
+                    intent_selector = intent_data.get('css_selector') or intent_data.get('xpath', '')
+                    intent_id = intent_data.get('id', '')
+
+                    # Format: type + text + selector
+                    intent_line = f"     * [{intent_id}] {intent_type}"
+                    if intent_text:
+                        intent_line += f" on '{intent_text[:30]}'"
+                    if intent_selector:
+                        intent_line += f" ({intent_selector[:50]})"
+                    state_desc += f"\n{intent_line}"
+
             lines.append(state_desc)
 
         return '\n'.join(lines)

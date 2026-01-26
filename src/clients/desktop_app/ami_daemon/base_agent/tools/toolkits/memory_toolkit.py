@@ -1,16 +1,19 @@
 """
 MemoryToolkit - Query Ami's Workflow Memory for task guidance.
 
-Ported from CAMEL-AI/Eigent project.
-Enables agents to search historical workflows using Ami's Memory API,
-providing guidance for task execution based on past experiences.
+Provides three simple query interfaces:
+1. query_cognitive_phrase() - Get user-recorded complete workflow
+2. query_path() - Get retrieved navigation path
+3. query_states() - Get related page states with operations
+
+Design principle: Memory is a tool, Agent is the decision maker.
 """
 
 import logging
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from .base_toolkit import BaseToolkit, FunctionTool
-from ...events import listen_toolkit
 
 logger = logging.getLogger(__name__)
 
@@ -23,21 +26,126 @@ except ImportError:
     logger.warning("httpx not available, MemoryToolkit will have limited functionality")
 
 
+@dataclass
+class IntentSequence:
+    """Represents an operation that can be performed on a page."""
+    description: str
+    intents: List[Dict[str, Any]] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> "IntentSequence":
+        return cls(
+            description=data.get("description", ""),
+            intents=data.get("intents", []),
+        )
+
+
+@dataclass
+class State:
+    """Page state with available operations."""
+    id: str
+    description: str
+    page_url: str
+    page_title: str
+    intent_sequences: List[IntentSequence] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> "State":
+        intent_seqs = [
+            IntentSequence.from_dict(seq)
+            for seq in data.get("intent_sequences", [])
+        ]
+        return cls(
+            id=data.get("id", ""),
+            description=data.get("description", ""),
+            page_url=data.get("page_url", ""),
+            page_title=data.get("page_title", ""),
+            intent_sequences=intent_seqs,
+        )
+
+
+@dataclass
+class Action:
+    """Navigation action between states."""
+    source_id: str
+    target_id: str
+    action_type: str
+    description: str
+    element_text: Optional[str] = None
+    element_selector: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> "Action":
+        # Extract element info from attributes or trigger_intent
+        attrs = data.get("attributes", {})
+        trigger_intent = data.get("trigger_intent", {})
+
+        element_text = (
+            attrs.get("element_text") or
+            trigger_intent.get("text") or
+            None
+        )
+        element_selector = (
+            attrs.get("element_selector") or
+            trigger_intent.get("css_selector") or
+            trigger_intent.get("xpath") or
+            None
+        )
+
+        return cls(
+            source_id=data.get("source", data.get("source_id", "")),
+            target_id=data.get("target", data.get("target_id", "")),
+            action_type=data.get("type", data.get("action_type", "")),
+            description=data.get("description", ""),
+            element_text=element_text,
+            element_selector=element_selector,
+        )
+
+
+@dataclass
+class CognitivePhrase:
+    """User-recorded complete workflow."""
+    id: str
+    description: str
+    states: List[State]
+    actions: List[Action]
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> "CognitivePhrase":
+        states = [State.from_dict(s) for s in data.get("states", [])]
+        actions = [Action.from_dict(a) for a in data.get("actions", [])]
+        return cls(
+            id=data.get("id", ""),
+            description=data.get("description", ""),
+            states=states,
+            actions=actions,
+        )
+
+
+@dataclass
+class Path:
+    """Retrieved navigation path."""
+    states: List[State]
+    actions: List[Action]
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> "Path":
+        states = [State.from_dict(s) for s in data.get("states", [])]
+        actions = [Action.from_dict(a) for a in data.get("actions", [])]
+        return cls(states=states, actions=actions)
+
+
 class MemoryToolkit(BaseToolkit):
     """Toolkit for querying workflow memory.
 
-    Enables agents to search historical workflows using Ami's Memory API.
-    This helps agents learn from past experiences and execute tasks more efficiently.
+    Provides three simple interfaces:
+    - query_cognitive_phrase(): Get user-recorded complete workflow
+    - query_path(): Get retrieved navigation path
+    - query_states(): Get related page states
 
-    Usage:
-        - Call query_similar_workflows() BEFORE starting a task
-        - Use the returned paths to guide execution strategy
-        - Follow the intent sequences for page-specific operations
-
-    Uses @listen_toolkit for automatic event emission on public methods.
+    Design: Memory is a tool, Agent is the decision maker.
     """
 
-    # Agent name for event tracking
     agent_name: str = "memory_agent"
 
     def __init__(
@@ -50,7 +158,7 @@ class MemoryToolkit(BaseToolkit):
         """Initialize MemoryToolkit.
 
         Args:
-            memory_api_base_url: Base URL of Ami's cloud backend (e.g., "http://localhost:8000").
+            memory_api_base_url: Base URL of Ami's cloud backend.
             ami_api_key: User's Ami API key for authentication.
             user_id: User ID for memory isolation.
             timeout: HTTP request timeout in seconds.
@@ -61,54 +169,79 @@ class MemoryToolkit(BaseToolkit):
         self._user_id = user_id
 
         logger.info(
-            f"MemoryToolkit initialized (user_id={user_id}, api_base_url={memory_api_base_url})"
+            f"MemoryToolkit initialized (user_id={user_id}, "
+            f"api_base_url={memory_api_base_url})"
         )
 
-    @listen_toolkit(
-        inputs=lambda self, task_description, domain=None, **kw: f"Querying memory: {task_description[:50]}{'...' if len(task_description) > 50 else ''}",
-        return_msg=lambda r: f"Found {r.count('Path ')} workflow paths" if "Path" in r else r[:100]
-    )
-    async def query_similar_workflows(
-        self,
-        task_description: str,
-        domain: Optional[str] = None,
-        top_k: int = 3,
-        min_score: float = 0.5,
-    ) -> str:
-        """Query memory for similar historical workflows.
+    # =========================================================================
+    # Three Core Query Methods
+    # =========================================================================
 
-        Use this tool BEFORE starting a task to find relevant past workflows
-        that can guide your execution strategy. The memory system uses semantic
-        search to find workflows that match your task description.
+    async def query_cognitive_phrase(self, task: str) -> Optional[CognitivePhrase]:
+        """Query for user-recorded complete workflow.
+
+        Use at task/subtask START to get complete navigation guidance.
 
         Args:
-            task_description: Natural language description of the task you want to perform.
-                Be specific about what you want to accomplish.
-                Example: "Search for AI products on Product Hunt and view team information"
-            domain: Optional domain filter to narrow results (e.g., "producthunt.com").
-                Use this when you know which website the task is on.
-            top_k: Number of similar workflows to return (default: 3).
-                Increase for more options, decrease for faster response.
-            min_score: Minimum similarity score threshold between 0 and 1 (default: 0.5).
-                Higher values return more relevant but fewer results.
+            task: Task description
 
         Returns:
-            Formatted string with similar workflow paths including:
-            - Path description and similarity score
-            - Step-by-step states (pages) with URLs
-            - Intent sequences (what operations to perform on each page)
-            - Actions (how to navigate between pages)
-
-            If no similar workflows are found, returns a message indicating
-            this is a new type of task.
+            CognitivePhrase if found, None otherwise
         """
-        if not HTTPX_AVAILABLE:
-            return "Memory query unavailable: httpx library not installed."
+        if not self.is_available():
+            return None
 
-        logger.info(
-            f"Querying similar workflows: task={task_description[:100]}, "
-            f"domain={domain}, top_k={top_k}, min_score={min_score}"
-        )
+        logger.info(f"[Memory] Querying cognitive_phrase: {task[:50]}...")
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{self._memory_api_base_url}/api/v1/memory/phrase/query",
+                    json={
+                        "user_id": self._user_id,
+                        "query": task,
+                    },
+                    headers={"X-Ami-API-Key": self._ami_api_key},
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+                result = response.json()
+
+            if not result.get("success") or not result.get("phrase"):
+                logger.info(f"[Memory] No cognitive_phrase found for: {task[:30]}...")
+                return None
+
+            phrase = CognitivePhrase.from_dict(result["phrase"])
+            logger.info(
+                f"[Memory] Found cognitive_phrase: {phrase.id} "
+                f"with {len(phrase.states)} states"
+            )
+            return phrase
+
+        except Exception as e:
+            logger.warning(f"[Memory] cognitive_phrase query failed: {e}")
+            return None
+
+    async def query_path(self, task: str) -> Optional[Path]:
+        """Query for a navigation path to the goal.
+
+        Use at task/subtask START when no cognitive_phrase is found.
+        Calls /api/v1/memory/query which returns paths found via:
+        1. Decompose query into target_query + key_queries
+        2. Embedding search for target and key states
+        3. BFS reverse traversal to find paths reaching these nodes
+        4. Score paths by key node coverage
+
+        Args:
+            task: Task description
+
+        Returns:
+            Path (states + actions) if found, None otherwise
+        """
+        if not self.is_available():
+            return None
+
+        logger.info(f"[Memory] Querying path: {task[:50]}...")
 
         try:
             async with httpx.AsyncClient() as client:
@@ -116,10 +249,7 @@ class MemoryToolkit(BaseToolkit):
                     f"{self._memory_api_base_url}/api/v1/memory/query",
                     json={
                         "user_id": self._user_id,
-                        "query": task_description,
-                        "top_k": top_k,
-                        "min_score": min_score,
-                        "domain": domain,
+                        "query": task,
                     },
                     headers={"X-Ami-API-Key": self._ami_api_key},
                     timeout=self.timeout,
@@ -128,197 +258,257 @@ class MemoryToolkit(BaseToolkit):
                 result = response.json()
 
             if not result.get("success"):
-                error_msg = result.get("message", "Unknown error")
-                logger.warning(f"Memory query failed: {error_msg}")
-                return f"Memory query failed: {error_msg}"
+                logger.info(f"[Memory] No path found for: {task[:30]}...")
+                return None
 
+            # Response contains scored paths with steps array
+            # Each path: {score, path_length, description, steps: [{state, action, intent_sequence}, ...]}
             paths = result.get("paths", [])
             if not paths:
-                logger.info("No similar workflows found")
-                return (
-                    "No similar workflows found in memory. "
-                    "This appears to be a new type of task. "
-                    "Proceed with your own planning and exploration."
-                )
+                logger.info(f"[Memory] No paths found for: {task[:30]}...")
+                return None
 
-            # Format results for LLM consumption
-            output = self._format_paths_for_llm(paths, result.get("decomposed", {}))
+            # Use the best path (highest score, already sorted by server)
+            best_path = paths[0]
+            steps = best_path.get("steps", [])
 
-            logger.info(f"Memory query successful: {len(paths)} paths found")
-            return output
+            if not steps:
+                logger.info(f"[Memory] Best path has no steps for: {task[:30]}...")
+                return None
 
-        except httpx.HTTPStatusError as e:
-            error_msg = f"Memory API error: HTTP {e.response.status_code}"
-            logger.error(f"{error_msg} - {e.response.text[:200]}")
-            return f"{error_msg}. Proceeding without memory guidance."
-        except httpx.TimeoutException:
-            logger.warning("Memory query timed out")
-            return "Memory query timed out. Proceeding without memory guidance."
+            # Extract states and actions from steps
+            states = []
+            actions = []
+            for step in steps:
+                state_data = step.get("state")
+                action_data = step.get("action")
+
+                if state_data:
+                    states.append(State.from_dict(state_data))
+                if action_data and action_data.get("source_id"):  # Has valid action
+                    actions.append(Action.from_dict(action_data))
+
+            if not states:
+                logger.info(f"[Memory] Path has no states for: {task[:30]}...")
+                return None
+
+            path = Path(states=states, actions=actions)
+            logger.info(
+                f"[Memory] Found path: {best_path.get('description', '')} "
+                f"({len(path.states)} states, {len(path.actions)} actions, "
+                f"score={best_path.get('score', 0)})"
+            )
+            return path
+
         except Exception as e:
-            logger.error(f"Memory query error: {e}")
-            return f"Memory query failed: {str(e)}. Proceeding without memory guidance."
+            logger.warning(f"[Memory] path query failed: {e}")
+            return None
 
-    @listen_toolkit(
-        inputs=lambda self, task_description, domain=None, **kw: f"Querying memory (sync): {task_description[:50]}{'...' if len(task_description) > 50 else ''}",
-        return_msg=lambda r: f"Found {r.count('Path ')} workflow paths" if "Path" in r else r[:100]
-    )
-    def query_similar_workflows_sync(
-        self,
-        task_description: str,
-        domain: Optional[str] = None,
-        top_k: int = 3,
-        min_score: float = 0.5,
-    ) -> str:
-        """Synchronous version of query_similar_workflows.
+    async def query_states(self, task: str) -> List[State]:
+        """Query for related page states.
 
-        Note: This method cannot be called from within an async context.
-        Use the async version query_similar_workflows() instead.
+        Use during agent loop to find page-specific operations.
 
         Args:
-            task_description: Natural language description of the task.
-            domain: Optional domain filter.
-            top_k: Number of results to return.
-            min_score: Minimum similarity score.
+            task: Task/page description
 
         Returns:
-            Formatted string with similar workflow paths.
+            List of relevant State objects (may be empty)
         """
-        import asyncio
+        if not self.is_available():
+            return []
+
+        logger.info(f"[Memory] Querying states: {task[:50]}...")
 
         try:
-            # Check if we're already in an async context
-            asyncio.get_running_loop()
-            raise RuntimeError(
-                "query_similar_workflows_sync() cannot be called from within an async context. "
-                "Use 'await query_similar_workflows()' instead."
-            )
-        except RuntimeError as e:
-            if "no running event loop" in str(e):
-                # No running loop, safe to use asyncio.run()
-                return asyncio.run(
-                    self.query_similar_workflows(task_description, domain, top_k, min_score)
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{self._memory_api_base_url}/api/v1/memory/query",
+                    json={
+                        "user_id": self._user_id,
+                        "query": task,
+                    },
+                    headers={"X-Ami-API-Key": self._ami_api_key},
+                    timeout=self.timeout,
                 )
-            raise
+                response.raise_for_status()
+                result = response.json()
 
-    def _format_paths_for_llm(self, paths: List[Dict], decomposed: Dict) -> str:
-        """Format workflow paths into a readable string for LLM.
+            if not result.get("success"):
+                logger.info(f"[Memory] No states found for: {task[:30]}...")
+                return []
 
-        Args:
-            paths: List of path objects from memory API.
-            decomposed: Decomposed query info (target_query, key_queries).
+            paths = result.get("paths", [])
+            states = []
+            for path in paths:
+                state_data = path.get("state", path)
+                if state_data:
+                    states.append(State.from_dict(state_data))
 
-        Returns:
-            Formatted string describing the workflow paths.
+            logger.info(f"[Memory] Found {len(states)} states")
+            return states
+
+        except Exception as e:
+            logger.warning(f"[Memory] states query failed: {e}")
+            return []
+
+    # =========================================================================
+    # Context Formatters
+    # =========================================================================
+
+    @staticmethod
+    def format_cognitive_phrase(phrase: CognitivePhrase) -> str:
+        """Format CognitivePhrase for LLM context."""
+        lines = ["## 🧠 MEMORY: VERIFIED WORKFLOW (MUST FOLLOW)\n"]
+        lines.append(f"**Description**: {phrase.description}\n")
+        lines.append("⚠️ **CRITICAL**: This workflow has been verified by the user. You MUST follow these exact steps.\n")
+        lines.append("**Navigation Steps**:")
+
+        for i, state in enumerate(phrase.states, 1):
+            lines.append(f"\n### Step {i}: {state.description}")
+            if state.page_url:
+                lines.append(f"   📍 URL: {state.page_url}")
+
+            # Show key operations
+            if state.intent_sequences:
+                lines.append("   🔧 Operations on this page:")
+                for seq in state.intent_sequences[:3]:
+                    lines.append(f"      • {seq.description}")
+                    for intent in seq.intents[:2]:
+                        selector = intent.get("css_selector") or intent.get("xpath", "")
+                        if selector:
+                            lines.append(f"        Selector: `{selector}`")
+
+            # Show action to next state
+            if i <= len(phrase.actions):
+                action = phrase.actions[i - 1]
+                lines.append(f"   ➡️ **ACTION TO NEXT STEP**: {action.description}")
+
+        lines.append("\n" + "=" * 60)
+        lines.append("⚠️ **IMPORTANT**: This is a user-verified workflow.")
+        lines.append("   - Follow these steps IN ORDER")
+        lines.append("   - Use the provided URLs and selectors")
+        lines.append("   - Do NOT deviate unless the page has changed")
+        lines.append("=" * 60)
+        return "\n".join(lines)
+
+    @staticmethod
+    def format_path(path: Path) -> str:
+        """Format retrieved path for LLM context.
+
+        Path from /api/v1/memory/query is a Navigation Map showing:
+        - Page TYPES (States) - not fixed URLs, but categories of pages
+        - How to navigate between page types (Actions)
         """
-        output = f"Found {len(paths)} relevant workflow paths from memory:\n\n"
+        has_actions = len(path.actions) > 0
 
-        # Show query decomposition if available
-        if decomposed:
-            target_query = decomposed.get("target_query")
-            key_queries = decomposed.get("key_queries", [])
-            if target_query or key_queries:
-                output += "**Query Analysis**:\n"
-                if target_query:
-                    output += f"  - Target: {target_query}\n"
-                if key_queries:
-                    output += f"  - Key pages: {', '.join(key_queries)}\n"
-                output += "\n"
+        lines = ["## 🗺️ NAVIGATION MAP\n"]
+        lines.append("This map shows a verified route to reach certain **page types**.\n")
+        lines.append("**IMPORTANT**: URLs are REFERENCE EXAMPLES, not fixed targets.")
+        lines.append("The same page type may have different URLs (e.g., /weekly/2026/3 vs /weekly/2026/4).\n")
 
-        for i, path in enumerate(paths, 1):
-            score = path.get("score", 0)
-            description = path.get("description", "Unknown path")
-            start_url = path.get("start_url", "N/A")
-            path_length = path.get("path_length", 0)
-            steps = path.get("steps", [])
+        lines.append("**Route Steps**:")
 
-            output += f"### Path {i} (score: {score:.2f})\n"
-            output += f"**Description**: {description}\n"
-            output += f"**Start URL**: {start_url}\n"
-            output += f"**Length**: {path_length} steps\n\n"
+        for i, state in enumerate(path.states, 1):
+            lines.append(f"\n### Step {i}: Page Type = \"{state.description}\"")
+            if state.page_url:
+                lines.append(f"   📍 Reference URL: `{state.page_url}`")
+                lines.append(f"      (This is an example - actual URL may vary)")
 
-            if steps:
-                output += "**Steps**:\n"
-                for j, step in enumerate(steps, 1):
-                    output += self._format_step(j, step)
-                output += "\n"
+            # Show key operations available on this page type
+            if state.intent_sequences:
+                lines.append("   🔧 **Available operations on this page**:")
+                for seq in state.intent_sequences[:3]:  # Show up to 3 sequences
+                    lines.append(f"      • {seq.description}")
+                    # Show intent details
+                    for intent in seq.intents[:3]:  # Show up to 3 intents per sequence
+                        intent_type = intent.get("type", "")
+                        intent_text = intent.get("text", "")
+                        selector = intent.get("css_selector") or intent.get("xpath", "")
 
-            output += "---\n\n"
+                        # Format based on intent type
+                        if intent_type.lower() in ["scroll", "scrolldown", "scrollup"]:
+                            lines.append(f"        - Scroll: {intent_text or 'page scroll'}")
+                        elif intent_type.lower() in ["dataload", "load", "loadmore"]:
+                            lines.append(f"        - Load more data: {intent_text or 'trigger data loading'}")
+                        elif intent_type.lower() in ["click", "clickelement"]:
+                            if intent_text:
+                                lines.append(f"        - Click: \"{intent_text}\"")
+                            if selector:
+                                lines.append(f"          Selector: `{selector}`")
+                        elif intent_type.lower() in ["type", "input", "typetext"]:
+                            lines.append(f"        - Input: {intent_text or 'text input'}")
+                            if selector:
+                                lines.append(f"          Selector: `{selector}`")
+                        else:
+                            # Generic format for other types
+                            if intent_text or selector:
+                                lines.append(f"        - {intent_type}: {intent_text or ''}")
+                                if selector:
+                                    lines.append(f"          Selector: `{selector}`")
 
-        output += (
-            "**Recommendation**: Use the above paths as guidance. "
-            "Start from the suggested URL and follow the operations on each page. "
-            "Adapt as needed based on the current page state.\n"
-        )
+            # Show action to next state if available
+            if i <= len(path.actions):
+                action = path.actions[i - 1]
+                lines.append(f"   ➡️ **To reach next page type**:")
+                if action.description:
+                    lines.append(f"      Action: {action.description}")
+                if action.element_text:
+                    lines.append(f"      Click element: \"{action.element_text}\"")
+                if action.element_selector:
+                    lines.append(f"      Selector: `{action.element_selector}`")
 
-        return output
+        lines.append("\n" + "-" * 60)
+        lines.append("📋 **HOW TO USE THIS MAP**:")
+        lines.append("   1. Use this route to navigate to your target page type")
+        lines.append("   2. URLs are references - adapt to current context if needed")
+        lines.append("   3. Actions show HOW to move between page types")
+        lines.append("   4. Once at target page, focus on completing the USER'S TASK")
+        lines.append("   5. If you need to process multiple items, use replan_task")
+        lines.append("-" * 60)
+        return "\n".join(lines)
 
-    def _format_step(self, step_num: int, step: Dict) -> str:
-        """Format a single step for display.
+    @staticmethod
+    def format_states(states: List[State]) -> str:
+        """Format scattered states for LLM context."""
+        if not states:
+            return ""
 
-        Args:
-            step_num: Step number (1-indexed).
-            step: Step data containing state, action, intent_sequence.
+        lines = ["## Memory: Related Pages\n"]
 
-        Returns:
-            Formatted string for this step.
-        """
-        output = ""
-        state = step.get("state", {})
-        action = step.get("action")
-        intent_seq = step.get("intent_sequence")
+        for state in states[:5]:
+            lines.append(f"- **{state.description}**")
+            if state.page_url:
+                lines.append(f"  URL: {state.page_url}")
 
-        # State info
-        state_desc = (
-            state.get("description")
-            or state.get("page_title")
-            or state.get("page_url", "Unknown page")
-        )
-        page_url = state.get("page_url", "N/A")
+            for seq in state.intent_sequences[:3]:
+                lines.append(f"  - {seq.description}")
+                for intent in seq.intents[:1]:
+                    selector = intent.get("css_selector") or intent.get("xpath", "")
+                    if selector:
+                        lines.append(f"    Selector: {selector}")
 
-        output += f"  {step_num}. **Page**: {state_desc}\n"
-        output += f"     URL: {page_url}\n"
+        return "\n".join(lines)
 
-        # Intent sequence (what to do on this page)
-        if intent_seq:
-            intents = intent_seq.get("intents", [])
-            if intents:
-                output += f"     **Operations on this page**:\n"
-                for intent in intents[:5]:  # Limit to first 5 intents
-                    intent_type = intent.get("type", "unknown")
-                    intent_text = intent.get("text") or intent.get("value", "")
-                    if intent_text:
-                        output += f"       - {intent_type}: {intent_text}\n"
-                    else:
-                        output += f"       - {intent_type}\n"
-
-                if len(intents) > 5:
-                    output += f"       - ... and {len(intents) - 5} more operations\n"
-
-        # Action to next state
-        if action:
-            action_desc = action.get("description") or action.get("type", "navigate")
-            output += f"     → **Next**: {action_desc}\n"
-
-        output += "\n"
-        return output
+    # =========================================================================
+    # Utility Methods
+    # =========================================================================
 
     def is_available(self) -> bool:
-        """Check if memory functionality is available.
-
-        Returns:
-            True if httpx is installed and API credentials are configured.
-        """
-        return HTTPX_AVAILABLE and bool(self._memory_api_base_url and self._ami_api_key)
+        """Check if memory functionality is available."""
+        return HTTPX_AVAILABLE and bool(
+            self._memory_api_base_url and self._ami_api_key
+        )
 
     def get_tools(self) -> List[FunctionTool]:
-        """Return a list of FunctionTool objects for this toolkit.
+        """Return FunctionTool objects for LLM tool-use.
 
-        Returns:
-            List of FunctionTool objects.
+        Note: The three query methods (query_cognitive_phrase, query_path,
+        query_states) are called by the agent framework, not exposed as
+        LLM-callable tools.
         """
-        return [
-            FunctionTool(self.query_similar_workflows),
-        ]
+        # Memory queries are called by framework, not LLM
+        return []
 
     @classmethod
     def toolkit_name(cls) -> str:

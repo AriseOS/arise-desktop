@@ -862,6 +862,7 @@ async def analyze_recording(data: dict, x_ami_api_key: Optional[str] = Header(No
         from src.common.llm.anthropic_provider import AnthropicProvider
         llm_provider = AnthropicProvider(
             api_key=x_ami_api_key,
+            model_name=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
             base_url=config_service.get("llm.proxy_url", "https://api.ariseos.com/api")
         )
 
@@ -1358,24 +1359,140 @@ async def add_to_memory(
         raise HTTPException(500, f"Failed to add to memory: {str(e)}")
 
 
+@app.post("/api/v1/memory/phrase/query")
+async def query_cognitive_phrase(
+    data: dict,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """
+    Query CognitivePhrase (User-Recorded Complete Workflow)
+
+    This endpoint queries for user-recorded complete workflows that match
+    the given task description. CognitivePhrases are high-value as they
+    represent verified user workflows.
+
+    Headers:
+        X-Ami-API-Key: User's API key (required)
+
+    Body:
+        {
+            "user_id": "user123",
+            "query": "View team info on Product Hunt"
+        }
+
+    Returns:
+        {
+            "success": true,
+            "phrase": {
+                "id": "phrase_xxx",
+                "description": "...",
+                "state_path": ["state_1", "state_2", ...],
+                "action_path": ["action_1", "action_2", ...],
+                "states": [...],    // Full state objects
+                "actions": [...]    // Full action objects
+            }
+        }
+
+        // Or if not found:
+        {
+            "success": true,
+            "phrase": null
+        }
+    """
+    logger.info(f"🔍 CognitivePhrase query request: data={data}")
+
+    if workflow_memory is None:
+        raise HTTPException(503, "Memory service not initialized")
+
+    if not x_ami_api_key:
+        raise HTTPException(400, "Missing X-Ami-API-Key header")
+
+    user_id = data.get("user_id")
+    query = data.get("query")
+
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+    if not query:
+        raise HTTPException(400, "Missing query")
+
+    try:
+        # Ensure user's memory is loaded
+        await _ensure_user_memory_loaded(user_id)
+
+        # Get Reasoner instance with user's API key
+        user_reasoner = await _get_reasoner_for_user(x_ami_api_key)
+
+        # Use CognitivePhraseChecker to find matching phrases
+        can_satisfy, matching_phrases, reasoning = await user_reasoner.phrase_checker.check(query)
+
+        if not can_satisfy or not matching_phrases:
+            logger.info(f"🔍 No CognitivePhrase found for: {query[:50]}...")
+            return {
+                "success": True,
+                "phrase": None,
+                "reasoning": reasoning,
+            }
+
+        # Get the first (best) matching phrase
+        phrase = matching_phrases[0]
+
+        # Expand state_path and action_path to full objects
+        states = []
+        for state_id in phrase.state_path:
+            state = workflow_memory.state_manager.get_state(state_id)
+            if state:
+                states.append(state.to_dict() if hasattr(state, 'to_dict') else state)
+
+        actions = []
+        # action_path contains action types, we need to get actual actions between states
+        for i in range(len(phrase.state_path) - 1):
+            source_id = phrase.state_path[i]
+            target_id = phrase.state_path[i + 1]
+            action = workflow_memory.action_manager.get_action(source_id, target_id)
+            if action:
+                actions.append(action.to_dict() if hasattr(action, 'to_dict') else action)
+
+        phrase_dict = phrase.to_dict() if hasattr(phrase, 'to_dict') else phrase
+        phrase_dict["states"] = states
+        phrase_dict["actions"] = actions
+
+        logger.info(f"✅ Found CognitivePhrase for '{query[:30]}...': {phrase.id} with {len(states)} states")
+
+        return {
+            "success": True,
+            "phrase": phrase_dict,
+            "reasoning": reasoning,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ CognitivePhrase query failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"CognitivePhrase query failed: {str(e)}")
+
+
 @app.post("/api/v1/memory/query")
 async def query_memory(
     data: dict,
     x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
 ):
     """
-    Query User's Workflow Memory using Natural Language
+    Query User's Workflow Memory using Natural Language (Fast Embedding-based)
 
-    This endpoint performs intelligent semantic search on the user's workflow memory
-    using the Reasoner module for cognitive phrase matching and semantic retrieval.
+    This endpoint performs fast semantic search on the user's workflow memory
+    using embedding similarity search. This is optimized for speed (~3-5 seconds)
+    compared to the heavy Reasoner-based approach (~30-60 seconds).
 
-    Query Processing (Reasoner):
-    1. Check cognitive phrases for direct/combinable matches
-    2. If no match, decompose target into TaskDAG
-    3. Use embedding to find candidate states
-    4. Use LLM to check state satisfaction
-    5. Explore neighbor states up to max_depth
-    6. Return complete operation paths
+    Query Processing:
+    1. (Optional) LLM decomposes query into target/key page concepts
+    2. Embedding search to find matching states
+    3. BFS traversal to find paths leading to target states
+    4. Score and rank paths by relevance
+
+    For full Reasoner-based workflow retrieval with LLM satisfaction checking,
+    use /api/v1/reasoner/plan instead.
 
     Headers:
         X-Ami-API-Key: User's API key (required)
@@ -1386,7 +1503,8 @@ async def query_memory(
             "query": "通过榜单查看产品团队信息",        // Required: Natural language query
             "top_k": 3,                              // Optional: Number of paths to return (default: 3)
             "min_score": 0.5,                        // Optional: Minimum similarity score (default: 0.5)
-            "domain": "producthunt.com"              // Optional: Filter by domain
+            "domain": "producthunt.com",             // Optional: Filter by domain
+            "max_depth": 5                           // Optional: Max BFS depth (default: 5)
         }
 
     Returns:
@@ -1415,6 +1533,7 @@ async def query_memory(
     top_k = data.get("top_k", 3)
     min_score = data.get("min_score", 0.5)
     domain = data.get("domain")
+    max_depth = data.get("max_depth", 5)  # Max path depth for BFS traversal
 
     if not user_id:
         raise HTTPException(400, "Missing user_id")
@@ -1425,51 +1544,12 @@ async def query_memory(
         # Ensure user's memory is loaded
         await _ensure_user_memory_loaded(user_id)
 
-        # Get Reasoner instance with user's API key
-        user_reasoner = await _get_reasoner_for_user(x_ami_api_key)
+        # =====================================================================
+        # Optimized Implementation: Embedding-based search (no heavy Reasoner)
+        # This replaces the slow reasoner.plan() with fast embedding search
+        # =====================================================================
 
-        # Query memory using Reasoner
-        result = await user_reasoner.plan(query, user_id=user_id)
-
-        if not result or not result.success:
-            logger.info(f"No matching paths found for query: {query}")
-            return {
-                "success": True,
-                "query": query,
-                "paths": [],
-                "total_paths": 0,
-                "message": "No matching paths found"
-            }
-
-        # Convert Reasoner result to simplified paths format
-        # Each state becomes a "path" entry for backward compatibility
-        paths = []
-        for i, state in enumerate(result.states[:top_k]):
-            state_dict = state.to_dict() if hasattr(state, 'to_dict') else state
-            paths.append({
-                "score": 1.0 - (i * 0.1),  # Decreasing score based on order
-                "description": state_dict.get("description", ""),
-                "domain": state_dict.get("domain", ""),
-                "page_url": state_dict.get("page_url", ""),
-                "page_title": state_dict.get("page_title", ""),
-                "path_length": len(state_dict.get("intent_sequences", [])),
-                "state": state_dict,
-            })
-
-        method = result.metadata.get("method", "reasoner") if result.metadata else "reasoner"
-        logger.info(f"✅ Memory query for user {user_id}: '{query}' -> {len(paths)} paths (via Reasoner, method={method})")
-
-        return {
-            "success": True,
-            "query": query,
-            "paths": paths,
-            "total_paths": len(paths),
-            "method": method,
-            "workflow": result.workflow,
-            "metadata": result.metadata,
-        }
-
-        # Step 1: LLM decomposes query into page concepts
+        # Step 1: LLM decomposes query into page concepts (optional, uses haiku)
         async def decompose_query(query: str) -> dict:
             """Use LLM to decompose user query into page concepts for better embedding search."""
             from src.common.llm import AnthropicProvider
@@ -1527,6 +1607,9 @@ async def query_memory(
         decomposed = await decompose_query(query)
         target_query = decomposed.get("target_query", query)
         key_queries = decomposed.get("key_queries", [])
+
+        # Import EmbeddingService for vector search
+        from src.cloud_backend.memgraph.services import EmbeddingService
 
         # Step 2: Search for target states (endpoints) using single target_query
         target_states = []
@@ -1609,15 +1692,51 @@ async def query_memory(
                 "domain": state.domain,
             }
 
-        def format_action(action):
-            """Format action for response"""
+        def format_action(action, source_state=None):
+            """Format action for response, including trigger intent details.
+
+            Args:
+                action: The Action object
+                source_state: Optional source State to look up trigger intent
+            """
             if not action:
                 return None
-            return {
-                "id": getattr(action, 'id', None),
+
+            result = {
+                "source_id": action.source,
+                "target_id": action.target,
                 "description": getattr(action, 'description', None),
                 "type": getattr(action, 'type', None),
             }
+
+            # Try to find the trigger intent from source state
+            trigger_intent_id = getattr(action, 'trigger_intent_id', None)
+            if trigger_intent_id and source_state and hasattr(source_state, 'intent_sequences'):
+                # Search for the intent in source state's intent_sequences
+                for seq in (source_state.intent_sequences or []):
+                    for intent in (seq.intents or []):
+                        intent_id = getattr(intent, 'id', None) or (intent.get('id') if isinstance(intent, dict) else None)
+                        if intent_id == trigger_intent_id:
+                            # Found the trigger intent - extract selector info
+                            if hasattr(intent, 'to_dict'):
+                                intent_data = intent.to_dict()
+                            elif isinstance(intent, dict):
+                                intent_data = intent
+                            else:
+                                intent_data = {}
+
+                            result["trigger_intent"] = {
+                                "css_selector": intent_data.get("css_selector"),
+                                "xpath": intent_data.get("xpath"),
+                                "text": intent_data.get("text"),
+                                "element_tag": intent_data.get("element_tag"),
+                                "description": intent_data.get("description"),
+                            }
+                            break
+                    if "trigger_intent" in result:
+                        break
+
+            return result
 
         def format_intent_sequence(state, query_embedding):
             """Find and format best IntentSequence for a state"""
@@ -1779,7 +1898,7 @@ async def query_memory(
                 for state, action in path:
                     step = {
                         "state": format_state(state),
-                        "action": format_action(action),
+                        "action": format_action(action, source_state=state),  # Pass source state to get trigger intent
                         "intent_sequence": format_intent_sequence(state, query_embedding),
                     }
                     path_steps.append(step)
@@ -2083,6 +2202,7 @@ async def _get_reasoner_for_user(x_ami_api_key: str):
     # Create LLM provider with user's API key
     llm_provider = AnthropicProvider(
         api_key=x_ami_api_key,
+        model_name=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
         base_url=config_service.get("llm.proxy_url", "https://api.ariseos.com/api")
     )
 
@@ -2382,6 +2502,7 @@ async def generate_workflow_direct(
 
                 llm = AnthropicProvider(
                     api_key=x_ami_api_key,
+                    model_name=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
                     base_url=config_service.get("llm.proxy_url")
                 )
                 extractor = IntentExtractor(llm_provider=llm)
@@ -2581,6 +2702,7 @@ async def generate_workflow_stream(
 
                     llm = AnthropicProvider(
                         api_key=x_ami_api_key,
+                        model_name=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
                         base_url=config_service.get("llm.proxy_url")
                     )
                     extractor = IntentExtractor(llm_provider=llm)

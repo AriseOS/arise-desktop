@@ -159,6 +159,11 @@ class TaskState:
     _human_response_queue: Optional[asyncio.Queue] = field(default=None, repr=False)
     _pending_human_question: Optional[str] = field(default=None, repr=False)
 
+    # Subtask confirmation state
+    _subtask_confirmation_event: Optional[asyncio.Event] = field(default=None, repr=False)
+    _confirmed_subtasks: Optional[List[Dict]] = field(default=None, repr=False)
+    _subtasks_cancelled: bool = field(default=False, repr=False)
+
     # Working directory manager
     _dir_manager: Optional[WorkingDirectoryManager] = field(default=None, repr=False)
 
@@ -169,6 +174,8 @@ class TaskState:
             self._progress_queue = asyncio.Queue()
         if self._human_response_queue is None:
             self._human_response_queue = asyncio.Queue()
+        if self._subtask_confirmation_event is None:
+            self._subtask_confirmation_event = asyncio.Event()
 
         # Initialize event queue and SSE emitter
         if self._event_queue is None:
@@ -256,6 +263,61 @@ class TaskState:
     async def get_event(self) -> ActionData:
         """Get next event from typed event queue."""
         return await self._event_queue.get()
+
+    # ===== Subtask Confirmation Methods =====
+
+    async def wait_for_subtask_confirmation(self, timeout: float = 30.0) -> bool:
+        """
+        Wait for subtask confirmation from frontend.
+
+        Args:
+            timeout: Maximum time to wait in seconds (default 30s)
+
+        Returns:
+            True if confirmed and should proceed, False if cancelled by user
+        """
+        try:
+            # Clear the event and cancelled flag before waiting
+            self._subtask_confirmation_event.clear()
+            self._subtasks_cancelled = False
+            logger.info(f"[Task {self.task_id}] Waiting for subtask confirmation (timeout={timeout}s)...")
+
+            # Wait with timeout
+            await asyncio.wait_for(
+                self._subtask_confirmation_event.wait(),
+                timeout=timeout
+            )
+
+            # Check if user cancelled (cancel_subtasks sets this flag before triggering event)
+            if self._subtasks_cancelled:
+                logger.info(f"[Task {self.task_id}] Subtask confirmation cancelled by user")
+                return False
+
+            logger.info(f"[Task {self.task_id}] Subtask confirmation received")
+            return True
+        except asyncio.TimeoutError:
+            logger.info(f"[Task {self.task_id}] Subtask confirmation timeout, auto-confirming")
+            return True  # Auto-confirm on timeout
+        except asyncio.CancelledError:
+            logger.info(f"[Task {self.task_id}] Subtask confirmation cancelled")
+            return False
+
+    def confirm_subtasks(self, subtasks: List[Dict]) -> None:
+        """
+        Confirm subtasks from frontend.
+
+        Called by confirm-subtasks endpoint to unblock the agent.
+
+        Args:
+            subtasks: List of confirmed (possibly edited) subtasks
+        """
+        self._confirmed_subtasks = subtasks
+        self._subtask_confirmation_event.set()
+        logger.info(f"[Task {self.task_id}] Subtasks confirmed: {len(subtasks)} subtasks")
+
+    def get_confirmed_subtasks(self) -> Optional[List[Dict]]:
+        """Get the confirmed subtasks (may be edited by user)."""
+        return self._confirmed_subtasks
 
     # ===== Conversation History Methods (Eigent TaskLock pattern) =====
 
@@ -892,56 +954,14 @@ class QuickTaskService:
         ))
 
         try:
-            # Call Reasoner API to get workflow plan (single call for both display and execution)
-            logger.info(f"[Task {task_id}] Calling Reasoner for task: {state.task[:50]}...")
-            reasoner_result = await self._call_reasoner(state.task)
-
-            # Extract display info from Reasoner result
-            if reasoner_result:
-                states = reasoner_result.get("states", [])
-                metadata = reasoner_result.get("metadata", {})
-                method = metadata.get("method", "unknown")
-
-                logger.info(f"[Task {task_id}] Reasoner returned {len(states)} states (method: {method})")
-
-                # Build display paths from states for frontend
-                display_paths = []
-                for i, state_obj in enumerate(states[:5]):  # Show top 5 states
-                    if hasattr(state_obj, 'description'):
-                        desc = state_obj.description or state_obj.page_title or state_obj.page_url
-                        url = state_obj.page_url
-                    else:
-                        desc = state_obj.get("description") or state_obj.get("page_title") or state_obj.get("page_url", "")
-                        url = state_obj.get("page_url", "")
-
-                    display_paths.append({
-                        "score": 1.0 - (i * 0.1),  # Decreasing score for display
-                        "description": desc,
-                        "domain": url.split("/")[2] if url and "/" in url else "",
-                    })
-
-                # Send Reasoner result to frontend (typed event)
-                await state.put_event(MemoryResultData(
-                    task_id=task_id,
-                    paths_count=len(states),
-                    paths=display_paths,
-                    method=method,
-                    has_workflow=True,
-                ))
-            else:
-                logger.info(f"[Task {task_id}] Reasoner returned no workflow, will use agent loop")
-                await state.put_event(MemoryResultData(
-                    task_id=task_id,
-                    paths_count=0,
-                    paths=[],
-                    has_workflow=False,
-                ))
+            # Memory query is now handled inside Agent.execute() via MemoryToolkit
+            # No longer call _call_reasoner() here - Agent will query Memory itself
+            logger.info(f"[Task {task_id}] Memory query will be handled by Agent internally")
 
             # ==================== Task Routing (Eigent Migration) ====================
             # Use TaskRouter to determine the best agent for this task
             routing_result = self._task_router.route(state.task, context={
                 "user_id": state.user_id,
-                "has_reasoner_workflow": reasoner_result is not None,
             })
             logger.info(
                 f"[Task {task_id}] TaskRouter: agent={routing_result.agent_type}, "
@@ -1270,14 +1290,12 @@ class QuickTaskService:
                 )
                 logger.info(f"[Task {task_id}] Including conversation context ({len(conversation_context)} chars)")
 
-            # Prepare input with pre-fetched Reasoner result and workspace info
+            # Prepare input - Memory query is handled inside Agent via MemoryToolkit
             input_data = AgentInput(
                 data={
                     "task": state.task,
                     "task_id": task_id,  # For notes directory isolation
                     "headless": headless,
-                    "reasoner_result": reasoner_result,  # Pre-fetched Reasoner workflow
-                    "use_reasoner": False,  # Don't call Reasoner again inside Agent
                     # Working directory info for toolkits
                     "working_directory": state.working_directory,
                     "notes_directory": state.notes_directory,

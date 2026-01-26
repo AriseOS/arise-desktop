@@ -59,7 +59,7 @@ llm:
   anthropic:
     # model: claude-sonnet-4-5-20250929  # Default model for complex tasks
     # simple_model: claude-haiku-4-5-20251001  # Light model for description generation (optional, falls back to default)
-    model: glm-4.7# Default model for complex tasks
+    model: glm-4.7  # Default model for complex tasks
     simple_model: glm-4.5-air # Light model for description generation (optional, falls back to default)
     max_tokens: 4096
     temperature: 0.0
