@@ -108,3 +108,4 @@ src/clients/desktop_app/src-tauri/tauri.conf.json.bak
 *.tar
 *.tar.gz
 ami-api-proxy-*.tar.gz
+AGENTS.md

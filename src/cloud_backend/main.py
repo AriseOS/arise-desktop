@@ -477,7 +477,7 @@ async def upload_recording(data: dict):
         builder = GraphBuilder()
         graph = builder.build(operations)
         graph_dict = graph.to_dict()
-        logger.info(f"Graph built: {len(graph.states)} states, {len(graph.edges)} edges")
+        logger.info(f"Graph built: {len(graph.states)} states, {len(graph.actions)} actions")
     except Exception as e:
         logger.error(f"Failed to build graph: {e}")
         import traceback
