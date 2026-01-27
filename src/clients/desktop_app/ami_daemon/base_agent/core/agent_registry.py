@@ -390,7 +390,6 @@ def register_default_agents() -> None:
     # Import here to avoid circular imports
     from ..agents import (
         EigentStyleBrowserAgent,
-        EigentBrowserAgent,
         TextAgent,
         VariableAgent,
         BrowserAgent,
@@ -414,15 +413,6 @@ def register_default_agents() -> None:
         capabilities=["web_navigation", "web_search", "data_extraction", "form_filling"],
         tags=["browser", "web", "automation", "research"],
         priority=10,
-    )
-
-    registry.register(
-        agent_type="eigent_browser_agent",
-        agent_class=EigentBrowserAgent,
-        description="ReAct-style browser agent with plan execution",
-        capabilities=["web_navigation", "plan_execution", "action_sequencing"],
-        tags=["browser", "react", "planning"],
-        priority=5,
     )
 
     registry.register(

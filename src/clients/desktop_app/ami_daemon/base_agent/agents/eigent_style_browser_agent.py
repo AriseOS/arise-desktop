@@ -7,7 +7,7 @@ This agent implements the complete Eigent Tool-calling architecture:
 3. Eigent-style System Prompt
 4. Memory Path reference capability (preserved from existing system)
 
-Unlike the ReAct-based EigentBrowserAgent, this agent:
+This agent:
 - Uses LLM function calling instead of fixed JSON output format
 - Supports parallel tool execution
 - Has automatic memory management
