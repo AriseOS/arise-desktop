@@ -451,6 +451,11 @@ class HybridBrowserSession:
             raise
 
         # Connect to browser via Playwright's CDP connection
+        # Bypass proxy for localhost (fixes Clash/proxy software interference with Node.js driver)
+        import os
+        os.environ.setdefault('NO_PROXY', '127.0.0.1,localhost')
+        os.environ.setdefault('no_proxy', '127.0.0.1,localhost')
+
         logger.info("Starting Playwright...")
         self._playwright = await async_playwright().start()
         logger.info(f"Playwright started, connecting to CDP at {cdp_url}...")
