@@ -16,10 +16,15 @@ Acceptance criteria:
 
 import hashlib
 import logging
+import re
 from typing import Any
 from typing import Dict
 from typing import List
+from urllib.parse import urlparse
+from urllib.parse import urlunparse
 
+from src.cloud_backend.memgraph.ontology.intent_sequence import IntentSequence
+from src.cloud_backend.memgraph.ontology.page_instance import PageInstance
 from .episode_segmenter import EpisodeSegmenter
 from .models import Action
 from .models import Episode
@@ -136,113 +141,216 @@ class GraphBuilder:
         episodes: List[Episode],
         phases: List
     ) -> StateActionGraph:
-        """Build State/Action Graph from episodes using memgraph ontology.
+        """Build State/Action Graph using memgraph ontology as the standard.
 
-        New behavior:
-        - Operations within same state → Intent objects (stored in State.intents)
-        - Operations causing state transitions → Action objects
+        Important design decision:
+        - Episodes and phases are retained as metadata only.
+        - The graph is constructed from the global event stream order (memgraph standard).
+
+        Behavior:
+        - Canonical URL defines State identity (query/fragment do not split states)
+        - Operations within a State → Intent objects
+        - State transitions (canonical URL change) → Action edges
+        - Each continuous State visit becomes one IntentSequence
         - No self-loop Actions (memgraph constraint)
 
         Args:
-            episodes: List of episodes
-            phases: List of phases (for context)
+            episodes: List of episodes (metadata only)
+            phases: List of phases (source of the global event stream)
 
         Returns:
             StateActionGraph with memgraph-compatible State/Intent/Action structure
         """
         graph = StateActionGraph(phases=phases, episodes=episodes)
 
-        if not episodes:
+        if not phases:
             return graph
 
-        # Track state sequence
+        # Deterministic counters with session-scoped prefixes to avoid cross-recording collisions
         state_id_counter = 1
         intent_id_counter = 1
         action_id_counter = 1
+        sequence_id_counter = 1
+        instance_id_counter = 1
 
-        # Build states and intents/actions from episodes
-        for episode in episodes:
-            if not episode.events:
+        action_event_types = {"click", "input", "scroll", "navigation"}
+
+        # Flatten the global event stream from phases (episodes are NOT used for graph topology)
+        events: List[Event] = []
+        for phase in phases:
+            events.extend(phase.events)
+
+        if not events:
+            return graph
+
+        # Sort by timestamp for deterministic ordering across phases
+        events.sort(key=lambda e: e.timestamp)
+
+        current_state_id: str | None = None
+        active_sequence: IntentSequence | None = None
+        active_sequence_state_id: str | None = None
+
+        def finalize_active_sequence() -> None:
+            """Finalize the active IntentSequence by attaching it to its State."""
+            nonlocal active_sequence, active_sequence_state_id
+            if not active_sequence or not active_sequence.intents:
+                active_sequence = None
+                active_sequence_state_id = None
+                return
+
+            state = graph.states.get(active_sequence_state_id)
+            if state:
+                # Ensure fields exist even for legacy states
+                if state.intent_sequences is None:
+                    state.intent_sequences = []
+                state.add_intent_sequence(active_sequence)
+
+            active_sequence = None
+            active_sequence_state_id = None
+
+        def ensure_state(event: Event) -> State | None:
+            """Get or create the canonical State for an event, adding it to the graph if needed."""
+            nonlocal state_id_counter
+            canonical_url = self._canonicalize_url(event.url)
+            if not canonical_url or canonical_url.lower() == "unknown":
+                return None
+
+            state, is_new_state = self._get_or_create_state(
+                graph=graph,
+                event=event,
+                state_id_counter=state_id_counter,
+            )
+            if is_new_state:
+                graph.add_state(state)
+                state_id_counter += 1
+            return state
+
+        def ensure_active_sequence(state_id: str, timestamp: int) -> IntentSequence:
+            """Ensure there is an active IntentSequence for the given state visit."""
+            nonlocal active_sequence, active_sequence_state_id, sequence_id_counter
+            if active_sequence and active_sequence_state_id == state_id:
+                return active_sequence
+
+            finalize_active_sequence()
+            sequence_id = self._make_scoped_id("SEQ", sequence_id_counter)
+            active_sequence = IntentSequence(
+                id=sequence_id,
+                session_id=self.session_id,
+                timestamp=timestamp,
+                intents=[],
+                user_id=self.user_id,
+            )
+            sequence_id_counter += 1
+            active_sequence_state_id = state_id
+            return active_sequence
+
+        def add_intent(
+            state: State,
+            event: Event,
+            extra_attributes: Dict[str, Any] | None = None,
+        ) -> Intent:
+            """Create an intent, attach it to the state, and append it to the active sequence."""
+            nonlocal intent_id_counter
+            sequence = ensure_active_sequence(state.id, event.timestamp)
+
+            intent_id = self._make_scoped_id("I", intent_id_counter)
+            intent = self._create_intent(
+                intent_id=intent_id,
+                state_id=state.id,
+                event=event,
+                page_url_override=state.page_url,
+                extra_attributes=extra_attributes,
+            )
+            intent_id_counter += 1
+
+            # Ensure intent_ids list exists for legacy states
+            if state.intent_ids is None:
+                state.intent_ids = []
+            graph.add_intent_to_state(state.id, intent)
+            sequence.intents.append(intent)
+            return intent
+
+        # Build states, intent sequences, and actions from the global event stream
+        for event in events:
+            if event.type not in action_event_types:
                 continue
 
-            # Create or get state for episode start
-            start_state = self._get_or_create_state(
-                graph=graph,
-                event=episode.events[0],
-                state_id_counter=state_id_counter
+            event_state = ensure_state(event)
+            if not event_state:
+                continue
+
+            event_canonical_url = event_state.page_url
+
+            if current_state_id is None:
+                current_state_id = event_state.id
+
+            current_state = graph.states.get(current_state_id)
+            if not current_state:
+                current_state = event_state
+                current_state_id = event_state.id
+
+            # State transition is defined by canonical URL change (memgraph standard)
+            is_transition = (
+                current_state.page_url
+                and event_canonical_url
+                and current_state.page_url != event_canonical_url
             )
-            if start_state.id not in graph.states:
-                graph.add_state(start_state)
-                state_id_counter += 1
 
-            # Process each event in episode
-            current_state_id = start_state.id
+            if is_transition:
+                # Create a trigger intent in the source state that references the target URL
+                trigger_attrs = {
+                    "is_transition_trigger": True,
+                    "transition_target_url": event.url,
+                    "transition_target_canonical_url": event_canonical_url,
+                }
+                trigger_intent = add_intent(current_state, event, extra_attributes=trigger_attrs)
 
-            for i, event in enumerate(episode.events):
-                # Skip non-action events (dataload, etc.)
-                if event.type not in ["click", "input", "scroll", "navigation"]:
-                    continue
+                # Update source state temporal bounds without adding incorrect instances
+                current_state.end_timestamp = max(
+                    current_state.end_timestamp or current_state.timestamp,
+                    event.timestamp,
+                )
+                current_state.duration = (
+                    current_state.end_timestamp - current_state.timestamp
+                    if current_state.end_timestamp
+                    else None
+                )
 
-                # Determine if this event causes a state transition
-                causes_transition = False
-                next_state = None
+                # Finalize the source state's sequence before leaving it
+                finalize_active_sequence()
 
-                if event.type == "navigation":
-                    # Navigation always changes state
-                    causes_transition = True
-                    next_state = self._get_or_create_state(
-                        graph=graph,
+                # Create action edge between states (no self-loops)
+                if event_state.id != current_state.id:
+                    action_id = self._make_scoped_id("A", action_id_counter)
+                    action = self._create_action(
+                        action_id=action_id,
+                        from_state_id=current_state.id,
+                        to_state_id=event_state.id,
                         event=event,
-                        state_id_counter=state_id_counter
+                        trigger_intent_id=trigger_intent.id,
                     )
-                elif i + 1 < len(episode.events):
-                    # Check if next event is in a different state
-                    next_event = episode.events[i + 1]
-                    if next_event.url != event.url or next_event.page_root != event.page_root:
-                        causes_transition = True
-                        next_state = self._get_or_create_state(
-                            graph=graph,
-                            event=next_event,
-                            state_id_counter=state_id_counter
-                        )
+                    graph.add_action(action)
+                    action_id_counter += 1
 
-                if causes_transition and next_state:
-                    # State transition: create Action
-                    if next_state.id not in graph.states:
-                        graph.add_state(next_state)
-                        state_id_counter += 1
+                # Enter the target state and update it with the concrete URL visit
+                current_state_id = event_state.id
+                instance_id_counter = self._update_state_with_event_instance(
+                    state=event_state,
+                    event=event,
+                    instance_id_counter=instance_id_counter,
+                )
+                continue
 
-                    # Only create Action if it's actually a state transition (no self-loop)
-                    if next_state.id != current_state_id:
-                        action = self._create_action(
-                            action_id=f"A{action_id_counter}",
-                            from_state_id=current_state_id,
-                            to_state_id=next_state.id,
-                            event=event
-                        )
-                        graph.add_action(action)
-                        action_id_counter += 1
+            # Normal in-state operation
+            instance_id_counter = self._update_state_with_event_instance(
+                state=current_state,
+                event=event,
+                instance_id_counter=instance_id_counter,
+            )
+            add_intent(current_state, event)
 
-                        # Update current state
-                        current_state_id = next_state.id
-                    else:
-                        # Same state - treat as Intent
-                        intent = self._create_intent(
-                            intent_id=f"I{intent_id_counter}",
-                            state_id=current_state_id,
-                            event=event
-                        )
-                        graph.add_intent_to_state(current_state_id, intent)
-                        intent_id_counter += 1
-                else:
-                    # No state transition: create Intent within current state
-                    intent = self._create_intent(
-                        intent_id=f"I{intent_id_counter}",
-                        state_id=current_state_id,
-                        event=event
-                    )
-                    graph.add_intent_to_state(current_state_id, intent)
-                    intent_id_counter += 1
+        # Finalize any remaining sequence at end of stream
+        finalize_active_sequence()
 
         return graph
 
@@ -250,8 +358,8 @@ class GraphBuilder:
         self,
         graph: StateActionGraph,
         event: Event,
-        state_id_counter: int
-    ) -> State:
+        state_id_counter: int,
+    ) -> tuple[State, bool]:
         """Get existing state or create new memgraph State for event.
 
         Args:
@@ -260,53 +368,60 @@ class GraphBuilder:
             state_id_counter: Counter for new state IDs
 
         Returns:
-            memgraph State object
+            Tuple of (memgraph State object, is_new_state)
         """
-        # Create state signature
-        state_key = self._create_state_key(event)
+        canonical_url = self._canonicalize_url(event.url)
+
+        # Create state signature (memgraph standard: canonical URL only)
+        state_key = self._create_state_key(canonical_url)
 
         # Check if state already exists
         for state in graph.states.values():
             if self._create_state_key_from_state(state) == state_key:
-                return state
+                return state, False
 
         # Create new memgraph State
+        state_id = self._make_scoped_id("S", state_id_counter)
+        domain = self._extract_domain(canonical_url)
         state = State(
-            id=f"S{state_id_counter}",
-            page_url=event.url,
+            id=state_id,
+            page_url=canonical_url,
             page_title=None,  # Not available in events
             timestamp=event.timestamp,
             end_timestamp=None,  # Will be updated later if needed
             duration=None,
             intents=[],  # Will be populated as we process events
             intent_ids=[],
+            instances=[],
+            intent_sequences=[],
             user_id=self.user_id,
             session_id=self.session_id,
+            domain=domain,
             attributes={
-                "page_root": event.page_root,
-                "dom_hash": event.dom_hash,
+                "canonical_url": canonical_url,
+                # page_root is metadata only (does not define state identity)
+                "page_roots": [event.page_root] if event.page_root else [],
+                "dom_hashes": [event.dom_hash] if event.dom_hash else [],
+                "last_seen_url": event.url,
+                "last_page_root": event.page_root,
+                "last_dom_hash": event.dom_hash,
             },
-            description=f"Page: {event.url}",  # Basic description
+            description=f"Page: {canonical_url}",  # Basic description
             embedding_vector=None  # Can be populated later with LLM
         )
 
-        return state
+        return state, True
 
-    def _create_state_key(self, event: Event) -> str:
+    def _create_state_key(self, canonical_url: str) -> str:
         """Create unique key for state identification.
 
         Args:
-            event: Event
+            canonical_url: Canonicalized URL (without query/fragment)
 
         Returns:
             State key string
         """
-        key_parts = [
-            event.url,
-            event.page_root
-        ]
-        key_string = "|".join(key_parts)
-        return hashlib.md5(key_string.encode()).hexdigest()
+        return hashlib.md5(canonical_url.encode()).hexdigest()
 
     def _create_state_key_from_state(self, state: State) -> str:
         """Create state key from memgraph State object.
@@ -317,19 +432,16 @@ class GraphBuilder:
         Returns:
             State key string
         """
-        page_root = state.attributes.get("page_root", "main")
-        key_parts = [
-            state.page_url,
-            page_root
-        ]
-        key_string = "|".join(key_parts)
-        return hashlib.md5(key_string.encode()).hexdigest()
+        canonical_url = self._canonicalize_url(state.page_url)
+        return hashlib.md5(canonical_url.encode()).hexdigest()
 
     def _create_intent(
         self,
         intent_id: str,
         state_id: str,
-        event: Event
+        event: Event,
+        page_url_override: str | None = None,
+        extra_attributes: Dict[str, Any] | None = None,
     ) -> Intent:
         """Create Intent object from event (operation within state).
 
@@ -337,6 +449,8 @@ class GraphBuilder:
             intent_id: Intent identifier
             state_id: State ID this intent belongs to
             event: Event that represents the intent
+            page_url_override: Canonical page URL for the state (memgraph standard)
+            extra_attributes: Additional attributes to merge into intent.attributes
 
         Returns:
             memgraph Intent object
@@ -347,12 +461,29 @@ class GraphBuilder:
         # Generate human-readable description
         description = self._generate_intent_description(event)
 
+        canonical_event_url = self._canonicalize_url(event.url)
+        intent_page_url = page_url_override or canonical_event_url
+
+        attributes = {
+            "canonical_event_url": canonical_event_url,
+            "original_event_url": event.url,
+            # page_root is metadata only
+            "page_root": event.page_root,
+            "dom_hash": event.dom_hash,
+            "raw_data": event.data,
+            "aria": target_attrs.get("aria"),
+            "href": target_attrs.get("href"),
+            "role": target_attrs.get("role"),
+        }
+        if extra_attributes:
+            attributes.update(extra_attributes)
+
         return Intent(
             id=intent_id,
             state_id=state_id,
             type=event.type,  # "click", "input", "scroll"
             timestamp=event.timestamp,
-            page_url=event.url,
+            page_url=intent_page_url,
             page_title=None,
             element_tag=target_attrs.get("element_tag"),
             xpath=target_attrs.get("xpath"),
@@ -360,14 +491,8 @@ class GraphBuilder:
             value=event.data.get("value"),
             user_id=self.user_id,
             session_id=self.session_id,
-            attributes={
-                "page_root": event.page_root,
-                "dom_hash": event.dom_hash,
-                "raw_data": event.data,
-                "aria": target_attrs.get("aria"),
-                "href": target_attrs.get("href"),
-                "role": target_attrs.get("role"),
-            }
+            description=description,
+            attributes=attributes
         )
 
     def _create_action(
@@ -375,7 +500,8 @@ class GraphBuilder:
         action_id: str,
         from_state_id: str,
         to_state_id: str,
-        event: Event
+        event: Event,
+        trigger_intent_id: str | None = None,
     ) -> Action:
         """Create Action object from event (state transition).
 
@@ -384,6 +510,7 @@ class GraphBuilder:
             from_state_id: Source state ID
             to_state_id: Destination state ID
             event: Event that caused the transition
+            trigger_intent_id: ID of the Intent that triggered this transition
 
         Returns:
             memgraph Action object
@@ -399,18 +526,144 @@ class GraphBuilder:
             target=to_state_id,
             type=action_type,
             timestamp=event.timestamp,
-            trigger_intent_id=action_id,  # Use action_id as trigger reference
+            trigger_intent_id=trigger_intent_id,
             user_id=self.user_id,
             session_id=self.session_id,
             attributes={
+                "action_id": action_id,
                 "raw_action_type": event.type,
                 "target_element": target_attrs,
                 "data": event.data,
                 "page_root": event.page_root,
+                "canonical_event_url": self._canonicalize_url(event.url),
+                "original_event_url": event.url,
             },
             weight=1.0,
             confidence=None
         )
+
+    def _update_state_with_event_instance(
+        self,
+        state: State,
+        event: Event,
+        instance_id_counter: int,
+    ) -> int:
+        """Update a State with concrete URL instance and metadata from an event.
+
+        This aligns graph_builder output with memgraph's abstract State model:
+        - State identity: canonical URL (query/fragment removed)
+        - Concrete visits: stored as PageInstance entries
+        - page_root/dom_hash: metadata only
+
+        Args:
+            state: State to update
+            event: Event providing concrete URL and metadata
+            instance_id_counter: Counter for deterministic PageInstance IDs
+
+        Returns:
+            Updated instance_id_counter
+        """
+        # Ensure lists exist for legacy states
+        if state.instances is None:
+            state.instances = []
+        if state.attributes is None:
+            state.attributes = {}
+
+        # Update temporal bounds
+        state.end_timestamp = max(state.end_timestamp or event.timestamp, event.timestamp)
+        state.duration = (state.end_timestamp - state.timestamp) if state.end_timestamp else None
+
+        # Track page_root/dom_hash as metadata only
+        page_roots = state.attributes.setdefault("page_roots", [])
+        if event.page_root and event.page_root not in page_roots:
+            page_roots.append(event.page_root)
+
+        dom_hashes = state.attributes.setdefault("dom_hashes", [])
+        if event.dom_hash and event.dom_hash not in dom_hashes:
+            dom_hashes.append(event.dom_hash)
+
+        state.attributes["last_seen_url"] = event.url
+        state.attributes["last_page_root"] = event.page_root
+        state.attributes["last_dom_hash"] = event.dom_hash
+        state.attributes["canonical_url"] = state.page_url
+        # Backward compatibility: keep single-value fields alongside history lists
+        if event.page_root:
+            state.attributes["page_root"] = event.page_root
+        if event.dom_hash:
+            state.attributes["dom_hash"] = event.dom_hash
+
+        # Add PageInstance for this concrete URL visit (dedup by URL string)
+        existing_urls = {
+            inst.url if hasattr(inst, "url") else inst.get("url")
+            for inst in state.instances
+        }
+        if event.url and event.url not in existing_urls:
+            instance_id = self._make_scoped_id("PI", instance_id_counter)
+            instance = PageInstance(
+                id=instance_id,
+                url=event.url,
+                page_title=None,
+                timestamp=event.timestamp,
+                session_id=self.session_id,
+                user_id=self.user_id,
+            )
+            state.instances.append(instance)
+            instance_id_counter += 1
+
+        return instance_id_counter
+
+    def _make_scoped_id(self, prefix: str, counter: int) -> str:
+        """Create deterministic, session-scoped IDs to avoid cross-recording collisions."""
+        session_prefix = self._session_prefix()
+        return f"{prefix}_{session_prefix}_{counter}"
+
+    def _session_prefix(self) -> str:
+        """Get a short, stable session prefix for ID scoping."""
+        if not self.session_id:
+            return "session"
+
+        sanitized = re.sub(r"[^A-Za-z0-9]+", "", self.session_id)
+        if sanitized:
+            return sanitized[:12]
+
+        # Fallback to a deterministic hash when session_id has no safe characters
+        return hashlib.md5(self.session_id.encode()).hexdigest()[:12]
+
+    def _canonicalize_url(self, url: str) -> str:
+        """Canonicalize URL for State identity.
+
+        Rules (as agreed):
+        - query params and fragments do NOT define state identity
+        - page_root is metadata only
+        """
+        if not url:
+            return ""
+
+        try:
+            parsed = urlparse(url)
+
+            # If parsing yields no scheme/netloc, treat as opaque and return as-is
+            if not parsed.scheme and not parsed.netloc:
+                base = url.split("#", 1)[0]
+                base = base.split("?", 1)[0]
+                return base or url
+
+            scheme = parsed.scheme.lower()
+            netloc = parsed.netloc.lower()
+            path = parsed.path or "/"
+
+            # Drop params, query, and fragment
+            return urlunparse((scheme, netloc, path, "", "", ""))
+        except Exception:
+            return url
+
+    def _extract_domain(self, url: str) -> str | None:
+        """Extract domain from URL for memgraph State.domain."""
+        try:
+            parsed = urlparse(url)
+            return parsed.netloc or None
+        except Exception:
+            return None
 
     def _generate_intent_description(self, event: Event) -> str:
         """Generate human-readable description for Intent.
