@@ -61,6 +61,7 @@ class GraphBuilder:
         scroll_merge_window_ms: int = 500,
         input_debounce_ms: int = 500,
         hover_merge_window_ms: int = 200,
+        trigger_resolution_window_ms: int = 15000,
         user_id: str = None,
         session_id: str = None
     ):
@@ -71,6 +72,8 @@ class GraphBuilder:
             scroll_merge_window_ms: Scroll merge window
             input_debounce_ms: Input debounce window
             hover_merge_window_ms: Hover merge window
+            trigger_resolution_window_ms: Max time gap to associate a navigation
+                Action with the most recent in-state Intent (e.g., prior click)
             user_id: User ID for attribution (optional)
             session_id: Session ID for grouping (optional)
         """
@@ -85,6 +88,7 @@ class GraphBuilder:
             idle_threshold_ms=idle_threshold_ms
         )
         self.episode_segmenter = EpisodeSegmenter()
+        self.trigger_resolution_window_ms = trigger_resolution_window_ms
         self.user_id = user_id
         self.session_id = session_id
 
@@ -189,6 +193,9 @@ class GraphBuilder:
         current_state_id: str | None = None
         active_sequence: IntentSequence | None = None
         active_sequence_state_id: str | None = None
+        # Track recent intents per state to better resolve transition triggers
+        last_intent_by_state: dict[str, Intent] = {}
+        last_click_intent_by_state: dict[str, Intent] = {}
 
         def finalize_active_sequence() -> None:
             """Finalize the active IntentSequence by attaching it to its State."""
@@ -297,6 +304,15 @@ class GraphBuilder:
             )
 
             if is_transition:
+                # For navigation events, try to associate the transition with the
+                # most recent in-state click/intent (within a time window).
+                previous_candidate: Intent | None = None
+                if event.type == "navigation":
+                    previous_candidate = (
+                        last_click_intent_by_state.get(current_state.id)
+                        or last_intent_by_state.get(current_state.id)
+                    )
+
                 # Create a trigger intent in the source state that references the target URL
                 trigger_attrs = {
                     "is_transition_trigger": True,
@@ -304,6 +320,22 @@ class GraphBuilder:
                     "transition_target_canonical_url": event_canonical_url,
                 }
                 trigger_intent = add_intent(current_state, event, extra_attributes=trigger_attrs)
+                # Update recent-intent indices for the source state
+                last_intent_by_state[current_state.id] = trigger_intent
+                if trigger_intent.type == "click":
+                    last_click_intent_by_state[current_state.id] = trigger_intent
+
+                def is_recent(candidate: Intent | None) -> bool:
+                    """Check whether a candidate intent is recent enough to use as trigger."""
+                    if not candidate:
+                        return False
+                    if not getattr(candidate, "timestamp", None):
+                        return False
+                    return (event.timestamp - candidate.timestamp) <= self.trigger_resolution_window_ms
+
+                resolved_trigger = (
+                    previous_candidate if is_recent(previous_candidate) else trigger_intent
+                )
 
                 # Update source state temporal bounds without adding incorrect instances
                 current_state.end_timestamp = max(
@@ -327,7 +359,7 @@ class GraphBuilder:
                         from_state_id=current_state.id,
                         to_state_id=event_state.id,
                         event=event,
-                        trigger_intent_id=trigger_intent.id,
+                        trigger_intent_id=resolved_trigger.id,
                     )
                     graph.add_action(action)
                     action_id_counter += 1
@@ -347,7 +379,11 @@ class GraphBuilder:
                 event=event,
                 instance_id_counter=instance_id_counter,
             )
-            add_intent(current_state, event)
+            intent = add_intent(current_state, event)
+            # Update recent-intent indices for trigger resolution
+            last_intent_by_state[current_state.id] = intent
+            if intent.type == "click":
+                last_click_intent_by_state[current_state.id] = intent
 
         # Finalize any remaining sequence at end of stream
         finalize_active_sequence()
@@ -623,11 +659,10 @@ class GraphBuilder:
             return "session"
 
         sanitized = re.sub(r"[^A-Za-z0-9]+", "", self.session_id)
-        if sanitized:
-            return sanitized[:12]
-
-        # Fallback to a deterministic hash when session_id has no safe characters
-        return hashlib.md5(self.session_id.encode()).hexdigest()[:12]
+        # Use a low-collision prefix: readable tail + deterministic hash suffix
+        readable = sanitized[-8:] if sanitized else "session"
+        hash_part = hashlib.md5(self.session_id.encode()).hexdigest()[:6]
+        return f"{readable}_{hash_part}"
 
     def _canonicalize_url(self, url: str) -> str:
         """Canonicalize URL for State identity.
