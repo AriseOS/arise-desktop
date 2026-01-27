@@ -1366,6 +1366,7 @@ If you need navigation help, check the `workflow_guide` note.
         # Build the injection content: plan summary + workflow hints
         workflow_hint_section = ""
         if self._workflow_guide_content:
+            logger.info(f"[Agent Loop] Injecting workflow hints ({len(self._workflow_guide_content)} chars)")
             workflow_hint_section = f"""
 
 ## Workflow Guide (Navigation Reference)
@@ -1373,17 +1374,25 @@ The following is a previously successful navigation path for a similar task:
 
 {self._workflow_guide_content}
 
-## Decision Guide
-To determine your NEXT ACTION, follow this process:
-1. **Check current page**: Look at the page snapshot above - what page type are you on?
-2. **Find your position in workflow**: Match your current page to a step in the workflow guide
-3. **Identify next step**: According to the workflow, what action should come AFTER your current position?
-4. **Execute the action**: Find the matching element on the CURRENT page and interact with it
+## Decision Guide (CRITICAL - FOLLOW THE WORKFLOW!)
+**You MUST strictly follow the workflow's Action instructions, not take shortcuts!**
 
-Example thinking:
-- "Current page shows a product list (matches Step 2 in workflow)"
-- "Workflow says after product list, I should click a product detail link"
-- "I see [ref=e15] is a product link on current page, I'll click that"
+To determine your NEXT ACTION:
+1. **Check current page**: What page type are you on? (match to a Step in workflow)
+2. **Read the Action**: Look at the "➡️ To reach next page type: Action:" for your current step
+3. **Execute EXACTLY that action**: Find the element described in the Action and click it
+   - If Action says "点击导航栏中的排行榜链接" → find and click the "排行榜/Leaderboard" link in nav bar
+   - If Action says "点击周排行榜链接" → find and click the "Weekly" tab/link
+   - Do NOT take shortcuts like clicking "See all of last week's products" if that's not the Action!
+
+**WRONG**: "I see a shortcut to weekly products, let me click that instead"
+**RIGHT**: "Workflow says click '排行榜' link in nav bar, let me find that element"
+
+Example:
+- Current page: Product Hunt homepage (Step 2)
+- Workflow Action: "点击导航栏中的'排行榜'链接进入每日排行榜页面"
+- I should find "Leaderboard" or "排行榜" in the navigation bar and click it
+- I should NOT click "See all of last week's products" even if it seems faster
 """
 
         injection_text = f"\n\n---\n{plan_summary}{workflow_hint_section}\n\nContinue with the current subtask. When done, call `complete_subtask()` to proceed."
@@ -2225,11 +2234,16 @@ Continue with the current subtask. When done, call `complete_subtask()` to proce
                 logger.info(f"Using workspace: {working_directory}")
 
             # Initialize browser session with task-specific data directory
+            # Use context.browser_session_id for session sharing across workflow steps
             browser_data_dir = _get_browser_data_dir(browser_data_directory)
+            session_id = getattr(context, 'browser_session_id', None) or "default"
+            logger.info(f"Using browser session_id: {session_id}")
+
             self._session = HybridBrowserSession(
                 headless=headless,
                 stealth=True,
                 user_data_dir=browser_data_dir,
+                session_id=session_id,
             )
 
             # Initialize toolkits with task isolation
@@ -2308,16 +2322,24 @@ Continue with the current subtask. When done, call `complete_subtask()` to proce
                 except Exception:
                     pass
 
+            # Get the actual result data from completed subtasks
+            # This is important for workflow integration - the last subtask's result
+            # contains the extracted data that needs to be passed to the next step
+            final_result = None
+            if self._task_orchestrator:
+                final_result = self._task_orchestrator.get_final_result()
+
             return AgentOutput(
                 success=True,
                 data={
-                    "result": result,
+                    "result": final_result if final_result is not None else result,
                     "task": task,
                     "steps_taken": self._step_count,
                     "notes": notes_content,
                     "messages": self._messages,
                     "execution_mode": execution_mode,
                     "memory_source": memory_source,
+                    "plan_summary": result,  # Keep the plan summary for debugging
                 },
                 message=f"Task completed ({execution_mode}): {task[:100]}"
             )
@@ -2333,14 +2355,27 @@ Continue with the current subtask. When done, call `complete_subtask()` to proce
                 data={"steps_taken": self._step_count}
             )
 
-    async def cleanup(self, context: AgentContext):
-        """Clean up browser session, toolkits, and reset state."""
-        # Close browser session
+    async def cleanup(self, context: AgentContext, close_browser: bool = False):
+        """Clean up browser session, toolkits, and reset state.
+
+        Args:
+            context: Agent context
+            close_browser: If True, actually close the browser session.
+                          If False (default), only clear local reference to allow
+                          session reuse across workflow steps.
+        """
+        # Handle browser session
         if self._session:
-            try:
-                await self._session.close()
-            except Exception as e:
-                logger.warning(f"Error closing browser session: {e}")
+            if close_browser:
+                # Actually close the browser (used at workflow end)
+                try:
+                    await self._session.close()
+                    logger.info("Browser session closed")
+                except Exception as e:
+                    logger.warning(f"Error closing browser session: {e}")
+            else:
+                # Just clear reference, keep session alive for next step
+                logger.debug("Clearing browser session reference (session kept alive for reuse)")
             self._session = None
 
         # Reset toolkits (they don't have async cleanup, just reset references)

@@ -1,21 +1,38 @@
 """
 Workflow Execution Engine
 Based on Agent-as-Step architecture
+
+v4.0 Changes:
+- Added WorkflowWorkspace for execution recording
+- Added error recovery via EigentStyleBrowserAgent
+- All browser/scraper operations now use LLM
 """
 import asyncio
 import logging
 import re
 import time
 import traceback
+from dataclasses import dataclass
 from typing import List, Dict, Any, Optional, Type
 
+from ..tools.eigent_browser.browser_session import HybridBrowserSession
 from .schemas import (
     AgentWorkflowStep, WorkflowResult, StepResult,
     AgentContext, AgentInput, AgentOutput, StopSignal
 )
+from .workflow_workspace import WorkflowWorkspace
 from ..agents.base_agent import BaseStepAgent
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class RecoveryConfig:
+    """Configuration for error recovery."""
+    enabled: bool = True
+    max_attempts: int = 2
+    recovery_max_steps: int = 20
+    recoverable_agent_types: tuple = ("browser_agent", "scraper_agent", "autonomous_browser_agent")
 
 
 def _get_condition_evaluator():
@@ -62,10 +79,11 @@ class WorkflowEngine:
         self._load_agent_types()
         return self._AGENT_TYPES
 
-    def __init__(self, agent_instance=None):
+    def __init__(self, agent_instance=None, recovery_config: Optional[RecoveryConfig] = None):
         self.agent = agent_instance
         self.condition_evaluator = _get_condition_evaluator()
         self._config_service = getattr(self.agent, 'config_service', None) if self.agent else None
+        self.recovery_config = recovery_config or RecoveryConfig()
 
     def _create_agent(self, agent_type: str, config: Optional[Dict] = None) -> BaseStepAgent:
         """Create agent instance"""
@@ -75,15 +93,9 @@ class WorkflowEngine:
 
         config = config or {}
 
-        # ScraperAgent needs special handling
-        if agent_type == 'scraper_agent':
-            from ..agents.scraper_agent import ScraperAgent
-            return ScraperAgent(
-                config_service=self._config_service,
-                extraction_method=config.get('extraction_method', 'llm'),
-                dom_scope=config.get('dom_scope', 'partial'),
-                debug_mode=config.get('debug_mode', False)
-            )
+        # Agents that need config_service
+        if agent_type in ('scraper_agent', 'browser_agent'):
+            return agent_class(config_service=self._config_service)
 
         return agent_class()
 
@@ -105,6 +117,7 @@ class WorkflowEngine:
 
         # Validate input
         if not await agent.validate_input(input_data):
+            logger.error(f"Agent {agent_type} input validation failed. input_data type={type(input_data)}, data={input_data}")
             raise ValueError(f"Agent {agent_type} input validation failed")
 
         # Execute agent
@@ -121,7 +134,8 @@ class WorkflowEngine:
         input_data: Dict[str, Any] = None,
         step_callback: Optional[Any] = None,
         log_callback: Optional[Any] = None,
-        stop_signal: Optional[StopSignal] = None
+        stop_signal: Optional[StopSignal] = None,
+        workflow_name: str = None
     ) -> WorkflowResult:
         """Execute workflow with optional step progress callback and stop support
 
@@ -134,21 +148,34 @@ class WorkflowEngine:
             log_callback: Optional async callback function(level, message, metadata)
                          Called for detailed execution logs from agents
             stop_signal: Optional StopSignal for cooperative workflow stopping
+            workflow_name: Optional workflow name for workspace recording
         """
         start_time = time.time()
         workflow_id = workflow_id or f"workflow_{int(time.time())}"
+        user_id = getattr(self.agent, 'user_id', 'default_user')
 
         # Initialize execution context
+        # Get browser_session_id from agent (set by WorkflowExecutor)
+        browser_session_id = getattr(self.agent, 'browser_session_id', None) or f"workflow_{workflow_id}"
+
         context = AgentContext(
             workflow_id=workflow_id,
             step_id="",
-            user_id=getattr(self.agent, 'user_id', 'default_user'),
+            user_id=user_id,
+            browser_session_id=browser_session_id,  # Pass session ID for browser sharing
             variables=input_data or {},
             agent_instance=self.agent,
             tools_registry=getattr(self.agent, 'tools_registry', None),
             memory_manager=getattr(self.agent, 'memory_manager', None),
             logger=logger,
             log_callback=log_callback
+        )
+
+        # Create workspace for execution recording
+        workspace = WorkflowWorkspace(
+            workflow_id=workflow_id,
+            workflow_name=workflow_name or workflow_id,
+            user_id=user_id,
         )
 
         executed_steps = []
@@ -160,6 +187,8 @@ class WorkflowEngine:
                 # ===== CHECK STOP SIGNAL =====
                 if stop_signal and stop_signal.is_stop_requested():
                     logger.info(f"Stop requested before step {step_index}: {step.name}")
+                    workspace.status = "failed"
+                    await workspace.save()
                     return WorkflowResult(
                         success=False,
                         stopped=True,
@@ -171,6 +200,18 @@ class WorkflowEngine:
 
                 # Update context
                 context.step_id = step.id
+
+                # Record step start in workspace
+                task_desc = self._get_step_task_description(step, context)
+                expected_outputs = list(step.outputs.keys()) if step.outputs else []
+                workspace.start_step(
+                    step_id=step.id,
+                    step_name=step.name,
+                    agent_type=step.agent_type,
+                    task_description=task_desc,
+                    inputs=step.inputs,
+                    expected_outputs=expected_outputs,
+                )
 
                 # Notify step start
                 if step_callback:
@@ -190,6 +231,7 @@ class WorkflowEngine:
                     # Check execution condition for normal steps
                     if step.condition and not await self._evaluate_condition(step.condition, context):
                         logger.info(f"Step {step.name} condition not met, skipping")
+                        workspace.complete_step(result={"skipped": True}, message="Condition not met")
                         continue
 
                     # Execute normal agent step
@@ -198,6 +240,8 @@ class WorkflowEngine:
                 # Check if control flow step was stopped
                 if hasattr(step_result, 'exit_reason') and step_result.exit_reason == 'stopped':
                     logger.info(f"Workflow stopped during control flow step: {step.name}")
+                    workspace.status = "failed"
+                    await workspace.save()
                     return WorkflowResult(
                         success=False,
                         stopped=True,
@@ -207,9 +251,52 @@ class WorkflowEngine:
                         total_execution_time=time.time() - start_time
                     )
 
-                # Update context variables
-                if step_result.success and step.outputs:
-                    await self._update_context_variables(step_result, step.outputs, context)
+                # Handle step result
+                if step_result.success:
+                    # Record success
+                    result_data = step_result.data if isinstance(step_result.data, dict) else {"result": step_result.data}
+                    workspace.complete_step(result=result_data)
+
+                    # Update context variables
+                    if step.outputs:
+                        await self._update_context_variables(step_result, step.outputs, context)
+                else:
+                    # Record failure
+                    workspace.fail_step(error=step_result.message)
+
+                    # Attempt recovery if enabled and agent type is recoverable
+                    if (self.recovery_config.enabled and
+                        step.agent_type in self.recovery_config.recoverable_agent_types):
+
+                        logger.info(f"Attempting error recovery for step: {step.name}")
+                        workspace.status = "recovering"
+
+                        recovery_result = await self._attempt_recovery(
+                            step=step,
+                            context=context,
+                            workspace=workspace,
+                        )
+
+                        if recovery_result and recovery_result.success:
+                            logger.info(f"Recovery successful for step: {step.name}")
+                            result_data = recovery_result.data if isinstance(recovery_result.data, dict) else {"result": recovery_result.data}
+                            workspace.recover_step(result=result_data)
+
+                            # Update step_result to reflect recovery
+                            step_result = StepResult(
+                                step_id=step.id,
+                                success=True,
+                                data=recovery_result.data,
+                                message="Recovered via LLM agent",
+                                execution_time=step_result.execution_time
+                            )
+
+                            # Update context variables
+                            if step.outputs:
+                                await self._update_context_variables(step_result, step.outputs, context)
+                        else:
+                            logger.warning(f"Recovery failed for step: {step.name}")
+                            workspace.status = "failed"
 
                 executed_steps.append(step_result)
 
@@ -221,7 +308,7 @@ class WorkflowEngine:
                     except Exception as e:
                         logger.warning(f"Step callback error (complete): {e}")
 
-                # Stop if step failed
+                # Stop if step failed (and recovery didn't help)
                 if not step_result.success:
                     workflow_success = False
                     failed_step_error = f"Step '{step.name}' (id={step.id}, agent={step.agent_type}) failed: {step_result.message}"
@@ -231,6 +318,10 @@ class WorkflowEngine:
             # Extract final_response as final result
             final_result = context.variables.get('final_response',
                 "Sorry, system failed to generate a valid response. Please check workflow configuration.")
+
+            # Update workspace status
+            workspace.status = "completed" if workflow_success else "failed"
+            await workspace.save()
 
             return WorkflowResult(
                 success=workflow_success,
@@ -244,10 +335,14 @@ class WorkflowEngine:
         except asyncio.CancelledError:
             # Must re-raise to allow force cancel to work
             logger.info(f"Workflow {workflow_id} cancelled")
+            workspace.status = "failed"
+            await workspace.save()
             raise
 
         except Exception as e:
             logger.error(f"Workflow execution failed: {str(e)}")
+            workspace.status = "failed"
+            await workspace.save()
             return WorkflowResult(
                 success=False,
                 workflow_id=workflow_id,
@@ -257,6 +352,112 @@ class WorkflowEngine:
             )
         finally:
             await context.cleanup_browser_session()
+            # Close shared HybridBrowserSession for this workflow
+            await self._cleanup_hybrid_browser_session(context.browser_session_id)
+
+    async def _cleanup_hybrid_browser_session(self, session_id: str) -> None:
+        """Clean up shared HybridBrowserSession at workflow end.
+
+        Args:
+            session_id: The browser session ID used by this workflow
+        """
+        try:
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                loop_id = str(id(loop))
+            except RuntimeError:
+                import threading
+                loop_id = f"sync_{threading.current_thread().ident}"
+
+            session_key = (loop_id, session_id)
+
+            async with HybridBrowserSession._instances_lock:
+                if session_key in HybridBrowserSession._instances:
+                    session = HybridBrowserSession._instances[session_key]
+                    try:
+                        await session.close()
+                        logger.info(f"Closed shared HybridBrowserSession: {session_id}")
+                    except Exception as e:
+                        logger.warning(f"Error closing HybridBrowserSession {session_id}: {e}")
+        except Exception as e:
+            logger.warning(f"Error in _cleanup_hybrid_browser_session: {e}")
+
+    def _get_step_task_description(self, step: AgentWorkflowStep, context: AgentContext) -> str:
+        """Get task description for a step."""
+        # Try to get from user_task field
+        if hasattr(step, 'user_task') and step.user_task:
+            return step.user_task
+
+        # Try to resolve from inputs
+        inputs = step.inputs or {}
+        if 'task' in inputs:
+            return self._resolve_string_with_variables(str(inputs['task']), context)
+        if 'user_task' in inputs:
+            return self._resolve_string_with_variables(str(inputs['user_task']), context)
+
+        # Default to step name
+        return step.name
+
+    async def _attempt_recovery(
+        self,
+        step: AgentWorkflowStep,
+        context: AgentContext,
+        workspace: WorkflowWorkspace,
+    ) -> Optional[AgentOutput]:
+        """Attempt to recover from a failed step using EigentStyleBrowserAgent.
+
+        Args:
+            step: The failed step
+            context: Execution context
+            workspace: Workflow workspace with execution history
+
+        Returns:
+            AgentOutput if recovery successful, None otherwise
+        """
+        try:
+            from ..agents.eigent_style_browser_agent import EigentStyleBrowserAgent
+
+            # Build recovery task from workspace context
+            recovery_context = workspace.get_context_for_recovery()
+            expected_outputs = list(step.outputs.keys()) if step.outputs else []
+
+            recovery_task = f"""
+You are recovering from a failed workflow step.
+
+{recovery_context}
+
+Your goal is to complete the failed step's objective and return the expected output.
+
+Expected output fields: {expected_outputs}
+
+Please analyze the situation, fix any issues, and return the required data.
+"""
+
+            # Create recovery agent
+            recovery_agent = EigentStyleBrowserAgent()
+            await recovery_agent.initialize(context)
+
+            # Execute recovery
+            recovery_input = AgentInput(
+                data={
+                    "task": recovery_task,
+                    "max_steps": self.recovery_config.recovery_max_steps,
+                }
+            )
+
+            result = await recovery_agent.execute(recovery_input, context)
+
+            # Cleanup
+            await recovery_agent.cleanup(context)
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Recovery attempt failed: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return None
 
     async def _execute_agent_step(
         self,

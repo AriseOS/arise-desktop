@@ -1,4 +1,8 @@
-"""Browser lifecycle management with health monitoring"""
+"""Browser lifecycle management with health monitoring
+
+This module now uses WorkflowBrowserAdapter (based on HybridBrowserSession)
+instead of the browser-use based BrowserSessionManager.
+"""
 import asyncio
 import logging
 import psutil
@@ -12,7 +16,11 @@ logger = logging.getLogger(__name__)
 
 
 class BrowserManager:
-    """Manage browser lifecycle with on-demand startup and health monitoring"""
+    """Manage browser lifecycle with on-demand startup and health monitoring
+
+    Now uses WorkflowBrowserAdapter (HybridBrowserSession-based) instead of
+    the browser-use based BrowserSessionManager.
+    """
 
     def __init__(self, config_service=None):
         """Initialize browser manager
@@ -23,7 +31,7 @@ class BrowserManager:
         self.config_service = config_service
         self.state = BrowserState.NOT_STARTED
 
-        # Browser session components
+        # Browser session components - now uses WorkflowBrowserAdapter
         self.session_manager = None
         # Track all managed sessions (not just 'global')
         # Key: session_id, Value: dict with session_info and metadata
@@ -152,14 +160,14 @@ class BrowserManager:
             self._notify_status_change("starting")
 
         try:
-            # Import here to avoid circular dependency
-            from src.clients.desktop_app.ami_daemon.base_agent.tools.browser_session_manager import (
-                BrowserSessionManager
+            # Import WorkflowBrowserAdapter (HybridBrowserSession-based)
+            from src.clients.desktop_app.ami_daemon.base_agent.tools.workflow_browser_adapter import (
+                WorkflowBrowserAdapter
             )
 
             # Get or create session manager instance
             if not self.session_manager:
-                self.session_manager = await BrowserSessionManager.get_instance()
+                self.session_manager = await WorkflowBrowserAdapter.get_instance()
 
             # Create browser session
             session_info = await self.session_manager.get_or_create_session(
@@ -394,7 +402,7 @@ class BrowserManager:
         """Get browser process PID from session info
 
         Args:
-            session_info: BrowserSessionInfo object
+            session_info: WorkflowBrowserSessionInfo object
 
         Returns:
             Browser PID or None if not found
@@ -403,38 +411,29 @@ class BrowserManager:
             if not session_info:
                 return None
 
-            # Get CDP URL from browser session
+            # Get browser session (HybridBrowserSession)
             session = session_info.session
-            cdp_url = session.cdp_url
 
-            if not cdp_url:
-                logger.warning("No CDP URL available")
-                return None
+            # Try to get PID from browser launcher (subprocess-based)
+            if hasattr(session, '_browser_launcher') and session._browser_launcher:
+                launcher = session._browser_launcher
+                if hasattr(launcher, '_process') and launcher._process:
+                    pid = launcher._process.pid
+                    logger.info(f"Found browser process from launcher: PID={pid}")
+                    return pid
 
-            # Extract port from CDP URL (e.g., "ws://localhost:60288/devtools/...")
-            # Format: ws://host:port/path
-            parts = cdp_url.split(':')
-            if len(parts) >= 3:
-                port_str = parts[2].split('/')[0]
-                cdp_port = int(port_str)
-                logger.debug(f"Looking for browser process on CDP port {cdp_port}")
+            # Fallback: search for Chrome process by name
+            for proc in psutil.process_iter(['pid', 'name']):
+                try:
+                    proc_name = proc.info['name'].lower()
+                    if 'chrome' in proc_name or 'chromium' in proc_name:
+                        # Return first found Chrome process
+                        logger.info(f"Found browser process: PID={proc.info['pid']}, Name={proc.info['name']}")
+                        return proc.info['pid']
+                except (psutil.NoSuchProcess, psutil.AccessDenied, AttributeError):
+                    continue
 
-                # Find process listening on this port
-                for proc in psutil.process_iter(['pid', 'name']):
-                    try:
-                        proc_name = proc.info['name'].lower()
-                        if 'chrome' in proc_name or 'chromium' in proc_name:
-                            # Check if this process is listening on our CDP port
-                            connections = proc.connections()
-                            for conn in connections:
-                                if hasattr(conn, 'laddr') and hasattr(conn.laddr, 'port'):
-                                    if conn.laddr.port == cdp_port:
-                                        logger.info(f"Found browser process: PID={proc.info['pid']}, Name={proc.info['name']}")
-                                        return proc.info['pid']
-                    except (psutil.NoSuchProcess, psutil.AccessDenied, AttributeError):
-                        continue
-
-            logger.warning(f"Could not find browser process for CDP URL: {cdp_url}")
+            logger.warning("Could not find browser process")
             return None
 
         except Exception as e:
@@ -498,7 +497,7 @@ class BrowserManager:
                 await asyncio.sleep(self._health_check_interval)
 
     async def _check_cdp_alive(self) -> bool:
-        """Check if any CDP connection is alive
+        """Check if any browser session is alive
 
         Returns:
             True if at least one browser session is responsive, False otherwise
@@ -516,27 +515,20 @@ class BrowserManager:
             try:
                 session = session_info.session
 
-                # Get CDP session
-                cdp_session = await session.get_or_create_cdp_session(focus=False)
-
-                # Send a lightweight CDP command to verify connection
-                result = await asyncio.wait_for(
-                    cdp_session.cdp_client.send.Browser.getVersion(
-                        session_id=cdp_session.session_id
-                    ),
-                    timeout=3.0
-                )
-
-                if result is not None:
-                    any_alive = True
-                    logger.debug(f"✓ Session {session_id} health check passed")
+                # Check if session has active page
+                if session._page is not None and not session._page.is_closed():
+                    # Try to get page URL as health check
+                    try:
+                        url = session._page.url
+                        any_alive = True
+                        logger.debug(f"✓ Session {session_id} health check passed (url: {url[:50]}...)")
+                    except Exception:
+                        logger.warning(f"✗ Session {session_id} health check failed")
                 else:
-                    logger.warning(f"✗ Session {session_id} health check failed")
+                    logger.debug(f"Session {session_id} has no active page")
 
-            except asyncio.TimeoutError:
-                logger.debug(f"CDP health check timed out for session {session_id}")
             except Exception as e:
-                logger.debug(f"CDP health check failed for session {session_id}: {type(e).__name__}: {e}")
+                logger.debug(f"Health check failed for session {session_id}: {type(e).__name__}: {e}")
 
         return any_alive
 
