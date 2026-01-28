@@ -571,37 +571,89 @@ class BrowserToolkit(BaseToolkit):
             return f"Error selecting option: {e}"
 
     @listen_toolkit(
-        inputs=lambda self, include_url=False: "Getting page snapshot",
+        inputs=lambda self, include_url=False, include_links=False: "Getting page snapshot",
         return_msg=lambda r: "Got snapshot" if r and not r.startswith("Error") else r[:100]
     )
-    async def browser_get_page_snapshot(self, include_url: bool = False) -> str:
+    async def browser_get_page_snapshot(
+        self,
+        include_url: bool = False,
+        include_links: bool = False,
+    ) -> str:
         """Get the current page snapshot without performing any action.
 
         Use this to see the current state of the page, including:
         - Page URL and title (if include_url=True)
         - Interactive elements with [ref=eN] markers
         - Page structure
+        - All links with their URLs (if include_links=True)
 
         Args:
             include_url: If True, includes the current page URL at the top of the snapshot.
                 Useful for loop iterations to track which page you're on.
+            include_links: If True, includes a list of all links on the page with their
+                actual href URLs. Useful for workflow data extraction.
 
         Returns:
-            The current page snapshot, optionally prefixed with URL info.
+            The current page snapshot, optionally with URL info and/or links list.
         """
         if not self._ensure_session():
             return "Error: Browser session not initialized"
 
         try:
-            snapshot = await self._session.get_snapshot()
+            if include_links:
+                # Get full result with elements map to extract links
+                full_result = await self._session.get_snapshot_with_elements()
+                snapshot = full_result.get("snapshotText", "")
+                elements = full_result.get("elements", {})
 
-            if include_url:
-                page = await self._session.get_page()
-                url = page.url
-                title = await page.title()
-                return f"**Current Page:**\n- URL: {url}\n- Title: {title}\n\n{snapshot}"
+                # Extract links from elements map
+                links = []
+                for ref, elem_info in elements.items():
+                    href = elem_info.get("href")
+                    if href:
+                        name = elem_info.get("name", "")
+                        role = elem_info.get("role", "")
+                        links.append({
+                            "ref": ref,
+                            "name": name,
+                            "href": href,
+                            "role": role,
+                        })
 
-            return snapshot
+                # Build links section
+                links_section = ""
+                if links:
+                    links_section = "\n\n**Page Links:**\n"
+                    for link in links:
+                        links_section += f"- [{link['ref']}] \"{link['name']}\" -> {link['href']}\n"
+
+                # Format snapshot text
+                if isinstance(snapshot, str) and snapshot.startswith("- Page Snapshot"):
+                    # Already formatted
+                    formatted_snapshot = snapshot
+                else:
+                    formatted_snapshot = f"- Page Snapshot\n```yaml\n{snapshot}\n```"
+
+                result = formatted_snapshot + links_section
+
+                if include_url:
+                    page = await self._session.get_page()
+                    url = page.url
+                    title = await page.title()
+                    return f"**Current Page:**\n- URL: {url}\n- Title: {title}\n\n{result}"
+
+                return result
+            else:
+                # Original behavior - just get snapshot text
+                snapshot = await self._session.get_snapshot()
+
+                if include_url:
+                    page = await self._session.get_page()
+                    url = page.url
+                    title = await page.title()
+                    return f"**Current Page:**\n- URL: {url}\n- Title: {title}\n\n{snapshot}"
+
+                return snapshot
         except Exception as e:
             logger.error(f"browser_get_page_snapshot error: {e}")
             return f"Error getting snapshot: {e}"

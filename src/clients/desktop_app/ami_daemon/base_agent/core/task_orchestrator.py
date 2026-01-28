@@ -1361,6 +1361,29 @@ class TaskOrchestrator:
                 return False
         return True
 
+    def get_final_result(self) -> Any:
+        """Get the final result from the last completed subtask.
+
+        Returns the result of the last DONE subtask, which typically
+        contains the extracted data or final output.
+
+        Returns:
+            The result from the last completed subtask, or None if no subtask completed
+        """
+        last_result = None
+        last_completed_at = None
+
+        for subtask in self.subtasks.values():
+            if subtask.state == SubTaskState.DONE and subtask.result is not None:
+                # Track the most recently completed subtask
+                if last_completed_at is None or (
+                    subtask.completed_at and subtask.completed_at > last_completed_at
+                ):
+                    last_completed_at = subtask.completed_at
+                    last_result = subtask.result
+
+        return last_result
+
     def get_next_subtask(self) -> Optional[SubTask]:
         """Get the next subtask that is ready to execute.
 

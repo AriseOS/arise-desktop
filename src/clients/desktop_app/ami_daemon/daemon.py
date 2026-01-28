@@ -66,6 +66,7 @@ from src.clients.desktop_app.ami_daemon.services.browser_manager import BrowserM
 from src.clients.desktop_app.ami_daemon.services.workflow_executor import WorkflowExecutor
 from src.clients.desktop_app.ami_daemon.services.workflow_history import WorkflowHistoryManager
 from src.clients.desktop_app.ami_daemon.services.cdp_recorder import CDPRecorder
+from src.clients.desktop_app.ami_daemon.services.recording_service import RecordingService
 from src.clients.desktop_app.ami_daemon.services.cloud_client import CloudClient
 from src.clients.desktop_app.ami_daemon.base_agent.tools.browser_use.extension_installer import ensure_extensions_installed
 from src.clients.desktop_app.ami_daemon.routers.quick_task import router as quick_task_router
@@ -96,6 +97,7 @@ browser_manager: Optional[BrowserManager] = None
 workflow_executor: Optional[WorkflowExecutor] = None
 history_manager: Optional[WorkflowHistoryManager] = None
 cdp_recorder: Optional[CDPRecorder] = None
+recording_service: Optional[RecordingService] = None
 cloud_client: Optional[CloudClient] = None
 
 # Version check result (populated on startup)
@@ -200,7 +202,7 @@ async def lifespan(app: FastAPI):
     - On startup: Initialize all services
     - On shutdown: Cleanup all resources (triggered by SIGTERM/SIGINT)
     """
-    global browser_manager, workflow_executor, history_manager, cdp_recorder, cloud_client, version_check_result
+    global browser_manager, workflow_executor, history_manager, cdp_recorder, recording_service, cloud_client, version_check_result
 
     # ========== STARTUP ==========
     logger.info("=" * 60)
@@ -264,9 +266,13 @@ async def lifespan(app: FastAPI):
         workflow_executor.set_progress_callback(ws_manager.send_progress_update)
         logger.info("✓ Workflow executor initialized with WebSocket progress callback")
 
-        # Initialize CDP recorder
+        # Initialize CDP recorder (legacy, kept for compatibility)
         cdp_recorder = CDPRecorder(storage_manager, browser_manager)
-        logger.info("✓ CDP recorder initialized")
+        logger.info("✓ CDP recorder initialized (legacy)")
+
+        # Initialize new Recording service (using HybridBrowserSession)
+        recording_service = RecordingService(storage_manager)
+        logger.info("✓ Recording service initialized (HybridBrowserSession)")
 
         # Inject cloud_client into quick_task router for memory queries
         from src.clients.desktop_app.ami_daemon.routers.quick_task import set_cloud_client
@@ -1045,33 +1051,28 @@ async def get_dashboard(user_id: str):
 
 @app.post("/api/v1/recordings/start", response_model=StartRecordingResponse)
 async def start_recording(request: StartRecordingRequest):
-    """Start CDP recording session
+    """Start recording session using HybridBrowserSession
 
-    This will automatically start the browser if it's not running
+    This uses the new RecordingService with better anti-detection capabilities.
+    The browser will be started automatically if not running.
     """
     try:
         logger.info(f"Starting recording: url={request.url}, title={request.title}")
 
-        # 1. Ensure browser is running
-        browser_status = browser_manager.get_status()
-        if not browser_status["is_running"]:
-            logger.info("Browser not running, starting browser for recording...")
-            await browser_manager.start_browser(headless=False)
-            # start_browser returns when browser is fully ready - no sleep needed
-            logger.info("Browser ready for recording")
-
-        # 2. Prepare metadata
+        # Prepare metadata
         metadata = request.task_metadata or {}
         metadata.update({
             "title": request.title,
             "description": request.description
         })
 
-        # 3. Start recording
-        result = await cdp_recorder.start_recording(
+        # Start recording using new RecordingService
+        # (RecordingService handles browser startup internally)
+        result = await recording_service.start_recording(
             url=request.url,
             user_id=request.user_id,
-            metadata=metadata
+            metadata=metadata,
+            headless=False,
         )
         logger.info(f"Recording started: session_id={result['session_id']}, user_id={request.user_id}")
         return result
@@ -1085,21 +1086,19 @@ async def start_recording(request: StartRecordingRequest):
 async def stop_recording():
     """Stop recording and save
 
-    This will automatically close the browser after recording stops
+    This stops the recording and saves operations to local storage.
+    The browser remains open for potential subsequent recordings.
     """
     try:
         logger.info("Stopping recording...")
 
-        # 1. Stop recording
-        result = await cdp_recorder.stop_recording()
+        # Stop recording using new RecordingService
+        result = await recording_service.stop_recording()
         logger.info(f"Recording stopped: {result['operations_count']} operations")
 
-        # 2. Close browser automatically
-        browser_status = browser_manager.get_status()
-        if browser_status["is_running"]:
-            logger.info("Closing browser after recording...")
-            await browser_manager.stop_browser()
-            logger.info("Browser closed")
+        # Close browser after recording
+        await recording_service.close_browser()
+        logger.info("Browser closed")
 
         return result
 
@@ -1116,7 +1115,7 @@ async def get_current_operations():
     real-time feedback of captured user operations.
     """
     try:
-        if not cdp_recorder or not cdp_recorder._is_recording:
+        if not recording_service or not recording_service.is_recording():
             return CurrentOperationsResponse(
                 is_recording=False,
                 session_id=None,
@@ -1126,9 +1125,9 @@ async def get_current_operations():
 
         return CurrentOperationsResponse(
             is_recording=True,
-            session_id=cdp_recorder.current_session_id,
-            operations_count=len(cdp_recorder.operations),
-            operations=cdp_recorder.operations
+            session_id=recording_service.current_session_id,
+            operations_count=recording_service.get_operations_count(),
+            operations=recording_service.get_operations()
         )
 
     except Exception as e:
@@ -3670,19 +3669,31 @@ async def cleanup_resources():
     This function is called by the lifespan shutdown context manager
     when uvicorn receives SIGTERM/SIGINT from the parent process (Tauri).
     """
-    global browser_manager, workflow_executor, cdp_recorder, cloud_client, _browser2_session
+    global browser_manager, workflow_executor, cdp_recorder, recording_service, cloud_client, _browser2_session
 
     logger.info("🧹 Cleaning up resources...")
 
     cleanup_errors = []
 
     try:
-        # 1. Stop active recording if any
-        if cdp_recorder and cdp_recorder._is_recording:
-            logger.info("Stopping active recording...")
+        # 1. Stop active recording if any (try new service first, then legacy)
+        if recording_service and recording_service.is_recording():
+            logger.info("Stopping active recording (RecordingService)...")
+            try:
+                await asyncio.wait_for(recording_service.stop_recording(), timeout=3.0)
+                await recording_service.close_browser()
+                logger.info("✓ Recording stopped (RecordingService)")
+            except asyncio.TimeoutError:
+                logger.warning("⚠️  Recording stop timeout")
+                cleanup_errors.append("Recording stop timeout")
+            except Exception as e:
+                logger.error(f"⚠️  Failed to stop recording: {e}")
+                cleanup_errors.append(f"Recording: {e}")
+        elif cdp_recorder and cdp_recorder._is_recording:
+            logger.info("Stopping active recording (legacy CDPRecorder)...")
             try:
                 await asyncio.wait_for(cdp_recorder.stop_recording(), timeout=3.0)
-                logger.info("✓ Recording stopped")
+                logger.info("✓ Recording stopped (legacy)")
             except asyncio.TimeoutError:
                 logger.warning("⚠️  Recording stop timeout")
                 cleanup_errors.append("Recording stop timeout")

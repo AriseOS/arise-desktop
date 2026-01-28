@@ -16,8 +16,7 @@ pyyaml>=6.0.0
 # WebSocket
 websockets>=12.0
 
-# Browser automation
-browser-use>=0.1.0
+# Browser automation (using eigent_browser)
 playwright>=1.40.0
 
 # System monitoring

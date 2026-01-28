@@ -35,6 +35,7 @@ import DocsPage from "./pages/DocsPage";
 import BackendErrorPage from "./pages/BackendErrorPage";
 import AgentPage from "./pages/AgentPage";
 import MemoryPage from "./pages/MemoryPage";
+import HomePage from "./pages/HomePage";
 
 // Import setup styles
 import "./styles/SetupPage.css";
@@ -564,19 +565,16 @@ function App() {
     </div>
   );
 
-  // Main page
+  // Main page - New HomePage (chat-style dashboard)
   const renderMainPage = () => {
-    if (dashboardLoading) {
-      return (
-        <div className="page auth-loading-page flex-center" style={{ height: '100vh' }}>
-          <div className="auth-loading flex-col" style={{ alignItems: 'center', gap: '16px' }}>
-            <div className="loading-spinner"></div>
-            <p>{t('common.loading')}</p>
-          </div>
-        </div>
-      );
-    }
-    return hasWorkflows ? renderReturningUserHome() : renderNewUserHome();
+    return (
+      <HomePage
+        session={session}
+        onNavigate={navigate}
+        showStatus={showStatus}
+        version={versionInfo?.version || '1.0.0'}
+      />
+    );
   };
 
   // Render update required page
@@ -895,20 +893,19 @@ function App() {
     }
   };
 
-  // Bottom navigation bar
+  // Bottom navigation bar - New 3-tab design: Ami, Library, Explore
   const renderBottomNav = () => {
     // Hide navigation on certain pages
-    const hideNavPages = ["quick-start", "recording", "execution-monitor", "execution-result"];
+    const hideNavPages = ["quick-start", "recording", "execution-monitor", "execution-result", "workflow-execution-live"];
     if (hideNavPages.includes(currentPage)) {
       return null;
     }
 
+    // New navigation: Ami (main), Library (recordings), Explore (discover workflows)
     const navItems = [
-      { id: "quick-start", icon: "record", label: t('nav.record') },
-      { id: "agent", icon: "sparkle", label: "Agent" },
-      { id: "workflows", icon: "workflows", label: t('nav.workflows') },
-      { id: "recordings-library", icon: "library", label: t('nav.library') },
-      { id: "memory", icon: "database", label: "Memory" },
+      { id: "main", icon: "robot", label: "Ami" },
+      { id: "recordings-library", icon: "library", label: "Library" },
+      { id: "workflows", icon: "compass", label: "Explore" },
     ];
 
     return (
@@ -925,17 +922,6 @@ function App() {
             <span className="nav-label">{item.label}</span>
           </button>
         ))}
-        {/* Diagnostic upload button in corner */}
-        <button
-          className={`nav-item diagnostic-btn ${diagnosticUploading ? 'uploading' : ''}`}
-          onClick={handleUploadDiagnostic}
-          disabled={diagnosticUploading}
-          title={t('app.diagnosticTitle')}
-        >
-          <span className="nav-icon">
-            <Icon name={diagnosticUploading ? "loader" : "bug"} size={18} />
-          </span>
-        </button>
       </nav>
     );
   };
@@ -952,7 +938,7 @@ function App() {
       )}
 
       {/* Page Content */}
-      <div className={`app-content ${["agent", "workflow-execution-live"].includes(currentPage) ? 'full-width-page' : ''}`}>
+      <div className={`app-content ${["main", "agent", "workflow-execution-live"].includes(currentPage) ? 'full-width-page' : ''}`}>
         {renderPage()}
       </div>
 

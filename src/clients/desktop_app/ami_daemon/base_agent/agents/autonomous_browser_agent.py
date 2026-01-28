@@ -1,21 +1,32 @@
 """
-Autonomous Browser Agent - 自主浏览器 Agent
+Autonomous Browser Agent - Wrapper for EigentStyleBrowserAgent
+
+This agent provides a simplified interface for autonomous browser operations,
+delegating to EigentStyleBrowserAgent for the actual implementation.
+
+Replaces the browser-use based implementation with eigent_browser.
 """
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from .base_agent import BaseStepAgent, AgentMetadata, InputSchema, FieldSchema
 from ..core.schemas import AgentContext, AgentInput, AgentOutput
+
+# Import from eigent_browser
+from ..tools.eigent_browser.browser_session import HybridBrowserSession
+from ..tools.workflow_browser_adapter import WorkflowBrowserSessionInfo
 
 logger = logging.getLogger(__name__)
 
 
 class AutonomousBrowserAgent(BaseStepAgent):
     """
-    自主浏览器 Agent
+    Autonomous Browser Agent
 
-    这是一个专门用于自主浏览器操作的 Agent，它实际上是对 ToolAgent + AutonomousBrowserTool 的封装。
-    在 Workflow 中使用 autonomous_browser_agent 类型时，会调用此 Agent。
+    This agent provides autonomous browser operations via natural language instructions.
+    It uses EigentStyleBrowserAgent internally for tool-calling based browser automation.
+
+    In workflow, use 'autonomous_browser_agent' type to invoke this agent.
     """
 
     INPUT_SCHEMA = InputSchema(
@@ -48,86 +59,60 @@ class AutonomousBrowserAgent(BaseStepAgent):
     def __init__(self):
         metadata = AgentMetadata(
             name="autonomous_browser_agent",
-            description="自主浏览器 Agent，支持通过自然语言指令进行网页探索和操作",
-            version="1.0.0",
+            description="Autonomous browser agent using eigent_browser for web automation",
+            version="2.0.0",
             tags=["browser", "autonomous", "web"],
         )
         super().__init__(metadata)
-        self.tool = None
-        self.browser_session = None
-        self.llm = None
-        self.llm_model = None
-        
+
+        # Browser session (HybridBrowserSession)
+        self.browser_session: Optional[HybridBrowserSession] = None
+        self.session_info: Optional[WorkflowBrowserSessionInfo] = None
+
+        # LLM provider
+        self.provider = None
+
+        # Internal EigentStyleBrowserAgent instance
+        self._eigent_agent = None
+
     async def initialize(self, context: AgentContext) -> bool:
-        """初始化 Agent"""
+        """Initialize Agent"""
         try:
-            import os
-            from browser_use.llm import ChatAnthropic
-            from ..tools.browser_use.no_cache_anthropic import NoCacheChatAnthropic
-
             # Get shared browser session from context
-            session_info = await context.get_browser_session()
-            self.browser_session = session_info.session
-            logger.info(f"AutonomousBrowserAgent using shared browser session")
+            self.session_info = await context.get_browser_session()
+            self.browser_session = self.session_info.session
+            logger.info("AutonomousBrowserAgent using shared browser session")
 
-            # Get LLM config from context.agent_instance.provider
-            llm_api_key = None
-            self.llm_model = "claude-sonnet-4-5-20250929"
-
+            # Get provider from context
             if context.agent_instance and hasattr(context.agent_instance, 'provider'):
-                provider = context.agent_instance.provider
-                if hasattr(provider, 'api_key') and provider.api_key:
-                    llm_api_key = provider.api_key
-                    logger.info(f"AutonomousBrowserAgent got API key from provider")
-                if hasattr(provider, 'model_name') and provider.model_name:
-                    self.llm_model = provider.model_name
-                    logger.info(f"AutonomousBrowserAgent using model: {self.llm_model}")
+                self.provider = context.agent_instance.provider
+                logger.info(f"AutonomousBrowserAgent got provider: {type(self.provider).__name__}")
             else:
-                logger.warning("AutonomousBrowserAgent: No provider in context, will use env var ANTHROPIC_API_KEY")
-
-            # Check if using custom Anthropic proxy (which may have stricter cache_control limits)
-            base_url = os.environ.get("ANTHROPIC_BASE_URL")
-            use_no_cache = base_url and "tun.agenticos.net" in base_url
-
-            if use_no_cache:
-                logger.info(f"Detected custom Anthropic proxy: {base_url}")
-                logger.info("Using NoCacheChatAnthropic to avoid cache_control limit issues")
-
-            # Initialize LLM - use NoCacheChatAnthropic for custom proxy to avoid cache_control errors
-            LLMClass = NoCacheChatAnthropic if use_no_cache else ChatAnthropic
-
-            if llm_api_key:
-                self.llm = LLMClass(model=self.llm_model, api_key=llm_api_key)
-            else:
-                self.llm = LLMClass(model=self.llm_model)
-
-            logger.info(f"AutonomousBrowserAgent initialized with model: {self.llm_model}, LLM class: {LLMClass.__name__}")
+                logger.warning("AutonomousBrowserAgent: No provider in context")
 
             self.is_initialized = True
             return True
+
         except Exception as e:
             import traceback
             logger.error(f"AutonomousBrowserAgent initialization failed: {str(e)}")
             logger.error(traceback.format_exc())
             return False
-            
+
     async def validate_input(self, input_data: Any) -> bool:
-        """验证输入"""
+        """Validate input"""
         if isinstance(input_data, (dict, AgentInput)):
             return True
         return False
-        
-    async def execute(self, input_data: Any, context: AgentContext) -> AgentOutput:
-        """执行任务"""
-        try:
-            from browser_use import Agent
 
-            # 解析输入
+    async def execute(self, input_data: Any, context: AgentContext) -> AgentOutput:
+        """Execute task using EigentStyleBrowserAgent"""
+        try:
+            # Parse input
             task = ""
             max_actions = 20
 
             if isinstance(input_data, AgentInput):
-                # Get task from data field (resolved_input from workflow)
                 if input_data.data:
                     task = input_data.data.get("task", "")
                     max_actions = input_data.data.get("max_actions", 20)
@@ -145,29 +130,35 @@ class AutonomousBrowserAgent(BaseStepAgent):
                     data={}
                 )
 
-            logger.info(f"AutonomousBrowserAgent calling browser-use Agent with max_steps={max_actions}")
+            # Create and initialize EigentStyleBrowserAgent
+            from .eigent_style_browser_agent import EigentStyleBrowserAgent
 
-            # Create browser-use Agent with shared browser session
-            agent = Agent(
-                task=task,
-                llm=self.llm,
-                browser_session=self.browser_session,
-                use_vision=True
+            self._eigent_agent = EigentStyleBrowserAgent()
+            await self._eigent_agent.initialize(context)
+
+            # Prepare input for EigentStyleBrowserAgent
+            eigent_input = AgentInput(
+                data={
+                    "task": task,
+                    "max_steps": max_actions,
+                }
             )
 
-            # Execute task with max_steps parameter
-            logger.info("Starting browser-use Agent execution...")
-            result = await agent.run(max_steps=max_actions)
-            logger.info(f"browser-use Agent execution completed, result length: {len(str(result))}")
+            logger.info(f"Delegating to EigentStyleBrowserAgent with max_steps={max_actions}")
+
+            # Execute via EigentStyleBrowserAgent
+            result = await self._eigent_agent.execute(eigent_input, context)
+
+            logger.info(f"EigentStyleBrowserAgent execution completed, success={result.success}")
 
             return AgentOutput(
-                success=True,
+                success=result.success,
                 data={
-                    "result": str(result),
+                    "result": result.data,
                     "task": task,
                     "max_actions": max_actions
                 },
-                message=f"Task completed: {task[:100]}"
+                message=result.message
             )
 
         except Exception as e:
@@ -180,8 +171,16 @@ class AutonomousBrowserAgent(BaseStepAgent):
                 message=error_msg,
                 data={}
             )
-            
+
     async def cleanup(self, context: AgentContext):
-        """清理资源"""
-        # Browser session is shared and managed by context, no need to cleanup here
+        """Cleanup resources"""
+        # Cleanup internal agent if created
+        if self._eigent_agent:
+            try:
+                await self._eigent_agent.cleanup(context)
+            except Exception as e:
+                logger.warning(f"Failed to cleanup internal agent: {e}")
+            self._eigent_agent = None
+
+        # Browser session is shared and managed by context
         pass

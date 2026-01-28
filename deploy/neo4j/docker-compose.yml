@@ -1,0 +1,36 @@
+# Neo4j for Ami Memory System
+#
+# Usage:
+#   cd deploy/neo4j
+#   docker-compose up -d
+#
+# Access:
+#   - Browser UI: http://localhost:7474
+#   - Bolt: neo4j://localhost:7687
+
+version: '3.8'
+
+services:
+  neo4j:
+    image: neo4j:5.15
+    container_name: ami-neo4j
+    ports:
+      - "7474:7474"  # HTTP (Browser UI)
+      - "7687:7687"  # Bolt (Driver connection)
+    environment:
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:-ami_password}
+      - NEO4J_PLUGINS=["apoc"]  # For batch operations
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    restart: unless-stopped
+    networks:
+      - ami
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+
+networks:
+  ami:
+    driver: bridge

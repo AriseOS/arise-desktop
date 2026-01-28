@@ -161,7 +161,7 @@ async def startup_event():
     try:
         from services.storage_service import StorageService
         from src.cloud_backend.intent_builder.services import WorkflowService
-        from src.cloud_backend.memgraph.graphstore.networkx_graph import NetworkXGraph
+        from src.cloud_backend.memgraph.graphstore import create_graph_store
         from src.cloud_backend.memgraph.memory.workflow_memory import WorkflowMemory
 
         # 1. CORS already configured
@@ -173,7 +173,25 @@ async def startup_event():
         print(f"✅ Storage: {storage_service.base_path}")
 
         # 3. Initialize WorkflowMemory (for NL query)
-        graph_store = NetworkXGraph()
+        # Check for graph_store backend configuration
+        graph_config = config_service.get("graph_store", {})
+        graph_backend = graph_config.get("backend", "networkx")
+
+        if graph_backend == "neo4j":
+            import os
+            graph_store = create_graph_store(
+                "neo4j",
+                uri=graph_config.get("uri") or os.getenv("NEO4J_URI", "neo4j://localhost:7687"),
+                user=graph_config.get("user") or os.getenv("NEO4J_USER", "neo4j"),
+                password=graph_config.get("password") or os.getenv("NEO4J_PASSWORD", ""),
+                database=graph_config.get("database") or os.getenv("NEO4J_DATABASE", "neo4j"),
+            )
+            graph_store.initialize_schema()
+            print(f"✅ Graph Store: Neo4j ({graph_config.get('uri', 'from env')})")
+        else:
+            graph_store = create_graph_store("networkx")
+            print("✅ Graph Store: NetworkX (in-memory)")
+
         workflow_memory = WorkflowMemory(graph_store)
         print("✅ Workflow Memory (for NL query)")
 
@@ -2065,8 +2083,8 @@ async def clear_memory(
     """
     Clear User's Workflow Memory
 
-    This endpoint deletes all States, Actions, and related data from the user's
-    workflow memory. This operation is irreversible.
+    This endpoint deletes all States, Actions, Domains, Manage edges, and
+    CognitivePhrases from the user's workflow memory. This operation is irreversible.
 
     Headers:
         X-Ami-API-Key: User's API key (optional)
@@ -2078,7 +2096,9 @@ async def clear_memory(
         {
             "success": true,
             "deleted_states": 10,
-            "deleted_actions": 8
+            "deleted_actions": 8,
+            "deleted_domains": 2,
+            "deleted_phrases": 3
         }
 
     Errors:
@@ -2089,29 +2109,58 @@ async def clear_memory(
         raise HTTPException(400, "Missing user_id")
 
     try:
-        # Get counts before deletion
-        all_states = workflow_memory.state_manager.list_states(user_id=user_id)
-        all_actions = workflow_memory.action_manager.list_actions(user_id=user_id)
-        states_count = len(all_states)
-        actions_count = len(all_actions)
+        # Check if GraphStore supports bulk deletion (Neo4j)
+        # TODO: For very large datasets, this single-query approach may still be slow.
+        # Consider using APOC batched deletion or chunked deletion in the future.
+        graph_store = workflow_memory.graph_store
+        has_bulk_delete = hasattr(graph_store, 'delete_nodes_by_filter')
 
-        # Delete all actions first (they reference states)
-        for action in all_actions:
-            workflow_memory.delete_action(action.source, action.target)
+        if has_bulk_delete:
+            # Use efficient bulk deletion (single Cypher query per label)
+            filters = {"user_id": user_id}
 
-        # Delete all states
-        for state in all_states:
-            workflow_memory.delete_state(state.id)
+            # Delete all nodes with DETACH DELETE (removes relationships automatically)
+            states_count = graph_store.delete_nodes_by_filter("State", filters)
+            domains_count = graph_store.delete_nodes_by_filter("Domain", filters)
+            phrases_count = graph_store.delete_nodes_by_filter("CognitivePhrase", filters)
+
+            # Actions don't have user_id directly, they were deleted via DETACH DELETE on States
+            actions_count = 0  # Already deleted with states
+
+        else:
+            # Fallback: one-by-one deletion (for NetworkX or other backends)
+            all_states = workflow_memory.state_manager.list_states(user_id=user_id)
+            all_actions = workflow_memory.action_manager.list_actions(user_id=user_id)
+            all_domains = workflow_memory.domain_manager.list_domains(user_id=user_id)
+            all_phrases = workflow_memory.phrase_manager.list_phrases(user_id=user_id)
+
+            states_count = len(all_states)
+            actions_count = len(all_actions)
+            domains_count = len(all_domains)
+            phrases_count = len(all_phrases)
+
+            for action in all_actions:
+                workflow_memory.delete_action(action.source, action.target)
+            for state in all_states:
+                workflow_memory.delete_state(state.id)
+            for domain in all_domains:
+                workflow_memory.domain_manager.delete_domain(domain.id)
+            for phrase in all_phrases:
+                workflow_memory.phrase_manager.delete_phrase(phrase.id)
 
         # Clear URL index for user
         workflow_memory.url_index.clear()
 
-        logger.info(f"✅ Memory cleared for user {user_id}: {states_count} states, {actions_count} actions")
+        logger.info(f"✅ Memory cleared for user {user_id}: "
+                   f"{states_count} states, {actions_count} actions, "
+                   f"{domains_count} domains, {phrases_count} phrases")
 
         return {
             "success": True,
             "deleted_states": states_count,
             "deleted_actions": actions_count,
+            "deleted_domains": domains_count,
+            "deleted_phrases": phrases_count,
         }
 
     except Exception as e:

@@ -13,6 +13,7 @@ from src.clients.desktop_app.ami_daemon.services.browser_manager import BrowserM
 from src.clients.desktop_app.ami_daemon.services.workflow_history import WorkflowHistoryManager
 from src.clients.desktop_app.ami_daemon.services.cloud_client import CloudClient
 from src.clients.desktop_app.ami_daemon.base_agent.core.schemas import StopSignal
+from src.clients.desktop_app.ami_daemon.base_agent.tools.eigent_browser.browser_session import HybridBrowserSession
 
 logger = logging.getLogger(__name__)
 
@@ -227,17 +228,11 @@ class WorkflowExecutor:
             # Get config service for BaseAgent
             config_service = get_config()
 
-            # Start browser through BrowserManager before creating BaseAgent
-            logger.info(f"Starting browser for workflow {task_id}...")
-            try:
-                browser_result = await self.browser.start_browser_for_workflow(
-                    workflow_id=task_id,
-                    headless=False  # Show browser during workflow execution
-                )
-                logger.info(f"✅ Browser started for workflow: {browser_result}")
-            except Exception as e:
-                logger.error(f"Failed to start browser for workflow: {e}")
-                raise
+            # NOTE: Browser is NOT started here. It will be lazily created
+            # by EigentStyleBrowserAgent when needed, using the browser_session_id.
+            # This allows workflows without browser steps to skip browser creation.
+            browser_session_id = f"workflow_{task_id}"
+            logger.info(f"Browser session ID for workflow: {browser_session_id} (lazy creation)")
 
             # Build provider config - only if user provides API key
             provider_config = None
@@ -268,7 +263,7 @@ class WorkflowExecutor:
                 config_service=config_service,
                 provider_config=provider_config,
                 browser_manager=self.browser,  # Pass BrowserManager reference
-                browser_session_id=f"workflow_{task_id}",  # Specify session ID
+                browser_session_id=browser_session_id,  # Specify session ID for lazy creation
                 cloud_client=self.cloud_client  # Pass CloudClient for script generation
             )
 
@@ -567,14 +562,18 @@ class WorkflowExecutor:
             # 1. Cleanup task resources (stop signals, task handles)
             self._cleanup_task_resources(task_id)
 
-            # 2. Close browser session
-            session_id = f"workflow_{task_id}"
+            # 2. Close browser session (lazily created by EigentStyleBrowserAgent)
+            # Use HybridBrowserSession.close_session_by_id directly since browser
+            # is created lazily and may not be registered with BrowserManager
             try:
-                logger.info(f"Closing browser session after workflow: {session_id}")
-                await self.browser.close_workflow_session(session_id)
-                logger.info(f"✅ Browser session closed: {session_id}")
+                logger.info(f"Closing browser session after workflow: {browser_session_id}")
+                closed = await HybridBrowserSession.close_session_by_id(browser_session_id)
+                if closed:
+                    logger.info(f"✅ Browser session closed: {browser_session_id}")
+                else:
+                    logger.debug(f"Browser session not found (may not have been created): {browser_session_id}")
             except Exception as e:
-                logger.warning(f"Failed to close browser session {session_id}: {e}")
+                logger.warning(f"Failed to close browser session {browser_session_id}: {e}")
 
     def _cleanup_task_resources(self, task_id: str):
         """Cleanup task-related resources (signals, handles)"""

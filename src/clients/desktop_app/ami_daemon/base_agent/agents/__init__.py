@@ -19,7 +19,6 @@ from .scraper_agent import ScraperAgent
 from .storage_agent import StorageAgent
 from .autonomous_browser_agent import AutonomousBrowserAgent
 from .tavily_agent import TavilyAgent
-from .eigent_browser_agent import EigentBrowserAgent
 from .eigent_style_browser_agent import EigentStyleBrowserAgent
 
 # New specialized agents (from Eigent migration)
@@ -43,7 +42,6 @@ __all__ = [
     'StorageAgent',
     'AutonomousBrowserAgent',
     'TavilyAgent',
-    'EigentBrowserAgent',
     'EigentStyleBrowserAgent',
 
     # New specialized agents (Eigent migration)
@@ -70,7 +68,6 @@ def get_all_agent_schemas() -> dict:
         'storage_agent': StorageAgent.get_input_schema(),
         'autonomous_browser_agent': AutonomousBrowserAgent.get_input_schema(),
         'tavily_agent': TavilyAgent.get_input_schema(),
-        'eigent_browser_agent': EigentBrowserAgent.get_input_schema(),
         'eigent_style_browser_agent': EigentStyleBrowserAgent.get_input_schema(),
 
         # New specialized agents

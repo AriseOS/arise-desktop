@@ -2,6 +2,39 @@
 
 Server-side services for Ami platform. Handles workflow generation, intent extraction, and centralized data storage.
 
+## Dependencies
+
+### Neo4j (Required for Memory System)
+
+Memory system uses Neo4j for persistent graph storage.
+
+**Install via Docker:**
+```bash
+docker run -d --name neo4j \
+  -p 7474:7474 -p 7687:7687 \
+  -e NEO4J_AUTH=neo4j/your_password \
+  neo4j:5.15
+```
+
+**Configure in `config/cloud-backend.yaml`:**
+```yaml
+graph_store:
+  backend: neo4j
+  uri: neo4j://localhost:7687
+  user: neo4j
+  password: your_password
+  database: neo4j
+```
+
+Or use environment variables:
+```bash
+export NEO4J_URI=neo4j://localhost:7687
+export NEO4J_USER=neo4j
+export NEO4J_PASSWORD=your_password
+```
+
+**Fallback**: Set `backend: networkx` to use in-memory storage (data lost on restart).
+
 ## Directories
 
 - `intent_builder/` - Intent-based workflow generation system

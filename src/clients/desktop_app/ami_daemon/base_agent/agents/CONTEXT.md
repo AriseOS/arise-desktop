@@ -33,7 +33,6 @@ all_schemas = get_all_agent_schemas()
 | `variable_agent.py` | VariableAgent | `inputs.operation`, `inputs.data` |
 | `autonomous_browser_agent.py` | AutonomousBrowserAgent | `inputs.task` |
 | `tavily_agent.py` | TavilyAgent | `inputs.operation`, `inputs.query` |
-| `eigent_browser_agent.py` | EigentBrowserAgent | `inputs.task`, `inputs.start_url` |
 
 ### Specialized Agents (Eigent Migration)
 
@@ -199,94 +198,17 @@ interaction_steps:
 
 Also update `docs/base_app/*_agent_spec.md` (source of truth for specs).
 
-## EigentBrowserAgent
+## EigentStyleBrowserAgent
 
-LLM-guided browser automation agent ported from CAMEL-AI/Eigent project. Uses the ReAct pattern:
-1. **Observe** - Capture page snapshot (DOM → YAML-like text with `[ref=eN]` element references)
-2. **Think** - Send snapshot + task to LLM, get plan + next action
-3. **Act** - Execute action via ActionExecutor
-4. **Repeat** - Until task complete or max_steps reached
+Full Tool-calling architecture browser agent ported from CAMEL-AI/Eigent. Uses Anthropic tool_use API with complete Toolkit system:
 
-### Memory-Guided Planning
-
-EigentBrowserAgent integrates with the workflow memory system to improve plan generation:
-
-1. **Memory Query** - Before plan generation, QuickTaskService queries `/api/v1/memory/query` for similar workflow paths
-2. **Path Reference** - Retrieved paths are formatted and included in the LLM prompt
-3. **Plan with path_ref** - LLM generates plan steps with optional `path_ref` indicating correspondence to memory path steps
-4. **Intent Reference** - During action generation, intents from referenced path steps are provided as hints
-
-```
-┌──────────────────┐     ┌─────────────────┐     ┌───────────────────┐
-│ QuickTaskService │     │  Cloud Backend  │     │ EigentBrowserAgent│
-│                  │────►│ /memory/query   │     │                   │
-│                  │◄────│ returns paths   │     │                   │
-│                  │──────────────────────────►│ memory_paths      │
-└──────────────────┘                           └───────────────────┘
-```
-
-**Plan Output Format (with memory reference):**
-```json
-{
-  "plan": [
-    {"step": "Click product card", "path_ref": 0},
-    {"step": "Click Team tab", "path_ref": 1},
-    {"step": "View members", "path_ref": null}
-  ],
-  "action": {"type": "click", "ref": "e1"}
-}
-```
-
-### LLM Integration (CRS Proxy)
-
-EigentBrowserAgent uses the same LLM provider configuration as other agents:
-
-```
-┌─────────────────┐      ┌──────────────────────┐      ┌─────────────────┐
-│  AMI Daemon     │      │  CRS Proxy           │      │  Anthropic API  │
-│  (Desktop App)  │ ───► │  api.ariseos.com/api │ ───► │                 │
-│                 │      │                      │      │                 │
-│  X-Ami-API-Key  │      │  (validates key)     │      │                 │
-└─────────────────┘      └──────────────────────┘      └─────────────────┘
-```
-
-**Configuration Flow:**
-1. Router (`routers/quick_task.py`) reads `llm.use_proxy` and `llm.proxy_url` from `app-backend.yaml`
-2. Service (`services/quick_task_service.py`) stores `api_key`, `model`, `base_url`, and `user_id`
-3. Service queries memory via CloudClient before task execution
-4. Agent (`eigent_browser_agent.py`) gets config from `context.agent_instance.provider`
-5. Anthropic client is created with `base_url` pointing to CRS proxy
-
-**Required Headers:**
-- `X-Ami-API-Key` (user's AMI API key in `ami_xxxxx` format)
-- `X-User-Id` (optional but recommended for memory queries)
-
-### System Prompt
-
-Returns JSON with:
-```json
-{
-  "plan": [
-    {"step": "Step 1", "path_ref": 0},
-    {"step": "Step 2", "path_ref": null}
-  ],
-  "action": {"type": "click", "ref": "e1"}
-}
-```
-
-### Supported Action Types
-
-| Action | Format | Description |
-|--------|--------|-------------|
-| `click` | `{"type": "click", "ref": "e1"}` | Click element by ref, text, or selector |
-| `type` | `{"type": "type", "ref": "e1", "text": "..."}` | Type text into element |
-| `select` | `{"type": "select", "ref": "e1", "value": "..."}` | Select dropdown option |
-| `wait` | `{"type": "wait", "timeout": 2000}` | Wait for timeout or element |
-| `scroll` | `{"type": "scroll", "direction": "down"}` | Scroll page |
-| `enter` | `{"type": "enter", "ref": "e1"}` | Press Enter key |
-| `navigate` | `{"type": "navigate", "url": "..."}` | Navigate to URL |
-| `back/forward` | `{"type": "back"}` | Browser navigation |
-| `finish` | `{"type": "finish", "summary": "..."}` | Task completed |
+- **NoteTakingToolkit** - Research documentation
+- **SearchToolkit** - Web search
+- **TerminalToolkit** - Terminal commands
+- **HumanToolkit** - Human-in-the-loop
+- **BrowserToolkit** - Browser operations
+- **MemoryToolkit** - Memory system integration
+- **TaskPlanningToolkit** - Task planning and tracking
 
 ### Key Components
 
