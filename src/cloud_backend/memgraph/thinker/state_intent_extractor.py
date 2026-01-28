@@ -185,11 +185,15 @@ class StateIntentExtractor:
                     timestamp=intent_data.timestamp,
                     page_url=state.page_url,
                     page_title=state.page_title,
+                    # New ref-based format
+                    element_ref=getattr(intent_data, 'element_ref', None),
+                    element_role=getattr(intent_data, 'element_role', None),
+                    # Legacy xpath-based format
                     element_id=intent_data.element_id,
                     element_tag=intent_data.element_tag,
                     element_class=intent_data.element_class,
-                    xpath=intent_data.xpath,
-                    css_selector=intent_data.css_selector,
+                    xpath=getattr(intent_data, 'xpath', None),
+                    css_selector=getattr(intent_data, 'css_selector', None),
                     text=intent_data.text,
                     value=intent_data.value,
                     coordinates=intent_data.coordinates,
@@ -232,6 +236,8 @@ class StateIntentExtractor:
     def _format_events_for_prompt(self, workflow_data: List[Dict[str, Any]]) -> str:
         """Format workflow events for LLM prompt with complete element information.
 
+        Supports both new ref-based format and legacy xpath-based format.
+
         Args:
             workflow_data: List of ALL workflow events
 
@@ -246,20 +252,33 @@ class StateIntentExtractor:
             timestamp = event.get('timestamp', 0)
             page_title = event.get('page_title', '')
 
-            # Extract element information from nested 'element' dict or direct fields
-            element_dict = event.get('element', {})
-            element_tag = element_dict.get('tagName', event.get('element_tag', ''))
-            element_id = element_dict.get('id', event.get('element_id', ''))
-            element_class = element_dict.get('className', event.get('element_class', ''))
-            xpath = element_dict.get('xpath', event.get('xpath', ''))
-            text = element_dict.get('textContent', event.get('text', ''))
-            css_selector = event.get('css_selector', '')
+            # New ref-based format (flat structure)
+            element_ref = event.get('ref', '')
+            element_role = event.get('role', '')
+            text = event.get('text', '')
+            value = event.get('value', '')
 
-            # Extract coordinates from data dict
+            # Legacy xpath-based format (nested 'element' dict)
+            element_dict = event.get('element', {})
+            if element_dict:
+                element_tag = element_dict.get('tagName', event.get('element_tag', ''))
+                element_id = element_dict.get('id', event.get('element_id', ''))
+                element_class = element_dict.get('className', event.get('element_class', ''))
+                xpath = element_dict.get('xpath', event.get('xpath', ''))
+                text = text or element_dict.get('textContent', '')
+                css_selector = event.get('css_selector', '')
+            else:
+                element_tag = event.get('element_tag', '')
+                element_id = event.get('element_id', '')
+                element_class = event.get('element_class', '')
+                xpath = event.get('xpath', '')
+                css_selector = event.get('css_selector', '')
+
+            # Extract coordinates from data dict (legacy format)
             data_dict = event.get('data', {})
             client_x = data_dict.get('clientX', event.get('clientX', ''))
             client_y = data_dict.get('clientY', event.get('clientY', ''))
-            value = data_dict.get('value', event.get('value', ''))
+            value = value or data_dict.get('value', '')
 
             # Format event with all available information
             event_desc = f"{i}. [{event_type}] URL: {url}"
@@ -267,8 +286,23 @@ class StateIntentExtractor:
                 event_desc += f" | Title: {page_title}"
             event_desc += f" | Timestamp: {timestamp}"
 
-            # Add element information if available
-            if element_tag or element_id or element_class or xpath:
+            # Add element information - prefer new format, fallback to legacy
+            has_new_format = element_ref or element_role
+            has_legacy_format = element_tag or element_id or element_class or xpath
+
+            if has_new_format:
+                # New ref-based format
+                event_desc += "\n   Element:"
+                if element_ref:
+                    event_desc += f" Ref={element_ref}"
+                if element_role:
+                    event_desc += f" | Role={element_role}"
+                if text:
+                    event_desc += f" | Text=\"{text}\""
+                if value:
+                    event_desc += f" | Value=\"{value}\""
+            elif has_legacy_format:
+                # Legacy xpath-based format
                 event_desc += "\n   Element:"
                 if element_tag:
                     event_desc += f" Tag={element_tag}"

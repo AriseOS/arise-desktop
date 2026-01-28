@@ -231,6 +231,9 @@ class BrowserConfig:
             '--disable-domain-reliability',
             '--disable-field-trial-config',  # Disable field trials
             '--disable-window-activation',  # Don't steal focus
+            '--disable-session-crashed-bubble',  # Prevent focus-stealing dialogs
+            '--disable-restore-session-state',  # Prevent restore dialogs
+            '--disable-features=GlobalMediaControls',  # Prevent media control popups
 
             # Performance and stability
             '--metrics-recording-only',

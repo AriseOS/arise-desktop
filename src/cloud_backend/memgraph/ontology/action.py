@@ -60,6 +60,11 @@ class Action(BaseModel):
         default=None,
         description='ID of the Intent that triggered this transition'
     )
+    
+    trigger: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description='Structured trigger information from recording (ref, text, role)'
+    )
 
     # User session information
     user_id: Optional[str] = Field(default=None, description='User ID')

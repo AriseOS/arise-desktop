@@ -16,6 +16,9 @@ from anthropic import Anthropic, APIStatusError, APIConnectionError
 # Retry configuration
 MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 2.0
+# Status codes that should trigger a retry (server errors and rate limits)
+# Note: 400 included because some API proxies return 400 with internal server errors
+RETRYABLE_STATUS_CODES = {400, 429, 500, 502, 503, 504}
 
 from .base_provider import (
     BaseProvider,
@@ -327,6 +330,15 @@ class AnthropicProvider(BaseProvider):
             except APIStatusError as e:
                 logger.error(f"Anthropic API Status Error: {e.status_code}")
                 logger.error(f"Response body: {e.body}")
+                # Check if this is a retryable status code
+                if e.status_code in RETRYABLE_STATUS_CODES:
+                    last_exception = e
+                    if attempt < MAX_RETRIES - 1:
+                        # Use exponential backoff for rate limits
+                        delay = RETRY_DELAY_SECONDS * (2 ** attempt) if e.status_code == 429 else RETRY_DELAY_SECONDS
+                        logger.info(f"Retryable status {e.status_code}, retrying in {delay} seconds... (attempt {attempt + 1}/{MAX_RETRIES})")
+                        await asyncio.sleep(delay)
+                        continue
                 raise
             except APIConnectionError as e:
                 last_exception = e
@@ -438,6 +450,15 @@ class AnthropicProvider(BaseProvider):
             except APIStatusError as e:
                 logger.error(f"Anthropic API Status Error: {e.status_code}")
                 logger.error(f"Response body: {e.body}")
+                # Check if this is a retryable status code
+                if e.status_code in RETRYABLE_STATUS_CODES:
+                    last_exception = e
+                    if attempt < MAX_RETRIES - 1:
+                        # Use exponential backoff for rate limits
+                        delay = RETRY_DELAY_SECONDS * (2 ** attempt) if e.status_code == 429 else RETRY_DELAY_SECONDS
+                        logger.info(f"Retryable status {e.status_code}, retrying in {delay} seconds... (attempt {attempt + 1}/{MAX_RETRIES})")
+                        await asyncio.sleep(delay)
+                        continue
                 raise
             except APIConnectionError as e:
                 last_exception = e
