@@ -742,19 +742,19 @@ class StorageService:
             logger.warning(f"Recording not found: {recording_id}")
             return None
 
-        with open(file_path, 'r') as f:
+        with open(file_path, 'r', encoding='utf-8-sig') as f:
             data = json.load(f)
 
         # Load graph if exists
         graph_path = recording_path / "graph.json"
         if graph_path.exists():
-            with open(graph_path, 'r') as f:
+            with open(graph_path, 'r', encoding='utf-8-sig') as f:
                 data["graph"] = json.load(f)
 
         # Load metadata if exists
         metadata_path = recording_path / "metadata.json"
         if metadata_path.exists():
-            with open(metadata_path, 'r') as f:
+            with open(metadata_path, 'r', encoding='utf-8-sig') as f:
                 metadata = json.load(f)
                 data["workflow_id"] = metadata.get("workflow_id")
 

@@ -492,7 +492,8 @@ async def upload_recording(data: dict):
     logger.info(f"Building graph for recording {recording_id}")
     try:
         from src.cloud_backend.graph_builder import GraphBuilder
-        builder = GraphBuilder()
+        # Ensure graph nodes/edges are attributed to the current user/session
+        builder = GraphBuilder(user_id=user_id, session_id=recording_id)
         graph = builder.build(operations)
         graph_dict = graph.to_dict()
         logger.info(f"Graph built: {len(graph.states)} states, {len(graph.actions)} actions")
@@ -2030,6 +2031,8 @@ async def get_memory_stats(
         raise HTTPException(400, "Missing user_id")
 
     try:
+        await _ensure_user_memory_loaded(user_id)
+
         # Get all states for user
         all_states = workflow_memory.state_manager.list_states(user_id=user_id)
 
@@ -2185,6 +2188,12 @@ async def _ensure_user_memory_loaded(user_id: str, session_id: Optional[str] = N
     if not workflow_memory:
         raise HTTPException(500, "WorkflowMemory not initialized")
 
+    # Disable auto-loading recording graphs into memory (explicitly requested).
+    # Memory should be populated via add_to_memory / WorkflowProcessor instead.
+    if not config_service.get("memory.load_recording_graphs", False):
+        logger.info("Auto-loading recording graphs is disabled; skipping load from recordings")
+        return
+
     logger.info(f"Loading memory for user {user_id}")
 
     # Get user's recordings from storage
@@ -2204,7 +2213,11 @@ async def _ensure_user_memory_loaded(user_id: str, session_id: Optional[str] = N
         recording_id = recording_meta.get("recording_id")
 
         # Get full recording data with graph
-        recording = storage_service.get_recording(user_id, recording_id)
+        try:
+            recording = storage_service.get_recording(user_id, recording_id)
+        except Exception as e:
+            logger.warning(f"Failed to read recording {recording_id}: {e}")
+            continue
         if not recording:
             continue
 
@@ -2216,6 +2229,21 @@ async def _ensure_user_memory_loaded(user_id: str, session_id: Optional[str] = N
         try:
             from src.cloud_backend.graph_builder.models import StateActionGraph
             graph = StateActionGraph.from_dict(graph_dict)
+
+            # Backfill missing user/session attribution for legacy recordings.
+            # This prevents stats/query filters by user_id from returning 0
+            # after a restart when old graphs lack user_id/session_id.
+            for state in graph.states.values():
+                if not getattr(state, "user_id", None):
+                    state.user_id = user_id
+                if not getattr(state, "session_id", None):
+                    state.session_id = recording_id
+
+            for action in graph.actions:
+                if not getattr(action, "user_id", None):
+                    action.user_id = user_id
+                if not getattr(action, "session_id", None):
+                    action.session_id = recording_id
 
             # Store states with intents to memory
             for state in graph.states.values():
