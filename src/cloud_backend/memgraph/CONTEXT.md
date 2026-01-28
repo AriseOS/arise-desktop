@@ -17,11 +17,27 @@
 | **Action** | State 之间的跳转 | 边 |
 | **IntentSequence** | 页面内的操作序列（点击、输入等） | State 属性 |
 
+## 存储后端
+
+默认使用 **Neo4j** 持久化存储，支持：
+- 持久化（重启不丢数据）
+- 向量索引（语义搜索）
+- 图查询（路径查找）
+
+配置见 `cloud-backend.yaml`:
+```yaml
+graph_store:
+  backend: neo4j  # 或 networkx (内存，重启丢失)
+  uri: neo4j://localhost:7687
+  user: neo4j
+  password: your_password
+```
+
 ## 目录结构
 
 - `memory/` - WorkflowMemory 核心实现，管理用户的操作图
 - `ontology/` - 数据模型定义（State, Action, Intent 等）
-- `graphstore/` - 图存储抽象层
+- `graphstore/` - 图存储抽象层（Neo4j / NetworkX）
 - `services/` - 服务层（EmbeddingService 等）
 - `thinker/` - Recording 解析器（WorkflowProcessor）
 - `reasoner/` - 图推理（路径查找等）

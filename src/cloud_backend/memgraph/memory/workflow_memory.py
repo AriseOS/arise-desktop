@@ -1187,6 +1187,266 @@ class InMemoryCognitivePhraseManager(CognitivePhraseManager):
         return [phrase for phrase, _ in similarities[:top_k]]
 
 
+class GraphCognitivePhraseManager(CognitivePhraseManager):
+    """GraphStore-based CognitivePhrase Manager.
+
+    Manages CognitivePhrase entities using GraphStore for persistent storage.
+    This enables CognitivePhrases to be stored in Neo4j alongside States and Actions.
+
+    Attributes:
+        graph_store: GraphStore instance for persistence.
+        node_label: Label for CognitivePhrase nodes (default: "CognitivePhrase").
+    """
+
+    def __init__(self, graph_store: "GraphStore", node_label: str = "CognitivePhrase"):
+        """Initialize GraphCognitivePhraseManager.
+
+        Args:
+            graph_store: GraphStore instance for persistence.
+            node_label: Label for CognitivePhrase nodes.
+        """
+        self.graph_store = graph_store
+        self.node_label = node_label
+
+    def create_phrase(self, phrase: CognitivePhrase) -> bool:
+        """Create a new cognitive phrase in GraphStore.
+
+        Args:
+            phrase: CognitivePhrase object to create.
+
+        Returns:
+            True if created successfully, False otherwise.
+        """
+        try:
+            # Check if already exists
+            existing = self.graph_store.get_node(
+                label=self.node_label, id_value=phrase.id, id_key="id"
+            )
+            if existing:
+                return False  # Already exists
+
+            # Convert to dict for storage
+            phrase_data = phrase.to_dict()
+            self.graph_store.upsert_node(
+                label=self.node_label,
+                properties=phrase_data,
+                id_key="id",
+            )
+            return True
+        except Exception as e:
+            print(f"Error creating phrase: {e}")
+            return False
+
+    def get_phrase(self, phrase_id: str) -> Optional[CognitivePhrase]:
+        """Get a cognitive phrase by ID from GraphStore.
+
+        Args:
+            phrase_id: Unique phrase identifier.
+
+        Returns:
+            CognitivePhrase object if found, None otherwise.
+        """
+        try:
+            node = self.graph_store.get_node(
+                label=self.node_label, id_value=phrase_id, id_key="id"
+            )
+            if node:
+                phrase = CognitivePhrase.from_dict(node)
+                # Record access and update in store
+                phrase.record_access()
+                self.update_phrase(phrase)
+                return phrase
+            return None
+        except Exception as e:
+            print(f"Error getting phrase: {e}")
+            return None
+
+    def update_phrase(self, phrase: CognitivePhrase) -> bool:
+        """Update an existing cognitive phrase in GraphStore.
+
+        Args:
+            phrase: CognitivePhrase object with updated information.
+
+        Returns:
+            True if updated successfully, False otherwise.
+        """
+        try:
+            phrase_data = phrase.to_dict()
+            self.graph_store.upsert_node(
+                label=self.node_label,
+                properties=phrase_data,
+                id_key="id",
+            )
+            return True
+        except Exception as e:
+            print(f"Error updating phrase: {e}")
+            return False
+
+    def delete_phrase(self, phrase_id: str) -> bool:
+        """Delete a cognitive phrase from GraphStore.
+
+        Args:
+            phrase_id: Unique phrase identifier.
+
+        Returns:
+            True if deleted successfully, False otherwise.
+        """
+        try:
+            return self.graph_store.delete_node(
+                label=self.node_label, id_value=phrase_id, id_key="id"
+            )
+        except Exception as e:
+            print(f"Error deleting phrase: {e}")
+            return False
+
+    def list_phrases(
+        self,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        goal_id: Optional[str] = None,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+        limit: Optional[int] = None,
+    ) -> List[CognitivePhrase]:
+        """List cognitive phrases with optional filters.
+
+        Args:
+            user_id: Filter by user ID.
+            session_id: Filter by session ID.
+            goal_id: Deprecated, ignored for compatibility.
+            start_time: Filter by start timestamp.
+            end_time: Filter by end timestamp.
+            limit: Maximum number of results.
+
+        Returns:
+            List of CognitivePhrase objects matching the filters.
+        """
+        try:
+            # Build filters
+            filters = {}
+            if user_id:
+                filters["user_id"] = user_id
+            if session_id:
+                filters["session_id"] = session_id
+
+            # Query nodes
+            nodes = self.graph_store.query_nodes(
+                label=self.node_label,
+                filters=filters if filters else None,
+                limit=limit,
+            )
+
+            # Convert to CognitivePhrase objects
+            phrases = []
+            for node in nodes:
+                try:
+                    phrase = CognitivePhrase.from_dict(node)
+
+                    # Apply time filters (not supported by basic query_nodes)
+                    if start_time and phrase.start_timestamp < start_time:
+                        continue
+                    if end_time and phrase.start_timestamp > end_time:
+                        continue
+
+                    phrases.append(phrase)
+                except Exception as e:
+                    print(f"Error converting phrase: {e}")
+                    continue
+
+            # Sort by access_count (descending) then by last_access_time (descending)
+            phrases.sort(
+                key=lambda p: (p.access_count, p.last_access_time or 0), reverse=True
+            )
+
+            # Apply limit after filtering
+            if limit:
+                phrases = phrases[:limit]
+
+            return phrases
+        except Exception as e:
+            print(f"Error listing phrases: {e}")
+            return []
+
+    def search_phrases_by_embedding(
+        self, query_vector: List[float], top_k: int = 10
+    ) -> List[CognitivePhrase]:
+        """Search cognitive phrases by embedding vector using GraphStore vector search.
+
+        Args:
+            query_vector: Query embedding vector.
+            top_k: Number of top results to return.
+
+        Returns:
+            List of top-k similar CognitivePhrase objects.
+        """
+        try:
+            # Try to use GraphStore's vector search
+            results = self.graph_store.vector_search(
+                label=self.node_label,
+                property_key="embedding_vector",
+                query_text_or_vector=query_vector,
+                topk=top_k,
+            )
+
+            phrases = []
+            for node, score in results:
+                try:
+                    phrase = CognitivePhrase.from_dict(node)
+                    phrases.append(phrase)
+                except Exception as e:
+                    print(f"Error converting phrase from vector search: {e}")
+                    continue
+
+            return phrases
+        except Exception as e:
+            # Fallback to manual cosine similarity if vector search not available
+            print(f"Vector search failed, using fallback: {e}")
+            return self._search_phrases_by_embedding_fallback(query_vector, top_k)
+
+    def _search_phrases_by_embedding_fallback(
+        self, query_vector: List[float], top_k: int = 10
+    ) -> List[CognitivePhrase]:
+        """Fallback embedding search using manual cosine similarity.
+
+        Args:
+            query_vector: Query embedding vector.
+            top_k: Number of top results to return.
+
+        Returns:
+            List of top-k similar CognitivePhrase objects.
+        """
+
+        def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
+            """Calculate cosine similarity between two vectors."""
+            if not vec1 or not vec2 or len(vec1) != len(vec2):
+                return 0.0
+
+            dot_product = sum(a * b for a, b in zip(vec1, vec2))
+            norm1 = math.sqrt(sum(a * a for a in vec1))
+            norm2 = math.sqrt(sum(b * b for b in vec2))
+
+            if norm1 == 0 or norm2 == 0:
+                return 0.0
+
+            return dot_product / (norm1 * norm2)
+
+        # Get all phrases
+        all_phrases = self.list_phrases()
+
+        # Calculate similarities
+        similarities = []
+        for phrase in all_phrases:
+            if phrase.embedding_vector:
+                similarity = cosine_similarity(query_vector, phrase.embedding_vector)
+                similarities.append((phrase, similarity))
+
+        # Sort by similarity (descending)
+        similarities.sort(key=lambda x: x[1], reverse=True)
+
+        # Return top-k
+        return [phrase for phrase, _ in similarities[:top_k]]
+
+
 class WorkflowMemory(Memory):
     """Workflow Memory implementation.
 
@@ -1205,15 +1465,19 @@ class WorkflowMemory(Memory):
         graph_store: GraphStore,
         phrase_manager: Optional[CognitivePhraseManager] = None,
         build_url_index: bool = True,
+        use_graph_phrase_manager: bool = True,
     ):
         """Initialize WorkflowMemory.
 
         Args:
             graph_store: GraphStore instance for Domain, State, Action, and Manage storage.
             phrase_manager: Optional CognitivePhraseManager instance.
-                If not provided, uses InMemoryCognitivePhraseManager.
+                If not provided and use_graph_phrase_manager is True, uses GraphCognitivePhraseManager.
+                Otherwise uses InMemoryCognitivePhraseManager.
                 All cognitive phrases are stored permanently with unique IDs.
             build_url_index: Whether to build URL index from graph on init (default True).
+            use_graph_phrase_manager: Whether to use GraphCognitivePhraseManager for persistent
+                storage of CognitivePhrases (default True). Set to False to use in-memory storage.
         """
         domain_manager = GraphDomainManager(graph_store)
         state_manager = GraphStateManager(graph_store)
@@ -1221,7 +1485,10 @@ class WorkflowMemory(Memory):
         manage_manager = GraphManageManager(graph_store)
 
         if phrase_manager is None:
-            phrase_manager = InMemoryCognitivePhraseManager()
+            if use_graph_phrase_manager:
+                phrase_manager = GraphCognitivePhraseManager(graph_store)
+            else:
+                phrase_manager = InMemoryCognitivePhraseManager()
 
         super().__init__(
             domain_manager,
@@ -1753,6 +2020,7 @@ __all__ = [
     "GraphStateManager",
     "GraphActionManager",
     "InMemoryCognitivePhraseManager",
+    "GraphCognitivePhraseManager",
     "WorkflowMemory",
     "URLIndex",
 ]
