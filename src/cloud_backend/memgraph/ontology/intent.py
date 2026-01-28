@@ -69,6 +69,12 @@ class Intent(BaseModel):
         default=None, description='Title of the page/screen')
 
     # Element information (what was interacted with)
+    # New format: ref-based identification (from unified_analyzer.js)
+    element_ref: Optional[str] = Field(
+        default=None, description='Element ref (e.g., "e42") from aria-ref attribute')
+    element_role: Optional[str] = Field(
+        default=None, description='ARIA role (e.g., "button", "link", "textbox")')
+    # Old format: xpath-based identification
     element_id: Optional[str] = Field(default=None, description='Element ID')
     element_tag: Optional[str] = Field(
         default=None, description='Element tag')
@@ -77,6 +83,9 @@ class Intent(BaseModel):
     xpath: Optional[str] = Field(default=None, description='XPath')
     css_selector: Optional[str] = Field(
         default=None, description='CSS selector')
+    # Alias for backward compatibility
+    selector: Optional[str] = Field(
+        default=None, description='CSS selector or XPath (alias)')
 
     # Content data (what was shown/entered)
     text: Optional[str] = Field(
