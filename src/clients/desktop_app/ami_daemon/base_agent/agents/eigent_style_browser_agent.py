@@ -23,6 +23,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
+from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
 
@@ -109,6 +110,63 @@ def _get_working_dir(explicit_dir: Optional[str] = None) -> str:
     if explicit_dir:
         return explicit_dir
     return get_working_directory()
+
+
+# Log-sanitization helpers for memory content
+_MAX_GUIDE_LINES = 30
+_MAX_GUIDE_CHARS = 4096
+_MAX_LINE_LEN = 200
+_MAX_LOG_STEPS = 8
+
+
+def _truncate_text(value: str, max_len: int) -> str:
+    if len(value) <= max_len:
+        return value
+    if max_len <= 15:
+        return value[:max_len]
+    return value[: max_len - 14] + "...(truncated)"
+
+
+def _sanitize_text(value: Optional[str], max_len: int = _MAX_LINE_LEN) -> str:
+    if not value:
+        return ""
+    text = str(value)
+    text = re.sub(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", "<redacted_email>", text)
+    text = re.sub(r"\+?\d[\d\-\s\(\)]{7,}\d", "<redacted_phone>", text)
+    text = re.sub(r"\b[a-zA-Z0-9_\-]{20,}\b", "<redacted_token>", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return _truncate_text(text, max_len)
+
+
+def _sanitize_url(url: Optional[str]) -> str:
+    if not url:
+        return ""
+    try:
+        parts = urlsplit(url)
+        netloc = parts.netloc.split("@")[-1]
+        cleaned = urlunsplit((parts.scheme, netloc, parts.path, "", ""))
+        return _sanitize_text(cleaned, max_len=_MAX_LINE_LEN)
+    except Exception:
+        return _sanitize_text(url, max_len=_MAX_LINE_LEN)
+
+
+def _sanitize_guide(content: str) -> str:
+    lines = content.splitlines()
+    out_lines: List[str] = []
+    total_chars = 0
+    for line in lines[:_MAX_GUIDE_LINES]:
+        sanitized = _sanitize_text(line, max_len=_MAX_LINE_LEN)
+        if total_chars + len(sanitized) + 1 > _MAX_GUIDE_CHARS:
+            remaining = _MAX_GUIDE_CHARS - total_chars
+            if remaining > 0:
+                sanitized = _truncate_text(sanitized, remaining)
+                out_lines.append(sanitized)
+            break
+        out_lines.append(sanitized)
+        total_chars += len(sanitized) + 1
+    if len(lines) > _MAX_GUIDE_LINES or total_chars >= _MAX_GUIDE_CHARS:
+        out_lines.append("[workflow_guide truncated]")
+    return "\n".join(out_lines)
 
 
 # Eigent-style System Prompt ported from eigent/backend/app/utils/agent.py
@@ -1832,20 +1890,56 @@ Execute the appropriate browser action now."""
         if cognitive_phrase:
             memory_source = "cognitive_phrase"
             workflow_guide_content = MemoryToolkit.format_cognitive_phrase(cognitive_phrase)
-            logger.info(f"[Agent Loop] Using CognitivePhrase with {len(cognitive_phrase.states)} states")
+            phrase_desc = _sanitize_text(getattr(cognitive_phrase, "description", ""), max_len=120)
+            logger.info(
+                "[Agent Loop] Using CognitivePhrase: states=%d actions=%d desc=%s",
+                len(cognitive_phrase.states),
+                len(cognitive_phrase.actions),
+                phrase_desc or "N/A",
+            )
+            for i, state in enumerate(cognitive_phrase.states[:_MAX_LOG_STEPS]):
+                state_desc = _sanitize_text(getattr(state, "description", ""), max_len=120)
+                state_url = _sanitize_url(getattr(state, "page_url", None))
+                action_desc = "N/A"
+                if i < len(cognitive_phrase.actions):
+                    action = cognitive_phrase.actions[i]
+                    action_desc = _sanitize_text(getattr(action, "description", ""), max_len=120)
+                logger.info(
+                    "[Memory] phrase step %d: state=%s url=%s action=%s",
+                    i + 1,
+                    state_desc or "N/A",
+                    state_url or "N/A",
+                    action_desc or "N/A",
+                )
         elif path:
             memory_source = "path"
             workflow_guide_content = MemoryToolkit.format_path(path)
-            logger.info(f"[Agent Loop] Using Path with {len(path.states)} states, {len(path.actions)} actions")
-            # Log path details for debugging
-            for i, state in enumerate(path.states):
+            logger.info(
+                "[Agent Loop] Using Path: states=%d actions=%d",
+                len(path.states),
+                len(path.actions),
+            )
+            # Log path details (sanitized, truncated)
+            for i, state in enumerate(path.states[:_MAX_LOG_STEPS]):
                 action_desc = "N/A"
                 if i < len(path.actions):
                     action = path.actions[i]
-                    action_desc = getattr(action, 'description', None) or (action.get('description') if isinstance(action, dict) else "N/A")
-                state_desc = getattr(state, 'description', str(state))[:50] if state else "N/A"
-                state_url = getattr(state, 'page_url', None) or (state.get('page_url') if isinstance(state, dict) else None)
-                logger.info(f"[Path] Step {i+1}: {state_desc}... | URL: {state_url or 'N/A'} | Action: {action_desc}")
+                    if isinstance(action, dict):
+                        action_desc = _sanitize_text(action.get("description"), max_len=120)
+                    else:
+                        action_desc = _sanitize_text(getattr(action, "description", ""), max_len=120)
+                state_desc = _sanitize_text(
+                    getattr(state, "description", None) if state else None,
+                    max_len=120,
+                )
+                state_url = _sanitize_url(getattr(state, "page_url", None) if state else None)
+                logger.info(
+                    "[Memory] path step %d: state=%s url=%s action=%s",
+                    i + 1,
+                    state_desc or "N/A",
+                    state_url or "N/A",
+                    action_desc or "N/A",
+                )
         else:
             workflow_guide_content = None
             logger.info("[Agent Loop] No memory guidance available")
@@ -1864,6 +1958,9 @@ Execute the appropriate browser action now."""
                 logger.info(f"[Agent Loop] Workflow guide saved as note: {result}")
             except Exception as e:
                 logger.warning(f"[Agent Loop] Failed to save workflow guide note: {e}")
+        if workflow_guide_content:
+            sanitized_guide = _sanitize_guide(workflow_guide_content)
+            logger.info("[Memory] workflow_guide (sanitized, truncated):\n%s", sanitized_guide)
 
         # === Decompose task into subtasks using TaskOrchestrator ===
         # Pass memory context to help guide decomposition

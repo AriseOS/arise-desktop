@@ -356,7 +356,9 @@ export const api = {
   // ============================================================================
 
   /**
-   * Call App Backend with auto-injected X-Ami-API-Key header
+   * Call App Backend with auto-injected auth headers
+   * - X-Ami-API-Key: CRS API key (if logged in)
+   * - X-User-Id: current username (if logged in)
    *
    * @param {string} endpoint - API endpoint path (e.g., "/api/browser/start")
    * @param {object} options - Fetch options (method, body, headers, etc.)
@@ -364,7 +366,9 @@ export const api = {
    */
   async callAppBackend(endpoint, options = {}) {
     try {
-      const apiKey = await auth.getApiKey();
+      const session = await auth.getSession();
+      const apiKey = session?.apiKey ?? await auth.getApiKey();
+      const userId = session?.username;
 
       const headers = {
         'Content-Type': 'application/json',
@@ -377,6 +381,10 @@ export const api = {
         console.log(`[API] Calling ${endpoint} with API key`);
       } else {
         console.log(`[API] Calling ${endpoint} without API key`);
+      }
+      // Auto-inject X-User-Id for user-scoped operations (e.g., memory)
+      if (userId) {
+        headers['X-User-Id'] = userId;
       }
 
       const response = await fetch(`${getBackendBase()}${endpoint}`, {
@@ -415,7 +423,9 @@ export const api = {
    */
   async callAppBackendRaw(endpoint, options = {}) {
     try {
-      const apiKey = await auth.getApiKey();
+      const session = await auth.getSession();
+      const apiKey = session?.apiKey ?? await auth.getApiKey();
+      const userId = session?.username;
 
       const headers = {
         'Content-Type': 'application/json',
@@ -424,6 +434,9 @@ export const api = {
 
       if (apiKey) {
         headers['X-Ami-API-Key'] = apiKey;
+      }
+      if (userId) {
+        headers['X-User-Id'] = userId;
       }
 
       return await fetch(`${getBackendBase()}${endpoint}`, {

@@ -10,12 +10,163 @@ Design principle: Memory is a tool, Agent is the decision maker.
 """
 
 import logging
+import re
+from urllib.parse import urlsplit, urlunsplit
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from .base_toolkit import BaseToolkit, FunctionTool
 
 logger = logging.getLogger(__name__)
+
+# Log-sanitization settings (avoid leaking sensitive info)
+_MAX_LOG_STEPS = 8
+_MAX_TEXT_LEN = 160
+_MAX_SELECTOR_LEN = 120
+
+
+def _truncate_text(value: str, max_len: int) -> str:
+    if len(value) <= max_len:
+        return value
+    if max_len <= 15:
+        return value[:max_len]
+    return value[: max_len - 14] + "...(truncated)"
+
+
+def _sanitize_text(value: Optional[str], max_len: int = _MAX_TEXT_LEN) -> str:
+    if not value:
+        return ""
+    text = str(value)
+    # Redact emails
+    text = re.sub(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", "<redacted_email>", text)
+    # Redact phone-like numbers
+    text = re.sub(r"\+?\d[\d\-\s\(\)]{7,}\d", "<redacted_phone>", text)
+    # Redact long tokens
+    text = re.sub(r"\b[a-zA-Z0-9_\-]{20,}\b", "<redacted_token>", text)
+    # Normalize whitespace
+    text = re.sub(r"\s+", " ", text).strip()
+    return _truncate_text(text, max_len)
+
+
+def _sanitize_url(url: Optional[str]) -> str:
+    if not url:
+        return ""
+    try:
+        parts = urlsplit(url)
+        netloc = parts.netloc.split("@")[-1]
+        cleaned = urlunsplit((parts.scheme, netloc, parts.path, "", ""))
+        return _sanitize_text(cleaned, max_len=_MAX_TEXT_LEN)
+    except Exception:
+        return _sanitize_text(url, max_len=_MAX_TEXT_LEN)
+
+
+def _format_intents_for_log(intents: List[Dict[str, Any]]) -> str:
+    if not intents:
+        return ""
+    items = []
+    for intent in intents[:2]:
+        if isinstance(intent, dict):
+            intent_type = _sanitize_text(intent.get("type"), max_len=40)
+            intent_text = _sanitize_text(intent.get("text"), max_len=60)
+        else:
+            intent_type = _sanitize_text(getattr(intent, "type", ""), max_len=40)
+            intent_text = _sanitize_text(getattr(intent, "text", ""), max_len=60)
+        if intent_type or intent_text:
+            items.append(f"{intent_type}:{intent_text}")
+    return ", ".join(items)
+
+
+def _log_cognitive_phrase_summary(phrase: "CognitivePhrase") -> None:
+    try:
+        logger.info(
+            "[Memory] cognitive_phrase summary: id=%s desc=%s states=%d actions=%d",
+            _sanitize_text(phrase.id, max_len=40),
+            _sanitize_text(phrase.description, max_len=120),
+            len(phrase.states),
+            len(phrase.actions),
+        )
+        for i, state in enumerate(phrase.states[:_MAX_LOG_STEPS]):
+            state_desc = _sanitize_text(state.description, max_len=120)
+            state_url = _sanitize_url(state.page_url)
+            logger.info(
+                "[Memory] phrase step %d: state=%s url=%s",
+                i + 1,
+                state_desc or "N/A",
+                state_url or "N/A",
+            )
+            if state.intent_sequences:
+                seq = state.intent_sequences[0]
+                seq_desc = _sanitize_text(seq.description, max_len=120)
+                seq_intents = _format_intents_for_log(seq.intents)
+                if seq_desc or seq_intents:
+                    logger.info(
+                        "[Memory] phrase step %d intents: %s | %s",
+                        i + 1,
+                        seq_desc or "N/A",
+                        seq_intents or "N/A",
+                    )
+            if i < len(phrase.actions):
+                action = phrase.actions[i]
+                action_desc = _sanitize_text(action.description, max_len=120)
+                action_text = _sanitize_text(action.element_text, max_len=60)
+                action_selector = _sanitize_text(action.element_selector, max_len=_MAX_SELECTOR_LEN)
+                logger.info(
+                    "[Memory] phrase step %d action: %s | text=%s | selector=%s",
+                    i + 1,
+                    action_desc or "N/A",
+                    action_text or "N/A",
+                    action_selector or "N/A",
+                )
+    except Exception as e:
+        logger.debug(f"[Memory] Failed to log cognitive_phrase summary: {e}")
+
+
+def _log_path_summary(best_path: Dict[str, Any], steps: List[Dict[str, Any]]) -> None:
+    try:
+        logger.info(
+            "[Memory] path summary: desc=%s score=%s steps=%d",
+            _sanitize_text(best_path.get("description"), max_len=120),
+            best_path.get("score", 0),
+            len(steps),
+        )
+        for i, step in enumerate(steps[:_MAX_LOG_STEPS]):
+            state_data = step.get("state") or {}
+            action_data = step.get("action") or {}
+            intent_seq = step.get("intent_sequence") or {}
+
+            state_desc = _sanitize_text(
+                state_data.get("description")
+                or state_data.get("page_title")
+                or state_data.get("page_url"),
+                max_len=120,
+            )
+            state_url = _sanitize_url(state_data.get("page_url"))
+
+            action_desc = _sanitize_text(action_data.get("description"), max_len=120)
+            action_text = _sanitize_text(action_data.get("trigger_intent", {}).get("text"), max_len=60)
+            action_selector = _sanitize_text(
+                action_data.get("trigger_intent", {}).get("css_selector")
+                or action_data.get("trigger_intent", {}).get("xpath"),
+                max_len=_MAX_SELECTOR_LEN,
+            )
+
+            intent_desc = _sanitize_text(intent_seq.get("description"), max_len=120)
+            intents_list = intent_seq.get("intents") or []
+            intents_summary = _format_intents_for_log(intents_list) if isinstance(intents_list, list) else ""
+
+            logger.info(
+                "[Memory] path step %d: state=%s url=%s | action=%s | text=%s | selector=%s | intents=%s | %s",
+                i + 1,
+                state_desc or "N/A",
+                state_url or "N/A",
+                action_desc or "N/A",
+                action_text or "N/A",
+                action_selector or "N/A",
+                intent_desc or "N/A",
+                intents_summary or "N/A",
+            )
+    except Exception as e:
+        logger.debug(f"[Memory] Failed to log path summary: {e}")
 
 # Try to import httpx for async HTTP requests
 try:
@@ -216,6 +367,7 @@ class MemoryToolkit(BaseToolkit):
                 f"[Memory] Found cognitive_phrase: {phrase.id} "
                 f"with {len(phrase.states)} states"
             )
+            _log_cognitive_phrase_summary(phrase)
             return phrase
 
         except Exception as e:
@@ -298,6 +450,7 @@ class MemoryToolkit(BaseToolkit):
                 f"({len(path.states)} states, {len(path.actions)} actions, "
                 f"score={best_path.get('score', 0)})"
             )
+            _log_path_summary(best_path, steps)
             return path
 
         except Exception as e:
