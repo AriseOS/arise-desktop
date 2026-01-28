@@ -79,7 +79,7 @@ All endpoints use `/api/v1/` prefix and follow RESTful conventions.
 - **Data Collections**: `/api/v1/data/collections/*` - Scraped data management
 - **Intent Builder**: `/api/v1/intent-builder/sessions/*` - AI conversation sessions
 - **Agents**: `/api/v1/agents/*` - Agent-based services (scraper-optimizer)
-- **Quick Task**: `/api/v1/quick-task/*` - Autonomous browser tasks (EigentBrowserAgent)
+- **Quick Task**: `/api/v1/quick-task/*` - Autonomous browser tasks (EigentStyleBrowserAgent)
 
 ## Execution Flow
 
@@ -156,7 +156,7 @@ Magic number ensures we identify our daemon vs other services on same port.
 
 ## Quick Task API
 
-Independent task execution interface for autonomous browser automation. Uses EigentBrowserAgent for LLM-guided browser control.
+Independent task execution interface for autonomous browser automation. Uses EigentStyleBrowserAgent for LLM-guided browser control.
 
 ### Endpoints
 

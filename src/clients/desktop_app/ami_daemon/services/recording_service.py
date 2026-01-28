@@ -219,9 +219,9 @@ class RecordingService:
                 "dom_snapshots_count": len(dom_snapshots),
             }
 
-            # Cleanup (but don't close browser - keep it open)
+            # Cleanup and close browser
             session_id = self.current_session_id
-            await self._cleanup(close_browser=False)
+            await self._cleanup(close_browser=True)
 
             self._notify_status_change("stopped")
             logger.info(f"Recording stopped: {session_id}, {len(operations)} operations saved")

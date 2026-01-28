@@ -69,10 +69,14 @@
             });
 
             // Clear all maps and reset counters
-            elementRefMap.clear();
+            // Note: WeakMap doesn't have .clear(), so we create a new one
+            elementRefMap = new WeakMap();
             refElementMap.clear();
             elementSignatureMap.clear();
             refAccessTimes.clear();
+
+            // Reset refCounter to 1 for fresh start
+            refCounter = 1;
 
             // Reset global state
             window.__camelElementRefMap = elementRefMap;
@@ -83,8 +87,6 @@
             // Clear cached analysis results
             delete window.__camelLastAnalysisResult;
             delete window.__camelLastAnalysisTime;
-
-            console.log('CAMEL: Cleared all refs due to navigation');
         } catch (error) {
             console.warn('CAMEL: Error clearing refs:', error);
         }
@@ -962,16 +964,29 @@
             return cachedResult;
         }
 
-        // Generate the complete structured snapshot using original snapshot.js logic
-        const outputLines = processDocument(document);
-        const snapshotText = outputLines.join('\n');
-
-        // Build the tree again to collect element information with visual data
+        // Build tree once and reuse for both snapshot text and element collection
         textCache.clear();
-        // Note: Don't reset refCounter anymore - use persistent counters
         let tree = buildAriaTree(document.body);
         [tree] = normalizeTree(tree);
 
+        // Generate snapshot text from the tree
+        const lines = renderTree(tree).slice(1); // Skip the root node line
+
+        // Handle iframes
+        const frames = document.querySelectorAll('iframe');
+        for (const frame of frames) {
+            try {
+                if (frame.contentDocument) {
+                    const frameLines = processDocument(frame.contentDocument);
+                    lines.push(...frameLines);
+                }
+            } catch (e) {
+                // Skip cross-origin iframes
+            }
+        }
+        const snapshotText = lines.join('\n');
+
+        // Collect element information from the same tree (no second buildAriaTree call)
         const elementsMap = {};
         collectElementsFromTree(tree, elementsMap, viewport_limit);
 
