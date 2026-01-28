@@ -122,11 +122,11 @@ cors:
 # Graph Store Configuration
 # Backend for Memory graph storage
 graph_store:
-  backend: networkx # Options: networkx (in-memory), neo4j (persistent)
+  backend: neo4j # Options: networkx (in-memory), neo4j (persistent)
   Neo4j Configuration (when backend: neo4j)
   uri: neo4j://localhost:7687  # Or use NEO4J_URI env var
   user: neo4j                   # Or use NEO4J_USER env var
-  password: # Or use NEO4J_PASSWORD env var (required)
+  password: Ami@2024 # Or use NEO4J_PASSWORD env var (required)
   database: neo4j               # Or use NEO4J_DATABASE env var
 
 # Embedding Model Configuration
@@ -137,7 +137,7 @@ embedding:
   dimension: 1024  # Embedding vector dimension
   # API configuration (for OpenAI-compatible APIs like SiliconFlow)
   api_url: https://api.siliconflow.cn/v1  # SiliconFlow API base URL
-  api_key: # Environment variable for API key
+  api_key: sk-nfveshrtleyiscbeivhxltvvlvbzelohzdwqgkozttaslmdu # Environment variable for API key
 
 # Rate Limiting (optional)
 # rate_limit:
