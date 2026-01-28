@@ -2188,6 +2188,12 @@ async def _ensure_user_memory_loaded(user_id: str, session_id: Optional[str] = N
     if not workflow_memory:
         raise HTTPException(500, "WorkflowMemory not initialized")
 
+    # Disable auto-loading recording graphs into memory (explicitly requested).
+    # Memory should be populated via add_to_memory / WorkflowProcessor instead.
+    if not config_service.get("memory.load_recording_graphs", False):
+        logger.info("Auto-loading recording graphs is disabled; skipping load from recordings")
+        return
+
     logger.info(f"Loading memory for user {user_id}")
 
     # Get user's recordings from storage
