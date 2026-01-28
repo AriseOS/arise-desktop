@@ -430,10 +430,9 @@ class WorkflowProcessor:
     def _normalize_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize event to standard format.
 
-        Handles differences between recording format and simple format:
-        - timestamp: string -> milliseconds int
-        - element: nested object -> flattened fields
-        - page_title vs title
+        Handles differences between recording formats:
+        - New format (ref-based): {type, ref, text, role, ...}
+        - Old format (xpath-based): {type, element: {tagName, xpath, ...}, data: {...}}
 
         Args:
             event: Raw event dictionary.
@@ -456,7 +455,47 @@ class WorkflowProcessor:
         elif "title" not in normalized and "page_title" in normalized:
             normalized["title"] = normalized["page_title"]
 
-        # Flatten element object (recording format)
+        # New format: ref-based (flat structure)
+        # Fields: ref, text, role, value, direction, amount, request_url
+        if "ref" in event:
+            # Already in new format - just normalize element info
+            if "role" in event and "element_tag" not in normalized:
+                # Map ARIA role to approximate tag
+                role = event.get("role", "")
+                role_to_tag = {
+                    "button": "button",
+                    "link": "a",
+                    "textbox": "input",
+                    "combobox": "select",
+                    "checkbox": "input",
+                    "radio": "input",
+                    "listitem": "li",
+                    "heading": "h1",
+                    "img": "img",
+                    "generic": "div",
+                }
+                normalized["element_tag"] = role_to_tag.get(role, "div")
+            if "text" in event and event["text"]:
+                # text is already at top level
+                pass
+            if "value" in event:
+                # value for type/input events
+                normalized["input_value"] = event.get("value", "")
+
+            # scroll event fields
+            if "direction" in event:
+                normalized["scroll_direction"] = event.get("direction")
+            if "amount" in event:
+                normalized["scroll_distance"] = event.get("amount")
+
+            # dataload event fields
+            if "request_url" in event:
+                normalized["data_request_url"] = event.get("request_url")
+
+            return normalized
+
+        # Old format: xpath-based (nested element/data objects)
+        # Flatten element object
         element = event.get("element", {})
         if element and isinstance(element, dict):
             if "tagName" in element and "element_tag" not in normalized:
@@ -464,13 +503,13 @@ class WorkflowProcessor:
             if "className" in element and "element_class" not in normalized:
                 normalized["element_class"] = element.get("className", "")
             if "textContent" in element and "text" not in normalized:
-                normalized["text"] = element.get("textContent", "")[:200]  # Truncate long text
+                normalized["text"] = element.get("textContent", "")[:200]
             if "xpath" in element and "xpath" not in normalized:
                 normalized["xpath"] = element.get("xpath", "")
             if "href" in element and "href" not in normalized:
                 normalized["href"] = element.get("href", "")
 
-        # Flatten data object (recording format)
+        # Flatten data object
         data = event.get("data", {})
         if data and isinstance(data, dict):
             if "selectedText" in data and "text" not in normalized:
@@ -708,8 +747,10 @@ class WorkflowProcessor:
     def _event_to_intent(self, event: Dict[str, Any]) -> Optional[Intent]:
         """Convert an event dictionary to an Intent object.
 
+        Supports both new format (ref-based) and old format (xpath-based).
+
         Args:
-            event: Event dictionary.
+            event: Event dictionary (normalized).
 
         Returns:
             Intent object if valid, None otherwise.
@@ -730,6 +771,9 @@ class WorkflowProcessor:
             "submit": "Submit",
             "copy": "Copy",
             "paste": "Paste",
+            "enter": "Enter",
+            "select_text": "SelectText",
+            "dataload": "DataLoad",
         }
 
         intent_type = type_mapping.get(event_type)
@@ -738,15 +782,26 @@ class WorkflowProcessor:
             intent_type = event.get("type", "Unknown")
 
         try:
+            # New format uses 'ref' and 'role' instead of xpath and element_id
+            element_ref = event.get("ref", "")
+            element_role = event.get("role", "")
+
             intent = Intent(
                 type=intent_type,
                 timestamp=event.get("timestamp", 0),
+                # New format fields
+                element_ref=element_ref,
+                element_role=element_role,
+                # Fallback to old format fields
                 element_tag=event.get("element_tag") or event.get("tag", ""),
                 element_id=event.get("element_id") or event.get("id", ""),
                 element_class=event.get("element_class") or event.get("class", ""),
+                # Text can come from multiple places
                 text=event.get("text") or event.get("element_text", ""),
+                # Value for type/input events
                 value=event.get("value") or event.get("input_value", ""),
-                selector=event.get("selector", ""),
+                # Selector (old format used xpath)
+                selector=event.get("selector") or event.get("xpath", ""),
                 page_url=event.get("page_url") or event.get("url", ""),
                 page_title=event.get("page_title") or event.get("title", ""),
             )
@@ -755,6 +810,36 @@ class WorkflowProcessor:
             print(f"Warning: Failed to create Intent from event: {e}")
             return None
 
+    def _find_transition_trigger(self, segment: URLSegment) -> Optional[Dict[str, Any]]:
+        """Find the operation that triggered page transition.
+        
+        Strategy: Assume the last click/submit operation in the segment
+        caused the navigation to the next state.
+        
+        Args:
+            segment: URL segment to search in.
+            
+        Returns:
+            Trigger event dict if found, None otherwise.
+        """
+        # Search backwards for trigger operations
+        for event in reversed(segment.events):
+            event_type = event.get("type")
+            
+            if event_type == "click":
+                role = event.get("role")
+                # Link/button clearly cause navigation
+                if role in ("link", "button"):
+                    return event
+                # Generic elements may also trigger navigation (JS onclick)
+                if role == "generic":
+                    return event
+                    
+            elif event_type == "submit":
+                return event
+        
+        return None
+    
     def _create_actions(
         self,
         segments: List[URLSegment],
@@ -785,14 +870,36 @@ class WorkflowProcessor:
             if source_state.id == target_state.id:
                 continue
 
-            action = Action(
-                source=source_state.id,
-                target=target_state.id,
-                type="navigate",
-                timestamp=target_segment.timestamp,
-                user_id=user_id,
-                session_id=session_id,
-            )
+            # Find the operation that triggered this transition
+            trigger_event = self._find_transition_trigger(source_segment)
+            
+            if trigger_event:
+                # Has explicit trigger operation
+                action = Action(
+                    source=source_state.id,
+                    target=target_state.id,
+                    type=trigger_event["type"],  # "click" | "submit"
+                    timestamp=trigger_event.get("timestamp"),
+                    trigger={
+                        "ref": trigger_event.get("ref"),
+                        "text": trigger_event.get("text"),
+                        "role": trigger_event.get("role"),
+                    },
+                    user_id=user_id,
+                    session_id=session_id,
+                )
+            else:
+                # No explicit trigger - automatic navigation/redirect
+                action = Action(
+                    source=source_state.id,
+                    target=target_state.id,
+                    type="auto_navigate",
+                    timestamp=target_segment.timestamp,
+                    trigger=None,
+                    user_id=user_id,
+                    session_id=session_id,
+                )
+            
             actions.append(action)
 
         return actions
@@ -997,6 +1104,9 @@ URL: {state.page_url}
         target_state: Optional[State] = None,
     ) -> str:
         """Generate description for an Action using LLM.
+        
+        Uses action.trigger information (from recording) to generate
+        accurate, semantic descriptions for better retrieval.
 
         Args:
             action: Action to describe.
@@ -1009,40 +1119,84 @@ URL: {state.page_url}
         if not source_state or not target_state:
             return "页面跳转"
 
-        # If no LLM provider, return default description
+        source_desc = source_state.description or source_state.page_title or "来源页面"
+        target_desc = target_state.description or target_state.page_title or "目标页面"
+
+        # If no LLM provider, use simple template
         if not self.simple_llm_provider:
-            return f"从 {source_state.page_title or '页面'} 跳转到 {target_state.page_title or '页面'}"
+            if action.trigger:
+                text = (action.trigger.get("text") or "")[:30]
+                return f"点击 '{text}' 进入 {target_desc}"
+            else:
+                return f"自动跳转到 {target_desc}"
 
-        source_info = f"页面: {source_state.page_title or source_state.page_url}"
-        target_info = f"页面: {target_state.page_title or target_state.page_url}"
+        # Use LLM with trigger information for semantic description
+        if action.trigger:
+            trigger = action.trigger
+            ref = trigger.get("ref") or ""
+            text = (trigger.get("text") or "")[:50]
+            role = trigger.get("role") or ""
+            
+            prompt = f"""请用简洁的中文描述这个页面跳转操作。
 
-        prompt = f"""请用简洁的中文描述这个页面跳转操作。
-
-来源页面: {source_info}
+来源页面: {source_desc}
 来源URL: {source_state.page_url}
 
-目标页面: {target_info}
+目标页面: {target_desc}
 目标URL: {target_state.page_url}
 
-要求:
-1. 用一句话描述从来源页面到目标页面的跳转
-2. 描述可能的操作方式（如"点击XX按钮"、"点击XX链接"等）
-3. 不要包含具体的URL
-4. 只返回描述文本
+用户操作: {action.type}
+触发元素信息:
+- 元素引用: [{ref}]
+- 元素文本: "{text}"
+- 元素角色: {role}
 
-示例: "点击产品列表项进入产品详情页"
+要求:
+1. 生成一句话语义化描述，包含操作和目标的语义信息
+2. 适合用于检索（如"查看排行榜"能匹配到这个描述）
+3. 可以包含位置信息（如"顶部导航"、"侧边栏"）
+4. 不要包含具体的 ref 编号（如 [e22]）
+5. 只返回描述文本，不要有引号
+
+示例: "点击顶部导航栏的 Launches 链接查看每日产品排行榜"
 
 描述:"""
+            
+            try:
+                response = await self.simple_llm_provider.generate_response(
+                    system_prompt="",
+                    user_prompt=prompt
+                )
+                return response.strip()
+            except Exception as e:
+                print(f"Warning: Failed to generate action description: {e}")
+                # Fallback to simple template
+                return f"点击 '{text}' 进入 {target_desc}"
+        
+        else:
+            # No trigger - automatic navigation
+            prompt = f"""请用简洁的中文描述这个自动页面跳转。
 
-        try:
-            response = await self.simple_llm_provider.generate_response(
-                system_prompt="",
-                user_prompt=prompt
-            )
-            return response.strip()
-        except Exception as e:
-            print(f"Warning: Failed to generate action description: {e}")
-            return f"从 {source_state.page_title or '页面'} 跳转到 {target_state.page_title or '页面'}"
+来源页面: {source_desc}
+目标页面: {target_desc}
+
+这是一个自动跳转（无用户操作触发）。
+
+要求: 一句话描述，说明是自动跳转
+
+示例: "自动跳转到产品详情页"
+
+描述:"""
+            
+            try:
+                response = await self.simple_llm_provider.generate_response(
+                    system_prompt="",
+                    user_prompt=prompt
+                )
+                return response.strip()
+            except Exception as e:
+                print(f"Warning: Failed to generate action description: {e}")
+                return f"自动跳转到 {target_desc}"
 
     def _generate_embeddings(
         self,

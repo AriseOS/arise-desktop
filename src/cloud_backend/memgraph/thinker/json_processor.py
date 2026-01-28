@@ -55,7 +55,11 @@ class BrowserEvent(BaseModel):
     page_url: str = Field(..., description="Page URL")
     page_title: Optional[str] = Field(default=None, description="Page title")
 
-    # Element information.
+    # Element information (new ref-based format).
+    element_ref: Optional[str] = Field(default=None, description="Element ref (e.g., 'e42')")
+    element_role: Optional[str] = Field(default=None, description="ARIA role (e.g., 'button', 'link')")
+
+    # Element information (legacy xpath-based format).
     element_tag: Optional[str] = Field(default=None, description="Element tag name")
     element_id: Optional[str] = Field(default=None, description="Element ID")
     element_class: Optional[str] = Field(default=None, description="Element class")
@@ -376,6 +380,14 @@ class JsonProcessor:
             if event.page_title:
                 lines.append(f"  Page Title: {event.page_title}")
 
+            # New ref-based format
+            if event.element_ref:
+                lines.append(f"  Ref: {event.element_ref}")
+
+            if event.element_role:
+                lines.append(f"  Role: {event.element_role}")
+
+            # Legacy xpath-based format
             if event.element_tag:
                 lines.append(f"  Element: <{event.element_tag}>")
 

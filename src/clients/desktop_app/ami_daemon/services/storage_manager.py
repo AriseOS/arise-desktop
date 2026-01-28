@@ -1,4 +1,7 @@
-"""Local file system storage management"""
+"""Local file system storage management
+
+File format: YAML for recordings and snapshots (human-readable, consistent with workflow format)
+"""
 
 import json
 import yaml
@@ -10,7 +13,44 @@ from src.common.timestamp_utils import get_current_timestamp
 
 
 class StorageManager:
-    """Manage local file storage for recordings, workflows, and execution results"""
+    """Manage local file storage for recordings, workflows, and execution results
+
+    Recording format (recording.yaml):
+        session_id: session_xxx
+        created_at: 2026-01-28T13:51:25
+        ended_at: 2026-01-28T13:52:03
+        task_metadata:
+          name: Recording Name
+          description: What this recording does
+        operations:
+          - type: click
+            ref: e42
+            text: Submit
+            role: button
+            timestamp: 2026-01-28T13:51:32
+            url: https://example.com
+          - type: type
+            ref: e15
+            text: search query
+            value: hello world
+            role: textbox
+
+    Snapshot format (snapshots/*.yaml):
+        url: https://example.com
+        captured_at: 2026-01-28T13:51:35
+        snapshot_text: |
+          - button "Submit" [ref=e42]
+          - textbox "Search" [ref=e15]
+        elements:
+          e42:
+            role: button
+            name: Submit
+            tagName: button
+          e15:
+            role: textbox
+            name: Search
+            tagName: input
+    """
 
     def __init__(self, base_path: Optional[Path] = None):
         """Initialize storage manager
@@ -29,11 +69,17 @@ class StorageManager:
 
     # === Recording Management ===
 
-    def save_recording(self, user_id: str, session_id: str, recording_data: dict, update_timestamp: bool = True):
-        """Save recording data to local file
+    def save_recording(
+        self,
+        user_id: str,
+        session_id: str,
+        recording_data: dict,
+        update_timestamp: bool = True,
+    ):
+        """Save recording data to YAML file
 
         Args:
-            recording_data: Output from RecordingSession.to_file_format()
+            recording_data: Recording data dict with operations
             update_timestamp: Whether to update the updated_at timestamp (default True)
         """
         recording_path = self._user_path(user_id) / "recordings" / session_id
@@ -43,38 +89,110 @@ class StorageManager:
         if update_timestamp:
             recording_data["updated_at"] = get_current_timestamp()
 
-        file_path = recording_path / "operations.json"
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(recording_data, f, indent=2, ensure_ascii=False)
+        # Save as YAML
+        file_path = recording_path / "recording.yaml"
+        with open(file_path, "w", encoding="utf-8") as f:
+            yaml.dump(
+                recording_data,
+                f,
+                default_flow_style=False,
+                allow_unicode=True,
+                sort_keys=False,
+            )
+
+    def save_snapshot(
+        self,
+        user_id: str,
+        session_id: str,
+        url_hash: str,
+        snapshot_data: dict,
+    ):
+        """Save page snapshot to YAML file
+
+        The snapshot_text is saved as a literal block scalar (|) to preserve
+        its multi-line format without escaping.
+
+        Args:
+            user_id: User ID
+            session_id: Recording session ID
+            url_hash: URL hash (12 char md5)
+            snapshot_data: Snapshot data with url, snapshot_text
+        """
+        snapshot_path = (
+            self._user_path(user_id) / "recordings" / session_id / "snapshots"
+        )
+        snapshot_path.mkdir(parents=True, exist_ok=True)
+
+        file_path = snapshot_path / f"{url_hash}.yaml"
+
+        url = snapshot_data.get("url", "")
+        captured_at = snapshot_data.get("captured_at", "")
+        snapshot_text = snapshot_data.get("snapshot_text", "")
+
+        # Write YAML manually with literal block scalar (|)
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(f"url: {url}\n")
+            f.write(f"captured_at: {captured_at}\n")
+            f.write("snapshot: |\n")
+            # Indent each line with 2 spaces for literal block
+            for line in snapshot_text.split("\n"):
+                f.write(f"  {line}\n")
 
     def get_recording(self, user_id: str, session_id: str) -> dict:
-        """Read recording data from local file
+        """Read recording data from file
 
-        Also loads DOM snapshots if available (for script pre-generation).
+        Supports both new YAML format and legacy JSON format.
+        Also loads snapshots if available.
 
         Returns:
-            Recording dict with optional 'dom_snapshots' field containing
-            URL -> DOM dict mapping
+            Recording dict with optional 'snapshots' field
         """
         recording_path = self._user_path(user_id) / "recordings" / session_id
-        file_path = recording_path / "operations.json"
-        with open(file_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
 
-        # Load DOM snapshots if available
+        # Try new YAML format first
+        yaml_path = recording_path / "recording.yaml"
+        json_path = recording_path / "operations.json"
+
+        if yaml_path.exists():
+            with open(yaml_path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+        elif json_path.exists():
+            # Legacy JSON format
+            with open(json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        else:
+            raise FileNotFoundError(f"Recording not found: {session_id}")
+
+        # Load snapshots (new YAML format)
+        snapshot_dir = recording_path / "snapshots"
+        if snapshot_dir.exists():
+            snapshots = {}
+            for snapshot_file in snapshot_dir.glob("*.yaml"):
+                try:
+                    with open(snapshot_file, "r", encoding="utf-8") as f:
+                        snapshot_data = yaml.safe_load(f)
+                        url = snapshot_data.get("url")
+                        if url:
+                            snapshots[url] = snapshot_data
+                except Exception:
+                    continue
+
+            if snapshots:
+                data["snapshots"] = snapshots
+
+        # Legacy: Load DOM snapshots (old JSON format)
         dom_dir = recording_path / "dom_snapshots"
-        if dom_dir.exists():
+        if dom_dir.exists() and "snapshots" not in data:
             dom_snapshots = {}
             for dom_file in dom_dir.glob("*.json"):
                 try:
-                    with open(dom_file, 'r', encoding='utf-8') as f:
+                    with open(dom_file, "r", encoding="utf-8") as f:
                         dom_data = json.load(f)
                         url = dom_data.get("url")
                         dom_dict = dom_data.get("dom")
                         if url and dom_dict:
                             dom_snapshots[url] = dom_dict
                 except Exception:
-                    # Skip corrupted DOM snapshot files
                     continue
 
             if dom_snapshots:
@@ -82,8 +200,16 @@ class StorageManager:
 
         return data
 
-    def update_recording_metadata(self, user_id: str, session_id: str, task_description: str = None, user_query: str = None, name: str = None, workflow_id: str = None):
-        """Update recording metadata with task_description, user_query, name and workflow_id
+    def update_recording_metadata(
+        self,
+        user_id: str,
+        session_id: str,
+        task_description: str = None,
+        user_query: str = None,
+        name: str = None,
+        workflow_id: str = None,
+    ):
+        """Update recording metadata
 
         Args:
             user_id: User ID
@@ -91,9 +217,8 @@ class StorageManager:
             task_description: Task description (what user did)
             user_query: User query (what user wants to achieve)
             name: Short name/title (optional)
-            workflow_id: Associated workflow ID (optional, can be None to clear)
+            workflow_id: Associated workflow ID (optional)
         """
-        # Read existing recording
         recording_data = self.get_recording(user_id, session_id)
 
         # Update task_metadata
@@ -107,35 +232,32 @@ class StorageManager:
         if name is not None:
             recording_data["task_metadata"]["name"] = name
 
-        # Update workflow_id at root level (can be set to None to clear)
+        # Update workflow_id at root level
         if workflow_id is not None:
             recording_data["workflow_id"] = workflow_id
-        elif "workflow_id" in recording_data and workflow_id is None:
-            # Explicitly clear workflow_id when passed as None
-            pass  # Keep existing behavior, only clear when explicitly requested via clear_workflow_id
 
-        # Save back (exclude dom_snapshots - they are stored separately)
-        save_data = {k: v for k, v in recording_data.items() if k != 'dom_snapshots'}
+        # Save back (exclude snapshots - stored separately)
+        save_data = {
+            k: v for k, v in recording_data.items() if k not in ("snapshots", "dom_snapshots")
+        }
         self.save_recording(user_id, session_id, save_data)
 
     def clear_recording_workflow_id(self, user_id: str, session_id: str):
-        """Clear the workflow_id from a recording (when workflow is deleted)"""
+        """Clear the workflow_id from a recording"""
         recording_data = self.get_recording(user_id, session_id)
         if "workflow_id" in recording_data:
             del recording_data["workflow_id"]
-            save_data = {k: v for k, v in recording_data.items() if k != 'dom_snapshots'}
+            save_data = {
+                k: v for k, v in recording_data.items() if k not in ("snapshots", "dom_snapshots")
+            }
             self.save_recording(user_id, session_id, save_data)
 
-    def update_recording_from_cloud(self, user_id: str, session_id: str, cloud_data: dict):
+    def update_recording_from_cloud(
+        self, user_id: str, session_id: str, cloud_data: dict
+    ):
         """Update local recording with cloud data (for sync)
 
         Only updates metadata fields, not operations.
-        Preserves local operations and DOM snapshots.
-
-        Args:
-            user_id: User ID
-            session_id: Session ID
-            cloud_data: Recording data from cloud with updated_at, workflow_id, task_description, etc.
         """
         recording_data = self.get_recording(user_id, session_id)
 
@@ -143,25 +265,26 @@ class StorageManager:
         if cloud_data.get("workflow_id"):
             recording_data["workflow_id"] = cloud_data["workflow_id"]
         elif "workflow_id" in cloud_data and cloud_data["workflow_id"] is None:
-            # Explicitly cleared on cloud
             recording_data.pop("workflow_id", None)
 
         if cloud_data.get("task_description"):
             if "task_metadata" not in recording_data:
                 recording_data["task_metadata"] = {}
-            recording_data["task_metadata"]["task_description"] = cloud_data["task_description"]
+            recording_data["task_metadata"]["task_description"] = cloud_data[
+                "task_description"
+            ]
 
         if cloud_data.get("user_query"):
             if "task_metadata" not in recording_data:
                 recording_data["task_metadata"] = {}
             recording_data["task_metadata"]["user_query"] = cloud_data["user_query"]
 
-        # Use cloud's updated_at to keep them in sync
         if cloud_data.get("updated_at"):
             recording_data["updated_at"] = cloud_data["updated_at"]
 
-        # Save without auto-updating timestamp (use cloud's timestamp)
-        save_data = {k: v for k, v in recording_data.items() if k != 'dom_snapshots'}
+        save_data = {
+            k: v for k, v in recording_data.items() if k not in ("snapshots", "dom_snapshots")
+        }
         self.save_recording(user_id, session_id, save_data, update_timestamp=False)
 
     def list_recordings(self, user_id: str) -> List[Dict[str, Any]]:
@@ -179,39 +302,68 @@ class StorageManager:
             if not session_dir.is_dir():
                 continue
 
-            operations_file = session_dir / "operations.json"
-            if not operations_file.exists():
+            # Try YAML first, then JSON
+            yaml_file = session_dir / "recording.yaml"
+            json_file = session_dir / "operations.json"
+
+            recording_file = None
+            if yaml_file.exists():
+                recording_file = yaml_file
+            elif json_file.exists():
+                recording_file = json_file
+            else:
                 continue
 
             try:
-                with open(operations_file, 'r', encoding='utf-8') as f:
-                    recording_data = json.load(f)
+                with open(recording_file, "r", encoding="utf-8") as f:
+                    if recording_file.suffix == ".yaml":
+                        recording_data = yaml.safe_load(f)
+                    else:
+                        recording_data = json.load(f)
 
-                # Extract metadata
                 task_metadata = recording_data.get("task_metadata", {})
                 operations = recording_data.get("operations", [])
 
                 # Get file creation time
-                created_at = datetime.fromtimestamp(operations_file.stat().st_ctime).isoformat()
+                created_at = datetime.fromtimestamp(
+                    recording_file.stat().st_ctime
+                ).isoformat()
 
-                # Count actions (click, input, etc.)
-                action_count = sum(1 for op in operations if op.get("type") in ["click", "input", "type", "navigate"])
+                # Count actions
+                action_count = sum(
+                    1
+                    for op in operations
+                    if op.get("type") in ["click", "input", "type", "navigate"]
+                )
 
-                # Count DOM snapshots
-                dom_count = 0
-                dom_dir = session_dir / "dom_snapshots"
-                if dom_dir.exists():
-                    dom_count = sum(1 for f in dom_dir.glob("*.json") if f.name != "url_index.json")
+                # Count snapshots (new format)
+                snapshot_count = 0
+                snapshot_dir = session_dir / "snapshots"
+                if snapshot_dir.exists():
+                    snapshot_count = sum(1 for f in snapshot_dir.glob("*.yaml"))
 
-                recordings.append({
-                    "session_id": session_dir.name,
-                    "task_metadata": task_metadata,
-                    "created_at": created_at,
-                    "action_count": action_count,
-                    "dom_count": dom_count
-                })
-            except Exception as e:
-                # Skip corrupted recordings
+                # Legacy: count DOM snapshots
+                if snapshot_count == 0:
+                    dom_dir = session_dir / "dom_snapshots"
+                    if dom_dir.exists():
+                        snapshot_count = sum(
+                            1
+                            for f in dom_dir.glob("*.json")
+                            if f.name != "url_index.json"
+                        )
+
+                recordings.append(
+                    {
+                        "session_id": session_dir.name,
+                        "task_metadata": task_metadata,
+                        "created_at": created_at,
+                        "action_count": action_count,
+                        "snapshot_count": snapshot_count,
+                        # Legacy field name for backward compatibility
+                        "dom_count": snapshot_count,
+                    }
+                )
+            except Exception:
                 continue
 
         # Sort by created_at descending (newest first)
@@ -220,10 +372,6 @@ class StorageManager:
 
     def delete_recording(self, user_id: str, session_id: str) -> bool:
         """Delete a recording
-
-        Args:
-            user_id: User ID
-            session_id: Recording session ID
 
         Returns:
             True if deleted successfully, False if not found
@@ -237,7 +385,9 @@ class StorageManager:
         shutil.rmtree(recording_path)
         return True
 
-    def get_recording_detail(self, user_id: str, session_id: str) -> Optional[Dict[str, Any]]:
+    def get_recording_detail(
+        self, user_id: str, session_id: str
+    ) -> Optional[Dict[str, Any]]:
         """Get detailed recording information including parsed operations
 
         Returns:
@@ -245,22 +395,31 @@ class StorageManager:
         """
         try:
             recording_data = self.get_recording(user_id, session_id)
-
-            metadata = recording_data.get("metadata", {})
             operations = recording_data.get("operations", [])
 
             # Count actions
-            action_count = 0
-            for op in operations:
-                op_type = op.get("type", "unknown")
-                if op_type in ["navigate", "click", "input", "type"]:
-                    action_count += 1
+            action_count = sum(
+                1
+                for op in operations
+                if op.get("type") in ["navigate", "click", "input", "type"]
+            )
 
             # Get file creation time
-            operations_file = self._user_path(user_id) / "recordings" / session_id / "operations.json"
-            created_at = datetime.fromtimestamp(operations_file.stat().st_ctime).isoformat()
+            recording_path = self._user_path(user_id) / "recordings" / session_id
+            yaml_file = recording_path / "recording.yaml"
+            json_file = recording_path / "operations.json"
 
-            # Extract task_metadata from recording data
+            if yaml_file.exists():
+                created_at = datetime.fromtimestamp(
+                    yaml_file.stat().st_ctime
+                ).isoformat()
+            elif json_file.exists():
+                created_at = datetime.fromtimestamp(
+                    json_file.stat().st_ctime
+                ).isoformat()
+            else:
+                created_at = None
+
             task_metadata = recording_data.get("task_metadata", {})
 
             return {
@@ -271,9 +430,11 @@ class StorageManager:
                 "task_metadata": task_metadata,
                 "workflow_id": recording_data.get("workflow_id"),
                 "operations": operations,
-                "dom_snapshots": recording_data.get("dom_snapshots", {})
+                "snapshots": recording_data.get("snapshots", {}),
+                # Legacy field
+                "dom_snapshots": recording_data.get("dom_snapshots", {}),
             }
-        except Exception as e:
+        except Exception:
             return None
 
     # === Workflow Management ===
@@ -284,41 +445,37 @@ class StorageManager:
         workflow_path.mkdir(parents=True, exist_ok=True)
 
         file_path = workflow_path / "workflow.yaml"
-        with open(file_path, 'w', encoding='utf-8') as f:
+        with open(file_path, "w", encoding="utf-8") as f:
             f.write(yaml_content)
 
     def get_workflow(self, user_id: str, workflow_id: str) -> str:
         """Read workflow YAML from local file"""
-        file_path = self._user_path(user_id) / "workflows" / workflow_id / "workflow.yaml"
-        with open(file_path, 'r', encoding='utf-8') as f:
+        file_path = (
+            self._user_path(user_id) / "workflows" / workflow_id / "workflow.yaml"
+        )
+        with open(file_path, "r", encoding="utf-8") as f:
             return f.read()
 
-    def get_workflow_metadata(self, user_id: str, workflow_id: str) -> Optional[Dict[str, Any]]:
-        """Read workflow metadata.json from local file
-
-        Returns:
-            Dict with metadata fields or None if not found:
-            {
-                'workflow_id': 'workflow_xxx',
-                'workflow_name': 'human-readable-name',
-                'source_recording_id': 'session_xxx',
-                'created_at': '2025-01-05T18:02:30Z',
-                'updated_at': '2025-01-05T18:07:50Z',
-                'resources': {...}
-            }
-        """
-        file_path = self._user_path(user_id) / "workflows" / workflow_id / "metadata.json"
+    def get_workflow_metadata(
+        self, user_id: str, workflow_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Read workflow metadata.json from local file"""
+        file_path = (
+            self._user_path(user_id) / "workflows" / workflow_id / "metadata.json"
+        )
         if not file_path.exists():
             return None
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception:
             return None
 
     def workflow_exists(self, user_id: str, workflow_id: str) -> bool:
         """Check if workflow exists locally"""
-        file_path = self._user_path(user_id) / "workflows" / workflow_id / "workflow.yaml"
+        file_path = (
+            self._user_path(user_id) / "workflows" / workflow_id / "workflow.yaml"
+        )
         return file_path.exists()
 
     def list_workflows(self, user_id: str) -> List[str]:
@@ -330,21 +487,7 @@ class StorageManager:
         return [d.name for d in workflows_path.iterdir() if d.is_dir()]
 
     def get_local_workflows_info(self, user_id: str) -> Dict[str, Dict[str, Any]]:
-        """Get detailed information about local workflows
-
-        Returns:
-            Dict mapping workflow_id to workflow info:
-            {
-                'workflow_xxx': {
-                    'agent_id': 'workflow_xxx',
-                    'name': 'Workflow Name',
-                    'description': 'Description',
-                    'created_at': '2025-01-09T10:30:00',
-                    'is_downloaded': True,
-                    'source': 'local'
-                }
-            }
-        """
+        """Get detailed information about local workflows"""
         workflows_path = self._user_path(user_id) / "workflows"
         if not workflows_path.exists():
             return {}
@@ -358,12 +501,10 @@ class StorageManager:
             workflow_id = workflow_dir.name
             workflow_file = workflow_dir / "workflow.yaml"
 
-            # Default values
             name = workflow_id
             description = ""
             created_at = None
 
-            # Get file creation time
             if workflow_file.exists():
                 try:
                     created_at = datetime.fromtimestamp(
@@ -372,47 +513,41 @@ class StorageManager:
                 except Exception:
                     pass
 
-                # Parse YAML to get name and description
                 try:
-                    with open(workflow_file, 'r', encoding='utf-8') as f:
+                    with open(workflow_file, "r", encoding="utf-8") as f:
                         data = yaml.safe_load(f)
                         if isinstance(data, dict):
-                            # Get name and description (support both v2 top-level and v1 metadata)
-                            metadata = data.get('metadata', {})
-                            name = data.get('name') or metadata.get('name') or workflow_id
-                            description = data.get('description') or metadata.get('description', '')
+                            metadata = data.get("metadata", {})
+                            name = (
+                                data.get("name")
+                                or metadata.get("name")
+                                or workflow_id
+                            )
+                            description = data.get("description") or metadata.get(
+                                "description", ""
+                            )
                 except Exception:
-                    # Use defaults if parsing fails
                     pass
 
-            # Get last execution time
             last_run = None
             last_exec = self.get_workflow_last_execution(user_id, workflow_id)
             if last_exec:
-                last_run = last_exec.get('timestamp')
+                last_run = last_exec.get("timestamp")
 
             local_workflows[workflow_id] = {
-                'agent_id': workflow_id,
-                'name': name,
-                'description': description,
-                'created_at': created_at,
-                'last_run': last_run,
-                'is_downloaded': True,
-                'source': 'local'
+                "agent_id": workflow_id,
+                "name": name,
+                "description": description,
+                "created_at": created_at,
+                "last_run": last_run,
+                "is_downloaded": True,
+                "source": "local",
             }
 
         return local_workflows
 
     def delete_workflow(self, user_id: str, workflow_name: str) -> bool:
-        """Delete a workflow and all its execution history
-
-        Args:
-            user_id: User ID
-            workflow_name: Workflow name/ID
-
-        Returns:
-            True if deleted successfully, False if not found
-        """
+        """Delete a workflow and all its execution history"""
         import shutil
 
         workflow_path = self._user_path(user_id) / "workflows" / workflow_name
@@ -422,17 +557,16 @@ class StorageManager:
         shutil.rmtree(workflow_path)
         return True
 
-    def get_workflow_last_execution(self, user_id: str, workflow_name: str) -> Optional[Dict[str, Any]]:
-        """Get the most recent execution result for a workflow
-
-        Returns:
-            Dict with execution info (timestamp, status, etc.) or None if no executions
-        """
-        exec_path = self._user_path(user_id) / "workflows" / workflow_name / "executions"
+    def get_workflow_last_execution(
+        self, user_id: str, workflow_name: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get the most recent execution result for a workflow"""
+        exec_path = (
+            self._user_path(user_id) / "workflows" / workflow_name / "executions"
+        )
         if not exec_path.exists():
             return None
 
-        # Get most recent execution directory
         exec_dirs = sorted(exec_path.iterdir(), reverse=True)
         if not exec_dirs:
             return None
@@ -442,13 +576,14 @@ class StorageManager:
                 result_file = exec_dir / "result.json"
                 if result_file.exists():
                     try:
-                        with open(result_file, 'r', encoding='utf-8') as f:
+                        with open(result_file, "r", encoding="utf-8") as f:
                             result = json.load(f)
                             return {
                                 "execution_id": exec_dir.name,
-                                "timestamp": result.get("completed_at") or result.get("timestamp", ""),
+                                "timestamp": result.get("completed_at")
+                                or result.get("timestamp", ""),
                                 "status": result.get("status", "unknown"),
-                                "error": result.get("error")
+                                "error": result.get("error"),
                             }
                     except Exception:
                         continue
@@ -458,32 +593,29 @@ class StorageManager:
     # === Execution Results ===
 
     def save_execution_result(
-        self,
-        user_id: str,
-        workflow_name: str,
-        execution_id: str,
-        result: dict
+        self, user_id: str, workflow_name: str, execution_id: str, result: dict
     ):
         """Save execution result"""
         exec_path = (
-            self._user_path(user_id) /
-            "workflows" / workflow_name /
-            "executions" / execution_id
+            self._user_path(user_id)
+            / "workflows"
+            / workflow_name
+            / "executions"
+            / execution_id
         )
         exec_path.mkdir(parents=True, exist_ok=True)
 
         file_path = exec_path / "result.json"
-        with open(file_path, 'w', encoding='utf-8') as f:
+        with open(file_path, "w", encoding="utf-8") as f:
             json.dump(result, f, indent=2, ensure_ascii=False)
 
     def get_execution_results(
-        self,
-        user_id: str,
-        workflow_name: str,
-        limit: int = 10
+        self, user_id: str, workflow_name: str, limit: int = 10
     ) -> List[dict]:
         """Get execution history for workflow"""
-        exec_path = self._user_path(user_id) / "workflows" / workflow_name / "executions"
+        exec_path = (
+            self._user_path(user_id) / "workflows" / workflow_name / "executions"
+        )
         if not exec_path.exists():
             return []
 
@@ -492,7 +624,7 @@ class StorageManager:
             if exec_dir.is_dir():
                 result_file = exec_dir / "result.json"
                 if result_file.exists():
-                    with open(result_file, 'r', encoding='utf-8') as f:
+                    with open(result_file, "r", encoding="utf-8") as f:
                         results.append(json.load(f))
 
         return results
