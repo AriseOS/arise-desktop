@@ -48,7 +48,7 @@ class Neo4jGraphStore(GraphStore):
         database: str = "neo4j",
         max_connection_pool_size: int = 50,
         connection_timeout: float = 30.0,
-        vector_dimensions: int = 768,
+        vector_dimensions: int = 1024,
     ):
         """Initialize Neo4j connection.
 
@@ -112,6 +112,7 @@ class Neo4jGraphStore(GraphStore):
             "CREATE CONSTRAINT domain_id IF NOT EXISTS FOR (d:Domain) REQUIRE d.id IS UNIQUE",
             "CREATE CONSTRAINT state_id IF NOT EXISTS FOR (s:State) REQUIRE s.id IS UNIQUE",
             "CREATE CONSTRAINT phrase_id IF NOT EXISTS FOR (p:CognitivePhrase) REQUIRE p.id IS UNIQUE",
+            "CREATE CONSTRAINT intent_sequence_id IF NOT EXISTS FOR (seq:IntentSequence) REQUIRE seq.id IS UNIQUE",
         ]
 
         indexes = [
@@ -119,6 +120,21 @@ class Neo4jGraphStore(GraphStore):
             "CREATE INDEX state_session_id IF NOT EXISTS FOR (s:State) ON (s.session_id)",
             "CREATE INDEX domain_user_id IF NOT EXISTS FOR (d:Domain) ON (d.user_id)",
             "CREATE INDEX phrase_user_id IF NOT EXISTS FOR (p:CognitivePhrase) ON (p.user_id)",
+            "CREATE INDEX intent_sequence_state_id IF NOT EXISTS FOR (seq:IntentSequence) ON (seq.state_id)",
+        ]
+
+        # V2: Vector indexes for semantic search (requires Neo4j 5.11+)
+        # Index names follow format: {label.lower()}_{property_key} to match vector_search()
+        vector_indexes = [
+            f"""CREATE VECTOR INDEX state_embedding_vector IF NOT EXISTS
+            FOR (s:State) ON s.embedding_vector
+            OPTIONS {{indexConfig: {{`vector.dimensions`: {self._vector_dimensions}}}}}""",
+            f"""CREATE VECTOR INDEX cognitivephrase_embedding_vector IF NOT EXISTS
+            FOR (p:CognitivePhrase) ON p.embedding_vector
+            OPTIONS {{indexConfig: {{`vector.dimensions`: {self._vector_dimensions}}}}}""",
+            f"""CREATE VECTOR INDEX intentsequence_embedding_vector IF NOT EXISTS
+            FOR (seq:IntentSequence) ON seq.embedding_vector
+            OPTIONS {{indexConfig: {{`vector.dimensions`: {self._vector_dimensions}}}}}""",
         ]
 
         with self._driver.session(database=self._database) as session:
@@ -127,6 +143,14 @@ class Neo4jGraphStore(GraphStore):
                     session.run(cypher)
                 except Exception as e:
                     logger.warning(f"Schema initialization warning: {e}")
+
+            # Vector indexes may fail on older Neo4j versions
+            for cypher in vector_indexes:
+                try:
+                    session.run(cypher)
+                    logger.info("Vector index created successfully")
+                except Exception as e:
+                    logger.warning(f"Vector index creation skipped (may require Neo4j 5.11+): {e}")
 
         logger.info("Schema initialized")
 
@@ -794,7 +818,7 @@ class Neo4jGraphStore(GraphStore):
         label: str,
         property_key: str,
         index_name: Optional[str] = None,
-        vector_dimensions: int = 768,
+        vector_dimensions: int = 1024,
         metric_type: str = "cosine",
         hnsw_m: Optional[int] = None,
         hnsw_ef_construction: Optional[int] = None,
@@ -845,6 +869,47 @@ class Neo4jGraphStore(GraphStore):
         self._text_indexes.pop(index_name, None)
         self._vector_indexes.pop(index_name, None)
         logger.info(f"Deleted index: {index_name}")
+
+    def recreate_vector_indexes(self) -> None:
+        """Drop and recreate all vector indexes with current dimension settings.
+
+        Use this when changing vector dimensions (e.g., from 768 to 1024).
+        This is a destructive operation - existing embeddings will need to be re-indexed.
+        """
+        # Vector index names used in initialize_schema
+        vector_index_names = [
+            "state_embedding_vector",
+            "cognitivephrase_embedding_vector",
+            "intentsequence_embedding_vector",
+        ]
+
+        for index_name in vector_index_names:
+            try:
+                self.delete_index(index_name)
+                logger.info(f"Dropped vector index: {index_name}")
+            except Exception as e:
+                logger.warning(f"Failed to drop index {index_name}: {e}")
+
+        # Recreate with current dimensions
+        vector_indexes = [
+            f"""CREATE VECTOR INDEX state_embedding_vector IF NOT EXISTS
+            FOR (s:State) ON s.embedding_vector
+            OPTIONS {{indexConfig: {{`vector.dimensions`: {self._vector_dimensions}}}}}""",
+            f"""CREATE VECTOR INDEX cognitivephrase_embedding_vector IF NOT EXISTS
+            FOR (p:CognitivePhrase) ON p.embedding_vector
+            OPTIONS {{indexConfig: {{`vector.dimensions`: {self._vector_dimensions}}}}}""",
+            f"""CREATE VECTOR INDEX intentsequence_embedding_vector IF NOT EXISTS
+            FOR (seq:IntentSequence) ON seq.embedding_vector
+            OPTIONS {{indexConfig: {{`vector.dimensions`: {self._vector_dimensions}}}}}""",
+        ]
+
+        with self._driver.session(database=self._database) as session:
+            for cypher in vector_indexes:
+                try:
+                    session.run(cypher)
+                    logger.info(f"Recreated vector index with {self._vector_dimensions} dimensions")
+                except Exception as e:
+                    logger.warning(f"Failed to create vector index: {e}")
 
     # ==================== Search Operations ====================
 
@@ -1172,6 +1237,34 @@ class Neo4jGraphStore(GraphStore):
         if deleted > 0:
             self._pagerank_executed = False
         logger.info(f"Bulk deleted {deleted} {label} nodes with filters {filters}")
+        return deleted
+
+    def delete_all_nodes_by_label(self, label: str) -> int:
+        """Delete ALL nodes with the given label.
+
+        WARNING: This deletes all nodes of this type. Use with caution.
+
+        Args:
+            label: Node label to delete
+
+        Returns:
+            Number of nodes deleted
+        """
+        def _work(tx):
+            result = tx.run(
+                f"""
+                MATCH (n:{label})
+                DETACH DELETE n
+                RETURN count(n) AS deleted
+                """
+            )
+            record = result.single()
+            return record["deleted"] if record else 0
+
+        deleted = self._execute_write(_work)
+        if deleted > 0:
+            self._pagerank_executed = False
+        logger.info(f"Deleted ALL {deleted} {label} nodes")
         return deleted
 
     def delete_relationships_by_filter(

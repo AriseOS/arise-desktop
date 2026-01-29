@@ -105,6 +105,21 @@ class BrowserToolkit(BaseToolkit):
             logger.debug(f"Failed to get page context: {e}")
             return ""
 
+    async def get_page_title(self) -> str:
+        """Get current page title.
+
+        Returns:
+            Page title string, or empty string if unavailable.
+        """
+        if not self._session:
+            return ""
+        try:
+            page = await self._session.get_page()
+            return await page.title()
+        except Exception as e:
+            logger.debug(f"Failed to get page title: {e}")
+            return ""
+
     async def _wait_for_page_stability(self, timeout_ms: Optional[int] = None) -> None:
         """Wait for page to become stable after an action.
 

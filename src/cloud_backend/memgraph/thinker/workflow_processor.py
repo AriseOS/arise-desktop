@@ -23,7 +23,7 @@ from urllib.parse import urlparse
 from src.cloud_backend.memgraph.memory.memory import Memory
 from src.cloud_backend.memgraph.memory.workflow_memory import WorkflowMemory
 from src.cloud_backend.memgraph.ontology.action import Action
-from src.cloud_backend.memgraph.ontology.cognitive_phrase import CognitivePhrase
+from src.cloud_backend.memgraph.ontology.cognitive_phrase import CognitivePhrase, ExecutionStep
 from src.cloud_backend.memgraph.ontology.domain import Domain, Manage
 from src.cloud_backend.memgraph.ontology.intent import Intent
 from src.cloud_backend.memgraph.ontology.intent_sequence import IntentSequence
@@ -226,7 +226,7 @@ class WorkflowProcessor:
             # Find or create State
             state, is_new = self._find_or_create_state(
                 segment=segment,
-                user_id=user_id,
+                user_id=None,  # user isolation disabled
                 session_id=session_id,
             )
             states.append(state)
@@ -244,17 +244,36 @@ class WorkflowProcessor:
             instance = self._create_page_instance(
                 segment=segment,
                 state_id=state.id,
-                user_id=user_id,
+                user_id=None,  # user isolation disabled
                 session_id=session_id,
             )
             page_instances.append(instance)
 
+        # Second pass: Create IntentSequences with navigation markers (v2)
+        # We need to know all states first to set navigation_target_state_id
+        for idx, (segment, state) in enumerate(zip(valid_segments, states)):
+            # Check if this segment leads to navigation (has a next state)
+            causes_navigation = False
+            navigation_target_state_id = None
+            
+            if idx < len(states) - 1:
+                next_state = states[idx + 1]
+                # Check if URL changed (real navigation, not same-state)
+                if state.id != next_state.id:
+                    # Check if there's a trigger operation in this segment
+                    trigger_event = self._find_transition_trigger(segment)
+                    if trigger_event:
+                        causes_navigation = True
+                        navigation_target_state_id = next_state.id
+            
             # Create IntentSequence (if has non-navigate events)
             sequence = self._create_intent_sequence(
                 segment=segment,
                 state_id=state.id,
-                user_id=user_id,
+                user_id=None,  # user isolation disabled
                 session_id=session_id,
+                causes_navigation=causes_navigation,
+                navigation_target_state_id=navigation_target_state_id,
             )
             if sequence:
                 intent_sequences.append(sequence)
@@ -268,7 +287,8 @@ class WorkflowProcessor:
         actions = self._create_actions(
             segments=valid_segments,  # Use valid_segments (same order as states)
             states=states,
-            user_id=user_id,
+            intent_sequences=intent_sequences,
+            user_id=None,  # user isolation disabled
             session_id=session_id,
         )
         print(f"  Created {len(actions)} actions\n")
@@ -277,7 +297,7 @@ class WorkflowProcessor:
         print("Stage 4: Extracting Domains and Manage edges...")
         domains, manages = self._extract_domains_and_manages(
             states=states,
-            user_id=user_id,
+            user_id=None,  # user isolation disabled
         )
         print(f"  Created {len(domains)} domains and {len(manages)} manage edges\n")
 
@@ -318,8 +338,9 @@ class WorkflowProcessor:
             cognitive_phrase = await self._create_cognitive_phrase(
                 states=states,
                 actions=actions,
+                intent_sequences=intent_sequences,
                 workflow_data=events,
-                user_id=user_id,
+                user_id=None,  # user isolation disabled
                 session_id=session_id,
             )
             if cognitive_phrase:
@@ -642,7 +663,7 @@ class WorkflowProcessor:
                 page_title=segment.page_title,
                 timestamp=segment.timestamp,
                 domain=domain,
-                user_id=user_id,
+                user_id=None,  # user isolation disabled
                 session_id=session_id,
             )
 
@@ -652,7 +673,7 @@ class WorkflowProcessor:
             page_title=segment.page_title,
             timestamp=segment.timestamp,
             domain=domain,
-            user_id=user_id,
+            user_id=None,  # user isolation disabled
             session_id=session_id,
             instances=[],
             intent_sequences=[],
@@ -681,7 +702,7 @@ class WorkflowProcessor:
             url=segment.url,
             page_title=segment.page_title,
             timestamp=segment.timestamp,
-            user_id=user_id,
+            user_id=None,  # user isolation disabled
             session_id=session_id,
         )
 
@@ -697,16 +718,21 @@ class WorkflowProcessor:
         state_id: str,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        causes_navigation: bool = False,
+        navigation_target_state_id: Optional[str] = None,
     ) -> Optional[IntentSequence]:
         """Create IntentSequence from segment events.
 
         Design decision: Don't create empty IntentSequences.
+        V2: Uses IntentSequenceManager to create independent nodes with HAS_SEQUENCE relationships.
 
         Args:
             segment: URLSegment to process.
             state_id: ID of the parent State.
             user_id: User ID.
             session_id: Session ID.
+            causes_navigation: Whether this sequence causes page navigation (v2).
+            navigation_target_state_id: Target State ID if causes_navigation (v2).
 
         Returns:
             IntentSequence object if has events, None otherwise.
@@ -734,13 +760,19 @@ class WorkflowProcessor:
         sequence = IntentSequence(
             timestamp=segment.timestamp,
             intents=intents,
-            user_id=user_id,
+            user_id=None,  # user isolation disabled
             session_id=session_id,
+            # v2 navigation markers
+            causes_navigation=causes_navigation,
+            navigation_target_state_id=navigation_target_state_id,
         )
 
-        # Add to State in memory
-        if self.memory:
-            self.memory.add_intent_sequence(state_id, sequence)
+        # V2: Use IntentSequenceManager to create independent node and relationship
+        if self.memory and self.memory.intent_sequence_manager:
+            # Create independent IntentSequence node
+            self.memory.intent_sequence_manager.create_sequence(sequence)
+            # Create HAS_SEQUENCE relationship from State to IntentSequence
+            self.memory.intent_sequence_manager.link_to_state(state_id, sequence.id)
 
         return sequence
 
@@ -782,28 +814,18 @@ class WorkflowProcessor:
             intent_type = event.get("type", "Unknown")
 
         try:
-            # New format uses 'ref' and 'role' instead of xpath and element_id
-            element_ref = event.get("ref", "")
-            element_role = event.get("role", "")
-
             intent = Intent(
                 type=intent_type,
                 timestamp=event.get("timestamp", 0),
-                # New format fields
-                element_ref=element_ref,
-                element_role=element_role,
-                # Fallback to old format fields
-                element_tag=event.get("element_tag") or event.get("tag", ""),
-                element_id=event.get("element_id") or event.get("id", ""),
-                element_class=event.get("element_class") or event.get("class", ""),
-                # Text can come from multiple places
-                text=event.get("text") or event.get("element_text", ""),
-                # Value for type/input events
-                value=event.get("value") or event.get("input_value", ""),
-                # Selector (old format used xpath)
-                selector=event.get("selector") or event.get("xpath", ""),
-                page_url=event.get("page_url") or event.get("url", ""),
-                page_title=event.get("page_title") or event.get("title", ""),
+                # Element identification (ref-based)
+                element_ref=event.get("ref", ""),
+                element_role=event.get("role", ""),
+                # Content
+                text=event.get("text", ""),
+                value=event.get("value", ""),
+                # Page information
+                page_url=event.get("url", ""),
+                page_title=event.get("title", ""),
             )
             return intent
         except Exception as e:
@@ -844,6 +866,7 @@ class WorkflowProcessor:
         self,
         segments: List[URLSegment],
         states: List[State],
+        intent_sequences: Optional[List[IntentSequence]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> List[Action]:
@@ -852,6 +875,7 @@ class WorkflowProcessor:
         Args:
             segments: List of URL segments.
             states: List of States (same order as segments).
+            intent_sequences: List of IntentSequences for trigger lookup (v2).
             user_id: User ID.
             session_id: Session ID.
 
@@ -859,6 +883,15 @@ class WorkflowProcessor:
             List of Action objects.
         """
         actions = []
+
+        # Build a map: state_id -> list of IntentSequences for that state
+        # We identify the IntentSequence that causes navigation by causes_navigation flag
+        state_to_nav_sequences: Dict[str, IntentSequence] = {}
+        if intent_sequences:
+            for seq in intent_sequences:
+                if seq.causes_navigation and seq.navigation_target_state_id:
+                    # Use navigation_target_state_id as key for lookup
+                    state_to_nav_sequences[seq.navigation_target_state_id] = seq
 
         for i in range(len(states) - 1):
             source_state = states[i]
@@ -869,6 +902,11 @@ class WorkflowProcessor:
             # Skip if same state (URL)
             if source_state.id == target_state.id:
                 continue
+
+            # Find the navigation sequence that triggered this transition (v2)
+            trigger_sequence_id = None
+            if target_state.id in state_to_nav_sequences:
+                trigger_sequence_id = state_to_nav_sequences[target_state.id].id
 
             # Find the operation that triggered this transition
             trigger_event = self._find_transition_trigger(source_segment)
@@ -885,7 +923,8 @@ class WorkflowProcessor:
                         "text": trigger_event.get("text"),
                         "role": trigger_event.get("role"),
                     },
-                    user_id=user_id,
+                    trigger_sequence_id=trigger_sequence_id,
+                    user_id=None,  # user isolation disabled
                     session_id=session_id,
                 )
             else:
@@ -896,7 +935,8 @@ class WorkflowProcessor:
                     type="auto_navigate",
                     timestamp=target_segment.timestamp,
                     trigger=None,
-                    user_id=user_id,
+                    trigger_sequence_id=trigger_sequence_id,
+                    user_id=None,  # user isolation disabled
                     session_id=session_id,
                 )
             
@@ -947,7 +987,7 @@ class WorkflowProcessor:
                     domain_name=domain_name,
                     domain_url=f"https://{domain_name}" if not domain_name.startswith("http") else domain_name,
                     domain_type="website",
-                    user_id=user_id,
+                    user_id=None,  # user isolation disabled
                 )
                 domain_map[domain_name] = domain
 
@@ -956,7 +996,7 @@ class WorkflowProcessor:
             manage = Manage(
                 domain_id=domain.id,
                 state_id=state.id,
-                user_id=user_id,
+                user_id=None,  # user isolation disabled
                 first_visit=state.timestamp,
                 last_visit=state.timestamp,
                 visit_count=1,
@@ -1309,15 +1349,19 @@ URL: {state.page_url}
         self,
         states: List[State],
         actions: List[Action],
+        intent_sequences: List[IntentSequence],
         workflow_data: List[Dict[str, Any]],
         user_id: Optional[str],
         session_id: Optional[str],
     ) -> Optional[CognitivePhrase]:
         """Create a cognitive phrase from the workflow (async).
 
+        V2: Now builds structured execution_plan with ExecutionSteps.
+
         Args:
             states: List of State objects.
             actions: List of Action objects.
+            intent_sequences: List of IntentSequence objects.
             workflow_data: Original workflow events.
             user_id: User ID.
             session_id: Session ID.
@@ -1331,16 +1375,23 @@ URL: {state.page_url}
         # Sort states by timestamp
         sorted_states = sorted(states, key=lambda s: s.timestamp)
 
-        # Build paths
+        # Build paths (kept for backward compatibility)
         state_path = [s.id for s in sorted_states]
-        action_map = {(a.source, a.target): a.type for a in actions}
+        action_map = {(a.source, a.target): a for a in actions}  # Changed to store full Action
 
         action_path = []
         for i in range(len(sorted_states) - 1):
             source_id = sorted_states[i].id
             target_id = sorted_states[i + 1].id
-            action_type = action_map.get((source_id, target_id), "navigate")
-            action_path.append(action_type)
+            action = action_map.get((source_id, target_id))
+            action_path.append(action.type if action else "navigate")
+
+        # Build execution_plan (v2)
+        execution_plan = self._build_execution_plan(
+            sorted_states=sorted_states,
+            actions=actions,
+            intent_sequences=intent_sequences,
+        )
 
         # Calculate timestamps
         start_timestamp = sorted_states[0].timestamp
@@ -1357,13 +1408,14 @@ URL: {state.page_url}
 
         phrase = CognitivePhrase(
             description=description,
-            user_id=user_id,
+            user_id=None,  # user isolation disabled
             session_id=effective_session_id,
             start_timestamp=start_timestamp,
             end_timestamp=end_timestamp,
             duration=duration,
             state_path=state_path,
             action_path=action_path,
+            execution_plan=execution_plan,  # v2: structured execution plan
             created_at=current_time,
         )
 
@@ -1376,6 +1428,89 @@ URL: {state.page_url}
                 print(f"Warning: Failed to generate phrase embedding: {e}")
 
         return phrase
+
+    def _build_execution_plan(
+        self,
+        sorted_states: List[State],
+        actions: List[Action],
+        intent_sequences: List[IntentSequence],
+    ) -> List[ExecutionStep]:
+        """Build structured ExecutionSteps from states, actions and sequences.
+
+        Each ExecutionStep represents what happens at a state:
+        - index: step number (1-based)
+        - state_id: which state/page
+        - in_page_sequence_ids: IntentSequences for in-page operations (not causing navigation)
+        - navigation_action_id: which Action leads to the next state (if any)
+        - navigation_sequence_id: IntentSequence that triggers navigation (if any)
+
+        Args:
+            sorted_states: States sorted by timestamp.
+            actions: List of Action objects.
+            intent_sequences: List of IntentSequence objects.
+
+        Returns:
+            List of ExecutionStep objects forming the execution plan.
+        """
+        execution_plan = []
+
+        # Build action lookup: source_id -> Action
+        action_by_source: Dict[str, Action] = {}
+        for action in actions:
+            action_by_source[action.source] = action
+
+        # Build IntentSequence lookup
+        # Separate navigation sequences from in-page sequences
+        # state_id -> in_page_sequence_ids (non-navigation)
+        # state_id -> navigation_sequence_id (causes navigation)
+        state_to_in_page_sequences: Dict[str, List[str]] = {s.id: [] for s in sorted_states}
+        state_to_navigation_sequence: Dict[str, str] = {}
+
+        for seq in intent_sequences:
+            if seq.causes_navigation and seq.navigation_target_state_id:
+                # This sequence causes navigation - find its source state
+                for action in actions:
+                    if action.target == seq.navigation_target_state_id:
+                        source_state_id = action.source
+                        state_to_navigation_sequence[source_state_id] = seq.id
+                        break
+            else:
+                # Non-navigation sequence - find the state it belongs to by timestamp
+                best_state_id = None
+                best_diff = float('inf')
+                for state in sorted_states:
+                    diff = abs(seq.timestamp - state.timestamp)
+                    if diff < best_diff:
+                        best_diff = diff
+                        best_state_id = state.id
+                if best_state_id and best_state_id in state_to_in_page_sequences:
+                    state_to_in_page_sequences[best_state_id].append(seq.id)
+
+        # Build ExecutionSteps
+        for i, state in enumerate(sorted_states):
+            # Get in-page IntentSequences for this state
+            in_page_sequence_ids = state_to_in_page_sequences.get(state.id, [])
+
+            # Get navigation sequence (if any)
+            navigation_sequence_id = state_to_navigation_sequence.get(state.id)
+
+            # Get navigation action (if this is not the last state)
+            navigation_action_id = None
+            if i < len(sorted_states) - 1:
+                action = action_by_source.get(state.id)
+                if action:
+                    navigation_action_id = action.id
+
+            step = ExecutionStep(
+                index=i + 1,  # 1-based index
+                state_id=state.id,
+                in_page_sequence_ids=in_page_sequence_ids,
+                navigation_action_id=navigation_action_id,
+                navigation_sequence_id=navigation_sequence_id,
+            )
+            execution_plan.append(step)
+
+        return execution_plan
 
     async def _generate_workflow_description(
         self, workflow_data: List[Dict[str, Any]]

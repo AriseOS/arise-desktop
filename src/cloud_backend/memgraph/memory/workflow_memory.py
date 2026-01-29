@@ -6,13 +6,14 @@ graph-based storage.
 """
 
 import math
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from src.cloud_backend.memgraph.graphstore.graph_store import GraphStore
 from src.cloud_backend.memgraph.memory.memory import (
     ActionManager,
     CognitivePhraseManager,
     DomainManager,
+    IntentSequenceManager,
     ManageManager,
     Memory,
     StateManager,
@@ -514,30 +515,43 @@ class GraphStateManager(StateManager):
             return False
 
     def search_states_by_embedding(
-        self, query_vector: List[float], top_k: int = 10, user_id: Optional[str] = None
+        self, query_vector: List[float], top_k: int = 10
     ) -> List[tuple[State, float]]:
         """Search states by embedding vector similarity.
 
         Args:
             query_vector: Query embedding vector.
             top_k: Number of top results to return.
-            user_id: Filter by user ID (optional).
 
         Returns:
             List of tuples (State, similarity_score).
         """
-        # Use fallback in-memory search which supports user_id filtering
-        return self._fallback_embedding_search(query_vector, top_k, user_id)
+        # Try Neo4j native vector search first
+        try:
+            results = self.graph_store.vector_search(
+                label="State",
+                property_key="embedding_vector",
+                query_text_or_vector=query_vector,
+                topk=top_k,
+            )
+            states = []
+            for node, score in results:
+                state = State.from_dict(node)
+                states.append((state, score))
+            return states
+        except Exception as e:
+            # Fallback to in-memory search if vector index not available
+            print(f"Neo4j vector search failed, using fallback: {e}")
+            return self._fallback_embedding_search(query_vector, top_k)
 
     def _fallback_embedding_search(
-        self, query_vector: List[float], top_k: int, user_id: Optional[str] = None
+        self, query_vector: List[float], top_k: int
     ) -> List[tuple[State, float]]:
         """Fallback embedding search using in-memory cosine similarity.
 
         Args:
             query_vector: Query embedding vector.
             top_k: Number of top results to return.
-            user_id: Filter by user ID (optional).
 
         Returns:
             List of tuples (State, similarity_score).
@@ -562,10 +576,6 @@ class GraphStateManager(StateManager):
         # Calculate similarities
         similarities = []
         for state in all_states:
-            # Filter by user_id if provided
-            if user_id and state.user_id != user_id:
-                continue
-
             if state.embedding_vector:
                 similarity = cosine_similarity(query_vector, state.embedding_vector)
                 similarities.append((state, similarity))
@@ -754,22 +764,24 @@ class GraphStateManager(StateManager):
             # Collect all intents with their parent states and calculate similarities
             similarities = []
             for state in all_states:
-                if not state.intents:
+                if not state.intent_sequences:
                     continue
 
-                for intent_data in state.intents:
-                    # Convert intent data to Intent object if needed
-                    if isinstance(intent_data, dict):
-                        intent = Intent.from_dict(intent_data)
-                    elif isinstance(intent_data, Intent):
-                        intent = intent_data
-                    else:
-                        continue
+                for seq in state.intent_sequences:
+                    seq_intents = seq.intents if hasattr(seq, "intents") else seq.get("intents", []) if isinstance(seq, dict) else []
+                    for intent_data in seq_intents:
+                        # Convert intent data to Intent object if needed
+                        if isinstance(intent_data, dict):
+                            intent = Intent.from_dict(intent_data)
+                        elif isinstance(intent_data, Intent):
+                            intent = intent_data
+                        else:
+                            continue
 
-                    # Calculate similarity if intent has embedding
-                    if intent.embedding_vector:
-                        similarity = cosine_similarity(query_vector, intent.embedding_vector)
-                        similarities.append((intent, state, similarity))
+                        # Calculate similarity if intent has embedding
+                        if intent.embedding_vector:
+                            similarity = cosine_similarity(query_vector, intent.embedding_vector)
+                            similarities.append((intent, state, similarity))
 
             # Sort by similarity (descending)
             similarities.sort(key=lambda x: x[2], reverse=True)
@@ -1010,6 +1022,90 @@ class GraphActionManager(ActionManager):
         except Exception as e:
             print(f"Error batch creating actions: {e}")
             return False
+
+    def find_shortest_path(
+        self,
+        source_id: str,
+        target_id: str,
+        state_manager: Optional["GraphStateManager"] = None,
+    ) -> Optional[Tuple[List["State"], List[Action]]]:
+        """Find shortest path between two states using BFS.
+
+        Args:
+            source_id: Source state ID.
+            target_id: Target state ID.
+            state_manager: Optional StateManager to retrieve State objects.
+
+        Returns:
+            Tuple of (states, actions) representing the path if found,
+            None if no path exists.
+        """
+        from collections import deque
+
+        if source_id == target_id:
+            return ([], [])
+
+        try:
+            # BFS to find shortest path
+            visited = set()
+            # Queue: (current_state_id, path_of_state_ids, path_of_actions)
+            queue = deque([(source_id, [source_id], [])])
+            visited.add(source_id)
+
+            while queue:
+                current_id, path_ids, path_actions = queue.popleft()
+
+                # Get outgoing actions from current state
+                outgoing = self.list_outgoing_actions(current_id)
+
+                for action in outgoing:
+                    next_id = action.target
+
+                    if next_id == target_id:
+                        # Found the target - build result
+                        final_path_ids = path_ids + [next_id]
+                        final_actions = path_actions + [action]
+
+                        # Convert state IDs to State objects if state_manager provided
+                        if state_manager:
+                            states = []
+                            for state_id in final_path_ids:
+                                state = state_manager.get_state(state_id)
+                                if state:
+                                    states.append(state)
+                            return (states, final_actions)
+                        else:
+                            # Return empty states list if no state_manager
+                            return ([], final_actions)
+
+                    if next_id not in visited:
+                        visited.add(next_id)
+                        queue.append((
+                            next_id,
+                            path_ids + [next_id],
+                            path_actions + [action]
+                        ))
+
+            return None  # No path found
+        except Exception as e:
+            print(f"Error finding shortest path: {e}")
+            return None
+
+    def list_outgoing_actions(
+        self,
+        state_id: str,
+    ) -> List[Action]:
+        """List all outgoing actions from a state.
+
+        Returns all actions where the given state is the source.
+
+        Args:
+            state_id: State ID to get outgoing actions for.
+
+        Returns:
+            List of Action objects originating from the state.
+        """
+        return self.list_actions(source_id=state_id)
 
 
 class InMemoryCognitivePhraseManager(CognitivePhraseManager):
@@ -1447,6 +1543,308 @@ class GraphCognitivePhraseManager(CognitivePhraseManager):
         return [phrase for phrase, _ in similarities[:top_k]]
 
 
+class GraphIntentSequenceManager(IntentSequenceManager):
+    """GraphStore-based IntentSequence Manager (v2).
+
+    Manages IntentSequence as independent graph nodes with HAS_SEQUENCE
+    relationships to States. This enables vector search on IntentSequences.
+
+    Attributes:
+        graph_store: GraphStore instance for persistence.
+        node_label: Label for IntentSequence nodes (default: "IntentSequence").
+        rel_type: Relationship type for HAS_SEQUENCE (default: "HAS_SEQUENCE").
+    """
+
+    def __init__(self, graph_store: GraphStore):
+        """Initialize GraphIntentSequenceManager.
+
+        Args:
+            graph_store: GraphStore instance for storage operations.
+        """
+        self.graph_store = graph_store
+        self.node_label = "IntentSequence"
+        self.rel_type = "HAS_SEQUENCE"
+
+    def create_sequence(self, sequence: IntentSequence) -> bool:
+        """Create a new IntentSequence node.
+
+        Args:
+            sequence: IntentSequence object to create.
+
+        Returns:
+            True if created successfully, False otherwise.
+        """
+        try:
+            properties = sequence.to_dict()
+            self.graph_store.upsert_node(
+                label=self.node_label, properties=properties, id_key="id"
+            )
+            return True
+        except Exception as e:
+            print(f"Error creating IntentSequence: {e}")
+            return False
+
+    def get_sequence(self, sequence_id: str) -> Optional[IntentSequence]:
+        """Get an IntentSequence by ID.
+
+        Args:
+            sequence_id: Unique sequence identifier.
+
+        Returns:
+            IntentSequence object if found, None otherwise.
+        """
+        try:
+            node = self.graph_store.get_node(
+                label=self.node_label, id_value=sequence_id, id_key="id"
+            )
+            if node:
+                return IntentSequence.from_dict(node)
+            return None
+        except Exception as e:
+            print(f"Error getting IntentSequence: {e}")
+            return None
+
+    def update_sequence(self, sequence: IntentSequence) -> bool:
+        """Update an existing IntentSequence.
+
+        Args:
+            sequence: IntentSequence object with updated information.
+
+        Returns:
+            True if updated successfully, False otherwise.
+        """
+        try:
+            properties = sequence.to_dict()
+            self.graph_store.upsert_node(
+                label=self.node_label, properties=properties, id_key="id"
+            )
+            return True
+        except Exception as e:
+            print(f"Error updating IntentSequence: {e}")
+            return False
+
+    def delete_sequence(self, sequence_id: str) -> bool:
+        """Delete an IntentSequence.
+
+        Args:
+            sequence_id: Unique sequence identifier.
+
+        Returns:
+            True if deleted successfully, False otherwise.
+        """
+        try:
+            return self.graph_store.delete_node(
+                label=self.node_label, id_value=sequence_id, id_key="id"
+            )
+        except Exception as e:
+            print(f"Error deleting IntentSequence: {e}")
+            return False
+
+    def link_to_state(self, state_id: str, sequence_id: str) -> bool:
+        """Create HAS_SEQUENCE relationship from State to IntentSequence.
+
+        Args:
+            state_id: State ID (source).
+            sequence_id: IntentSequence ID (target).
+
+        Returns:
+            True if created successfully, False otherwise.
+        """
+        try:
+            self.graph_store.upsert_relationship(
+                start_node_label="State",
+                start_node_id_value=state_id,
+                end_node_label=self.node_label,
+                end_node_id_value=sequence_id,
+                rel_type=self.rel_type,
+                properties={},
+                upsert_nodes=False,
+            )
+            return True
+        except Exception as e:
+            print(f"Error linking IntentSequence to State: {e}")
+            return False
+
+    def unlink_from_state(self, state_id: str, sequence_id: str) -> bool:
+        """Remove HAS_SEQUENCE relationship.
+
+        Args:
+            state_id: State ID (source).
+            sequence_id: IntentSequence ID (target).
+
+        Returns:
+            True if removed successfully, False otherwise.
+        """
+        try:
+            return self.graph_store.delete_relationship(
+                start_node_label="State",
+                start_node_id_value=state_id,
+                end_node_label=self.node_label,
+                end_node_id_value=sequence_id,
+                rel_type=self.rel_type,
+            )
+        except Exception as e:
+            print(f"Error unlinking IntentSequence from State: {e}")
+            return False
+
+    def list_by_state(self, state_id: str) -> List[IntentSequence]:
+        """List all IntentSequences belonging to a State.
+
+        Args:
+            state_id: State ID to query.
+
+        Returns:
+            List of IntentSequence objects linked to this State.
+        """
+        try:
+            # Query HAS_SEQUENCE relationships
+            rels = self.graph_store.query_relationships(
+                start_node_label="State",
+                start_node_id_value=state_id,
+                end_node_label=self.node_label,
+                rel_type=self.rel_type,
+            )
+
+            sequences = []
+            for rel_data in rels:
+                end_node = rel_data.get("end", {})
+                if end_node:
+                    try:
+                        seq = IntentSequence.from_dict(end_node)
+                        sequences.append(seq)
+                    except Exception as e:
+                        print(f"Error parsing IntentSequence: {e}")
+                        continue
+
+            return sequences
+        except Exception as e:
+            print(f"Error listing IntentSequences by State: {e}")
+            return []
+
+    def search_by_embedding(
+        self,
+        query_vector: List[float],
+        state_id: Optional[str] = None,
+        top_k: int = 10
+    ) -> List[Tuple[IntentSequence, float]]:
+        """Search IntentSequences by embedding vector similarity.
+
+        Args:
+            query_vector: Query embedding vector.
+            state_id: Optional filter to specific State.
+            top_k: Number of top results to return.
+
+        Returns:
+            List of (IntentSequence, similarity_score) tuples.
+        """
+        try:
+            # Try GraphStore vector search first
+            results = self.graph_store.vector_search(
+                label=self.node_label,
+                property_key="embedding_vector",
+                query_text_or_vector=query_vector,
+                topk=top_k * 2 if state_id else top_k,  # Get more if filtering
+            )
+
+            sequences_with_scores = []
+            for node, score in results:
+                try:
+                    seq = IntentSequence.from_dict(node)
+
+                    # Filter by state_id if provided (check via relationship)
+                    if state_id:
+                        state_seqs = self.list_by_state(state_id)
+                        state_seq_ids = {s.id for s in state_seqs}
+                        if seq.id not in state_seq_ids:
+                            continue
+
+                    sequences_with_scores.append((seq, score))
+
+                    if len(sequences_with_scores) >= top_k:
+                        break
+                except Exception as e:
+                    print(f"Error parsing IntentSequence from search: {e}")
+                    continue
+
+            return sequences_with_scores[:top_k]
+        except Exception as e:
+            # Fallback to manual search
+            print(f"Vector search failed, using fallback: {e}")
+            return self._search_by_embedding_fallback(query_vector, state_id, top_k)
+
+    def _search_by_embedding_fallback(
+        self,
+        query_vector: List[float],
+        state_id: Optional[str] = None,
+        top_k: int = 10
+    ) -> List[Tuple[IntentSequence, float]]:
+        """Fallback embedding search using manual cosine similarity.
+
+        Args:
+            query_vector: Query embedding vector.
+            state_id: Optional filter to specific State.
+            top_k: Number of top results to return.
+
+        Returns:
+            List of (IntentSequence, similarity_score) tuples.
+        """
+
+        def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
+            """Calculate cosine similarity between two vectors."""
+            if not vec1 or not vec2 or len(vec1) != len(vec2):
+                return 0.0
+
+            dot_product = sum(a * b for a, b in zip(vec1, vec2))
+            norm1 = math.sqrt(sum(a * a for a in vec1))
+            norm2 = math.sqrt(sum(b * b for b in vec2))
+
+            if norm1 == 0 or norm2 == 0:
+                return 0.0
+
+            return dot_product / (norm1 * norm2)
+
+        # Get sequences to search
+        if state_id:
+            all_sequences = self.list_by_state(state_id)
+        else:
+            # Get all sequences (query all nodes)
+            try:
+                nodes = self.graph_store.query_nodes(label=self.node_label)
+                all_sequences = [IntentSequence.from_dict(n) for n in nodes]
+            except Exception:
+                all_sequences = []
+
+        # Calculate similarities
+        similarities = []
+        for seq in all_sequences:
+            if seq.embedding_vector:
+                similarity = cosine_similarity(query_vector, seq.embedding_vector)
+                similarities.append((seq, similarity))
+
+        # Sort by similarity (descending)
+        similarities.sort(key=lambda x: x[1], reverse=True)
+
+        return similarities[:top_k]
+
+    def batch_create_sequences(self, sequences: List[IntentSequence]) -> bool:
+        """Batch create multiple IntentSequences.
+
+        Args:
+            sequences: List of IntentSequence objects to create.
+
+        Returns:
+            True if all created successfully, False otherwise.
+        """
+        try:
+            for seq in sequences:
+                if not self.create_sequence(seq):
+                    return False
+            return True
+        except Exception as e:
+            print(f"Error batch creating IntentSequences: {e}")
+            return False
+
+
 class WorkflowMemory(Memory):
     """Workflow Memory implementation.
 
@@ -1483,6 +1881,7 @@ class WorkflowMemory(Memory):
         state_manager = GraphStateManager(graph_store)
         action_manager = GraphActionManager(graph_store)
         manage_manager = GraphManageManager(graph_store)
+        intent_sequence_manager = GraphIntentSequenceManager(graph_store)
 
         if phrase_manager is None:
             if use_graph_phrase_manager:
@@ -1495,7 +1894,8 @@ class WorkflowMemory(Memory):
             state_manager,
             action_manager,
             manage_manager,
-            phrase_manager
+            phrase_manager,
+            intent_sequence_manager,
         )
         self.graph_store = graph_store
 
@@ -1837,36 +2237,25 @@ class WorkflowMemory(Memory):
         state_id: str,
         sequence: IntentSequence,
     ) -> bool:
-        """Add an IntentSequence to an existing State with deduplication.
+        """DEPRECATED: Use intent_sequence_manager instead.
 
-        IntentSequences are deduplicated by description - if a sequence
-        with the same description already exists, it won't be added.
+        V2 uses independent IntentSequence nodes with HAS_SEQUENCE relationships.
+        Use:
+            self.intent_sequence_manager.create_sequence(sequence)
+            self.intent_sequence_manager.link_to_state(state_id, sequence.id)
 
-        Args:
-            state_id: ID of the State to add sequence to.
-            sequence: IntentSequence to add.
-
-        Returns:
-            True if added (or duplicate found), False on error.
+        This method is kept for backward compatibility but delegates to V2 implementation.
         """
-        try:
-            # Get existing state
-            state = self.get_state(state_id)
-            if not state:
-                print(f"Error: State {state_id} not found")
+        if self.intent_sequence_manager:
+            try:
+                self.intent_sequence_manager.create_sequence(sequence)
+                self.intent_sequence_manager.link_to_state(state_id, sequence.id)
+                return True
+            except Exception as e:
+                print(f"Error adding intent sequence via V2 manager: {e}")
                 return False
-
-            # Add sequence to state (handles deduplication)
-            added = state.add_intent_sequence(sequence)
-
-            if added:
-                # Update state in graph
-                return self.state_manager.update_state(state)
-
-            # Duplicate found - still return True (not an error)
-            return True
-        except Exception as e:
-            print(f"Error adding intent sequence: {e}")
+        else:
+            print("Warning: IntentSequenceManager not available")
             return False
 
     def search_intent_sequences_by_embedding(

@@ -57,10 +57,16 @@ Ami/
 - LLM Providers: `src/common/llm/`
 - Desktop App: `src/clients/desktop_app/`
 
+## Environment
+
+- Python dependencies use **venv**: activate with `source .venv/bin/activate` before running any Python commands
+- Client logs: `~/.ami/logs/app.log`
+- Server logs: `~/ami-server/logs/`
+
 ## Development Commands
 
 ```bash
-# Python backend
+# Python backend (ensure venv is activated)
 pip install -r requirements.txt
 uvicorn src.cloud_backend.main:app --reload
 

@@ -32,7 +32,7 @@ class Neo4jConfig:
         default_factory=lambda: float(os.getenv("NEO4J_CONNECTION_TIMEOUT", "30.0"))
     )
     vector_dimensions: int = field(
-        default_factory=lambda: int(os.getenv("NEO4J_VECTOR_DIMENSIONS", "768"))
+        default_factory=lambda: int(os.getenv("NEO4J_VECTOR_DIMENSIONS", "1024"))
     )
 
     @classmethod

@@ -1638,7 +1638,6 @@ async def query_memory(
             results = workflow_memory.state_manager.search_states_by_embedding(
                 query_vector=tq_embedding,
                 top_k=top_k,
-                user_id=user_id,
             )
             for state, score in results:
                 if score >= min_score and (not domain or state.domain == domain):
@@ -1661,7 +1660,6 @@ async def query_memory(
             results = workflow_memory.state_manager.search_states_by_embedding(
                 query_vector=kq_embedding,
                 top_k=3,
-                user_id=user_id,
             )
             matched_states = []
             for state, score in results:
@@ -1992,6 +1990,144 @@ async def query_memory(
         raise HTTPException(500, f"Memory query failed: {str(e)}")
 
 
+@app.post("/api/v1/memory/v2/query")
+async def query_memory_v2(
+    data: dict,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """
+    Unified Memory Query (V2) - Task, Navigation, and Action queries
+
+    This is the V2 unified query interface that supports three query types:
+    1. **Task Query**: Complete workflow retrieval (default)
+    2. **Navigation Query**: Find path between two states
+    3. **Action Query**: Find available actions in current state
+
+    The query type is automatically inferred from parameters:
+    - If start_state and end_state provided → navigation query
+    - If current_state provided → action query
+    - Otherwise → task query
+
+    Headers:
+        X-Ami-API-Key: User's API key (required)
+
+    Body:
+        {
+            "target": "Query description or task",
+            "current_state": "state_id",      // For action query
+            "start_state": "start description or id",  // For navigation
+            "end_state": "end description or id",      // For navigation
+            "as_type": "task|navigation|action",  // Explicit type override
+            "user_id": "user123",             // Optional
+            "top_k": 10                       // Optional
+        }
+
+    Returns:
+        {
+            "success": true,
+            "query_type": "task|navigation|action",
+            "states": [...],           // For task/navigation
+            "actions": [...],          // For task/navigation
+            "intent_sequences": [...], // For action queries
+            "cognitive_phrase": {...}, // For task queries (if found)
+            "execution_plan": [...],   // For task queries (if found)
+            "metadata": {...}
+        }
+
+    Examples:
+        Task query: {"target": "在 Product Hunt 查看团队信息"}
+        Navigation query: {"start_state": "首页", "end_state": "团队页"}
+        Action query: {"target": "查看团队", "current_state": "state_123"}
+        Explore query: {"target": "", "current_state": "state_123"}
+    """
+    logger.info(f"🔍 Memory V2 query request: data={data}")
+
+    if workflow_memory is None:
+        raise HTTPException(503, "Memory service not initialized")
+
+    if not x_ami_api_key:
+        raise HTTPException(400, "Missing X-Ami-API-Key header")
+
+    target = data.get("target", "")
+    current_state = data.get("current_state")
+    start_state = data.get("start_state")
+    end_state = data.get("end_state")
+    as_type = data.get("as_type")
+    user_id = data.get("user_id")
+    top_k = data.get("top_k", 10)
+
+    try:
+        # Get Reasoner instance with user's API key
+        user_reasoner = await _get_reasoner_for_user(x_ami_api_key)
+
+        # Call unified query
+        result = await user_reasoner.query(
+            target=target,
+            current_state=current_state,
+            start_state=start_state,
+            end_state=end_state,
+            as_type=as_type,
+            top_k=top_k,
+        )
+
+        # Convert to API response format
+        response = {
+            "success": result.success,
+            "query_type": result.query_type,
+            "metadata": result.metadata,
+        }
+
+        # Add type-specific fields
+        if result.query_type == "task":
+            response["states"] = [s.to_dict() if hasattr(s, 'to_dict') else s for s in result.states]
+            response["actions"] = [a.to_dict() if hasattr(a, 'to_dict') else a for a in result.actions]
+            if result.cognitive_phrase:
+                response["cognitive_phrase"] = result.cognitive_phrase.to_dict() if hasattr(result.cognitive_phrase, 'to_dict') else result.cognitive_phrase
+            if result.execution_plan:
+                response["execution_plan"] = [
+                    step.model_dump() if hasattr(step, 'model_dump') else step
+                    for step in result.execution_plan
+                ]
+            if result.subtasks:
+                response["subtasks"] = [
+                    {
+                        "task_id": st.task_id,
+                        "target": st.target,
+                        "found": st.found,
+                        "states": [s.to_dict() if hasattr(s, 'to_dict') else s for s in st.states],
+                        "actions": [a.to_dict() if hasattr(a, 'to_dict') else a for a in st.actions],
+                    }
+                    for st in result.subtasks
+                ]
+
+        elif result.query_type == "navigation":
+            response["states"] = [s.to_dict() if hasattr(s, 'to_dict') else s for s in result.states]
+            response["actions"] = [a.to_dict() if hasattr(a, 'to_dict') else a for a in result.actions]
+
+        elif result.query_type == "action":
+            response["intent_sequences"] = [
+                seq.to_dict() if hasattr(seq, 'to_dict') else seq
+                for seq in result.intent_sequences
+            ]
+            # Also include outgoing actions for exploration
+            if result.actions:
+                response["outgoing_actions"] = [
+                    a.to_dict() if hasattr(a, 'to_dict') else a
+                    for a in result.actions
+                ]
+
+        logger.info(f"✅ Memory V2 query completed: type={result.query_type}, success={result.success}")
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        logger.error(f"❌ Memory V2 query failed: {e}\n{error_trace}")
+        raise HTTPException(500, f"Memory V2 query failed: {str(e)}")
+
+
 @app.get("/api/v1/memory/stats")
 async def get_memory_stats(
     user_id: str,
@@ -2077,20 +2213,23 @@ async def get_memory_stats(
 
 @app.delete("/api/v1/memory")
 async def clear_memory(
-    user_id: str,
+    user_id: Optional[str] = None,
     x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
 ):
     """
-    Clear User's Workflow Memory
+    Clear Workflow Memory
 
-    This endpoint deletes all States, Actions, Domains, Manage edges, and
-    CognitivePhrases from the user's workflow memory. This operation is irreversible.
+    This endpoint deletes all States, Actions, Domains, Manage edges,
+    IntentSequences, and CognitivePhrases from workflow memory.
+    This operation is irreversible.
+
+    Note: user_id is currently ignored (user isolation disabled).
 
     Headers:
         X-Ami-API-Key: User's API key (optional)
 
     Query Parameters:
-        user_id: User identifier (required)
+        user_id: User identifier (optional, currently ignored)
 
     Returns:
         {
@@ -2098,46 +2237,41 @@ async def clear_memory(
             "deleted_states": 10,
             "deleted_actions": 8,
             "deleted_domains": 2,
-            "deleted_phrases": 3
+            "deleted_phrases": 3,
+            "deleted_sequences": 5
         }
 
     Errors:
-        400: Missing user_id
         500: Failed to clear memory
     """
-    if not user_id:
-        raise HTTPException(400, "Missing user_id")
-
     try:
         # Check if GraphStore supports bulk deletion (Neo4j)
-        # TODO: For very large datasets, this single-query approach may still be slow.
-        # Consider using APOC batched deletion or chunked deletion in the future.
         graph_store = workflow_memory.graph_store
-        has_bulk_delete = hasattr(graph_store, 'delete_nodes_by_filter')
+        has_delete_all = hasattr(graph_store, 'delete_all_nodes_by_label')
 
-        if has_bulk_delete:
-            # Use efficient bulk deletion (single Cypher query per label)
-            filters = {"user_id": user_id}
-
+        if has_delete_all:
+            # Use efficient bulk deletion - delete ALL nodes
             # Delete all nodes with DETACH DELETE (removes relationships automatically)
-            states_count = graph_store.delete_nodes_by_filter("State", filters)
-            domains_count = graph_store.delete_nodes_by_filter("Domain", filters)
-            phrases_count = graph_store.delete_nodes_by_filter("CognitivePhrase", filters)
+            states_count = graph_store.delete_all_nodes_by_label("State")
+            domains_count = graph_store.delete_all_nodes_by_label("Domain")
+            phrases_count = graph_store.delete_all_nodes_by_label("CognitivePhrase")
+            sequences_count = graph_store.delete_all_nodes_by_label("IntentSequence")
 
-            # Actions don't have user_id directly, they were deleted via DETACH DELETE on States
-            actions_count = 0  # Already deleted with states
+            # Actions are edges, deleted via DETACH DELETE on States
+            actions_count = 0
 
         else:
             # Fallback: one-by-one deletion (for NetworkX or other backends)
-            all_states = workflow_memory.state_manager.list_states(user_id=user_id)
-            all_actions = workflow_memory.action_manager.list_actions(user_id=user_id)
-            all_domains = workflow_memory.domain_manager.list_domains(user_id=user_id)
-            all_phrases = workflow_memory.phrase_manager.list_phrases(user_id=user_id)
+            all_states = workflow_memory.state_manager.list_states()
+            all_actions = workflow_memory.action_manager.list_actions()
+            all_domains = workflow_memory.domain_manager.list_domains()
+            all_phrases = workflow_memory.phrase_manager.list_phrases()
 
             states_count = len(all_states)
             actions_count = len(all_actions)
             domains_count = len(all_domains)
             phrases_count = len(all_phrases)
+            sequences_count = 0
 
             for action in all_actions:
                 workflow_memory.delete_action(action.source, action.target)
@@ -2148,12 +2282,13 @@ async def clear_memory(
             for phrase in all_phrases:
                 workflow_memory.phrase_manager.delete_phrase(phrase.id)
 
-        # Clear URL index for user
+        # Clear URL index
         workflow_memory.url_index.clear()
 
-        logger.info(f"✅ Memory cleared for user {user_id}: "
+        logger.info(f"✅ Memory cleared: "
                    f"{states_count} states, {actions_count} actions, "
-                   f"{domains_count} domains, {phrases_count} phrases")
+                   f"{domains_count} domains, {phrases_count} phrases, "
+                   f"{sequences_count} sequences")
 
         return {
             "success": True,
@@ -2161,6 +2296,7 @@ async def clear_memory(
             "deleted_actions": actions_count,
             "deleted_domains": domains_count,
             "deleted_phrases": phrases_count,
+            "deleted_sequences": sequences_count,
         }
 
     except Exception as e:
@@ -2274,6 +2410,7 @@ async def _get_reasoner_for_user(x_ami_api_key: str):
         Reasoner instance
     """
     from src.cloud_backend.memgraph.reasoner.reasoner import Reasoner
+    from src.cloud_backend.memgraph.services.embedding_service import EmbeddingService
     from src.common.llm.anthropic_provider import AnthropicProvider
 
     # Create LLM provider with user's API key
@@ -2283,10 +2420,11 @@ async def _get_reasoner_for_user(x_ami_api_key: str):
         base_url=config_service.get("llm.proxy_url", "https://api.ariseos.com/api")
     )
 
-    # Create Reasoner with memory and LLM provider
+    # Create Reasoner with memory, LLM provider, and embedding service
     reasoner = Reasoner(
         memory=workflow_memory,
         llm_provider=llm_provider,
+        embedding_service=EmbeddingService,
         max_depth=3
     )
 

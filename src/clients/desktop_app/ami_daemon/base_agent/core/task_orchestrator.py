@@ -491,7 +491,7 @@ class TaskOrchestrator:
         """
         # Import here to avoid circular dependency
         from ..tools.toolkits.memory_toolkit import (
-            CognitivePhrase, Path, MemoryToolkit
+            CognitivePhrase, MemoryToolkit
         )
 
         # === Case 1: CognitivePhrase exists - use as primary guide ===
@@ -692,7 +692,7 @@ class TaskOrchestrator:
         if cognitive_phrase:
             return MemoryToolkit.format_cognitive_phrase(cognitive_phrase)
         elif path:
-            return MemoryToolkit.format_path(path)
+            return MemoryToolkit.format_navigation_path(path.states, path.actions)
         else:
             return "No workflow guidance available from memory. Decompose based on logical steps."
 

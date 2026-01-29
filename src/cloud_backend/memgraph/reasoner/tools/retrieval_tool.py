@@ -97,9 +97,11 @@ class RetrievalTool(TaskTool):
         if self.embedding_service:
             try:
                 query_embedding = self.embedding_service.encode(target)
-                return self.memory.state_manager.search_states_by_embedding(
+                results = self.memory.state_manager.search_states_by_embedding(
                     query_embedding, top_k=top_k
                 )
+                # search_states_by_embedding returns List[tuple[State, float]]
+                return [state for state, _score in results] if results else []
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 print(f"Embedding search failed: {exc}")
 

@@ -180,6 +180,19 @@ class EmbeddingService:
             return None
 
     @classmethod
+    def encode(cls, text: str, **kwargs: Any) -> Optional[List[float]]:
+        """Alias for embed() - for compatibility with Reasoner interface.
+
+        Args:
+            text: Input text to embed.
+            **kwargs: Additional parameters for the embedding model.
+
+        Returns:
+            Embedding vector as a list of floats, or None if unavailable.
+        """
+        return cls.embed(text, **kwargs)
+
+    @classmethod
     def embed_batch(cls, texts: List[str], **kwargs: Any) -> Optional[List[List[float]]]:
         """Generate embeddings for multiple texts.
 
