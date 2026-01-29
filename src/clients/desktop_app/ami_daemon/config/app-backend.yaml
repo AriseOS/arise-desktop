@@ -43,7 +43,7 @@ cloud:
   # System proxy settings (e.g., Clash modifying macOS preferences) are ignored
 
 logging:
-  level: INFO
+  level: DEBUG
   # Log directory (app.log and error.log will be created here)
   dir: ${storage.base_path}/logs
   # Rotation settings

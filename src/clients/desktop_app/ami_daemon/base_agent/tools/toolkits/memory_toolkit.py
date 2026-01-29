@@ -11,12 +11,15 @@ Design principle: Memory is a tool, Agent is the decision maker.
 
 import logging
 import re
+from datetime import datetime
+from pathlib import Path as FsPath
 from urllib.parse import urlsplit, urlunsplit
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
 from .base_toolkit import BaseToolkit, FunctionTool
+from ...workspace import get_current_manager
 
 logger = logging.getLogger(__name__)
 
@@ -444,6 +447,225 @@ class MemoryToolkit(BaseToolkit):
             f"MemoryToolkit initialized (user_id={user_id}, "
             f"api_base_url={memory_api_base_url})"
         )
+
+    def _write_query_path_report(self, task: str, result: Dict[str, Any]) -> Optional[str]:
+        def _clean_inline(value: Any) -> str:
+            if value is None:
+                return ""
+            text = str(value).replace("\r", " ")
+            text = " ".join(text.splitlines())
+            return text.strip()
+
+        def _format_state_line(state: Dict[str, Any]) -> str:
+            desc = _clean_inline(state.get("description") or state.get("page_title") or state.get("page_url"))
+            url = _clean_inline(state.get("page_url"))
+            state_id = _clean_inline(state.get("id"))
+            parts = [p for p in [desc, url] if p]
+            if state_id:
+                parts.append(f"id={state_id}")
+            return " | ".join(parts) if parts else "N/A"
+
+        def _to_float(value: Any) -> float:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return 0.0
+
+        def _to_int(value: Any) -> int:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return 0
+
+        manager = get_current_manager()
+        task_id = "unknown"
+        project_id = None
+        output_dir: Optional[FsPath] = None
+
+        if manager:
+            output_dir = FsPath(manager.output_dir)
+            task_id = getattr(manager, "task_id", task_id)
+            project_id = getattr(manager, "project_id", None)
+        else:
+            task_state = self.get_task_state()
+            if task_state and hasattr(task_state, "dir_manager"):
+                output_dir = FsPath(task_state.dir_manager.output_dir)
+                task_id = getattr(task_state, "task_id", task_id)
+                project_id = getattr(task_state, "project_id", None)
+
+        if output_dir is None:
+            output_dir = FsPath.cwd()
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        timestamp = datetime.now()
+        filename = f"query_path_{timestamp.strftime('%Y%m%d_%H%M%S')}_{task_id}.txt"
+        file_path = output_dir / filename
+
+        decomposed = result.get("decomposed") or {}
+        target_query = decomposed.get("target_query", result.get("query", ""))
+        key_queries = decomposed.get("key_queries") or []
+
+        candidate_states = result.get("candidate_states") or {}
+        target_candidates = candidate_states.get("target_states") or []
+        key_candidates_by_type = candidate_states.get("key_states_by_type") or {}
+
+        score_weights = result.get("score_weights") or {"target_weight": 1.0, "key_weight": 0.3}
+        score_formula = result.get(
+            "score_formula",
+            "score = has_target * target_weight * target_score + key_type_coverage * key_weight",
+        )
+
+        lines: List[str] = []
+        lines.append("=== Memory Query Path Report ===")
+        lines.append(f"Time: {timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
+        lines.append(f"Task: {_clean_inline(task)}")
+        lines.append(f"Query: {_clean_inline(result.get('query', task))}")
+        lines.append(f"User ID: {_clean_inline(self._user_id)}")
+        lines.append(f"Task ID: {_clean_inline(task_id)}")
+        if project_id:
+            lines.append(f"Project ID: {_clean_inline(project_id)}")
+        lines.append(f"API Base URL: {_clean_inline(self._memory_api_base_url)}")
+        lines.append("")
+
+        lines.append("[Decomposed Query]")
+        lines.append(f"target_query: {_clean_inline(target_query)}")
+        if key_queries:
+            lines.append("key_queries:")
+            for idx, kq in enumerate(key_queries, 1):
+                lines.append(f"  {idx}. {_clean_inline(kq)}")
+        else:
+            lines.append("key_queries: (none)")
+        lines.append("")
+
+        lines.append("[Candidate Target States]")
+        if target_candidates:
+            for item in target_candidates:
+                score = _to_float(item.get("similarity_score"))
+                state = item.get("state") or {}
+                lines.append(f"- ({score:.4f}) {_format_state_line(state)}")
+        else:
+            lines.append("(none)")
+        lines.append("")
+
+        lines.append("[Candidate Key States]")
+        if key_candidates_by_type:
+            for kq, items in key_candidates_by_type.items():
+                lines.append(f"- key_query: {_clean_inline(kq)}")
+                for item in items or []:
+                    score = _to_float(item.get("similarity_score"))
+                    state = item.get("state") or {}
+                    lines.append(f"  - ({score:.4f}) {_format_state_line(state)}")
+        else:
+            lines.append("(none)")
+        lines.append("")
+
+        lines.append("[Score Weights]")
+        lines.append(f"target_weight: {_to_float(score_weights.get('target_weight')):.4f}")
+        lines.append(f"key_weight: {_to_float(score_weights.get('key_weight')):.4f}")
+        lines.append(f"formula: {_clean_inline(score_formula)}")
+        lines.append("")
+
+        paths = result.get("paths") or []
+        paths_sorted = sorted(paths, key=lambda p: _to_float(p.get("score")), reverse=True)
+
+        lines.append("[Paths] (sorted by score desc)")
+        if not paths_sorted:
+            lines.append("(none)")
+        for idx, path in enumerate(paths_sorted, 1):
+            score = _to_float(path.get("score"))
+            path_length = _to_int(path.get("path_length"))
+            has_target = _to_float(path.get("has_target"))
+            target_score = _to_float(path.get("target_score"))
+            key_types_hit = _to_int(path.get("key_types_hit"))
+            key_types_total = _to_int(path.get("key_types_total"))
+            key_coverage = _to_float(path.get("key_type_coverage"))
+            target_weight = _to_float(score_weights.get("target_weight"))
+            key_weight = _to_float(score_weights.get("key_weight"))
+            target_component = has_target * target_weight * target_score
+            key_component = key_coverage * key_weight
+
+            lines.append(
+                f"{idx}) score={score:.4f} | length={path_length} | "
+                f"has_target={int(has_target)} | target_score={target_score:.4f} | "
+                f"key_coverage={key_coverage:.4f} ({key_types_hit}/{key_types_total})"
+            )
+            lines.append(
+                f"   score_components: target={target_component:.4f} | key={key_component:.4f} | total={score:.4f}"
+            )
+            if path.get("description"):
+                lines.append(f"   description: {_clean_inline(path.get('description'))}")
+            if path.get("start_url"):
+                lines.append(f"   start_url: {_clean_inline(path.get('start_url'))}")
+
+            steps = path.get("steps") or []
+            lines.append("   path_chain:")
+            if steps:
+                for step_idx, step in enumerate(steps, 1):
+                    state = step.get("state") or {}
+                    lines.append(f"     {step_idx}. {_format_state_line(state)}")
+            else:
+                lines.append("     (none)")
+
+            lines.append("   steps:")
+            if steps:
+                for step_idx, step in enumerate(steps, 1):
+                    state = step.get("state") or {}
+                    action = step.get("action") or {}
+                    intent_seq = step.get("intent_sequence") or {}
+
+                    lines.append(f"     step {step_idx}:")
+                    lines.append(f"       state: {_format_state_line(state)}")
+
+                    if action:
+                        action_desc = _clean_inline(action.get("description"))
+                        action_type = _clean_inline(action.get("type"))
+                        action_line = action_desc or "N/A"
+                        if action_type:
+                            action_line += f" | type={action_type}"
+                        lines.append(f"       action: {action_line}")
+
+                        trigger = action.get("trigger_intent") or {}
+                        if trigger:
+                            trig_text = _clean_inline(trigger.get("text"))
+                            trig_selector = _clean_inline(trigger.get("css_selector") or trigger.get("xpath"))
+                            trig_desc = _clean_inline(trigger.get("description"))
+                            trig_parts = []
+                            if trig_text:
+                                trig_parts.append(f"text={trig_text}")
+                            if trig_selector:
+                                trig_parts.append(f"selector={trig_selector}")
+                            if trig_desc:
+                                trig_parts.append(f"desc={trig_desc}")
+                            if trig_parts:
+                                lines.append(f"       trigger: {' | '.join(trig_parts)}")
+
+                    if intent_seq:
+                        seq_desc = _clean_inline(intent_seq.get("description"))
+                        lines.append(f"       intent_sequence: {seq_desc or 'N/A'}")
+                        intents = intent_seq.get("intents") or []
+                        if intents:
+                            lines.append("       intents:")
+                            for intent in intents:
+                                intent_type = _clean_inline(intent.get("type"))
+                                intent_text = _clean_inline(intent.get("text"))
+                                intent_value = _clean_inline(intent.get("value"))
+                                parts = []
+                                if intent_type:
+                                    parts.append(f"type={intent_type}")
+                                if intent_text:
+                                    parts.append(f"text={intent_text}")
+                                if intent_value:
+                                    parts.append(f"value={intent_value}")
+                                lines.append(f"         - {' | '.join(parts) if parts else 'N/A'}")
+                        else:
+                            lines.append("       intents: (none)")
+
+            lines.append("")
+
+        file_path.write_text("\n".join(lines), encoding="utf-8")
+        logger.info(f"[Memory] query_path report written: {file_path}")
+        return str(file_path)
 
     # =========================================================================
     # V2 Three-Level Query Methods
