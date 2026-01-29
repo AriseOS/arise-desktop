@@ -1553,6 +1553,7 @@ async def query_memory(
     min_score = data.get("min_score", 0.5)
     domain = data.get("domain")
     max_depth = data.get("max_depth", 5)  # Max path depth for BFS traversal
+    debug = bool(data.get("debug", False))
 
     if not user_id:
         raise HTTPException(400, "Missing user_id")
@@ -1630,6 +1631,24 @@ async def query_memory(
         # Import EmbeddingService for vector search
         from src.cloud_backend.memgraph.services import EmbeddingService
 
+        def _format_state_summary(state):
+            return {
+                "id": state.id,
+                "description": state.description,
+                "page_title": state.page_title,
+                "page_url": state.page_url,
+                "domain": state.domain,
+            }
+
+        def _format_candidate_states(states):
+            return [
+                {
+                    "state": _format_state_summary(state),
+                    "similarity_score": round(score, 4),
+                }
+                for state, score in states
+            ]
+
         # Step 2: Search for target states (endpoints) using single target_query
         target_states = []
         target_state_ids = set()
@@ -1684,18 +1703,39 @@ async def query_memory(
         for kq, states in key_states_by_type.items():
             key_type_state_ids[kq] = {state.id for state, score in states}
 
+        candidate_states = None
+        if debug:
+            candidate_states = {
+                "target_states": _format_candidate_states(target_states),
+                "key_states_by_type": {
+                    kq: _format_candidate_states(states)
+                    for kq, states in key_states_by_type.items()
+                },
+            }
+
         # Combine for compatibility with existing logic
         matching_states = target_states
 
         if not matching_states:
             logger.info(f"No matching states found for query: {query}")
-            return {
+            response = {
                 "success": True,
                 "query": query,
+                "decomposed": {
+                    "target_query": target_query,
+                    "key_queries": key_queries,
+                },
                 "paths": [],
                 "total_paths": 0,
                 "message": "No matching states found"
             }
+            if debug:
+                response["candidate_states"] = candidate_states
+                response["score_weights"] = {"target_weight": 1.0, "key_weight": 0.3}
+                response["score_formula"] = (
+                    "score = has_target * target_weight * target_score + key_type_coverage * key_weight"
+                )
+            return response
 
         # Step 3: Build paths by reverse traversal from target states
         # For each target state, find all paths leading to it by traversing incoming edges
@@ -1978,6 +2018,17 @@ async def query_memory(
                 "target_query": target_query,
                 "key_queries": key_queries,
             },
+            **(
+                {
+                    "candidate_states": candidate_states,
+                    "score_weights": {"target_weight": 1.0, "key_weight": 0.3},
+                    "score_formula": (
+                        "score = has_target * target_weight * target_score + key_type_coverage * key_weight"
+                    ),
+                }
+                if debug
+                else {}
+            ),
             "paths": paths,
             "total_paths": len(paths),
         }

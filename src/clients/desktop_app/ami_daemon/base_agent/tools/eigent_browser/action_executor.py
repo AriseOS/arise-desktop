@@ -7,6 +7,7 @@ Supports actions based on element references [ref=eN].
 
 import asyncio
 import logging
+import time
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from .config_loader import ConfigLoader
@@ -200,10 +201,94 @@ class ActionExecutor:
         element = self.page.locator(found_selector).first
         details['successful_strategy'] = found_selector
 
+        click_target = element
+        click_target_kind = "element"
+
         # Log current tab count before click
         if self.session:
             tab_count_before = len(self.session._pages)
             logger.debug(f"Click starting: selector={found_selector}, tabs_before={tab_count_before}, short_timeout={self.short_timeout}ms")
+
+        # Collect extra element diagnostics (best-effort) before click
+        element_diag = None
+        try:
+            element_diag = await element.evaluate(
+                """el => {
+                    const text = (el.innerText || el.textContent || '').trim();
+                    const rect = el.getBoundingClientRect();
+                    const inViewport =
+                        rect.width > 0 &&
+                        rect.height > 0 &&
+                        rect.bottom >= 0 &&
+                        rect.right >= 0 &&
+                        rect.top <= (window.innerHeight || document.documentElement.clientHeight) &&
+                        rect.left <= (window.innerWidth || document.documentElement.clientWidth);
+                    const closestLink = el.closest('a');
+                    const descendantLinks = el.querySelectorAll('a[href]');
+                    const descendantLink = descendantLinks.length === 1 ? descendantLinks[0] : null;
+                    const descendantText = descendantLink ? (descendantLink.innerText || descendantLink.textContent || '').trim() : '';
+                    const onclickAttr = el.getAttribute('onclick');
+                    const onclickProp = typeof el.onclick === 'function';
+                    return {
+                        tag: el.tagName,
+                        href: el.getAttribute('href'),
+                        closestHref: closestLink ? closestLink.getAttribute('href') : null,
+                        role: el.getAttribute('role'),
+                        ariaLabel: el.getAttribute('aria-label'),
+                        text: text ? text.slice(0, 200) : '',
+                        descendantHref: descendantLink ? descendantLink.getAttribute('href') : null,
+                        descendantText: descendantText ? descendantText.slice(0, 200) : '',
+                        descendantCount: descendantLinks.length,
+                        onclick: !!onclickAttr || onclickProp,
+                        rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+                        inViewport
+                    };
+                }"""
+            )
+            element_diag.update({
+                "visible": await element.is_visible(),
+                "enabled": await element.is_enabled(),
+                "page_url": self.page.url if self.page else None,
+            })
+            logger.debug(f"Click element diagnostics: {element_diag}")
+        except Exception as e:
+            logger.debug(f"Click diagnostics failed: {e}")
+
+        # Conservative redirect: if a container wraps a single link, prefer that link
+        try:
+            if element_diag:
+                tag = element_diag.get("tag")
+                href = element_diag.get("href")
+                closest_href = element_diag.get("closestHref")
+                role = element_diag.get("role")
+                has_onclick = element_diag.get("onclick")
+                descendant_count = element_diag.get("descendantCount")
+                descendant_href = element_diag.get("descendantHref")
+                source_text = (element_diag.get("text") or "").strip()
+                descendant_text = (element_diag.get("descendantText") or "").strip()
+                role_is_link = (role or "").lower() == "link"
+                if (
+                    tag in {"LI", "DIV", "SPAN"}
+                    and not href
+                    and not closest_href
+                    and not role_is_link
+                    and not has_onclick
+                    and descendant_count == 1
+                    and descendant_href
+                    and source_text
+                    and descendant_text
+                    and (source_text.lower() in descendant_text.lower() or descendant_text.lower() in source_text.lower())
+                ):
+                    descendant_locator = element.locator(":scope a[href]").first
+                    if await descendant_locator.count() > 0 and await descendant_locator.is_visible() and await descendant_locator.is_enabled():
+                        click_target = descendant_locator
+                        click_target_kind = "descendant_a"
+                        details["redirected_click_target"] = click_target_kind
+                        details["descendant_href"] = descendant_href
+                        details["descendant_text"] = descendant_text[:200]
+                        logger.debug(f"Redirecting click to descendant <a>: href={descendant_href}")
+        except Exception as e:
+            logger.debug(f"Descendant link check failed: {e}")
 
         # Strategy 1: Ctrl+Click (always try first)
         try:
@@ -211,12 +296,14 @@ class ActionExecutor:
                 context = self.page.context
                 context_pages_before = len(context.pages)
                 logger.debug(f"Attempting Ctrl+Click with expect_page... context={context}, context_pages_before={context_pages_before}")
+                t0 = time.perf_counter()
                 async with context.expect_page(
                     timeout=self.short_timeout
                 ) as new_page_info:
-                    await element.click(modifiers=["ControlOrMeta"])
+                    await click_target.click(modifiers=["ControlOrMeta"])
                     logger.debug("Click executed, waiting for page event...")
                 # New tab was created
+                elapsed_ms = int((time.perf_counter() - t0) * 1000)
                 logger.debug("expect_page succeeded - new tab detected")
                 new_page = await new_page_info.value
                 await new_page.wait_for_load_state('domcontentloaded')
@@ -230,14 +317,17 @@ class ActionExecutor:
                     "click_method": "ctrl_click_new_tab",
                     "new_tab_created": True,
                     "new_tab_index": new_tab_index,
+                    "ctrl_click_elapsed_ms": elapsed_ms,
                 })
                 return {
                     "message": f"Clicked element, opened in new tab {new_tab_index}",
                     "details": details,
                 }
             else:
-                await element.click(modifiers=["ControlOrMeta"])
+                t0 = time.perf_counter()
+                await click_target.click(modifiers=["ControlOrMeta"])
                 details["click_method"] = "ctrl_click_no_session"
+                details["ctrl_click_elapsed_ms"] = int((time.perf_counter() - t0) * 1000)
                 return {
                     "message": f"Clicked element (ctrl click): {found_selector}",
                     "details": details,
@@ -245,10 +335,17 @@ class ActionExecutor:
         except (asyncio.TimeoutError, TimeoutError) as e:
             # No new tab was opened within timeout, click may have still worked
             # Note: Playwright raises TimeoutError (builtin), not asyncio.TimeoutError
+            elapsed_ms = None
+            try:
+                elapsed_ms = int((time.perf_counter() - t0) * 1000)
+            except Exception:
+                pass
             tab_count_after = len(self.session._pages) if self.session else 0
             context_pages_after = len(self.page.context.pages) if self.page else 0
-            logger.debug(f"[TIMEOUT CAUGHT] expect_page timeout after {self.short_timeout}ms - session_tabs={tab_count_after}, context_pages={context_pages_after}")
+            logger.debug(f"[TIMEOUT CAUGHT] expect_page timeout after {self.short_timeout}ms (elapsed={elapsed_ms}ms) - session_tabs={tab_count_after}, context_pages={context_pages_after}")
             details["click_method"] = "ctrl_click_same_tab"
+            if elapsed_ms is not None:
+                details["ctrl_click_elapsed_ms"] = elapsed_ms
             return {
                 "message": f"Clicked element (same tab): {found_selector}",
                 "details": details,
@@ -266,7 +363,7 @@ class ActionExecutor:
         # Strategy 2: Force click as fallback
         logger.debug("Falling back to force click...")
         try:
-            await element.click(force=True, timeout=self.default_timeout)
+            await click_target.click(force=True, timeout=self.default_timeout)
             tab_count_after = len(self.session._pages) if self.session else 0
             logger.debug(f"Force click succeeded, tabs_after={tab_count_after}")
             details["click_method"] = "force_click"
