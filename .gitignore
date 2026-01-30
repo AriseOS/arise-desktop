@@ -104,6 +104,9 @@ src/clients/desktop_app/src-tauri/resources/ami-daemon.exe
 src/clients/desktop_app/src-tauri/tauri.conf.json.backup
 src/clients/desktop_app/src-tauri/tauri.conf.json.bak
 
+# Desktop app generated / lock files
+src/clients/desktop_app/src-tauri/gen/schemas/windows-schema.json
+
 # Docker image archives (offline deployment)
 *.tar
 *.tar.gz

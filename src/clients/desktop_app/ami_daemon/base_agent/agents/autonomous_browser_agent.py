@@ -172,12 +172,12 @@ class AutonomousBrowserAgent(BaseStepAgent):
                 data={}
             )
 
-    async def cleanup(self, context: AgentContext):
+    async def cleanup(self, context: AgentContext, close_browser: bool = False):
         """Cleanup resources"""
         # Cleanup internal agent if created
         if self._eigent_agent:
             try:
-                await self._eigent_agent.cleanup(context)
+                await self._eigent_agent.cleanup(context, close_browser=close_browser)
             except Exception as e:
                 logger.warning(f"Failed to cleanup internal agent: {e}")
             self._eigent_agent = None

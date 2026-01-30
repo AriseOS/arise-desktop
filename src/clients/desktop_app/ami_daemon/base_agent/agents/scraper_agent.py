@@ -801,17 +801,16 @@ class ScraperAgent(BaseStepAgent):
 
         return fixed
 
-    async def cleanup(self, context: AgentContext):
+    async def cleanup(self, context: AgentContext, close_browser: bool = False):
         """Cleanup resources."""
         # Cleanup EigentStyleBrowserAgent
         if self._eigent_agent:
             try:
-                await self._eigent_agent.cleanup(context)
+                await self._eigent_agent.cleanup(context, close_browser=close_browser)
             except Exception as e:
                 logger.warning(f"Failed to cleanup EigentStyleBrowserAgent: {e}")
             self._eigent_agent = None
 
-        # Note: Don't close browser session here - it may be shared
-        # across workflow steps via session_id. The WorkflowEngine
-        # handles browser cleanup at workflow end.
+        # Note: Default behavior avoids closing shared sessions (workflow steps).
+        # Use close_browser=True when it's safe to fully close the browser.
         self._browser_session = None

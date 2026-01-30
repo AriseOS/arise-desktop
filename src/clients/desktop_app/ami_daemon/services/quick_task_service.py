@@ -19,6 +19,7 @@ from enum import Enum
 import asyncio
 import uuid
 import logging
+import inspect
 
 from ..base_agent.workspace import (
     WorkingDirectoryManager,
@@ -528,6 +529,40 @@ class QuickTaskService:
         if user_id:
             self._user_id = user_id
 
+    async def _cleanup_agent(
+        self,
+        agent: Any,
+        context: Any,
+        close_browser: bool = True,
+    ) -> None:
+        """Best-effort cleanup for agents with varying cleanup signatures."""
+        if not agent or not context:
+            return
+
+        cleanup = getattr(agent, "cleanup", None)
+        if not cleanup:
+            return
+
+        try:
+            signature = inspect.signature(cleanup)
+            supports_close = (
+                "close_browser" in signature.parameters
+                or any(
+                    param.kind == inspect.Parameter.VAR_KEYWORD
+                    for param in signature.parameters.values()
+                )
+            )
+        except (TypeError, ValueError):
+            supports_close = False
+
+        try:
+            if supports_close:
+                await cleanup(context, close_browser=close_browser)
+            else:
+                await cleanup(context)
+        except Exception as e:
+            logger.warning(f"Failed to cleanup agent: {e}")
+
     async def submit_task(
         self,
         task: str,
@@ -953,6 +988,9 @@ class QuickTaskService:
             project_id=state.project_id,
         ))
 
+        agent = None
+        context = None
+
         try:
             # Memory query is now handled inside Agent.execute() via MemoryToolkit
             # No longer call _call_reasoner() here - Agent will query Memory itself
@@ -1316,9 +1354,6 @@ class QuickTaskService:
                 notes_content = result.data.get("notes")
                 state.notes_content = notes_content
 
-            # Cleanup
-            await agent.cleanup(context)
-
             # Save result
             state.result = {
                 "success": result.success,
@@ -1392,6 +1427,8 @@ class QuickTaskService:
                 status="failed",
                 message=str(e),
             ))
+        finally:
+            await self._cleanup_agent(agent, context, close_browser=True)
 
     def cleanup_old_tasks(self, max_age_seconds: int = 3600):
         """Clean up old completed/failed tasks."""
