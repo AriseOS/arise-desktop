@@ -13,6 +13,7 @@ Commands:
     visit <url>           - Navigate to URL
     click <ref>           - Click element by ref (e.g., click e1)
     click_text <text>     - Click element by text
+    select <ref> <value>  - Select option from dropdown (e.g., select e1 Best Sellers)
     type <ref> <text>     - Type text into element
     enter [ref]           - Press enter (optionally on element)
     scroll <up|down> [amount] - Scroll page
@@ -71,7 +72,7 @@ class InteractiveBrowserTester:
 
     # Available commands for auto-completion
     COMMANDS = [
-        "visit", "click", "click_text", "type", "enter", "scroll",
+        "visit", "click", "click_text", "select", "type", "enter", "scroll",
         "snapshot", "tabs", "switch", "new_tab", "close_tab", "links",
         "console", "exec", "back", "forward", "info", "help",
         "debug_session", "debug_click", "debug_snapshot",
@@ -171,6 +172,16 @@ class InteractiveBrowserTester:
                     result = await self.toolkit.browser_click(element_text=args)
                     self.print_result("LLM sees after click", result)
 
+            elif command == "select":
+                select_parts = args.split(maxsplit=1)
+                if len(select_parts) < 2:
+                    print("Usage: select <ref> <value>  (e.g., select e1 Best Sellers)")
+                else:
+                    ref, value = select_parts
+                    print(f"\n>>> Selecting '{value}' in ref={ref}")
+                    result = await self.toolkit.browser_select(value=value, ref=ref)
+                    self.print_result("LLM sees after select", result)
+
             elif command == "type":
                 type_parts = args.split(maxsplit=1)
                 if len(type_parts) < 2:
@@ -197,7 +208,7 @@ class InteractiveBrowserTester:
 
             elif command == "snapshot":
                 print("\n>>> Getting page snapshot")
-                result = await self.toolkit.browser_get_page_snapshot(include_url=True)
+                result = await self.toolkit.browser_get_page_snapshot()
                 self.print_result("LLM sees (page snapshot)", result)
 
             elif command == "tabs":

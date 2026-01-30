@@ -333,23 +333,24 @@ successful workflows. This is a REFERENCE, not a script.
 <batch_processing>
 ## Efficient Batch Processing
 
-When dealing with multiple items (e.g., a list of products on a leaderboard):
+When dealing with multiple items (e.g., a list of products, search results, entries):
 
-### Strategy 1: Extract All Items First
-1. Use `browser_get_page_snapshot(include_url=True)` to see all items on the page
-2. The snapshot shows all links with [ref=eN] markers
-3. Plan which items to process before clicking into each one
+### Step 1: Extract All Items with URLs
+1. Call `browser_get_page_snapshot(include_links=True)` to get all links on the page
+2. Save the full link list to a note with `create_note` — this is your index for later
+3. Scroll down and repeat if the page has more items below the fold
 
-### Strategy 2: Use Replan for Dynamic Discovery
-When you discover multiple items to process:
-1. Call `replan_task` to create a subtask for EACH item
-2. This ensures systematic tracking and prevents loops
-3. Complete each subtask with `complete_subtask` when done
+### Step 2: Replan with URLs in Subtask Content
+When creating subtasks for each item, **always include the URL** in the subtask content:
+- GOOD: `"Visit DataFast detail page (https://producthunt.com/products/datafast), extract team info"`
+- BAD: `"Visit DataFast detail page, extract team info"`
+This way you can navigate directly without going back to the list page.
 
-### Avoid Common Mistakes
-- DON'T process items one-by-one without tracking
-- DON'T forget which items you've already processed
-- DO use the task planning tools to track progress
+### Step 3: Process Each Item Efficiently
+- Use `browser_visit_page(url)` to go directly to each item — do NOT navigate back to the list page to click
+- Extract the information you need from the current page
+- If you only need names/text visible on the page, read them from the snapshot — do NOT click into sub-pages unnecessarily
+- Save findings to notes with `append_note`, then call `complete_subtask`
 </batch_processing>
 
 <web_search_workflow>

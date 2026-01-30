@@ -60,6 +60,17 @@ class PageSnapshot:
                 and 'snapshotText' in snapshot_result
             ):
                 snapshot_text = snapshot_result['snapshotText']
+                # Log ref debug info
+                metadata = snapshot_result.get('metadata', {})
+                ref_debug = metadata.get('refDebug')
+                if ref_debug:
+                    logger.debug(
+                        "Ref assignment stats: weakmapHit=%s ariaRefHit=%s signatureHit=%s newRef=%s evicted=%s | refCounter=%s totalMapped=%s",
+                        ref_debug.get('weakmapHit'), ref_debug.get('ariaRefHit'),
+                        ref_debug.get('signatureHit'), ref_debug.get('newRef'),
+                        ref_debug.get('evicted'),
+                        metadata.get('refCounterValue'), metadata.get('totalMappedRefs'),
+                    )
             else:
                 snapshot_text = snapshot_result
 
