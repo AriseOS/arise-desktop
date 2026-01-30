@@ -223,16 +223,12 @@ class ActionExtractor:
             # Include Intent details so LLM knows what elements were clicked
             intents_to_show = []
 
-            # Check intent_sequences first (preferred)
-            if hasattr(state, 'intent_sequences') and state.intent_sequences:
+            # Extract intents from intent_sequences
+            if state.intent_sequences:
                 for seq in state.intent_sequences:
                     if hasattr(seq, 'intents') and seq.intents:
                         for intent in seq.intents:
                             intents_to_show.append(intent)
-
-            # Fallback to legacy intents field
-            elif state.intents:
-                intents_to_show = state.intents
 
             if intents_to_show:
                 state_desc += f"\n   - Operations ({len(intents_to_show)}):"

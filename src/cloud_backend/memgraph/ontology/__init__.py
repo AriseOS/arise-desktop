@@ -51,6 +51,12 @@ from src.cloud_backend.memgraph.ontology.intent import AtomicIntent, Intent
 from src.cloud_backend.memgraph.ontology.intent_sequence import IntentSequence
 from src.cloud_backend.memgraph.ontology.page_instance import PageInstance
 from src.cloud_backend.memgraph.ontology.state import SemanticState, State
+from src.cloud_backend.memgraph.ontology.query_result import (
+    NavigationResult,
+    QueryResult,
+    SubTaskResult,
+    TaskResult,
+)
 
 __all__ = [
     # Domain related
@@ -71,4 +77,9 @@ __all__ = [
     "TransitionEdge",  # Backward compatibility
     # CognitivePhrase related
     "CognitivePhrase",
+    # Query result related
+    "QueryResult",
+    "NavigationResult",
+    "TaskResult",
+    "SubTaskResult",
 ]

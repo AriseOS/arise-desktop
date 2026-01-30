@@ -1922,7 +1922,7 @@ Execute the appropriate browser action now."""
                 )
         elif path:
             memory_source = "path"
-            workflow_guide_content = MemoryToolkit.format_path(path)
+            workflow_guide_content = MemoryToolkit.format_navigation_path(path.states, path.actions)
             logger.info(
                 "[Agent Loop] Using Path: states=%d actions=%d",
                 len(path.states),
@@ -2089,50 +2089,47 @@ Execute the appropriate browser action now."""
                 self._task_orchestrator.mark_running(current_subtask.id)
                 logger.info(f"[Agent Loop] Started subtask {current_subtask.id}: {current_subtask.content[:50]}")
 
-                # === Query Memory for subtask guidance (only if no global workflow_guide) ===
-                # If we already have workflow_guide saved at task level, skip per-subtask queries.
-                # The model can read the workflow_guide note when needed.
-                if memory_source == "none" and self._memory_toolkit and self._memory_toolkit.is_available():
-                    subtask_phrase = await self._memory_toolkit.query_cognitive_phrase(
-                        current_subtask.content
-                    )
-                    if subtask_phrase:
-                        # Found workflow for this subtask - save as note
-                        subtask_guide = MemoryToolkit.format_cognitive_phrase(subtask_phrase)
-                        if self._note_toolkit:
-                            try:
-                                self._note_toolkit.create_note(
-                                    note_name="workflow_guide",
-                                    content=subtask_guide,
-                                    overwrite=True
+                # === Query Memory for subtask navigation guidance ===
+                # Use Navigation Query: page_title -> subtask goal
+                if self._memory_toolkit and self._memory_toolkit.is_available() and self._browser_toolkit:
+                    try:
+                        # Get current page title as starting point
+                        page_title = await self._browser_toolkit.get_page_title()
+                        if page_title:
+                            # Query navigation path from current page to subtask goal
+                            nav_result = await self._memory_toolkit.query_navigation(
+                                start_state=page_title,
+                                end_state=current_subtask.content,
+                            )
+                            if nav_result.success and (nav_result.states or nav_result.actions):
+                                # Format and save as note
+                                nav_guide = MemoryToolkit.format_navigation_path(
+                                    nav_result.states, nav_result.actions
                                 )
-                                logger.info(
-                                    f"[Memory] Saved CognitivePhrase as workflow_guide for subtask {current_subtask.id}"
-                                )
-                            except Exception as e:
-                                logger.warning(f"[Memory] Failed to save workflow_guide: {e}")
-                    else:
-                        # Try path
-                        subtask_path = await self._memory_toolkit.query_path(
-                            current_subtask.content
-                        )
-                        if subtask_path and self._note_toolkit:
-                            subtask_guide = MemoryToolkit.format_path(subtask_path)
-                            try:
-                                self._note_toolkit.create_note(
-                                    note_name="workflow_guide",
-                                    content=subtask_guide,
-                                    overwrite=True
-                                )
-                                logger.info(
-                                    f"[Memory] Saved Path as workflow_guide for subtask {current_subtask.id}"
-                                )
-                            except Exception as e:
-                                logger.warning(f"[Memory] Failed to save workflow_guide: {e}")
-                elif memory_source != "none":
-                    logger.debug(
-                        f"[Memory] Skipping per-subtask query - using global {memory_source}"
-                    )
+                                if nav_guide and self._note_toolkit:
+                                    # Add reference disclaimer
+                                    nav_guide = (
+                                        "## Memory Reference (参考信息)\n\n"
+                                        "以下是 Memory 中记录的相关路径，仅供参考。\n"
+                                        "页面可能已变化，前面步骤可能出错导致当前状态与预期不符。\n"
+                                        "请结合实际页面内容判断。\n\n"
+                                        + nav_guide
+                                    )
+                                    self._note_toolkit.create_note(
+                                        note_name="navigation_guide",
+                                        content=nav_guide,
+                                        overwrite=True,
+                                    )
+                                    logger.info(
+                                        f"[Memory] Navigation guide saved for subtask {current_subtask.id}: "
+                                        f"{len(nav_result.states)} states"
+                                    )
+                            else:
+                                logger.debug(f"[Memory] No navigation path found for subtask")
+                        else:
+                            logger.debug("[Memory] No page title available, skipping navigation query")
+                    except Exception as e:
+                        logger.warning(f"[Memory] Navigation query failed: {e}")
 
             # === Check if we should create a snapshot (for very long tasks) ===
             logger.info("[Agent Loop] Checking snapshot...")
@@ -2363,27 +2360,76 @@ Continue with the current subtask. When done, call `complete_subtask()` to proce
                 logger.info("[Memory] Querying Memory before task decomposition...")
                 await self._notify_progress("memory_query_started", {"task": task})
 
-                # Step 1: Query cognitive_phrase (highest value)
-                cognitive_phrase = await self._memory_toolkit.query_cognitive_phrase(task)
+                # Use V2 query_task API (returns QueryResult with cognitive_phrase or path)
+                memory_result = await self._memory_toolkit.query_task(task)
 
-                if cognitive_phrase:
+                if memory_result.cognitive_phrase:
+                    # L1: Complete workflow replay from cognitive phrase
+                    cognitive_phrase = memory_result.cognitive_phrase
                     memory_source = "cognitive_phrase"
                     execution_mode = "agent_loop_with_workflow"
                     logger.info(
                         f"[Memory] Found CognitivePhrase: {cognitive_phrase.id} "
                         f"with {len(cognitive_phrase.states)} states"
                     )
-                else:
-                    # Step 2: Query path (if no cognitive_phrase)
-                    path = await self._memory_toolkit.query_path(task)
-                    if path:
-                        memory_source = "path"
+                elif memory_result.subtasks:
+                    # L3: Subtask decomposition with per-subtask navigation guidance
+                    # Build subtask plan with navigation info for each subtask
+                    from ..tools.toolkits.memory_toolkit import CognitivePhrase as MemPath
+                    # Collect all states/actions across subtasks that found results
+                    all_states = []
+                    all_actions = []
+                    subtask_plan = []
+                    for st in memory_result.subtasks:
+                        subtask_info = {
+                            "task_id": st.task_id,
+                            "target": st.target,
+                            "found": st.found,
+                            "states": st.states,
+                            "actions": st.actions,
+                        }
+                        subtask_plan.append(subtask_info)
+                        if st.found:
+                            all_states.extend(st.states)
+                            all_actions.extend(st.actions)
+
+                    if all_states:
+                        path = MemPath(
+                            id="subtask_composed_path",
+                            description="Subtask-decomposed navigation path",
+                            states=all_states,
+                            actions=all_actions,
+                        )
+                        memory_source = "subtasks"
                         execution_mode = "agent_loop_with_path"
                         logger.info(
-                            f"[Memory] Found Path with {len(path.states)} states"
+                            f"[Memory] Found subtask plan with {len(memory_result.subtasks)} subtasks, "
+                            f"{len(all_states)} states total"
                         )
                     else:
-                        logger.info("[Memory] No workflow or path found")
+                        memory_source = "subtasks_no_nav"
+                        logger.info(
+                            f"[Memory] Subtask plan with {len(memory_result.subtasks)} subtasks but no navigation states"
+                        )
+
+                    # Store subtask plan for agent loop to use
+                    self._subtask_plan = subtask_plan
+                elif memory_result.states and not memory_result.subtasks:
+                    # L2: Overall navigation path (no subtask decomposition)
+                    from ..tools.toolkits.memory_toolkit import CognitivePhrase as MemPath
+                    path = MemPath(
+                        id="composed_path",
+                        description="Composed navigation path",
+                        states=memory_result.states,
+                        actions=memory_result.actions,
+                    )
+                    memory_source = "path"
+                    execution_mode = "agent_loop_with_path"
+                    logger.info(
+                        f"[Memory] Found Path with {len(path.states)} states"
+                    )
+                else:
+                    logger.info("[Memory] No workflow or path found")
             else:
                 logger.info("[Memory] Memory not available, skipping query")
 

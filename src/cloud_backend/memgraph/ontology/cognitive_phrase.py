@@ -15,6 +15,45 @@ from pydantic import Field
 from pydantic import model_validator
 
 
+class ExecutionStep(BaseModel):
+    """ExecutionStep - One step in the execution plan (v2).
+
+    Represents a single step in a structured execution plan,
+    clearly separating in-page operations from navigation actions.
+
+    Attributes:
+        index: Step number (1-based).
+        state_id: State ID where this step occurs.
+        in_page_sequence_ids: IDs of page-internal IntentSequences.
+        navigation_action_id: ID of the Action to navigate to next state (None for last step).
+        navigation_sequence_id: ID of the IntentSequence that triggers navigation (if any).
+    """
+
+    index: int = Field(..., description="Step number (1-based)")
+    state_id: str = Field(..., description="Current State ID")
+    in_page_sequence_ids: List[str] = Field(
+        default_factory=list,
+        description="IDs of IntentSequences for in-page operations (not causing navigation)"
+    )
+    navigation_action_id: Optional[str] = Field(
+        default=None,
+        description="Action ID for navigating to next state (None for last step)"
+    )
+    navigation_sequence_id: Optional[str] = Field(
+        default=None,
+        description="ID of IntentSequence that triggers navigation (if applicable)"
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return self.model_dump()
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ExecutionStep":
+        """Create instance from dictionary."""
+        return cls(**data)
+
+
 class CognitivePhrase(BaseModel):
     """CognitivePhrase - Cognitive phrase representing a workflow pattern.
 
@@ -42,12 +81,17 @@ class CognitivePhrase(BaseModel):
     id: Optional[str] = Field(
         default=None, description='Unique cognitive phrase identifier')
 
+    # ✨ Short label for the workflow (v2)
+    label: Optional[str] = Field(
+        default=None,
+        description="Short label for the workflow (e.g., 'View PH Team Info')")
+
     # Natural language description of the workflow
     description: str = Field(
         ..., description='Natural language description of the workflow process')
 
     # User session information
-    user_id: str = Field(..., description='User ID')
+    user_id: Optional[str] = Field(default=None, description='User ID')
     session_id: str = Field(..., description='Session ID')
 
     # Time information
@@ -68,13 +112,21 @@ class CognitivePhrase(BaseModel):
     embedding_vector: Optional[List[float]] = Field(
         default=None, description='Embedding vector for semantic search')
 
+    # ✨ Structured execution plan (v2)
+    execution_plan: List[ExecutionStep] = Field(
+        default_factory=list,
+        description="Structured execution plan with in-page and navigation actions"
+    )
+
     # Access tracking
     access_count: int = Field(
         default=0, description='Number of times accessed (for tracking)')
+    success_count: int = Field(
+        default=0, description='Number of successful executions')
     last_access_time: Optional[int] = Field(
         default=None, description='Last access timestamp in milliseconds')
-    created_at: int = Field(
-        ..., description='Creation timestamp in milliseconds')
+    created_at: Optional[int] = Field(
+        default=None, description='Creation timestamp in milliseconds')
 
     @model_validator(mode='before')
     @classmethod
@@ -125,4 +177,5 @@ class CognitivePhrase(BaseModel):
 
 __all__ = [
     'CognitivePhrase',
+    'ExecutionStep',
 ]

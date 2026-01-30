@@ -73,16 +73,7 @@ class State(BaseModel):
         default=None, description="Duration spent in this state (milliseconds)"
     )
 
-    # Contained intents (DEPRECATED - use intent_sequences instead)
-    intents: List[Any] = Field(
-        default_factory=list,
-        description="List of Intents - DEPRECATED, use intent_sequences instead"
-    )
-    intent_ids: Optional[List[str]] = Field(
-        default=None, description="List of Intent IDs"
-    )
-
-    # NEW: Page instances (concrete URLs belonging to this abstract state)
+    # Page instances (concrete URLs belonging to this abstract state)
     instances: List[Any] = Field(
         default_factory=list,
         description="List of PageInstance objects (concrete URLs)"
@@ -139,12 +130,6 @@ class State(BaseModel):
             Dictionary representation of the state.
         """
         data = self.model_dump()
-        # Handle intents (deprecated but still supported)
-        if self.intents:
-            data["intents"] = [
-                intent.to_dict() if hasattr(intent, "to_dict") else intent
-                for intent in self.intents
-            ]
         # Handle instances
         if self.instances:
             data["instances"] = [
@@ -204,11 +189,12 @@ class State(BaseModel):
         self.instances.append(instance)
 
     def add_intent_sequence(self, sequence: "IntentSequence") -> bool:
-        """Add an IntentSequence to this state with deduplication.
+        """DEPRECATED: V2 uses IntentSequenceManager for graph storage.
 
-        IntentSequences are deduplicated by:
-        1. First by intents content hash (primary - always checked)
-        2. Fallback by description if available (secondary)
+        This method is kept for in-memory operations only. For graph persistence,
+        use IntentSequenceManager.create_sequence() and link_to_state().
+
+        Adds an IntentSequence to this state's in-memory list with deduplication.
 
         Args:
             sequence: IntentSequence to add.

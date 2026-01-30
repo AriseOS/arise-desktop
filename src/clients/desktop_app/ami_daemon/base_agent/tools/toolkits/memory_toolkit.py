@@ -1,10 +1,10 @@
 """
-MemoryToolkit - Query Ami's Workflow Memory for task guidance.
+MemoryToolkit - Query Ami's Workflow Memory for task guidance (V2).
 
-Provides three simple query interfaces:
-1. query_cognitive_phrase() - Get user-recorded complete workflow
-2. query_path() - Get retrieved navigation path
-3. query_states() - Get related page states with operations
+Provides three query interfaces matching the three-level query model:
+1. query_task(task) - Task level: Get complete workflow for a task
+2. query_navigation(start, end) - Navigation level: Get path between pages
+3. query_actions(state, target?) - Action level: Get available operations on a page
 
 Design principle: Memory is a tool, Agent is the decision maker.
 """
@@ -15,7 +15,8 @@ from datetime import datetime
 from pathlib import Path as FsPath
 from urllib.parse import urlsplit, urlunsplit
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from enum import Enum
+from typing import Any, Dict, List, Literal, Optional
 
 from .base_toolkit import BaseToolkit, FunctionTool
 from ...workspace import get_current_manager
@@ -180,122 +181,242 @@ except ImportError:
     logger.warning("httpx not available, MemoryToolkit will have limited functionality")
 
 
+# =============================================================================
+# Data Models
+# =============================================================================
+
+@dataclass
+class Intent:
+    """Single user operation (click, type, scroll, etc.)."""
+    type: str
+    element_ref: Optional[str] = None
+    text: Optional[str] = None
+    value: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> "Intent":
+        return cls(
+            type=data.get("type", ""),
+            element_ref=data.get("element_ref") or data.get("ref"),
+            text=data.get("text"),
+            value=data.get("value"),
+        )
+
+
 @dataclass
 class IntentSequence:
-    """Represents an operation that can be performed on a page."""
-    description: str
-    intents: List[Dict[str, Any]] = field(default_factory=list)
+    """Sequence of operations on a page."""
+    id: str
+    description: Optional[str]
+    intents: List[Intent]
+    causes_navigation: bool = False
+    navigation_target_state_id: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: Dict) -> "IntentSequence":
+        intents = []
+        for i in data.get("intents", []):
+            if isinstance(i, dict):
+                intents.append(Intent.from_dict(i))
         return cls(
-            description=data.get("description", ""),
-            intents=data.get("intents", []),
+            id=data.get("id", ""),
+            description=data.get("description"),
+            intents=intents,
+            causes_navigation=data.get("causes_navigation", False),
+            navigation_target_state_id=data.get("navigation_target_state_id"),
         )
 
 
 @dataclass
 class State:
-    """Page state with available operations."""
+    """Page state (abstraction of a page type)."""
     id: str
     description: str
     page_url: str
     page_title: str
-    intent_sequences: List[IntentSequence] = field(default_factory=list)
+    domain: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: Dict) -> "State":
-        intent_seqs = [
-            IntentSequence.from_dict(seq)
-            for seq in data.get("intent_sequences", [])
-        ]
         return cls(
             id=data.get("id", ""),
             description=data.get("description", ""),
             page_url=data.get("page_url", ""),
             page_title=data.get("page_title", ""),
-            intent_sequences=intent_seqs,
+            domain=data.get("domain"),
         )
 
 
 @dataclass
 class Action:
     """Navigation action between states."""
+    id: str
     source_id: str
     target_id: str
     action_type: str
-    description: str
-    element_text: Optional[str] = None
-    element_selector: Optional[str] = None
+    description: Optional[str] = None
+    trigger: Optional[Dict[str, Any]] = None  # {ref, text, role}
+    trigger_sequence_id: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: Dict) -> "Action":
-        # Extract element info from attributes or trigger_intent
-        attrs = data.get("attributes", {})
-        trigger_intent = data.get("trigger_intent", {})
-
-        element_text = (
-            attrs.get("element_text") or
-            trigger_intent.get("text") or
-            None
-        )
-        element_selector = (
-            attrs.get("element_selector") or
-            trigger_intent.get("css_selector") or
-            trigger_intent.get("xpath") or
-            None
-        )
-
         return cls(
+            id=data.get("id", ""),
             source_id=data.get("source", data.get("source_id", "")),
             target_id=data.get("target", data.get("target_id", "")),
             action_type=data.get("type", data.get("action_type", "")),
-            description=data.get("description", ""),
-            element_text=element_text,
-            element_selector=element_selector,
+            description=data.get("description"),
+            trigger=data.get("trigger"),
+            trigger_sequence_id=data.get("trigger_sequence_id"),
+        )
+
+
+@dataclass
+class ExecutionStep:
+    """Single step in an execution plan."""
+    index: int
+    state_id: str
+    in_page_sequence_ids: List[str] = field(default_factory=list)
+    navigation_action_id: Optional[str] = None
+    navigation_sequence_id: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> "ExecutionStep":
+        return cls(
+            index=data.get("index", 0),
+            state_id=data.get("state_id", ""),
+            in_page_sequence_ids=data.get("in_page_sequence_ids", []),
+            navigation_action_id=data.get("navigation_action_id"),
+            navigation_sequence_id=data.get("navigation_sequence_id"),
         )
 
 
 @dataclass
 class CognitivePhrase:
-    """User-recorded complete workflow."""
+    """User-recorded complete workflow with execution plan."""
     id: str
     description: str
     states: List[State]
     actions: List[Action]
+    execution_plan: List[ExecutionStep] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: Dict) -> "CognitivePhrase":
         states = [State.from_dict(s) for s in data.get("states", [])]
         actions = [Action.from_dict(a) for a in data.get("actions", [])]
+        execution_plan = [
+            ExecutionStep.from_dict(step)
+            for step in data.get("execution_plan", [])
+        ]
         return cls(
             id=data.get("id", ""),
             description=data.get("description", ""),
             states=states,
             actions=actions,
+            execution_plan=execution_plan,
+        )
+
+
+class QueryType(str, Enum):
+    """Query result type."""
+    TASK = "task"
+    NAVIGATION = "navigation"
+    ACTION = "action"
+
+
+@dataclass
+class SubTaskResult:
+    """Result for a single subtask from task decomposition."""
+    task_id: str
+    target: str
+    states: List[State] = field(default_factory=list)
+    actions: List[Action] = field(default_factory=list)
+    found: bool = False
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> "SubTaskResult":
+        return cls(
+            task_id=data.get("task_id", ""),
+            target=data.get("target", ""),
+            states=[State.from_dict(s) for s in data.get("states", [])],
+            actions=[Action.from_dict(a) for a in data.get("actions", [])],
+            found=data.get("found", False),
         )
 
 
 @dataclass
-class Path:
-    """Retrieved navigation path."""
-    states: List[State]
-    actions: List[Action]
+class QueryResult:
+    """Unified query result from V2 API."""
+    success: bool
+    query_type: QueryType
+    # Task/Navigation results
+    states: List[State] = field(default_factory=list)
+    actions: List[Action] = field(default_factory=list)
+    # Task-specific
+    cognitive_phrase: Optional[CognitivePhrase] = None
+    execution_plan: List[ExecutionStep] = field(default_factory=list)
+    subtasks: List[SubTaskResult] = field(default_factory=list)
+    # Action-specific
+    intent_sequences: List[IntentSequence] = field(default_factory=list)
+    outgoing_actions: List[Action] = field(default_factory=list)
+    # Metadata
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    error: Optional[str] = None
 
     @classmethod
-    def from_dict(cls, data: Dict) -> "Path":
+    def from_api_response(cls, data: Dict) -> "QueryResult":
+        """Parse V2 API response into QueryResult."""
+        query_type = QueryType(data.get("query_type", "task"))
+
         states = [State.from_dict(s) for s in data.get("states", [])]
         actions = [Action.from_dict(a) for a in data.get("actions", [])]
-        return cls(states=states, actions=actions)
+
+        cognitive_phrase = None
+        if data.get("cognitive_phrase"):
+            cognitive_phrase = CognitivePhrase.from_dict(data["cognitive_phrase"])
+
+        execution_plan = [
+            ExecutionStep.from_dict(step)
+            for step in data.get("execution_plan", [])
+        ]
+
+        intent_sequences = [
+            IntentSequence.from_dict(seq)
+            for seq in data.get("intent_sequences", [])
+        ]
+
+        outgoing_actions = [
+            Action.from_dict(a)
+            for a in data.get("outgoing_actions", [])
+        ]
+
+        subtasks = [
+            SubTaskResult.from_dict(st)
+            for st in data.get("subtasks", [])
+        ]
+
+        return cls(
+            success=data.get("success", False),
+            query_type=query_type,
+            states=states,
+            actions=actions,
+            cognitive_phrase=cognitive_phrase,
+            execution_plan=execution_plan,
+            subtasks=subtasks,
+            intent_sequences=intent_sequences,
+            outgoing_actions=outgoing_actions,
+            metadata=data.get("metadata", {}),
+            error=data.get("metadata", {}).get("error"),
+        )
 
 
 class MemoryToolkit(BaseToolkit):
-    """Toolkit for querying workflow memory.
+    """Toolkit for querying workflow memory (V2).
 
-    Provides three simple interfaces:
-    - query_cognitive_phrase(): Get user-recorded complete workflow
-    - query_path(): Get retrieved navigation path
-    - query_states(): Get related page states
+    Provides three interfaces matching the three-level query model:
+    - query_task(task): Task level - Get complete workflow for a task
+    - query_navigation(start, end): Navigation level - Get path between pages
+    - query_actions(state, target?): Action level - Get available operations
 
     Design: Memory is a tool, Agent is the decision maker.
     """
@@ -547,329 +668,327 @@ class MemoryToolkit(BaseToolkit):
         return str(file_path)
 
     # =========================================================================
-    # Three Core Query Methods
+    # V2 Three-Level Query Methods
     # =========================================================================
 
-    async def query_cognitive_phrase(self, task: str) -> Optional[CognitivePhrase]:
-        """Query for user-recorded complete workflow.
-
-        Use at task/subtask START to get complete navigation guidance.
+    async def _call_v2_query(self, payload: Dict[str, Any]) -> QueryResult:
+        """Call V2 query API and parse response.
 
         Args:
-            task: Task description
+            payload: Request payload for /api/v1/memory/v2/query
 
         Returns:
-            CognitivePhrase if found, None otherwise
+            QueryResult parsed from API response
         """
         if not self.is_available():
-            return None
-
-        logger.info(f"[Memory] Querying cognitive_phrase: {task[:50]}...")
-
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    f"{self._memory_api_base_url}/api/v1/memory/phrase/query",
-                    json={
-                        "user_id": self._user_id,
-                        "query": task,
-                    },
-                    headers={"X-Ami-API-Key": self._ami_api_key},
-                    timeout=self.timeout,
-                )
-                response.raise_for_status()
-                result = response.json()
-
-            if not result.get("success") or not result.get("phrase"):
-                logger.info(f"[Memory] No cognitive_phrase found for: {task[:30]}...")
-                return None
-
-            phrase = CognitivePhrase.from_dict(result["phrase"])
-            logger.info(
-                f"[Memory] Found cognitive_phrase: {phrase.id} "
-                f"with {len(phrase.states)} states"
+            return QueryResult(
+                success=False,
+                query_type=QueryType.TASK,
+                error="Memory toolkit not available",
             )
-            _log_cognitive_phrase_summary(phrase)
-            return phrase
-
-        except Exception as e:
-            logger.warning(f"[Memory] cognitive_phrase query failed: {e}")
-            return None
-
-    async def query_path(self, task: str) -> Optional[Path]:
-        """Query for a navigation path to the goal.
-
-        Use at task/subtask START when no cognitive_phrase is found.
-        Calls /api/v1/memory/query which returns paths found via:
-        1. Decompose query into target_query + key_queries
-        2. Embedding search for target and key states
-        3. BFS reverse traversal to find paths reaching these nodes
-        4. Score paths by key node coverage
-
-        Args:
-            task: Task description
-
-        Returns:
-            Path (states + actions) if found, None otherwise
-        """
-        if not self.is_available():
-            return None
-
-        logger.info(f"[Memory] Querying path: {task[:50]}...")
 
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{self._memory_api_base_url}/api/v1/memory/query",
-                    json={
-                        "user_id": self._user_id,
-                        "query": task,
-                        "debug": True,
-                    },
+                    f"{self._memory_api_base_url}/api/v1/memory/v2/query",
+                    json=payload,
                     headers={"X-Ami-API-Key": self._ami_api_key},
                     timeout=self.timeout,
                 )
                 response.raise_for_status()
-                result = response.json()
+                data = response.json()
 
-            try:
-                self._write_query_path_report(task, result)
-            except Exception as e:
-                logger.warning(f"[Memory] Failed to write query_path report: {e}")
+            return QueryResult.from_api_response(data)
 
-            if not result.get("success"):
-                logger.info(f"[Memory] No path found for: {task[:30]}...")
-                return None
-
-            # Response contains scored paths with steps array
-            # Each path: {score, path_length, description, steps: [{state, action, intent_sequence}, ...]}
-            paths = result.get("paths", [])
-            if not paths:
-                logger.info(f"[Memory] No paths found for: {task[:30]}...")
-                return None
-
-            # Use the best path (highest score, already sorted by server)
-            best_path = paths[0]
-            steps = best_path.get("steps", [])
-
-            if not steps:
-                logger.info(f"[Memory] Best path has no steps for: {task[:30]}...")
-                return None
-
-            # Extract states and actions from steps
-            states = []
-            actions = []
-            for step in steps:
-                state_data = step.get("state")
-                action_data = step.get("action")
-
-                if state_data:
-                    states.append(State.from_dict(state_data))
-                if action_data and action_data.get("source_id"):  # Has valid action
-                    actions.append(Action.from_dict(action_data))
-
-            if not states:
-                logger.info(f"[Memory] Path has no states for: {task[:30]}...")
-                return None
-
-            path = Path(states=states, actions=actions)
-            logger.info(
-                f"[Memory] Found path: {best_path.get('description', '')} "
-                f"({len(path.states)} states, {len(path.actions)} actions, "
-                f"score={best_path.get('score', 0)})"
+        except Exception as e:
+            logger.warning(f"[Memory] V2 query failed: {e}")
+            return QueryResult(
+                success=False,
+                query_type=QueryType.TASK,
+                error=str(e),
             )
-            _log_path_summary(best_path, steps)
-            return path
 
-        except Exception as e:
-            logger.warning(f"[Memory] path query failed: {e}")
-            return None
+    async def query_task(self, task: str) -> QueryResult:
+        """Task-level query: Get complete workflow for a task.
 
-    async def query_states(self, task: str) -> List[State]:
-        """Query for related page states.
-
-        Use during agent loop to find page-specific operations.
+        Use when starting a new task without knowing current state.
+        Returns CognitivePhrase (if exact match) or composed path.
 
         Args:
-            task: Task/page description
+            task: Natural language task description
+                  e.g., "在 Product Hunt 查看团队信息"
 
         Returns:
-            List of relevant State objects (may be empty)
+            QueryResult with:
+            - cognitive_phrase: If exact user-recorded workflow found
+            - execution_plan: Step-by-step execution plan
+            - states/actions: Path components if composed
         """
-        if not self.is_available():
-            return []
+        logger.info(f"[Memory] Task query: {task[:50]}...")
 
-        logger.info(f"[Memory] Querying states: {task[:50]}...")
+        result = await self._call_v2_query({"target": task})
 
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    f"{self._memory_api_base_url}/api/v1/memory/query",
-                    json={
-                        "user_id": self._user_id,
-                        "query": task,
-                    },
-                    headers={"X-Ami-API-Key": self._ami_api_key},
-                    timeout=self.timeout,
+        if result.success:
+            if result.cognitive_phrase:
+                logger.info(
+                    f"[Memory] Found CognitivePhrase: {result.cognitive_phrase.id}"
                 )
-                response.raise_for_status()
-                result = response.json()
+            else:
+                logger.info(
+                    f"[Memory] Found composed path: {len(result.states)} states"
+                )
+        else:
+            logger.info(f"[Memory] No task result for: {task[:30]}...")
 
-            if not result.get("success"):
-                logger.info(f"[Memory] No states found for: {task[:30]}...")
-                return []
+        return result
 
-            paths = result.get("paths", [])
-            states = []
-            for path in paths:
-                state_data = path.get("state", path)
-                if state_data:
-                    states.append(State.from_dict(state_data))
+    async def query_navigation(
+        self,
+        start_state: str,
+        end_state: str,
+    ) -> QueryResult:
+        """Navigation-level query: Get path between two states.
 
-            logger.info(f"[Memory] Found {len(states)} states")
-            return states
+        Use when you know current state and want to reach a target state.
+        Both start and end can be state IDs or semantic descriptions.
 
-        except Exception as e:
-            logger.warning(f"[Memory] states query failed: {e}")
-            return []
+        Args:
+            start_state: Starting state ID or description
+                         e.g., "state_123" or "Product Hunt 首页"
+            end_state: Target state ID or description
+                       e.g., "state_456" or "产品详情页"
+
+        Returns:
+            QueryResult with states and actions forming the shortest path
+        """
+        logger.info(
+            f"[Memory] Navigation query: {start_state[:30]}... -> {end_state[:30]}..."
+        )
+
+        result = await self._call_v2_query({
+            "start_state": start_state,
+            "end_state": end_state,
+        })
+
+        if result.success:
+            logger.info(
+                f"[Memory] Found path: {len(result.states)} states, "
+                f"{len(result.actions)} actions"
+            )
+        else:
+            logger.info(f"[Memory] No navigation path found")
+
+        return result
+
+    async def query_actions(
+        self,
+        current_state: str,
+        target: Optional[str] = None,
+    ) -> QueryResult:
+        """Action-level query: Get available operations on current page.
+
+        Use when on a specific page and need to know what can be done.
+
+        Args:
+            current_state: Current state ID or description
+                           e.g., "state_123" or "产品详情页"
+            target: Optional target action description
+                    e.g., "查看团队" or None for exploring all options
+
+        Returns:
+            QueryResult with:
+            - intent_sequences: Available operations on this page
+            - outgoing_actions: Navigation actions to other pages
+        """
+        if target:
+            logger.info(
+                f"[Memory] Action query: {target[:30]}... on {current_state[:30]}..."
+            )
+        else:
+            logger.info(f"[Memory] Explore query: {current_state[:30]}...")
+
+        payload = {"current_state": current_state}
+        if target:
+            payload["target"] = target
+
+        result = await self._call_v2_query(payload)
+
+        if result.success:
+            logger.info(
+                f"[Memory] Found {len(result.intent_sequences)} sequences, "
+                f"{len(result.outgoing_actions)} outgoing actions"
+            )
+        else:
+            logger.info(f"[Memory] No actions found")
+
+        return result
 
     # =========================================================================
-    # Context Formatters
+    # Context Formatters (V2)
     # =========================================================================
+
+    @staticmethod
+    def format_task_result(result: QueryResult) -> str:
+        """Format task query result for LLM context.
+
+        Handles both CognitivePhrase (exact match) and composed path results.
+        """
+        if not result.success:
+            return ""
+
+        if result.cognitive_phrase:
+            return MemoryToolkit.format_cognitive_phrase(result.cognitive_phrase)
+        elif result.states:
+            return MemoryToolkit.format_navigation_path(result.states, result.actions)
+        return ""
 
     @staticmethod
     def format_cognitive_phrase(phrase: CognitivePhrase) -> str:
-        """Format CognitivePhrase for LLM context."""
-        lines = ["## 🧠 MEMORY: VERIFIED WORKFLOW (MUST FOLLOW)\n"]
-        lines.append(f"**Description**: {phrase.description}\n")
-        lines.append("⚠️ **CRITICAL**: This workflow has been verified by the user. You MUST follow these exact steps.\n")
-        lines.append("**Navigation Steps**:")
+        """Format CognitivePhrase for LLM context.
 
-        for i, state in enumerate(phrase.states, 1):
-            lines.append(f"\n### Step {i}: {state.description}")
-            if state.page_url:
-                lines.append(f"   📍 URL: {state.page_url}")
-
-            # Show key operations
-            if state.intent_sequences:
-                lines.append("   🔧 Operations on this page:")
-                for seq in state.intent_sequences[:3]:
-                    lines.append(f"      • {seq.description}")
-                    for intent in seq.intents[:2]:
-                        selector = intent.get("css_selector") or intent.get("xpath", "")
-                        if selector:
-                            lines.append(f"        Selector: `{selector}`")
-
-            # Show action to next state
-            if i <= len(phrase.actions):
-                action = phrase.actions[i - 1]
-                lines.append(f"   ➡️ **ACTION TO NEXT STEP**: {action.description}")
-
-        lines.append("\n" + "=" * 60)
-        lines.append("⚠️ **IMPORTANT**: This is a user-verified workflow.")
-        lines.append("   - Follow these steps IN ORDER")
-        lines.append("   - Use the provided URLs and selectors")
-        lines.append("   - Do NOT deviate unless the page has changed")
-        lines.append("=" * 60)
-        return "\n".join(lines)
-
-    @staticmethod
-    def format_path(path: Path) -> str:
-        """Format retrieved path for LLM context.
-
-        Path from /api/v1/memory/query is a Navigation Map showing:
-        - Page TYPES (States) - not fixed URLs, but categories of pages
-        - How to navigate between page types (Actions)
+        Note: This is reference information. Pages may have changed.
         """
-        has_actions = len(path.actions) > 0
+        lines = [f"**Workflow**: {phrase.description}\n"]
 
-        lines = ["## 🗺️ NAVIGATION MAP\n"]
-        lines.append("This map shows a verified route to reach certain **page types**.\n")
-        lines.append("**IMPORTANT**: URLs are REFERENCE EXAMPLES, not fixed targets.")
-        lines.append("The same page type may have different URLs (e.g., /weekly/2026/3 vs /weekly/2026/4).\n")
+        # Use execution_plan if available for structured steps
+        if phrase.execution_plan:
+            state_map = {s.id: s for s in phrase.states}
+            action_map = {a.id: a for a in phrase.actions}
 
-        lines.append("**Route Steps**:")
+            for step in phrase.execution_plan:
+                state = state_map.get(step.state_id)
+                if not state:
+                    continue
 
-        for i, state in enumerate(path.states, 1):
-            lines.append(f"\n### Step {i}: Page Type = \"{state.description}\"")
-            if state.page_url:
-                lines.append(f"   📍 Reference URL: `{state.page_url}`")
-                lines.append(f"      (This is an example - actual URL may vary)")
+                lines.append(f"Step {step.index}: {state.description}")
+                if state.page_url:
+                    lines.append(f"  URL: {state.page_url}")
 
-            # Show key operations available on this page type
-            if state.intent_sequences:
-                lines.append("   🔧 **Available operations on this page**:")
-                for seq in state.intent_sequences[:3]:  # Show up to 3 sequences
-                    lines.append(f"      • {seq.description}")
-                    # Show intent details
-                    for intent in seq.intents[:3]:  # Show up to 3 intents per sequence
-                        intent_type = intent.get("type", "")
-                        intent_text = intent.get("text", "")
-                        selector = intent.get("css_selector") or intent.get("xpath", "")
+                # Navigation to next
+                if step.navigation_action_id:
+                    action = action_map.get(step.navigation_action_id)
+                    if action:
+                        nav_desc = action.description or "next"
+                        if action.trigger and action.trigger.get("text"):
+                            nav_desc += f" (click \"{action.trigger['text']}\")"
+                        lines.append(f"  -> {nav_desc}")
+        else:
+            # Fallback: list states and actions
+            for i, state in enumerate(phrase.states, 1):
+                lines.append(f"Step {i}: {state.description}")
+                if state.page_url:
+                    lines.append(f"  URL: {state.page_url}")
 
-                        # Format based on intent type
-                        if intent_type.lower() in ["scroll", "scrolldown", "scrollup"]:
-                            lines.append(f"        - Scroll: {intent_text or 'page scroll'}")
-                        elif intent_type.lower() in ["dataload", "load", "loadmore"]:
-                            lines.append(f"        - Load more data: {intent_text or 'trigger data loading'}")
-                        elif intent_type.lower() in ["click", "clickelement"]:
-                            if intent_text:
-                                lines.append(f"        - Click: \"{intent_text}\"")
-                            if selector:
-                                lines.append(f"          Selector: `{selector}`")
-                        elif intent_type.lower() in ["type", "input", "typetext"]:
-                            lines.append(f"        - Input: {intent_text or 'text input'}")
-                            if selector:
-                                lines.append(f"          Selector: `{selector}`")
-                        else:
-                            # Generic format for other types
-                            if intent_text or selector:
-                                lines.append(f"        - {intent_type}: {intent_text or ''}")
-                                if selector:
-                                    lines.append(f"          Selector: `{selector}`")
+                if i <= len(phrase.actions):
+                    action = phrase.actions[i - 1]
+                    lines.append(f"  -> {action.description or 'Next'}")
 
-            # Show action to next state if available
-            if i <= len(path.actions):
-                action = path.actions[i - 1]
-                lines.append(f"   ➡️ **To reach next page type**:")
-                if action.description:
-                    lines.append(f"      Action: {action.description}")
-                if action.element_text:
-                    lines.append(f"      Click element: \"{action.element_text}\"")
-                if action.element_selector:
-                    lines.append(f"      Selector: `{action.element_selector}`")
-
-        lines.append("\n" + "-" * 60)
-        lines.append("📋 **HOW TO USE THIS MAP**:")
-        lines.append("   1. Use this route to navigate to your target page type")
-        lines.append("   2. URLs are references - adapt to current context if needed")
-        lines.append("   3. Actions show HOW to move between page types")
-        lines.append("   4. Once at target page, focus on completing the USER'S TASK")
-        lines.append("   5. If you need to process multiple items, use replan_task")
-        lines.append("-" * 60)
         return "\n".join(lines)
 
     @staticmethod
-    def format_states(states: List[State]) -> str:
-        """Format scattered states for LLM context."""
+    def format_navigation_path(states: List[State], actions: List[Action]) -> str:
+        """Format navigation path for LLM context.
+
+        Shows route between states with actions as transitions.
+        Note: This is reference information. Pages may have changed.
+        """
         if not states:
             return ""
 
-        lines = ["## Memory: Related Pages\n"]
+        lines = ["**Navigation Path**:\n"]
 
-        for state in states[:5]:
-            lines.append(f"- **{state.description}**")
+        for i, state in enumerate(states, 1):
+            lines.append(f"Step {i}: {state.description}")
             if state.page_url:
                 lines.append(f"  URL: {state.page_url}")
 
-            for seq in state.intent_sequences[:3]:
-                lines.append(f"  - {seq.description}")
-                for intent in seq.intents[:1]:
-                    selector = intent.get("css_selector") or intent.get("xpath", "")
-                    if selector:
-                        lines.append(f"    Selector: {selector}")
+            # Show action to next state
+            if i <= len(actions):
+                action = actions[i - 1]
+                nav_desc = action.description or "next"
+                if action.trigger and action.trigger.get("text"):
+                    nav_desc += f" (click \"{action.trigger['text']}\")"
+                lines.append(f"  -> {nav_desc}")
 
         return "\n".join(lines)
+
+    @staticmethod
+    def format_action_result(result: QueryResult) -> str:
+        """Format action query result for LLM context.
+
+        Shows available operations on current page.
+        """
+        if not result.success:
+            return ""
+
+        lines = ["## AVAILABLE ACTIONS ON CURRENT PAGE\n"]
+
+        # In-page operations (IntentSequences)
+        if result.intent_sequences:
+            lines.append("**Operations you can perform:**")
+            for seq in result.intent_sequences:
+                lines.append(f"\n- **{seq.description or 'Operation'}**")
+                lines.append(f"  sequence_id: {seq.id}")
+                if seq.causes_navigation:
+                    lines.append(f"  (navigates to: {seq.navigation_target_state_id})")
+
+                # Show intents
+                for intent in seq.intents[:3]:
+                    intent_desc = MemoryToolkit._format_intent(intent)
+                    if intent_desc:
+                        lines.append(f"    {intent_desc}")
+
+        # Outgoing navigation actions
+        if result.outgoing_actions:
+            lines.append("\n**Navigation to other pages:**")
+            for action in result.outgoing_actions:
+                lines.append(f"\n- {action.description or 'Navigate'}")
+                lines.append(f"  target: {action.target_id}")
+                if action.trigger:
+                    trigger = action.trigger
+                    if trigger.get("text"):
+                        lines.append(f"  Click: \"{trigger['text']}\"")
+
+        if not result.intent_sequences and not result.outgoing_actions:
+            lines.append("No recorded operations found for this page.")
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_intent(intent: Intent) -> str:
+        """Format single intent for display."""
+        intent_type = intent.type.lower()
+
+        if intent_type in ["click", "clickelement"]:
+            if intent.text:
+                return f"- Click: \"{intent.text}\""
+            elif intent.element_ref:
+                return f"- Click element: {intent.element_ref}"
+        elif intent_type in ["type", "input", "typetext"]:
+            return f"- Type: \"{intent.value or intent.text or ''}\""
+        elif intent_type in ["scroll", "scrolldown", "scrollup"]:
+            return f"- Scroll: {intent.text or 'page'}"
+        elif intent_type in ["navigate", "goto"]:
+            return f"- Navigate: {intent.value or intent.text or ''}"
+        else:
+            if intent.text or intent.value:
+                return f"- {intent_type}: {intent.text or intent.value}"
+
+        return ""
+
+    @staticmethod
+    def format_result(result: QueryResult) -> str:
+        """Format any QueryResult based on its type."""
+        if not result.success:
+            return ""
+
+        if result.query_type == QueryType.TASK:
+            return MemoryToolkit.format_task_result(result)
+        elif result.query_type == QueryType.NAVIGATION:
+            return MemoryToolkit.format_navigation_path(result.states, result.actions)
+        elif result.query_type == QueryType.ACTION:
+            return MemoryToolkit.format_action_result(result)
+        return ""
 
     # =========================================================================
     # Utility Methods
@@ -884,9 +1003,9 @@ class MemoryToolkit(BaseToolkit):
     def get_tools(self) -> List[FunctionTool]:
         """Return FunctionTool objects for LLM tool-use.
 
-        Note: The three query methods (query_cognitive_phrase, query_path,
-        query_states) are called by the agent framework, not exposed as
-        LLM-callable tools.
+        Note: The three query methods (query_task, query_navigation,
+        query_actions) are called by the agent framework, not exposed as
+        LLM-callable tools directly.
         """
         # Memory queries are called by framework, not LLM
         return []
@@ -895,3 +1014,23 @@ class MemoryToolkit(BaseToolkit):
     def toolkit_name(cls) -> str:
         """Return the name of this toolkit."""
         return "Memory Toolkit"
+
+
+# =============================================================================
+# Exported Symbols
+# =============================================================================
+
+__all__ = [
+    # Data models
+    "Intent",
+    "IntentSequence",
+    "State",
+    "Action",
+    "ExecutionStep",
+    "CognitivePhrase",
+    "QueryType",
+    "SubTaskResult",
+    "QueryResult",
+    # Toolkit
+    "MemoryToolkit",
+]
