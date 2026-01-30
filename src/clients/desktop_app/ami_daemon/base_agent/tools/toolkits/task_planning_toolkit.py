@@ -112,8 +112,10 @@ class TaskPlanningToolkit(BaseToolkit):
         if not self._orchestrator:
             return "Error: No TaskOrchestrator configured. Cannot track subtask state."
 
-        # Mark the subtask as completed
-        self._orchestrator.mark_completed(subtask_id, result)
+        # Mark the subtask as completed (validates state)
+        error = self._orchestrator.mark_completed(subtask_id, result)
+        if error:
+            return error
 
         # Return updated plan summary
         return self._orchestrator.get_plan_summary()

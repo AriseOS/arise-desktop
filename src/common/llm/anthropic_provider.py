@@ -126,18 +126,6 @@ class AnthropicProvider(BaseProvider):
         if not hasattr(response, 'usage'):
             return None
 
-        # Debug: Log the full usage object for non-Claude models
-        if not self.model_name.startswith('claude'):
-            logger.info(f"[DEBUG] Non-Claude model usage object:")
-            logger.info(f"  Model: {self.model_name}")
-            logger.info(f"  Usage type: {type(response.usage)}")
-            logger.info(f"  Usage attributes: {dir(response.usage)}")
-            logger.info(f"  Usage dict: {vars(response.usage) if hasattr(response.usage, '__dict__') else 'N/A'}")
-            logger.info(f"  input_tokens: {getattr(response.usage, 'input_tokens', None)}")
-            logger.info(f"  output_tokens: {getattr(response.usage, 'output_tokens', None)}")
-            logger.info(f"  cache_creation_input_tokens: {getattr(response.usage, 'cache_creation_input_tokens', None)}")
-            logger.info(f"  cache_read_input_tokens: {getattr(response.usage, 'cache_read_input_tokens', None)}")
-
         usage_data = {
             "input_tokens": getattr(response.usage, 'input_tokens', 0) or 0,
             "output_tokens": getattr(response.usage, 'output_tokens', 0) or 0,
@@ -269,8 +257,6 @@ class AnthropicProvider(BaseProvider):
         for attempt in range(MAX_RETRIES):
             try:
                 logger.info(f"Calling Anthropic API... (attempt {attempt + 1}/{MAX_RETRIES})")
-                logger.info(f"  Client type: {type(self._client)}")
-                logger.info(f"  Client base_url: {self._client.base_url}")
 
                 # Make the API call and catch any errors
                 try:
@@ -283,9 +269,7 @@ class AnthropicProvider(BaseProvider):
                         max_tokens=self.max_tokens
                     )
 
-                    logger.info(f"Anthropic API call successful, model: {self.model_name}")
-                    logger.info(f"Response type: {type(response)}")
-                    logger.info(f"Response: {response}")
+                    logger.info(f"Anthropic API call successful")
 
                     # Record token usage (Eigent Migration)
                     self._record_usage(response)
@@ -408,9 +392,6 @@ class AnthropicProvider(BaseProvider):
         for attempt in range(MAX_RETRIES):
             try:
                 logger.info(f"Calling Anthropic API with tools... (attempt {attempt + 1}/{MAX_RETRIES})")
-                logger.info(f"  Model: {self.model_name}")
-                logger.info(f"  Tools count: {len(tools)}")
-                logger.info(f"  Messages count: {len(messages)}")
 
                 # Use asyncio.to_thread() to run sync client in thread pool
                 response = await asyncio.to_thread(
@@ -422,9 +403,7 @@ class AnthropicProvider(BaseProvider):
                     tools=tools,
                 )
 
-                logger.info(f"Anthropic API call successful")
-                logger.info(f"  Stop reason: {response.stop_reason}")
-                logger.info(f"  Content blocks: {len(response.content)}")
+                logger.info(f"Anthropic API call successful (stop={response.stop_reason}, blocks={len(response.content)})")
 
                 # Record token usage (Eigent Migration)
                 self._record_usage(response)

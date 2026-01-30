@@ -1158,12 +1158,9 @@ class QuickTaskService:
                     reasoning_text = data.get("reasoning", "")
                     step = data.get("step", state.loop_iteration)
                     timestamp = datetime.now().isoformat()
-                    logger.info(f"[Task {task_id}] on_agent_progress received llm_reasoning event")
-                    logger.info(f"[Task {task_id}] Emitting agent_thinking event: {reasoning_text[:100]}...")
-
                     # Save to state for persistence
                     state.thinking_logs.append({
-                        "content": reasoning_text[:500],  # Truncate for storage
+                        "content": reasoning_text[:500],
                         "step": step,
                         "agent_name": agent_name,
                         "timestamp": timestamp,
@@ -1175,9 +1172,7 @@ class QuickTaskService:
                         thinking=reasoning_text,
                         step=step,
                     )
-                    logger.info(f"[Task {task_id}] AgentThinkingData created: action={thinking_event.action}")
                     await state.put_event(thinking_event)
-                    logger.info(f"[Task {task_id}] agent_thinking event put to queue")
 
                 elif event == "agent_completed":
                     state.progress = 1.0
