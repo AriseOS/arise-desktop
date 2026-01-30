@@ -24,7 +24,7 @@ from src.cloud_backend.memgraph.memory.memory import Memory
 from src.cloud_backend.memgraph.memory.workflow_memory import WorkflowMemory
 from src.cloud_backend.memgraph.ontology.action import Action
 from src.cloud_backend.memgraph.ontology.cognitive_phrase import CognitivePhrase, ExecutionStep
-from src.cloud_backend.memgraph.ontology.domain import Domain, Manage
+from src.cloud_backend.memgraph.ontology.domain import Domain, Manage, normalize_domain_url
 from src.cloud_backend.memgraph.ontology.intent import Intent
 from src.cloud_backend.memgraph.ontology.intent_sequence import IntentSequence
 from src.cloud_backend.memgraph.ontology.page_instance import PageInstance
@@ -982,17 +982,21 @@ class WorkflowProcessor:
             if not domain_name:
                 domain_name = self._extract_domain_from_url(state.page_url)
 
-            if domain_name not in domain_map:
+            domain_key = normalize_domain_url(domain_name, "website")
+            if not domain_key:
+                continue
+
+            if domain_key not in domain_map:
                 domain = Domain(
                     domain_name=domain_name,
-                    domain_url=f"https://{domain_name}" if not domain_name.startswith("http") else domain_name,
+                    domain_url=domain_key,
                     domain_type="website",
                     user_id=None,  # user isolation disabled
                 )
-                domain_map[domain_name] = domain
+                domain_map[domain_key] = domain
 
             # Create Manage edge
-            domain = domain_map[domain_name]
+            domain = domain_map[domain_key]
             manage = Manage(
                 domain_id=domain.id,
                 state_id=state.id,
