@@ -7,8 +7,49 @@ through Manage edges.
 
 import uuid
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, model_validator
+
+
+def normalize_domain_url(domain_url: str, domain_type: Optional[str] = None) -> str:
+    """Normalize domain_url for consistent deduplication.
+
+    - Website: extract host, lower, strip www., drop default ports.
+    - App: lower + strip.
+    """
+    if not isinstance(domain_url, str):
+        return domain_url
+
+    raw = domain_url.strip()
+    if not raw:
+        return raw
+
+    if isinstance(domain_type, str) and domain_type.lower() == "app":
+        return raw.lower()
+
+    host = ""
+    port = None
+    try:
+        parsed = urlparse(raw if "://" in raw else f"http://{raw}")
+        host = parsed.hostname or ""
+        port = parsed.port
+    except Exception:
+        host = ""
+        port = None
+
+    if not host:
+        host = raw.split("/")[0]
+        host = host.split("?")[0].split("#")[0]
+
+    host = host.lower().rstrip(".")
+    if host.startswith("www."):
+        host = host[4:]
+
+    if port and port not in (80, 443):
+        host = f"{host}:{port}"
+
+    return host
 
 
 class Domain(BaseModel):
@@ -76,7 +117,7 @@ class Domain(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def generate_id(cls, data: Any) -> Any:
-        """Auto-generate ID if not provided.
+        """Normalize domain_url and auto-generate ID if not provided.
 
         Args:
             data: Input data dictionary.
@@ -85,7 +126,15 @@ class Domain(BaseModel):
             Data with ID generated if missing.
         """
         if isinstance(data, dict):
-            if not data.get("id"):
+            domain_url = data.get("domain_url")
+            if domain_url:
+                domain_type = data.get("domain_type") or "website"
+                normalized = normalize_domain_url(domain_url, domain_type)
+                if normalized:
+                    data["domain_url"] = normalized
+                    if not data.get("id"):
+                        data["id"] = normalized
+            elif not data.get("id"):
                 data["id"] = str(uuid.uuid4())
         return data
 
@@ -254,4 +303,5 @@ class Manage(BaseModel):
 __all__ = [
     "Domain",
     "Manage",
+    "normalize_domain_url",
 ]
