@@ -3,6 +3,7 @@
 This module uses LLM to identify Actions (state transitions that cause navigation).
 """
 
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -13,6 +14,8 @@ from src.cloud_backend.memgraph.thinker.prompts.action_extraction_prompt import 
     ActionExtractionInput,
     ActionExtractionPrompt,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class ActionExtractionResult:
@@ -155,11 +158,11 @@ class ActionExtractor:
 
             # Validate indices
             if source_idx not in state_id_map or target_idx not in state_id_map:
-                print(f"Warning: Invalid state index {source_idx} or {target_idx}")
+                logger.warning(f" Invalid state index {source_idx} or {target_idx}")
                 continue
 
             if source_idx == target_idx:
-                print(f"Warning: Source and target are the same ({source_idx})")
+                logger.warning(f" Source and target are the same ({source_idx})")
                 continue
 
             # Create Action with description and element info
@@ -185,7 +188,7 @@ class ActionExtractor:
                 actions.append(action)
 
             except Exception as action_err:
-                print(f"Warning: Failed to create action: {str(action_err)}")
+                logger.warning(f" Failed to create action: {str(action_err)}")
                 continue
 
         # Build metadata

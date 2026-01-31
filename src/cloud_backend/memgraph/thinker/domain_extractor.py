@@ -3,6 +3,7 @@
 This module uses LLM to identify domains (apps/websites) from user workflow data.
 """
 
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -12,6 +13,8 @@ from src.cloud_backend.memgraph.thinker.prompts.domain_extraction_prompt import 
     DomainExtractionInput,
     DomainExtractionPrompt,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class DomainExtractionResult:
@@ -159,7 +162,7 @@ class DomainExtractor:
                     domain_mapping[related_url] = domain
 
             except Exception as domain_err:
-                print(f"Warning: Failed to create domain from data: {str(domain_err)}")
+                logger.warning(f" Failed to create domain from data: {str(domain_err)}")
                 continue
 
         if not domains:

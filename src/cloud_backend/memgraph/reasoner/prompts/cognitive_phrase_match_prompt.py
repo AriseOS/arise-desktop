@@ -45,8 +45,14 @@ class CognitivePhraseMatchPrompt(BasePrompt[CognitivePhraseMatchInput, Cognitive
     def get_system_prompt(self) -> str:
         """Get system prompt."""
         return """You are an expert at analyzing cognitive phrases and user goals.
-Your task is to determine if available cognitive phrases can satisfy a user's target,
-either through direct match or by combining multiple phrases."""
+
+IMPORTANT: A cognitive phrase is a recorded workflow that will be REPLAYED exactly as recorded.
+Your task is to determine if replaying a cognitive phrase can DIRECTLY achieve the user's goal.
+
+Key principle: The phrase must produce the EXACT result the user wants, not just a similar workflow.
+- If user wants to search "AI glasses" but phrase searches "AI ring", it's NOT a match (different results)
+- If user wants product A details but phrase shows product B details, it's NOT a match
+- Only match when replaying the phrase gives the user exactly what they asked for"""
 
     def build_prompt(self, input_data: CognitivePhraseMatchInput) -> str:
         """Build the prompt."""
@@ -62,38 +68,33 @@ either through direct match or by combining multiple phrases."""
             )
 
         prompt = f"""## Task
-Analyze if the available cognitive phrases can satisfy the user's target.
+Determine if replaying any cognitive phrase can directly achieve the user's goal.
 
-## Target
+## User's Goal
 {input_data.target}
 
-## Available Cognitive Phrases
+## Available Cognitive Phrases (recorded workflows)
 {chr(10).join(phrases_text)}
 
 ## Instructions
-1. Analyze if any single cognitive phrase directly matches the target
-2. Consider if multiple phrases can be combined to satisfy the target
-3. Evaluate the semantic similarity and workflow compatibility
-4. Provide a clear reasoning for your decision
+1. A cognitive phrase will be REPLAYED exactly as recorded - no modifications
+2. Only match if replaying produces the EXACT result the user wants
+3. Similar workflow structure is NOT enough - the actual content/data must match
+4. If the user's search term, product, or target differs from the phrase, it's NOT a match
+
+## Critical Examples
+- User: "Search for AI glasses on Amazon" + Phrase: "Search for AI ring on Amazon" → NOT a match (different products)
+- User: "View iPhone 15 details" + Phrase: "View iPhone 15 details" → MATCH (same product)
+- User: "Search for laptops" + Phrase: "Search for laptops and sort by price" → Could be partial match
 
 ## Output Format
-Return a JSON object with the following structure:
+Return a JSON object:
 {{
     "can_satisfy": boolean,
     "matched_phrase_ids": [list of phrase IDs that match],
     "combination_strategy": "direct" | "sequential" | "none",
     "reasoning": "detailed explanation",
     "confidence": float between 0 and 1
-}}
-
-## Example
-{{
-    "can_satisfy": true,
-    "matched_phrase_ids": ["phrase-123"],
-    "combination_strategy": "direct",
-    "reasoning": "Phrase 'phrase-123' directly matches the target as it "
-                 "contains the exact workflow steps needed.",
-    "confidence": 0.92
 }}
 """
         return prompt

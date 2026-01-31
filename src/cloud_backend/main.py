@@ -192,7 +192,14 @@ async def startup_event():
             graph_store = create_graph_store("networkx")
             print("✅ Graph Store: NetworkX (in-memory)")
 
-        workflow_memory = WorkflowMemory(graph_store)
+        # Get memory configuration
+        memory_config = config_service.get("memory", {})
+        intent_sequence_dedup_threshold = memory_config.get("intent_sequence_dedup_threshold")
+
+        workflow_memory = WorkflowMemory(
+            graph_store,
+            intent_sequence_dedup_threshold=intent_sequence_dedup_threshold,
+        )
         print("✅ Workflow Memory (for NL query)")
 
         # 3.1 Initialize EmbeddingService (for semantic search) - REQUIRED
@@ -1596,8 +1603,7 @@ async def query_memory(
                         "task_id": st.task_id,
                         "target": st.target,
                         "found": st.found,
-                        "states": [s.to_dict() if hasattr(s, 'to_dict') else s for s in st.states],
-                        "actions": [a.to_dict() if hasattr(a, 'to_dict') else a for a in st.actions],
+                        "path_state_indices": st.path_state_indices,
                     }
                     for st in result.subtasks
                 ]
@@ -2017,12 +2023,18 @@ async def _get_reasoner_for_user(x_ami_api_key: str):
         base_url=config_service.get("llm.proxy_url", "https://api.ariseos.com/api")
     )
 
+    # Get Reasoner configuration
+    reasoner_config = config_service.get("reasoner", {})
+    max_depth = reasoner_config.get("max_depth", 3)
+    similarity_thresholds = reasoner_config.get("similarity_thresholds", {})
+
     # Create Reasoner with memory, LLM provider, and embedding service
     reasoner = Reasoner(
         memory=workflow_memory,
         llm_provider=llm_provider,
         embedding_service=EmbeddingService,
-        max_depth=3
+        max_depth=max_depth,
+        similarity_thresholds=similarity_thresholds,
     )
 
     return reasoner

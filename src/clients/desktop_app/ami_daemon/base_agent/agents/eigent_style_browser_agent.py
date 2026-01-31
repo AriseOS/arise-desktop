@@ -489,6 +489,17 @@ class EigentStyleBrowserAgent(BaseStepAgent):
         # Stored for injection into each LLM call
         self._workflow_guide_content: Optional[str] = None
 
+        # IntentSequence cache for page operations
+        # Cached when LLM calls query_page_operations, cleared on URL change
+        self._cached_page_operations: Optional[str] = None
+        self._cached_page_operations_url: Optional[str] = None
+
+        # Memory query results: global path and subtask mappings
+        self._global_path_states: List[Any] = []  # L2 global path states
+        self._global_path_actions: List[Any] = []  # L2 global path actions
+        self._subtask_target_states: Dict[str, Any] = {}  # task_id -> target State
+        self._subtask_plan: List[Dict[str, Any]] = []  # Subtask plan from memory
+
     def set_progress_callback(self, callback: Callable):
         """Set callback for progress updates."""
         self._progress_callback = callback
@@ -834,6 +845,9 @@ Remember: This is a GUIDE. Adapt to your actual task goal.
 
         Uses set_process_task context manager to track tool execution
         for @listen_toolkit event emission.
+
+        Special handling for query_page_operations: caches result for
+        subsequent loops until URL changes.
         """
         tool = self._tool_map.get(tool_name)
         if not tool:
@@ -859,6 +873,18 @@ Remember: This is a GUIDE. Adapt to your actual task goal.
                     result = tool.func(**tool_input)
 
             result_str = str(result) if result is not None else "(no output)"
+
+            # Cache query_page_operations result for subsequent loops
+            if tool_name == "query_page_operations" and result_str:
+                url = tool_input.get("url", "")
+                if url and result_str != "(no output)":
+                    self._cached_page_operations = result_str
+                    self._cached_page_operations_url = url
+                    logger.info(f"[Memory Cache] Cached page operations for {url[:60]}...")
+                else:
+                    # No results found, clear cache
+                    self._cached_page_operations = None
+                    self._cached_page_operations_url = None
 
             # Notify tool execution complete
             await self._notify_progress("tool_completed", {
@@ -1335,6 +1361,77 @@ Example:
                     if "## Current Task Plan" not in content:
                         msg["content"] = f"{content}{injection_text}"
                         logger.debug(f"Appended plan summary and workflow hints to user message")
+
+                break  # Only modify the last user message
+
+    async def _check_and_inject_page_operations_cache(self) -> None:
+        """Check URL change and manage page operations cache.
+
+        This method:
+        1. Gets current page URL from browser
+        2. If URL changed from cached URL, clears the cache
+        3. If cache exists and URL matches, injects cached content into messages
+        """
+        if not self._browser_toolkit:
+            return
+
+        # Get current URL
+        try:
+            page = await self._browser_toolkit._session.get_page()
+            current_url = page.url
+        except Exception as e:
+            logger.debug(f"[Memory Cache] Could not get current URL: {e}")
+            return
+
+        # Check if URL changed
+        if self._cached_page_operations_url and current_url != self._cached_page_operations_url:
+            logger.info(
+                f"[Memory Cache] URL changed from {self._cached_page_operations_url[:50]}... "
+                f"to {current_url[:50]}..., clearing cache"
+            )
+            self._cached_page_operations = None
+            self._cached_page_operations_url = None
+            return
+
+        # If cache exists and URL matches, inject into messages
+        if self._cached_page_operations and self._cached_page_operations_url == current_url:
+            self._inject_page_operations_to_messages(self._cached_page_operations)
+
+    def _inject_page_operations_to_messages(self, page_operations: str) -> None:
+        """Inject cached page operations into the last user message.
+
+        Args:
+            page_operations: Formatted page operations string.
+        """
+        if not self._messages or len(self._messages) < 2:
+            return
+
+        injection_text = f"\n\n---\n## Cached Page Operations (from previous query)\n{page_operations}"
+
+        # Find the last user message
+        for i in range(len(self._messages) - 1, -1, -1):
+            msg = self._messages[i]
+            if msg.get("role") == "user":
+                content = msg.get("content", "")
+
+                # If it's a list (tool_result), append as text block
+                if isinstance(content, list):
+                    # Check if already injected
+                    for block in content:
+                        if isinstance(block, dict) and "Cached Page Operations" in block.get("text", ""):
+                            return  # Already injected
+                    content.append({
+                        "type": "text",
+                        "text": injection_text,
+                    })
+                    msg["content"] = content
+                    logger.debug("[Memory Cache] Injected cached page operations into tool_result message")
+
+                # If it's a string, append
+                elif isinstance(content, str):
+                    if "Cached Page Operations" not in content:
+                        msg["content"] = f"{content}{injection_text}"
+                        logger.debug("[Memory Cache] Appended cached page operations to user message")
 
                 break  # Only modify the last user message
 
@@ -1950,11 +2047,18 @@ Execute the appropriate browser action now."""
                     # === Query Memory for subtask navigation guidance ===
                     if self._memory_toolkit and self._memory_toolkit.is_available() and self._browser_toolkit:
                         try:
-                            page_title = await self._browser_toolkit.get_page_title()
-                            if page_title:
+                            # Get current page URL for start_state
+                            page = await self._browser_toolkit._session.get_page()
+                            current_url = page.url if page else None
+
+                            # Get target state for this subtask from path_state_indices
+                            target_state = getattr(self, '_subtask_target_states', {}).get(current_subtask.id)
+
+                            if current_url and target_state:
+                                # Use state ID for precise navigation query
                                 nav_result = await self._memory_toolkit.query_navigation(
-                                    start_state=page_title,
-                                    end_state=current_subtask.content,
+                                    start_state=current_url,
+                                    end_state=target_state.id,
                                 )
                                 if nav_result.success and (nav_result.states or nav_result.actions):
                                     nav_guide = MemoryToolkit.format_navigation_path(
@@ -1979,8 +2083,16 @@ Execute the appropriate browser action now."""
                                         )
                                 else:
                                     logger.debug("[Memory] No navigation path found for subtask")
+                            else:
+                                logger.debug(
+                                    f"[Memory] Skipping navigation query: "
+                                    f"current_url={bool(current_url)}, target_state={bool(target_state)}"
+                                )
                         except Exception as e:
                             logger.warning(f"[Memory] Navigation query failed: {e}")
+
+            # === Check URL change and manage page operations cache ===
+            await self._check_and_inject_page_operations_cache()
 
             # === Manage message history (prune + summarize if needed) ===
             self._messages = history_manager.prune_tool_calls(self._messages)
@@ -2230,47 +2342,61 @@ Execute the appropriate browser action now."""
                         f"with {len(cognitive_phrase.states)} states"
                     )
                 elif memory_result.subtasks:
-                    # L3: Subtask decomposition with per-subtask navigation guidance
-                    # Build subtask plan with navigation info for each subtask
-                    from ..tools.toolkits.memory_toolkit import CognitivePhrase as MemPath
-                    # Collect all states/actions across subtasks that found results
-                    all_states = []
-                    all_actions = []
+                    # L3: Subtask decomposition with optional L2 global path
+                    # Store global path (L2) separately from subtasks
+                    # Each subtask uses path_state_indices to reference global path
+
+                    # Store global path if available
+                    has_global_path = bool(memory_result.states)
+                    if has_global_path:
+                        self._global_path_states = memory_result.states
+                        self._global_path_actions = memory_result.actions
+                    else:
+                        self._global_path_states = []
+                        self._global_path_actions = []
+
+                    # Build subtask plan with target state mapping
                     subtask_plan = []
+                    subtasks_with_nav = 0
+                    self._subtask_target_states = {}  # task_id -> target State
+
                     for st in memory_result.subtasks:
                         subtask_info = {
                             "task_id": st.task_id,
                             "target": st.target,
                             "found": st.found,
-                            "states": st.states,
-                            "actions": st.actions,
+                            "path_state_indices": st.path_state_indices,
                         }
                         subtask_plan.append(subtask_info)
-                        if st.found:
-                            all_states.extend(st.states)
-                            all_actions.extend(st.actions)
 
-                    if all_states:
-                        path = MemPath(
-                            id="subtask_composed_path",
-                            description="Subtask-decomposed navigation path",
-                            states=all_states,
-                            actions=all_actions,
-                        )
-                        memory_source = "subtasks"
-                        execution_mode = "agent_loop_with_path"
-                        logger.info(
-                            f"[Memory] Found subtask plan with {len(memory_result.subtasks)} subtasks, "
-                            f"{len(all_states)} states total"
-                        )
-                    else:
-                        memory_source = "subtasks_no_nav"
-                        logger.info(
-                            f"[Memory] Subtask plan with {len(memory_result.subtasks)} subtasks but no navigation states"
-                        )
+                        if st.found and st.path_state_indices and has_global_path:
+                            subtasks_with_nav += 1
+                            # Map subtask to its target state (last state in indices)
+                            last_idx = st.path_state_indices[-1]
+                            if last_idx < len(self._global_path_states):
+                                self._subtask_target_states[st.task_id] = self._global_path_states[last_idx]
+
+                    memory_source = "subtasks"
+                    execution_mode = "agent_loop_with_subtasks"
+                    logger.info(
+                        f"[Memory] Found subtask plan with {len(memory_result.subtasks)} subtasks, "
+                        f"{subtasks_with_nav} with navigation info, "
+                        f"global_path has {len(self._global_path_states)} states"
+                    )
 
                     # Store subtask plan for agent loop to use
                     self._subtask_plan = subtask_plan
+
+                    # Create path from global_path for workflow_guide
+                    if has_global_path:
+                        from ..tools.toolkits.memory_toolkit import CognitivePhrase as MemPath
+                        path = MemPath(
+                            id="global_path",
+                            description="Global navigation path from L2",
+                            states=self._global_path_states,
+                            actions=self._global_path_actions,
+                        )
+                        memory_source = "subtasks_with_path"
                 elif memory_result.states and not memory_result.subtasks:
                     # L2: Overall navigation path (no subtask decomposition)
                     from ..tools.toolkits.memory_toolkit import CognitivePhrase as MemPath
@@ -2394,3 +2520,7 @@ Execute the appropriate browser action now."""
         self._step_count = 0
         self._tools = []
         self._tool_map = {}
+
+        # Reset page operations cache
+        self._cached_page_operations = None
+        self._cached_page_operations_url = None

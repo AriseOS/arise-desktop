@@ -1,8 +1,11 @@
 """Cognitive Phrase Checker - Checks if cognitive phrases can satisfy target."""
 
+import logging
 from typing import List, Optional, Tuple, Any
 
 from src.cloud_backend.memgraph.memory.memory import Memory
+
+logger = logging.getLogger(__name__)
 from src.cloud_backend.memgraph.ontology.cognitive_phrase import CognitivePhrase
 from src.cloud_backend.memgraph.reasoner.prompts.cognitive_phrase_match_prompt import (
     CognitivePhraseMatchInput,
@@ -87,12 +90,9 @@ class CognitivePhraseChecker:
                 user_prompt=prompt_text
             )
 
-            # Print raw LLM response for debugging
-            print("\n" + "=" * 80)
-            print("COGNITIVE PHRASE CHECKER - RAW LLM RESPONSE:")
-            print("=" * 80)
-            print(response)
-            print("=" * 80 + "\n")
+            # Log raw LLM response for debugging
+            logger.info(f"[L1] CognitivePhrase check - target: {target[:100]}...")
+            logger.info(f"[L1] LLM response: {response[:500]}...")
 
             # Parse response
             output = self.prompt.parse_response(response)
@@ -110,7 +110,7 @@ class CognitivePhraseChecker:
             return output.can_satisfy, matching_phrases, output.reasoning
 
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            print(f"LLM cognitive phrase check failed: {exc}")
+            logger.error(f"LLM cognitive phrase check failed: {exc}")
             return False, [], f"LLM check error: {str(exc)}"
 
 

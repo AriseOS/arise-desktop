@@ -3,12 +3,15 @@
 This module creates Manage edges that connect Domains to States, tracking visit information.
 """
 
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 from src.cloud_backend.memgraph.ontology.domain import Domain, Manage, normalize_domain_url
 from src.cloud_backend.memgraph.ontology.state import State
+
+logger = logging.getLogger(__name__)
 
 
 class ManageGenerationResult:
@@ -90,7 +93,7 @@ class ManageGenerator:
             domain = self._find_domain_for_state(state, domain_url_map)
 
             if not domain:
-                print(f"Warning: No domain found for state {state.page_url}")
+                logger.warning(f" No domain found for state {state.page_url}")
                 continue
 
             # Create or update Manage edge
@@ -232,7 +235,7 @@ class ManageGenerator:
                     return domain
 
         except Exception as err:
-            print(f"Warning: Failed to parse URL {page_url}: {str(err)}")
+            logger.warning(f" Failed to parse URL {page_url}: {str(err)}")
 
         return None
 

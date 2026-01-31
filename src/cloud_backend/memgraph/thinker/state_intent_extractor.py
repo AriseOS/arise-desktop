@@ -3,6 +3,7 @@
 This module uses LLM to identify States (pages/screens) and Intents (operations within states).
 """
 
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -14,6 +15,8 @@ from src.cloud_backend.memgraph.thinker.prompts.state_intent_extraction_prompt i
     StateIntentExtractionInput,
     StateIntentExtractionPrompt,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class StateIntentExtractionResult:
@@ -158,7 +161,7 @@ class StateIntentExtractor:
                 states.append(state)
                 state_id_map[idx] = state.id
             except Exception as state_err:
-                print(f"Warning: Failed to create state from data: {str(state_err)}")
+                logger.warning(f" Failed to create state from data: {str(state_err)}")
                 continue
 
         if not states:
@@ -172,7 +175,7 @@ class StateIntentExtractor:
             state_idx = intent_data.state_index
 
             if state_idx not in state_id_map:
-                print(f"Warning: Invalid state_index {state_idx}, skipping intent")
+                logger.warning(f" Invalid state_index {state_idx}, skipping intent")
                 continue
 
             state_id = state_id_map[state_idx]
@@ -213,7 +216,7 @@ class StateIntentExtractor:
                 state_intent_mapping[state_id].append(intent)
 
             except Exception as intent_err:
-                print(f"Warning: Failed to create intent from data: {str(intent_err)}")
+                logger.warning(f" Failed to create intent from data: {str(intent_err)}")
                 continue
 
         # Build metadata

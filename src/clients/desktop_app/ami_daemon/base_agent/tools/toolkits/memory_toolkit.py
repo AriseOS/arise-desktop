@@ -190,6 +190,7 @@ class Intent:
     """Single user operation (click, type, scroll, etc.)."""
     type: str
     element_ref: Optional[str] = None
+    element_role: Optional[str] = None
     text: Optional[str] = None
     value: Optional[str] = None
 
@@ -198,6 +199,7 @@ class Intent:
         return cls(
             type=data.get("type", ""),
             element_ref=data.get("element_ref") or data.get("ref"),
+            element_role=data.get("element_role"),
             text=data.get("text"),
             value=data.get("value"),
         )
@@ -329,8 +331,7 @@ class SubTaskResult:
     """Result for a single subtask from task decomposition."""
     task_id: str
     target: str
-    states: List[State] = field(default_factory=list)
-    actions: List[Action] = field(default_factory=list)
+    path_state_indices: List[int] = field(default_factory=list)
     found: bool = False
 
     @classmethod
@@ -338,8 +339,7 @@ class SubTaskResult:
         return cls(
             task_id=data.get("task_id", ""),
             target=data.get("target", ""),
-            states=[State.from_dict(s) for s in data.get("states", [])],
-            actions=[Action.from_dict(a) for a in data.get("actions", [])],
+            path_state_indices=data.get("path_state_indices", []),
             found=data.get("found", False),
         )
 
@@ -428,7 +428,7 @@ class MemoryToolkit(BaseToolkit):
         memory_api_base_url: str,
         ami_api_key: str,
         user_id: str,
-        timeout: Optional[float] = 30.0,
+        timeout: Optional[float] = 180.0,
     ) -> None:
         """Initialize MemoryToolkit.
 
@@ -823,6 +823,37 @@ class MemoryToolkit(BaseToolkit):
 
         return result
 
+    async def query_page_operations(self, url: str) -> str:
+        """Query available operations for the current page from memory.
+
+        Use this tool when you're on a complex page and want to know what
+        operations users have performed here before. This helps you understand
+        what actions are possible on this page.
+
+        Args:
+            url: Current page URL (e.g., "https://producthunt.com/products/xxx")
+
+        Returns:
+            Formatted string describing available operations on this page.
+            Returns empty message if no recorded operations found.
+        """
+        logger.info(f"[Memory] query_page_operations: {url[:80]}...")
+
+        result = await self._call_v2_query({
+            "current_state": url,
+            "target": "",
+        })
+
+        if result.success and (result.intent_sequences or result.outgoing_actions):
+            logger.info(
+                f"[Memory] Found {len(result.intent_sequences)} operations, "
+                f"{len(result.outgoing_actions)} navigation actions"
+            )
+            return self.format_page_operations(result.intent_sequences, result.outgoing_actions)
+
+        logger.info(f"[Memory] No recorded operations for this page")
+        return ""
+
     # =========================================================================
     # Context Formatters (V2)
     # =========================================================================
@@ -955,6 +986,74 @@ class MemoryToolkit(BaseToolkit):
         return "\n".join(lines)
 
     @staticmethod
+    def format_page_operations(
+        intent_sequences: List[IntentSequence],
+        outgoing_actions: List[Action],
+    ) -> str:
+        """Format page operations for LLM context (simplified format).
+
+        This format is designed for the query_page_operations tool,
+        providing concise, actionable information.
+
+        Args:
+            intent_sequences: List of IntentSequence objects.
+            outgoing_actions: List of Action objects for navigation.
+
+        Returns:
+            Formatted string for LLM consumption.
+        """
+        total_count = len(intent_sequences) + len(outgoing_actions)
+        lines = [f"## Page Operations ({total_count} recorded)\n"]
+
+        # In-page operations
+        for i, seq in enumerate(intent_sequences, 1):
+            nav_marker = " → navigates" if seq.causes_navigation else ""
+            lines.append(f"{i}. \"{seq.description or 'Operation'}\"{nav_marker}")
+
+            # Show intents with actionable info
+            for intent in seq.intents:
+                intent_line = MemoryToolkit._format_intent_compact(intent)
+                if intent_line:
+                    lines.append(f"   {intent_line}")
+
+        # Navigation actions
+        if outgoing_actions:
+            if intent_sequences:
+                lines.append("")
+            lines.append("**Navigation options:**")
+            for action in outgoing_actions:
+                desc = action.description or "Navigate"
+                trigger_text = ""
+                if action.trigger and action.trigger.get("text"):
+                    trigger_text = f" (click \"{action.trigger['text']}\")"
+                lines.append(f"- {desc}{trigger_text}")
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_intent_compact(intent: Intent) -> str:
+        """Format single intent in compact form for page operations display."""
+        intent_type = intent.type.lower()
+        role = intent.element_role or ""
+        text = intent.text or ""
+
+        if intent_type in ["click", "clickelement"]:
+            if role and text:
+                return f"- click {role} \"{text}\""
+            elif text:
+                return f"- click \"{text}\""
+            elif role:
+                return f"- click {role}"
+        elif intent_type in ["type", "input", "typetext"]:
+            target = text or role or "field"
+            return f"- type in {target}"
+        elif intent_type in ["scroll", "scrolldown", "scrollup"]:
+            direction = "down" if "down" in intent_type else "up" if "up" in intent_type else ""
+            return f"- scroll {direction}".strip()
+
+        return ""
+
+    @staticmethod
     def _format_intent(intent: Intent) -> str:
         """Format single intent for display."""
         intent_type = intent.type.lower()
@@ -1003,12 +1102,22 @@ class MemoryToolkit(BaseToolkit):
     def get_tools(self) -> List[FunctionTool]:
         """Return FunctionTool objects for LLM tool-use.
 
-        Note: The three query methods (query_task, query_navigation,
-        query_actions) are called by the agent framework, not exposed as
-        LLM-callable tools directly.
+        Exposes query_page_operations as an LLM-callable tool.
+        Other query methods (query_task, query_navigation, query_actions)
+        are called by the agent framework directly.
         """
-        # Memory queries are called by framework, not LLM
-        return []
+        return [
+            FunctionTool(
+                func=self.query_page_operations,
+                name="query_page_operations",
+                description=(
+                    "Query available operations for the current page from memory. "
+                    "Use this when you're on a complex page and want to know what "
+                    "operations users have performed here before. "
+                    "Returns recorded operations that can help guide your actions."
+                ),
+            ),
+        ]
 
     @classmethod
     def toolkit_name(cls) -> str:
