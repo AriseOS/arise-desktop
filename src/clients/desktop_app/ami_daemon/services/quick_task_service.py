@@ -915,8 +915,8 @@ class QuickTaskService:
             logger.warning(f"Reasoner API call failed: {e}")
             return None
 
-    async def _query_memory(self, task: str) -> List[Dict[str, Any]]:
-        """Query memory for similar workflow paths.
+    async def _query_memory(self, task: str) -> Dict[str, Any]:
+        """Query memory for workflow states and actions.
 
         DEPRECATED: Use _call_reasoner instead for full workflow retrieval.
         This method is kept for backward compatibility.
@@ -925,12 +925,12 @@ class QuickTaskService:
             task: Task description to query
 
         Returns:
-            List of memory paths, empty if no results or error
+            Memory result dict with states/actions, or empty dict if no results or error
         """
         logger.info(f"_query_memory called: cloud_client={self._cloud_client is not None}, user_id={self._user_id}")
         if not self._cloud_client or not self._user_id:
             logger.info(f"Memory query skipped: cloud_client={self._cloud_client is not None}, user_id={self._user_id}")
-            return []
+            return {}
 
         try:
             logger.info(f"Querying memory for task: {task[:50]}...")
@@ -941,21 +941,23 @@ class QuickTaskService:
                 min_score=0.3  # Lower threshold to get more potential matches
             )
 
-            if result.get("success") and result.get("paths"):
-                paths = result["paths"]
-                logger.info(f"Memory query returned {len(paths)} paths")
-                for i, path in enumerate(paths):
-                    logger.info(f"  Path {i+1}: score={path.get('score', 0):.3f}, "
-                              f"steps={path.get('path_length', 0)}, "
-                              f"desc={path.get('description', '')[:50]}")
-                return paths
+            if result.get("success"):
+                query_type = result.get("query_type", "unknown")
+                states = result.get("states", [])
+                actions = result.get("actions", [])
+                logger.info(f"Memory query returned: type={query_type}, states={len(states)}, actions={len(actions)}")
+                for i, state in enumerate(states):
+                    state_id = state.get("id", "?") if isinstance(state, dict) else "?"
+                    state_desc = (state.get("description", "") if isinstance(state, dict) else "")[:50]
+                    logger.info(f"  State {i+1}: id={state_id}, desc={state_desc}")
+                return result
             else:
-                logger.info("Memory query returned no paths")
-                return []
+                logger.info("Memory query returned no results")
+                return {}
 
         except Exception as e:
             logger.warning(f"Memory query failed: {e}")
-            return []
+            return {}
 
     async def _execute_task(
         self,

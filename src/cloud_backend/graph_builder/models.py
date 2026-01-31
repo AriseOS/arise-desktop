@@ -299,7 +299,10 @@ class StateActionGraph:
         self.actions.append(action)
 
     def add_intent_to_state(self, state_id: str, intent: Intent) -> None:
-        """Add an intent to a state.
+        """Add an intent to a state (legacy, no-op).
+
+        V2: Intents are tracked in IntentSequence objects, not on State directly.
+        This method is kept for API compatibility but does nothing.
 
         Args:
             state_id: State ID
@@ -310,11 +313,6 @@ class StateActionGraph:
         """
         if state_id not in self.states:
             raise KeyError(f"State {state_id} not found in graph")
-
-        state = self.states[state_id]
-        state.intents.append(intent)
-        if intent.id not in state.intent_ids:
-            state.intent_ids.append(intent.id)
 
     def get_state(self, state_id: str) -> Optional[State]:
         """Get state by ID.

@@ -676,7 +676,6 @@ class WorkflowProcessor:
             user_id=None,  # user isolation disabled
             session_id=session_id,
             instances=[],
-            intent_sequences=[],
         )
         return state, True
 
@@ -769,9 +768,13 @@ class WorkflowProcessor:
 
         # V2: Use IntentSequenceManager to create independent node and relationship
         if self.memory and self.memory.intent_sequence_manager:
-            # Create independent IntentSequence node
+            # Check for duplicate within this state first
+            existing_id = self.memory.intent_sequence_manager.find_duplicate(
+                sequence, state_id
+            )
+            if existing_id:
+                return None  # Already exists, skip
             self.memory.intent_sequence_manager.create_sequence(sequence)
-            # Create HAS_SEQUENCE relationship from State to IntentSequence
             self.memory.intent_sequence_manager.link_to_state(state_id, sequence.id)
 
         return sequence
@@ -1319,7 +1322,7 @@ URL: {state.page_url}
             except Exception as e:
                 print(f"Warning: Failed to store domain {domain.id}: {e}")
 
-        # Note: States are already updated by add_page_instance and add_intent_sequence
+        # Note: States are already stored. IntentSequences are linked via HAS_SEQUENCE.
         # We only need to update descriptions and embeddings for new states
         for state in states:
             # Re-read from memory to get the version with instances/sequences
@@ -1470,25 +1473,30 @@ URL: {state.page_url}
         state_to_in_page_sequences: Dict[str, List[str]] = {s.id: [] for s in sorted_states}
         state_to_navigation_sequence: Dict[str, str] = {}
 
+        # Build state_id -> sequence mapping from HAS_SEQUENCE relationships
+        seq_to_state: Dict[str, str] = {}
+        if self.memory and self.memory.intent_sequence_manager:
+            for state in sorted_states:
+                state_seqs = self.memory.intent_sequence_manager.list_by_state(state.id)
+                for s in state_seqs:
+                    seq_to_state[s.id] = state.id
+
         for seq in intent_sequences:
+            owner_state_id = seq_to_state.get(seq.id)
             if seq.causes_navigation and seq.navigation_target_state_id:
                 # This sequence causes navigation - find its source state
-                for action in actions:
-                    if action.target == seq.navigation_target_state_id:
-                        source_state_id = action.source
-                        state_to_navigation_sequence[source_state_id] = seq.id
-                        break
+                if owner_state_id:
+                    state_to_navigation_sequence[owner_state_id] = seq.id
+                else:
+                    # Fallback: match via action target
+                    for action in actions:
+                        if action.target == seq.navigation_target_state_id:
+                            state_to_navigation_sequence[action.source] = seq.id
+                            break
             else:
-                # Non-navigation sequence - find the state it belongs to by timestamp
-                best_state_id = None
-                best_diff = float('inf')
-                for state in sorted_states:
-                    diff = abs(seq.timestamp - state.timestamp)
-                    if diff < best_diff:
-                        best_diff = diff
-                        best_state_id = state.id
-                if best_state_id and best_state_id in state_to_in_page_sequences:
-                    state_to_in_page_sequences[best_state_id].append(seq.id)
+                # Non-navigation sequence - use graph relationship
+                if owner_state_id and owner_state_id in state_to_in_page_sequences:
+                    state_to_in_page_sequences[owner_state_id].append(seq.id)
 
         # Build ExecutionSteps
         for i, state in enumerate(sorted_states):

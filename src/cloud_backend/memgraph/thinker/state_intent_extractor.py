@@ -179,37 +179,38 @@ class StateIntentExtractor:
             state = states[state_idx]
 
             try:
+                # Store legacy xpath-based fields in attributes
+                attrs = intent_data.attributes.copy() if intent_data.attributes else {}
+                if getattr(intent_data, 'element_id', None):
+                    attrs["element_id"] = intent_data.element_id
+                if getattr(intent_data, 'element_tag', None):
+                    attrs["element_tag"] = intent_data.element_tag
+                if getattr(intent_data, 'element_class', None):
+                    attrs["element_class"] = intent_data.element_class
+                if getattr(intent_data, 'xpath', None):
+                    attrs["xpath"] = intent_data.xpath
+                if getattr(intent_data, 'css_selector', None):
+                    attrs["css_selector"] = intent_data.css_selector
+                if getattr(intent_data, 'coordinates', None):
+                    attrs["coordinates"] = intent_data.coordinates
+
                 intent = Intent(
                     state_id=state_id,
                     type=intent_data.type,
                     timestamp=intent_data.timestamp,
                     page_url=state.page_url,
                     page_title=state.page_title,
-                    # New ref-based format
                     element_ref=getattr(intent_data, 'element_ref', None),
                     element_role=getattr(intent_data, 'element_role', None),
-                    # Legacy xpath-based format
-                    element_id=intent_data.element_id,
-                    element_tag=intent_data.element_tag,
-                    element_class=intent_data.element_class,
-                    xpath=getattr(intent_data, 'xpath', None),
-                    css_selector=getattr(intent_data, 'css_selector', None),
                     text=intent_data.text,
                     value=intent_data.value,
-                    coordinates=intent_data.coordinates,
                     user_id=user_id,
                     session_id=session_id,
-                    attributes=intent_data.attributes
+                    attributes=attrs
                 )
 
                 intents.append(intent)
                 state_intent_mapping[state_id].append(intent)
-
-                # Embed intent in state
-                state.intents.append(intent)
-                if not state.intent_ids:
-                    state.intent_ids = []
-                state.intent_ids.append(intent.id)
 
             except Exception as intent_err:
                 print(f"Warning: Failed to create intent from data: {str(intent_err)}")

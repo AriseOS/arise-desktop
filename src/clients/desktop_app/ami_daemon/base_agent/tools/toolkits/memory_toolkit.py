@@ -675,7 +675,7 @@ class MemoryToolkit(BaseToolkit):
         """Call V2 query API and parse response.
 
         Args:
-            payload: Request payload for /api/v1/memory/v2/query
+            payload: Request payload for /api/v1/memory/query
 
         Returns:
             QueryResult parsed from API response
@@ -690,7 +690,7 @@ class MemoryToolkit(BaseToolkit):
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{self._memory_api_base_url}/api/v1/memory/v2/query",
+                    f"{self._memory_api_base_url}/api/v1/memory/query",
                     json=payload,
                     headers={"X-Ami-API-Key": self._ami_api_key},
                     timeout=self.timeout,

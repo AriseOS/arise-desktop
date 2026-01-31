@@ -92,6 +92,27 @@ class Reasoner:
         )
         self.tools[retrieval_tool.name] = retrieval_tool
 
+    def _gather_state_sequences(self, state_ids: list) -> Dict[str, list]:
+        """Gather IntentSequences for each state from memory.
+
+        Args:
+            state_ids: List of state IDs to gather sequences for.
+
+        Returns:
+            Mapping of state_id -> List[IntentSequence].
+        """
+        result = {}
+        if not self.memory.intent_sequence_manager:
+            return result
+        for state_id in state_ids:
+            try:
+                sequences = self.memory.intent_sequence_manager.list_by_state(state_id)
+                if sequences:
+                    result[state_id] = sequences
+            except Exception:
+                continue
+        return result
+
     def register_tool(self, tool: TaskTool):
         """Register a custom tool.
 
@@ -168,12 +189,16 @@ class Reasoner:
                 }
             )
 
+        # Gather IntentSequences for each state
+        state_sequences = self._gather_state_sequences([s.id for s in states])
+
         # Convert to workflow
         workflow = self.workflow_converter.convert(
             phrase.description,
             states,
             actions,
-            [phrase]
+            [phrase],
+            state_sequences=state_sequences,
         )
 
         return WorkflowResult(
@@ -247,7 +272,8 @@ class Reasoner:
                 # No valid states found, fall back to task decomposition
                 print("Warning: No valid states found in cognitive phrases, falling back to task decomposition")
             else:
-                workflow = self.workflow_converter.convert(target, states, actions, phrases)
+                state_sequences = self._gather_state_sequences([s.id for s in states])
+                workflow = self.workflow_converter.convert(target, states, actions, phrases, state_sequences=state_sequences)
 
                 return WorkflowResult(
                     target=target,
@@ -328,7 +354,8 @@ class Reasoner:
         has_results = len(all_states) > 0
 
         # Step 4: Convert to workflow (only if we have states)
-        workflow = self.workflow_converter.convert(target, all_states, all_actions) if has_results else None
+        state_sequences = self._gather_state_sequences([s.id for s in all_states]) if has_results else None
+        workflow = self.workflow_converter.convert(target, all_states, all_actions, state_sequences=state_sequences) if has_results else None
 
         return WorkflowResult(
             target=target,

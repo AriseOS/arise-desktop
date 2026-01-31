@@ -131,8 +131,7 @@ class GraphBuilder:
         # Step 5: Build graph
         logger.info("Step 5/5: Graph Construction")
         graph = self._build_graph(episodes, phases)
-        total_intents = sum(len(s.intents) for s in graph.states.values())
-        logger.info(f"  → {len(graph.states)} states, {total_intents} intents, {len(graph.actions)} actions")
+        logger.info(f"  → {len(graph.states)} states, {len(graph.actions)} actions")
 
         logger.info("="*70)
         logger.info("Graph Builder Pipeline Complete")
@@ -198,20 +197,13 @@ class GraphBuilder:
         last_click_intent_by_state: dict[str, Intent] = {}
 
         def finalize_active_sequence() -> None:
-            """Finalize the active IntentSequence by attaching it to its State."""
+            """Finalize the active IntentSequence.
+
+            V2: IntentSequences are stored as independent graph nodes via
+            IntentSequenceManager, not embedded in State objects. graph_builder
+            is a legacy component and does not persist sequences.
+            """
             nonlocal active_sequence, active_sequence_state_id
-            if not active_sequence or not active_sequence.intents:
-                active_sequence = None
-                active_sequence_state_id = None
-                return
-
-            state = graph.states.get(active_sequence_state_id)
-            if state:
-                # Ensure fields exist even for legacy states
-                if state.intent_sequences is None:
-                    state.intent_sequences = []
-                state.add_intent_sequence(active_sequence)
-
             active_sequence = None
             active_sequence_state_id = None
 
@@ -270,9 +262,6 @@ class GraphBuilder:
             )
             intent_id_counter += 1
 
-            # Ensure intent_ids list exists for legacy states
-            if state.intent_ids is None:
-                state.intent_ids = []
             graph.add_intent_to_state(state.id, intent)
             sequence.intents.append(intent)
             return intent
@@ -348,6 +337,9 @@ class GraphBuilder:
                     else None
                 )
 
+                # Capture the active sequence ID before finalizing
+                trigger_sequence_id = active_sequence.id if active_sequence else None
+
                 # Finalize the source state's sequence before leaving it
                 finalize_active_sequence()
 
@@ -359,7 +351,7 @@ class GraphBuilder:
                         from_state_id=current_state.id,
                         to_state_id=event_state.id,
                         event=event,
-                        trigger_intent_id=resolved_trigger.id,
+                        trigger_sequence_id=trigger_sequence_id,
                     )
                     graph.add_action(action)
                     action_id_counter += 1
@@ -426,10 +418,7 @@ class GraphBuilder:
             timestamp=event.timestamp,
             end_timestamp=None,  # Will be updated later if needed
             duration=None,
-            intents=[],  # Will be populated as we process events
-            intent_ids=[],
             instances=[],
-            intent_sequences=[],
             user_id=self.user_id,
             session_id=self.session_id,
             domain=domain,
@@ -514,6 +503,12 @@ class GraphBuilder:
         if extra_attributes:
             attributes.update(extra_attributes)
 
+        # Store legacy xpath-based fields in attributes (Intent model uses ref-based format)
+        if target_attrs.get("element_tag"):
+            attributes["element_tag"] = target_attrs["element_tag"]
+        if target_attrs.get("xpath"):
+            attributes["xpath"] = target_attrs["xpath"]
+
         return Intent(
             id=intent_id,
             state_id=state_id,
@@ -521,8 +516,7 @@ class GraphBuilder:
             timestamp=event.timestamp,
             page_url=intent_page_url,
             page_title=None,
-            element_tag=target_attrs.get("element_tag"),
-            xpath=target_attrs.get("xpath"),
+            element_role=target_attrs.get("role"),
             text=target_attrs.get("text"),
             value=event.data.get("value"),
             user_id=self.user_id,
@@ -537,7 +531,7 @@ class GraphBuilder:
         from_state_id: str,
         to_state_id: str,
         event: Event,
-        trigger_intent_id: str | None = None,
+        trigger_sequence_id: str | None = None,
     ) -> Action:
         """Create Action object from event (state transition).
 
@@ -546,7 +540,7 @@ class GraphBuilder:
             from_state_id: Source state ID
             to_state_id: Destination state ID
             event: Event that caused the transition
-            trigger_intent_id: ID of the Intent that triggered this transition
+            trigger_sequence_id: ID of the IntentSequence that triggered this transition
 
         Returns:
             memgraph Action object
@@ -562,7 +556,7 @@ class GraphBuilder:
             target=to_state_id,
             type=action_type,
             timestamp=event.timestamp,
-            trigger_intent_id=trigger_intent_id,
+            trigger_sequence_id=trigger_sequence_id,
             user_id=self.user_id,
             session_id=self.session_id,
             attributes={

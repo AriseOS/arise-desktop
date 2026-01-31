@@ -151,7 +151,7 @@ def graph_to_prompt_data(graph: Dict[str, Any]) -> Dict[str, Any]:
     for action in actions:
         op = {
             "type": "action",
-            "action_id": action.get("trigger_intent_id", ""),
+            "action_id": action.get("trigger_sequence_id", ""),
             "from_state": action.get("source", ""),
             "to_state": action.get("target", ""),
             "action_type": action.get("type", ""),  # Navigate, ClickLink, etc.

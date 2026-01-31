@@ -3385,8 +3385,12 @@ async def query_memory(
     Query User's Workflow Memory using Natural Language
 
     This endpoint performs intelligent semantic search on the user's workflow memory.
-    The system automatically analyzes the query and returns the most relevant
-    operation paths with States, Actions, and IntentSequences.
+    The system automatically analyzes the query and returns relevant states and actions.
+
+    Query types are automatically inferred:
+    - Task query (default): Complete workflow retrieval
+    - Navigation query: If start_state and end_state provided
+    - Action query: If current_state provided
 
     Headers:
         X-Ami-API-Key: User's API key (required)
@@ -3394,18 +3398,13 @@ async def query_memory(
     Returns:
         {
             "success": true,
-            "query": "通过榜单查看产品团队信息",
-            "paths": [
-                {
-                    "score": 0.85,
-                    "description": "从榜单页到团队页的操作路径",
-                    "steps": [
-                        {"state": {...}, "action": {...}, "intent_sequence": {...}},
-                        ...
-                    ]
-                }
-            ],
-            "total_paths": 1
+            "query_type": "task|navigation|action",
+            "states": [...],           // For task/navigation queries
+            "actions": [...],          // For task/navigation queries
+            "intent_sequences": [...], // For action queries
+            "cognitive_phrase": {...}, // For task queries (if found)
+            "execution_plan": [...],   // For task queries (if found)
+            "metadata": {...}
         }
     """
     if not x_ami_api_key:
@@ -3422,11 +3421,9 @@ async def query_memory(
             user_id=request.user_id,
             query=request.query,
             top_k=request.top_k,
-            min_score=request.min_score,
-            domain=request.domain
         )
 
-        logger.info(f"Memory query result: {result.get('total_paths')} paths")
+        logger.info(f"Memory query result: type={result.get('query_type')}, states={len(result.get('states', []))}, actions={len(result.get('actions', []))}")
         return result
 
     except Exception as e:

@@ -22,7 +22,6 @@ from src.cloud_backend.memgraph.memory.url_index import URLIndex
 from src.cloud_backend.memgraph.ontology.action import Action
 from src.cloud_backend.memgraph.ontology.cognitive_phrase import CognitivePhrase
 from src.cloud_backend.memgraph.ontology.domain import Domain, Manage
-from src.cloud_backend.memgraph.ontology.intent import Intent
 from src.cloud_backend.memgraph.ontology.intent_sequence import IntentSequence
 from src.cloud_backend.memgraph.ontology.page_instance import PageInstance
 from src.cloud_backend.memgraph.ontology.state import State
@@ -727,70 +726,6 @@ class GraphStateManager(StateManager):
             print(f"Error getting k-hop neighbors: {e}")
             return []
 
-    def search_intents_by_embedding(
-        self, query_vector: List[float], top_k: int = 10
-    ) -> List[tuple[Intent, State, float]]:
-        """Search intents by embedding vector similarity.
-
-        Since intents are embedded within states, this method searches through
-        all states and their contained intents to find the most similar ones.
-
-        Args:
-            query_vector: Query embedding vector.
-            top_k: Number of top results to return.
-
-        Returns:
-            List of tuples (Intent, State, similarity_score) for top-k similar intents,
-            where State is the parent state containing the intent.
-        """
-        def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
-            """Calculate cosine similarity between two vectors."""
-            if not vec1 or not vec2 or len(vec1) != len(vec2):
-                return 0.0
-
-            dot_product = sum(a * b for a, b in zip(vec1, vec2))
-            norm1 = math.sqrt(sum(a * a for a in vec1))
-            norm2 = math.sqrt(sum(b * b for b in vec2))
-
-            if norm1 == 0 or norm2 == 0:
-                return 0.0
-
-            return dot_product / (norm1 * norm2)
-
-        try:
-            # Get all states
-            all_states = self.list_states()
-
-            # Collect all intents with their parent states and calculate similarities
-            similarities = []
-            for state in all_states:
-                if not state.intent_sequences:
-                    continue
-
-                for seq in state.intent_sequences:
-                    seq_intents = seq.intents if hasattr(seq, "intents") else seq.get("intents", []) if isinstance(seq, dict) else []
-                    for intent_data in seq_intents:
-                        # Convert intent data to Intent object if needed
-                        if isinstance(intent_data, dict):
-                            intent = Intent.from_dict(intent_data)
-                        elif isinstance(intent_data, Intent):
-                            intent = intent_data
-                        else:
-                            continue
-
-                        # Calculate similarity if intent has embedding
-                        if intent.embedding_vector:
-                            similarity = cosine_similarity(query_vector, intent.embedding_vector)
-                            similarities.append((intent, state, similarity))
-
-            # Sort by similarity (descending)
-            similarities.sort(key=lambda x: x[2], reverse=True)
-
-            # Return top-k
-            return similarities[:top_k]
-        except Exception as e:
-            print(f"Error searching intents by embedding: {e}")
-            return []
 
 
 class GraphActionManager(ActionManager):
@@ -1566,15 +1501,21 @@ class GraphIntentSequenceManager(IntentSequenceManager):
         self.rel_type = "HAS_SEQUENCE"
 
     def create_sequence(self, sequence: IntentSequence) -> bool:
-        """Create a new IntentSequence node.
+        """Create a new IntentSequence node with deduplication.
+
+        Deduplication is based on a content hash of the intents list.
+        If a sequence with the same content hash already exists, the
+        creation is skipped and the existing sequence's ID is preserved.
 
         Args:
             sequence: IntentSequence object to create.
 
         Returns:
-            True if created successfully, False otherwise.
+            True if created (or already exists), False on error.
         """
         try:
+            if not sequence.content_hash:
+                sequence.content_hash = self._compute_content_hash(sequence)
             properties = sequence.to_dict()
             self.graph_store.upsert_node(
                 label=self.node_label, properties=properties, id_key="id"
@@ -1583,6 +1524,64 @@ class GraphIntentSequenceManager(IntentSequenceManager):
         except Exception as e:
             print(f"Error creating IntentSequence: {e}")
             return False
+
+    def find_duplicate(self, sequence: IntentSequence, state_id: str) -> Optional[str]:
+        """Check if a duplicate IntentSequence already exists for a State.
+
+        Uses the stored content_hash property for fast comparison.
+
+        Args:
+            sequence: IntentSequence to check.
+            state_id: State ID to check within.
+
+        Returns:
+            Existing sequence ID if duplicate found, None otherwise.
+        """
+        content_hash = self._compute_content_hash(sequence)
+        if not content_hash:
+            return None
+
+        existing_seqs = self.list_by_state(state_id)
+        for existing in existing_seqs:
+            existing_hash = existing.content_hash or self._compute_content_hash(existing)
+            if existing_hash == content_hash:
+                return existing.id
+        return None
+
+    @staticmethod
+    def _compute_content_hash(sequence: IntentSequence) -> Optional[str]:
+        """Compute a content hash for deduplication.
+
+        Based on intent types, text, and values in order.
+        Normalizes None to '' for consistent hashing across Intent objects and dicts.
+
+        Args:
+            sequence: IntentSequence to hash.
+
+        Returns:
+            MD5 hex digest, or None if cannot compute.
+        """
+        import hashlib
+
+        if not sequence.intents:
+            return None
+
+        intent_keys = []
+        for intent in sequence.intents:
+            if hasattr(intent, "type"):
+                # Intent object: .text may be None
+                key = f"{intent.type}:{intent.text or ''}:{intent.value or ''}"
+            elif isinstance(intent, dict):
+                # Dict: .get() may return None
+                key = f"{intent.get('type') or ''}:{intent.get('text') or ''}:{intent.get('value') or ''}"
+            else:
+                continue
+            intent_keys.append(key)
+
+        if not intent_keys:
+            return None
+
+        return hashlib.md5("|".join(intent_keys).encode()).hexdigest()
 
     def get_sequence(self, sequence_id: str) -> Optional[IntentSequence]:
         """Get an IntentSequence by ID.
@@ -1658,7 +1657,6 @@ class GraphIntentSequenceManager(IntentSequenceManager):
                 end_node_id_value=sequence_id,
                 rel_type=self.rel_type,
                 properties={},
-                upsert_nodes=False,
             )
             return True
         except Exception as e:
@@ -1737,94 +1735,36 @@ class GraphIntentSequenceManager(IntentSequenceManager):
         Returns:
             List of (IntentSequence, similarity_score) tuples.
         """
-        try:
-            # Try GraphStore vector search first
-            results = self.graph_store.vector_search(
-                label=self.node_label,
-                property_key="embedding_vector",
-                query_text_or_vector=query_vector,
-                topk=top_k * 2 if state_id else top_k,  # Get more if filtering
-            )
+        # Pre-fetch state sequence IDs once if filtering by state
+        state_seq_ids = None
+        if state_id:
+            state_seqs = self.list_by_state(state_id)
+            state_seq_ids = {s.id for s in state_seqs}
 
-            sequences_with_scores = []
-            for node, score in results:
-                try:
-                    seq = IntentSequence.from_dict(node)
+        results = self.graph_store.vector_search(
+            label=self.node_label,
+            property_key="embedding_vector",
+            vector=query_vector,
+            limit=top_k * 2 if state_id else top_k,
+        )
 
-                    # Filter by state_id if provided (check via relationship)
-                    if state_id:
-                        state_seqs = self.list_by_state(state_id)
-                        state_seq_ids = {s.id for s in state_seqs}
-                        if seq.id not in state_seq_ids:
-                            continue
+        sequences_with_scores = []
+        for node, score in results:
+            try:
+                seq = IntentSequence.from_dict(node)
 
-                    sequences_with_scores.append((seq, score))
-
-                    if len(sequences_with_scores) >= top_k:
-                        break
-                except Exception as e:
-                    print(f"Error parsing IntentSequence from search: {e}")
+                if state_seq_ids is not None and seq.id not in state_seq_ids:
                     continue
 
-            return sequences_with_scores[:top_k]
-        except Exception as e:
-            # Fallback to manual search
-            print(f"Vector search failed, using fallback: {e}")
-            return self._search_by_embedding_fallback(query_vector, state_id, top_k)
+                sequences_with_scores.append((seq, score))
 
-    def _search_by_embedding_fallback(
-        self,
-        query_vector: List[float],
-        state_id: Optional[str] = None,
-        top_k: int = 10
-    ) -> List[Tuple[IntentSequence, float]]:
-        """Fallback embedding search using manual cosine similarity.
+                if len(sequences_with_scores) >= top_k:
+                    break
+            except Exception as e:
+                print(f"Error parsing IntentSequence from search: {e}")
+                continue
 
-        Args:
-            query_vector: Query embedding vector.
-            state_id: Optional filter to specific State.
-            top_k: Number of top results to return.
-
-        Returns:
-            List of (IntentSequence, similarity_score) tuples.
-        """
-
-        def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
-            """Calculate cosine similarity between two vectors."""
-            if not vec1 or not vec2 or len(vec1) != len(vec2):
-                return 0.0
-
-            dot_product = sum(a * b for a, b in zip(vec1, vec2))
-            norm1 = math.sqrt(sum(a * a for a in vec1))
-            norm2 = math.sqrt(sum(b * b for b in vec2))
-
-            if norm1 == 0 or norm2 == 0:
-                return 0.0
-
-            return dot_product / (norm1 * norm2)
-
-        # Get sequences to search
-        if state_id:
-            all_sequences = self.list_by_state(state_id)
-        else:
-            # Get all sequences (query all nodes)
-            try:
-                nodes = self.graph_store.query_nodes(label=self.node_label)
-                all_sequences = [IntentSequence.from_dict(n) for n in nodes]
-            except Exception:
-                all_sequences = []
-
-        # Calculate similarities
-        similarities = []
-        for seq in all_sequences:
-            if seq.embedding_vector:
-                similarity = cosine_similarity(query_vector, seq.embedding_vector)
-                similarities.append((seq, similarity))
-
-        # Sort by similarity (descending)
-        similarities.sort(key=lambda x: x[1], reverse=True)
-
-        return similarities[:top_k]
+        return sequences_with_scores[:top_k]
 
     def batch_create_sequences(self, sequences: List[IntentSequence]) -> bool:
         """Batch create multiple IntentSequences.
@@ -2182,7 +2122,6 @@ class WorkflowMemory(Memory):
             user_id=user_id,
             session_id=session_id,
             instances=[],
-            intent_sequences=[],
         )
 
         # Save to graph
@@ -2231,100 +2170,6 @@ class WorkflowMemory(Memory):
         except Exception as e:
             print(f"Error adding page instance: {e}")
             return False
-
-    def add_intent_sequence(
-        self,
-        state_id: str,
-        sequence: IntentSequence,
-    ) -> bool:
-        """DEPRECATED: Use intent_sequence_manager instead.
-
-        V2 uses independent IntentSequence nodes with HAS_SEQUENCE relationships.
-        Use:
-            self.intent_sequence_manager.create_sequence(sequence)
-            self.intent_sequence_manager.link_to_state(state_id, sequence.id)
-
-        This method is kept for backward compatibility but delegates to V2 implementation.
-        """
-        if self.intent_sequence_manager:
-            try:
-                self.intent_sequence_manager.create_sequence(sequence)
-                self.intent_sequence_manager.link_to_state(state_id, sequence.id)
-                return True
-            except Exception as e:
-                print(f"Error adding intent sequence via V2 manager: {e}")
-                return False
-        else:
-            print("Warning: IntentSequenceManager not available")
-            return False
-
-    def search_intent_sequences_by_embedding(
-        self, query_vector: List[float], top_k: int = 10, user_id: Optional[str] = None
-    ) -> List[tuple[IntentSequence, State, float]]:
-        """Search IntentSequences by embedding vector similarity.
-
-        This implements the two-level retrieval from design doc 5.6:
-        - Search through all states and their intent_sequences
-        - Return matching IntentSequences with their parent State
-
-        Args:
-            query_vector: Query embedding vector.
-            top_k: Number of top results to return.
-            user_id: Filter by user ID (optional).
-
-        Returns:
-            List of tuples (IntentSequence, State, similarity_score).
-        """
-        def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
-            """Calculate cosine similarity between two vectors."""
-            if not vec1 or not vec2 or len(vec1) != len(vec2):
-                return 0.0
-
-            dot_product = sum(a * b for a, b in zip(vec1, vec2))
-            norm1 = math.sqrt(sum(a * a for a in vec1))
-            norm2 = math.sqrt(sum(b * b for b in vec2))
-
-            if norm1 == 0 or norm2 == 0:
-                return 0.0
-
-            return dot_product / (norm1 * norm2)
-
-        try:
-            # Get all states
-            all_states = self.state_manager.list_states()
-
-            # Collect all intent sequences with their parent states
-            similarities = []
-            for state in all_states:
-                # Filter by user_id if provided
-                if user_id and state.user_id != user_id:
-                    continue
-
-                if not state.intent_sequences:
-                    continue
-
-                for seq_data in state.intent_sequences:
-                    # Convert to IntentSequence object if needed
-                    if isinstance(seq_data, dict):
-                        sequence = IntentSequence.from_dict(seq_data)
-                    elif isinstance(seq_data, IntentSequence):
-                        sequence = seq_data
-                    else:
-                        continue
-
-                    # Calculate similarity if sequence has embedding
-                    if sequence.embedding_vector:
-                        similarity = cosine_similarity(query_vector, sequence.embedding_vector)
-                        similarities.append((sequence, state, similarity))
-
-            # Sort by similarity (descending)
-            similarities.sort(key=lambda x: x[2], reverse=True)
-
-            # Return top-k
-            return similarities[:top_k]
-        except Exception as e:
-            print(f"Error searching intent sequences by embedding: {e}")
-            return []
 
     def find_path(
         self,
