@@ -53,6 +53,13 @@ class EventTarget:
         """
         return {k: v for k, v in asdict(self).items() if v is not None}
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "EventTarget":
+        """Create EventTarget from a dictionary."""
+        if isinstance(data, cls):
+            return data
+        return cls(**(data or {}))
+
 
 @dataclass
 class Event:
@@ -97,6 +104,19 @@ class Event:
         if self.dom_hash:
             result["dom_hash"] = self.dom_hash
         return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Event":
+        """Create Event from a dictionary."""
+        if isinstance(data, cls):
+            return data
+        payload = dict(data or {})
+        target = payload.get("target")
+        if isinstance(target, dict):
+            payload["target"] = EventTarget.from_dict(target)
+        payload.setdefault("page_root", "main")
+        payload.setdefault("data", {})
+        return cls(**payload)
 
 
 # Note: State, Intent, and Action are now imported from memgraph.ontology
@@ -158,6 +178,21 @@ class Phase:
             "end_url": self.end_url
         }
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Phase":
+        """Create Phase from a dictionary."""
+        if isinstance(data, cls):
+            return data
+        payload = dict(data or {})
+        raw_events = payload.get("events") or []
+        payload["events"] = [
+            Event.from_dict(event) if isinstance(event, dict) else event
+            for event in raw_events
+        ]
+        payload.setdefault("start_url", "")
+        payload.setdefault("end_url", "")
+        return cls(**payload)
+
 
 @dataclass
 class Episode:
@@ -195,6 +230,22 @@ class Episode:
             "target_roles": self.target_roles,
             "url": self.url
         }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Episode":
+        """Create Episode from a dictionary."""
+        if isinstance(data, cls):
+            return data
+        payload = dict(data or {})
+        raw_events = payload.get("events") or []
+        payload["events"] = [
+            Event.from_dict(event) if isinstance(event, dict) else event
+            for event in raw_events
+        ]
+        payload.setdefault("event_types", [])
+        payload.setdefault("target_roles", [])
+        payload.setdefault("url", "")
+        return cls(**payload)
 
 
 @dataclass
@@ -248,7 +299,10 @@ class StateActionGraph:
         self.actions.append(action)
 
     def add_intent_to_state(self, state_id: str, intent: Intent) -> None:
-        """Add an intent to a state.
+        """Add an intent to a state (legacy, no-op).
+
+        V2: Intents are tracked in IntentSequence objects, not on State directly.
+        This method is kept for API compatibility but does nothing.
 
         Args:
             state_id: State ID
@@ -259,11 +313,6 @@ class StateActionGraph:
         """
         if state_id not in self.states:
             raise KeyError(f"State {state_id} not found in graph")
-
-        state = self.states[state_id]
-        state.intents.append(intent)
-        if intent.id not in state.intent_ids:
-            state.intent_ids.append(intent.id)
 
     def get_state(self, state_id: str) -> Optional[State]:
         """Get state by ID.
@@ -288,6 +337,58 @@ class StateActionGraph:
             "phases": [p.to_dict() for p in self.phases],
             "episodes": [ep.to_dict() for ep in self.episodes]
         }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "StateActionGraph":
+        """Create StateActionGraph from a dictionary.
+
+        This supports legacy recordings that may use "edges" instead of "actions".
+        """
+        payload = data or {}
+
+        # States
+        raw_states = payload.get("states") or {}
+        states: Dict[str, State] = {}
+        if isinstance(raw_states, dict):
+            for state_id, state_data in raw_states.items():
+                if isinstance(state_data, State):
+                    state = state_data
+                else:
+                    state_payload = dict(state_data or {})
+                    # Backfill missing ID from the dictionary key when needed.
+                    if state_id and not state_payload.get("id"):
+                        state_payload["id"] = state_id
+                    state = State.from_dict(state_payload)
+                states[state.id] = state
+
+        # Actions (support legacy "edges" key)
+        raw_actions = payload.get("actions")
+        if raw_actions is None:
+            raw_actions = payload.get("edges", [])
+        actions: List[Action] = []
+        for action_data in raw_actions or []:
+            if isinstance(action_data, Action):
+                action = action_data
+            else:
+                action = Action.from_dict(dict(action_data or {}))
+            actions.append(action)
+
+        # Phases / Episodes
+        phases = [
+            Phase.from_dict(phase) if isinstance(phase, dict) else phase
+            for phase in (payload.get("phases") or [])
+        ]
+        episodes = [
+            Episode.from_dict(ep) if isinstance(ep, dict) else ep
+            for ep in (payload.get("episodes") or [])
+        ]
+
+        return cls(
+            states=states,
+            actions=actions,
+            phases=phases,
+            episodes=episodes,
+        )
 
 
 # Export all models

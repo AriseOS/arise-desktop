@@ -161,7 +161,7 @@ async def startup_event():
     try:
         from services.storage_service import StorageService
         from src.cloud_backend.intent_builder.services import WorkflowService
-        from src.cloud_backend.memgraph.graphstore.networkx_graph import NetworkXGraph
+        from src.cloud_backend.memgraph.graphstore import create_graph_store
         from src.cloud_backend.memgraph.memory.workflow_memory import WorkflowMemory
 
         # 1. CORS already configured
@@ -173,8 +173,33 @@ async def startup_event():
         print(f"✅ Storage: {storage_service.base_path}")
 
         # 3. Initialize WorkflowMemory (for NL query)
-        graph_store = NetworkXGraph()
-        workflow_memory = WorkflowMemory(graph_store)
+        # Check for graph_store backend configuration
+        graph_config = config_service.get("graph_store", {})
+        graph_backend = graph_config.get("backend", "networkx")
+
+        if graph_backend == "neo4j":
+            import os
+            graph_store = create_graph_store(
+                "neo4j",
+                uri=graph_config.get("uri") or os.getenv("NEO4J_URI", "neo4j://localhost:7687"),
+                user=graph_config.get("user") or os.getenv("NEO4J_USER", "neo4j"),
+                password=graph_config.get("password") or os.getenv("NEO4J_PASSWORD", ""),
+                database=graph_config.get("database") or os.getenv("NEO4J_DATABASE", "neo4j"),
+            )
+            graph_store.initialize_schema()
+            print(f"✅ Graph Store: Neo4j ({graph_config.get('uri', 'from env')})")
+        else:
+            graph_store = create_graph_store("networkx")
+            print("✅ Graph Store: NetworkX (in-memory)")
+
+        # Get memory configuration
+        memory_config = config_service.get("memory", {})
+        intent_sequence_dedup_threshold = memory_config.get("intent_sequence_dedup_threshold")
+
+        workflow_memory = WorkflowMemory(
+            graph_store,
+            intent_sequence_dedup_threshold=intent_sequence_dedup_threshold,
+        )
         print("✅ Workflow Memory (for NL query)")
 
         # 3.1 Initialize EmbeddingService (for semantic search) - REQUIRED
@@ -474,10 +499,11 @@ async def upload_recording(data: dict):
     logger.info(f"Building graph for recording {recording_id}")
     try:
         from src.cloud_backend.graph_builder import GraphBuilder
-        builder = GraphBuilder()
+        # Ensure graph nodes/edges are attributed to the current user/session
+        builder = GraphBuilder(user_id=user_id, session_id=recording_id)
         graph = builder.build(operations)
         graph_dict = graph.to_dict()
-        logger.info(f"Graph built: {len(graph.states)} states, {len(graph.edges)} edges")
+        logger.info(f"Graph built: {len(graph.states)} states, {len(graph.actions)} actions")
     except Exception as e:
         logger.error(f"Failed to build graph: {e}")
         import traceback
@@ -862,6 +888,7 @@ async def analyze_recording(data: dict, x_ami_api_key: Optional[str] = Header(No
         from src.common.llm.anthropic_provider import AnthropicProvider
         llm_provider = AnthropicProvider(
             api_key=x_ami_api_key,
+            model_name=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
             base_url=config_service.get("llm.proxy_url", "https://api.ariseos.com/api")
         )
 
@@ -1358,51 +1385,47 @@ async def add_to_memory(
         raise HTTPException(500, f"Failed to add to memory: {str(e)}")
 
 
-@app.post("/api/v1/memory/query")
-async def query_memory(
+@app.post("/api/v1/memory/phrase/query")
+async def query_cognitive_phrase(
     data: dict,
     x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
 ):
     """
-    Query User's Workflow Memory using Natural Language
+    Query CognitivePhrase (User-Recorded Complete Workflow)
 
-    This endpoint performs intelligent semantic search on the user's workflow memory
-    using the Reasoner module for cognitive phrase matching and semantic retrieval.
-
-    Query Processing (Reasoner):
-    1. Check cognitive phrases for direct/combinable matches
-    2. If no match, decompose target into TaskDAG
-    3. Use embedding to find candidate states
-    4. Use LLM to check state satisfaction
-    5. Explore neighbor states up to max_depth
-    6. Return complete operation paths
+    This endpoint queries for user-recorded complete workflows that match
+    the given task description. CognitivePhrases are high-value as they
+    represent verified user workflows.
 
     Headers:
         X-Ami-API-Key: User's API key (required)
 
     Body:
         {
-            "user_id": "user123",                    // Required: User identifier
-            "query": "通过榜单查看产品团队信息",        // Required: Natural language query
-            "top_k": 3,                              // Optional: Number of paths to return (default: 3)
-            "min_score": 0.5,                        // Optional: Minimum similarity score (default: 0.5)
-            "domain": "producthunt.com"              // Optional: Filter by domain
+            "user_id": "user123",
+            "query": "View team info on Product Hunt"
         }
 
     Returns:
         {
             "success": true,
-            "query": "通过榜单查看产品团队信息",
-            "paths": [...],
-            "total_paths": 1
+            "phrase": {
+                "id": "phrase_xxx",
+                "description": "...",
+                "state_path": ["state_1", "state_2", ...],
+                "action_path": ["action_1", "action_2", ...],
+                "states": [...],    // Full state objects
+                "actions": [...]    // Full action objects
+            }
         }
 
-    Errors:
-        400: Missing user_id or query
-        503: Memory service not initialized
-        500: Query failed
+        // Or if not found:
+        {
+            "success": true,
+            "phrase": null
+        }
     """
-    logger.info(f"🔍 Memory query request received: data={data}")
+    logger.info(f"🔍 CognitivePhrase query request: data={data}")
 
     if workflow_memory is None:
         raise HTTPException(503, "Memory service not initialized")
@@ -1412,9 +1435,6 @@ async def query_memory(
 
     user_id = data.get("user_id")
     query = data.get("query")
-    top_k = data.get("top_k", 3)
-    min_score = data.get("min_score", 0.5)
-    domain = data.get("domain")
 
     if not user_id:
         raise HTTPException(400, "Missing user_id")
@@ -1428,420 +1448,269 @@ async def query_memory(
         # Get Reasoner instance with user's API key
         user_reasoner = await _get_reasoner_for_user(x_ami_api_key)
 
-        # Query memory using Reasoner
-        result = await user_reasoner.plan(query, user_id=user_id)
+        # Use CognitivePhraseChecker to find matching phrases
+        can_satisfy, matching_phrases, reasoning = await user_reasoner.phrase_checker.check(query)
 
-        if not result or not result.success:
-            logger.info(f"No matching paths found for query: {query}")
+        if not can_satisfy or not matching_phrases:
+            logger.info(f"🔍 No CognitivePhrase found for: {query[:50]}...")
             return {
                 "success": True,
-                "query": query,
-                "paths": [],
-                "total_paths": 0,
-                "message": "No matching paths found"
+                "phrase": None,
+                "reasoning": reasoning,
             }
 
-        # Convert Reasoner result to simplified paths format
-        # Each state becomes a "path" entry for backward compatibility
-        paths = []
-        for i, state in enumerate(result.states[:top_k]):
-            state_dict = state.to_dict() if hasattr(state, 'to_dict') else state
-            paths.append({
-                "score": 1.0 - (i * 0.1),  # Decreasing score based on order
-                "description": state_dict.get("description", ""),
-                "domain": state_dict.get("domain", ""),
-                "page_url": state_dict.get("page_url", ""),
-                "page_title": state_dict.get("page_title", ""),
-                "path_length": len(state_dict.get("intent_sequences", [])),
-                "state": state_dict,
-            })
+        # Get the first (best) matching phrase
+        phrase = matching_phrases[0]
 
-        method = result.metadata.get("method", "reasoner") if result.metadata else "reasoner"
-        logger.info(f"✅ Memory query for user {user_id}: '{query}' -> {len(paths)} paths (via Reasoner, method={method})")
+        # Expand state_path and action_path to full objects
+        states = []
+        for state_id in phrase.state_path:
+            state = workflow_memory.state_manager.get_state(state_id)
+            if state:
+                states.append(state.to_dict() if hasattr(state, 'to_dict') else state)
+
+        actions = []
+        # action_path contains action types, we need to get actual actions between states
+        for i in range(len(phrase.state_path) - 1):
+            source_id = phrase.state_path[i]
+            target_id = phrase.state_path[i + 1]
+            action = workflow_memory.action_manager.get_action(source_id, target_id)
+            if action:
+                actions.append(action.to_dict() if hasattr(action, 'to_dict') else action)
+
+        phrase_dict = phrase.to_dict() if hasattr(phrase, 'to_dict') else phrase
+        phrase_dict["states"] = states
+        phrase_dict["actions"] = actions
+
+        logger.info(f"✅ Found CognitivePhrase for '{query[:30]}...': {phrase.id} with {len(states)} states")
 
         return {
             "success": True,
-            "query": query,
-            "paths": paths,
-            "total_paths": len(paths),
-            "method": method,
-            "workflow": result.workflow,
+            "phrase": phrase_dict,
+            "reasoning": reasoning,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ CognitivePhrase query failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"CognitivePhrase query failed: {str(e)}")
+
+
+@app.post("/api/v1/memory/query")
+async def query_memory(
+    data: dict,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """
+    Unified Memory Query - Task, Navigation, and Action queries
+
+    This unified query interface supports three query types:
+    1. **Task Query**: Complete workflow retrieval (default)
+    2. **Navigation Query**: Find path between two states
+    3. **Action Query**: Find available actions in current state
+
+    The query type is automatically inferred from parameters:
+    - If start_state and end_state provided → navigation query
+    - If current_state provided → action query
+    - Otherwise → task query
+
+    Headers:
+        X-Ami-API-Key: User's API key (required)
+
+    Body:
+        {
+            "target": "Query description or task",
+            "current_state": "state_id",      // For action query
+            "start_state": "start description or id",  // For navigation
+            "end_state": "end description or id",      // For navigation
+            "as_type": "task|navigation|action",  // Explicit type override
+            "user_id": "user123",             // Optional
+            "top_k": 10                       // Optional
+        }
+
+    Returns:
+        {
+            "success": true,
+            "query_type": "task|navigation|action",
+            "states": [...],           // For task/navigation
+            "actions": [...],          // For task/navigation
+            "intent_sequences": [...], // For action queries
+            "cognitive_phrase": {...}, // For task queries (if found)
+            "execution_plan": [...],   // For task queries (if found)
+            "metadata": {...}
+        }
+
+    Examples:
+        Task query: {"target": "在 Product Hunt 查看团队信息"}
+        Navigation query: {"start_state": "首页", "end_state": "团队页"}
+        Action query: {"target": "查看团队", "current_state": "state_123"}
+        Explore query: {"target": "", "current_state": "state_123"}
+    """
+    logger.info(f"🔍 Memory unified query request: data={data}")
+
+    if workflow_memory is None:
+        raise HTTPException(503, "Memory service not initialized")
+
+    if not x_ami_api_key:
+        raise HTTPException(400, "Missing X-Ami-API-Key header")
+
+    target = data.get("target", "")
+    current_state = data.get("current_state")
+    start_state = data.get("start_state")
+    end_state = data.get("end_state")
+    as_type = data.get("as_type")
+    user_id = data.get("user_id")
+    top_k = data.get("top_k", 10)
+
+    try:
+        # Get Reasoner instance with user's API key
+        user_reasoner = await _get_reasoner_for_user(x_ami_api_key)
+
+        # Call unified query
+        result = await user_reasoner.query(
+            target=target,
+            current_state=current_state,
+            start_state=start_state,
+            end_state=end_state,
+            as_type=as_type,
+            top_k=top_k,
+        )
+
+        # Convert to API response format
+        response = {
+            "success": result.success,
+            "query_type": result.query_type,
             "metadata": result.metadata,
         }
 
-        # Step 1: LLM decomposes query into page concepts
-        async def decompose_query(query: str) -> dict:
-            """Use LLM to decompose user query into page concepts for better embedding search."""
-            from src.common.llm import AnthropicProvider
-
-            system_prompt = """我有一个页面库，需要用 embedding 检索页面。用户描述了一个任务。
-
-你的任务：为用户的目标页面和途经页面，分别生成检索语句。
-
-返回 JSON：
-{
-    "target_query": "目标页面的检索语句",
-    "key_queries": ["途经页面的检索语句"]
-}
-
-要求：
-- target_query：描述用户最终要到达的页面，保留完整上下文（如网站名、产品名）
-- key_queries：用户明确提到的途经页面，没提到就是空数组
-- 检索语句要像页面的内容描述，不要用动作词（查看、点击等）
-- 保持简洁，便于 embedding 匹配
-
-示例：
-用户: "通过 Product Hunt 周榜查看团队成员国籍"
-输出: {"target_query": "Product Hunt 产品团队成员", "key_queries": ["Product Hunt 周榜"]}"""
-
-            user_prompt = f"用户任务: {query}"
-
-            try:
-                # Use lightweight model for query decomposition
-                simple_model = config_service.get("llm.anthropic.simple_model", "claude-haiku-4-5-20251001")
-                llm = AnthropicProvider(
-                    api_key=x_ami_api_key,
-                    model_name=simple_model,
-                    base_url=config_service.get("llm.proxy_url")
-                )
-
-                # Use generate_json_response for automatic JSON parsing and repair
-                result = await llm.generate_json_response(
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                )
-
-                # Validate result has expected keys
-                if "target_query" not in result:
-                    result["target_query"] = query
-                if "key_queries" not in result:
-                    result["key_queries"] = []
-                logger.info(f"🧠 LLM decomposed query: {result}")
-                return result
-
-            except Exception as e:
-                logger.warning(f"LLM query decomposition failed: {e}, falling back to original query")
-                return {"target_query": query, "key_queries": []}
-
-        # Decompose the query
-        decomposed = await decompose_query(query)
-        target_query = decomposed.get("target_query", query)
-        key_queries = decomposed.get("key_queries", [])
-
-        # Step 2: Search for target states (endpoints) using single target_query
-        target_states = []
-        target_state_ids = set()
-        tq_embedding = EmbeddingService.embed(target_query)
-        if tq_embedding:
-            results = workflow_memory.state_manager.search_states_by_embedding(
-                query_vector=tq_embedding,
-                top_k=top_k,
-                user_id=user_id,
-            )
-            for state, score in results:
-                if score >= min_score and (not domain or state.domain == domain):
-                    target_states.append((state, score))
-                    target_state_ids.add(state.id)
-
-        # Log target states
-        logger.info(f"🎯 Target states from query '{target_query}':")
-        for state, score in target_states:
-            state_desc = state.description or state.page_title or state.page_url
-            logger.info(f"   - [{score:.3f}] {state_desc}")
-
-        # Step 3: Search for key states by type (intermediate nodes for scoring)
-        # key_states_by_type: {key_query: [(state, score), ...]}
-        key_states_by_type = {}
-        for kq in key_queries:
-            kq_embedding = EmbeddingService.embed(kq)
-            if not kq_embedding:
-                continue
-            results = workflow_memory.state_manager.search_states_by_embedding(
-                query_vector=kq_embedding,
-                top_k=3,
-                user_id=user_id,
-            )
-            matched_states = []
-            for state, score in results:
-                if score >= min_score and (not domain or state.domain == domain):
-                    matched_states.append((state, score))
-            if matched_states:
-                key_states_by_type[kq] = matched_states
-
-        # Log key states by type
-        if key_states_by_type:
-            logger.info(f"🔑 Key states by type:")
-            for kq, states in key_states_by_type.items():
-                logger.info(f"   Type '{kq}':")
-                for state, score in states:
-                    state_desc = state.description or state.page_title or state.page_url
-                    logger.info(f"      - [{score:.3f}] {state_desc}")
-
-        # Build set of state IDs for each key type (for coverage calculation)
-        key_type_state_ids = {}
-        for kq, states in key_states_by_type.items():
-            key_type_state_ids[kq] = {state.id for state, score in states}
-
-        # Combine for compatibility with existing logic
-        matching_states = target_states
-
-        if not matching_states:
-            logger.info(f"No matching states found for query: {query}")
-            return {
-                "success": True,
-                "query": query,
-                "paths": [],
-                "total_paths": 0,
-                "message": "No matching states found"
-            }
-
-        # Step 3: Build paths by reverse traversal from target states
-        # For each target state, find all paths leading to it by traversing incoming edges
-        paths = []
-
-        def format_state(state):
-            """Format state for response"""
-            return {
-                "id": state.id,
-                "description": state.description,
-                "page_title": state.page_title,
-                "page_url": state.page_url,
-                "domain": state.domain,
-            }
-
-        def format_action(action):
-            """Format action for response"""
-            if not action:
-                return None
-            return {
-                "id": getattr(action, 'id', None),
-                "description": getattr(action, 'description', None),
-                "type": getattr(action, 'type', None),
-            }
-
-        def format_intent_sequence(state, query_embedding):
-            """Find and format best IntentSequence for a state"""
-            if not state.intent_sequences:
-                return None
-
-            best_seq = None
-            best_score = 0.0
-
-            for seq in state.intent_sequences:
-                if seq.embedding_vector:
-                    # Cosine similarity
-                    import math
-                    dot = sum(a * b for a, b in zip(query_embedding, seq.embedding_vector))
-                    norm1 = math.sqrt(sum(a * a for a in query_embedding))
-                    norm2 = math.sqrt(sum(b * b for b in seq.embedding_vector))
-                    score = dot / (norm1 * norm2) if norm1 > 0 and norm2 > 0 else 0.0
-                    if score > best_score:
-                        best_score = score
-                        best_seq = seq
-                elif not best_seq and seq.intents:
-                    # Fallback: use first non-empty sequence
-                    best_seq = seq
-
-            if not best_seq:
-                return None
-
-            intents_data = []
-            if best_seq.intents:
-                for intent in best_seq.intents[:10]:
-                    if hasattr(intent, "to_dict"):
-                        intent_dict = intent.to_dict()
-                    else:
-                        intent_dict = intent
-                    intents_data.append({
-                        "type": intent_dict.get("type"),
-                        "text": intent_dict.get("text"),
-                        "value": intent_dict.get("value"),
-                    })
-
-            return {
-                "id": best_seq.id,
-                "description": best_seq.description,
-                "intents": intents_data,
-            }
-
-        def find_paths_to_target(target_state, max_depth, max_paths=10):
-            """Find all paths leading to target using BFS with cycle detection.
-
-            Uses iterative BFS instead of recursion to better handle cycles and
-            limit path explosion. Each path tracks its own visited set.
-
-            Returns list of paths, each path is [(state, action_to_next), ...] ending at target.
-            """
-            # Each queue item: (current_state, path_so_far, visited_in_this_path)
-            # path_so_far is [(state, action_to_next), ...] in reverse order (from current back to target)
-            queue = [(target_state, [(target_state, None)], {target_state.id})]
-            complete_paths = []
-
-            while queue and len(complete_paths) < max_paths:
-                current_state, path_so_far, visited = queue.pop(0)
-
-                # Check depth limit
-                if len(path_so_far) > max_depth:
-                    # Treat current start as a valid entry point
-                    complete_paths.append(path_so_far)
-                    continue
-
-                # Get incoming actions (edges pointing to this state)
-                incoming_actions = workflow_memory.state_manager.get_connected_actions(
-                    current_state.id, direction="incoming"
-                )
-
-                # Base case: no incoming edges = this is a natural start point
-                if not incoming_actions:
-                    complete_paths.append(path_so_far)
-                    continue
-
-                has_valid_predecessor = False
-
-                for action in incoming_actions:
-                    # Get source state of this action
-                    source_state = workflow_memory.state_manager.get_state(action.source)
-                    if not source_state:
-                        continue
-
-                    # Skip if this would create a cycle in current path
-                    if source_state.id in visited:
-                        continue
-
-                    has_valid_predecessor = True
-
-                    # Build new path: prepend source state
-                    # Update the action on current state (action leads FROM source TO current)
-                    new_path = list(path_so_far)
-                    new_path[-len(path_so_far)] = (current_state, None)  # Will be updated
-
-                    # Actually we need to track action differently
-                    # path format: [(state1, action1→2), (state2, action2→3), ..., (stateN, None)]
-                    # When prepending: [(source, action_to_current), ...existing path with updated first element...]
-
-                    # Simpler: rebuild path with source prepended
-                    new_path = [(source_state, action)] + path_so_far
-
-                    new_visited = visited | {source_state.id}
-                    queue.append((source_state, new_path, new_visited))
-
-                # If all predecessors were cycles, current state is a valid start
-                if not has_valid_predecessor:
-                    complete_paths.append(path_so_far)
-
-            # If no complete paths found, the target itself is a valid single-node path
-            if not complete_paths:
-                complete_paths = [[(target_state, None)]]
-
-            return complete_paths
-
-        # Scoring weights
-        target_weight = 1.0   # Target is most important
-        key_weight = 0.3      # Key type coverage bonus
-        key_type_count = len(key_queries)
-
-        # Generate a general query embedding for intent sequence matching
-        query_embedding = EmbeddingService.embed(query)
-
-        # Track seen paths to avoid duplicates across different targets
-        seen_path_signatures = set()
-
-        def get_path_signature(path):
-            """Generate a unique signature for a path to detect duplicates."""
-            return tuple(state.id for state, action in path)
-
-        def calculate_key_type_coverage(path_state_ids):
-            """Calculate how many key types are covered by the path.
-            Each type only counts once, even if multiple states of that type are in the path.
-            """
-            if key_type_count == 0:
-                return 0, 0
-            types_hit = 0
-            for kq, state_ids in key_type_state_ids.items():
-                # If any state of this type is in the path, count this type as hit
-                if path_state_ids & state_ids:
-                    types_hit += 1
-            return types_hit, key_type_count
-
-        # Collect all paths from all target states
-        for target_state, target_score in matching_states[:top_k]:
-            # Find all paths leading to this target
-            all_paths_to_target = find_paths_to_target(target_state, max_depth)
-
-            # Limit paths per target to avoid explosion
-            for path in all_paths_to_target[:5]:  # Max 5 paths per target
-                # Skip duplicate paths
-                sig = get_path_signature(path)
-                if sig in seen_path_signatures:
-                    continue
-                seen_path_signatures.add(sig)
-                path_steps = []
-                for state, action in path:
-                    step = {
-                        "state": format_state(state),
-                        "action": format_action(action),
-                        "intent_sequence": format_intent_sequence(state, query_embedding),
+        # Add type-specific fields
+        if result.query_type == "task":
+            response["states"] = [s.to_dict() if hasattr(s, 'to_dict') else s for s in result.states]
+            response["actions"] = [a.to_dict() if hasattr(a, 'to_dict') else a for a in result.actions]
+            if result.cognitive_phrase:
+                response["cognitive_phrase"] = result.cognitive_phrase.to_dict() if hasattr(result.cognitive_phrase, 'to_dict') else result.cognitive_phrase
+            if result.execution_plan:
+                response["execution_plan"] = [
+                    step.model_dump() if hasattr(step, 'model_dump') else step
+                    for step in result.execution_plan
+                ]
+            if result.subtasks:
+                response["subtasks"] = [
+                    {
+                        "task_id": st.task_id,
+                        "target": st.target,
+                        "found": st.found,
+                        "path_state_indices": st.path_state_indices,
                     }
-                    path_steps.append(step)
+                    for st in result.subtasks
+                ]
 
-                # Get state IDs in this path
-                path_state_ids = {state.id for state, action in path}
+        elif result.query_type == "navigation":
+            response["states"] = [s.to_dict() if hasattr(s, 'to_dict') else s for s in result.states]
+            response["actions"] = [a.to_dict() if hasattr(a, 'to_dict') else a for a in result.actions]
 
-                # Check if path ends at a target state
-                end_state = path[-1][0]
-                has_target = 1 if end_state.id in target_state_ids else 0
+        elif result.query_type == "action":
+            response["intent_sequences"] = [
+                seq.to_dict() if hasattr(seq, 'to_dict') else seq
+                for seq in result.intent_sequences
+            ]
+            # Also include outgoing actions for exploration
+            if result.actions:
+                response["outgoing_actions"] = [
+                    a.to_dict() if hasattr(a, 'to_dict') else a
+                    for a in result.actions
+                ]
 
-                # Calculate key type coverage (by type, not by count)
-                types_hit, types_total = calculate_key_type_coverage(path_state_ids)
-                key_type_coverage = types_hit / types_total if types_total > 0 else 0.0
+        logger.info(f"✅ Memory unified query completed: type={result.query_type}, success={result.success}")
+        return response
 
-                # Calculate path score:
-                # score = has_target * target_weight * target_score + key_type_coverage * key_weight
-                path_score = has_target * target_weight * target_score + key_type_coverage * key_weight
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        logger.error(f"❌ Memory unified query failed: {e}\n{error_trace}")
+        raise HTTPException(500, f"Memory unified query failed: {str(e)}")
 
-                # Generate path description
-                start_state = path[0][0]
-                start_desc = start_state.description or start_state.page_title or start_state.page_url
-                end_desc = target_state.description or target_state.page_title or target_state.page_url
 
-                if len(path) == 1:
-                    path_desc = end_desc
-                else:
-                    path_desc = f"{start_desc} → {end_desc}"
+@app.post("/api/v1/memory/state")
+async def get_state_by_url(
+    data: dict,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """
+    Get State and IntentSequences by URL
 
-                paths.append({
-                    "score": round(path_score, 4),
-                    "has_target": has_target,
-                    "target_score": round(target_score, 4),
-                    "key_types_hit": types_hit,
-                    "key_types_total": types_total,
-                    "key_type_coverage": round(key_type_coverage, 4),
-                    "path_length": len(path),
-                    "description": path_desc,
-                    "start_url": start_state.page_url,
-                    "steps": path_steps,
-                })
+    Look up a State by its page URL and return the State along with
+    all linked IntentSequences.
 
-        # Sort by score only (higher is better)
-        paths.sort(key=lambda x: -x["score"])
-        paths = paths[:top_k * 2]  # Allow more paths since we have multiple per target
+    Headers:
+        X-Ami-API-Key: User's API key (required)
 
-        # Log paths with scores for debugging
-        logger.info(f"📊 Path scores (sorted):")
-        for i, p in enumerate(paths):
-            logger.info(f"   {i+1}. [{p['path_length']} steps] score={p['score']}, has_target={p['has_target']}, target_score={p['target_score']}, key_coverage={p['key_type_coverage']} ({p['key_types_hit']}/{p['key_types_total']})")
+    Body:
+        {
+            "user_id": "user123",                              // Required
+            "url": "https://example.com/products/123"          // Required
+        }
 
-        logger.info(f"✅ Memory query for user {user_id}: '{query}' -> {len(paths)} paths")
+    Returns:
+        {
+            "success": true,
+            "state": {
+                "id": "...",
+                "page_url": "https://example.com/products/123",
+                "page_title": "Product Detail",
+                "description": "...",
+                "domain": "example.com"
+            },
+            "intent_sequences": [
+                {
+                    "id": "...",
+                    "description": "Click add to cart",
+                    "timestamp": 1000,
+                    "intents": [...]
+                }
+            ]
+        }
+
+    Errors:
+        400: Missing user_id or url
+        404: No State found for URL
+        503: Memory service not initialized
+    """
+    if workflow_memory is None:
+        raise HTTPException(503, "Memory service not initialized")
+
+    if not x_ami_api_key:
+        raise HTTPException(400, "Missing X-Ami-API-Key header")
+
+    user_id = data.get("user_id")
+    url = data.get("url")
+
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+    if not url:
+        raise HTTPException(400, "Missing url")
+
+    try:
+        await _ensure_user_memory_loaded(user_id)
+
+        state = workflow_memory.find_state_by_url(url)
+        if not state:
+            raise HTTPException(404, f"No State found for URL: {url}")
+
+        # Get linked IntentSequences
+        sequences = []
+        if workflow_memory.intent_sequence_manager:
+            sequences = workflow_memory.intent_sequence_manager.list_by_state(state.id)
 
         return {
             "success": True,
-            "query": query,
-            "decomposed": {
-                "target_query": target_query,
-                "key_queries": key_queries,
-            },
-            "paths": paths,
-            "total_paths": len(paths),
+            "state": state.to_dict(),
+            "intent_sequences": [seq.to_dict() for seq in sequences],
         }
 
     except HTTPException:
@@ -1849,9 +1718,8 @@ async def query_memory(
     except Exception as e:
         import traceback
         error_trace = traceback.format_exc()
-        logger.error(f"❌ Memory query failed: {e}\n{error_trace}")
-        print(f"❌ Memory query error:\n{error_trace}")
-        raise HTTPException(500, f"Memory query failed: {str(e)}")
+        logger.error(f"State lookup failed: {e}\n{error_trace}")
+        raise HTTPException(500, f"State lookup failed: {str(e)}")
 
 
 @app.get("/api/v1/memory/stats")
@@ -1893,6 +1761,8 @@ async def get_memory_stats(
         raise HTTPException(400, "Missing user_id")
 
     try:
+        await _ensure_user_memory_loaded(user_id)
+
         # Get all states for user
         all_states = workflow_memory.state_manager.list_states(user_id=user_id)
 
@@ -1902,10 +1772,19 @@ async def get_memory_stats(
         domains = set()
 
         for state in all_states:
-            total_intent_sequences += len(state.intent_sequences)
             total_page_instances += len(state.instances)
             if state.domain:
                 domains.add(state.domain)
+
+        # Count IntentSequences via graph query (single query, not N+1)
+        if workflow_memory.intent_sequence_manager:
+            try:
+                all_seq_nodes = workflow_memory.intent_sequence_manager.graph_store.query_nodes(
+                    label="IntentSequence"
+                )
+                total_intent_sequences = len(all_seq_nodes)
+            except Exception:
+                total_intent_sequences = 0
 
         # Get actions count
         total_actions = len(workflow_memory.action_manager.list_actions(user_id=user_id))
@@ -1937,59 +1816,90 @@ async def get_memory_stats(
 
 @app.delete("/api/v1/memory")
 async def clear_memory(
-    user_id: str,
+    user_id: Optional[str] = None,
     x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
 ):
     """
-    Clear User's Workflow Memory
+    Clear Workflow Memory
 
-    This endpoint deletes all States, Actions, and related data from the user's
-    workflow memory. This operation is irreversible.
+    This endpoint deletes all States, Actions, Domains, Manage edges,
+    IntentSequences, and CognitivePhrases from workflow memory.
+    This operation is irreversible.
+
+    Note: user_id is currently ignored (user isolation disabled).
 
     Headers:
         X-Ami-API-Key: User's API key (optional)
 
     Query Parameters:
-        user_id: User identifier (required)
+        user_id: User identifier (optional, currently ignored)
 
     Returns:
         {
             "success": true,
             "deleted_states": 10,
-            "deleted_actions": 8
+            "deleted_actions": 8,
+            "deleted_domains": 2,
+            "deleted_phrases": 3,
+            "deleted_sequences": 5
         }
 
     Errors:
-        400: Missing user_id
         500: Failed to clear memory
     """
-    if not user_id:
-        raise HTTPException(400, "Missing user_id")
-
     try:
-        # Get counts before deletion
-        all_states = workflow_memory.state_manager.list_states(user_id=user_id)
-        all_actions = workflow_memory.action_manager.list_actions(user_id=user_id)
-        states_count = len(all_states)
-        actions_count = len(all_actions)
+        # Check if GraphStore supports bulk deletion (Neo4j)
+        graph_store = workflow_memory.graph_store
+        has_delete_all = hasattr(graph_store, 'delete_all_nodes_by_label')
 
-        # Delete all actions first (they reference states)
-        for action in all_actions:
-            workflow_memory.delete_action(action.source, action.target)
+        if has_delete_all:
+            # Use efficient bulk deletion - delete ALL nodes
+            # Delete all nodes with DETACH DELETE (removes relationships automatically)
+            states_count = graph_store.delete_all_nodes_by_label("State")
+            domains_count = graph_store.delete_all_nodes_by_label("Domain")
+            phrases_count = graph_store.delete_all_nodes_by_label("CognitivePhrase")
+            sequences_count = graph_store.delete_all_nodes_by_label("IntentSequence")
 
-        # Delete all states
-        for state in all_states:
-            workflow_memory.delete_state(state.id)
+            # Actions are edges, deleted via DETACH DELETE on States
+            actions_count = 0
 
-        # Clear URL index for user
+        else:
+            # Fallback: one-by-one deletion (for NetworkX or other backends)
+            all_states = workflow_memory.state_manager.list_states()
+            all_actions = workflow_memory.action_manager.list_actions()
+            all_domains = workflow_memory.domain_manager.list_domains()
+            all_phrases = workflow_memory.phrase_manager.list_phrases()
+
+            states_count = len(all_states)
+            actions_count = len(all_actions)
+            domains_count = len(all_domains)
+            phrases_count = len(all_phrases)
+            sequences_count = 0
+
+            for action in all_actions:
+                workflow_memory.delete_action(action.source, action.target)
+            for state in all_states:
+                workflow_memory.delete_state(state.id)
+            for domain in all_domains:
+                workflow_memory.domain_manager.delete_domain(domain.id)
+            for phrase in all_phrases:
+                workflow_memory.phrase_manager.delete_phrase(phrase.id)
+
+        # Clear URL index
         workflow_memory.url_index.clear()
 
-        logger.info(f"✅ Memory cleared for user {user_id}: {states_count} states, {actions_count} actions")
+        logger.info(f"✅ Memory cleared: "
+                   f"{states_count} states, {actions_count} actions, "
+                   f"{domains_count} domains, {phrases_count} phrases, "
+                   f"{sequences_count} sequences")
 
         return {
             "success": True,
             "deleted_states": states_count,
             "deleted_actions": actions_count,
+            "deleted_domains": domains_count,
+            "deleted_phrases": phrases_count,
+            "deleted_sequences": sequences_count,
         }
 
     except Exception as e:
@@ -2017,6 +1927,12 @@ async def _ensure_user_memory_loaded(user_id: str, session_id: Optional[str] = N
     if not workflow_memory:
         raise HTTPException(500, "WorkflowMemory not initialized")
 
+    # Disable auto-loading recording graphs into memory (explicitly requested).
+    # Memory should be populated via add_to_memory / WorkflowProcessor instead.
+    if not config_service.get("memory.load_recording_graphs", False):
+        logger.info("Auto-loading recording graphs is disabled; skipping load from recordings")
+        return
+
     logger.info(f"Loading memory for user {user_id}")
 
     # Get user's recordings from storage
@@ -2036,7 +1952,11 @@ async def _ensure_user_memory_loaded(user_id: str, session_id: Optional[str] = N
         recording_id = recording_meta.get("recording_id")
 
         # Get full recording data with graph
-        recording = storage_service.get_recording(user_id, recording_id)
+        try:
+            recording = storage_service.get_recording(user_id, recording_id)
+        except Exception as e:
+            logger.warning(f"Failed to read recording {recording_id}: {e}")
+            continue
         if not recording:
             continue
 
@@ -2048,6 +1968,21 @@ async def _ensure_user_memory_loaded(user_id: str, session_id: Optional[str] = N
         try:
             from src.cloud_backend.graph_builder.models import StateActionGraph
             graph = StateActionGraph.from_dict(graph_dict)
+
+            # Backfill missing user/session attribution for legacy recordings.
+            # This prevents stats/query filters by user_id from returning 0
+            # after a restart when old graphs lack user_id/session_id.
+            for state in graph.states.values():
+                if not getattr(state, "user_id", None):
+                    state.user_id = user_id
+                if not getattr(state, "session_id", None):
+                    state.session_id = recording_id
+
+            for action in graph.actions:
+                if not getattr(action, "user_id", None):
+                    action.user_id = user_id
+                if not getattr(action, "session_id", None):
+                    action.session_id = recording_id
 
             # Store states with intents to memory
             for state in graph.states.values():
@@ -2078,19 +2013,28 @@ async def _get_reasoner_for_user(x_ami_api_key: str):
         Reasoner instance
     """
     from src.cloud_backend.memgraph.reasoner.reasoner import Reasoner
+    from src.cloud_backend.memgraph.services.embedding_service import EmbeddingService
     from src.common.llm.anthropic_provider import AnthropicProvider
 
     # Create LLM provider with user's API key
     llm_provider = AnthropicProvider(
         api_key=x_ami_api_key,
+        model_name=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
         base_url=config_service.get("llm.proxy_url", "https://api.ariseos.com/api")
     )
 
-    # Create Reasoner with memory and LLM provider
+    # Get Reasoner configuration
+    reasoner_config = config_service.get("reasoner", {})
+    max_depth = reasoner_config.get("max_depth", 3)
+    similarity_thresholds = reasoner_config.get("similarity_thresholds", {})
+
+    # Create Reasoner with memory, LLM provider, and embedding service
     reasoner = Reasoner(
         memory=workflow_memory,
         llm_provider=llm_provider,
-        max_depth=3
+        embedding_service=EmbeddingService,
+        max_depth=max_depth,
+        similarity_thresholds=similarity_thresholds,
     )
 
     return reasoner
@@ -2382,6 +2326,7 @@ async def generate_workflow_direct(
 
                 llm = AnthropicProvider(
                     api_key=x_ami_api_key,
+                    model_name=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
                     base_url=config_service.get("llm.proxy_url")
                 )
                 extractor = IntentExtractor(llm_provider=llm)
@@ -2581,6 +2526,7 @@ async def generate_workflow_stream(
 
                     llm = AnthropicProvider(
                         api_key=x_ami_api_key,
+                        model_name=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
                         base_url=config_service.get("llm.proxy_url")
                     )
                     extractor = IntentExtractor(llm_provider=llm)

@@ -5,14 +5,16 @@ States, Actions, and CognitivePhrase units, using GraphStore for
 graph-based storage.
 """
 
+import logging
 import math
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from src.cloud_backend.memgraph.graphstore.graph_store import GraphStore
 from src.cloud_backend.memgraph.memory.memory import (
     ActionManager,
     CognitivePhraseManager,
     DomainManager,
+    IntentSequenceManager,
     ManageManager,
     Memory,
     StateManager,
@@ -21,10 +23,11 @@ from src.cloud_backend.memgraph.memory.url_index import URLIndex
 from src.cloud_backend.memgraph.ontology.action import Action
 from src.cloud_backend.memgraph.ontology.cognitive_phrase import CognitivePhrase
 from src.cloud_backend.memgraph.ontology.domain import Domain, Manage
-from src.cloud_backend.memgraph.ontology.intent import Intent
 from src.cloud_backend.memgraph.ontology.intent_sequence import IntentSequence
 from src.cloud_backend.memgraph.ontology.page_instance import PageInstance
 from src.cloud_backend.memgraph.ontology.state import State
+
+logger = logging.getLogger(__name__)
 
 
 class GraphDomainManager(DomainManager):
@@ -58,7 +61,7 @@ class GraphDomainManager(DomainManager):
             )
             return True
         except Exception as e:
-            print(f"Error creating domain: {e}")
+            logger.error(f" creating domain: {e}")
             return False
 
     def get_domain(self, domain_id: str) -> Optional[Domain]:
@@ -78,7 +81,7 @@ class GraphDomainManager(DomainManager):
                 return Domain.from_dict(node)
             return None
         except Exception as e:
-            print(f"Error getting domain: {e}")
+            logger.error(f" getting domain: {e}")
             return None
 
     def update_domain(self, domain: Domain) -> bool:
@@ -97,7 +100,7 @@ class GraphDomainManager(DomainManager):
             )
             return True
         except Exception as e:
-            print(f"Error updating domain: {e}")
+            logger.error(f" updating domain: {e}")
             return False
 
     def delete_domain(self, domain_id: str) -> bool:
@@ -115,7 +118,7 @@ class GraphDomainManager(DomainManager):
             )
             return True
         except Exception as e:
-            print(f"Error deleting domain: {e}")
+            logger.error(f" deleting domain: {e}")
             return False
 
     def list_domains(
@@ -146,7 +149,7 @@ class GraphDomainManager(DomainManager):
             )
             return [Domain.from_dict(node) for node in nodes]
         except Exception as e:
-            print(f"Error listing domains: {e}")
+            logger.error(f" listing domains: {e}")
             return []
 
     def batch_create_domains(self, domains: List[Domain]) -> bool:
@@ -164,7 +167,7 @@ class GraphDomainManager(DomainManager):
                     return False
             return True
         except Exception as e:
-            print(f"Error batch creating domains: {e}")
+            logger.error(f" batch creating domains: {e}")
             return False
 
 
@@ -204,7 +207,7 @@ class GraphManageManager(ManageManager):
             )
             return True
         except Exception as e:
-            print(f"Error creating manage edge: {e}")
+            logger.error(f" creating manage edge: {e}")
             return False
 
     def get_manage(self, domain_id: str, state_id: str) -> Optional[Manage]:
@@ -233,7 +236,7 @@ class GraphManageManager(ManageManager):
                 return Manage.from_dict(rel_data)
             return None
         except Exception as e:
-            print(f"Error getting manage edge: {e}")
+            logger.error(f" getting manage edge: {e}")
             return None
 
     def update_manage(self, manage: Manage) -> bool:
@@ -258,7 +261,7 @@ class GraphManageManager(ManageManager):
             )
             return True
         except Exception as e:
-            print(f"Error updating manage edge: {e}")
+            logger.error(f" updating manage edge: {e}")
             return False
 
     def delete_manage(self, domain_id: str, state_id: str) -> bool:
@@ -281,7 +284,7 @@ class GraphManageManager(ManageManager):
             )
             return True
         except Exception as e:
-            print(f"Error deleting manage edge: {e}")
+            logger.error(f" deleting manage edge: {e}")
             return False
 
     def list_manages(
@@ -325,7 +328,7 @@ class GraphManageManager(ManageManager):
 
             return manages
         except Exception as e:
-            print(f"Error listing manage edges: {e}")
+            logger.error(f" listing manage edges: {e}")
             return []
 
     def batch_create_manages(self, manages: List[Manage]) -> bool:
@@ -343,7 +346,7 @@ class GraphManageManager(ManageManager):
                     return False
             return True
         except Exception as e:
-            print(f"Error batch creating manage edges: {e}")
+            logger.error(f" batch creating manage edges: {e}")
             return False
 
 
@@ -378,7 +381,7 @@ class GraphStateManager(StateManager):
             )
             return True
         except Exception as e:
-            print(f"Error creating state: {e}")
+            logger.error(f" creating state: {e}")
             return False
 
     def get_state(self, state_id: str) -> Optional[State]:
@@ -398,7 +401,7 @@ class GraphStateManager(StateManager):
                 return State.from_dict(node)
             return None
         except Exception as e:
-            print(f"Error getting state: {e}")
+            logger.error(f" getting state: {e}")
             return None
 
     def update_state(self, state: State) -> bool:
@@ -417,7 +420,7 @@ class GraphStateManager(StateManager):
             )
             return True
         except Exception as e:
-            print(f"Error updating state: {e}")
+            logger.error(f" updating state: {e}")
             return False
 
     def delete_state(self, state_id: str) -> bool:
@@ -435,7 +438,7 @@ class GraphStateManager(StateManager):
             )
             return True
         except Exception as e:
-            print(f"Error deleting state: {e}")
+            logger.error(f" deleting state: {e}")
             return False
 
     def list_states(
@@ -491,7 +494,7 @@ class GraphStateManager(StateManager):
 
             return states
         except Exception as e:
-            print(f"Error listing states: {e}")
+            logger.error(f" listing states: {e}")
             return []
 
     def batch_create_states(self, states: List[State]) -> bool:
@@ -510,34 +513,47 @@ class GraphStateManager(StateManager):
             )
             return True
         except Exception as e:
-            print(f"Error batch creating states: {e}")
+            logger.error(f" batch creating states: {e}")
             return False
 
     def search_states_by_embedding(
-        self, query_vector: List[float], top_k: int = 10, user_id: Optional[str] = None
+        self, query_vector: List[float], top_k: int = 10
     ) -> List[tuple[State, float]]:
         """Search states by embedding vector similarity.
 
         Args:
             query_vector: Query embedding vector.
             top_k: Number of top results to return.
-            user_id: Filter by user ID (optional).
 
         Returns:
             List of tuples (State, similarity_score).
         """
-        # Use fallback in-memory search which supports user_id filtering
-        return self._fallback_embedding_search(query_vector, top_k, user_id)
+        # Try Neo4j native vector search first
+        try:
+            results = self.graph_store.vector_search(
+                label="State",
+                property_key="embedding_vector",
+                query_text_or_vector=query_vector,
+                topk=top_k,
+            )
+            states = []
+            for node, score in results:
+                state = State.from_dict(node)
+                states.append((state, score))
+            return states
+        except Exception as e:
+            # Fallback to in-memory search if vector index not available
+            logger.warning(f"Neo4j vector search failed, using fallback: {e}")
+            return self._fallback_embedding_search(query_vector, top_k)
 
     def _fallback_embedding_search(
-        self, query_vector: List[float], top_k: int, user_id: Optional[str] = None
+        self, query_vector: List[float], top_k: int
     ) -> List[tuple[State, float]]:
         """Fallback embedding search using in-memory cosine similarity.
 
         Args:
             query_vector: Query embedding vector.
             top_k: Number of top results to return.
-            user_id: Filter by user ID (optional).
 
         Returns:
             List of tuples (State, similarity_score).
@@ -562,10 +578,6 @@ class GraphStateManager(StateManager):
         # Calculate similarities
         similarities = []
         for state in all_states:
-            # Filter by user_id if provided
-            if user_id and state.user_id != user_id:
-                continue
-
             if state.embedding_vector:
                 similarity = cosine_similarity(query_vector, state.embedding_vector)
                 similarities.append((state, similarity))
@@ -642,7 +654,7 @@ class GraphStateManager(StateManager):
 
             return actions
         except Exception as e:
-            print(f"Error getting connected actions: {e}")
+            logger.error(f" getting connected actions: {e}")
             return []
 
     def get_k_hop_neighbors(
@@ -714,71 +726,9 @@ class GraphStateManager(StateManager):
 
             return k_hop_states
         except Exception as e:
-            print(f"Error getting k-hop neighbors: {e}")
+            logger.error(f" getting k-hop neighbors: {e}")
             return []
 
-    def search_intents_by_embedding(
-        self, query_vector: List[float], top_k: int = 10
-    ) -> List[tuple[Intent, State, float]]:
-        """Search intents by embedding vector similarity.
-
-        Since intents are embedded within states, this method searches through
-        all states and their contained intents to find the most similar ones.
-
-        Args:
-            query_vector: Query embedding vector.
-            top_k: Number of top results to return.
-
-        Returns:
-            List of tuples (Intent, State, similarity_score) for top-k similar intents,
-            where State is the parent state containing the intent.
-        """
-        def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
-            """Calculate cosine similarity between two vectors."""
-            if not vec1 or not vec2 or len(vec1) != len(vec2):
-                return 0.0
-
-            dot_product = sum(a * b for a, b in zip(vec1, vec2))
-            norm1 = math.sqrt(sum(a * a for a in vec1))
-            norm2 = math.sqrt(sum(b * b for b in vec2))
-
-            if norm1 == 0 or norm2 == 0:
-                return 0.0
-
-            return dot_product / (norm1 * norm2)
-
-        try:
-            # Get all states
-            all_states = self.list_states()
-
-            # Collect all intents with their parent states and calculate similarities
-            similarities = []
-            for state in all_states:
-                if not state.intents:
-                    continue
-
-                for intent_data in state.intents:
-                    # Convert intent data to Intent object if needed
-                    if isinstance(intent_data, dict):
-                        intent = Intent.from_dict(intent_data)
-                    elif isinstance(intent_data, Intent):
-                        intent = intent_data
-                    else:
-                        continue
-
-                    # Calculate similarity if intent has embedding
-                    if intent.embedding_vector:
-                        similarity = cosine_similarity(query_vector, intent.embedding_vector)
-                        similarities.append((intent, state, similarity))
-
-            # Sort by similarity (descending)
-            similarities.sort(key=lambda x: x[2], reverse=True)
-
-            # Return top-k
-            return similarities[:top_k]
-        except Exception as e:
-            print(f"Error searching intents by embedding: {e}")
-            return []
 
 
 class GraphActionManager(ActionManager):
@@ -822,7 +772,7 @@ class GraphActionManager(ActionManager):
             )
             return True
         except Exception as e:
-            print(f"Error creating action: {e}")
+            logger.error(f" creating action: {e}")
             return False
 
     def get_action(self, source_id: str, target_id: str) -> Optional[Action]:
@@ -860,7 +810,7 @@ class GraphActionManager(ActionManager):
                 return Action(**action_dict)
             return None
         except Exception as e:
-            print(f"Error getting action: {e}")
+            logger.error(f" getting action: {e}")
             return None
 
     def update_action(self, action: Action) -> bool:
@@ -889,7 +839,7 @@ class GraphActionManager(ActionManager):
             )
             return True
         except Exception as e:
-            print(f"Error updating action: {e}")
+            logger.error(f" updating action: {e}")
             return False
 
     def delete_action(self, source_id: str, target_id: str) -> bool:
@@ -934,7 +884,7 @@ class GraphActionManager(ActionManager):
                 rel_type=rel_type if rel_type else ""
             )
         except Exception as e:
-            print(f"Error deleting action: {e}")
+            logger.error(f" deleting action: {e}")
             return False
 
     def list_actions(
@@ -990,7 +940,7 @@ class GraphActionManager(ActionManager):
 
             return actions
         except Exception as e:
-            print(f"Error listing actions: {e}")
+            logger.error(f" listing actions: {e}")
             return []
 
     def batch_create_actions(self, actions: List[Action]) -> bool:
@@ -1008,8 +958,92 @@ class GraphActionManager(ActionManager):
                     return False
             return True
         except Exception as e:
-            print(f"Error batch creating actions: {e}")
+            logger.error(f" batch creating actions: {e}")
             return False
+
+    def find_shortest_path(
+        self,
+        source_id: str,
+        target_id: str,
+        state_manager: Optional["GraphStateManager"] = None,
+    ) -> Optional[Tuple[List["State"], List[Action]]]:
+        """Find shortest path between two states using BFS.
+
+        Args:
+            source_id: Source state ID.
+            target_id: Target state ID.
+            state_manager: Optional StateManager to retrieve State objects.
+
+        Returns:
+            Tuple of (states, actions) representing the path if found,
+            None if no path exists.
+        """
+        from collections import deque
+
+        if source_id == target_id:
+            return ([], [])
+
+        try:
+            # BFS to find shortest path
+            visited = set()
+            # Queue: (current_state_id, path_of_state_ids, path_of_actions)
+            queue = deque([(source_id, [source_id], [])])
+            visited.add(source_id)
+
+            while queue:
+                current_id, path_ids, path_actions = queue.popleft()
+
+                # Get outgoing actions from current state
+                outgoing = self.list_outgoing_actions(current_id)
+
+                for action in outgoing:
+                    next_id = action.target
+
+                    if next_id == target_id:
+                        # Found the target - build result
+                        final_path_ids = path_ids + [next_id]
+                        final_actions = path_actions + [action]
+
+                        # Convert state IDs to State objects if state_manager provided
+                        if state_manager:
+                            states = []
+                            for state_id in final_path_ids:
+                                state = state_manager.get_state(state_id)
+                                if state:
+                                    states.append(state)
+                            return (states, final_actions)
+                        else:
+                            # Return empty states list if no state_manager
+                            return ([], final_actions)
+
+                    if next_id not in visited:
+                        visited.add(next_id)
+                        queue.append((
+                            next_id,
+                            path_ids + [next_id],
+                            path_actions + [action]
+                        ))
+
+            return None  # No path found
+        except Exception as e:
+            logger.error(f" finding shortest path: {e}")
+            return None
+
+    def list_outgoing_actions(
+        self,
+        state_id: str,
+    ) -> List[Action]:
+        """List all outgoing actions from a state.
+
+        Returns all actions where the given state is the source.
+
+        Args:
+            state_id: State ID to get outgoing actions for.
+
+        Returns:
+            List of Action objects originating from the state.
+        """
+        return self.list_actions(source_id=state_id)
 
 
 class InMemoryCognitivePhraseManager(CognitivePhraseManager):
@@ -1046,7 +1080,7 @@ class InMemoryCognitivePhraseManager(CognitivePhraseManager):
             self.phrases[phrase.id] = phrase
             return True
         except Exception as e:
-            print(f"Error creating phrase: {e}")
+            logger.error(f" creating phrase: {e}")
             return False
 
     def get_phrase(self, phrase_id: str) -> Optional[CognitivePhrase]:
@@ -1079,7 +1113,7 @@ class InMemoryCognitivePhraseManager(CognitivePhraseManager):
             self.phrases[phrase.id] = phrase
             return True
         except Exception as e:
-            print(f"Error updating phrase: {e}")
+            logger.error(f" updating phrase: {e}")
             return False
 
     def delete_phrase(self, phrase_id: str) -> bool:
@@ -1097,7 +1131,7 @@ class InMemoryCognitivePhraseManager(CognitivePhraseManager):
                 return True
             return False
         except Exception as e:
-            print(f"Error deleting phrase: {e}")
+            logger.error(f" deleting phrase: {e}")
             return False
 
     def list_phrases(
@@ -1187,6 +1221,632 @@ class InMemoryCognitivePhraseManager(CognitivePhraseManager):
         return [phrase for phrase, _ in similarities[:top_k]]
 
 
+class GraphCognitivePhraseManager(CognitivePhraseManager):
+    """GraphStore-based CognitivePhrase Manager.
+
+    Manages CognitivePhrase entities using GraphStore for persistent storage.
+    This enables CognitivePhrases to be stored in Neo4j alongside States and Actions.
+
+    Attributes:
+        graph_store: GraphStore instance for persistence.
+        node_label: Label for CognitivePhrase nodes (default: "CognitivePhrase").
+    """
+
+    def __init__(self, graph_store: "GraphStore", node_label: str = "CognitivePhrase"):
+        """Initialize GraphCognitivePhraseManager.
+
+        Args:
+            graph_store: GraphStore instance for persistence.
+            node_label: Label for CognitivePhrase nodes.
+        """
+        self.graph_store = graph_store
+        self.node_label = node_label
+
+    def create_phrase(self, phrase: CognitivePhrase) -> bool:
+        """Create a new cognitive phrase in GraphStore.
+
+        Args:
+            phrase: CognitivePhrase object to create.
+
+        Returns:
+            True if created successfully, False otherwise.
+        """
+        try:
+            # Check if already exists
+            existing = self.graph_store.get_node(
+                label=self.node_label, id_value=phrase.id, id_key="id"
+            )
+            if existing:
+                return False  # Already exists
+
+            # Convert to dict for storage
+            phrase_data = phrase.to_dict()
+            self.graph_store.upsert_node(
+                label=self.node_label,
+                properties=phrase_data,
+                id_key="id",
+            )
+            return True
+        except Exception as e:
+            logger.error(f" creating phrase: {e}")
+            return False
+
+    def get_phrase(self, phrase_id: str) -> Optional[CognitivePhrase]:
+        """Get a cognitive phrase by ID from GraphStore.
+
+        Args:
+            phrase_id: Unique phrase identifier.
+
+        Returns:
+            CognitivePhrase object if found, None otherwise.
+        """
+        try:
+            node = self.graph_store.get_node(
+                label=self.node_label, id_value=phrase_id, id_key="id"
+            )
+            if node:
+                phrase = CognitivePhrase.from_dict(node)
+                # Record access and update in store
+                phrase.record_access()
+                self.update_phrase(phrase)
+                return phrase
+            return None
+        except Exception as e:
+            logger.error(f" getting phrase: {e}")
+            return None
+
+    def update_phrase(self, phrase: CognitivePhrase) -> bool:
+        """Update an existing cognitive phrase in GraphStore.
+
+        Args:
+            phrase: CognitivePhrase object with updated information.
+
+        Returns:
+            True if updated successfully, False otherwise.
+        """
+        try:
+            phrase_data = phrase.to_dict()
+            self.graph_store.upsert_node(
+                label=self.node_label,
+                properties=phrase_data,
+                id_key="id",
+            )
+            return True
+        except Exception as e:
+            logger.error(f" updating phrase: {e}")
+            return False
+
+    def delete_phrase(self, phrase_id: str) -> bool:
+        """Delete a cognitive phrase from GraphStore.
+
+        Args:
+            phrase_id: Unique phrase identifier.
+
+        Returns:
+            True if deleted successfully, False otherwise.
+        """
+        try:
+            return self.graph_store.delete_node(
+                label=self.node_label, id_value=phrase_id, id_key="id"
+            )
+        except Exception as e:
+            logger.error(f" deleting phrase: {e}")
+            return False
+
+    def list_phrases(
+        self,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        goal_id: Optional[str] = None,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+        limit: Optional[int] = None,
+    ) -> List[CognitivePhrase]:
+        """List cognitive phrases with optional filters.
+
+        Args:
+            user_id: Filter by user ID.
+            session_id: Filter by session ID.
+            goal_id: Deprecated, ignored for compatibility.
+            start_time: Filter by start timestamp.
+            end_time: Filter by end timestamp.
+            limit: Maximum number of results.
+
+        Returns:
+            List of CognitivePhrase objects matching the filters.
+        """
+        try:
+            # Build filters
+            filters = {}
+            if user_id:
+                filters["user_id"] = user_id
+            if session_id:
+                filters["session_id"] = session_id
+
+            # Query nodes
+            nodes = self.graph_store.query_nodes(
+                label=self.node_label,
+                filters=filters if filters else None,
+                limit=limit,
+            )
+
+            # Convert to CognitivePhrase objects
+            phrases = []
+            for node in nodes:
+                try:
+                    phrase = CognitivePhrase.from_dict(node)
+
+                    # Apply time filters (not supported by basic query_nodes)
+                    if start_time and phrase.start_timestamp < start_time:
+                        continue
+                    if end_time and phrase.start_timestamp > end_time:
+                        continue
+
+                    phrases.append(phrase)
+                except Exception as e:
+                    logger.error(f" converting phrase: {e}")
+                    continue
+
+            # Sort by access_count (descending) then by last_access_time (descending)
+            phrases.sort(
+                key=lambda p: (p.access_count, p.last_access_time or 0), reverse=True
+            )
+
+            # Apply limit after filtering
+            if limit:
+                phrases = phrases[:limit]
+
+            return phrases
+        except Exception as e:
+            logger.error(f" listing phrases: {e}")
+            return []
+
+    def search_phrases_by_embedding(
+        self, query_vector: List[float], top_k: int = 10
+    ) -> List[CognitivePhrase]:
+        """Search cognitive phrases by embedding vector using GraphStore vector search.
+
+        Args:
+            query_vector: Query embedding vector.
+            top_k: Number of top results to return.
+
+        Returns:
+            List of top-k similar CognitivePhrase objects.
+        """
+        try:
+            # Try to use GraphStore's vector search
+            results = self.graph_store.vector_search(
+                label=self.node_label,
+                property_key="embedding_vector",
+                query_text_or_vector=query_vector,
+                topk=top_k,
+            )
+
+            phrases = []
+            for node, score in results:
+                try:
+                    phrase = CognitivePhrase.from_dict(node)
+                    phrases.append(phrase)
+                except Exception as e:
+                    logger.error(f" converting phrase from vector search: {e}")
+                    continue
+
+            return phrases
+        except Exception as e:
+            # Fallback to manual cosine similarity if vector search not available
+            logger.warning(f"Vector search failed, using fallback: {e}")
+            return self._search_phrases_by_embedding_fallback(query_vector, top_k)
+
+    def _search_phrases_by_embedding_fallback(
+        self, query_vector: List[float], top_k: int = 10
+    ) -> List[CognitivePhrase]:
+        """Fallback embedding search using manual cosine similarity.
+
+        Args:
+            query_vector: Query embedding vector.
+            top_k: Number of top results to return.
+
+        Returns:
+            List of top-k similar CognitivePhrase objects.
+        """
+
+        def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
+            """Calculate cosine similarity between two vectors."""
+            if not vec1 or not vec2 or len(vec1) != len(vec2):
+                return 0.0
+
+            dot_product = sum(a * b for a, b in zip(vec1, vec2))
+            norm1 = math.sqrt(sum(a * a for a in vec1))
+            norm2 = math.sqrt(sum(b * b for b in vec2))
+
+            if norm1 == 0 or norm2 == 0:
+                return 0.0
+
+            return dot_product / (norm1 * norm2)
+
+        # Get all phrases
+        all_phrases = self.list_phrases()
+
+        # Calculate similarities
+        similarities = []
+        for phrase in all_phrases:
+            if phrase.embedding_vector:
+                similarity = cosine_similarity(query_vector, phrase.embedding_vector)
+                similarities.append((phrase, similarity))
+
+        # Sort by similarity (descending)
+        similarities.sort(key=lambda x: x[1], reverse=True)
+
+        # Return top-k
+        return [phrase for phrase, _ in similarities[:top_k]]
+
+
+class GraphIntentSequenceManager(IntentSequenceManager):
+    """GraphStore-based IntentSequence Manager (v2).
+
+    Manages IntentSequence as independent graph nodes with HAS_SEQUENCE
+    relationships to States. This enables vector search on IntentSequences.
+
+    Deduplication Strategy:
+        1. Content hash (exact match): Fast MD5 comparison of intent content
+        2. Embedding similarity (semantic match): Cosine similarity >= threshold
+
+    Attributes:
+        graph_store: GraphStore instance for persistence.
+        node_label: Label for IntentSequence nodes (default: "IntentSequence").
+        rel_type: Relationship type for HAS_SEQUENCE (default: "HAS_SEQUENCE").
+        similarity_threshold: Cosine similarity threshold for dedup (default: 0.95).
+    """
+
+    # Default similarity threshold for embedding-based deduplication
+    DEFAULT_SIMILARITY_THRESHOLD = 0.95
+
+    def __init__(
+        self,
+        graph_store: GraphStore,
+        similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD
+    ):
+        """Initialize GraphIntentSequenceManager.
+
+        Args:
+            graph_store: GraphStore instance for storage operations.
+            similarity_threshold: Cosine similarity threshold for deduplication.
+                Sequences with similarity >= threshold are considered duplicates.
+                Default: 0.95 (very similar descriptions are deduplicated).
+        """
+        self.graph_store = graph_store
+        self.node_label = "IntentSequence"
+        self.rel_type = "HAS_SEQUENCE"
+        self.similarity_threshold = similarity_threshold
+
+    def create_sequence(self, sequence: IntentSequence) -> bool:
+        """Create a new IntentSequence node with deduplication.
+
+        Deduplication is based on a content hash of the intents list.
+        If a sequence with the same content hash already exists, the
+        creation is skipped and the existing sequence's ID is preserved.
+
+        Args:
+            sequence: IntentSequence object to create.
+
+        Returns:
+            True if created (or already exists), False on error.
+        """
+        try:
+            if not sequence.content_hash:
+                sequence.content_hash = self._compute_content_hash(sequence)
+            properties = sequence.to_dict()
+            self.graph_store.upsert_node(
+                label=self.node_label, properties=properties, id_key="id"
+            )
+            return True
+        except Exception as e:
+            logger.error(f" creating IntentSequence: {e}")
+            return False
+
+    def find_duplicate(self, sequence: IntentSequence, state_id: str) -> Optional[str]:
+        """Check if a duplicate IntentSequence already exists for a State.
+
+        Deduplication strategy (within the same State):
+        1. Content hash match: Exact match based on MD5 of intent content (fast)
+        2. Embedding similarity: If both have embeddings and similarity >= threshold
+
+        Args:
+            sequence: IntentSequence to check.
+            state_id: State ID to check within.
+
+        Returns:
+            Existing sequence ID if duplicate found, None otherwise.
+        """
+        existing_seqs = self.list_by_state(state_id)
+        if not existing_seqs:
+            return None
+
+        # Step 1: Content hash exact match (fast path)
+        content_hash = self._compute_content_hash(sequence)
+        if content_hash:
+            for existing in existing_seqs:
+                existing_hash = existing.content_hash or self._compute_content_hash(existing)
+                if existing_hash == content_hash:
+                    return existing.id
+
+        # Step 2: Embedding similarity match (semantic dedup)
+        # Only if the new sequence has an embedding vector
+        if sequence.embedding_vector:
+            for existing in existing_seqs:
+                if existing.embedding_vector:
+                    similarity = self._cosine_similarity(
+                        sequence.embedding_vector, existing.embedding_vector
+                    )
+                    if similarity >= self.similarity_threshold:
+                        logger.debug(
+                            f"[IntentSequenceDedup] Found similar sequence: "
+                            f"similarity={similarity:.4f} >= threshold={self.similarity_threshold}"
+                        )
+                        return existing.id
+
+        return None
+
+    @staticmethod
+    def _cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
+        """Calculate cosine similarity between two vectors.
+
+        Args:
+            vec1: First embedding vector.
+            vec2: Second embedding vector.
+
+        Returns:
+            Cosine similarity score in range [-1, 1], or 0.0 if invalid.
+        """
+        if not vec1 or not vec2 or len(vec1) != len(vec2):
+            return 0.0
+
+        dot_product = sum(a * b for a, b in zip(vec1, vec2))
+        norm1 = math.sqrt(sum(a * a for a in vec1))
+        norm2 = math.sqrt(sum(b * b for b in vec2))
+
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+
+        return dot_product / (norm1 * norm2)
+
+    @staticmethod
+    def _compute_content_hash(sequence: IntentSequence) -> Optional[str]:
+        """Compute a content hash for deduplication.
+
+        Based on intent types, text, and values in order.
+        Normalizes None to '' for consistent hashing across Intent objects and dicts.
+
+        Args:
+            sequence: IntentSequence to hash.
+
+        Returns:
+            MD5 hex digest, or None if cannot compute.
+        """
+        import hashlib
+
+        if not sequence.intents:
+            return None
+
+        intent_keys = []
+        for intent in sequence.intents:
+            if hasattr(intent, "type"):
+                # Intent object: .text may be None
+                key = f"{intent.type}:{intent.text or ''}:{intent.value or ''}"
+            elif isinstance(intent, dict):
+                # Dict: .get() may return None
+                key = f"{intent.get('type') or ''}:{intent.get('text') or ''}:{intent.get('value') or ''}"
+            else:
+                continue
+            intent_keys.append(key)
+
+        if not intent_keys:
+            return None
+
+        return hashlib.md5("|".join(intent_keys).encode()).hexdigest()
+
+    def get_sequence(self, sequence_id: str) -> Optional[IntentSequence]:
+        """Get an IntentSequence by ID.
+
+        Args:
+            sequence_id: Unique sequence identifier.
+
+        Returns:
+            IntentSequence object if found, None otherwise.
+        """
+        try:
+            node = self.graph_store.get_node(
+                label=self.node_label, id_value=sequence_id, id_key="id"
+            )
+            if node:
+                return IntentSequence.from_dict(node)
+            return None
+        except Exception as e:
+            logger.error(f" getting IntentSequence: {e}")
+            return None
+
+    def update_sequence(self, sequence: IntentSequence) -> bool:
+        """Update an existing IntentSequence.
+
+        Args:
+            sequence: IntentSequence object with updated information.
+
+        Returns:
+            True if updated successfully, False otherwise.
+        """
+        try:
+            properties = sequence.to_dict()
+            self.graph_store.upsert_node(
+                label=self.node_label, properties=properties, id_key="id"
+            )
+            return True
+        except Exception as e:
+            logger.error(f" updating IntentSequence: {e}")
+            return False
+
+    def delete_sequence(self, sequence_id: str) -> bool:
+        """Delete an IntentSequence.
+
+        Args:
+            sequence_id: Unique sequence identifier.
+
+        Returns:
+            True if deleted successfully, False otherwise.
+        """
+        try:
+            return self.graph_store.delete_node(
+                label=self.node_label, id_value=sequence_id, id_key="id"
+            )
+        except Exception as e:
+            logger.error(f" deleting IntentSequence: {e}")
+            return False
+
+    def link_to_state(self, state_id: str, sequence_id: str) -> bool:
+        """Create HAS_SEQUENCE relationship from State to IntentSequence.
+
+        Args:
+            state_id: State ID (source).
+            sequence_id: IntentSequence ID (target).
+
+        Returns:
+            True if created successfully, False otherwise.
+        """
+        try:
+            self.graph_store.upsert_relationship(
+                start_node_label="State",
+                start_node_id_value=state_id,
+                end_node_label=self.node_label,
+                end_node_id_value=sequence_id,
+                rel_type=self.rel_type,
+                properties={},
+            )
+            return True
+        except Exception as e:
+            logger.error(f" linking IntentSequence to State: {e}")
+            return False
+
+    def unlink_from_state(self, state_id: str, sequence_id: str) -> bool:
+        """Remove HAS_SEQUENCE relationship.
+
+        Args:
+            state_id: State ID (source).
+            sequence_id: IntentSequence ID (target).
+
+        Returns:
+            True if removed successfully, False otherwise.
+        """
+        try:
+            return self.graph_store.delete_relationship(
+                start_node_label="State",
+                start_node_id_value=state_id,
+                end_node_label=self.node_label,
+                end_node_id_value=sequence_id,
+                rel_type=self.rel_type,
+            )
+        except Exception as e:
+            logger.error(f" unlinking IntentSequence from State: {e}")
+            return False
+
+    def list_by_state(self, state_id: str) -> List[IntentSequence]:
+        """List all IntentSequences belonging to a State.
+
+        Args:
+            state_id: State ID to query.
+
+        Returns:
+            List of IntentSequence objects linked to this State.
+        """
+        try:
+            # Query HAS_SEQUENCE relationships
+            rels = self.graph_store.query_relationships(
+                start_node_label="State",
+                start_node_id_value=state_id,
+                end_node_label=self.node_label,
+                rel_type=self.rel_type,
+            )
+
+            sequences = []
+            for rel_data in rels:
+                end_node = rel_data.get("end", {})
+                if end_node:
+                    try:
+                        seq = IntentSequence.from_dict(end_node)
+                        sequences.append(seq)
+                    except Exception as e:
+                        logger.error(f" parsing IntentSequence: {e}")
+                        continue
+
+            return sequences
+        except Exception as e:
+            logger.error(f" listing IntentSequences by State: {e}")
+            return []
+
+    def search_by_embedding(
+        self,
+        query_vector: List[float],
+        state_id: Optional[str] = None,
+        top_k: int = 10
+    ) -> List[Tuple[IntentSequence, float]]:
+        """Search IntentSequences by embedding vector similarity.
+
+        Args:
+            query_vector: Query embedding vector.
+            state_id: Optional filter to specific State.
+            top_k: Number of top results to return.
+
+        Returns:
+            List of (IntentSequence, similarity_score) tuples.
+        """
+        # Pre-fetch state sequence IDs once if filtering by state
+        state_seq_ids = None
+        if state_id:
+            state_seqs = self.list_by_state(state_id)
+            state_seq_ids = {s.id for s in state_seqs}
+
+        results = self.graph_store.vector_search(
+            label=self.node_label,
+            property_key="embedding_vector",
+            vector=query_vector,
+            limit=top_k * 2 if state_id else top_k,
+        )
+
+        sequences_with_scores = []
+        for node, score in results:
+            try:
+                seq = IntentSequence.from_dict(node)
+
+                if state_seq_ids is not None and seq.id not in state_seq_ids:
+                    continue
+
+                sequences_with_scores.append((seq, score))
+
+                if len(sequences_with_scores) >= top_k:
+                    break
+            except Exception as e:
+                logger.error(f" parsing IntentSequence from search: {e}")
+                continue
+
+        return sequences_with_scores[:top_k]
+
+    def batch_create_sequences(self, sequences: List[IntentSequence]) -> bool:
+        """Batch create multiple IntentSequences.
+
+        Args:
+            sequences: List of IntentSequence objects to create.
+
+        Returns:
+            True if all created successfully, False otherwise.
+        """
+        try:
+            for seq in sequences:
+                if not self.create_sequence(seq):
+                    return False
+            return True
+        except Exception as e:
+            logger.error(f" batch creating IntentSequences: {e}")
+            return False
+
+
 class WorkflowMemory(Memory):
     """Workflow Memory implementation.
 
@@ -1205,30 +1865,49 @@ class WorkflowMemory(Memory):
         graph_store: GraphStore,
         phrase_manager: Optional[CognitivePhraseManager] = None,
         build_url_index: bool = True,
+        use_graph_phrase_manager: bool = True,
+        intent_sequence_dedup_threshold: Optional[float] = None,
     ):
         """Initialize WorkflowMemory.
 
         Args:
             graph_store: GraphStore instance for Domain, State, Action, and Manage storage.
             phrase_manager: Optional CognitivePhraseManager instance.
-                If not provided, uses InMemoryCognitivePhraseManager.
+                If not provided and use_graph_phrase_manager is True, uses GraphCognitivePhraseManager.
+                Otherwise uses InMemoryCognitivePhraseManager.
                 All cognitive phrases are stored permanently with unique IDs.
             build_url_index: Whether to build URL index from graph on init (default True).
+            use_graph_phrase_manager: Whether to use GraphCognitivePhraseManager for persistent
+                storage of CognitivePhrases (default True). Set to False to use in-memory storage.
+            intent_sequence_dedup_threshold: Cosine similarity threshold for IntentSequence
+                deduplication. If None, uses GraphIntentSequenceManager default (0.95).
         """
         domain_manager = GraphDomainManager(graph_store)
         state_manager = GraphStateManager(graph_store)
         action_manager = GraphActionManager(graph_store)
         manage_manager = GraphManageManager(graph_store)
 
+        # Create IntentSequenceManager with optional custom threshold
+        if intent_sequence_dedup_threshold is not None:
+            intent_sequence_manager = GraphIntentSequenceManager(
+                graph_store, similarity_threshold=intent_sequence_dedup_threshold
+            )
+        else:
+            intent_sequence_manager = GraphIntentSequenceManager(graph_store)
+
         if phrase_manager is None:
-            phrase_manager = InMemoryCognitivePhraseManager()
+            if use_graph_phrase_manager:
+                phrase_manager = GraphCognitivePhraseManager(graph_store)
+            else:
+                phrase_manager = InMemoryCognitivePhraseManager()
 
         super().__init__(
             domain_manager,
             state_manager,
             action_manager,
             manage_manager,
-            phrase_manager
+            phrase_manager,
+            intent_sequence_manager,
         )
         self.graph_store = graph_store
 
@@ -1237,7 +1916,7 @@ class WorkflowMemory(Memory):
         if build_url_index:
             url_count = self.url_index.build_from_graph(graph_store)
             if url_count > 0:
-                print(f"URLIndex: Loaded {url_count} URLs from graph")
+                logger.info(f"URLIndex: Loaded {url_count} URLs from graph")
 
     def add_workflow_step(
         self,
@@ -1448,7 +2127,7 @@ class WorkflowMemory(Memory):
 
             return True
         except Exception as e:
-            print(f"Error importing memory: {e}")
+            logger.error(f" importing memory: {e}")
             return False
 
     # ==================== NEW METHODS FOR ABSTRACT STATE DESIGN ====================
@@ -1515,7 +2194,6 @@ class WorkflowMemory(Memory):
             user_id=user_id,
             session_id=session_id,
             instances=[],
-            intent_sequences=[],
         )
 
         # Save to graph
@@ -1547,7 +2225,7 @@ class WorkflowMemory(Memory):
             # Get existing state
             state = self.get_state(state_id)
             if not state:
-                print(f"Error: State {state_id} not found")
+                logger.error(f": State {state_id} not found")
                 return False
 
             # Add instance to state
@@ -1562,113 +2240,8 @@ class WorkflowMemory(Memory):
 
             return True
         except Exception as e:
-            print(f"Error adding page instance: {e}")
+            logger.error(f" adding page instance: {e}")
             return False
-
-    def add_intent_sequence(
-        self,
-        state_id: str,
-        sequence: IntentSequence,
-    ) -> bool:
-        """Add an IntentSequence to an existing State with deduplication.
-
-        IntentSequences are deduplicated by description - if a sequence
-        with the same description already exists, it won't be added.
-
-        Args:
-            state_id: ID of the State to add sequence to.
-            sequence: IntentSequence to add.
-
-        Returns:
-            True if added (or duplicate found), False on error.
-        """
-        try:
-            # Get existing state
-            state = self.get_state(state_id)
-            if not state:
-                print(f"Error: State {state_id} not found")
-                return False
-
-            # Add sequence to state (handles deduplication)
-            added = state.add_intent_sequence(sequence)
-
-            if added:
-                # Update state in graph
-                return self.state_manager.update_state(state)
-
-            # Duplicate found - still return True (not an error)
-            return True
-        except Exception as e:
-            print(f"Error adding intent sequence: {e}")
-            return False
-
-    def search_intent_sequences_by_embedding(
-        self, query_vector: List[float], top_k: int = 10, user_id: Optional[str] = None
-    ) -> List[tuple[IntentSequence, State, float]]:
-        """Search IntentSequences by embedding vector similarity.
-
-        This implements the two-level retrieval from design doc 5.6:
-        - Search through all states and their intent_sequences
-        - Return matching IntentSequences with their parent State
-
-        Args:
-            query_vector: Query embedding vector.
-            top_k: Number of top results to return.
-            user_id: Filter by user ID (optional).
-
-        Returns:
-            List of tuples (IntentSequence, State, similarity_score).
-        """
-        def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
-            """Calculate cosine similarity between two vectors."""
-            if not vec1 or not vec2 or len(vec1) != len(vec2):
-                return 0.0
-
-            dot_product = sum(a * b for a, b in zip(vec1, vec2))
-            norm1 = math.sqrt(sum(a * a for a in vec1))
-            norm2 = math.sqrt(sum(b * b for b in vec2))
-
-            if norm1 == 0 or norm2 == 0:
-                return 0.0
-
-            return dot_product / (norm1 * norm2)
-
-        try:
-            # Get all states
-            all_states = self.state_manager.list_states()
-
-            # Collect all intent sequences with their parent states
-            similarities = []
-            for state in all_states:
-                # Filter by user_id if provided
-                if user_id and state.user_id != user_id:
-                    continue
-
-                if not state.intent_sequences:
-                    continue
-
-                for seq_data in state.intent_sequences:
-                    # Convert to IntentSequence object if needed
-                    if isinstance(seq_data, dict):
-                        sequence = IntentSequence.from_dict(seq_data)
-                    elif isinstance(seq_data, IntentSequence):
-                        sequence = seq_data
-                    else:
-                        continue
-
-                    # Calculate similarity if sequence has embedding
-                    if sequence.embedding_vector:
-                        similarity = cosine_similarity(query_vector, sequence.embedding_vector)
-                        similarities.append((sequence, state, similarity))
-
-            # Sort by similarity (descending)
-            similarities.sort(key=lambda x: x[2], reverse=True)
-
-            # Return top-k
-            return similarities[:top_k]
-        except Exception as e:
-            print(f"Error searching intent sequences by embedding: {e}")
-            return []
 
     def find_path(
         self,
@@ -1753,6 +2326,7 @@ __all__ = [
     "GraphStateManager",
     "GraphActionManager",
     "InMemoryCognitivePhraseManager",
+    "GraphCognitivePhraseManager",
     "WorkflowMemory",
     "URLIndex",
 ]

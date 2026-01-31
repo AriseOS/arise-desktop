@@ -69,24 +69,17 @@ class Intent(BaseModel):
         default=None, description='Title of the page/screen')
 
     # Element information (what was interacted with)
-    element_id: Optional[str] = Field(default=None, description='Element ID')
-    element_tag: Optional[str] = Field(
-        default=None, description='Element tag')
-    element_class: Optional[str] = Field(
-        default=None, description='Element CSS class')
-    xpath: Optional[str] = Field(default=None, description='XPath')
-    css_selector: Optional[str] = Field(
-        default=None, description='CSS selector')
+    # ref-based identification (from unified_analyzer.js)
+    element_ref: Optional[str] = Field(
+        default=None, description='Element ref (e.g., "e42") from aria-ref attribute')
+    element_role: Optional[str] = Field(
+        default=None, description='ARIA role (e.g., "button", "link", "textbox")')
 
     # Content data (what was shown/entered)
     text: Optional[str] = Field(
         default=None, description='Element text content')
     value: Optional[str] = Field(
         default=None, description='Input or selected value')
-
-    # Coordinate information
-    coordinates: Optional[Dict[str, float]] = Field(
-        default=None, description='Coordinates {x, y}')
 
     # User session information
     user_id: Optional[str] = Field(default=None, description='User ID')

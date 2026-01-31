@@ -77,6 +77,22 @@ class IntentSequence(BaseModel):
     # User information
     user_id: Optional[str] = Field(default=None, description="User ID")
 
+    # ✨ Navigation markers (v2)
+    causes_navigation: bool = Field(
+        default=False,
+        description="Whether this sequence causes page navigation"
+    )
+    navigation_target_state_id: Optional[str] = Field(
+        default=None,
+        description="If causes_navigation=True, the target State ID"
+    )
+
+    # Deduplication hash (computed from intents content)
+    content_hash: Optional[str] = Field(
+        default=None,
+        description="MD5 hash of intents content for deduplication"
+    )
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary.
 

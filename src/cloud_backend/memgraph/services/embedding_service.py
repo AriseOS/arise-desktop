@@ -4,6 +4,7 @@ This module provides a singleton service for managing embedding models,
 supporting configuration-based initialization and lazy loading.
 """
 
+import logging
 import os
 from typing import Any, Dict, List, Optional
 
@@ -17,6 +18,8 @@ from src.cloud_backend.memgraph.services.embedding_model.local_bge_model import 
 from src.cloud_backend.memgraph.services.embedding_model.openai_embedding import (
     OpenAIEmbedding,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class EmbeddingService:
@@ -176,8 +179,21 @@ class EmbeddingService:
             response = cls._model.embed(text, **kwargs)
             return response.to_list()
         except Exception as e:
-            print(f"Error generating embedding: {e}")
+            logger.error(f" generating embedding: {e}")
             return None
+
+    @classmethod
+    def encode(cls, text: str, **kwargs: Any) -> Optional[List[float]]:
+        """Alias for embed() - for compatibility with Reasoner interface.
+
+        Args:
+            text: Input text to embed.
+            **kwargs: Additional parameters for the embedding model.
+
+        Returns:
+            Embedding vector as a list of floats, or None if unavailable.
+        """
+        return cls.embed(text, **kwargs)
 
     @classmethod
     def embed_batch(cls, texts: List[str], **kwargs: Any) -> Optional[List[List[float]]]:
@@ -197,7 +213,7 @@ class EmbeddingService:
             responses = cls._model.embed_batch(texts, **kwargs)
             return [resp.to_list() for resp in responses]
         except Exception as e:
-            print(f"Error generating batch embeddings: {e}")
+            logger.error(f" generating batch embeddings: {e}")
             return None
 
     @classmethod
@@ -218,7 +234,7 @@ class EmbeddingService:
             response = await cls._model.embed_async(text, **kwargs)
             return response.to_list()
         except Exception as e:
-            print(f"Error generating async embedding: {e}")
+            logger.error(f" generating async embedding: {e}")
             return None
 
     @classmethod
@@ -241,7 +257,7 @@ class EmbeddingService:
             responses = await cls._model.embed_batch_async(texts, **kwargs)
             return [resp.to_list() for resp in responses]
         except Exception as e:
-            print(f"Error generating async batch embeddings: {e}")
+            logger.error(f" generating async batch embeddings: {e}")
             return None
 
     @classmethod

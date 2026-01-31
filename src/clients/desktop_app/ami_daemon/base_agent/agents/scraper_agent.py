@@ -1,95 +1,91 @@
-"""ScraperAgent - 基于 browser-use 库的通用爬虫生成代理"""
-import asyncio
+"""ScraperAgent v4.1 - LLM-based data extraction agent
+
+Design Change (v4.1):
+- Code-level snapshot capture (no LLM token limits)
+- Code-level notes file writing
+- LLM only does data parsing (its strength)
+- Large data sets saved in batches via LLM append_note calls
+
+Features:
+- Uses EigentStyleBrowserAgent for browser operations
+- Code captures page snapshot directly (bypasses LLM output limits)
+- LLM reads snapshot from notes and extracts structured data
+- Handles large data extraction via batched notes
+
+Input Format (backward compatible):
+- data_requirements: What data to extract
+- target_path: URL(s) to navigate to
+- interaction_steps: Pre-extraction interactions
+"""
+
 import json
-import hashlib
-import random
 import logging
-from typing import Any, Dict, Optional, Union, List
-from datetime import datetime
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
 
 from .base_agent import BaseStepAgent, AgentMetadata, InputSchema, FieldSchema
-from ..core.schemas import AgentContext
-from src.common.llm import OpenAIProvider, AnthropicProvider
-
-# Import script templates from common module (for consistency with Cloud Backend)
-from src.common.script_generation.templates import SCRAPER_AGENT_PROMPT
-
-try:
-    from browser_use import Tools
-    from browser_use.browser.session import BrowserSession
-    from browser_use.browser.profile import BrowserProfile
-    from browser_use.dom.service import DomService
-    from browser_use.browser.events import NavigateToUrlEvent, ScrollEvent
-    from browser_use.agent.views import ActionResult
-    BROWSER_USE_AVAILABLE = True
-    # Backward compatibility
-    Controller = Tools
-except ImportError:
-    BROWSER_USE_AVAILABLE = False
-    Tools = None
-    Controller = None
-    BrowserSession = None
-    BrowserProfile = None
-    DomService = None
-    ActionResult = None
-    ActionModel = None
+from ..core.schemas import AgentContext, AgentInput, AgentOutput
+from ..workspace import get_current_manager
+from ..tools.eigent_browser.browser_session import HybridBrowserSession
 
 logger = logging.getLogger(__name__)
 
+# Fixed filenames for scraper notes
+PAGE_SNAPSHOT_NOTE = "page_snapshot"
+EXTRACTED_DATA_NOTE = "workflow_extracted_data"
+
+
+def _get_browser_data_dir() -> Optional[str]:
+    """Get browser data directory."""
+    try:
+        manager = get_current_manager()
+        if manager:
+            path = manager.browser_data_dir
+        else:
+            path = Path.home() / ".ami" / "browser_data_quicktask"
+        path.mkdir(parents=True, exist_ok=True)
+        return str(path)
+    except Exception as e:
+        logger.warning(f"Failed to get browser_data dir: {e}")
+        return None
+
+
+def _get_notes_dir() -> Path:
+    """Get notes directory."""
+    manager = get_current_manager()
+    if manager:
+        path = manager.notes_dir
+    else:
+        path = Path.home() / ".ami" / "notes"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
 
 class ScraperAgent(BaseStepAgent):
-    """
-    基于 browser-use 库的爬虫代理
+    """ScraperAgent v4.1 - LLM-based data extraction agent
 
-    提取方法:
-    1. script模式: 自动生成并缓存脚本，复用执行（支持 partial/full DOM）
-    2. llm模式: 直接使用LLM提取数据（仅支持 partial DOM）
-
-    特点:
-    - 使用 browser-use 库进行真实浏览器操作
-    - 支持复杂的页面交互（点击、滚动、输入等）
-    - script模式自动检查KV缓存，无需手动区分初始化/执行阶段
+    Code-level snapshot capture + LLM-based data parsing.
+    Maintains backward compatibility with v3 input format.
     """
 
     INPUT_SCHEMA = InputSchema(
-        description="Web scraping agent for extracting structured data from web pages",
+        description="Data extraction agent using LLM for intelligent scraping",
         fields={
             "data_requirements": FieldSchema(
                 type="dict|str",
                 required=True,
-                description="Data extraction requirements with output_format defining fields to extract"
+                description="Data extraction requirements with output_format defining fields"
             ),
             "target_path": FieldSchema(
                 type="str|list",
                 required=False,
-                description="URL(s) to navigate to (optional if already on target page)"
+                description="URL(s) to navigate to before extraction"
             ),
             "interaction_steps": FieldSchema(
                 type="list",
                 required=False,
                 items_type="dict",
-                description="Pre-extraction interactions (e.g., scroll to load more content)"
-            ),
-            "extraction_method": FieldSchema(
-                type="str",
-                required=False,
-                enum=["script", "llm"],
-                default="llm",
-                description="Extraction method: 'script' for cached scripts, 'llm' for direct LLM extraction"
-            ),
-            "dom_scope": FieldSchema(
-                type="str",
-                required=False,
-                enum=["partial", "full"],
-                default="partial",
-                description="DOM scope: 'partial' for visible elements, 'full' for complete DOM"
-            ),
-            "debug_mode": FieldSchema(
-                type="bool",
-                required=False,
-                default=False,
-                description="Enable debug mode for detailed logging"
+                description="Pre-extraction interactions (scroll, click, etc.)"
             ),
             "max_items": FieldSchema(
                 type="int",
@@ -97,1455 +93,724 @@ class ScraperAgent(BaseStepAgent):
                 default=0,
                 description="Maximum items to extract (0 for unlimited)"
             ),
-            "timeout": FieldSchema(
+            "max_steps": FieldSchema(
                 type="int",
                 required=False,
                 default=30,
-                description="Extraction timeout in seconds"
+                description="Maximum LLM steps for extraction"
             ),
         },
         examples=[
             {
                 "data_requirements": {
-                    "user_description": "Extract product information from the page",
+                    "user_description": "Extract product information",
                     "output_format": {
                         "name": "Product name",
                         "price": "Product price",
-                        "description": "Product description"
+                        "url": "Product URL"
                     }
                 },
-                "target_path": "https://example.com/products",
-                "extraction_method": "llm"
+                "target_path": "https://example.com/products"
             },
             {
-                "data_requirements": {
-                    "user_description": "Extract all article titles",
-                    "output_format": {"title": "Article title", "url": "Article URL"}
-                },
+                "data_requirements": "Extract all article titles and links",
                 "interaction_steps": [
-                    {"action_type": "scroll", "parameters": {"direction": "down", "amount": 3}}
-                ],
-                "extraction_method": "script",
-                "max_items": 20
+                    {"task": "Scroll down to load more content"}
+                ]
             }
         ]
     )
 
-    SYSTEM_PROMPT = """你是网页数据提取专家。根据提供的三步指导，分析DOM结构生成提取脚本。只返回Python代码，不要解释。"""
-    
-    def __init__(self,
-                 config_service=None,
-                 metadata: Optional[AgentMetadata] = None,
-                 extraction_method: str = 'llm',  # 默认值
-                 dom_scope: str = 'partial',      # 默认值
-                 debug_mode: bool = False         # 默认值
-):
-        """初始化，保留默认配置，运行时可覆盖
-
-        Args:
-            config_service: 配置服务（用于获取路径等）
-            metadata: Agent元数据
-            extraction_method: 默认提取方法 ('script' or 'llm')
-            dom_scope: 默认DOM范围 ('partial' or 'full')
-            debug_mode: 默认调试模式
-        """
-        if not BROWSER_USE_AVAILABLE:
-            raise ImportError("browser-use 库未安装，请先安装: pip install browser-use")
-
+    def __init__(
+        self,
+        config_service=None,
+        metadata: Optional[AgentMetadata] = None
+    ):
         if metadata is None:
             metadata = AgentMetadata(
                 name="scraper_agent",
-                description="基于 browser-use 库的通用爬虫生成和执行代理"
+                description="LLM-based data extraction agent"
             )
         super().__init__(metadata)
 
-        # 保存配置服务
         self.config_service = config_service
-
-        # Initialize ResourceManager for workflow resource sync
-        self.resource_manager = None
-        if config_service:
-            from src.common.services.resource_manager import ResourceManager
-            self.resource_manager = ResourceManager(config_service)
-            logger.info("ResourceManager initialized for workflow resource sync")
-
-        # 默认配置（运行时可覆盖）
-        self.extraction_method = extraction_method
-        self.dom_scope = dom_scope
-        self.debug_mode = debug_mode
-
-        # 会话管理相关
-        self._session_manager = None
-        self._session_id = None
-        self._is_shared_session = False
-
-        # browser-use 组件将在initialize时设置
-        self.browser_session = None
-        self.controller = None
-
-        # Provider will be set in initialize
-        self.provider = None
-
-    def _configure_cdp_logging(self):
-        """Configure CDP logging to reduce noise from non-fatal iframe errors"""
-        import logging
-        # Reduce CDP error logging for known non-fatal issues
-        # "Command can only be executed on top-level targets" errors are caught and handled
-        cdp_logger = logging.getLogger('cdp_use.client')
-        # Only show CRITICAL CDP errors, suppress ERROR level
-        cdp_logger.setLevel(logging.CRITICAL)
+        self._eigent_agent = None
+        self._browser_session: Optional[HybridBrowserSession] = None
 
     async def initialize(self, context: AgentContext) -> bool:
-        """初始化Agent，从context获取浏览器会话和provider"""
+        """Initialize the agent."""
         try:
-            # Configure CDP logging to suppress non-fatal iframe errors
-            self._configure_cdp_logging()
-
-            # Save context for later use (e.g., in _generate_script_key)
-            self._context = context
-
-            # 从context获取浏览器会话（懒加载）
-            session_info = await context.get_browser_session()
-
-            # 设置browser-use组件
-            self.browser_session = session_info.session
-            self.controller = session_info.controller
-
-            # Get provider from context.agent_instance (BaseAgent)
-            if context.agent_instance and hasattr(context.agent_instance, 'provider'):
-                self.provider = context.agent_instance.provider
-                logger.info(f"ScraperAgent got provider from BaseAgent: {type(self.provider).__name__}")
-            else:
-                logger.warning("ScraperAgent: No provider available from context, will fail if LLM is needed")
-
-            # 标记已初始化
             self.is_initialized = True
+            logger.info("ScraperAgent v4.1 initialized")
+            return True
+        except Exception as e:
+            logger.error(f"ScraperAgent initialization failed: {e}")
+            return False
 
-            logger.info(f"ScraperAgent初始化成功，使用workflow {context.workflow_id} 的共享会话")
+    async def validate_input(self, input_data: Any) -> bool:
+        """Validate input data."""
+        if isinstance(input_data, dict):
+            return bool(input_data.get("data_requirements"))
+        if isinstance(input_data, AgentInput):
+            return await self.validate_input(input_data.data)
+        return False
+
+    async def _ensure_browser_session(self, context: AgentContext, headless: bool = False) -> HybridBrowserSession:
+        """Ensure browser session is initialized.
+
+        Reuses existing session from context if available.
+        """
+        # Try to get session_id from context for session sharing
+        session_id = getattr(context, 'browser_session_id', None) or "scraper_default"
+
+        self._browser_session = HybridBrowserSession(
+            headless=headless,
+            stealth=True,
+            user_data_dir=_get_browser_data_dir(),
+            session_id=session_id,
+        )
+        await self._browser_session.ensure_browser()
+        return self._browser_session
+
+    async def _capture_snapshot_to_notes(self, include_links: bool = True) -> str:
+        """Capture page snapshot and save directly to notes file.
+
+        This bypasses LLM output token limits by writing directly from code.
+
+        Returns:
+            Path to saved notes file
+        """
+        if not self._browser_session:
+            raise RuntimeError("Browser session not initialized")
+
+        # Get snapshot with elements (includes href for links)
+        if include_links:
+            full_result = await self._browser_session.get_snapshot_with_elements()
+            snapshot_text = full_result.get("snapshotText", "")
+            elements = full_result.get("elements", {})
+            current_url = full_result.get("url", "")
+
+            # Build links section
+            links = []
+            for ref, elem_info in elements.items():
+                href = elem_info.get("href")
+                if href:
+                    name = elem_info.get("name", "")
+                    role = elem_info.get("role", "")
+                    links.append(f"- [{ref}] \"{name}\" -> {href}")
+
+            links_section = ""
+            if links:
+                links_section = "\n\n**Page Links:**\n" + "\n".join(links)
+
+            # Format complete snapshot
+            content = f"**Current Page:**\n- URL: {current_url}\n\n"
+            content += f"- Page Snapshot\n```yaml\n{snapshot_text}\n```"
+            content += links_section
+        else:
+            snapshot_text = await self._browser_session.get_snapshot()
+            page = await self._browser_session.get_page()
+            current_url = page.url
+            content = f"**Current Page:**\n- URL: {current_url}\n\n{snapshot_text}"
+
+        # Write directly to notes file (bypasses LLM token limits)
+        notes_dir = _get_notes_dir()
+        note_path = notes_dir / f"{PAGE_SNAPSHOT_NOTE}.md"
+        note_path.write_text(content, encoding="utf-8")
+
+        # Also update the .note_register so NoteTakingToolkit can find it
+        self._register_note(notes_dir, PAGE_SNAPSHOT_NOTE)
+
+        logger.info(f"[ScraperAgent] Snapshot saved to {note_path} ({len(content)} chars)")
+        return str(note_path)
+
+    def _register_note(self, notes_dir: Path, note_name: str) -> None:
+        """Register a note in the .note_register file.
+
+        This is needed so NoteTakingToolkit.read_note() can find notes
+        that were created directly by code (not via toolkit).
+        """
+        try:
+            registry_file = notes_dir / ".note_register"
+
+            # Load existing registry
+            if registry_file.exists():
+                registry = registry_file.read_text(encoding="utf-8").strip().split("\n")
+                registry = [r for r in registry if r]  # Remove empty lines
+            else:
+                registry = []
+
+            # Add note if not already registered
+            if note_name not in registry:
+                registry.append(note_name)
+                registry_file.write_text("\n".join(registry), encoding="utf-8")
+                logger.debug(f"Registered note: {note_name}")
+        except Exception as e:
+            logger.warning(f"Failed to register note {note_name}: {e}")
+
+    async def execute(self, input_data: Any, context: AgentContext) -> AgentOutput:
+        """Execute data extraction.
+
+        v4.1 Flow:
+        1. Code navigates to target URL (if provided)
+        2. Code executes interaction steps via LLM (if any)
+        3. Code captures snapshot and saves to notes file directly
+        4. LLM reads snapshot from notes and extracts structured data
+
+        Args:
+            input_data: Input data (AgentInput or dict)
+            context: Execution context
+
+        Returns:
+            AgentOutput with extracted data
+        """
+        if not self.is_initialized:
+            return AgentOutput(
+                success=False,
+                message="ScraperAgent not initialized",
+                data={}
+            )
+
+        # Parse input
+        if isinstance(input_data, AgentInput):
+            data = input_data.data
+        else:
+            data = input_data
+
+        data_requirements = data.get("data_requirements", {})
+        target_path = data.get("target_path")
+        interaction_steps = data.get("interaction_steps", [])
+        max_items = data.get("max_items", 0)
+        max_steps = data.get("max_steps", 30)
+        headless = data.get("headless", False)
+
+        logger.info(f"ScraperAgent v4.1 executing: target={target_path}, max_items={max_items}")
+
+        try:
+            # Prepare output data file
+            self._prepare_extracted_data_file()
+
+            # Initialize browser session
+            await self._ensure_browser_session(context, headless=headless)
+
+            # Step 1: Navigate to target URL (code-level)
+            if target_path:
+                url = target_path[0] if isinstance(target_path, list) else target_path
+                logger.info(f"[ScraperAgent] Step 1a: Navigating to {url}")
+                await self._browser_session.navigate(url)
+
+            # Step 1b: Execute interaction steps if any (via LLM)
+            if interaction_steps:
+                logger.info(f"[ScraperAgent] Step 1b: Executing {len(interaction_steps)} interaction steps")
+                await self._execute_interactions(interaction_steps, context, max_steps // 3)
+
+            # Step 2: Capture snapshot and save to notes (code-level, no token limits)
+            logger.info("[ScraperAgent] Step 2: Capturing snapshot (code-level)")
+            await self._capture_snapshot_to_notes(include_links=True)
+
+            # Step 3: LLM extracts data from snapshot file
+            extraction_task = self._build_extraction_task(
+                data_requirements=data_requirements,
+                max_items=max_items
+            )
+
+            logger.info("[ScraperAgent] Step 3: LLM extracting data from snapshot")
+
+            # Create EigentStyleBrowserAgent for LLM extraction
+            # It will read the snapshot from notes and output structured data
+            from .eigent_style_browser_agent import EigentStyleBrowserAgent
+            self._eigent_agent = EigentStyleBrowserAgent()
+            await self._eigent_agent.initialize(context)
+
+            # IMPORTANT: Pass the same notes_directory so LLM can read our snapshot
+            notes_dir = str(_get_notes_dir())
+            result = await self._eigent_agent.execute(
+                AgentInput(data={
+                    "task": extraction_task,
+                    "max_steps": max_steps,
+                    "notes_directory": notes_dir,  # Same dir where we saved snapshot
+                }),
+                context
+            )
+
+            if not result.success:
+                return AgentOutput(
+                    success=False,
+                    message=result.message,
+                    data={"error": result.message, "extracted_data": []}
+                )
+
+            # Validate and get extracted data
+            extracted_data, validation_errors = self._validate_extracted_data(data_requirements)
+
+            # If validation failed, ask LLM to fix it
+            if validation_errors and len(validation_errors) > 0:
+                logger.warning(f"Validation errors: {validation_errors}, attempting fix...")
+
+                fix_result = await self._attempt_fix_extraction(
+                    context=context,
+                    data_requirements=data_requirements,
+                    validation_errors=validation_errors,
+                    max_steps=max_steps // 2,
+                )
+
+                if fix_result:
+                    extracted_data = fix_result
+
+            # Final result
+            items_count = len(extracted_data) if extracted_data else 0
+            logger.info(f"ScraperAgent extracted {items_count} items")
+
+            return AgentOutput(
+                success=items_count > 0,
+                message=f"Successfully extracted {items_count} items" if items_count > 0 else "No data extracted",
+                data={
+                    "extracted_data": extracted_data or [],
+                    "items_extracted": items_count,
+                    "result": extracted_data or [],
+                }
+            )
+
+        except Exception as e:
+            import traceback
+            error_msg = f"ScraperAgent execution failed: {e}"
+            logger.error(error_msg)
+            logger.error(traceback.format_exc())
+
+            return AgentOutput(
+                success=False,
+                message=error_msg,
+                data={"error": str(e), "extracted_data": []}
+            )
+
+    def _prepare_extracted_data_file(self) -> None:
+        """Prepare empty extracted data file for LLM to append to.
+
+        This creates an empty note file so LLM can simply use append_note()
+        without worrying about create vs append.
+        """
+        try:
+            notes_dir = _get_notes_dir()
+            note_path = notes_dir / f"{EXTRACTED_DATA_NOTE}.md"
+
+            # Create empty file (or clear existing)
+            note_path.write_text("", encoding="utf-8")
+            logger.info(f"Prepared empty data file: {note_path}")
+        except Exception as e:
+            logger.warning(f"Failed to prepare extracted data file: {e}")
+
+    def _validate_extracted_data(
+        self,
+        data_requirements: Union[Dict, str]
+    ) -> tuple[Optional[List[Dict]], List[str]]:
+        """Validate extracted data from notes file.
+
+        Args:
+            data_requirements: Expected data format
+
+        Returns:
+            Tuple of (extracted_data, validation_errors)
+            - extracted_data: List of valid items, or None if file not found
+            - validation_errors: List of error messages
+        """
+        errors = []
+
+        # Read from notes file
+        extracted_data = self._read_extracted_data_from_notes()
+
+        if extracted_data is None:
+            errors.append("No extracted data file found or file is not valid JSON")
+            return None, errors
+
+        if not isinstance(extracted_data, list):
+            errors.append(f"Extracted data is not a list: {type(extracted_data)}")
+            return None, errors
+
+        if len(extracted_data) == 0:
+            errors.append("Extracted data is empty (0 items)")
+            return [], errors
+
+        # Validate against expected fields
+        if isinstance(data_requirements, dict):
+            output_format = data_requirements.get("output_format", {})
+            if output_format:
+                required_fields = set(output_format.keys())
+                valid_items = []
+                invalid_count = 0
+
+                for i, item in enumerate(extracted_data):
+                    if not isinstance(item, dict):
+                        invalid_count += 1
+                        continue
+
+                    # Check if item has at least one required field
+                    item_fields = set(item.keys())
+                    if not item_fields.intersection(required_fields):
+                        invalid_count += 1
+                        continue
+
+                    valid_items.append(item)
+
+                if invalid_count > 0:
+                    errors.append(f"{invalid_count} items don't have required fields: {list(required_fields)}")
+
+                # Check if too many items are invalid
+                if len(valid_items) < len(extracted_data) * 0.5:
+                    errors.append(f"More than 50% of items are invalid ({len(valid_items)}/{len(extracted_data)})")
+
+                return valid_items, errors
+
+        return extracted_data, errors
+
+    async def _attempt_fix_extraction(
+        self,
+        context: AgentContext,
+        data_requirements: Union[Dict, str],
+        validation_errors: List[str],
+        max_steps: int = 15,
+    ) -> Optional[List[Dict]]:
+        """Attempt to fix extraction errors by asking LLM to correct the data.
+
+        Args:
+            context: Execution context
+            data_requirements: Expected data format
+            validation_errors: List of validation errors
+            max_steps: Max steps for fix attempt
+
+        Returns:
+            Fixed data list or None if fix failed
+        """
+        try:
+            # Build fix task
+            fix_task = self._build_fix_task(data_requirements, validation_errors)
+
+            # Reuse the same agent (browser session is still active)
+            eigent_input = AgentInput(
+                data={
+                    "task": fix_task,
+                    "max_steps": max_steps,
+                }
+            )
+
+            result = await self._eigent_agent.execute(eigent_input, context)
+
+            if not result.success:
+                logger.warning(f"Fix attempt failed: {result.message}")
+                return None
+
+            # Read fixed data
+            fixed_data = self._read_extracted_data_from_notes()
+            if fixed_data and len(fixed_data) > 0:
+                logger.info(f"Fix successful, got {len(fixed_data)} items")
+                return fixed_data
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Fix attempt error: {e}")
+            return None
+
+    def _build_fix_task(
+        self,
+        data_requirements: Union[Dict, str],
+        validation_errors: List[str]
+    ) -> str:
+        """Build task to fix extraction errors."""
+        parts = []
+
+        parts.append("The previous data extraction had validation errors. Please fix them.")
+        parts.append("")
+        parts.append("Validation errors:")
+        for err in validation_errors:
+            parts.append(f"  - {err}")
+        parts.append("")
+
+        # Show expected format
+        if isinstance(data_requirements, dict):
+            output_format = data_requirements.get("output_format", {})
+            if output_format:
+                parts.append("Expected fields for each item:")
+                for field, desc in output_format.items():
+                    parts.append(f"  - {field}: {desc}")
+                parts.append("")
+
+        parts.append("Please:")
+        parts.append(f"1. Read the current note file '{EXTRACTED_DATA_NOTE}' to see what was extracted")
+        parts.append("2. Fix the JSON format and ensure all items have the required fields")
+        parts.append(f"3. Overwrite the note file with corrected data: create_note('{EXTRACTED_DATA_NOTE}', '<valid JSON array>', overwrite=True)")
+        parts.append("")
+        parts.append("The data must be a valid JSON array with all items having the required fields.")
+
+        return "\n".join(parts)
+
+    async def _execute_interactions(
+        self,
+        interaction_steps: List[Dict],
+        context: AgentContext,
+        max_steps: int = 10,
+    ) -> bool:
+        """Execute interaction steps via LLM.
+
+        Uses EigentStyleBrowserAgent for complex interactions like
+        scrolling, clicking, form filling, etc.
+
+        Args:
+            interaction_steps: List of interaction step dicts
+            context: Execution context
+            max_steps: Max LLM steps
+
+        Returns:
+            True if all interactions completed successfully
+        """
+        if not interaction_steps:
             return True
 
-        except Exception as e:
-            logger.error(f"ScraperAgent初始化失败: {e}")
-            return False
+        # Build interaction task
+        parts = ["Task: Perform the following page interactions:"]
+        parts.append("")
+        for i, step in enumerate(interaction_steps, 1):
+            task = step.get("task", str(step))
+            parts.append(f"{i}. {task}")
+        parts.append("")
+        parts.append("Complete each interaction in order. Use browser tools as needed.")
 
-    def _parse_runtime_config(self, input_data: Dict) -> Dict:
-        """解析运行时配置
+        interaction_task = "\n".join(parts)
 
-        Args:
-            input_data: 输入数据字典
+        # Create agent for interactions
+        from .eigent_style_browser_agent import EigentStyleBrowserAgent
+        interaction_agent = EigentStyleBrowserAgent()
+        await interaction_agent.initialize(context)
 
-        Returns:
-            配置字典，包含extraction_method, dom_scope, debug_mode等
-        """
-        config = {}
+        # Share browser session
+        interaction_agent._session = self._browser_session
 
-        # 提取配置参数（支持从顶层或options中获取）
-        options = input_data.get('options', {})
-
-        # extraction_method - 默认使用 llm 避免 memory 依赖
-        config['extraction_method'] = (
-            input_data.get('extraction_method') or
-            options.get('extraction_method') or
-            'llm'
+        result = await interaction_agent.execute(
+            AgentInput(data={"task": interaction_task, "max_steps": max_steps}),
+            context
         )
 
-        # dom_scope - 默认 partial
-        config['dom_scope'] = (
-            input_data.get('dom_scope') or
-            options.get('dom_scope') or
-            'partial'
-        )
+        return result.success
 
-        # debug_mode - 默认 False
-        config['debug_mode'] = (
-            input_data.get('debug_mode') or
-            options.get('debug_mode') or
-            False
-        )
-
-        # max_items - 默认为 0 表示无限制（提取全部）
-        # 只有当用户明确指定数量时才设置限制
-        max_items_raw = input_data.get('max_items') or options.get('max_items')
-        
-        if max_items_raw is not None:
-            # 强制转换为整数，防止变量替换失败导致字符串传入
-            try:
-                config['max_items'] = int(max_items_raw)
-            except (ValueError, TypeError):
-                logger.warning(f"max_items 转换失败: {max_items_raw}，将提取全部数据")
-                config['max_items'] = 0
-        else:
-            # 用户未指定，默认提取全部
-            config['max_items'] = 0
-
-        config['timeout'] = (
-            input_data.get('timeout') or
-            options.get('timeout') or
-            30
-        )
-
-        # 验证配置值
-        if config['extraction_method'] not in ['script', 'llm']:
-            raise ValueError(f"不支持的提取方法: {config['extraction_method']}，请使用 'script' 或 'llm'")
-
-        # LLM 模式只支持 partial DOM
-        if config['extraction_method'] == 'llm' and config['dom_scope'] != 'partial':
-            logger.warning(f"LLM模式只支持partial DOM，已自动调整")
-            config['dom_scope'] = 'partial'
-
-        if config['dom_scope'] not in ['partial', 'full']:
-            raise ValueError(f"不支持的DOM范围: {config['dom_scope']}，请使用 'partial' 或 'full'")
-
-        logger.debug(f"运行时配置: {config}")
-        return config
-    
-    async def validate_input(self, input_data: Any) -> bool:
-        """验证输入数据"""
-        # Handle AgentInput type from workflow engine
-        from ..core.schemas import AgentInput
-
-        if isinstance(input_data, AgentInput):
-            actual_data = input_data.data
-        elif isinstance(input_data, dict):
-            actual_data = input_data
-        else:
-            return False
-
-        # data_requirements 是必需的
-        # target_path 是可选的 - 如果为空或不存在，使用当前页面
-        return 'data_requirements' in actual_data
-    
-    async def execute(self, input_data: Any, context: AgentContext) -> Any:
-        """执行代理任务"""
-        if not self.is_initialized:
-            raise RuntimeError("代理未初始化")
-
-        # Handle AgentInput type from workflow engine
-        from ..core.schemas import AgentInput, AgentOutput
-
-        if isinstance(input_data, AgentInput):
-            actual_data = input_data.data
-        else:
-            actual_data = input_data
-
-        # 从输入数据中提取配置（运行时决定所有行为）
-        config = self._parse_runtime_config(actual_data)
-
-        # 运行时覆盖实例变量
-        self.extraction_method = config['extraction_method']
-        self.dom_scope = config['dom_scope']
-        self.debug_mode = config['debug_mode']
-
-        # 执行数据提取
-        result = await self._handle_scrape(actual_data, context, config)
-
-        # Wrap result in AgentOutput for workflow engine
-        # 统一契约：输出放在 data["result"] 中，类型为 List[Dict]
-        if isinstance(input_data, AgentInput):
-            extracted_data = result.get('extracted_data', [])
-            return AgentOutput(
-                success=result.get('success', False),
-                data={"result": extracted_data},
-                message=result.get('message', ''),
-                metadata={
-                    "extraction_method": result.get('extraction_method'),
-                    "total_items": len(extracted_data) if isinstance(extracted_data, list) else 0
-                }
-            )
-        else:
-            return result
-
-
-    async def _handle_scrape(self, input_data: Dict, context: AgentContext, config: Dict) -> Dict:
-        """统一的数据提取处理"""
-        target_path = input_data.get('target_path')  # 可选，如果为空则使用当前页面
-        data_requirements = input_data['data_requirements']
-        interaction_steps = input_data.get('interaction_steps', [])
-
-        if target_path:
-            logger.info(f"📄 Starting scrape with target_path: {target_path}")
-        else:
-            logger.info(f"📄 Starting scrape on current page")
-        logger.debug(f"   config: {config}")
-
-        try:
-            # 使用config中的参数
-            max_items = config['max_items']
-            timeout = config['timeout']
-
-            # 如果有 target_path，导航到目标页面并执行交互
-            # 如果没有 target_path，直接使用当前页面
-            if target_path:
-                navigate_result = await self._navigate_to_pages(target_path, interaction_steps)
-
-                if navigate_result.success is False:
-                    return self._create_response(
-                        False,
-                        f'页面导航失败: {navigate_result.error}'
-                    )
-            else:
-                # 没有 target_path，使用当前页面，但可能还有 interaction_steps (如 scroll)
-                if interaction_steps:
-                    logger.info(f"🎯 Executing {len(interaction_steps)} interaction steps on current page...")
-                    for idx, step in enumerate(interaction_steps):
-                        action_type = step.get('action_type', 'unknown')
-                        logger.info(f"   Step {idx + 1}/{len(interaction_steps)}: {action_type}")
-
-                        interaction_result = await self._execute_interaction_step(step)
-
-                        if interaction_result.success is False:
-                            return self._create_response(
-                                False,
-                                f'交互步骤 {idx + 1} 失败: {interaction_result.error}'
-                            )
-
-                    logger.info(f"✅ All interaction steps completed successfully")
-                    await asyncio.sleep(3)  # Wait for content stability
-
-            # 提取数据
-            extraction_result = await self._extract_data_from_current_page(
-                data_requirements,
-                max_items,
-                timeout,
-                context=context,
-                config=config
-            )
-
-            # Anti-bot random behavior after extraction
-            await self._perform_anti_bot_behavior()
-
-            # 返回结果
-            if extraction_result["success"]:
-                # Log extraction results in one line
-                data_preview = extraction_result["data"][:2] if extraction_result["total_count"] > 0 else []
-                preview_str = f"{data_preview[0]}" if len(data_preview) > 0 else "[]"
-                logger.info(f"✅ Extracted {extraction_result['total_count']} items using {config['extraction_method']} | Preview: {preview_str}")
-
-                # Log full output for debugging
-                logger.info(f"📦 Full extracted_data output (type={type(extraction_result['data'])}, length={len(extraction_result['data'])}): {extraction_result['data']}")
-
-                # Send extraction results to frontend
-                if context and context.log_callback:
-                    try:
-                        await context.log_callback(
-                            "success",
-                            f"✅ Extracted {extraction_result['total_count']} items successfully",
-                            {
-                                "extraction_method": config['extraction_method'],
-                                "total_items": extraction_result['total_count'],
-                                "extracted_data": extraction_result['data']  # Send all data
-                            }
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to send log callback: {e}")
-
-                return self._create_response(
-                    True,
-                    f'成功提取{extraction_result["total_count"]}条数据',
-                    extraction_method=config['extraction_method'],
-                    extracted_data=extraction_result["data"],
-                    metadata={
-                        'total_items': extraction_result["total_count"],
-                        'target_path': target_path,
-                        'extraction_method': config['extraction_method'],
-                        'execution_time': datetime.now().isoformat()
-                    }
-                )
-            else:
-                logger.error(f"❌ Data extraction failed: {extraction_result.get('error', 'Unknown error')}")
-                return self._create_response(
-                    False,
-                    f'数据提取失败',
-                    extraction_method=config['extraction_method'],
-                    error=extraction_result["error"]
-                )
-
-        except Exception as e:
-            logger.error(f"数据提取执行失败: {e}")
-            return self._create_response(
-                False,
-                '数据提取失败',
-                error=str(e)
-            )
-    
-    async def _navigate_to_pages(self, 
-                               path: Union[str, List[str]], 
-                               interaction_steps: List[Dict]) -> ActionResult:
-        """Execute sequential page navigation in the same tab."""
-        try:
-            # Convert single path to list for unified processing
-            urls = path if isinstance(path, list) else [path]
-            last_result = None
-            
-            # Navigate through all URLs in the same tab
-            for i, url in enumerate(urls):
-                logger.info(f"🔗 Attempting to navigate to: {url}")
-
-                # Use event system directly (v0.9+ recommended approach)
-                event = self.browser_session.event_bus.dispatch(
-                    NavigateToUrlEvent(url=url, new_tab=False)
-                )
-                await event
-                result = await event.event_result(raise_if_any=False, raise_if_none=False)
-                await asyncio.sleep(5)  # browser-use already waits for page load via _wait_for_stable_network()
-
-                # Check for explicit failure
-                if result and hasattr(result, 'success') and result.success is False:
-                    logger.error(f"❌ Navigation failed for URL: {url}, error: {result.error}")
-                    return result
-
-                last_result = result
-
-                # Add natural delay between navigations
-                # if i < len(urls) - 1:
-                #     await asyncio.sleep(random.uniform(3, 5))  # browser-use already handles page load timing
-
-            # Execute interaction steps after navigation (if provided)
-            if interaction_steps:
-                logger.info(f"🎯 Executing {len(interaction_steps)} interaction steps...")
-                for idx, step in enumerate(interaction_steps):
-                    action_type = step.get('action_type', 'unknown')
-                    logger.info(f"   Step {idx + 1}/{len(interaction_steps)}: {action_type}")
-
-                    interaction_result = await self._execute_interaction_step(step)
-
-                    # Check if interaction failed
-                    if interaction_result and hasattr(interaction_result, 'success') and interaction_result.success is False:
-                        logger.error(f"❌ Interaction step {idx + 1} failed: {interaction_result.error}")
-                        return interaction_result
-
-                    # Add small delay between interactions for stability
-                    await asyncio.sleep(0.5)
-
-                logger.info(f"✅ All interaction steps completed successfully")
-
-                # Wait 3 seconds after all interaction steps to ensure content is loaded
-                await asyncio.sleep(3)
-
-            # Return the last result (which should have success=None for successful navigation)
-            return last_result if last_result else ActionResult(extracted_content="No navigation performed")
-                
-        except Exception as e:
-            logger.error(f"Navigation failed: {e}")
-            return ActionResult(success=False, error=str(e))
-
-    async def _execute_interaction_step(self, step_config: Dict) -> ActionResult:
-        """Execute single interaction step (currently only supports scroll)"""
-        try:
-            action_type = step_config['action_type']
-            parameters = step_config.get('parameters', {})
-
-            if action_type == 'scroll':
-                # Use event system directly (v0.9+ recommended approach)
-                scroll_down = parameters.get('down', True)
-                amount = int(parameters.get('num_pages', 1.0) * 500)  # Convert pages to pixels
-                direction = "down" if scroll_down else "up"
-
-                logger.debug(f"Scrolling: direction={direction}, amount={amount}px")
-
-                event = self.browser_session.event_bus.dispatch(
-                    ScrollEvent(direction=direction, amount=amount)
-                )
-                await event
-                result = await event.event_result(raise_if_any=False, raise_if_none=False)
-
-                # Wait for page to stabilize after scroll
-                await asyncio.sleep(1)
-
-                return ActionResult(extracted_content=f"Scrolled {direction} {amount}px")
-            else:
-                logger.warning(f"Unsupported action type: {action_type}. Currently only 'scroll' is supported.")
-                return ActionResult(success=False, error=f"Unsupported action type: {action_type}. Only 'scroll' is currently supported.")
-
-        except Exception as e:
-            logger.error(f"Interaction step failed: {e}")
-            return ActionResult(success=False, error=str(e))
-
-    async def _perform_anti_bot_behavior(self) -> None:
-        """Perform random scrolling and sleep to avoid anti-bot detection"""
-        try:
-            # Random number of scroll actions (1-3 times)
-            num_scrolls = random.randint(1, 3)
-            logger.info(f"🤖 Performing anti-bot behavior: {num_scrolls} random scrolls")
-
-            for i in range(num_scrolls):
-                # Random scroll direction and distance
-                scroll_down = random.choice([True, False])
-                scroll_pages = random.uniform(0.3, 1.0)  # 0.3 to 1 page
-                direction = "down" if scroll_down else "up"
-                amount = int(scroll_pages * 500)  # Convert to pixels
-
-                logger.debug(f"   Scroll {i+1}/{num_scrolls}: {direction} {amount}px")
-
-                # Use event system directly
-                event = self.browser_session.event_bus.dispatch(
-                    ScrollEvent(direction=direction, amount=amount)
-                )
-                await event
-                await event.event_result(raise_if_any=False, raise_if_none=False)
-
-                # Random sleep between scrolls (1-3 seconds)
-                sleep_time = random.uniform(1, 3)
-                await asyncio.sleep(sleep_time)
-
-            # Final random sleep (2-5 seconds)
-            final_sleep = random.uniform(2, 5)
-            logger.info(f"   Final sleep: {final_sleep:.2f} seconds")
-            await asyncio.sleep(final_sleep)
-
-            logger.info(f"✅ Anti-bot behavior completed")
-
-        except Exception as e:
-            # Don't fail the entire scraping if anti-bot behavior fails
-            logger.warning(f"Anti-bot behavior failed (non-critical): {e}")
-
-
-    def _generate_url_hash(self, url: str) -> str:
-        """Generate hash for URL to use as storage key
-
-        Args:
-            url: The webpage URL
-
-        Returns:
-            8-character hash string
-        """
-        return hashlib.md5(url.encode()).hexdigest()[:8]
-
-
-    async def _save_dom_snapshot(self, url: str, dom_dict: Dict) -> None:
-        """Save full DOM snapshot to cloud for debugging and future reference
-
-        Args:
-            url: The webpage URL
-            dom_dict: DOM dictionary to save (should be full DOM)
-        """
-        if not url:
-            logger.warning("⚠️  No URL provided, skipping DOM snapshot save")
-            return
-
-        if not hasattr(self, '_context') or not self._context:
-            logger.warning("⚠️  No context available, skipping DOM snapshot save")
-            return
-
-        # Get cloud client from context
-        cloud_client = None
-        if self._context.agent_instance and hasattr(self._context.agent_instance, 'cloud_client'):
-            cloud_client = self._context.agent_instance.cloud_client
-
-        if not cloud_client:
-            logger.warning("⚠️  CloudClient not available, skipping DOM snapshot save")
-            return
-
-        try:
-            user_id = getattr(self._context, 'user_id', 'default_user')
-            workflow_id = getattr(self._context, 'workflow_id', None)
-            step_id = getattr(self._context, 'step_id', None)
-
-            if not workflow_id or not step_id:
-                logger.warning("⚠️  workflow_id or step_id not available, skipping DOM snapshot save")
-                return
-
-            # Generate URL hash for filename
-            url_hash = self._generate_url_hash(url)
-            timestamp = datetime.now().isoformat()
-
-            # Build DOM snapshot data (wrapped format with step_id for url_index mapping)
-            snapshot_data = {
-                "url": url,
-                "url_hash": url_hash,
-                "step_id": step_id,  # Include step_id for url_index.json mapping
-                "timestamp": timestamp,
-                "dom": dom_dict
-            }
-
-            # Upload to cloud: dom_snapshots/{url_hash}.json
-            file_path = f"dom_snapshots/{url_hash}.json"
-            content = json.dumps(snapshot_data, ensure_ascii=False).encode('utf-8')
-
-            success = await cloud_client.upload_workflow_file(
-                workflow_id=workflow_id,
-                file_path=file_path,
-                content=content,
-                user_id=user_id
-            )
-
-            if success:
-                logger.info(f"✅ DOM snapshot uploaded to cloud: {file_path}")
-                logger.info(f"   URL: {url}")
-                logger.info(f"   Size: {len(content)} bytes")
-            else:
-                logger.warning(f"⚠️  Failed to upload DOM snapshot to cloud")
-
-        except Exception as e:
-            logger.warning(f"⚠️  Failed to save DOM snapshot: {e}")
-
-    async def _get_current_page_dom(self) -> tuple:
-        """Get DOM from current page with stability check
-
-        Returns:
-            tuple: (target_dom, dom_dict, llm_view)
-        """
-        from browser_use.browser.events import BrowserStateRequestEvent
-        from ..tools.browser_use.dom_extractor import extract_dom_dict, extract_llm_view, DOMExtractor
-
-        if not self.browser_session:
-            raise RuntimeError("Browser session is None")
-
-        # Wait 3 seconds for page to fully load before getting DOM
-        logger.info("Waiting 3 seconds for page to fully load...")
-        await asyncio.sleep(3)
-
-        # Wait for page stability
-        event = self.browser_session.event_bus.dispatch(
-            BrowserStateRequestEvent(
-                include_dom=True,
-                include_screenshot=False,
-                include_recent_events=False
-            )
-        )
-        await event.event_result(raise_if_any=True, raise_if_none=False)
-
-        # Get enhanced DOM from cache
-        enhanced_dom = self.browser_session._dom_watchdog.enhanced_dom_tree
-        if enhanced_dom is None:
-            return "", {}, "[]"
-
-        # Extract DOM based on scope
-        extractor = DOMExtractor()
-        if self.dom_scope == "full":
-            target_dom, _ = extractor.serialize_accessible_elements_custom(
-                enhanced_dom, include_non_visible=True
-            )
-        else:
-            target_dom, _ = extractor.serialize_accessible_elements_custom(
-                enhanced_dom, include_non_visible=False
-            )
-
-        # Convert to DOM structures - reuse the same extractor instance to preserve include_non_visible setting
-        dom_dict = extractor.extract_dom_dict(target_dom)
-        include_xpath = (self.extraction_method == 'script')
-        llm_view = extract_llm_view(dom_dict, include_xpath=include_xpath)
-
-        return target_dom, dom_dict, llm_view
-
-    async def _extract_data_from_current_page(
+    def _build_extraction_task(
         self,
-        data_requirements: str,
-        max_items: int,
-        timeout: int,
-        context: Optional[AgentContext] = None,
-        config: Optional[Dict] = None
-    ) -> Dict[str, Any]:
-        """Extract data from current page
+        data_requirements: Union[Dict, str],
+        max_items: int
+    ) -> str:
+        """Build task to extract data from saved snapshot file.
+
+        This is Step 2 of the scraper flow:
+        1. Read snapshot from note file (use shell commands for partial reads)
+        2. Extract required data
+        3. Save extracted data to output file (in batches if large)
+        """
+        # Get the actual notes file path for shell commands
+        notes_dir = _get_notes_dir()
+        snapshot_file = notes_dir / f"{PAGE_SNAPSHOT_NOTE}.md"
+        output_file = notes_dir / f"{EXTRACTED_DATA_NOTE}.md"
+
+        parts = []
+
+        parts.append("Task: Extract data from saved snapshot file")
+        parts.append("")
+
+        # File paths for shell commands
+        parts.append(f"Snapshot file path: {snapshot_file}")
+        parts.append(f"Output file path: {output_file}")
+        parts.append("")
+
+        # What to extract
+        parts.append("Extract the following data:")
+        if isinstance(data_requirements, str):
+            parts.append(f"  {data_requirements}")
+        elif isinstance(data_requirements, dict):
+            user_desc = data_requirements.get("user_description", "")
+            if user_desc:
+                parts.append(f"  {user_desc}")
+
+            output_format = data_requirements.get("output_format", {})
+            if output_format:
+                parts.append("  Required fields:")
+                for field, desc in output_format.items():
+                    parts.append(f"    - {field}: {desc}")
+
+            extraction_hints = data_requirements.get("extraction_hints", "")
+            if extraction_hints:
+                parts.append(f"  Hints: {extraction_hints}")
+
+        if max_items > 0:
+            parts.append(f"  Limit: max {max_items} items")
+
+        parts.append("")
+
+        # How to do it - emphasize shell commands for partial reads
+        parts.append("## Extraction Steps")
+        parts.append("")
+        parts.append("1. First, check total lines in snapshot:")
+        parts.append(f"   run_terminal_cmd('wc -l {snapshot_file}')")
+        parts.append("")
+        parts.append("2. Read the **Page Links** section (usually at the end of file):")
+        parts.append(f"   run_terminal_cmd('grep -n \"Page Links\" {snapshot_file}')  # Find where links section starts")
+        parts.append(f"   run_terminal_cmd('sed -n \"<start>,<end>p\" {snapshot_file}')  # Read specific line range")
+        parts.append("")
+        parts.append("3. Parse the links and save to output file")
+        parts.append("")
+
+        # Batch processing with shell commands
+        parts.append("## CRITICAL - Batch Processing Rules")
+        parts.append("")
+        parts.append("If there are many items (>50), process in batches:")
+        parts.append("")
+        parts.append("For EACH batch, you MUST:")
+        parts.append("1. Use shell command to read ONLY that batch's lines from snapshot:")
+        parts.append(f"   run_terminal_cmd('sed -n \"<start_line>,<end_line>p\" {snapshot_file}')")
+        parts.append("2. Parse the data from ONLY those lines")
+        parts.append("3. Append to output file:")
+        parts.append(f"   append_note('{EXTRACTED_DATA_NOTE}', '<JSON array for this batch>')")
+        parts.append("")
+        parts.append("Example batch processing:")
+        parts.append("- Batch 1: sed -n '100,150p' to read lines 100-150, parse, append")
+        parts.append("- Batch 2: sed -n '151,200p' to read lines 151-200, parse, append")
+        parts.append("- ... and so on")
+        parts.append("")
+        parts.append("**DO NOT** rely on memory from previous batches!")
+        parts.append("**DO NOT** fabricate data - only extract what you read from the file!")
+        parts.append("")
+        parts.append("Output format: JSON array, e.g., [{\"name\": \"Product1\", \"url\": \"https://...\"}, ...]")
+
+        return "\n".join(parts)
+
+    def _read_extracted_data_from_notes(self) -> Optional[List[Dict]]:
+        """Read extracted data from notes file.
+
+        Handles multiple JSON arrays appended together (from batch writes).
+        E.g., '[{...}, {...}][{...}, {...}]' -> merged into one list.
+
+        Returns:
+            List of extracted items if successful, None if file not found or invalid JSON.
+        """
+        try:
+            notes_dir = _get_notes_dir()
+            note_path = notes_dir / f"{EXTRACTED_DATA_NOTE}.md"
+
+            if not note_path.exists():
+                logger.debug(f"Notes file not found: {note_path}")
+                return None
+
+            content = note_path.read_text(encoding="utf-8").strip()
+
+            if not content:
+                logger.debug("Notes file is empty")
+                return None
+
+            # Try to parse as single JSON array first
+            try:
+                data = json.loads(content)
+                if isinstance(data, list):
+                    logger.info(f"Successfully read {len(data)} items from notes file")
+                    return data
+                else:
+                    logger.warning(f"Notes file contains non-list JSON: {type(data)}")
+                    return None
+            except json.JSONDecodeError:
+                # Try to handle multiple JSON arrays (from batch writes)
+                # E.g., '[{...}][{...}]' or '[{...}]\n[{...}]'
+                logger.info("Single JSON parse failed, trying to merge multiple arrays...")
+                merged_data = self._merge_json_arrays(content)
+                if merged_data is not None:
+                    logger.info(f"Successfully merged {len(merged_data)} items from multiple arrays")
+                    return merged_data
+
+                # Try to fix common JSON issues
+                logger.warning("Merge failed, attempting to fix JSON...")
+                fixed_content = self._fix_json_array(content)
+                if fixed_content:
+                    try:
+                        data = json.loads(fixed_content)
+                        if isinstance(data, list):
+                            logger.info(f"Successfully read {len(data)} items after JSON fix")
+                            return data
+                    except json.JSONDecodeError:
+                        pass
+                logger.error("Failed to parse notes file as JSON")
+                return None
+
+        except Exception as e:
+            logger.error(f"Error reading notes file: {e}")
+            return None
+
+    def _merge_json_arrays(self, content: str) -> Optional[List[Dict]]:
+        """Merge multiple JSON arrays into one list.
+
+        Handles formats like:
+        - '[{...}][{...}]'
+        - '[{...}]\n[{...}]'
+        - '[{...}], [{...}]'
 
         Args:
-            data_requirements: Data requirements specification
-            max_items: Maximum number of items to extract
-            timeout: Timeout in seconds
-            context: Agent context
-            config: Configuration dict
+            content: Raw content with potentially multiple JSON arrays
+
+        Returns:
+            Merged list or None if parsing fails
         """
-
-        try:
-            # Cache script key for this extraction (used by _save_dom_snapshot)
-            self._current_script_key = self._generate_script_key(data_requirements)
-
-            # Get DOM from current page
-            target_dom, dom_dict, llm_view = await self._get_current_page_dom()
-
-            # 调试模式: 保存DOM结构
-            if self.debug_mode:
-                logger.info("=== DOM 结构分析 ===")
-                logger.info(f"DOM范围: {self.dom_scope}")
-                logger.info(f"DOM元素总数: {len(target_dom.selector_map) if hasattr(target_dom, 'selector_map') else '未知'}")
-                logger.info(f"有意义元素数: {len(json.loads(llm_view)) if llm_view != '[]' else 0}")
-
-                # 保存DOM到文件
-                import time
-                debug_key = f"extraction_{self.extraction_method}_{self.dom_scope}_{int(time.time())}"
-
-                # 使用人类可读的JSON格式保存到文件
-                dom_representation = json.dumps(dom_dict, indent=2, ensure_ascii=False)
-
-                await self._save_dom_to_file(dom_representation, debug_key)
-
-            # 根据配置的提取方法调用对应函数
-            if self.extraction_method == 'script':
-                return await self._extract_with_script(
-                    target_dom, dom_dict, llm_view, data_requirements, max_items, timeout, context
-                )
-            else:
-                return await self._extract_with_llm(
-                    dom_dict, llm_view, data_requirements, max_items, timeout
-                )
-
-        except Exception as e:
-            logger.error(f"数据提取失败: {e}")
-            return self._create_error_result(str(e))
-    
-    async def _extract_with_script(
-        self,
-        target_dom,
-        dom_dict: Dict,
-        llm_view: str,
-        data_requirements: Dict,
-        max_items: int,
-        timeout: int,
-        context: Optional[AgentContext] = None
-    ) -> Dict[str, Any]:
-        """Extract data using script mode - file-based caching with Claude SDK"""
-        from pathlib import Path
-
-        try:
-            # Use cached script key (set in _extract_data_from_current_page)
-            script_key = self._current_script_key
-
-            if not self.config_service:
-                raise RuntimeError("ConfigService required for file-based script storage")
-
-            scripts_root = self.config_service.get_path("data.scripts")
-            script_workspace = scripts_root / script_key
-            script_file = script_workspace / "extraction_script.py"
-
-            # Check if script already exists (file-based cache)
-            generated_script = None
-
-            if script_file.exists():
-                # Load cached script from file
-                script_content = script_file.read_text(encoding='utf-8')
-                logger.info(f"✅ Loaded cached script from {script_file}")
-                logger.info(f"   Script size: {len(script_content)} chars")
-
-                # Send status to frontend (without script content)
-                if context and context.log_callback:
-                    try:
-                        await context.log_callback(
-                            "info",
-                            f"✅ Using cached extraction script",
-                            {"cache_path": str(script_file)}
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to send log callback: {e}", exc_info=True)
-
-                # Wrap the script with execution wrapper (same as fresh generation)
-                generated_script = self._extract_and_wrap_code(script_content)
-            else:
-                # Generate new script using Claude SDK
-                logger.info(f"📝 Script not found at {script_file}")
-                logger.info(f"   Generating new script with Claude SDK...")
-                logger.info(f"   Using full DOM for script generation (ensures all fields are captured)")
-
-                # Send log to frontend
-                if context and context.log_callback:
-                    try:
-                        await context.log_callback(
-                            "info",
-                            "📝 No cached script found, generating new script with Ami Coder...",
-                            {"script_path": str(script_file)}
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to send log callback: {e}")
-
-                # Get current page URL for script generation
-                page_url = None
-                if self.browser_session:
-                    try:
-                        page_url = await self.browser_session.get_current_page_url()
-                        logger.info(f"📍 Page URL for script generation: {page_url}")
-                    except Exception as e:
-                        logger.warning(f"⚠️  Could not get page URL: {e}")
-
-                # Force full DOM for script generation to capture all page content
-                # This ensures the script can extract fields even if they're below the fold
-                original_scope = self.dom_scope
-                self.dom_scope = 'full'
-
-                # Get full DOM for script generation
-                generation_dom, generation_dict, generation_llm_view = await self._get_current_page_dom()
-
-                # Restore original scope
-                self.dom_scope = original_scope
-
-                # Build DOM analysis data with FULL DOM
-                dom_analysis = {
-                    'serialized_dom': generation_dom,
-                    'dom_dict': generation_dict,
-                    'llm_view': generation_llm_view,
-                    'dom_config': {
-                        'dom_scope': 'full'  # Always full for generation
-                    },
-                    'page_url': page_url  # Include page URL for base URL inference
-                }
-
-                # Generate script using Claude SDK
-                generated_script = await self._generate_extraction_script_with_llm(
-                    dom_analysis, data_requirements, [], None, context=context
-                )
-
-                logger.info(f"✅ Script generated successfully by Claude SDK")
-                logger.info(f"   Script workspace: {script_workspace}")
-                logger.info(f"   Script file: {script_file}")
-                logger.info(f"   Generated using: full DOM (captures all page content)")
-                logger.info(f"   Execution will use: {self.dom_scope} DOM")
-
-            # Script mode always uses full DOM for execution
-            # Get full DOM if not already using full scope
-            if self.dom_scope != 'full':
-                logger.info(f"Script mode: switching from {self.dom_scope} to full DOM for execution")
-                original_scope = self.dom_scope
-                self.dom_scope = 'full'
-                execution_dom, execution_dict, _ = await self._get_current_page_dom()
-                self.dom_scope = original_scope
-            else:
-                execution_dom = target_dom
-                execution_dict = dom_dict
-
-            # Get current page URL before script execution
-            page_url = ""
-            try:
-                page_url = await self.browser_session.get_current_page_url()
-                logger.info(f"📍 Current page URL: {page_url}")
-            except Exception as e:
-                logger.warning(f"⚠️  Could not get current page URL: {e}")
-
-            result = await self._execute_generated_script_direct(
-                generated_script, execution_dict, max_items, script_workspace, page_url
-            )
-
-            # Save DOM snapshot for debugging and future reference
-            try:
-                await self._save_dom_snapshot(page_url, execution_dict)
-            except Exception as e:
-                logger.warning(f"Failed to save DOM snapshot: {e}")
-
-            # Update local dom_data.json in script directory with latest DOM
-            # Use wrapped format for consistency with main() testing
-            try:
-                if script_workspace and script_workspace.exists():
-                    dom_data_file = script_workspace / "dom_data.json"
-                    wrapped_data = {"url": page_url, "dom": execution_dict}
-                    dom_data_file.write_text(
-                        json.dumps(wrapped_data, indent=2, ensure_ascii=False),
-                        encoding='utf-8'
-                    )
-                    logger.info(f"Updated dom_data.json in script directory: {dom_data_file}")
-            except Exception as e:
-                logger.warning(f"Failed to update local dom_data.json: {e}")
-
-            return result
-
-        except Exception as e:
-            logger.error(f"脚本模式提取失败: {e}")
-            return self._create_error_result(str(e))
-    
-    def _parse_llm_json(self, text: str) -> Optional[List[Dict]]:
-        """Parse JSON from LLM response - simple and robust"""
         import re
 
-        if not text:
+        merged = []
+
+        # Find all JSON arrays in the content
+        # Pattern matches [...] with nested brackets handled simply
+        array_pattern = r'\[(?:[^\[\]]|\[(?:[^\[\]]|\[[^\[\]]*\])*\])*\]'
+
+        matches = re.findall(array_pattern, content)
+
+        if not matches:
             return None
 
-        # Step 1: Extract JSON array (handle markdown blocks)
-        text = text.strip()
-        if '```' in text:
-            match = re.search(r'```(?:json)?\s*(.*?)\s*```', text, re.DOTALL)
-            if match:
-                text = match.group(1).strip()
+        for match in matches:
+            try:
+                data = json.loads(match)
+                if isinstance(data, list):
+                    merged.extend(data)
+            except json.JSONDecodeError:
+                logger.debug(f"Failed to parse array segment: {match[:100]}...")
+                continue
 
-        # Find array pattern
-        match = re.search(r'(\[.*\])', text, re.DOTALL)
-        if not match:
-            return None
+        if merged:
+            return merged
 
-        json_str = match.group(1)
+        return None
 
-        # Step 2: Normalize Chinese punctuation
-        cn_to_en = {
-            '"': '"', '"': '"',  # Chinese quotes
-            ''': "'", ''': "'",  # Chinese apostrophes
-            '，': ',', '：': ':',  # Chinese comma/colon
-            '；': ';',            # Chinese semicolon
-        }
-        for cn, en in cn_to_en.items():
-            json_str = json_str.replace(cn, en)
-
-        # Step 3: Try parse directly
-        try:
-            data = json.loads(json_str)
-            return data if isinstance(data, list) else None
-        except json.JSONDecodeError:
-            pass
-
-        # Step 4: Fallback - clean nested quotes in values
-        # Remove any quotes inside string values
-        def clean_value(match):
-            value = match.group(1)
-            # Remove all quotes and apostrophes from value
-            value = value.replace('"', '').replace("'", '')
-            return f'"{value}"'
-
-        json_str = re.sub(r'"([^"]*)"(?=[,\}\]])', clean_value, json_str)
-
-        # Final attempt
-        try:
-            data = json.loads(json_str)
-            return data if isinstance(data, list) else None
-        except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse JSON: {e}")
-            logger.debug(f"Problematic JSON: {json_str[:200]}...")
-            return None
-
-    def _build_extraction_prompt(self, llm_view: str, requirements: Dict, max_items: int, max_dom_chars: int = 250000) -> str:
-        """Build extraction prompt from requirements
+    def _fix_json_array(self, content: str) -> Optional[str]:
+        """Attempt to fix common JSON array issues.
 
         Args:
-            llm_view: LLM view of DOM to include in prompt
-            requirements: Data requirements
-            max_items: Maximum items to extract
-            max_dom_chars: Maximum DOM characters to prevent token overflow (default: 250k chars ≈ 140k tokens)
-        """
-        user_desc = requirements.get('user_description', '')
-        output_format = requirements.get('output_format', {})
-        sample_data = requirements.get('sample_data', [])
-        xpath_hints = requirements.get('xpath_hints', {})
-
-        # Truncate DOM if too large to prevent token overflow
-        if len(llm_view) > max_dom_chars:
-            logger.warning(f"DOM truncated from {len(llm_view)} to {max_dom_chars} chars to prevent token overflow")
-            llm_view = llm_view[:max_dom_chars] + '\n... [DOM TRUNCATED]'
-
-        # Format field descriptions
-        fields = "\n".join([
-            f"- {name}: {desc}"
-            for name, desc in output_format.items()
-        ])
-
-        # Format sample if provided
-        sample = ""
-        if sample_data:
-            sample = f"\n\nSample output:\n{json.dumps(sample_data, indent=2, ensure_ascii=False)}"
-
-        # Format xpath hints if provided
-        xpath_hints_text = ""
-        if xpath_hints:
-            hints_list = "\n".join([f"- {name}: {xpath}" for name, xpath in xpath_hints.items()])
-            xpath_hints_text = f"\n\nXPath hints (reference for element locations):\n{hints_list}\n\nNote: These XPath hints are REFERENCE ONLY from user demonstrations. Use them to understand which elements to extract, but adapt to the actual DOM structure if needed."
-
-        return f"""Extract data from HTML DOM:
-
-Requirement: {user_desc}
-Fields:
-{fields}
-
-Max items: {max_items}
-DOM scope: {self.dom_scope}{sample}{xpath_hints_text}
-
-HTML DOM:
-{llm_view}
-
-CRITICAL RULES:
-1. Return JSON array ONLY, no other text
-2. NO markdown blocks (no ```)
-3. NO quotes or apostrophes inside field values
-4. Replace ALL quotes in values with spaces or dashes
-5. Example: Change "User's comment" to "User comment"
-6. Example: Change 'Product "ABC"' to 'Product ABC'
-
-CORRECT format:
-[{{"text": "Hot topic about technology"}}, {{"text": "User comment on product"}}]
-
-WRONG format:
-[{{"text": "User said 'hello'"}}, {{"text": "Product "ABC" review"}}]
-
-Extract data now:"""
-
-    async def _extract_with_llm(
-        self,
-        dom_dict: Dict,
-        llm_view: str,
-        data_requirements: Dict,
-        max_items: int,
-        timeout: int
-    ) -> Dict[str, Any]:
-        """Extract data using LLM with simplified logic"""
-        try:
-            # Debug logging before building prompt
-            logger.info(f"📊 Debug: llm_view length = {len(llm_view)} chars")
-            logger.info(f"📊 Debug: llm_view preview = {llm_view[:200]}...")
-
-            # Build extraction prompt
-            prompt = self._build_extraction_prompt(
-                llm_view,
-                data_requirements,
-                max_items
-            )
-
-            logger.info(f"📊 Debug: final prompt length = {len(prompt)} chars")
-
-            # Get LLM response using provider from context
-            if not self.provider:
-                raise RuntimeError("No LLM provider available. ScraperAgent must be initialized with context.")
-
-            response = await self.provider.generate_response(
-                system_prompt="You are a data extraction expert. Return only JSON array, no markdown, no explanations.",
-                user_prompt=prompt
-            )
-
-            # Enhanced logging for debugging
-            logger.info(f"LLM response length: {len(response)}")
-            logger.info(f"LLM response preview: {response[:500]}...")
-
-            # Parse response
-            extracted_data = self._parse_llm_json(response)
-
-            # Log parsing result
-            if extracted_data:
-                logger.info(f"Successfully parsed {len(extracted_data)} items")
-            else:
-                logger.warning(f"Failed to parse LLM response")
-                logger.info(f"Full LLM response: {response}")
-
-            if extracted_data:
-                # Limit results if needed
-                if max_items > 0:
-                    extracted_data = extracted_data[:max_items]
-
-                return {
-                    "success": True,
-                    "data": extracted_data,
-                    "total_count": len(extracted_data),
-                    "dom_config": {"dom_scope": self.dom_scope},
-                    "error": None
-                }
-
-            logger.warning("No valid data extracted from LLM response")
-            return self._create_error_result("Failed to extract valid JSON from LLM")
-
-        except Exception as e:
-            logger.error(f"LLM extraction error: {e}")
-            return self._create_error_result(str(e))
-    
-    async def _execute_generated_script_direct(
-        self,
-        script_content: str,
-        dom_dict: Dict,
-        max_items: int,
-        script_dir: Optional[Path] = None,
-        page_url: str = ""
-    ) -> Dict[str, Any]:
-        """直接执行生成的脚本，使用提供的DOM数据
-
-        Args:
-            script_content: 脚本内容
-            dom_dict: DOM字典（嵌套字典，不是 HTML）
-            max_items: 最大提取数量
-            script_dir: 脚本目录（用于导入 dom_tools）
-            page_url: 当前页面URL（传给 extract_data_from_page）
-        """
-        import sys
-
-        try:
-            # Add script directory to sys.path so 'from dom_tools import ...' works
-            if script_dir and str(script_dir) not in sys.path:
-                sys.path.insert(0, str(script_dir))
-
-            # 准备脚本执行环境
-            execution_env = {
-                'max_items': max_items,
-                # 导入必要的模块
-                'json': json,
-                'logging': logging,
-                'logger': logging.getLogger(__name__),
-                'List': List,
-                'Dict': Dict,
-                'Any': Any,
-            }
-
-            # 执行脚本
-            exec(script_content, execution_env, execution_env)
-
-            # 获取执行函数 - 支持两种函数名
-            execute_func = execution_env.get('execute_extraction')
-            extract_func = execution_env.get('extract_data_from_page')
-
-            if execute_func:
-                # 使用 execute_extraction(dom_dict, max_items, page_url)
-                result = execute_func(dom_dict, max_items, page_url)
-            elif extract_func:
-                # 使用 extract_data_from_page(dom_dict, page_url)
-                extracted_data = extract_func(dom_dict, page_url)
-                # 包装为标准结果格式
-                if isinstance(extracted_data, list):
-                    # Apply max_items limit
-                    if max_items and max_items > 0:
-                        extracted_data = extracted_data[:max_items]
-                    result = {
-                        "success": True,
-                        "data": extracted_data,
-                        "count": len(extracted_data)
-                    }
-                elif isinstance(extracted_data, dict):
-                    result = {
-                        "success": True,
-                        "data": [extracted_data],
-                        "count": 1
-                    }
-                else:
-                    result = {
-                        "success": True,
-                        "data": extracted_data,
-                        "count": 1 if extracted_data else 0
-                    }
-            else:
-                return self._create_error_result("脚本缺少 execute_extraction 或 extract_data_from_page 函数")
-
-            return result
-            
-        except Exception as e:
-            logger.error(f"脚本执行失败: {e}")
-            return self._create_error_result(str(e))
-    
-    
-    async def _generate_extraction_script_with_llm(self,
-                                                 dom_analysis: Dict,
-                                                 data_requirements: Dict,
-                                                 interaction_steps: List[Dict],
-                                                 example_data: Optional[str] = None,
-                                                 max_dom_chars: int = 250000,
-                                                 context: Optional[AgentContext] = None) -> str:
-        """Generate data extraction script using Cloud API
-
-        Script generation is delegated to the cloud backend, which:
-        1. Stores DOM snapshot in workflow directory
-        2. Generates script using Claude Agent SDK
-        3. Returns script content
-
-        Args:
-            dom_analysis: DOM analysis data containing dom_dict and page_url
-            data_requirements: Data requirements dictionary
-            interaction_steps: Interaction steps (unused)
-            example_data: Example data (unused)
-            max_dom_chars: Maximum DOM characters (unused)
-            context: Agent context for progress reporting
+            content: Raw content that might have JSON issues
 
         Returns:
-            Generated script content as string
-
-        Raises:
-            RuntimeError: If cloud script generation fails
+            Fixed JSON string or None if unfixable
         """
-        from pathlib import Path
+        # Remove trailing commas before ]
+        import re
+        fixed = re.sub(r',\s*]', ']', content)
 
-        try:
-            # 1. Get context info
-            if not hasattr(self, '_context') or not self._context:
-                raise RuntimeError("Agent context not available")
+        # Ensure it starts with [ and ends with ]
+        fixed = fixed.strip()
+        if not fixed.startswith('['):
+            fixed = '[' + fixed
+        if not fixed.endswith(']'):
+            fixed = fixed + ']'
 
-            user_id = getattr(self._context, 'user_id', 'default_user')
-            workflow_id = getattr(self._context, 'workflow_id', None)
-            step_id = getattr(self._context, 'step_id', None)
+        return fixed
 
-            if not workflow_id or not step_id:
-                raise RuntimeError(f"workflow_id ({workflow_id}) and step_id ({step_id}) required for cloud script generation")
+    async def cleanup(self, context: AgentContext, close_browser: bool = False):
+        """Cleanup resources."""
+        # Cleanup EigentStyleBrowserAgent
+        if self._eigent_agent:
+            try:
+                await self._eigent_agent.cleanup(context, close_browser=close_browser)
+            except Exception as e:
+                logger.warning(f"Failed to cleanup EigentStyleBrowserAgent: {e}")
+            self._eigent_agent = None
 
-            # 2. Get cloud client from context
-            cloud_client = None
-            if self._context.agent_instance and hasattr(self._context.agent_instance, 'cloud_client'):
-                cloud_client = self._context.agent_instance.cloud_client
-
-            if not cloud_client:
-                raise RuntimeError("CloudClient not available in agent context")
-
-            # 3. Get API key from provider (same pattern as other agents)
-            api_key = None
-            if self.provider and hasattr(self.provider, 'api_key') and self.provider.api_key:
-                api_key = self.provider.api_key
-                logger.info(f"Got API key from provider for cloud script generation")
-            else:
-                logger.warning("No API key available from provider for cloud script generation")
-
-            # 4. Get page URL and DOM data from dom_analysis
-            page_url = dom_analysis.get('page_url', '')
-            dom_dict = dom_analysis.get('dom_dict', {})
-
-            logger.info(f"Requesting cloud script generation: workflow={workflow_id}, step={step_id}")
-            logger.info(f"  Page URL: {page_url}")
-            logger.info(f"  DOM size: {len(json.dumps(dom_dict))} chars")
-
-            # Send progress update to frontend
-            if context and context.log_callback:
-                try:
-                    await context.log_callback(
-                        "info",
-                        "📡 Requesting script generation from cloud...",
-                        {"workflow_id": workflow_id, "step_id": step_id}
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to send log callback: {e}")
-
-            # 5. Call cloud API to generate script with SSE streaming
-            # Progress callback to forward progress to frontend
-            async def script_progress_callback(level: str, message: str, data: dict):
-                if context and context.log_callback:
-                    try:
-                        turn = data.get("turn", 0)
-                        tool_name = data.get("tool_name")
-                        progress_msg = f"🔧 Generating script (turn {turn})"
-                        if tool_name:
-                            progress_msg += f" - using {tool_name}"
-                        await context.log_callback(level, progress_msg, data)
-                    except Exception as e:
-                        logger.warning(f"Failed to send progress callback: {e}")
-
-            result = await cloud_client.generate_script_stream(
-                workflow_id=workflow_id,
-                step_id=step_id,
-                script_type="scraper",
-                page_url=page_url,
-                user_id=user_id,
-                dom_data=dom_dict,  # Upload current page DOM
-                api_key=api_key,
-                progress_callback=script_progress_callback
-            )
-
-            if not result.get('success'):
-                error_msg = result.get('error', 'Unknown error')
-                raise RuntimeError(f"Cloud script generation failed: {error_msg}")
-
-            script_content = result.get('script_content', '')
-            script_path = result.get('script_path', '')
-            turns = result.get('turns', 0)
-
-            logger.info(f"✅ Cloud script generation completed in {turns} turns")
-            logger.info(f"   Script path: {script_path}")
-            logger.info(f"   Script size: {len(script_content)} chars")
-
-            # 5. Save script to local cache (use the same path as the cache check)
-            # self._current_script_key contains path: users/{user_id}/workflows/{workflow_id}/{step_id}
-            if self.config_service and hasattr(self, '_current_script_key') and self._current_script_key:
-                scripts_root = self.config_service.get_path("data.scripts")
-                local_script_dir = scripts_root / self._current_script_key
-                local_script_dir.mkdir(parents=True, exist_ok=True)
-
-                local_script_file = local_script_dir / "extraction_script.py"
-                local_script_file.write_text(script_content, encoding='utf-8')
-                logger.info(f"   Saved to local cache: {local_script_file}")
-
-                # Also save requirement.json for reference
-                requirement_file = local_script_dir / "requirement.json"
-                requirement_file.write_text(
-                    json.dumps(data_requirements, indent=2, ensure_ascii=False),
-                    encoding='utf-8'
-                )
-
-                # Download dom_tools.py from cloud (required for script execution)
-                # Cloud stores files directly in step directory (no hash subdirectory)
-                try:
-                    dom_tools_content = await cloud_client.download_workflow_file(
-                        workflow_id=workflow_id,
-                        file_path=f"{step_id}/dom_tools.py",
-                        user_id=user_id
-                    )
-                    dom_tools_file = local_script_dir / "dom_tools.py"
-                    dom_tools_file.write_bytes(dom_tools_content)
-                    logger.info(f"   Downloaded dom_tools.py to: {dom_tools_file}")
-                except Exception as e:
-                    logger.warning(f"   Failed to download dom_tools.py: {e}")
-
-            # Send completion update to frontend
-            if context and context.log_callback:
-                try:
-                    await context.log_callback(
-                        "success",
-                        f"✅ Script generated by cloud in {turns} turns",
-                        {"script_path": script_path, "turns": turns}
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to send log callback: {e}")
-
-            # 6. Wrap script with execution wrapper
-            return self._extract_and_wrap_code(script_content)
-
-        except Exception as e:
-            logger.error(f"Cloud script generation failed: {e}")
-            import traceback
-            traceback.print_exc()
-            raise RuntimeError(f"Cloud script generation failed: {e}")
-    
-    def _extract_and_wrap_code(self, response: str) -> str:
-        """提取并包装数据提取代码"""
-        # 提取代码块
-        if "```python" in response:
-            start = response.find("```python") + 9
-            end = response.find("```", start)
-            code = response[start:end].strip()
-        elif "```" in response:
-            start = response.find("```") + 3
-            end = response.find("```", start)
-            code = response[start:end].strip()
-        else:
-            code = response.strip()
-        
-        # 包装执行结构 - 支持 extract_data_from_page 或 main 函数
-        return f'''
-import json
-import logging
-from typing import List, Dict, Any
-
-{code}
-
-def execute_extraction(dom_dict, max_items: int = 100, page_url: str = ""):
-    """Execute data extraction wrapper function
-
-    Supports scripts with either:
-    - extract_data_from_page(dom_dict, page_url) function
-    - main() function that returns extracted data
-
-    Args:
-        dom_dict: DOM dictionary
-        max_items: Maximum items to extract
-        page_url: Current page URL for absolute URL conversion
-    """
-    import logging
-    logger = logging.getLogger(__name__)
-
-    try:
-        # Try extract_data_from_page first, then fall back to main
-        # Use globals() to check function existence in exec() environment
-        _globals = globals()
-        if 'extract_data_from_page' in _globals:
-            all_data = extract_data_from_page(dom_dict, page_url)
-        elif 'main' in _globals:
-            # For scripts with main(), we need to provide dom_dict via a different mechanism
-            # Check if main accepts arguments
-            import inspect
-            main_sig = inspect.signature(main)
-            if len(main_sig.parameters) > 0:
-                all_data = main(dom_dict)
-            else:
-                # main() with no args - script likely loads dom_data.json itself
-                # We need to save dom_dict to dom_data.json temporarily in wrapped format
-                import tempfile
-                import os
-                original_cwd = os.getcwd()
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    os.chdir(tmpdir)
-                    # Save in wrapped format with url and dom keys
-                    wrapped_dom = {{"url": page_url, "dom": dom_dict}}
-                    with open('dom_data.json', 'w', encoding='utf-8') as f:
-                        json.dump(wrapped_dom, f, ensure_ascii=False)
-                    all_data = main()
-                    os.chdir(original_cwd)
-        else:
-            raise NameError("Script must define either 'extract_data_from_page(dom_dict, page_url)' or 'main()' function")
-
-        # Normalize to list - scraper_agent always returns List[Dict]
-        if isinstance(all_data, dict):
-            all_data = [all_data]
-        elif not isinstance(all_data, list):
-            all_data = [all_data] if all_data else []
-
-        # Apply quantity limit
-        limited_data = all_data[:max_items] if max_items > 0 else all_data
-        return {{
-            "success": True,
-            "data": limited_data,
-            "total_count": len(limited_data),
-            "error": None
-        }}
-    except Exception as e:
-        logger.error("Data extraction failed: " + str(e))
-        return {{
-            "success": False,
-            "data": [],
-            "total_count": 0,
-            "error": str(e)
-        }}
-'''
-
-    def _generate_script_key(self, data_requirements: Dict) -> str:
-        """Generate script storage path relative to data.root
-
-        Path structure: users/{user_id}/workflows/{workflow_id}/{step_id}
-        Scripts are stored directly in the step directory.
-
-        Args:
-            data_requirements: Dict containing user_description and output_format (unused)
-
-        Returns:
-            Relative path like: users/default_user/workflows/producthunt-daily-top10/extract-daily-link
-        """
-        # Get context information
-        user_id = "default_user"
-        workflow_id = "default_workflow"
-        step_id = "default_step"
-
-        if hasattr(self, '_context') and self._context:
-            user_id = getattr(self._context, 'user_id', user_id)
-            workflow_id = getattr(self._context, 'workflow_id', workflow_id)
-            step_id = getattr(self._context, 'step_id', step_id)
-            logger.info(f"ScraperAgent context info - user_id: {user_id}, workflow_id: {workflow_id}, step_id: {step_id}")
-        else:
-            logger.warning("ScraperAgent: No context available, using default values for script path")
-
-        # Build relative path directly to step directory (no hash subdirectory)
-        script_path = f"users/{user_id}/workflows/{workflow_id}/{step_id}"
-        logger.info(f"Generated script path: {script_path}")
-        return script_path
-    
-    def _create_error_result(self, error_msg: str) -> Dict[str, Any]:
-        return {
-            "success": False,
-            "data": [],
-            "total_count": 0,
-            "error": error_msg
-        }
-    
-    def _create_response(self, success: bool, message: str = "", **kwargs) -> Dict[str, Any]:
-        response = {
-            'success': success,
-            'message': message
-        }
-        response.update(kwargs)
-        return response
-    
-    async def _save_dom_to_file(self, dom_content: str, script_key: str) -> None:
-        """保存DOM内容到文件用于调试"""
-        if not self.config_service:
-            logger.warning("无法保存DOM文件: 缺少配置服务")
-            return
-
-        debug_dir = self.config_service.get_path("data.debug")
-        
-        dom_file = debug_dir / f"{script_key}_dom.txt"
-        try:
-            with open(dom_file, 'w', encoding='utf-8') as f:
-                f.write(f"=== DOM 结构 ({script_key}) ===\n")
-                f.write(f"生成时间: {datetime.now().isoformat()}\n")
-                f.write("=" * 50 + "\n\n")
-                f.write(dom_content)
-            logger.info(f"DOM结构已保存到: {dom_file}")
-        except Exception as e:
-            logger.warning(f"保存DOM文件失败: {e}")
-    
-    async def _save_script_to_file(self, script_content: str, script_key: str) -> None:
-        """保存生成的脚本到文件用于调试"""
-        if not self.config_service:
-            logger.warning("无法保存脚本文件: 缺少配置服务")
-            return
-
-        debug_dir = self.config_service.get_path("data.debug")
-        
-        script_file = debug_dir / f"{script_key}_script.py"
-        try:
-            with open(script_file, 'w', encoding='utf-8') as f:
-                f.write(f"# 生成的脚本 ({script_key})\n")
-                f.write(f"# 生成时间: {datetime.now().isoformat()}\n")
-                f.write("#" + "=" * 50 + "\n\n")
-                f.write(script_content)
-            logger.info(f"生成的脚本已保存到: {script_file}")
-        except Exception as e:
-            logger.warning(f"保存脚本文件失败: {e}")
-
-    # cleanup 方法不再需要，由context统一管理浏览器会话生命周期
-
+        # Note: Default behavior avoids closing shared sessions (workflow steps).
+        # Use close_browser=True when it's safe to fully close the browser.
+        self._browser_session = None

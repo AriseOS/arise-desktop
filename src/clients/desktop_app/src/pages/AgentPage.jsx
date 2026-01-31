@@ -70,6 +70,9 @@ function AgentPage({ session, onNavigate, showStatus, version }) {
   const toolkitEvents = activeTask?.toolkitEvents || [];
   const terminalOutput = activeTask?.terminalOutput || [];
   const memoryPaths = activeTask?.memoryPaths || [];
+  const memoryLevel = activeTask?.memoryLevel || null;
+  const memoryLevelReason = activeTask?.memoryLevelReason || '';
+  const memoryStatesCount = activeTask?.memoryStatesCount || 0;
   const thinkingLogs = activeTask?.thinkingLogs || [];
   const browserScreenshot = activeTask?.browserScreenshot || null;
   const browserUrl = activeTask?.browserUrl || '';
@@ -254,12 +257,26 @@ function AgentPage({ session, onNavigate, showStatus, version }) {
       case 'querying_reasoner': return '🧠 Querying Reasoner...';
       case 'reasoner_executing': return '🧠 Executing Reasoner workflow...';
       case 'reasoner_completed': return '🧠 Reasoner workflow completed';
+      case 'memory_guided': return `🧠 Memory L1: Path-guided execution`;
       case 'executing': return `🤖 Agent Loop ${loopIteration}`;
       case 'completed': return 'Completed';
       case 'failed': return 'Failed';
       case 'cancelled': return 'Cancelled';
       default: return executionPhase;
     }
+  };
+
+  // Get Memory Level badge info
+  const getMemoryLevelBadge = () => {
+    if (!memoryLevel) return null;
+
+    const config = {
+      'L1': { label: 'L1', color: 'green', title: `Complete path (${memoryStatesCount} states)` },
+      'L2': { label: 'L2', color: 'yellow', title: `Partial match (${memoryStatesCount} states)` },
+      'L3': { label: 'L3', color: 'gray', title: 'Real-time queries' },
+    };
+
+    return config[memoryLevel] || config['L3'];
   };
 
   // Example tasks
@@ -527,6 +544,15 @@ function AgentPage({ session, onNavigate, showStatus, version }) {
                     <span>Failed</span>
                   </div>
                 )}
+                {/* Memory Level Indicator */}
+                {memoryLevel && (
+                  <div
+                    className={`memory-level-badge memory-${memoryLevel.toLowerCase()}`}
+                    title={getMemoryLevelBadge()?.title || ''}
+                  >
+                    <span className="memory-level">{memoryLevel}</span>
+                  </div>
+                )}
                 <span className="task-description-brief" title={taskDescription}>
                   {taskDescription.length > 60 ? taskDescription.slice(0, 60) + '...' : taskDescription}
                 </span>
@@ -591,19 +617,21 @@ function AgentPage({ session, onNavigate, showStatus, version }) {
         maxVisible={3}
       />
 
-      {/* Task Decomposition Modal - Only show when editing (Eigent pattern: inline TaskCard in ChatBox for normal view) */}
-      {isTaskEdit && subtasks.length > 0 && (
+      {/* Task Decomposition Panel - Show when decomposition is ready for confirmation or editing */}
+      {(showDecomposition || isTaskEdit) && subtasks.length > 0 && (
         <div className="task-decomposition-overlay">
           <TaskDecomposition
             subtasks={subtasks}
             onConfirm={(editedSubtasks) => {
               handleDecompositionConfirm(editedSubtasks);
-              handleCloseEditTask();
+              if (isTaskEdit) {
+                handleCloseEditTask();
+              }
             }}
-            onCancel={handleCloseEditTask}
-            autoConfirmDelay={0}
-            isVisible={isTaskEdit}
-            title="Edit Task Plan"
+            onCancel={isTaskEdit ? handleCloseEditTask : handleDecompositionCancel}
+            autoConfirmDelay={isTaskEdit ? 0 : 30}
+            isVisible={true}
+            title={isTaskEdit ? "Edit Task Plan" : "Task Plan"}
           />
         </div>
       )}

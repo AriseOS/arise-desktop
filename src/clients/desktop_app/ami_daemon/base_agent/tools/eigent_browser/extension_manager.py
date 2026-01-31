@@ -34,7 +34,11 @@ DEFAULT_EXTENSIONS = [
         'id': 'lckanjgmijmafbedllaakclkaicjfmnk',
         'url': 'https://clients2.google.com/service/update2/crx?response=redirect&prodversion=133&acceptformat=crx3&x=id%3Dlckanjgmijmafbedllaakclkaicjfmnk%26uc',
     },
-    # Note: Force Background Tab not included - not needed for our use case
+    {
+        'name': 'Force Background Tab',
+        'id': 'gidlfommnbibbmegmgajdbikelkdcmcl',
+        'url': 'https://clients2.google.com/service/update2/crx?response=redirect&prodversion=133&acceptformat=crx3&x=id%3Dgidlfommnbibbmegmgajdbikelkdcmcl%26uc',
+    },
 ]
 
 

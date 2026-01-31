@@ -6,6 +6,7 @@ This tool implements the retrieval functionality:
 3. Explore neighbor states up to max_depth
 """
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from src.cloud_backend.memgraph.memory.memory import Memory
@@ -15,6 +16,8 @@ from src.cloud_backend.memgraph.reasoner.prompts.state_satisfaction_prompt impor
     StateSatisfactionPrompt,
 )
 from src.cloud_backend.memgraph.reasoner.tools.task_tool import TaskTool, ToolResult
+
+logger = logging.getLogger(__name__)
 
 
 class RetrievalTool(TaskTool):
@@ -97,11 +100,13 @@ class RetrievalTool(TaskTool):
         if self.embedding_service:
             try:
                 query_embedding = self.embedding_service.encode(target)
-                return self.memory.state_manager.search_states_by_embedding(
+                results = self.memory.state_manager.search_states_by_embedding(
                     query_embedding, top_k=top_k
                 )
+                # search_states_by_embedding returns List[tuple[State, float]]
+                return [state for state, _score in results] if results else []
             except Exception as exc:  # pylint: disable=broad-exception-caught
-                print(f"Embedding search failed: {exc}")
+                logger.error(f"Embedding search failed: {exc}")
 
         # Fallback to listing states
         return self.memory.state_manager.list_states(limit=top_k)
@@ -134,7 +139,7 @@ class RetrievalTool(TaskTool):
             return output.satisfies
 
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            print(f"LLM satisfaction check failed: {exc}")
+            logger.error(f"LLM satisfaction check failed: {exc}")
             return False
 
     async def _explore_neighbors(

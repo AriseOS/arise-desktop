@@ -4,11 +4,13 @@
     // Ported from CAMEL-AI/Eigent project
 
     // Memory management constants and configuration
-    const MAX_REFS = 2000; // Maximum number of refs to keep in memory
+    const MAX_REFS = 20000; // Maximum number of refs to keep in memory
     const MAX_UNUSED_AGE_MS = 90000; // Remove refs unused for more than xx seconds
     const CLEANUP_THRESHOLD = 0.8; // Start aggressive cleanup when 80% of max refs reached
 
     // Persistent ref management across page analysis calls with memory leak prevention
+    const _hadExistingState = !!window.__camelRefElementMap;
+    const _existingMapSize = window.__camelRefElementMap ? window.__camelRefElementMap.size : 0;
     let refCounter = window.__camelRefCounter || 1;
     let elementRefMap = window.__camelElementRefMap || new WeakMap();
     let refElementMap = window.__camelRefElementMap || new Map();
@@ -17,6 +19,8 @@
     // LRU tracking for ref access times
     let refAccessTimes = window.__camelRefAccessTimes || new Map();
     let lastNavigationUrl = window.__camelLastNavigationUrl || window.location.href;
+
+    console.log(`[CAMEL-REF-DEBUG] Init: hadExistingState=${_hadExistingState}, existingMapSize=${_existingMapSize}, refCounter=${refCounter}, ariaRefsInDOM=${document.querySelectorAll('[aria-ref]').length}`);
 
     // Initialize navigation event listeners for automatic cleanup
     if (!window.__camelNavigationListenersInitialized) {
@@ -69,10 +73,14 @@
             });
 
             // Clear all maps and reset counters
-            elementRefMap.clear();
+            // Note: WeakMap doesn't have .clear(), so we create a new one
+            elementRefMap = new WeakMap();
             refElementMap.clear();
             elementSignatureMap.clear();
             refAccessTimes.clear();
+
+            // Reset refCounter to 1 for fresh start
+            refCounter = 1;
 
             // Reset global state
             window.__camelElementRefMap = elementRefMap;
@@ -83,8 +91,6 @@
             // Clear cached analysis results
             delete window.__camelLastAnalysisResult;
             delete window.__camelLastAnalysisTime;
-
-            console.log('CAMEL: Cleared all refs due to navigation');
         } catch (error) {
             console.warn('CAMEL: Error clearing refs:', error);
         }
@@ -170,6 +176,9 @@
     }
 
     // Get or assign a persistent ref for an element
+    // Debug counters for ref assignment analysis
+    let _refDebug = { weakmapHit: 0, ariaRefHit: 0, signatureHit: 0, newRef: 0, evicted: 0 };
+
     function getOrAssignRef(element) {
         // Check if element already has a ref assigned
         if (elementRefMap.has(element)) {
@@ -177,6 +186,7 @@
             // Verify the ref is still valid
             if (refElementMap.get(existingRef) === element) {
                 updateRefAccessTime(existingRef);
+                _refDebug.weakmapHit++;
                 return existingRef;
             }
         }
@@ -187,6 +197,7 @@
             // Re-establish mappings
             elementRefMap.set(element, existingAriaRef);
             updateRefAccessTime(existingAriaRef);
+            _refDebug.ariaRefHit++;
             return existingAriaRef;
         }
 
@@ -203,13 +214,15 @@
                 elementSignatureMap.set(signature, existingRef);
                 element.setAttribute('aria-ref', existingRef);
                 updateRefAccessTime(existingRef);
+                _refDebug.signatureHit++;
                 return existingRef;
             }
         }
 
         // Check if we need to evict refs before creating new ones
         if (refElementMap.size >= MAX_REFS) {
-            evictLRURefs();
+            const evictedCount = evictLRURefs();
+            _refDebug.evicted += evictedCount;
         }
 
         // Generate new ref for new element
@@ -221,6 +234,7 @@
         }
         element.setAttribute('aria-ref', newRef);
         updateRefAccessTime(newRef);
+        _refDebug.newRef++;
         return newRef;
     }
 
@@ -962,16 +976,29 @@
             return cachedResult;
         }
 
-        // Generate the complete structured snapshot using original snapshot.js logic
-        const outputLines = processDocument(document);
-        const snapshotText = outputLines.join('\n');
-
-        // Build the tree again to collect element information with visual data
+        // Build tree once and reuse for both snapshot text and element collection
         textCache.clear();
-        // Note: Don't reset refCounter anymore - use persistent counters
         let tree = buildAriaTree(document.body);
         [tree] = normalizeTree(tree);
 
+        // Generate snapshot text from the tree
+        const lines = renderTree(tree).slice(1); // Skip the root node line
+
+        // Handle iframes
+        const frames = document.querySelectorAll('iframe');
+        for (const frame of frames) {
+            try {
+                if (frame.contentDocument) {
+                    const frameLines = processDocument(frame.contentDocument);
+                    lines.push(...frameLines);
+                }
+            } catch (e) {
+                // Skip cross-origin iframes
+            }
+        }
+        const snapshotText = lines.join('\n');
+
+        // Collect element information from the same tree (no second buildAriaTree call)
         const elementsMap = {};
         collectElementsFromTree(tree, elementsMap, viewport_limit);
 
@@ -1028,9 +1055,16 @@
                 },
                 // Performance information
                 cacheHit: false,
-                analysisTime: Date.now() - currentTime
+                analysisTime: Date.now() - currentTime,
+                refDebug: _refDebug
             }
         };
+
+        // Log final ref state after analysis
+        const _allRefs = document.querySelectorAll('[aria-ref]');
+        const _sampleRefs = [];
+        _allRefs.forEach((e, i) => { if (i < 3 || i === _allRefs.length - 1) _sampleRefs.push(e.getAttribute('aria-ref')); });
+        console.log(`[CAMEL-REF-DEBUG] Done: refCounter=${refCounter}, refsInDOM=${_allRefs.length}, mapSize=${refElementMap.size}, samples=[${_sampleRefs.join(',')}], debug=${JSON.stringify(_refDebug)}`);
 
         // Cache the result for potential reuse
         window.__camelLastAnalysisResult = result;

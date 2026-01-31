@@ -56,13 +56,14 @@ dependencies = [
     # Graph and data processing
     "networkx>=3.0",
     "numpy>=1.24.0",
+    "neo4j>=5.0.0",
+    "graphdatascience>=1.6",
 
     # LLM providers
     "anthropic>=0.25.0",
     "openai>=1.3.0",
 
-    # Browser automation
-    "browser-use>=0.1.0",
+    # Browser automation (using eigent_browser)
     "playwright>=1.40.0",
 
     # Multi-agent framework

@@ -87,11 +87,19 @@ class BrowserLauncher:
         logger.info(f"Chrome path: {chrome_path}")
         logger.info(f"Args ({len(args)}): {args[:5]}... (showing first 5)")
 
+        # Prepare environment - on macOS, set LSBackgroundOnly to prevent stealing focus
+        env = os.environ.copy()
+        if platform.system() == "Darwin":
+            # LSBackgroundOnly=1 tells macOS to treat this as a background app
+            # that should not steal focus when launched
+            env["LSBackgroundOnly"] = "1"
+
         self._process = await asyncio.create_subprocess_exec(
             chrome_path,
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=env,
         )
         logger.info(f"Browser launched with PID: {self._process.pid}")
 

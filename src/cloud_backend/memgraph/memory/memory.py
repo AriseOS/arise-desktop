@@ -5,12 +5,12 @@ States, Actions, and CognitivePhrase units.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from src.cloud_backend.memgraph.ontology.action import Action
 from src.cloud_backend.memgraph.ontology.cognitive_phrase import CognitivePhrase
 from src.cloud_backend.memgraph.ontology.domain import Domain, Manage
-from src.cloud_backend.memgraph.ontology.intent import Intent
+from src.cloud_backend.memgraph.ontology.intent_sequence import IntentSequence
 from src.cloud_backend.memgraph.ontology.state import State
 
 
@@ -262,7 +262,7 @@ class StateManager(ABC):
     @abstractmethod
     def search_states_by_embedding(
         self, query_vector: List[float], top_k: int = 10
-    ) -> List[State]:
+    ) -> List[tuple[State, float]]:
         """Search states by embedding vector similarity.
 
         Args:
@@ -270,7 +270,7 @@ class StateManager(ABC):
             top_k: Number of top results to return.
 
         Returns:
-            List of top-k similar State objects.
+            List of (State, similarity_score) tuples for top-k similar states.
         """
 
     @abstractmethod
@@ -312,23 +312,6 @@ class StateManager(ABC):
             List of State objects that are exactly k hops away.
         """
 
-    @abstractmethod
-    def search_intents_by_embedding(
-        self, query_vector: List[float], top_k: int = 10
-    ) -> List[tuple[Intent, State, float]]:
-        """Search intents by embedding vector similarity.
-
-        Since intents are embedded within states, this method searches through
-        all states and their contained intents to find the most similar ones.
-
-        Args:
-            query_vector: Query embedding vector.
-            top_k: Number of top results to return.
-
-        Returns:
-            List of tuples (Intent, State, similarity_score) for top-k similar intents,
-            where State is the parent state containing the intent.
-        """
 
 
 class ActionManager(ABC):
@@ -389,6 +372,7 @@ class ActionManager(ABC):
         source_id: Optional[str] = None,
         target_id: Optional[str] = None,
         action_type: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> List[Action]:
         """List actions with optional filters.
 
@@ -396,6 +380,7 @@ class ActionManager(ABC):
             source_id: Filter by source state ID.
             target_id: Filter by target state ID.
             action_type: Filter by action type.
+            user_id: Filter by user ID.
 
         Returns:
             List of Action objects matching the filters.
@@ -407,6 +392,158 @@ class ActionManager(ABC):
 
         Args:
             actions: List of Action objects to create.
+
+        Returns:
+            True if all created successfully, False otherwise.
+        """
+
+    @abstractmethod
+    def find_shortest_path(
+        self,
+        source_id: str,
+        target_id: str,
+    ) -> Optional[Tuple[List["State"], List[Action]]]:
+        """Find shortest path between two states (v2).
+
+        Uses BFS or graph-native shortest path algorithm to find
+        the path with minimum number of actions between two states.
+
+        Args:
+            source_id: Source state ID.
+            target_id: Target state ID.
+
+        Returns:
+            Tuple of (states, actions) representing the path if found,
+            None if no path exists.
+        """
+
+    @abstractmethod
+    def list_outgoing_actions(
+        self,
+        state_id: str,
+    ) -> List[Action]:
+        """List all outgoing actions from a state (v2).
+
+        Returns all actions where the given state is the source.
+
+        Args:
+            state_id: State ID to get outgoing actions for.
+
+        Returns:
+            List of Action objects originating from the state.
+        """
+
+
+class IntentSequenceManager(ABC):
+    """Abstract IntentSequence Manager for IntentSequence CRUD operations (v2).
+
+    Manages IntentSequence as independent graph nodes with HAS_SEQUENCE
+    relationships to States.
+    """
+
+    @abstractmethod
+    def create_sequence(self, sequence: IntentSequence) -> bool:
+        """Create a new IntentSequence node.
+
+        Args:
+            sequence: IntentSequence object to create.
+
+        Returns:
+            True if created successfully, False otherwise.
+        """
+
+    @abstractmethod
+    def get_sequence(self, sequence_id: str) -> Optional[IntentSequence]:
+        """Get an IntentSequence by ID.
+
+        Args:
+            sequence_id: Unique sequence identifier.
+
+        Returns:
+            IntentSequence object if found, None otherwise.
+        """
+
+    @abstractmethod
+    def update_sequence(self, sequence: IntentSequence) -> bool:
+        """Update an existing IntentSequence.
+
+        Args:
+            sequence: IntentSequence object with updated information.
+
+        Returns:
+            True if updated successfully, False otherwise.
+        """
+
+    @abstractmethod
+    def delete_sequence(self, sequence_id: str) -> bool:
+        """Delete an IntentSequence.
+
+        Args:
+            sequence_id: Unique sequence identifier.
+
+        Returns:
+            True if deleted successfully, False otherwise.
+        """
+
+    @abstractmethod
+    def link_to_state(self, state_id: str, sequence_id: str) -> bool:
+        """Create HAS_SEQUENCE relationship from State to IntentSequence.
+
+        Args:
+            state_id: State ID (source).
+            sequence_id: IntentSequence ID (target).
+
+        Returns:
+            True if created successfully, False otherwise.
+        """
+
+    @abstractmethod
+    def unlink_from_state(self, state_id: str, sequence_id: str) -> bool:
+        """Remove HAS_SEQUENCE relationship.
+
+        Args:
+            state_id: State ID (source).
+            sequence_id: IntentSequence ID (target).
+
+        Returns:
+            True if removed successfully, False otherwise.
+        """
+
+    @abstractmethod
+    def list_by_state(self, state_id: str) -> List[IntentSequence]:
+        """List all IntentSequences belonging to a State.
+
+        Args:
+            state_id: State ID to query.
+
+        Returns:
+            List of IntentSequence objects linked to this State.
+        """
+
+    @abstractmethod
+    def search_by_embedding(
+        self,
+        query_vector: List[float],
+        state_id: Optional[str] = None,
+        top_k: int = 10
+    ) -> List[Tuple[IntentSequence, float]]:
+        """Search IntentSequences by embedding vector similarity.
+
+        Args:
+            query_vector: Query embedding vector.
+            state_id: Optional filter to specific State.
+            top_k: Number of top results to return.
+
+        Returns:
+            List of (IntentSequence, similarity_score) tuples.
+        """
+
+    @abstractmethod
+    def batch_create_sequences(self, sequences: List[IntentSequence]) -> bool:
+        """Batch create multiple IntentSequences.
+
+        Args:
+            sequences: List of IntentSequence objects to create.
 
         Returns:
             True if all created successfully, False otherwise.
@@ -506,7 +643,7 @@ class Memory(ABC):
     """Abstract Memory interface integrating all memory components.
 
     This is the main interface for memory operations, providing unified
-    access to Domains, States, Actions, Manages, and CognitivePhrases.
+    access to Domains, States, Actions, Manages, CognitivePhrases and IntentSequences.
 
     Attributes:
         domain_manager: DomainManager instance for Domain operations.
@@ -514,6 +651,7 @@ class Memory(ABC):
         action_manager: ActionManager instance for Action operations.
         manage_manager: ManageManager instance for Manage operations.
         phrase_manager: CognitivePhraseManager instance for CognitivePhrase operations.
+        intent_sequence_manager: IntentSequenceManager instance for IntentSequence operations (v2).
     """
 
     def __init__(
@@ -523,6 +661,7 @@ class Memory(ABC):
         action_manager: ActionManager,
         manage_manager: ManageManager,
         phrase_manager: CognitivePhraseManager,
+        intent_sequence_manager: Optional[IntentSequenceManager] = None,
     ):
         """Initialize Memory with component managers.
 
@@ -532,12 +671,14 @@ class Memory(ABC):
             action_manager: ActionManager instance.
             manage_manager: ManageManager instance.
             phrase_manager: CognitivePhraseManager instance.
+            intent_sequence_manager: IntentSequenceManager instance (optional, v2).
         """
         self.domain_manager = domain_manager
         self.state_manager = state_manager
         self.action_manager = action_manager
         self.manage_manager = manage_manager
         self.phrase_manager = phrase_manager
+        self.intent_sequence_manager = intent_sequence_manager
 
     # Domain operations
     def create_domain(self, domain: Domain) -> bool:
@@ -716,12 +857,77 @@ class Memory(ABC):
             True if imported successfully, False otherwise.
         """
 
+    # ============ V2 Query Methods (Lightweight, no LLM) ============
+
+    def query_navigation_path(
+        self,
+        start_state_id: str,
+        end_state_id: str,
+    ) -> Optional[Tuple[List["State"], List[Action]]]:
+        """Find navigation path between two states (v2 lightweight method).
+
+        Uses BFS to find shortest path. Does not use LLM for semantic matching.
+        For semantic state resolution, use Reasoner.query() instead.
+
+        Args:
+            start_state_id: Source state ID (must be exact ID).
+            end_state_id: Target state ID (must be exact ID).
+
+        Returns:
+            Tuple of (states, actions) if path found, None otherwise.
+        """
+        return self.action_manager.find_shortest_path(
+            source_id=start_state_id,
+            target_id=end_state_id,
+            state_manager=self.state_manager,
+        )
+
+    def get_page_capabilities(self, state_id: str) -> Dict[str, Any]:
+        """Get all available actions and navigations for a state (v2 exploration).
+
+        Lists all IntentSequences and outgoing Actions for a given state.
+
+        Args:
+            state_id: State ID to explore.
+
+        Returns:
+            Dictionary with 'sequences' and 'navigations' lists.
+        """
+        sequences = []
+        if self.intent_sequence_manager:
+            sequences = self.intent_sequence_manager.list_by_state(state_id)
+
+        navigations = self.action_manager.list_outgoing_actions(state_id)
+
+        return {
+            "sequences": sequences,
+            "navigations": navigations,
+            "state_id": state_id,
+        }
+
+    def list_page_actions(
+        self,
+        state_id: str,
+    ) -> List["IntentSequence"]:
+        """List all IntentSequences for a state (v2 convenience method).
+
+        Args:
+            state_id: State ID.
+
+        Returns:
+            List of IntentSequence objects for the state.
+        """
+        if not self.intent_sequence_manager:
+            return []
+        return self.intent_sequence_manager.list_by_state(state_id)
+
 
 __all__ = [
     "DomainManager",
     "ManageManager",
     "StateManager",
     "ActionManager",
+    "IntentSequenceManager",
     "CognitivePhraseManager",
     "Memory",
 ]

@@ -241,7 +241,40 @@ export const Icon = ({ name, size = 24, className = "", ...props }) => {
             <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
         ),
         send: (
-            <line x1="22" y1="2" x2="11" y2="13" />
+            <>
+                <line x1="22" y1="2" x2="11" y2="13" />
+                <polygon points="22 2 15 22 11 13 2 9 22 2" />
+            </>
+        ),
+        // Microphone
+        mic: (
+            <>
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                <line x1="12" y1="19" x2="12" y2="23" />
+                <line x1="8" y1="23" x2="16" y2="23" />
+            </>
+        ),
+        // Compass for Explore
+        compass: (
+            <>
+                <circle cx="12" cy="12" r="10" />
+                <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
+            </>
+        ),
+        // Robot / AI Assistant
+        robot: (
+            <>
+                <rect x="3" y="11" width="18" height="10" rx="2" />
+                <circle cx="12" cy="5" r="2" />
+                <path d="M12 7v4" />
+                <line x1="8" y1="16" x2="8" y2="16" strokeWidth="2" strokeLinecap="round" />
+                <line x1="16" y1="16" x2="16" y2="16" strokeWidth="2" strokeLinecap="round" />
+            </>
+        ),
+        // Stop
+        stop: (
+            <rect x="6" y="6" width="12" height="12" rx="2" />
         ),
         inbox: (
             <>

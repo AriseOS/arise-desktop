@@ -57,10 +57,20 @@ Ami/
 - LLM Providers: `src/common/llm/`
 - Desktop App: `src/clients/desktop_app/`
 
+## Environment
+
+- Python dependencies use **venv**: activate with `source .venv/bin/activate` before running any Python commands
+- Client logs: `~/.ami/logs/app.log`
+- Server logs: `~/ami-server/logs/`
+
+## Debugging Tools
+
+- **`scripts/parse_task_log.py`** — Parses agent task execution logs (`~/.ami/logs/app.log`) to extract key events, useful for analyzing how an agent completed a task. Run `python scripts/parse_task_log.py` (auto-detects latest task) or `--task-id <id>` for a specific task.
+
 ## Development Commands
 
 ```bash
-# Python backend
+# Python backend (ensure venv is activated)
 pip install -r requirements.txt
 uvicorn src.cloud_backend.main:app --reload
 

@@ -90,6 +90,10 @@ const createInitialTaskState = (taskDescription = '', type = 'normal') => ({
 
   // Memory
   memoryPaths: [],
+  memoryLevel: null,        // "L1" | "L2" | "L3" | null
+  memoryLevelReason: '',    // Why this level was determined
+  memoryMethod: '',         // "cognitive_phrase_match" | "task_dag" | "none"
+  memoryStatesCount: 0,     // Number of states found
 
   // Thinking/Reasoning (for AgentTab display)
   thinkingLogs: [],  // Agent reasoning history
@@ -628,12 +632,44 @@ export const useAgentStore = create((set, get) => ({
 
       case 'memory_loaded':
       case 'memory_result':
-        updateTask({
-          memoryPaths: event.paths || [],
-          executionPhase: 'memory_loaded',
-        });
-        if (event.paths?.length > 0) {
-          addNotice('memory', 'Memory Loaded', `Found ${event.paths.length} relevant paths`);
+        {
+          const paths = event.paths || [];
+          const level = event.level || (paths.length > 0 ? 'L2' : 'L3');
+
+          updateTask({
+            memoryPaths: paths,
+            memoryLevel: level,
+            executionPhase: 'memory_loaded',
+          });
+
+          if (paths.length > 0) {
+            addNotice('memory', 'Memory Loaded', `Found ${paths.length} relevant paths [${level}]`);
+          }
+        }
+        break;
+
+      // Memory Level Determination Event (from P0-1)
+      case 'memory_level':
+        {
+          const { level, reason, states_count, method, paths } = event;
+
+          updateTask({
+            memoryLevel: level,
+            memoryLevelReason: reason || '',
+            memoryMethod: method || '',
+            memoryStatesCount: states_count || 0,
+            memoryPaths: paths || [],
+            executionPhase: level === 'L1' ? 'memory_guided' : 'executing',
+          });
+
+          // Show level-specific notice
+          const levelMessages = {
+            'L1': `Memory L1: Complete path found (${states_count || 0} states)`,
+            'L2': `Memory L2: Partial match (${states_count || 0} states)`,
+            'L3': 'Memory L3: Using real-time queries',
+          };
+
+          addNotice('memory', 'Memory Level', levelMessages[level] || `Memory: ${level}`);
         }
         break;
 
@@ -803,12 +839,29 @@ export const useAgentStore = create((set, get) => ({
             setStatus('pending');  // Reset status for new round
           }
 
+          // Map TaskPlanningToolkit states to UI states
+          const mapState = (s) => {
+            if (!s) return 'pending';
+            const stateUpper = s.toUpperCase();
+            if (stateUpper === 'DONE') return 'completed';
+            if (stateUpper === 'FAILED') return 'failed';
+            if (stateUpper === 'RUNNING') return 'running';
+            if (stateUpper === 'DELETED') return 'deleted';
+            return 'pending'; // OPEN -> pending
+          };
+
+          // Normalize subtasks with mapped status
+          const normalizedSubtasks = newSubtasks.map(t => ({
+            ...t,
+            status: mapState(t.state || t.status),
+          }));
+
           // Update task with decomposition data (Eigent pattern)
           // Clear streamingDecomposeText when decomposition is complete
           updateTask({
-            subtasks: newSubtasks,
-            taskInfo: newSubtasks,
-            taskRunning: newSubtasks.map(t => ({ ...t, status: 'pending' })),
+            subtasks: normalizedSubtasks,
+            taskInfo: normalizedSubtasks,
+            taskRunning: normalizedSubtasks.map(t => ({ ...t })),
             summaryTask: summaryTask,
             showDecomposition: true,
             isTaskEdit: false,
@@ -979,6 +1032,10 @@ export const useAgentStore = create((set, get) => ({
           notesContent: event.notes,
           executionPhase: 'completed',
           progressValue: 100,
+          // Clear decomposition state to avoid showing confirm button after completion
+          showDecomposition: false,
+          taskInfo: [],
+          streamingDecomposeText: '',
         });
         if (event.output) {
           addMessage('assistant', typeof event.output === 'string' ? event.output : JSON.stringify(event.output, null, 2));
@@ -996,6 +1053,10 @@ export const useAgentStore = create((set, get) => ({
           error: event.error,
           notesContent: event.notes,
           executionPhase: 'failed',
+          // Clear decomposition state
+          showDecomposition: false,
+          taskInfo: [],
+          streamingDecomposeText: '',
         });
         addNotice('error', 'Task Failed', event.error);
         if (sseClients[taskId]) {
@@ -1009,6 +1070,10 @@ export const useAgentStore = create((set, get) => ({
         updateTask({
           error: 'Task was cancelled',
           executionPhase: 'cancelled',
+          // Clear decomposition state
+          showDecomposition: false,
+          taskInfo: [],
+          streamingDecomposeText: '',
         });
         addNotice('warning', 'Task Cancelled', 'Task was cancelled by user');
         if (sseClients[taskId]) {
@@ -1597,6 +1662,19 @@ export const useAgentStore = create((set, get) => ({
   confirmDecomposition: async (taskId, subtasks) => {
     const task = get().tasks[taskId];
     if (!task) return false;
+
+    // Don't confirm if task is already completed, failed, or cancelled
+    const terminalStates = ['completed', 'finished', 'failed', 'cancelled'];
+    if (terminalStates.includes(task.status)) {
+      console.log(`[AgentStore] Ignoring confirmation for ${taskId}: task already ${task.status}`);
+      return false;
+    }
+
+    // Don't confirm if decomposition is not showing (already confirmed or not in decomposition phase)
+    if (!task.showDecomposition && !task.isTaskEdit) {
+      console.log(`[AgentStore] Ignoring confirmation for ${taskId}: not in decomposition phase`);
+      return false;
+    }
 
     // Clear auto-confirm timer
     if (autoConfirmTimers[taskId]) {

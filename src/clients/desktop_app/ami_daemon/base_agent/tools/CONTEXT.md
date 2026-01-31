@@ -7,12 +7,43 @@ Tool integrations for agents.
 ```
 tools/
 ├── base_tool.py              # BaseTool abstract class
-├── browser_session_manager.py # Browser session lifecycle
-├── browser_use/              # Browser automation (based on browser-use library)
-├── eigent_browser/           # Eigent browser automation (ported from CAMEL-AI/Eigent)
+├── workflow_browser_adapter.py # Browser session adapter for workflow engine
+├── browser_use/              # Browser automation (DEPRECATED - use eigent_browser)
+├── eigent_browser/           # Eigent browser automation (primary browser system)
 ├── toolkits/                 # LLM tool-calling toolkits (Eigent migration)
 └── android_use/              # Android automation (TODO)
 ```
+
+## Workflow Browser Adapter
+
+The `workflow_browser_adapter.py` provides a unified interface for workflow agents to interact with browsers:
+
+```python
+from .workflow_browser_adapter import WorkflowBrowserAdapter
+
+adapter = await WorkflowBrowserAdapter.get_instance()
+session_info = await adapter.get_or_create_session(
+    session_id="workflow_123",
+    config_service=config_service,
+    headless=False
+)
+
+# Navigate
+await adapter.navigate(session_info, "https://example.com")
+
+# Get page snapshot for LLM
+snapshot_text = await adapter.get_page_snapshot(session_info)
+
+# Execute actions
+await adapter.click(session_info, ref="e1")
+await adapter.type_text(session_info, ref="e2", text="hello")
+```
+
+**Key Features:**
+- Wraps HybridBrowserSession for workflow compatibility
+- Session lifecycle management with reference counting
+- Automatic cleanup of expired sessions
+- Multi-tab support
 
 ## Toolkits (toolkits/)
 
@@ -99,54 +130,10 @@ class BaseTool(ABC):
     def get_available_actions(self) -> List[str]
 ```
 
-## Browser Tools (browser_use/)
-
-Built on the browser-use library. Key components:
-
-- **BrowserSession** - Manages browser instance lifecycle
-- **Controller** - Executes browser actions (click, type, scroll)
-- **DomService** - DOM analysis and element extraction
-- **DomExtractor** - Serializes DOM for LLM analysis
-
-### DOM Extraction Modes
-
-- `partial` - Visible elements only (faster, for interaction)
-- `full` - All elements including hidden (for comprehensive scraping)
-
-### Key Files in browser_use/
-
-| File | Purpose |
-|------|---------|
-| `dom_extractor.py` | DOM serialization for LLM |
-| `controller.py` | Browser action execution |
-| `element.py` | DOM element abstraction |
-| `user_behavior/monitor.py` | User behavior recording with DOM capture |
-
-### User Behavior Monitor (user_behavior/)
-
-Records user actions during browser sessions:
-- Tracks clicks, navigation, input events
-- **DOM Capture**: Captures DOM snapshots on navigation for script pre-generation
-
-```python
-monitor = SimpleUserBehaviorMonitor()
-monitor.enable_dom_capture(True)  # Enable DOM capture on navigation
-
-# After recording...
-dom_snapshots = monitor.get_dom_snapshots()
-# Returns: Dict[str, dict]  # URL -> DOM dict
-```
-
-## Browser Session Manager
-
-Manages browser session lifecycle:
-- Creates/reuses browser instances
-- Handles session cleanup
-- Supports headless/headful modes
-
-## Eigent Browser Tools (eigent_browser/)
+## Eigent Browser Tools (eigent_browser/) - PRIMARY
 
 Ported from CAMEL-AI/Eigent project for LLM-friendly browser automation.
+**This is the primary browser system, replacing browser-use.**
 
 ### Key Components
 
@@ -155,8 +142,11 @@ Ported from CAMEL-AI/Eigent project for LLM-friendly browser automation.
 | `page_snapshot.py` | DOM → YAML-like text snapshot with `[ref=eN]` element references |
 | `action_executor.py` | Execute browser actions (click, type, scroll, etc.) |
 | `browser_session.py` | Multi-tab browser session management (singleton pattern) |
+| `browser_launcher.py` | Subprocess-based Chrome launch with CDP (anti-detection) |
+| `behavior_recorder.py` | User behavior recording for HybridBrowserSession |
 | `config_loader.py` | Browser config and timeout settings |
 | `unified_analyzer.js` | JS script for DOM analysis and element ref assignment |
+| `scripts/behavior_tracker.js` | JS script for user behavior capture |
 
 ### Snapshot Format
 
@@ -187,3 +177,45 @@ HybridBrowserSession uses singleton pattern per event-loop and session-id:
 - Prevents multiple browser instances
 - Supports multi-tab management
 - Stealth mode for anti-detection
+
+### Behavior Recording (behavior_recorder.py)
+
+Pluggable user behavior recording for HybridBrowserSession:
+
+```python
+from .eigent_browser.behavior_recorder import BehaviorRecorder
+from .eigent_browser.browser_session import HybridBrowserSession
+
+# Create session and recorder
+session = HybridBrowserSession(headless=False, stealth=True)
+recorder = BehaviorRecorder(enable_dom_capture=True)
+
+# Start recording
+await session.ensure_browser()
+await recorder.start_recording(session)
+await session.visit("https://example.com")
+
+# ... user performs actions in browser ...
+
+# Stop and get results
+result = await recorder.stop_recording()
+# result = {
+#     "session_id": "session_20250126_143022",
+#     "operations": [...],  # List of user operations
+#     "dom_snapshots": {...},  # URL -> DOM snapshot
+# }
+```
+
+**Key features:**
+- CDP binding for JavaScript → Python communication
+- Multi-tab auto-setup (hooks into tab registration)
+- DOM snapshot capture on navigation
+- Operation deduplication (navigation events)
+
+## Browser Tools (browser_use/) - DEPRECATED
+
+**Note: This module is deprecated. Use eigent_browser instead.**
+
+Previously built on the browser-use library. The workflow engine and agents have been migrated to use eigent_browser via WorkflowBrowserAdapter.
+
+Legacy files remain for reference but should not be used in new code.

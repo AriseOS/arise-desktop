@@ -5,6 +5,7 @@ State (page/screen) to another State. Actions are the edges in the memory graph
 connecting State nodes.
 """
 
+import uuid
 from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field, model_validator
@@ -29,17 +30,25 @@ class Action(BaseModel):
         - The action should represent a meaningful navigation event
 
     Attributes:
+        id: Unique action identifier (auto-generated if not provided).
         source: Source state ID (where the user was).
         target: Target state ID (where the user navigated to).
-        type: Transition type (LLM-generated, e.g., "ClickLink", "NavigateBack").
+        type: Transition type (e.g., "click", "submit", "auto_navigate").
         timestamp: When the transition occurred (milliseconds, optional).
-        trigger_intent_id: ID of the Intent that triggered this transition (optional).
+        trigger: Structured trigger information (ref, text, role from recording).
         user_id: User ID (optional).
         session_id: Session ID (optional).
         attributes: Additional metadata about the transition.
         weight: Edge weight for graph algorithms (default: 1.0).
         confidence: Confidence score for this transition (optional).
+        description: Semantic description for retrieval (LLM-generated).
     """
+
+    # Unique identifier (v2 - for ExecutionStep references)
+    id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        description='Unique action identifier'
+    )
 
     # Core attributes (REQUIRED - defines the state transition)
     source: str = Field(..., description='Source state ID')
@@ -56,9 +65,15 @@ class Action(BaseModel):
     )
 
     # Trigger information (what caused this transition)
-    trigger_intent_id: Optional[str] = Field(
+    trigger: Optional[Dict[str, Any]] = Field(
         default=None,
-        description='ID of the Intent that triggered this transition'
+        description='Structured trigger information from recording (ref, text, role)'
+    )
+
+    # ✨ Reference to the IntentSequence that triggered this Action (v2)
+    trigger_sequence_id: Optional[str] = Field(
+        default=None,
+        description='ID of the IntentSequence that caused this navigation (optional context)'
     )
 
     # User session information

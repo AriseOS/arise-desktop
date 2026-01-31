@@ -13,6 +13,7 @@ Commands:
     visit <url>           - Navigate to URL
     click <ref>           - Click element by ref (e.g., click e1)
     click_text <text>     - Click element by text
+    select <ref> <value>  - Select option from dropdown (e.g., select e1 Best Sellers)
     type <ref> <text>     - Type text into element
     enter [ref]           - Press enter (optionally on element)
     scroll <up|down> [amount] - Scroll page
@@ -40,11 +41,27 @@ import asyncio
 import sys
 import os
 import argparse
+import logging
 from pathlib import Path
+
+from prompt_toolkit import PromptSession
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+from prompt_toolkit.completion import WordCompleter
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
+
+# Enable debug mode by default for interactive testing
+os.environ["AMI_DEBUG"] = "1"
+
+# Configure logging to show debug messages
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S"
+)
 
 from src.clients.desktop_app.ami_daemon.base_agent.tools.eigent_browser.browser_session import HybridBrowserSession
 from src.clients.desktop_app.ami_daemon.base_agent.tools.toolkits.browser_toolkit import BrowserToolkit
@@ -53,10 +70,28 @@ from src.clients.desktop_app.ami_daemon.base_agent.tools.toolkits.browser_toolki
 class InteractiveBrowserTester:
     """Interactive browser testing interface."""
 
+    # Available commands for auto-completion
+    COMMANDS = [
+        "visit", "click", "click_text", "select", "type", "enter", "scroll",
+        "snapshot", "tabs", "switch", "new_tab", "close_tab", "links",
+        "console", "exec", "back", "forward", "info", "help",
+        "debug_session", "debug_click", "debug_snapshot",
+        "raw_click", "raw_ctrl_click",
+        "quit", "exit", "q"
+    ]
+
     def __init__(self, headless: bool = False):
         self.headless = headless
         self.session: HybridBrowserSession = None
         self.toolkit: BrowserToolkit = None
+
+        # Setup prompt_toolkit with history and auto-completion
+        history_file = Path.home() / ".browser_interactive_history"
+        self.prompt_session = PromptSession(
+            history=FileHistory(str(history_file)),
+            auto_suggest=AutoSuggestFromHistory(),
+            completer=WordCompleter(self.COMMANDS, ignore_case=True),
+        )
 
     async def setup(self):
         """Initialize browser session and toolkit."""
@@ -137,6 +172,16 @@ class InteractiveBrowserTester:
                     result = await self.toolkit.browser_click(element_text=args)
                     self.print_result("LLM sees after click", result)
 
+            elif command == "select":
+                select_parts = args.split(maxsplit=1)
+                if len(select_parts) < 2:
+                    print("Usage: select <ref> <value>  (e.g., select e1 Best Sellers)")
+                else:
+                    ref, value = select_parts
+                    print(f"\n>>> Selecting '{value}' in ref={ref}")
+                    result = await self.toolkit.browser_select(value=value, ref=ref)
+                    self.print_result("LLM sees after select", result)
+
             elif command == "type":
                 type_parts = args.split(maxsplit=1)
                 if len(type_parts) < 2:
@@ -163,7 +208,7 @@ class InteractiveBrowserTester:
 
             elif command == "snapshot":
                 print("\n>>> Getting page snapshot")
-                result = await self.toolkit.browser_get_page_snapshot(include_url=True)
+                result = await self.toolkit.browser_get_page_snapshot()
                 self.print_result("LLM sees (page snapshot)", result)
 
             elif command == "tabs":
@@ -349,6 +394,10 @@ class InteractiveBrowserTester:
         print("="*60)
         print("\nThis simulates what the LLM can see and do with the browser.")
         print("Every result shows exactly what would be returned to the LLM.\n")
+        print("Features:")
+        print("  - Arrow keys: navigate command history (up/down) and edit (left/right)")
+        print("  - Tab: auto-complete commands")
+        print("  - History is saved across sessions\n")
         print("Tips:")
         print("  - Use 'debug_click <ref>' to see raw click results")
         print("  - Use 'debug_session' to see internal tab state")
@@ -357,7 +406,8 @@ class InteractiveBrowserTester:
         try:
             while True:
                 try:
-                    cmd = input("browser> ").strip()
+                    cmd = await self.prompt_session.prompt_async("browser> ")
+                    cmd = cmd.strip()
                     if not await self.run_command(cmd):
                         break
                 except EOFError:
@@ -371,7 +421,12 @@ class InteractiveBrowserTester:
 async def main():
     parser = argparse.ArgumentParser(description="Interactive Browser Test")
     parser.add_argument("--headless", action="store_true", help="Run browser in headless mode")
+    parser.add_argument("--no-debug", action="store_true", help="Disable debug logging")
     args = parser.parse_args()
+
+    if args.no_debug:
+        os.environ["AMI_DEBUG"] = ""
+        logging.getLogger().setLevel(logging.INFO)
 
     tester = InteractiveBrowserTester(headless=args.headless)
     await tester.run()

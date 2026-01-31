@@ -165,23 +165,60 @@ class BrowserToolkit(BaseToolkit):
             logger.debug(f"Failed to get page context: {e}")
             return ""
 
-    async def _wait_for_page_stability(self, timeout_ms: int = 1500) -> None:
+    async def get_page_title(self) -> str:
+        """Get current page title.
+
+        Returns:
+            Page title string, or empty string if unavailable.
+        """
+        if not self._session:
+            return ""
+        try:
+            page = await self._session.get_page()
+            return await page.title()
+        except Exception as e:
+            logger.debug(f"Failed to get page title: {e}")
+            return ""
+
+    async def _wait_for_page_stability(self, timeout_ms: Optional[int] = None) -> None:
         """Wait for page to become stable after an action.
 
         This is important after click/type actions that may trigger:
         - Page navigation
         - New tab opening
         - AJAX content loading
+        - SPA re-rendering
 
-        Following Eigent's pattern for page stability.
+        Following Eigent's pattern for page stability:
+        1. First wait for DOM content loaded
+        2. Then try to wait for network idle (SPA apps need this)
+
+        Args:
+            timeout_ms: Timeout in milliseconds. If None, uses session's network_idle_timeout.
         """
         if not self._session:
             return
 
+        # Use session's configured timeout if not specified
+        if timeout_ms is None:
+            timeout_ms = self._session._network_idle_timeout or 5000
+
         try:
             page = await self._session.get_page()
-            # Wait for network to be idle (no pending requests)
+
+            # Step 1: Wait for DOM content to be loaded
             await page.wait_for_load_state('domcontentloaded', timeout=timeout_ms)
+            logger.debug("DOM content loaded")
+
+            # Step 2: Try to wait for network idle (important for SPA)
+            # This gives time for React/Vue/etc to finish rendering
+            try:
+                await page.wait_for_load_state('networkidle', timeout=timeout_ms)
+                logger.debug("Network idle achieved")
+            except Exception:
+                # Network idle timeout is acceptable - SPA might keep connections open
+                logger.debug(f"Network idle timeout after {timeout_ms}ms - continuing anyway")
+
         except Exception as e:
             logger.debug(f"Page stability wait interrupted: {e}")
 
@@ -372,23 +409,6 @@ class BrowserToolkit(BaseToolkit):
             return "Error: Must provide ref, element_text, or selector"
 
         try:
-            # Get element description before clicking (for debugging)
-            element_desc = ""
-            if ref:
-                try:
-                    before_snapshot = await self._session.get_snapshot()
-                    # Parse snapshot to find the element description
-                    # Format: - link "Text" [ref=e17] or - button "Text" [ref=e17]
-                    import re
-                    pattern = rf'- (\w+) "([^"]*)"[^\[]*\[ref={ref}\]'
-                    match = re.search(pattern, before_snapshot)
-                    if match:
-                        element_type, element_text_found = match.groups()
-                        element_desc = f'{element_type} "{element_text_found}"'
-                        logger.info(f"[Click] Clicking {element_desc} (ref={ref})")
-                except Exception as e:
-                    logger.debug(f"Could not get element description: {e}")
-
             action = {"type": "click"}
             if ref:
                 action["ref"] = ref
@@ -400,22 +420,15 @@ class BrowserToolkit(BaseToolkit):
             result = await self._session.exec_action(action)
 
             if result.get("success"):
-                # Extract details about the click result
                 details = result.get("details", {})
                 new_tab_created = details.get("new_tab_created", False)
                 new_tab_index = details.get("new_tab_index")
-                click_method = details.get("click_method", "unknown")
 
-                # Build informative click message
                 if new_tab_created and new_tab_index:
-                    click_info = f"Clicked {element_desc}, opened new tab (now on tab {new_tab_index})" if element_desc else f"Clicked, opened new tab (now on tab {new_tab_index})"
-                    logger.info(f"[Click] New tab created: {new_tab_index}, auto-switched")
+                    click_info = f"Clicked, opened new tab (now on tab {new_tab_index})"
                 else:
-                    click_info = f"Clicked {element_desc}" if element_desc else "Clicked successfully"
+                    click_info = "Clicked successfully"
 
-                # Wait for page stability and include tab info in result
-                # This ensures LLM sees the new page content after navigation/tab switch
-                # Force refresh aria-ref if a new tab was created (each tab has its own window object)
                 return await self._build_action_result(
                     click_info,
                     wait_for_stability=True,
@@ -633,37 +646,78 @@ class BrowserToolkit(BaseToolkit):
             return f"Error selecting option: {e}"
 
     @listen_toolkit(
-        inputs=lambda self, include_url=False: "Getting page snapshot",
+        inputs=lambda self, include_links=False: "Getting page snapshot",
         return_msg=lambda r: "Got snapshot" if r and not r.startswith("Error") else r[:100]
     )
-    async def browser_get_page_snapshot(self, include_url: bool = False) -> str:
+    async def browser_get_page_snapshot(
+        self,
+        include_links: bool = False,
+    ) -> str:
         """Get the current page snapshot without performing any action.
 
+        Always includes the current page URL and title at the top.
+
         Use this to see the current state of the page, including:
-        - Page URL and title (if include_url=True)
+        - Page URL and title
         - Interactive elements with [ref=eN] markers
         - Page structure
+        - All links with their href URLs (if include_links=True)
 
         Args:
-            include_url: If True, includes the current page URL at the top of the snapshot.
-                Useful for loop iterations to track which page you're on.
+            include_links: If True, appends a list of all links on the page
+                with their actual href URLs. Useful for extracting navigation
+                targets to save in notes for later use.
 
         Returns:
-            The current page snapshot, optionally prefixed with URL info.
+            The current page snapshot with URL info and optionally a links list.
         """
         if not self._ensure_session():
             return "Error: Browser session not initialized"
 
         try:
-            snapshot = await self._session.get_snapshot()
+            # Always get page URL and title
+            page = await self._session.get_page()
+            url = page.url
+            title = await page.title()
+            header = f"**Current Page:**\n- URL: {url}\n- Title: {title}\n\n"
 
-            if include_url:
-                page = await self._session.get_page()
-                url = page.url
-                title = await page.title()
-                return f"**Current Page:**\n- URL: {url}\n- Title: {title}\n\n{snapshot}"
+            if include_links:
+                # Get full result with elements map to extract links
+                full_result = await self._session.get_snapshot_with_elements()
+                snapshot = full_result.get("snapshotText", "")
+                elements = full_result.get("elements", {})
 
-            return snapshot
+                # Extract links from elements map
+                links = []
+                for ref, elem_info in elements.items():
+                    href = elem_info.get("href")
+                    if href:
+                        name = elem_info.get("name", "")
+                        role = elem_info.get("role", "")
+                        links.append({
+                            "ref": ref,
+                            "name": name,
+                            "href": href,
+                            "role": role,
+                        })
+
+                # Build links section
+                links_section = ""
+                if links:
+                    links_section = "\n\n**Page Links:**\n"
+                    for link in links:
+                        links_section += f"- [{link['ref']}] \"{link['name']}\" -> {link['href']}\n"
+
+                # Format snapshot text
+                if isinstance(snapshot, str) and snapshot.startswith("- Page Snapshot"):
+                    formatted_snapshot = snapshot
+                else:
+                    formatted_snapshot = f"- Page Snapshot\n```yaml\n{snapshot}\n```"
+
+                return header + formatted_snapshot + links_section
+            else:
+                snapshot = await self._session.get_snapshot()
+                return header + snapshot
         except Exception as e:
             logger.error(f"browser_get_page_snapshot error: {e}")
             return f"Error getting snapshot: {e}"

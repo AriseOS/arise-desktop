@@ -102,6 +102,11 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
       'submit': t('recordingDetail.submit'),
       'hover': t('recordingDetail.hover'),
       'copy_action': t('recordingDetail.copyAction'),
+      'copy': t('recordingDetail.copyAction'),
+      'paste': 'Paste',
+      'enter': 'Enter',
+      'select_text': 'Select Text',
+      'dataload': 'Data Load',
       'test': t('recordingDetail.test'),
       'type': t('recordingDetail.type'),
       'fill': t('recordingDetail.fill')
@@ -119,6 +124,11 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
       'submit': 'checkCircle',
       'hover': 'hand',
       'copy_action': 'clipboard',
+      'copy': 'clipboard',
+      'paste': 'clipboard',
+      'enter': 'cornerDownLeft',
+      'select_text': 'type',
+      'dataload': 'download',
       'test': 'flask',
       'type': 'keyboard',
       'fill': 'edit'
@@ -131,8 +141,8 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
 
     const details = [];
     const type = operation.type;
-    const element = operation.element || {};
-    const data = operation.data || {};
+
+    // New format: ref, text, role, value, direction, amount, request_url
 
     // For navigate operations
     if (type === 'navigate') {
@@ -144,20 +154,12 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
           </div>
         );
       }
-      if (operation.page_title) {
-        details.push(
-          <div key="page_title" className="action-detail">
-            <span className="detail-label">{t('recordingDetail.pageTitle')}:</span>
-            <span className="detail-value">"{operation.page_title}"</span>
-          </div>
-        );
-      }
     }
 
     // For click operations
     if (type === 'click') {
-      if (element.textContent) {
-        const displayText = element.textContent.trim();
+      if (operation.text) {
+        const displayText = operation.text.trim();
         details.push(
           <div key="element_text" className="action-detail highlight-action">
             <span className="detail-label"><Icon icon="mousePointer" size={14} /> {t('recordingDetail.clickedOn')}:</span>
@@ -165,89 +167,71 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
           </div>
         );
       }
-      if (element.xpath) {
+      if (operation.ref) {
         details.push(
-          <div key="xpath" className="action-detail">
-            <span className="detail-label">XPath:</span>
-            <span className="detail-value code">{element.xpath}</span>
+          <div key="ref" className="action-detail">
+            <span className="detail-label">Ref:</span>
+            <span className="detail-value code">[{operation.ref}]</span>
           </div>
         );
       }
-      if (element.tagName) {
+      if (operation.role) {
         details.push(
-          <div key="tag" className="action-detail">
-            <span className="detail-label">{t('recordingDetail.tag')}:</span>
-            <span className="detail-value code">{element.tagName}</span>
+          <div key="role" className="action-detail">
+            <span className="detail-label">Role:</span>
+            <span className="detail-value code">{operation.role}</span>
           </div>
         );
       }
     }
 
-    // For input/type operations
-    if (type === 'input' || type === 'type') {
-      if (data.value) {
+    // For type operations
+    if (type === 'type') {
+      if (operation.value) {
         details.push(
           <div key="value" className="action-detail">
             <span className="detail-label">{t('recordingDetail.inputValue')}:</span>
-            <span className="detail-value">"{data.value}"</span>
+            <span className="detail-value">"{operation.value}"</span>
           </div>
         );
       }
-      if (element.xpath) {
+      if (operation.ref) {
         details.push(
-          <div key="xpath" className="action-detail">
-            <span className="detail-label">XPath:</span>
-            <span className="detail-value code">{element.xpath}</span>
+          <div key="ref" className="action-detail">
+            <span className="detail-label">Ref:</span>
+            <span className="detail-value code">[{operation.ref}]</span>
           </div>
         );
       }
     }
 
-    // For select operations
+    // For select operations (dropdown)
     if (type === 'select') {
-      if (data.selectedText) {
-        const selectedText = data.selectedText.trim();
+      if (operation.value) {
         details.push(
-          <div key="selected_text" className="action-detail highlight-action">
+          <div key="value" className="action-detail highlight-action">
             <span className="detail-label"><Icon icon="checkSquare" size={14} /> {t('recordingDetail.selected')}:</span>
-            <span className="detail-value selected-text">"{selectedText.substring(0, 100)}{selectedText.length > 100 ? '...' : ''}"</span>
+            <span className="detail-value selected-text">"{operation.value}"</span>
           </div>
         );
       }
-      if (element.textContent && element.textContent !== data.selectedText) {
-        const elementText = element.textContent.trim();
+      if (operation.ref) {
         details.push(
-          <div key="element_text" className="action-detail">
-            <span className="detail-label">{t('recordingDetail.fromElement')}:</span>
-            <span className="detail-value">"{elementText.substring(0, 100)}{elementText.length > 100 ? '...' : ''}"</span>
-          </div>
-        );
-      }
-      if (element.xpath) {
-        details.push(
-          <div key="xpath" className="action-detail">
-            <span className="detail-label">XPath:</span>
-            <span className="detail-value code">{element.xpath}</span>
+          <div key="ref" className="action-detail">
+            <span className="detail-label">Ref:</span>
+            <span className="detail-value code">[{operation.ref}]</span>
           </div>
         );
       }
     }
 
-    // For copy_action operations
-    if (type === 'copy_action') {
-      if (data.copiedText) {
+    // For copy/paste operations
+    if (type === 'copy' || type === 'paste') {
+      if (operation.text) {
         details.push(
-          <div key="copied_text" className="action-detail field-mapping">
-            <span className="detail-label"><Icon icon="clipboard" size={14} /> {t('recordingDetail.copiedText')}:</span>
-            <span className="detail-value field-value">"{data.copiedText}"</span>
-          </div>
-        );
-      }
-      if (element.xpath) {
-        details.push(
-          <div key="xpath" className="action-detail">
-            <span className="detail-label">XPath:</span>
-            <span className="detail-value code">{element.xpath}</span>
+          <div key="text" className="action-detail field-mapping">
+            <span className="detail-label"><Icon icon="clipboard" size={14} /> Text:</span>
+            <span className="detail-value field-value">"{operation.text.substring(0, 100)}{operation.text.length > 100 ? '...' : ''}"</span>
           </div>
         );
       }
@@ -255,23 +239,63 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
 
     // For scroll operations
     if (type === 'scroll') {
-      if (data.direction) {
+      if (operation.direction) {
         details.push(
           <div key="direction" className="action-detail">
             <span className="detail-label">{t('recordingDetail.direction')}:</span>
-            <span className="detail-value">{data.direction}</span>
+            <span className="detail-value">{operation.direction}</span>
+          </div>
+        );
+      }
+      if (operation.amount) {
+        details.push(
+          <div key="amount" className="action-detail">
+            <span className="detail-label">Amount:</span>
+            <span className="detail-value">{operation.amount}px</span>
           </div>
         );
       }
     }
 
-    // For test operations
-    if (type === 'test') {
-      if (data.message) {
+    // For enter operations
+    if (type === 'enter') {
+      if (operation.ref) {
         details.push(
-          <div key="message" className="action-detail">
-            <span className="detail-label">{t('recordingDetail.message')}:</span>
-            <span className="detail-value">{data.message}</span>
+          <div key="ref" className="action-detail">
+            <span className="detail-label">Ref:</span>
+            <span className="detail-value code">[{operation.ref}]</span>
+          </div>
+        );
+      }
+    }
+
+    // For dataload operations
+    if (type === 'dataload') {
+      if (operation.request_url) {
+        details.push(
+          <div key="request_url" className="action-detail">
+            <span className="detail-label">Request:</span>
+            <span className="detail-value url-text">{operation.request_url.substring(0, 80)}{operation.request_url.length > 80 ? '...' : ''}</span>
+          </div>
+        );
+      }
+      if (operation.method) {
+        details.push(
+          <div key="method" className="action-detail">
+            <span className="detail-label">Method:</span>
+            <span className="detail-value code">{operation.method}</span>
+          </div>
+        );
+      }
+    }
+
+    // For select_text operations
+    if (type === 'select_text') {
+      if (operation.text) {
+        details.push(
+          <div key="text" className="action-detail">
+            <span className="detail-label">Selected:</span>
+            <span className="detail-value">"{operation.text.substring(0, 100)}{operation.text.length > 100 ? '...' : ''}"</span>
           </div>
         );
       }
@@ -442,7 +466,7 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
               onClick={() => setActiveTab('doms')}
             >
               <Icon icon="code" />
-              <span>{t('recordingDetail.doms')}</span>
+              <span>{t('recordingDetail.snapshots')}</span>
             </button>
             <button
               className={`tab-button ${activeTab === 'yaml' ? 'active' : ''}`}
@@ -503,18 +527,18 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
 
             {activeTab === 'doms' && (
               <div className="doms-section">
-                <h2 className="section-title">{t('recordingDetail.domSnapshots')} ({recording.dom_snapshots ? Object.keys(recording.dom_snapshots).length : 0})</h2>
-                {!recording.dom_snapshots || Object.keys(recording.dom_snapshots).length === 0 ? (
+                <h2 className="section-title">{t('recordingDetail.snapshots')} ({recording.snapshots ? Object.keys(recording.snapshots).length : 0})</h2>
+                {!recording.snapshots || Object.keys(recording.snapshots).length === 0 ? (
                   <div className="empty-message">
-                    <p>{t('recordingDetail.noDoms')}</p>
+                    <p>{t('recordingDetail.noSnapshots')}</p>
                   </div>
                 ) : (
                   <div className="dom-list">
-                    {Object.keys(recording.dom_snapshots).map((url, index) => (
+                    {Object.entries(recording.snapshots).map(([urlHash, snapshot], index) => (
                       <div key={index} className="dom-item">
                         <div className="dom-header">
                           <span className="dom-index">#{index + 1}</span>
-                          <span className="dom-url">{url}</span>
+                          <span className="dom-url">{snapshot.url || urlHash}</span>
                         </div>
                       </div>
                     ))}

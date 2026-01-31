@@ -255,6 +255,33 @@ class HybridBrowserSession:
 
         new_page.on(event="close", f=handle_page_close)
 
+    def _on_new_page(self, page: "Page") -> None:
+        """Callback for context 'page' event - auto-register new tabs/popups.
+
+        This catches all new pages opened by any means:
+        - JavaScript window.open()
+        - Links with target="_blank"
+        - Popups
+        - Force clicks on links
+        """
+        import asyncio
+        import time
+        logger.debug(f"[PAGE EVENT] Received at {time.strftime('%H:%M:%S')}, page.url={page.url}")
+
+        async def register():
+            # Check if already registered
+            for existing_page in self._pages.values():
+                if existing_page is page:
+                    logger.debug("Page already registered, skipping")
+                    return
+
+            tab_id = await TabIdGenerator.generate_tab_id()
+            await self._register_new_page(tab_id, page)
+            logger.info(f"[Auto] Registered new tab {tab_id} (opened by page event). Total tabs: {len(self._pages)}")
+
+        # Schedule the async registration
+        asyncio.create_task(register())
+
     async def register_page(self, new_page: "Page") -> str:
         """Register a page that was created externally (e.g., by a click)."""
         for tab_id, page in self._pages.items():
@@ -424,6 +451,11 @@ class HybridBrowserSession:
             raise
 
         # Connect to browser via Playwright's CDP connection
+        # Bypass proxy for localhost (fixes Clash/proxy software interference with Node.js driver)
+        import os
+        os.environ.setdefault('NO_PROXY', '127.0.0.1,localhost')
+        os.environ.setdefault('no_proxy', '127.0.0.1,localhost')
+
         logger.info("Starting Playwright...")
         self._playwright = await async_playwright().start()
         logger.info(f"Playwright started, connecting to CDP at {cdp_url}...")
@@ -454,6 +486,9 @@ class HybridBrowserSession:
             self._context = contexts[0]
         else:
             self._context = await self._browser.new_context()
+
+        # Listen for new pages (tabs/popups) opened by any means (JS, target="_blank", etc.)
+        self._context.on("page", self._on_new_page)
 
         # Get existing pages or create new one
         pages = self._context.pages
@@ -613,6 +648,42 @@ class HybridBrowserSession:
 
         logger.debug("All browser sessions closed and registry cleared")
 
+    @classmethod
+    async def close_session_by_id(cls, session_id: str) -> bool:
+        """Close a specific browser session by session_id.
+
+        Args:
+            session_id: The session identifier to close
+
+        Returns:
+            True if session was found and closed, False if not found
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            loop_id = str(id(loop))
+        except RuntimeError:
+            import threading
+            loop_id = f"sync_{threading.current_thread().ident}"
+
+        session_key = (loop_id, session_id)
+
+        async with cls._instances_lock:
+            if session_key not in cls._instances:
+                logger.debug(f"Session {session_id} not found in registry (may not have been created)")
+                return False
+
+            instance = cls._instances[session_key]
+            del cls._instances[session_key]
+
+        # Close outside the lock to avoid deadlock
+        try:
+            await instance._close_session()
+            logger.info(f"Closed browser session: {session_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error closing session {session_id}: {e}")
+            return False
+
     # ------------------------------------------------------------------
     # Page interaction
     # ------------------------------------------------------------------
@@ -646,6 +717,24 @@ class HybridBrowserSession:
             diff_only=diff_only,
             viewport_limit=viewport_limit,
         )
+
+    async def get_snapshot_with_elements(
+        self,
+        *,
+        viewport_limit: bool = False,
+    ) -> Dict[str, Any]:
+        """Get full snapshot result including elements map with href info.
+
+        Returns:
+            Dict with keys:
+                - snapshotText: YAML-like snapshot text
+                - elements: Dict mapping ref (e.g., "e1") to element info including href
+                - url: Current page URL
+                - metadata: Analysis metadata
+        """
+        if not self.snapshot:
+            return {"snapshotText": "<empty>", "elements": {}}
+        return await self.snapshot.get_full_result(viewport_limit=viewport_limit)
 
     async def exec_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
         """Execute action on current tab."""

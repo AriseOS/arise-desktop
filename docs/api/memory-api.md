@@ -140,7 +140,8 @@ Step 4: Return Results
     "query": "通过榜单查看产品团队信息",
     "top_k": 3,
     "min_score": 0.5,
-    "domain": "producthunt.com"
+    "domain": "producthunt.com",
+    "debug": true
 }
 ```
 
@@ -151,6 +152,7 @@ Step 4: Return Results
 | top_k | integer | No | 3 | Number of paths to return |
 | min_score | float | No | 0.5 | Minimum similarity score (0.0-1.0) |
 | domain | string | No | - | Filter results by domain |
+| debug | boolean | No | false | Include candidate states and score breakdown metadata |
 
 #### Response
 
@@ -239,6 +241,10 @@ Step 4: Return Results
 | query | string | Original query |
 | paths | array | List of matching operation paths |
 | total_paths | integer | Number of paths returned |
+| decomposed | object | Query decomposition with `target_query` and `key_queries` |
+| candidate_states | object | (debug only) Candidate target/key states with similarity scores |
+| score_weights | object | (debug only) Scoring weights used |
+| score_formula | string | (debug only) Scoring formula string |
 
 **Path Object:**
 

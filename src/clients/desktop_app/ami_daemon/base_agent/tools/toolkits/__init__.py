@@ -30,7 +30,7 @@ from .terminal_toolkit import TerminalToolkit
 from .human_toolkit import HumanToolkit
 from .browser_toolkit import BrowserToolkit
 from .memory_toolkit import MemoryToolkit
-from .task_planning_toolkit import TaskPlanningToolkit, Task, TaskState
+from .task_planning_toolkit import TaskPlanningToolkit
 
 # MCP base classes and toolkits
 from .mcp_base import MCPClient, MCPTool, BaseMCPToolkit
@@ -54,10 +54,8 @@ __all__ = [
     "BrowserToolkit",
     "MemoryToolkit",
 
-    # Task planning (from CAMEL)
+    # Task planning (uses TaskOrchestrator)
     "TaskPlanningToolkit",
-    "Task",
-    "TaskState",
 
     # MCP base classes
     "MCPClient",

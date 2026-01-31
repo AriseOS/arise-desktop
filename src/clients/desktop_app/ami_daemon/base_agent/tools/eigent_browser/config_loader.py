@@ -50,7 +50,7 @@ class BrowserConfig:
 
     # Default timeout values (in milliseconds)
     DEFAULT_ACTION_TIMEOUT = 3000
-    DEFAULT_SHORT_TIMEOUT = 1000
+    DEFAULT_SHORT_TIMEOUT = 5000  # Increased from 1000 to allow more time for new tab detection
     DEFAULT_NAVIGATION_TIMEOUT = 10000
     DEFAULT_NETWORK_IDLE_TIMEOUT = 5000
     DEFAULT_SCREENSHOT_TIMEOUT = 15000
@@ -231,6 +231,9 @@ class BrowserConfig:
             '--disable-domain-reliability',
             '--disable-field-trial-config',  # Disable field trials
             '--disable-window-activation',  # Don't steal focus
+            '--disable-session-crashed-bubble',  # Prevent focus-stealing dialogs
+            '--disable-restore-session-state',  # Prevent restore dialogs
+            '--disable-features=GlobalMediaControls',  # Prevent media control popups
 
             # Performance and stability
             '--metrics-recording-only',

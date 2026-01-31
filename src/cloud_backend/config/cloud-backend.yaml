@@ -59,7 +59,7 @@ llm:
   anthropic:
     # model: claude-sonnet-4-5-20250929  # Default model for complex tasks
     # simple_model: claude-haiku-4-5-20251001  # Light model for description generation (optional, falls back to default)
-    model: glm-4.7# Default model for complex tasks
+    model: glm-4.7  # Default model for complex tasks
     simple_model: glm-4.5-air # Light model for description generation (optional, falls back to default)
     max_tokens: 4096
     temperature: 0.0
@@ -119,6 +119,24 @@ cors:
   allow_headers:
     - "*"
 
+# Graph Store Configuration
+# Backend for Memory graph storage
+#
+# To enable Neo4j persistent storage:
+# 1. Start Neo4j:
+#    docker run -d --name neo4j -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/your_password neo4j:5.15
+# 2. Change backend to: neo4j
+# 3. Set password below (or via NEO4J_PASSWORD env var)
+#
+graph_store:
+  # backend: networkx  # Options: networkx (in-memory, data lost on restart), neo4j (persistent)
+  backend: neo4j # Options: networkx (in-memory, data lost on restart), neo4j (persistent)
+  # Neo4j Configuration (used when backend: neo4j)
+  uri: neo4j://localhost:7687  # Or use NEO4J_URI env var
+  user: neo4j                   # Or use NEO4J_USER env var
+  password: Ami@2024 # Or use NEO4J_PASSWORD env var
+  database: neo4j               # Or use NEO4J_DATABASE env var
+
 # Embedding Model Configuration
 # For semantic search in Memory system
 embedding:
@@ -128,6 +146,24 @@ embedding:
   # API configuration (for OpenAI-compatible APIs like SiliconFlow)
   api_url: https://api.siliconflow.cn/v1  # SiliconFlow API base URL
   api_key: sk-nfveshrtleyiscbeivhxltvvlvbzelohzdwqgkozttaslmdu # Environment variable for API key
+
+# Reasoner Configuration
+# Memory retrieval and workflow planning
+reasoner:
+  max_depth: 3  # Maximum BFS traversal depth for path finding
+  # Similarity thresholds for embedding search
+  similarity_thresholds:
+    state_resolution: 0.5  # Minimum score to accept a state match when resolving state by URL/description
+    path_finding: 0.3  # Minimum score for candidate states in navigation path finding
+
+# Memory Configuration
+# IntentSequence and workflow storage settings
+memory:
+  # IntentSequence deduplication threshold
+  # Sequences with cosine similarity >= this threshold are considered duplicates
+  # Higher value = stricter dedup (only near-identical sequences are merged)
+  # Lower value = more aggressive dedup (semantically similar sequences are merged)
+  intent_sequence_dedup_threshold: 0.95
 
 # Rate Limiting (optional)
 # rate_limit:

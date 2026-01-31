@@ -8,24 +8,50 @@
 2. **检索**: 用自然语言查询，返回相关操作路径
 3. **重放**: 提供具体操作步骤供 Agent 执行
 
-## 核心概念
+## 核心概念 (V2)
 
 | 概念 | 说明 | 图中角色 |
 |------|------|----------|
 | **State** | 一类页面的抽象（如"产品详情页"） | 节点 |
 | **PageInstance** | 具体页面 URL 实例 | State 属性 |
 | **Action** | State 之间的跳转 | 边 |
-| **IntentSequence** | 页面内的操作序列（点击、输入等） | State 属性 |
+| **IntentSequence** | 页面内的操作序列（V2: 独立节点） | 节点，通过 HAS_SEQUENCE 关联 State |
+| **CognitivePhrase** | 任务工作流（包含 execution_plan） | 节点 |
+| **QueryResult** | 统一查询结果（task/navigation/action） | 数据模型 |
+
+### V2 关键变更
+
+- **IntentSequence 独立节点**: 支持向量索引直接查询
+- **导航标记**: `causes_navigation` + `navigation_target_state_id`
+- **执行计划**: CognitivePhrase 包含结构化 `execution_plan`
+- **统一查询**: Reasoner.query() 自动判断类型
+
+## 存储后端
+
+默认使用 **Neo4j** 持久化存储，支持：
+- 持久化（重启不丢数据）
+- 向量索引（语义搜索）
+- 图查询（路径查找）
+
+配置见 `cloud-backend.yaml`:
+```yaml
+graph_store:
+  backend: neo4j  # 或 networkx (内存，重启丢失)
+  uri: neo4j://localhost:7687
+  user: neo4j
+  password: your_password
+```
 
 ## 目录结构
 
 - `memory/` - WorkflowMemory 核心实现，管理用户的操作图
-- `ontology/` - 数据模型定义（State, Action, Intent 等）
-- `graphstore/` - 图存储抽象层
+- `ontology/` - 数据模型定义（State, Action, IntentSequence, QueryResult 等）
+- `graphstore/` - 图存储抽象层（Neo4j / NetworkX）
 - `services/` - 服务层（EmbeddingService 等）
 - `thinker/` - Recording 解析器（WorkflowProcessor）
-- `reasoner/` - 图推理（路径查找等）
+- `reasoner/` - 图推理和查询接口（query, navigate, plan）
 - `agent/` - Agent 集成接口
+
 
 ## API 接口
 
@@ -52,9 +78,44 @@
 }
 ```
 
-### POST /api/v1/memory/query
+### POST /api/v1/memory/v2/query (V2 统一查询)
 
-自然语言查询操作路径。
+统一查询接口，支持三种查询类型：
+
+**查询类型自动推断**:
+- `start_state` + `end_state` → **navigation** 查询
+- `current_state` → **action** 查询
+- 否则 → **task** 查询
+
+```json
+// 任务查询
+{"target": "在 Product Hunt 查看团队信息"}
+
+// 导航查询
+{"start_state": "首页", "end_state": "团队页"}
+
+// 操作查询
+{"target": "查看团队", "current_state": "state_123"}
+
+// 探索查询（当前页面能做什么）
+{"target": "", "current_state": "state_123"}
+
+// 响应
+{
+    "success": true,
+    "query_type": "task|navigation|action",
+    "states": [...],           // task/navigation
+    "actions": [...],          // task/navigation
+    "intent_sequences": [...], // action
+    "cognitive_phrase": {...}, // task (如果匹配)
+    "execution_plan": [...],   // task (如果匹配)
+    "metadata": {...}
+}
+```
+
+### POST /api/v1/memory/query (旧版，路径搜索)
+
+自然语言查询操作路径（embedding-based）。
 
 ```json
 // 请求
@@ -68,26 +129,9 @@
 // 响应
 {
     "success": true,
-    "paths": [
-        {
-            "score": 0.85,
-            "steps": [
-                {
-                    "state": {"description": "周榜页", "page_url": "..."},
-                    "action": {"description": "点击产品"},
-                    "intent_sequence": {"intents": [...]}
-                }
-            ]
-        }
-    ]
+    "paths": [...]
 }
 ```
-
-**查询处理流程**:
-1. LLM 重写 query → target_query + key_queries
-2. Embedding 检索 → 匹配 State
-3. 图路径搜索 → 起点到目标的路径
-4. 评分排序 → 返回最佳路径
 
 ### GET /api/v1/memory/stats
 
@@ -127,12 +171,17 @@ Recording → POST /recordings → POST /memory/add → Memory 图
 ## 关键文件
 
 - `memory/workflow_memory.py` - WorkflowMemory 类，管理用户图
+- `memory/memory.py` - Memory 抽象接口和 Manager 定义
 - `thinker/workflow_processor.py` - 解析 Recording 生成图数据
+- `reasoner/reasoner.py` - Reasoner 查询接口（query, navigate, plan）
 - `services/embedding_service.py` - Embedding 生成与检索
 - `ontology/state.py` - State/PageInstance 定义
 - `ontology/action.py` - Action 定义
-- `ontology/intent.py` - Intent/IntentSequence 定义
+- `ontology/intent_sequence.py` - IntentSequence 定义
+- `ontology/cognitive_phrase.py` - CognitivePhrase/ExecutionStep 定义
+- `ontology/query_result.py` - QueryResult 统一查询结果（V2）
 
 ## 设计文档
 
-详细设计见 `docs/design/memory-graph-ontology-design.md`
+- `docs/memory-graph-redesign-v2.md` - V2 重新设计
+- `docs/design/memory-graph-ontology-design.md` - 原有设计思路

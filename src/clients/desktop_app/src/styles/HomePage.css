@@ -1,0 +1,644 @@
+/* HomePage - Chat-style dashboard */
+
+.home-page-v2 {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background-color: var(--bg-app);
+  overflow: hidden;
+}
+
+/* Header */
+.home-page-v2 .home-header {
+  padding: 20px 24px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.home-page-v2 .home-title {
+  font-size: 34px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.home-page-v2 .header-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.home-page-v2 .header-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 20px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.home-page-v2 .header-btn:hover {
+  background-color: var(--bg-surface-hover);
+}
+
+/* Welcome Card - Compact, Left-aligned */
+.home-page-v2 .welcome-card {
+  background: linear-gradient(135deg, var(--color-primary-500), var(--color-primary-700));
+  border-radius: 16px;
+  padding: 14px 18px;
+  color: white;
+  margin: 0 24px 16px;
+  flex-shrink: 0;
+}
+
+.home-page-v2 .welcome-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: flex-start;
+}
+
+.home-page-v2 .assistant-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  flex-shrink: 0;
+}
+
+.home-page-v2 .welcome-text {
+  text-align: left;
+}
+
+.home-page-v2 .welcome-text h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 2px 0;
+  color: white;
+}
+
+.home-page-v2 .welcome-text p {
+  font-size: 13px;
+  opacity: 0.85;
+  margin: 0;
+  color: white;
+}
+
+/* Recording Panel - Compact bar shown during recording */
+.home-page-v2 .recording-panel {
+  margin: 0 24px 12px;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #FF453A, #FF6B5B);
+  border-radius: 12px;
+  color: white;
+  flex-shrink: 0;
+}
+
+.home-page-v2 .recording-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.home-page-v2 .recording-panel .recording-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.home-page-v2 .recording-panel .status-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: white;
+  animation: pulse 1s infinite;
+}
+
+.home-page-v2 .recording-panel .status-text {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.home-page-v2 .stop-recording-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  border-radius: 8px;
+  color: white;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.home-page-v2 .stop-recording-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.home-page-v2 .recording-steps-mini {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.home-page-v2 .step-mini {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  opacity: 0.9;
+}
+
+.home-page-v2 .step-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: white;
+  flex-shrink: 0;
+}
+
+.home-page-v2 .step-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Chat Container */
+.home-page-v2 .chat-container {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  padding: 0 24px 16px;
+  gap: 16px;
+  min-height: 0;
+}
+
+.home-page-v2 .chat-history {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding-right: 8px;
+}
+
+.home-page-v2 .chat-history.full-width {
+  width: 100%;
+}
+
+/* Instructions Box */
+.home-page-v2 .instructions-box {
+  background-color: var(--bg-surface);
+  border-radius: 20px;
+  padding: 24px;
+  border: 1px solid var(--border-subtle);
+}
+
+.home-page-v2 .instructions-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 20px;
+  color: var(--primary-main);
+}
+
+.home-page-v2 .instruction-item {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.home-page-v2 .instruction-item:last-child {
+  margin-bottom: 0;
+}
+
+.home-page-v2 .instruction-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background-color: var(--primary-main);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 14px;
+  flex-shrink: 0;
+}
+
+.home-page-v2 .instruction-text {
+  flex: 1;
+}
+
+.home-page-v2 .instruction-action {
+  font-weight: 600;
+  margin-bottom: 2px;
+  color: var(--text-primary);
+}
+
+.home-page-v2 .instruction-desc {
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+/* Messages */
+.home-page-v2 .message {
+  margin-bottom: 16px;
+  animation: fadeIn 0.3s ease;
+}
+
+.home-page-v2 .message.user {
+  text-align: right;
+}
+
+.home-page-v2 .message.ai {
+  text-align: left;
+}
+
+.home-page-v2 .message-bubble {
+  display: inline-block;
+  max-width: 85%;
+  padding: 12px 16px;
+  border-radius: 20px;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.home-page-v2 .message.ai .message-bubble {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-bottom-left-radius: 4px;
+  color: var(--text-primary);
+}
+
+.home-page-v2 .message.user .message-bubble {
+  background-color: var(--primary-main);
+  color: white;
+  border-bottom-right-radius: 4px;
+}
+
+.home-page-v2 .message-time {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+}
+
+/* Recording Sandbox */
+.home-page-v2 .recording-sandbox {
+  display: none;
+  width: 360px;
+  background-color: var(--bg-surface);
+  border-radius: 20px;
+  border: 1px solid var(--border-subtle);
+  overflow: hidden;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.home-page-v2 .recording-sandbox.active {
+  display: flex;
+  animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.home-page-v2 .sandbox-header {
+  padding: 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.home-page-v2 .sandbox-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.home-page-v2 .recording-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.home-page-v2 .status-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: #FF453A;
+  animation: pulse 1.5s infinite;
+}
+
+.home-page-v2 .status-indicator.idle {
+  background-color: var(--text-tertiary);
+  animation: none;
+}
+
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.5; }
+  100% { opacity: 1; }
+}
+
+.home-page-v2 .status-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.home-page-v2 .sandbox-content {
+  flex: 1;
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.home-page-v2 .recording-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.home-page-v2 .empty-steps {
+  color: var(--text-tertiary);
+  text-align: center;
+  padding: 24px;
+  font-size: 14px;
+}
+
+.home-page-v2 .step-item {
+  display: flex;
+  align-items: center;
+  padding: 12px;
+  background-color: var(--bg-surface-hover);
+  border-radius: 12px;
+}
+
+.home-page-v2 .step-number {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background-color: var(--primary-main);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  margin-right: 12px;
+  flex-shrink: 0;
+}
+
+.home-page-v2 .step-content {
+  flex: 1;
+}
+
+.home-page-v2 .step-action {
+  font-weight: 500;
+  margin-bottom: 2px;
+  color: var(--text-primary);
+}
+
+.home-page-v2 .step-timestamp {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.home-page-v2 .recording-tips {
+  margin-top: 16px;
+  padding: 12px;
+  background-color: var(--bg-surface-hover);
+  border-radius: 12px;
+}
+
+.home-page-v2 .tip-item {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+
+.home-page-v2 .tip-item:last-child {
+  margin-bottom: 0;
+}
+
+.home-page-v2 .tip-icon {
+  color: var(--primary-main);
+  margin-right: 8px;
+  margin-top: 2px;
+}
+
+.home-page-v2 .tip-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.home-page-v2 .tip-text strong {
+  color: var(--text-primary);
+}
+
+.home-page-v2 .sandbox-controls {
+  padding: 16px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.home-page-v2 .control-btn {
+  padding: 12px;
+  border-radius: 12px;
+  border: none;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all var(--transition-fast);
+}
+
+.home-page-v2 .control-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.home-page-v2 .record-btn {
+  background-color: #FF453A;
+  color: white;
+}
+
+.home-page-v2 .record-btn:hover:not(:disabled) {
+  background-color: #E03E35;
+}
+
+.home-page-v2 .stop-btn {
+  background-color: var(--bg-surface-hover);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+}
+
+.home-page-v2 .stop-btn:hover:not(:disabled) {
+  background-color: var(--color-gray-200);
+}
+
+/* Input Area - Fixed at bottom */
+.home-page-v2 .input-area {
+  padding: 12px 24px 90px; /* Extra padding for bottom nav */
+  background-color: var(--bg-surface);
+  border-top: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.home-page-v2 .input-wrapper {
+  display: flex;
+  flex-direction: row !important;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+}
+
+.home-page-v2 .text-input {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 24px;
+  font-size: 15px;
+  background-color: var(--bg-surface-hover);
+  outline: none;
+  color: var(--text-primary);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.home-page-v2 .text-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.home-page-v2 .text-input:focus {
+  border-color: var(--primary-main);
+  box-shadow: 0 0 0 3px var(--color-primary-100);
+}
+
+.home-page-v2 .action-buttons {
+  display: flex;
+  flex-direction: row !important;
+  gap: 8px;
+  flex-shrink: 0;
+  align-items: center;
+}
+
+.home-page-v2 .action-btn {
+  width: 42px;
+  height: 42px;
+  border-radius: 21px;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.home-page-v2 .action-btn:hover:not(:disabled) {
+  transform: scale(1.05);
+}
+
+.home-page-v2 .action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.home-page-v2 .send-btn {
+  background-color: var(--primary-main);
+  color: white;
+}
+
+.home-page-v2 .send-btn:hover:not(:disabled) {
+  background-color: var(--primary-hover);
+}
+
+.home-page-v2 .voice-btn {
+  background-color: #5E5CE6;
+  color: white;
+}
+
+.home-page-v2 .voice-btn:hover:not(:disabled) {
+  background-color: #4E4ED6;
+}
+
+.home-page-v2 .voice-btn.active {
+  box-shadow: 0 0 0 4px rgba(94, 92, 230, 0.3);
+}
+
+.home-page-v2 .record-icon-btn {
+  background-color: #FF453A;
+  color: white;
+}
+
+.home-page-v2 .record-icon-btn:hover:not(:disabled) {
+  background-color: #E03E35;
+}
+
+.home-page-v2 .record-icon-btn.active {
+  box-shadow: 0 0 0 4px rgba(255, 69, 58, 0.3);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .home-page-v2 .recording-sandbox {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    z-index: 1000;
+    border-radius: 0;
+  }
+
+  .home-page-v2 .home-title {
+    font-size: 28px;
+  }
+
+  .home-page-v2 .welcome-card {
+    margin: 0 16px 12px;
+    padding: 20px;
+  }
+
+  .home-page-v2 .chat-container {
+    padding: 0 16px 12px;
+  }
+
+  .home-page-v2 .input-area {
+    padding: 12px 16px 20px;
+  }
+
+  .home-page-v2 .action-btn {
+    width: 44px;
+    height: 44px;
+  }
+}

@@ -6,10 +6,8 @@ Supports actions based on element references [ref=eN].
 """
 
 import asyncio
-import datetime
 import logging
-import os
-from pathlib import Path
+import time
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from .config_loader import ConfigLoader
@@ -19,11 +17,39 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Debug mode - enabled via AMI_DEBUG environment variable
-DEBUG_MODE = os.environ.get("AMI_DEBUG", "").lower() in ("1", "true", "yes")
 
-# Debug screenshot directory
-DEBUG_SCREENSHOT_DIR = Path.home() / ".ami" / "debug_screenshots"
+def _parse_snapshot_format(value: str) -> Dict[str, Optional[str]]:
+    """Parse snapshot format like '[listitem "Best Products" [ref=e17]' into usable parts.
+
+    LLM sometimes mistakenly passes snapshot representation as selector.
+    This function extracts ref and text from such formats.
+
+    Args:
+        value: The possibly malformed selector string.
+
+    Returns:
+        Dict with 'ref' and 'text' keys (values may be None if not found).
+    """
+    import re
+
+    result: Dict[str, Optional[str]] = {"ref": None, "text": None}
+
+    if not value:
+        return result
+
+    # Check if this looks like a snapshot format (contains [ref=...] or starts with [tagname)
+    if "[ref=" in value or (value.startswith("[") and not value.startswith("[aria-")):
+        # Extract ref like [ref=e17] or ref=e17]
+        ref_match = re.search(r'\[?ref=([a-zA-Z0-9]+)\]?', value)
+        if ref_match:
+            result["ref"] = ref_match.group(1)
+
+        # Extract quoted text like "Best Products"
+        text_match = re.search(r'"([^"]+)"', value)
+        if text_match:
+            result["text"] = text_match.group(1)
+
+    return result
 
 
 class ActionExecutor:
@@ -36,43 +62,14 @@ class ActionExecutor:
         default_timeout: Optional[int] = None,
         short_timeout: Optional[int] = None,
         max_scroll_amount: Optional[int] = None,
-        debug: bool = False,
     ):
         self.page = page
         self.session = session  # Browser session instance for tab management
-        self.debug = debug or DEBUG_MODE
 
         # Configure timeouts using the config file with optional overrides
         self.default_timeout = ConfigLoader.get_action_timeout(default_timeout)
         self.short_timeout = ConfigLoader.get_short_timeout(short_timeout)
         self.max_scroll_amount = ConfigLoader.get_max_scroll_amount(max_scroll_amount)
-
-    def _debug_log(self, message: str, **kwargs) -> None:
-        """Log debug message if debug mode is enabled."""
-        if self.debug:
-            extra_info = " ".join(f"{k}={v}" for k, v in kwargs.items()) if kwargs else ""
-            msg = f"[DEBUG ActionExecutor] {message} {extra_info}".strip()
-            print(msg)  # Print to terminal
-            logger.info(msg)  # Also log to file
-
-    async def _save_debug_screenshot(self, action_type: str, ref: str = "", error: str = "") -> Optional[str]:
-        """Save a debug screenshot when an action fails."""
-        if not self.debug:
-            return None
-
-        try:
-            DEBUG_SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"{timestamp}_{action_type}_{ref}_{error[:20]}.png".replace(" ", "_").replace(":", "_")
-            filepath = DEBUG_SCREENSHOT_DIR / filename
-            await self.page.screenshot(path=str(filepath))
-            msg = f"[DEBUG] Screenshot saved: {filepath}"
-            print(msg)
-            logger.info(msg)
-            return str(filepath)
-        except Exception as e:
-            logger.warning(f"Failed to save debug screenshot: {e}")
-            return None
 
     # ------------------------------------------------------------------
     # Public helpers
@@ -140,13 +137,28 @@ class ActionExecutor:
 
         Click strategy (following Eigent's design):
         1. Always try Ctrl+Click first - this opens links in new tabs
-        2. If new tab opens → automatically switch to it (LLM sees new page)
+        2. If new tab opens → automatically switch to it
         3. If no new tab (timeout) → click succeeded on same page
-        4. If Ctrl+Click fails → fallback to normal force click
+        4. If Ctrl+Click fails → fallback to force click
         """
         ref = action.get("ref")
         text = action.get("text")
         selector = action.get("selector")
+
+        # Fix: LLM sometimes passes snapshot format as selector
+        # e.g., '[listitem "Best Products" [ref=e17]' instead of proper args
+        if selector and not ref:
+            parsed = _parse_snapshot_format(selector)
+            if parsed["ref"]:
+                logger.info(f"Parsed ref '{parsed['ref']}' from malformed selector: {selector}")
+                ref = parsed["ref"]
+            if parsed["text"] and not text:
+                logger.info(f"Parsed text '{parsed['text']}' from malformed selector: {selector}")
+                text = parsed["text"]
+            # Clear invalid selector to avoid CSS syntax error
+            if parsed["ref"] or parsed["text"]:
+                selector = None
+
         if not (ref or text or selector):
             return {
                 "message": "Error: click requires ref/text/selector",
@@ -162,15 +174,10 @@ class ActionExecutor:
         if text:
             strategies.append(f'text="{text}"')
 
-        # Log current page info
-        current_url = self.page.url
-        self._debug_log(f"Click action started", url=current_url, ref=ref, text=text)
-
         details: Dict[str, Any] = {
             "ref": ref,
             "selector": selector,
             "text": text,
-            "page_url": current_url,
             "strategies_tried": [],
             "successful_strategy": None,
             "click_method": None,
@@ -180,401 +187,213 @@ class ActionExecutor:
         # Find the first valid selector
         found_selector = None
         for sel in strategies:
-            count = await self.page.locator(sel).count()
-            self._debug_log(f"Trying selector: {sel}", count=count)
-            details['strategies_tried'].append({
-                'selector': sel,
-                'count': count,
-            })
-            if count > 0:
+            if await self.page.locator(sel).count() > 0:
                 found_selector = sel
                 break
 
         if not found_selector:
             details['error'] = "element_not_found"
-            details['failure_reason'] = "No matching element found with any strategy"
-
-            # If searching by ref, collect available refs on the page for debugging
-            if ref:
-                available_refs = await self._get_available_refs_sample()
-                details['available_refs_sample'] = available_refs
-                self._debug_log(
-                    f"Click failed: ref '{ref}' not found",
-                    available_refs_count=available_refs.get('total_count', 0),
-                    sample=available_refs.get('sample', [])[:5]
-                )
-            else:
-                self._debug_log("Click failed: element not found", strategies=strategies)
-
-            # If searching by text, try to find similar text on page
-            if text:
-                similar_texts = await self._find_similar_texts(text)
-                if similar_texts:
-                    details['similar_texts_on_page'] = similar_texts
-                    self._debug_log(f"Similar texts found on page", similar=similar_texts[:3])
-
-            await self._save_debug_screenshot("click", ref or text or "", "element_not_found")
             return {
-                "message": f"Error: Click failed - element not found. Tried: {strategies}",
+                "message": "Error: Click failed, element not found",
                 "details": details,
             }
 
         element = self.page.locator(found_selector).first
         details['successful_strategy'] = found_selector
 
-        # Get element info for debugging
-        try:
-            element_info = await self._get_element_debug_info(element)
-            details['element_info'] = element_info
-            self._debug_log(f"Element found", **element_info)
-        except Exception as e:
-            self._debug_log(f"Could not get element info: {e}")
+        click_target = element
+        click_target_kind = "element"
 
-        # Check for blocking modals before clicking
-        modal_info = await self._detect_blocking_modal()
-        if modal_info['has_modal']:
-            details['blocking_modal'] = modal_info
-            self._debug_log(f"Blocking modal detected", **modal_info)
-
-        # Strategy 1: Always try Ctrl+Click first (Eigent's approach)
-        # This handles links that open in new tabs AND regular clicks
+        # Log current tab count before click
         if self.session:
-            try:
-                self._debug_log("Attempting ctrl+click (always try first)")
-                async with self.page.context.expect_page(
+            tab_count_before = len(self.session._pages)
+            logger.debug(f"Click starting: selector={found_selector}, tabs_before={tab_count_before}, short_timeout={self.short_timeout}ms")
+
+        # Collect extra element diagnostics (best-effort) before click
+        element_diag = None
+        try:
+            element_diag = await element.evaluate(
+                """el => {
+                    const text = (el.innerText || el.textContent || '').trim();
+                    const rect = el.getBoundingClientRect();
+                    const inViewport =
+                        rect.width > 0 &&
+                        rect.height > 0 &&
+                        rect.bottom >= 0 &&
+                        rect.right >= 0 &&
+                        rect.top <= (window.innerHeight || document.documentElement.clientHeight) &&
+                        rect.left <= (window.innerWidth || document.documentElement.clientWidth);
+                    const closestLink = el.closest('a');
+                    const descendantLinks = el.querySelectorAll('a[href]');
+                    const descendantLink = descendantLinks.length === 1 ? descendantLinks[0] : null;
+                    const descendantText = descendantLink ? (descendantLink.innerText || descendantLink.textContent || '').trim() : '';
+                    const onclickAttr = el.getAttribute('onclick');
+                    const onclickProp = typeof el.onclick === 'function';
+                    return {
+                        tag: el.tagName,
+                        href: el.getAttribute('href'),
+                        closestHref: closestLink ? closestLink.getAttribute('href') : null,
+                        role: el.getAttribute('role'),
+                        ariaLabel: el.getAttribute('aria-label'),
+                        text: text ? text.slice(0, 200) : '',
+                        descendantHref: descendantLink ? descendantLink.getAttribute('href') : null,
+                        descendantText: descendantText ? descendantText.slice(0, 200) : '',
+                        descendantCount: descendantLinks.length,
+                        onclick: !!onclickAttr || onclickProp,
+                        rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+                        inViewport
+                    };
+                }"""
+            )
+            element_diag.update({
+                "visible": await element.is_visible(),
+                "enabled": await element.is_enabled(),
+                "page_url": self.page.url if self.page else None,
+            })
+            logger.debug(f"Click element diagnostics: {element_diag}")
+        except Exception as e:
+            logger.debug(f"Click diagnostics failed: {e}")
+
+        # Conservative redirect: if a container wraps a single link, prefer that link
+        try:
+            if element_diag:
+                tag = element_diag.get("tag")
+                href = element_diag.get("href")
+                closest_href = element_diag.get("closestHref")
+                role = element_diag.get("role")
+                has_onclick = element_diag.get("onclick")
+                descendant_count = element_diag.get("descendantCount")
+                descendant_href = element_diag.get("descendantHref")
+                source_text = (element_diag.get("text") or "").strip()
+                descendant_text = (element_diag.get("descendantText") or "").strip()
+                role_is_link = (role or "").lower() == "link"
+                if (
+                    tag in {"LI", "DIV", "SPAN"}
+                    and not href
+                    and not closest_href
+                    and not role_is_link
+                    and not has_onclick
+                    and descendant_count == 1
+                    and descendant_href
+                    and source_text
+                    and descendant_text
+                    and (source_text.lower() in descendant_text.lower() or descendant_text.lower() in source_text.lower())
+                ):
+                    descendant_locator = element.locator(":scope a[href]").first
+                    if await descendant_locator.count() > 0 and await descendant_locator.is_visible() and await descendant_locator.is_enabled():
+                        click_target = descendant_locator
+                        click_target_kind = "descendant_a"
+                        details["redirected_click_target"] = click_target_kind
+                        details["descendant_href"] = descendant_href
+                        details["descendant_text"] = descendant_text[:200]
+                        logger.debug(f"Redirecting click to descendant <a>: href={descendant_href}")
+        except Exception as e:
+            logger.debug(f"Descendant link check failed: {e}")
+
+        # Strategy 1: Ctrl+Click (always try first)
+        try:
+            if self.session:
+                context = self.page.context
+                context_pages_before = len(context.pages)
+                logger.debug(f"Attempting Ctrl+Click with expect_page... context={context}, context_pages_before={context_pages_before}")
+                t0 = time.perf_counter()
+                async with context.expect_page(
                     timeout=self.short_timeout
                 ) as new_page_info:
-                    await element.click(modifiers=["ControlOrMeta"])
+                    await click_target.click(modifiers=["ControlOrMeta"])
+                    logger.debug("Click executed, waiting for page event...")
                 # New tab was created
+                elapsed_ms = int((time.perf_counter() - t0) * 1000)
+                logger.debug("expect_page succeeded - new tab detected")
                 new_page = await new_page_info.value
                 await new_page.wait_for_load_state('domcontentloaded')
                 new_tab_index = await self.session.register_page(new_page)
                 if new_tab_index is not None:
                     await self.session.switch_to_tab(new_tab_index)
                     self.page = new_page
-                details.update(
-                    {
-                        "click_method": "ctrl_click_new_tab",
-                        "new_tab_created": True,
-                        "new_tab_index": new_tab_index,
-                    }
-                )
-                self._debug_log("Ctrl+click opened new tab, auto-switched", tab=new_tab_index)
+                tab_count_after = len(self.session._pages)
+                logger.debug(f"New tab registered: {new_tab_index}, tabs_after={tab_count_after}")
+                details.update({
+                    "click_method": "ctrl_click_new_tab",
+                    "new_tab_created": True,
+                    "new_tab_index": new_tab_index,
+                    "ctrl_click_elapsed_ms": elapsed_ms,
+                })
                 return {
                     "message": f"Clicked element, opened in new tab {new_tab_index}",
                     "details": details,
                 }
-            except asyncio.TimeoutError:
-                # No new tab was opened - Ctrl+Click may not have triggered JS handlers
-                # Fall through to try normal click for JavaScript-based navigation links
-                self._debug_log("Ctrl+click timeout - no new tab opened (likely SPA link)")
-                details['strategies_tried'].append({
-                    'selector': found_selector,
-                    'method': 'ctrl_click',
-                    'result': 'timeout_no_new_tab',
-                    'reason': 'SPA/JavaScript link does not open new tab with Ctrl+Click',
-                })
-            except Exception as e:
-                error_msg = str(e)
-                failure_reason = self._analyze_click_error(error_msg)
-                self._debug_log(f"Ctrl+click failed: {failure_reason}", error=error_msg[:200])
-                details['strategies_tried'].append({
-                    'selector': found_selector,
-                    'method': 'ctrl_click',
-                    'error': error_msg[:500],
-                    'failure_reason': failure_reason,
-                })
-                # Fall through to fallback
-
-        # Strategy 2: Fallback to normal force click if ctrl+click fails
-        try:
-            self._debug_log("Attempting force click (fallback)")
-            await element.click(force=True, timeout=self.default_timeout)
-            details["click_method"] = "force_click"
-
-            # Check if URL changed after click
-            new_url = self.page.url
-            url_changed = new_url != current_url
-            details['url_changed'] = url_changed
-            details['new_url'] = new_url if url_changed else None
-
-            self._debug_log("Force click succeeded", url_changed=url_changed)
-            return {
-                "message": f"Clicked element (fallback): {found_selector}",
-                "details": details,
-            }
-        except Exception as e:
-            error_msg = str(e)
-            failure_reason = self._analyze_click_error(error_msg)
-            self._debug_log(f"Force click failed: {failure_reason}", error=error_msg[:200])
-            await self._save_debug_screenshot("click", ref or text or "", "all_failed")
-            details["click_method"] = "all_failed"
-            details["error"] = error_msg[:500]
-            details["failure_reason"] = failure_reason
-            return {
-                "message": f"Error: Click failed - {failure_reason}",
-                "details": details,
-            }
-
-    async def _get_element_debug_info(self, element) -> Dict[str, Any]:
-        """Get debug information about an element."""
-        info = {}
-        try:
-            # Get bounding box
-            box = await element.bounding_box()
-            if box:
-                info['bounding_box'] = {
-                    'x': round(box['x'], 1),
-                    'y': round(box['y'], 1),
-                    'width': round(box['width'], 1),
-                    'height': round(box['height'], 1),
-                }
-                info['is_visible'] = box['width'] > 0 and box['height'] > 0
             else:
-                info['is_visible'] = False
-                info['bounding_box'] = None
-
-            # Check if element is in viewport
-            if box:
-                viewport = self.page.viewport_size
-                if viewport:
-                    in_viewport = (
-                        box['x'] >= 0 and
-                        box['y'] >= 0 and
-                        box['x'] + box['width'] <= viewport['width'] and
-                        box['y'] + box['height'] <= viewport['height']
-                    )
-                    info['in_viewport'] = in_viewport
-
-            # Get tag name and some attributes
-            tag_name = await element.evaluate("el => el.tagName.toLowerCase()")
-            info['tag_name'] = tag_name
-
-            # Get href if it's a link
-            if tag_name == 'a':
-                href = await element.get_attribute('href')
-                info['href'] = href
-
-            # Check if element is enabled/disabled
-            is_disabled = await element.is_disabled()
-            info['is_disabled'] = is_disabled
-
-        except Exception as e:
-            info['error'] = str(e)
-
-        return info
-
-    async def _detect_blocking_modal(self) -> Dict[str, Any]:
-        """Detect if there's a modal/dialog blocking the page."""
-        modal_selectors = [
-            '[role="dialog"]',
-            '[role="alertdialog"]',
-            '[aria-modal="true"]',
-            '.modal',
-            '.popup',
-            '[data-state="open"]',
-        ]
-
-        result = {
-            'has_modal': False,
-            'modal_type': None,
-            'modal_selector': None,
-        }
-
-        for selector in modal_selectors:
+                t0 = time.perf_counter()
+                await click_target.click(modifiers=["ControlOrMeta"])
+                details["click_method"] = "ctrl_click_no_session"
+                details["ctrl_click_elapsed_ms"] = int((time.perf_counter() - t0) * 1000)
+                return {
+                    "message": f"Clicked element (ctrl click): {found_selector}",
+                    "details": details,
+                }
+        except (asyncio.TimeoutError, TimeoutError) as e:
+            # No new tab was opened within timeout, click may have still worked
+            # Note: Playwright raises TimeoutError (builtin), not asyncio.TimeoutError
+            elapsed_ms = None
             try:
-                count = await self.page.locator(selector).count()
-                if count > 0:
-                    # Check if the modal is actually visible
-                    modal = self.page.locator(selector).first
-                    is_visible = await modal.is_visible()
-                    if is_visible:
-                        result['has_modal'] = True
-                        result['modal_selector'] = selector
-
-                        # Try to get modal info
-                        try:
-                            box = await modal.bounding_box()
-                            if box:
-                                result['modal_size'] = {
-                                    'width': round(box['width'], 1),
-                                    'height': round(box['height'], 1),
-                                }
-                        except:
-                            pass
-
-                        # Check for close button
-                        close_selectors = [
-                            f'{selector} button[aria-label*="close"]',
-                            f'{selector} button[aria-label*="Close"]',
-                            f'{selector} button:has-text("×")',
-                            f'{selector} button:has-text("Close")',
-                            f'{selector} [aria-label*="dismiss"]',
-                        ]
-                        for close_sel in close_selectors:
-                            try:
-                                close_count = await self.page.locator(close_sel).count()
-                                if close_count > 0:
-                                    result['has_close_button'] = True
-                                    result['close_button_selector'] = close_sel
-                                    break
-                            except:
-                                pass
-
-                        break
-            except:
+                elapsed_ms = int((time.perf_counter() - t0) * 1000)
+            except Exception:
                 pass
-
-        return result
-
-    def _analyze_click_error(self, error_msg: str) -> str:
-        """Analyze click error message and return a human-readable reason."""
-        error_lower = error_msg.lower()
-
-        if "intercepts pointer events" in error_lower:
-            # Extract the intercepting element info
-            if "dialog" in error_lower:
-                return "BLOCKED_BY_MODAL: A dialog/modal is blocking the element"
-            elif "overlay" in error_lower or "backdrop" in error_lower:
-                return "BLOCKED_BY_OVERLAY: An overlay/backdrop is blocking the element"
-            else:
-                return "BLOCKED_BY_ELEMENT: Another element is blocking the click target"
-
-        if "timeout" in error_lower:
-            if "waiting for element" in error_lower:
-                return "TIMEOUT_ELEMENT_NOT_READY: Element not ready within timeout"
-            elif "waiting for event" in error_lower:
-                return "TIMEOUT_NO_NEW_TAB: Ctrl+click didn't open new tab (likely SPA)"
-            else:
-                return "TIMEOUT_GENERAL: Operation timed out"
-
-        if "element is not visible" in error_lower:
-            return "ELEMENT_NOT_VISIBLE: Element exists but is not visible"
-
-        if "element is not enabled" in error_lower or "disabled" in error_lower:
-            return "ELEMENT_DISABLED: Element is disabled"
-
-        if "detached" in error_lower:
-            return "ELEMENT_DETACHED: Element was removed from DOM"
-
-        if "outside" in error_lower and "viewport" in error_lower:
-            return "ELEMENT_OUTSIDE_VIEWPORT: Element is outside the visible area"
-
-        return f"UNKNOWN_ERROR: {error_msg[:100]}"
-
-    async def _get_available_refs_sample(self) -> Dict[str, Any]:
-        """Get a sample of available aria-ref elements on the page for debugging."""
-        result = {
-            'total_count': 0,
-            'sample': [],
-            'ref_range': None,
-        }
-
-        try:
-            # Get all elements with aria-ref attribute
-            refs_data = await self.page.evaluate("""
-                () => {
-                    const elements = document.querySelectorAll('[aria-ref]');
-                    const refs = [];
-                    const allRefNumbers = [];
-
-                    elements.forEach((el, idx) => {
-                        const ref = el.getAttribute('aria-ref');
-                        const refNum = parseInt(ref.replace('e', ''), 10);
-                        if (!isNaN(refNum)) {
-                            allRefNumbers.push(refNum);
-                        }
-
-                        // Only collect sample (first 20 and last 10)
-                        if (idx < 20 || idx >= elements.length - 10) {
-                            refs.push({
-                                ref: ref,
-                                tag: el.tagName.toLowerCase(),
-                                text: (el.textContent || '').trim().substring(0, 50),
-                                visible: el.offsetParent !== null,
-                            });
-                        }
-                    });
-
-                    // Sort ref numbers to get range
-                    allRefNumbers.sort((a, b) => a - b);
-
-                    return {
-                        total: elements.length,
-                        sample: refs,
-                        minRef: allRefNumbers.length > 0 ? allRefNumbers[0] : null,
-                        maxRef: allRefNumbers.length > 0 ? allRefNumbers[allRefNumbers.length - 1] : null,
-                    };
-                }
-            """)
-
-            result['total_count'] = refs_data.get('total', 0)
-            result['sample'] = refs_data.get('sample', [])
-            if refs_data.get('minRef') is not None:
-                result['ref_range'] = f"e{refs_data['minRef']} - e{refs_data['maxRef']}"
-
+            tab_count_after = len(self.session._pages) if self.session else 0
+            context_pages_after = len(self.page.context.pages) if self.page else 0
+            logger.debug(f"[TIMEOUT CAUGHT] expect_page timeout after {self.short_timeout}ms (elapsed={elapsed_ms}ms) - session_tabs={tab_count_after}, context_pages={context_pages_after}")
+            details["click_method"] = "ctrl_click_same_tab"
+            if elapsed_ms is not None:
+                details["ctrl_click_elapsed_ms"] = elapsed_ms
+            return {
+                "message": f"Clicked element (same tab): {found_selector}",
+                "details": details,
+            }
         except Exception as e:
-            result['error'] = str(e)
-            self._debug_log(f"Failed to get available refs: {e}")
+            # Log full exception info to understand why it's not caught above
+            logger.debug(f"[EXCEPTION CAUGHT] type={type(e)}, mro={type(e).__mro__}, name={type(e).__name__}: {e}")
+            details['strategies_tried'].append({
+                'selector': found_selector,
+                'method': 'ctrl_click',
+                'error': str(e),
+            })
+            # Fall through to fallback
 
-        return result
-
-    async def _find_similar_texts(self, target_text: str, max_results: int = 5) -> list:
-        """Find similar text content on the page when exact match fails."""
+        # Strategy 2: Force click as fallback
+        logger.debug("Falling back to force click...")
         try:
-            # Normalize the target text
-            target_lower = target_text.lower().strip()
-
-            # Search for elements containing parts of the text
-            similar_texts = await self.page.evaluate("""
-                (args) => {
-                    const { targetLower, maxResults } = args;
-                    const results = [];
-
-                    // Get all text-containing elements
-                    const textElements = document.querySelectorAll('a, button, [role="button"], [role="link"], h1, h2, h3, h4, p, span, div');
-
-                    for (const el of textElements) {
-                        if (results.length >= maxResults) break;
-
-                        const text = (el.textContent || '').trim();
-                        if (!text || text.length > 200) continue;
-
-                        const textLower = text.toLowerCase();
-
-                        // Check for partial matches
-                        const targetWords = targetLower.split(/\\s+/).filter(w => w.length > 2);
-                        const matchedWords = targetWords.filter(word => textLower.includes(word));
-
-                        if (matchedWords.length > 0 && matchedWords.length >= targetWords.length * 0.3) {
-                            results.push({
-                                text: text.substring(0, 100),
-                                tag: el.tagName.toLowerCase(),
-                                ref: el.getAttribute('aria-ref'),
-                                matchedWords: matchedWords,
-                                matchRatio: matchedWords.length / targetWords.length,
-                            });
-                        }
-                    }
-
-                    // Sort by match ratio
-                    results.sort((a, b) => b.matchRatio - a.matchRatio);
-
-                    return results.slice(0, maxResults);
-                }
-            """, {'targetLower': target_lower, 'maxResults': max_results})
-
-            return similar_texts
-
+            await click_target.click(force=True, timeout=self.default_timeout)
+            tab_count_after = len(self.session._pages) if self.session else 0
+            logger.debug(f"Force click succeeded, tabs_after={tab_count_after}")
+            details["click_method"] = "force_click"
+            return {
+                "message": f"Clicked element (force): {found_selector}",
+                "details": details,
+            }
         except Exception as e:
-            self._debug_log(f"Failed to find similar texts: {e}")
-            return []
+            logger.debug(f"Force click also failed: {e}")
+            details["click_method"] = "all_failed"
+            details["error"] = str(e)
+            return {
+                "message": f"Error: All click strategies failed for {found_selector}",
+                "details": details,
+            }
 
     async def _type(self, action: Dict[str, Any]) -> Dict[str, Any]:
         """Handle typing text into input fields."""
         ref = action.get("ref")
         selector = action.get("selector")
         text = action.get("text", "")
+
+        # Fix: LLM sometimes passes snapshot format as selector
+        if selector and not ref:
+            parsed = _parse_snapshot_format(selector)
+            if parsed["ref"]:
+                logger.info(f"Parsed ref '{parsed['ref']}' from malformed selector: {selector}")
+                ref = parsed["ref"]
+                selector = None
+
         if not (ref or selector):
             return {
                 "message": "Error: type requires ref/selector",
@@ -605,6 +424,15 @@ class ActionExecutor:
         ref = action.get("ref")
         selector = action.get("selector")
         value = action.get("value", "")
+
+        # Fix: LLM sometimes passes snapshot format as selector
+        if selector and not ref:
+            parsed = _parse_snapshot_format(selector)
+            if parsed["ref"]:
+                logger.info(f"Parsed ref '{parsed['ref']}' from malformed selector: {selector}")
+                ref = parsed["ref"]
+                selector = None
+
         if not (ref or selector):
             return {
                 "message": "Error: select requires ref/selector",

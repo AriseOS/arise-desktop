@@ -3,12 +3,15 @@
 This module creates Manage edges that connect Domains to States, tracking visit information.
 """
 
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
-from src.cloud_backend.memgraph.ontology.domain import Domain, Manage
+from src.cloud_backend.memgraph.ontology.domain import Domain, Manage, normalize_domain_url
 from src.cloud_backend.memgraph.ontology.state import State
+
+logger = logging.getLogger(__name__)
 
 
 class ManageGenerationResult:
@@ -90,7 +93,7 @@ class ManageGenerator:
             domain = self._find_domain_for_state(state, domain_url_map)
 
             if not domain:
-                print(f"Warning: No domain found for state {state.page_url}")
+                logger.warning(f" No domain found for state {state.page_url}")
                 continue
 
             # Create or update Manage edge
@@ -155,11 +158,12 @@ class ManageGenerator:
 
         for domain in domains:
             # Map domain_url
-            url_map[domain.domain_url] = domain
+            domain_url = normalize_domain_url(domain.domain_url, domain.domain_type)
+            if not domain_url:
+                continue
+            url_map[domain_url] = domain
 
             # Also map common variations
-            domain_url = domain.domain_url
-
             # Add variations (with/without www, etc.)
             variations = [
                 domain_url,
@@ -188,6 +192,12 @@ class ManageGenerator:
         """
         page_url = state.page_url
 
+        # Prefer explicit state domain if available
+        if state.domain:
+            domain_key = normalize_domain_url(state.domain)
+            if domain_key in domain_url_map:
+                return domain_url_map[domain_key]
+
         # Try exact match first
         if page_url in domain_url_map:
             return domain_url_map[page_url]
@@ -200,6 +210,10 @@ class ManageGenerator:
             if not domain_url and parsed.path:
                 # Handle app-style URLs (no scheme)
                 domain_url = parsed.path.split('/')[0]
+
+            domain_url = normalize_domain_url(domain_url)
+            if not domain_url:
+                return None
 
             # Try direct lookup
             if domain_url in domain_url_map:
@@ -221,7 +235,7 @@ class ManageGenerator:
                     return domain
 
         except Exception as err:
-            print(f"Warning: Failed to parse URL {page_url}: {str(err)}")
+            logger.warning(f" Failed to parse URL {page_url}: {str(err)}")
 
         return None
 
