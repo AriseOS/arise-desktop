@@ -1484,21 +1484,37 @@ class GraphIntentSequenceManager(IntentSequenceManager):
     Manages IntentSequence as independent graph nodes with HAS_SEQUENCE
     relationships to States. This enables vector search on IntentSequences.
 
+    Deduplication Strategy:
+        1. Content hash (exact match): Fast MD5 comparison of intent content
+        2. Embedding similarity (semantic match): Cosine similarity >= threshold
+
     Attributes:
         graph_store: GraphStore instance for persistence.
         node_label: Label for IntentSequence nodes (default: "IntentSequence").
         rel_type: Relationship type for HAS_SEQUENCE (default: "HAS_SEQUENCE").
+        similarity_threshold: Cosine similarity threshold for dedup (default: 0.95).
     """
 
-    def __init__(self, graph_store: GraphStore):
+    # Default similarity threshold for embedding-based deduplication
+    DEFAULT_SIMILARITY_THRESHOLD = 0.95
+
+    def __init__(
+        self,
+        graph_store: GraphStore,
+        similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD
+    ):
         """Initialize GraphIntentSequenceManager.
 
         Args:
             graph_store: GraphStore instance for storage operations.
+            similarity_threshold: Cosine similarity threshold for deduplication.
+                Sequences with similarity >= threshold are considered duplicates.
+                Default: 0.95 (very similar descriptions are deduplicated).
         """
         self.graph_store = graph_store
         self.node_label = "IntentSequence"
         self.rel_type = "HAS_SEQUENCE"
+        self.similarity_threshold = similarity_threshold
 
     def create_sequence(self, sequence: IntentSequence) -> bool:
         """Create a new IntentSequence node with deduplication.
@@ -1528,7 +1544,9 @@ class GraphIntentSequenceManager(IntentSequenceManager):
     def find_duplicate(self, sequence: IntentSequence, state_id: str) -> Optional[str]:
         """Check if a duplicate IntentSequence already exists for a State.
 
-        Uses the stored content_hash property for fast comparison.
+        Deduplication strategy (within the same State):
+        1. Content hash match: Exact match based on MD5 of intent content (fast)
+        2. Embedding similarity: If both have embeddings and similarity >= threshold
 
         Args:
             sequence: IntentSequence to check.
@@ -1537,16 +1555,55 @@ class GraphIntentSequenceManager(IntentSequenceManager):
         Returns:
             Existing sequence ID if duplicate found, None otherwise.
         """
-        content_hash = self._compute_content_hash(sequence)
-        if not content_hash:
+        existing_seqs = self.list_by_state(state_id)
+        if not existing_seqs:
             return None
 
-        existing_seqs = self.list_by_state(state_id)
-        for existing in existing_seqs:
-            existing_hash = existing.content_hash or self._compute_content_hash(existing)
-            if existing_hash == content_hash:
-                return existing.id
+        # Step 1: Content hash exact match (fast path)
+        content_hash = self._compute_content_hash(sequence)
+        if content_hash:
+            for existing in existing_seqs:
+                existing_hash = existing.content_hash or self._compute_content_hash(existing)
+                if existing_hash == content_hash:
+                    return existing.id
+
+        # Step 2: Embedding similarity match (semantic dedup)
+        # Only if the new sequence has an embedding vector
+        if sequence.embedding_vector:
+            for existing in existing_seqs:
+                if existing.embedding_vector:
+                    similarity = self._cosine_similarity(
+                        sequence.embedding_vector, existing.embedding_vector
+                    )
+                    if similarity >= self.similarity_threshold:
+                        print(f"[IntentSequenceDedup] Found similar sequence: "
+                              f"similarity={similarity:.4f} >= threshold={self.similarity_threshold}")
+                        return existing.id
+
         return None
+
+    @staticmethod
+    def _cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
+        """Calculate cosine similarity between two vectors.
+
+        Args:
+            vec1: First embedding vector.
+            vec2: Second embedding vector.
+
+        Returns:
+            Cosine similarity score in range [-1, 1], or 0.0 if invalid.
+        """
+        if not vec1 or not vec2 or len(vec1) != len(vec2):
+            return 0.0
+
+        dot_product = sum(a * b for a, b in zip(vec1, vec2))
+        norm1 = math.sqrt(sum(a * a for a in vec1))
+        norm2 = math.sqrt(sum(b * b for b in vec2))
+
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+
+        return dot_product / (norm1 * norm2)
 
     @staticmethod
     def _compute_content_hash(sequence: IntentSequence) -> Optional[str]:

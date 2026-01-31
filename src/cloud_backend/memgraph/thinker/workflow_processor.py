@@ -1338,6 +1338,17 @@ URL: {state.page_url}
                 except Exception as e:
                     print(f"Warning: Failed to update state {state.id}: {e}")
 
+        # Update IntentSequences with descriptions and embeddings
+        # IntentSequences were created in _create_intent_sequence but without
+        # description/embedding at that time. Now we update them.
+        if self.memory.intent_sequence_manager:
+            for sequence in intent_sequences:
+                if sequence.description or sequence.embedding_vector:
+                    try:
+                        self.memory.intent_sequence_manager.update_sequence(sequence)
+                    except Exception as e:
+                        print(f"Warning: Failed to update IntentSequence {sequence.id}: {e}")
+
         # Store actions
         for action in actions:
             try:
