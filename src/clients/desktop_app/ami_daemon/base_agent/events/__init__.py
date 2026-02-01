@@ -49,6 +49,8 @@ from .action_types import (
     # Memory events
     MemoryQueryData,
     MemoryResultData,
+    MemoryLevelData,
+    MemoryEventData,
     # System events
     HeartbeatData,
     ErrorData,
@@ -127,6 +129,8 @@ __all__ = [
     # Memory events
     "MemoryQueryData",
     "MemoryResultData",
+    "MemoryLevelData",
+    "MemoryEventData",
     # System events
     "HeartbeatData",
     "ErrorData",

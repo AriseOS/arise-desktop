@@ -101,6 +101,11 @@ TOOL_PREFIX_TO_TOOLKIT = {
     "memory": "Memory Toolkit",
     "task": "Task Planning Toolkit",
     "calendar": "Calendar Toolkit",
+    # Internal task management tools (ListenBrowserAgent)
+    "get": "Task Planning Toolkit",      # get_current_plan
+    "complete": "Task Planning Toolkit", # complete_subtask
+    "report": "Task Planning Toolkit",   # report_subtask_failure
+    "replan": "Task Planning Toolkit",   # replan_task
 }
 
 
@@ -665,12 +670,12 @@ class QuickTaskService:
         # Set as current manager for toolkits
         set_current_manager(state.dir_manager)
 
-        # Execute task asynchronously using Workforce architecture
+        # Execute task asynchronously using AMI Executor
         asyncio.create_task(
-            self._execute_task_workforce(task_id, headless=headless)
+            self._execute_task_ami(task_id, headless=headless)
         )
+        logger.info(f"Task submitted: {task_id} (workspace: {state.working_directory})")
 
-        logger.info(f"Task submitted (Workforce): {task_id} (workspace: {state.working_directory})")
         return task_id
 
     async def continue_task(
@@ -727,9 +732,9 @@ class QuickTaskService:
             # Set as current manager
             set_current_manager(new_state.dir_manager)
 
-            # Execute new task using Workforce architecture
+            # Execute new task using AMI Executor
             asyncio.create_task(
-                self._execute_task_workforce(new_task_id, headless=headless)
+                self._execute_task_ami(new_task_id, headless=headless)
             )
 
             logger.info(
@@ -756,9 +761,9 @@ class QuickTaskService:
             # Set as current manager
             set_current_manager(old_state.dir_manager)
 
-            # Execute continued task using Workforce architecture
+            # Execute continued task using AMI Executor
             asyncio.create_task(
-                self._execute_task_workforce(task_id, headless=headless)
+                self._execute_task_ami(task_id, headless=headless)
             )
 
             logger.info(
@@ -1120,6 +1125,9 @@ Respond ONLY with the JSON array, no other text."""
         the /confirm-subtasks API. Backend has a fallback timeout in case
         frontend fails to respond.
 
+        Note: awaiting_confirmation should already be set to True before calling
+        this method (to avoid race condition with frontend confirm request).
+
         Args:
             state: TaskState with subtasks to confirm
             timeout_seconds: Maximum wait time (default 120s as safety net)
@@ -1128,7 +1136,19 @@ Respond ONLY with the JSON array, no other text."""
             True if confirmed, False if cancelled or timeout
         """
         logger.info(f"[Task {state.task_id}] Waiting for confirmation from frontend")
-        state.awaiting_confirmation = True
+        # Note: awaiting_confirmation is set before TaskDecomposedData event is sent
+        # to avoid race condition. We ensure it's True here as a safety check.
+        if not state.awaiting_confirmation:
+            state.awaiting_confirmation = True
+
+        # Check if already confirmed (race condition: frontend confirmed before we got here)
+        if state._confirmation_event.is_set():
+            logger.info(f"[Task {state.task_id}] Confirmation already received")
+            cancelled = state._confirmation_cancelled
+            state.awaiting_confirmation = False
+            state._confirmation_event.clear()
+            state._confirmation_cancelled = False
+            return not cancelled
 
         try:
             # BUG-4 fix: Add timeout to prevent indefinite waiting
@@ -1147,15 +1167,18 @@ Respond ONLY with the JSON array, no other text."""
                 title="Auto-confirmed",
                 message="Task plan auto-confirmed due to timeout",
             ))
-            return True
-        finally:
             state.awaiting_confirmation = False
-            # BUG-5 fix: Reset confirmation flags for potential reuse
-            state._confirmation_event.clear()
-            state._confirmation_cancelled = False
+            return True
 
-        # Check if cancelled
-        if state._confirmation_cancelled:
+        # Check if cancelled (before resetting flags)
+        cancelled = state._confirmation_cancelled
+
+        # Reset state for potential reuse
+        state.awaiting_confirmation = False
+        state._confirmation_event.clear()
+        state._confirmation_cancelled = False
+
+        if cancelled:
             logger.info(f"[Task {state.task_id}] Task plan was cancelled by user")
             return False
 
@@ -1180,7 +1203,14 @@ Respond ONLY with the JSON array, no other text."""
             return False
 
         if not state.awaiting_confirmation:
-            logger.warning(f"Task {task_id} is not awaiting confirmation")
+            # Detailed debug info to diagnose race condition
+            logger.warning(
+                f"Task {task_id} is not awaiting confirmation. "
+                f"State: status={state.status}, "
+                f"awaiting_confirmation={state.awaiting_confirmation}, "
+                f"subtasks_count={len(state.subtasks) if state.subtasks else 0}, "
+                f"confirmation_event_set={state._confirmation_event.is_set()}"
+            )
             return False
 
         # Update subtasks with user edits
@@ -1401,30 +1431,29 @@ Response:"""
             logger.error(f"[Task {task_id}] Error waiting for user message: {e}")
             return None
 
-    async def _execute_task_workforce(
+    async def _execute_task_ami(
         self,
         task_id: str,
         headless: bool = False,
     ):
         """
-        Execute a task using Orchestrator Agent + AMIWorkforce.
+        Execute a task using AMITaskPlanner + AMITaskExecutor.
 
-        This method implements the new Orchestrator pattern:
-        1. Orchestrator Agent receives the user message
-        2. Orchestrator decides: direct reply, tool use, or decompose_task
-        3. If decompose_task is called, trigger full Workforce execution
-        4. After completion, wait for next user message (multi-turn)
+        This method replaces _execute_task_workforce with a simpler implementation:
+        - Uses AMITaskPlanner for coarse-grained decomposition + Memory query
+        - Uses AMITaskExecutor for sequential execution with workflow_guide injection
+        - No CAMEL Workforce dependency
 
-        The key difference from the old _classify_task approach:
-        - No hardcoded classification rules
-        - LLM decides autonomously how to handle each request
-        - Can use tools for simple tasks without full Workforce overhead
+        Key differences from _execute_task_workforce:
+        - workflow_guide is injected as explicit instruction, not metadata
+        - ~650 lines vs ~2000 lines of code
+        - Direct prompt control
 
         Args:
             task_id: Task identifier
             headless: Whether to run browser in headless mode
         """
-        logger.info(f"[Task {task_id}] Starting Orchestrator-based session")
+        logger.info(f"[Task {task_id}] Starting AMI Executor-based session")
 
         state = self._tasks[task_id]
         state.status = TaskStatus.RUNNING
@@ -1465,8 +1494,9 @@ Response:"""
         )
         logger.info(f"[Task {task_id}] Orchestrator Agent created")
 
-        # Workforce instance (created lazily when decompose_task is called)
-        workforce = None
+        # AMI components (created lazily)
+        executor = None
+        agents_dict = None
         current_question = state.task
         loop_iteration = 0
 
@@ -1477,13 +1507,8 @@ Response:"""
 
             try:
                 # ===== Run Orchestrator Agent =====
-                # The Orchestrator will either:
-                # 1. Reply directly (no tools)
-                # 2. Use tools and reply
-                # 3. Call decompose_task (triggers Workforce)
                 logger.info(f"[Task {task_id}] Running Orchestrator for: {current_question[:100]}...")
 
-                # Use run_orchestrator for complete tool-use loop
                 orchestrator_reply = await run_orchestrator(
                     orchestrator=orchestrator,
                     decompose_tool=decompose_tool,
@@ -1494,47 +1519,48 @@ Response:"""
 
                 # Check if decompose_task was called
                 if decompose_tool.triggered:
-                    # ===== Workforce Execution Path =====
+                    # ===== AMI Executor Path =====
                     task_to_decompose = decompose_tool.task_description or current_question
-                    logger.info(f"[Task {task_id}] decompose_task triggered, starting Workforce")
+                    logger.info(f"[Task {task_id}] decompose_task triggered, starting AMI Executor")
 
-                    # Emit confirmed event (Eigent pattern)
+                    # Emit confirmed event
                     await state.put_event(ConfirmedData(
                         task_id=task_id,
                         question=task_to_decompose,
                     ))
 
                     try:
-                        # Create or reuse Workforce
-                        if workforce is None:
-                            workforce = await self._create_workforce(task_id, state, headless)
-                            logger.info(f"[Task {task_id}] Created new Workforce")
-
-                        # Store workforce reference for pause/resume
-                        state._workforce = workforce
-
-                        # Query Memory for workflow guidance
-                        await workforce.query_memory_for_task(task_to_decompose)
-                        workforce.propagate_workflow_guide_to_workers()
-
-                        if workforce.has_workflow_guide:
-                            logger.info(
-                                f"[Task {task_id}] Memory guidance active: level={workforce.memory_level}"
+                        # Create agents and executor if not yet created
+                        if agents_dict is None:
+                            agents_dict, task_agent = await self._create_agents_for_ami_executor(
+                                task_id, state, headless
                             )
+                            logger.info(f"[Task {task_id}] Created agents for AMI Executor")
 
-                        # Decompose task
-                        logger.info(f"[Task {task_id}] Decomposing task via Workforce...")
-                        subtasks = await workforce.decompose_task(task_to_decompose)
+                        # Create Memory Toolkit
+                        memory_toolkit = await self._create_memory_toolkit(task_id, state)
+
+                        # Create Task Planner
+                        from ..base_agent.core import AMITaskPlanner, AMITaskExecutor
+                        planner = AMITaskPlanner(
+                            task_id=task_id,
+                            task_state=state,
+                            task_agent=task_agent,
+                            memory_toolkit=memory_toolkit,
+                        )
+
+                        # Phase 1 & 2: Decompose and query Memory
+                        logger.info(f"[Task {task_id}] AMI: Decomposing and querying Memory...")
+                        subtasks = await planner.decompose_and_query_memory(task_to_decompose)
 
                         if not subtasks:
-                            logger.warning(f"[Task {task_id}] Task decomposition returned no subtasks")
+                            logger.warning(f"[Task {task_id}] Decomposition returned no subtasks")
                             await state.put_event(NoticeData(
                                 task_id=task_id,
                                 level="warning",
                                 title="Decomposition Failed",
                                 message="Could not decompose task into subtasks.",
                             ))
-                            # Fall back to orchestrator response
                             state.add_conversation("assistant", orchestrator_reply)
                             await state.put_event(WaitConfirmData(
                                 task_id=task_id,
@@ -1545,12 +1571,34 @@ Response:"""
                         else:
                             # Update state with subtasks
                             state.subtasks = [
-                                {"id": st.id, "content": st.content, "state": "OPEN", "status": "OPEN"}
+                                {
+                                    "id": st.id,
+                                    "content": st.content,
+                                    "state": st.state.value,
+                                    "status": st.state.value,
+                                    "agent_type": st.agent_type,
+                                    "memory_level": st.memory_level,
+                                }
                                 for st in subtasks
                             ]
                             state.summary_task = task_to_decompose
 
-                            # Wait for frontend confirmation
+                            # Set awaiting_confirmation BEFORE emitting event
+                            # This fixes race condition where frontend sends confirm
+                            # before _wait_for_confirmation is called
+                            state.awaiting_confirmation = True
+                            state._confirmation_event.clear()
+                            state._confirmation_cancelled = False
+
+                            # Emit TaskDecomposedData event
+                            await state.put_event(TaskDecomposedData(
+                                task_id=task_id,
+                                subtasks=state.subtasks,
+                                summary_task=task_to_decompose,
+                                total_subtasks=len(subtasks),
+                            ))
+
+                            # Wait for confirmation
                             confirmed = await self._wait_for_confirmation(state)
 
                             if not confirmed:
@@ -1561,7 +1609,6 @@ Response:"""
                                     completed_count=0,
                                     pending_count=len(subtasks),
                                 ))
-                                # Eigent multi-turn: Allow user to continue after cancelling plan
                                 context = "mid_execution" if loop_iteration > 1 else "initial"
                                 await state.put_event(WaitConfirmData(
                                     task_id=task_id,
@@ -1571,34 +1618,41 @@ Response:"""
                                 ))
                                 state.subtasks = []
                             else:
-                                # Execute subtasks
-                                logger.info(f"[Task {task_id}] Starting Workforce execution with {len(subtasks)} subtasks...")
+                                # Execute subtasks with AMI Executor
+                                logger.info(f"[Task {task_id}] Starting AMI Executor with {len(subtasks)} subtasks...")
                                 start_time = datetime.now()
 
                                 await state.put_event(WorkforceStartedData(
                                     task_id=task_id,
                                     total_tasks=len(subtasks),
-                                    workers_count=4,
+                                    workers_count=len(agents_dict),
                                     description=f"Starting execution with {len(subtasks)} subtasks",
                                 ))
 
-                                await workforce.start_with_subtasks(subtasks)
+                                # Create executor
+                                executor = AMITaskExecutor(
+                                    task_id=task_id,
+                                    task_state=state,
+                                    agents=agents_dict,
+                                )
+                                executor.set_subtasks(subtasks)
 
-                                # Get progress summary
-                                progress = workforce.get_progress()
+                                # Execute
+                                result = await executor.execute()
+
                                 duration = (datetime.now() - start_time).total_seconds()
 
                                 await state.put_event(WorkforceCompletedData(
                                     task_id=task_id,
-                                    completed_count=progress["completed"],
-                                    failed_count=progress["failed"],
-                                    total_count=progress["total"],
+                                    completed_count=result["completed"],
+                                    failed_count=result["failed"],
+                                    total_count=result["total"],
                                     duration_seconds=duration,
                                 ))
 
                                 # Aggregate results
-                                final_output = await self._aggregate_results(
-                                    task_id, state, subtasks, progress, duration
+                                final_output = await self._aggregate_ami_results(
+                                    task_id, state, subtasks, result, duration
                                 )
 
                                 # Record in conversation history
@@ -1610,17 +1664,15 @@ Response:"""
 
                                 # Update state
                                 state.result = {
-                                    "success": progress["failed"] == 0,
+                                    "success": result["failed"] == 0,
                                     "message": final_output,
                                     "data": {
-                                        "completed": progress["completed"],
-                                        "failed": progress["failed"],
+                                        "completed": result["completed"],
+                                        "failed": result["failed"],
                                         "duration": duration,
                                     },
                                 }
 
-                                # Eigent multi-turn pattern:
-                                # Stay in conversation loop, send WaitConfirmData
                                 context = "mid_execution" if loop_iteration > 1 else "initial"
                                 await state.put_event(WaitConfirmData(
                                     task_id=task_id,
@@ -1629,10 +1681,10 @@ Response:"""
                                     context=context,
                                 ))
 
-                                logger.info(f"[Task {task_id}] Workforce completed, ready for multi-turn")
+                                logger.info(f"[Task {task_id}] AMI Executor completed, ready for multi-turn")
 
                     except Exception as e:
-                        logger.exception(f"[Task {task_id}] Workforce execution failed: {e}")
+                        logger.exception(f"[Task {task_id}] AMI Executor failed: {e}")
                         state.error = str(e)
 
                         await state.put_event(WorkforceStoppedData(
@@ -1643,7 +1695,6 @@ Response:"""
                             task_id=task_id,
                             error=str(e),
                         ))
-                        # Eigent multi-turn: Allow retry after failure
                         context = "mid_execution" if loop_iteration > 1 else "initial"
                         await state.put_event(WaitConfirmData(
                             task_id=task_id,
@@ -1651,19 +1702,15 @@ Response:"""
                             question=task_to_decompose,
                             context=context,
                         ))
-                        # Set status to WAITING for multi-turn retry
                         state.status = TaskStatus.WAITING
                         state.updated_at = datetime.now()
 
                 else:
-                    # ===== Direct Response Path (No Workforce) =====
-                    # Orchestrator replied directly or used tools
+                    # ===== Direct Response Path (No Execution) =====
                     logger.info(f"[Task {task_id}] Orchestrator handled directly (no decompose_task)")
 
-                    # Record response in conversation history
                     state.add_conversation("assistant", orchestrator_reply)
 
-                    # Emit wait_confirm event for frontend
                     context = "initial" if loop_iteration == 1 else "mid_execution"
                     await state.put_event(WaitConfirmData(
                         task_id=task_id,
@@ -1689,7 +1736,6 @@ Response:"""
                     title="Execution Error",
                     message=str(e),
                 ))
-                # Eigent multi-turn: Allow retry after failure
                 context = "mid_execution" if loop_iteration > 1 else "initial"
                 await state.put_event(WaitConfirmData(
                     task_id=task_id,
@@ -1699,7 +1745,7 @@ Response:"""
                 ))
                 state.status = TaskStatus.WAITING
 
-            # ===== Wait for Next User Message (Multi-turn) =====
+            # ===== Wait for Next User Message =====
             logger.info(f"[Task {task_id}] Waiting for next user message...")
 
             try:
@@ -1708,7 +1754,6 @@ Response:"""
                     logger.info(f"[Task {task_id}] No more user messages, ending session")
                     break
 
-                # Add to conversation history
                 state.add_conversation("user", next_message)
                 current_question = next_message
                 logger.info(f"[Task {task_id}] Received next user message: {next_message[:100]}...")
@@ -1721,11 +1766,10 @@ Response:"""
                 break
 
         # ===== Session End Cleanup =====
-        logger.info(f"[Task {task_id}] Multi-turn session ended after {loop_iteration} iterations")
+        logger.info(f"[Task {task_id}] AMI session ended after {loop_iteration} iterations")
         state.status = TaskStatus.COMPLETED
         state.completed_at = datetime.now()
 
-        # Notify frontend that session has ended
         await state.put_event(EndData(
             task_id=task_id,
             status="completed",
@@ -1742,17 +1786,17 @@ Response:"""
         except Exception as cleanup_error:
             logger.warning(f"[Task {task_id}] Error closing browser session: {cleanup_error}")
 
-    async def _create_workforce(
+    async def _create_agents_for_ami_executor(
         self,
         task_id: str,
         state: "TaskState",
         headless: bool = False,
     ):
         """
-        Create a new Workforce with all agents.
+        Create agents for AMI Executor.
 
-        This is extracted from _execute_task_workforce to support workforce reuse
-        in multi-turn conversations.
+        Returns a dictionary of agents keyed by agent_type for AMITaskExecutor,
+        plus the task_agent for AMITaskPlanner.
 
         Args:
             task_id: Task identifier
@@ -1760,21 +1804,22 @@ Response:"""
             headless: Whether to run browser in headless mode
 
         Returns:
-            AMIWorkforce instance with all workers added
+            Tuple of (agents_dict, task_agent)
         """
-        from ..base_agent.core import AMIWorkforce
         from ..base_agent.core.agent_factories import (
-            create_browser_agent,
+            create_listen_browser_agent,
             create_developer_agent,
             create_document_agent,
             create_multi_modal_agent,
+            create_model_backend,
         )
+        from camel.agents import ChatAgent
 
-        logger.info(f"[Task {task_id}] Creating agents...")
+        logger.info(f"[Task {task_id}] Creating agents for AMI Executor...")
 
         # Create all agents in parallel
         agent_results = await asyncio.gather(
-            create_browser_agent(
+            create_listen_browser_agent(
                 task_state=state,
                 task_id=task_id,
                 working_directory=state.working_directory,
@@ -1820,24 +1865,19 @@ Response:"""
             return_exceptions=True,
         )
 
-        # Process results and handle partial failures
-        agent_names = ["Browser", "Developer", "Document", "Multi-Modal"]
-        available_agents = []
+        # Process results
+        agent_names = ["browser", "code", "document", "multi_modal"]
+        agents_dict = {}
         failed_agents = []
 
         for i, result in enumerate(agent_results):
             if isinstance(result, Exception):
                 logger.warning(f"[Task {task_id}] {agent_names[i]} Agent creation failed: {result}")
                 failed_agents.append(agent_names[i])
-                available_agents.append(None)
             else:
-                available_agents.append(result)
+                agents_dict[agent_names[i]] = result
 
-        browser_agent, developer_agent, document_agent, multi_modal_agent = available_agents
-
-        # Check if we have at least one working agent
-        working_agents = [a for a in available_agents if a is not None]
-        if not working_agents:
+        if not agents_dict:
             raise RuntimeError(f"All agents failed to create: {failed_agents}")
 
         if failed_agents:
@@ -1848,97 +1888,73 @@ Response:"""
                 message=f"Some agents failed to initialize: {', '.join(failed_agents)}. Continuing with available agents.",
             ))
 
-        logger.info(f"[Task {task_id}] Agents created: {len(working_agents)}/4 available")
+        logger.info(f"[Task {task_id}] Agents created: {len(agents_dict)}/4 available")
 
-        # Create Memory Toolkit
-        memory_toolkit = None
-        if self._cloud_client and self._llm_api_key:
-            try:
-                from ..base_agent.tools.toolkits import MemoryToolkit
-                memory_api_base_url = getattr(self._cloud_client, 'api_url', None)
-                if memory_api_base_url:
-                    effective_user_id = state.user_id or self._user_id or "default"
-                    memory_toolkit = MemoryToolkit(
-                        memory_api_base_url=memory_api_base_url,
-                        ami_api_key=self._llm_api_key,
-                        user_id=effective_user_id,
-                    )
-                    logger.info(f"[Task {task_id}] MemoryToolkit created for Workforce")
-            except Exception as e:
-                logger.warning(f"[Task {task_id}] Failed to create MemoryToolkit: {e}")
-
-        # Create Workforce
-        workforce = AMIWorkforce(
-            task_id=task_id,
-            task_state=state,
+        # Create task_agent for AMITaskPlanner
+        model_backend = create_model_backend(
             llm_api_key=self._llm_api_key,
             llm_model=self._llm_model,
             llm_base_url=self._llm_base_url,
-            memory_toolkit=memory_toolkit,
-            description="AMI Task Coordinator",
         )
 
-        # Add all workers (Eigent pattern descriptions)
-        if browser_agent is not None:
-            workforce.add_single_agent_worker(
-                "Browser Agent: Can search the web, extract webpage content, "
-                "simulate browser actions, and provide relevant information to "
-                "solve the given task.",
-                browser_agent,
-            )
-        if developer_agent is not None:
-            workforce.add_single_agent_worker(
-                "Developer Agent: A master-level coding assistant with a powerful "
-                "terminal. It can write and execute code, manage files, automate "
-                "desktop tasks, and deploy web applications to solve complex "
-                "technical challenges.",
-                developer_agent,
-            )
-        if document_agent is not None:
-            workforce.add_single_agent_worker(
-                "Document Agent: A document processing assistant skilled in creating "
-                "and modifying a wide range of file formats. It can generate "
-                "text-based files/reports (Markdown, JSON, YAML, HTML), "
-                "office documents (Word, PDF), presentations (PowerPoint), and "
-                "data files (Excel, CSV).",
-                document_agent,
-            )
-        if multi_modal_agent is not None:
-            workforce.add_single_agent_worker(
-                "Multi-Modal Agent: A specialist in media processing. It can "
-                "analyze images and audio, transcribe speech, download videos, and "
-                "generate new images from text prompts.",
-                multi_modal_agent,
-            )
+        task_agent = ChatAgent(
+            system_message="You are a task decomposition expert. Split tasks by work type (browser, document, code).",
+            model=model_backend,
+        )
 
-        logger.info(f"[Task {task_id}] Added {len(working_agents)} workers to Workforce")
+        return agents_dict, task_agent
 
-        # Emit workforce started event
-        await state.put_event(WorkforceStartedData(
-            task_id=task_id,
-            total_tasks=0,
-            workers_count=len(working_agents),
-            description="Starting task decomposition",
-        ))
-
-        return workforce
-
-    async def _aggregate_results(
+    async def _create_memory_toolkit(
         self,
         task_id: str,
         state: "TaskState",
-        subtasks,
-        progress: dict,
-        duration: float,
-    ) -> str:
+    ):
         """
-        Aggregate results from subtasks into a summary.
+        Create Memory Toolkit for AMI components.
 
         Args:
             task_id: Task identifier
             state: TaskState
-            subtasks: List of completed subtasks
-            progress: Progress dict with completed/failed counts
+
+        Returns:
+            MemoryToolkit instance or None
+        """
+        if not self._cloud_client or not self._llm_api_key:
+            return None
+
+        try:
+            from ..base_agent.tools.toolkits import MemoryToolkit
+            memory_api_base_url = getattr(self._cloud_client, 'api_url', None)
+            if memory_api_base_url:
+                effective_user_id = state.user_id or self._user_id or "default"
+                memory_toolkit = MemoryToolkit(
+                    memory_api_base_url=memory_api_base_url,
+                    ami_api_key=self._llm_api_key,
+                    user_id=effective_user_id,
+                )
+                logger.info(f"[Task {task_id}] MemoryToolkit created for AMI Executor")
+                return memory_toolkit
+        except Exception as e:
+            logger.warning(f"[Task {task_id}] Failed to create MemoryToolkit: {e}")
+
+        return None
+
+    async def _aggregate_ami_results(
+        self,
+        task_id: str,
+        state: "TaskState",
+        subtasks,
+        result: dict,
+        duration: float,
+    ) -> str:
+        """
+        Aggregate results from AMI subtasks into a summary.
+
+        Args:
+            task_id: Task identifier
+            state: TaskState
+            subtasks: List of AMISubtask objects
+            result: Execution result dict
             duration: Execution duration in seconds
 
         Returns:
@@ -1987,7 +2003,7 @@ Response:"""
         if summary_output:
             return summary_output
         else:
-            return f"Completed {progress['completed']}/{progress['total']} subtasks"
+            return f"Completed {result['completed']}/{result['total']} subtasks"
 
     # ===== Multi-turn Conversation Handling (Eigent pattern) =====
 

@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 from camel.agents import ChatAgent
 
 from .listen_chat_agent import ListenChatAgent
+from .listen_browser_agent import ListenBrowserAgent
 from .ami_model_backend import AMIModelBackend
 from ..tools.toolkits import (
     NoteTakingToolkit,
@@ -683,7 +684,8 @@ async def create_browser_agent(
     logger.info(f"[AgentFactory] Headless mode: {headless}")
 
     agent_name = "browser_agent"
-    notes_dir = notes_directory or working_directory
+    # Use working_directory for notes so files can be accessed by shell in same directory
+    notes_dir = working_directory
 
     # Initialize toolkits
     note_toolkit = NoteTakingToolkit(notes_directory=notes_dir)
@@ -746,6 +748,7 @@ async def create_browser_agent(
         )
 
     # Create the agent
+    # Set token_limit to enable CAMEL's automatic context summarization
     agent = ListenChatAgent(
         task_state=task_state,
         agent_name=agent_name,
@@ -753,6 +756,7 @@ async def create_browser_agent(
         model=model_config,
         tools=tools,
         agent_id=f"{agent_name}_{task_id}_{uuid.uuid4().hex[:8]}",
+        token_limit=150000,  # Enable auto-summarization when context exceeds 75k tokens (50%)
     )
 
     # Set NoteTakingToolkit reference for workflow guide persistence
@@ -768,6 +772,139 @@ async def create_browser_agent(
         memory_toolkit.set_agent(agent)
 
     logger.info(f"[AgentFactory] Browser agent created with {len(tools)} tools")
+    return agent
+
+
+async def create_listen_browser_agent(
+    task_state: Any,
+    task_id: str,
+    working_directory: str,
+    notes_directory: Optional[str] = None,
+    browser_data_directory: Optional[str] = None,
+    headless: bool = False,
+    memory_api_base_url: Optional[str] = None,
+    ami_api_key: Optional[str] = None,
+    user_id: Optional[str] = None,
+    llm_api_key: Optional[str] = None,
+    llm_model: Optional[str] = None,
+    llm_base_url: Optional[str] = None,
+) -> ListenBrowserAgent:
+    """
+    Create a ListenBrowserAgent with full TaskOrchestrator capabilities.
+
+    This factory creates a ListenBrowserAgent which includes:
+    - All toolkits from create_browser_agent (Browser, NoteTaking, Search, Terminal, Human, Memory)
+    - Internal TaskOrchestrator for subtask management
+    - Internal task management tools (get_current_plan, complete_subtask, replan_task)
+    - Memory L1 direct subtask conversion from cognitive_phrase
+
+    Use this when you need an agent that can:
+    - Handle a complete browser task with internal decomposition
+    - Track progress through internal subtask management
+    - Dynamically replan when discovering new items
+
+    Args:
+        task_state: TaskState for SSE event emission
+        task_id: Task identifier (used as session_id for browser)
+        working_directory: Directory for file operations
+        notes_directory: Directory for notes (defaults to working_directory)
+        browser_data_directory: Directory for browser user data
+        headless: Whether to run browser in headless mode
+        memory_api_base_url: API URL for memory service
+        ami_api_key: AMI API key
+        user_id: User identifier
+        llm_api_key: LLM API key
+        llm_model: LLM model name
+        llm_base_url: LLM base URL
+
+    Returns:
+        Configured ListenBrowserAgent instance
+    """
+    logger.info(f"[AgentFactory] Creating ListenBrowserAgent for task {task_id}")
+
+    agent_name = "listen_browser_agent"
+    # Use working_directory for notes as well, so files created by create_note
+    # can be accessed by shell_exec_async in the same directory
+    notes_dir = working_directory
+
+    # Initialize toolkits
+    note_toolkit = NoteTakingToolkit(notes_directory=notes_dir)
+    note_toolkit.set_task_state(task_state)
+
+    search_toolkit = SearchToolkit()
+    search_toolkit.set_task_state(task_state)
+
+    terminal_toolkit = TerminalToolkit(working_directory=working_directory)
+    terminal_toolkit.set_task_state(task_state)
+
+    human_toolkit = HumanToolkit()
+    human_toolkit.set_task_state(task_state)
+
+    # Create BrowserToolkit with session_id mode
+    browser_toolkit = BrowserToolkit(
+        session_id=task_id,
+        headless=headless,
+        user_data_dir=browser_data_directory,
+    )
+    browser_toolkit.set_task_state(task_state)
+
+    # Create MemoryToolkit if configured
+    memory_toolkit = None
+    if memory_api_base_url and ami_api_key and user_id:
+        memory_toolkit = MemoryToolkit(
+            memory_api_base_url=memory_api_base_url,
+            ami_api_key=ami_api_key,
+            user_id=user_id,
+        )
+        memory_toolkit.set_task_state(task_state)
+
+    # Create model configuration
+    model_config = None
+    if llm_api_key and llm_model:
+        model_config = create_model_backend(
+            llm_api_key=llm_api_key,
+            llm_model=llm_model,
+            llm_base_url=llm_base_url,
+        )
+
+    # Build tools list for LLM - same as create_browser_agent
+    tools = [
+        *[_extract_callable(t) for t in note_toolkit.get_tools()],
+        *[_extract_callable(t) for t in search_toolkit.get_tools()],
+        *[_extract_callable(t) for t in terminal_toolkit.get_tools()],
+        *[_extract_callable(t) for t in human_toolkit.get_tools()],
+        *[_extract_callable(t) for t in browser_toolkit.get_tools()],
+    ]
+
+    # Add memory toolkit tools if available
+    if memory_toolkit:
+        tools.extend([_extract_callable(t) for t in memory_toolkit.get_tools()])
+
+    # Create the agent with tools passed to parent class
+    # Set token_limit to enable CAMEL's automatic context summarization
+    # GLM-4 has ~200k context, so we set 150k as limit to leave room for response
+    agent = ListenBrowserAgent(
+        task_state=task_state,
+        agent_name=agent_name,
+        browser_session=None,  # Will be created on-demand by BrowserToolkit
+        browser_toolkit=browser_toolkit,
+        note_toolkit=note_toolkit,
+        search_toolkit=search_toolkit,
+        terminal_toolkit=terminal_toolkit,
+        human_toolkit=human_toolkit,
+        memory_toolkit=memory_toolkit,
+        working_directory=working_directory,
+        model=model_config,
+        tools=tools,  # Pass tools to parent class for LLM awareness
+        token_limit=150000,  # Enable auto-summarization when context exceeds 75k tokens (50%)
+    )
+
+    # Set agent reference in toolkits for IntentSequence cache integration
+    browser_toolkit.set_agent(agent)
+    if memory_toolkit:
+        memory_toolkit.set_agent(agent)
+
+    logger.info(f"[AgentFactory] ListenBrowserAgent created")
     return agent
 
 
@@ -806,7 +943,8 @@ def create_developer_agent(
     logger.info(f"[AgentFactory] Working directory: {working_directory}")
 
     agent_name = "developer_agent"
-    notes_dir = notes_directory or working_directory
+    # Use working_directory for notes so files can be accessed by shell in same directory
+    notes_dir = working_directory
 
     # Initialize toolkits
     note_toolkit = NoteTakingToolkit(notes_directory=notes_dir)
@@ -842,6 +980,7 @@ def create_developer_agent(
         )
 
     # Create the agent
+    # Set token_limit to enable CAMEL's automatic context summarization
     agent = ListenChatAgent(
         task_state=task_state,
         agent_name=agent_name,
@@ -849,6 +988,7 @@ def create_developer_agent(
         model=model_config,
         tools=tools,
         agent_id=f"{agent_name}_{task_id}_{uuid.uuid4().hex[:8]}",
+        token_limit=150000,  # Enable auto-summarization when context exceeds 75k tokens (50%)
     )
 
     # Set NoteTakingToolkit reference for workflow guide persistence
@@ -901,7 +1041,8 @@ async def create_document_agent(
     logger.info(f"[AgentFactory] Working directory: {working_directory}")
 
     agent_name = "document_agent"
-    notes_dir = notes_directory or working_directory
+    # Use working_directory for notes so files can be accessed by shell in same directory
+    notes_dir = working_directory
 
     # Initialize toolkits
     file_toolkit = FileToolkit(working_directory=working_directory)
@@ -965,6 +1106,7 @@ async def create_document_agent(
         )
 
     # Create the agent
+    # Set token_limit to enable CAMEL's automatic context summarization
     agent = ListenChatAgent(
         task_state=task_state,
         agent_name=agent_name,
@@ -972,6 +1114,7 @@ async def create_document_agent(
         model=model_config,
         tools=tools,
         agent_id=f"{agent_name}_{task_id}_{uuid.uuid4().hex[:8]}",
+        token_limit=150000,  # Enable auto-summarization when context exceeds 75k tokens (50%)
     )
 
     # Set NoteTakingToolkit reference for workflow guide persistence
@@ -1023,7 +1166,8 @@ def create_multi_modal_agent(
     logger.info(f"[AgentFactory] Working directory: {working_directory}")
 
     agent_name = "multi_modal_agent"
-    notes_dir = notes_directory or working_directory
+    # Use working_directory for notes so files can be accessed by shell in same directory
+    notes_dir = working_directory
 
     # Create model configuration for vision/audio toolkits
     vision_model = None
@@ -1125,6 +1269,7 @@ def create_multi_modal_agent(
         )
 
     # Create the agent
+    # Set token_limit to enable CAMEL's automatic context summarization
     agent = ListenChatAgent(
         task_state=task_state,
         agent_name=agent_name,
@@ -1132,6 +1277,7 @@ def create_multi_modal_agent(
         model=model_config,
         tools=tools,
         agent_id=f"{agent_name}_{task_id}_{uuid.uuid4().hex[:8]}",
+        token_limit=150000,  # Enable auto-summarization when context exceeds 75k tokens (50%)
     )
 
     # Set NoteTakingToolkit reference for workflow guide persistence
@@ -1246,6 +1392,7 @@ async def create_social_medium_agent(
         )
 
     # Create the agent
+    # Set token_limit to enable CAMEL's automatic context summarization
     agent = ListenChatAgent(
         task_state=task_state,
         agent_name=agent_name,
@@ -1253,6 +1400,7 @@ async def create_social_medium_agent(
         model=model_config,
         tools=tools,
         agent_id=f"{agent_name}_{task_id}_{uuid.uuid4().hex[:8]}",
+        token_limit=150000,  # Enable auto-summarization when context exceeds 75k tokens (50%)
     )
 
     # Set NoteTakingToolkit reference for workflow guide persistence

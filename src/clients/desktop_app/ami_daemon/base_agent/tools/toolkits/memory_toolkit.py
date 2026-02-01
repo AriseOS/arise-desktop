@@ -237,15 +237,21 @@ class State:
     page_url: str
     page_title: str
     domain: Optional[str] = None
+    intent_sequences: List["IntentSequence"] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: Dict) -> "State":
+        intent_seqs = []
+        for seq in data.get("intent_sequences", []):
+            if isinstance(seq, dict):
+                intent_seqs.append(IntentSequence.from_dict(seq))
         return cls(
             id=data.get("id", ""),
             description=data.get("description", ""),
             page_url=data.get("page_url", ""),
             page_title=data.get("page_title", ""),
             domain=data.get("domain"),
+            intent_sequences=intent_seqs,
         )
 
 
@@ -373,7 +379,24 @@ class QueryResult:
 
         cognitive_phrase = None
         if data.get("cognitive_phrase"):
-            cognitive_phrase = CognitivePhrase.from_dict(data["cognitive_phrase"])
+            # Server returns state_path/action_path in cognitive_phrase,
+            # but full states/actions at top level. Merge them.
+            phrase_data = data["cognitive_phrase"].copy()
+            # If cognitive_phrase doesn't have states/actions, use top-level ones
+            if not phrase_data.get("states") and states:
+                phrase_data["states"] = [
+                    {"id": s.id, "description": s.description,
+                     "page_url": s.page_url, "page_title": s.page_title,
+                     "domain": s.domain}
+                    for s in states
+                ]
+            if not phrase_data.get("actions") and actions:
+                phrase_data["actions"] = [
+                    {"id": a.id, "source_id": a.source_id, "target_id": a.target_id,
+                     "action_type": a.action_type, "description": a.description}
+                    for a in actions
+                ]
+            cognitive_phrase = CognitivePhrase.from_dict(phrase_data)
 
         execution_plan = [
             ExecutionStep.from_dict(step)
@@ -1142,18 +1165,8 @@ class MemoryToolkit(BaseToolkit):
         Other query methods (query_task, query_navigation, query_actions)
         are called by the agent framework directly.
         """
-        return [
-            FunctionTool(
-                func=self.query_page_operations,
-                name="query_page_operations",
-                description=(
-                    "Query available operations for the current page from memory. "
-                    "Use this when you're on a complex page and want to know what "
-                    "operations users have performed here before. "
-                    "Returns recorded operations that can help guide your actions."
-                ),
-            ),
-        ]
+        # query_page_operations has a proper docstring that CAMEL will extract
+        return [FunctionTool(self.query_page_operations)]
 
     @classmethod
     def toolkit_name(cls) -> str:

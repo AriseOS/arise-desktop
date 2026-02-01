@@ -130,10 +130,6 @@ class AMISingleAgentWorker(BaseSingleAgentWorker):
             state="RUNNING",
         ))
 
-        # Get worker agent from pool
-        worker_agent = await self._get_worker_agent()
-        worker_agent.process_task_id = task.id
-
         logger.info(f"[AMISingleAgentWorker] Processing task: {task.id}")
 
         response_content = ""
@@ -141,80 +137,124 @@ class AMISingleAgentWorker(BaseSingleAgentWorker):
         start_time = datetime.datetime.now()
 
         try:
-            dependency_tasks_info = self._get_dep_tasks_info(dependencies)
-            prompt = PROCESS_TASK_PROMPT.format(
-                content=task.content,
-                parent_task_content=task.parent.content if task.parent else "",
-                dependency_tasks_info=dependency_tasks_info,
-                additional_info=task.additional_info,
-            )
+            # Check if the ORIGINAL worker has execute() method (e.g., ListenBrowserAgent)
+            # We check self.worker instead of clone because clone might lose the execute() method
+            if hasattr(self.worker, 'execute') and callable(getattr(self.worker, 'execute')):
+                # Use the original worker directly for agents with execute() method
+                # These agents have internal task decomposition and execution loops
+                # and should not be cloned as it would lose browser session state
+                worker_agent = self.worker
+                worker_agent.process_task_id = task.id
 
-            if self.use_structured_output_handler and self.structured_handler:
-                # Use structured output handler
-                enhanced_prompt = self.structured_handler.generate_structured_prompt(
-                    base_prompt=prompt,
-                    schema=TaskResult,
-                    examples=[
-                        {
-                            "content": "I have successfully completed the task...",
-                            "failed": False,
-                        }
-                    ],
-                    additional_instructions=(
-                        "Ensure you provide a clear description of what was done "
-                        "and whether the task succeeded or failed."
-                    ),
-                )
-                response = await worker_agent.astep(enhanced_prompt)
-
-                # Handle streaming response
-                if isinstance(response, AsyncStreamingChatAgentResponse):
-                    accumulated_content = ""
-                    async for chunk in response:
-                        if chunk.msg and chunk.msg.content:
-                            accumulated_content += chunk.msg.content
-                    response_content = accumulated_content
-                else:
-                    response_content = response.msg.content if response.msg else ""
-
-                task_result = self.structured_handler.parse_structured_response(
-                    response_text=response_content,
-                    schema=TaskResult,
-                    fallback_values={
-                        "content": "Task processing failed",
-                        "failed": True,
-                    },
-                )
-            else:
-                # Use native structured output
-                response = await worker_agent.astep(prompt, response_format=TaskResult)
-
-                if isinstance(response, AsyncStreamingChatAgentResponse):
-                    task_result = None
-                    accumulated_content = ""
-                    async for chunk in response:
-                        if chunk.msg:
-                            if chunk.msg.content:
-                                accumulated_content += chunk.msg.content
-                            if chunk.msg.parsed:
-                                task_result = chunk.msg.parsed
-                    response_content = accumulated_content
-                    if task_result is None:
-                        task_result = TaskResult(
-                            content="Failed to parse streaming response",
-                            failed=True,
+                # Pass workflow_guide to agent before execution
+                # This is needed because execute() only receives task.content
+                if hasattr(worker_agent, 'set_memory_context') and task.additional_info:
+                    workflow_guide = task.additional_info.get('workflow_guide')
+                    memory_level = task.additional_info.get('memory_level', 'L3')
+                    if workflow_guide:
+                        worker_agent.set_memory_context(
+                            memory_result=None,  # Not needed, workflow_guide is pre-formatted
+                            memory_level=memory_level,
+                            workflow_guide=workflow_guide,
                         )
-                else:
-                    task_result = response.msg.parsed
-                    response_content = response.msg.content if response.msg else ""
+                        logger.info(
+                            f"[AMISingleAgentWorker] Set memory context for {type(worker_agent).__name__}: "
+                            f"level={memory_level}, workflow_guide_len={len(workflow_guide)}"
+                        )
 
-            # Get token usage
-            if isinstance(response, AsyncStreamingChatAgentResponse):
-                final_response = await response
-                usage_info = final_response.info.get("usage") or final_response.info.get("token_usage")
+                # Use agent's specialized execute() method
+                logger.info(
+                    f"[AMISingleAgentWorker] Using {type(worker_agent).__name__}.execute() "
+                    f"for task {task.id}"
+                )
+                result_content = await worker_agent.execute(task.content)
+
+                # Convert result to TaskResult format
+                task_result = TaskResult(
+                    content=result_content if result_content else "Task completed",
+                    failed=False,  # If execute() completes without exception, assume success
+                )
+                response_content = result_content or ""
+                total_tokens = 0  # execute() handles its own token tracking
             else:
-                usage_info = response.info.get("usage") or response.info.get("token_usage")
-            total_tokens = usage_info.get("total_tokens", 0) if usage_info else 0
+                # Standard flow: use cloned agent with astep() for regular agents
+                worker_agent = await self._get_worker_agent()
+                worker_agent.process_task_id = task.id
+
+                dependency_tasks_info = self._get_dep_tasks_info(dependencies)
+                prompt = PROCESS_TASK_PROMPT.format(
+                    content=task.content,
+                    parent_task_content=task.parent.content if task.parent else "",
+                    dependency_tasks_info=dependency_tasks_info,
+                    additional_info=task.additional_info,
+                )
+
+                if self.use_structured_output_handler and self.structured_handler:
+                    # Use structured output handler
+                    enhanced_prompt = self.structured_handler.generate_structured_prompt(
+                        base_prompt=prompt,
+                        schema=TaskResult,
+                        examples=[
+                            {
+                                "content": "I have successfully completed the task...",
+                                "failed": False,
+                            }
+                        ],
+                        additional_instructions=(
+                            "Ensure you provide a clear description of what was done "
+                            "and whether the task succeeded or failed."
+                        ),
+                    )
+                    response = await worker_agent.astep(enhanced_prompt)
+
+                    # Handle streaming response
+                    if isinstance(response, AsyncStreamingChatAgentResponse):
+                        accumulated_content = ""
+                        async for chunk in response:
+                            if chunk.msg and chunk.msg.content:
+                                accumulated_content += chunk.msg.content
+                        response_content = accumulated_content
+                    else:
+                        response_content = response.msg.content if response.msg else ""
+
+                    task_result = self.structured_handler.parse_structured_response(
+                        response_text=response_content,
+                        schema=TaskResult,
+                        fallback_values={
+                            "content": "Task processing failed",
+                            "failed": True,
+                        },
+                    )
+                else:
+                    # Use native structured output
+                    response = await worker_agent.astep(prompt, response_format=TaskResult)
+
+                    if isinstance(response, AsyncStreamingChatAgentResponse):
+                        task_result = None
+                        accumulated_content = ""
+                        async for chunk in response:
+                            if chunk.msg:
+                                if chunk.msg.content:
+                                    accumulated_content += chunk.msg.content
+                                if chunk.msg.parsed:
+                                    task_result = chunk.msg.parsed
+                        response_content = accumulated_content
+                        if task_result is None:
+                            task_result = TaskResult(
+                                content="Failed to parse streaming response",
+                                failed=True,
+                            )
+                    else:
+                        task_result = response.msg.parsed
+                        response_content = response.msg.content if response.msg else ""
+
+                # Get token usage (only for standard flow)
+                if isinstance(response, AsyncStreamingChatAgentResponse):
+                    final_response = await response
+                    usage_info = final_response.info.get("usage") or final_response.info.get("token_usage")
+                else:
+                    usage_info = response.info.get("usage") or response.info.get("token_usage")
+                total_tokens = usage_info.get("total_tokens", 0) if usage_info else 0
 
             # Transfer memory if enabled
             if self.enable_workflow_memory:

@@ -166,47 +166,30 @@ class GoogleCalendarToolkit(BaseToolkit):
 
     def _build_function_tools(self) -> None:
         """Build FunctionTool wrappers for calendar methods."""
+        # Helper to create tool with custom name
+        def make_tool(func, name, description):
+            tool = FunctionTool(func)
+            tool.set_function_name(name)
+            tool.set_function_description(description)
+            return tool
+
         self._function_tools = [
-            FunctionTool(
-                func=self.list_events,
-                name="calendar_list_events",
-                description="List calendar events within a time range",
-            ),
-            FunctionTool(
-                func=self.create_event,
-                name="calendar_create_event",
-                description="Create a new calendar event",
-            ),
-            FunctionTool(
-                func=self.update_event,
-                name="calendar_update_event",
-                description="Update an existing calendar event",
-            ),
-            FunctionTool(
-                func=self.delete_event,
-                name="calendar_delete_event",
-                description="Delete a calendar event",
-            ),
-            FunctionTool(
-                func=self.get_event,
-                name="calendar_get_event",
-                description="Get details of a specific calendar event",
-            ),
-            FunctionTool(
-                func=self.get_free_busy,
-                name="calendar_get_free_busy",
-                description="Get free/busy information for calendars",
-            ),
-            FunctionTool(
-                func=self.list_calendars,
-                name="calendar_list_calendars",
-                description="List all accessible calendars",
-            ),
-            FunctionTool(
-                func=self.quick_add,
-                name="calendar_quick_add",
-                description="Create event using natural language (like Google's quick add)",
-            ),
+            make_tool(self.list_events, "calendar_list_events",
+                     "List calendar events within a time range"),
+            make_tool(self.create_event, "calendar_create_event",
+                     "Create a new calendar event"),
+            make_tool(self.update_event, "calendar_update_event",
+                     "Update an existing calendar event"),
+            make_tool(self.delete_event, "calendar_delete_event",
+                     "Delete a calendar event"),
+            make_tool(self.get_event, "calendar_get_event",
+                     "Get details of a specific calendar event"),
+            make_tool(self.get_free_busy, "calendar_get_free_busy",
+                     "Get free/busy information for calendars"),
+            make_tool(self.list_calendars, "calendar_list_calendars",
+                     "List all accessible calendars"),
+            make_tool(self.quick_add, "calendar_quick_add",
+                     "Create event using natural language (like Google's quick add)"),
         ]
 
     def get_tools(self) -> List[FunctionTool]:

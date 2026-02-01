@@ -367,9 +367,10 @@ class TerminalToolkit(BaseToolkit):
         Returns:
             List of FunctionTool objects.
         """
-        return [
-            FunctionTool(self.shell_exec_async, name="shell_exec"),
-        ]
+        # Create tool and rename to match expected name (without _async suffix)
+        tool = FunctionTool(self.shell_exec_async)
+        tool.set_function_name("shell_exec")
+        return [tool]
 
     @classmethod
     def toolkit_name(cls) -> str:

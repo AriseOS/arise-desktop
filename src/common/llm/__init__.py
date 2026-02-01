@@ -8,6 +8,9 @@ from .base_provider import (
     ToolUseBlock,
     TextBlock,
     ToolResultBlock,
+    # JSON utilities
+    parse_json_with_repair,
+    extract_json_from_markdown,
 )
 from .anthropic_provider import AnthropicProvider
 from .openai_provider import OpenAIProvider
@@ -24,4 +27,7 @@ __all__ = [
     "ToolUseBlock",
     "TextBlock",
     "ToolResultBlock",
+    # JSON utilities
+    "parse_json_with_repair",
+    "extract_json_from_markdown",
 ]

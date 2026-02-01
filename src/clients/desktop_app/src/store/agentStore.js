@@ -930,10 +930,11 @@ export const useAgentStore = create((set, get) => ({
             return 'pending'; // OPEN -> pending
           };
 
-          // Normalize subtasks with mapped status
+          // Normalize subtasks with mapped status and agent_type
           const normalizedSubtasks = newSubtasks.map(t => ({
             ...t,
             status: mapState(t.state || t.status),
+            agent_type: t.agent_type || null,  // Preserve agent_type from backend
           }));
 
           // Update task with decomposition data (Eigent pattern)
@@ -1049,6 +1050,8 @@ export const useAgentStore = create((set, get) => ({
         break;
 
       // TaskPlanningToolkit: task_replanned event
+      // Note: Replan is an automatic plan adjustment during execution, NOT requiring user confirmation.
+      // Therefore, showDecomposition should remain false to avoid triggering confirm UI.
       case 'task_replanned':
         {
           const newSubtasks = event.subtasks || event.data?.subtasks || [];
@@ -1058,11 +1061,13 @@ export const useAgentStore = create((set, get) => ({
           if (!currentTask) break;
 
           // Replace subtasks with new plan
+          // Note: showDecomposition is NOT set to true because replan is automatic
+          // and doesn't require user confirmation (unlike initial task_decomposed)
           updateTask({
             subtasks: newSubtasks,
             taskInfo: newSubtasks,
             taskRunning: newSubtasks.map(t => ({ ...t, status: 'pending' })),
-            showDecomposition: true,
+            // showDecomposition: false - keep it false to not trigger confirm UI
           });
 
           addNotice('info', 'Task Re-planned', `${newSubtasks.length} new subtasks${reason ? `: ${reason}` : ''}`);
@@ -1079,6 +1084,8 @@ export const useAgentStore = create((set, get) => ({
             content,
             state: taskState,  // "waiting" | "running"
             failure_count = 0,
+            worker_name,      // New: human-readable worker name
+            agent_type,       // New: worker type (browser/document/code)
             // Backward compatible fields
             agent_id,
             task_id: assignedTaskId,
@@ -1101,6 +1108,21 @@ export const useAgentStore = create((set, get) => ({
           const taskInRunning = updatedTaskRunning.find(t => t.id === actualTaskId);
           const taskContent = content || taskInRunning?.content || '';
 
+          // Update taskRunning with worker_name and agent_type
+          updatedTaskRunning = updatedTaskRunning.map(t => {
+            if (t.id === actualTaskId) {
+              return {
+                ...t,
+                status: taskState === 'waiting' ? 'waiting' : 'running',
+                worker_name: worker_name || t.worker_name,
+                agent_type: agent_type || t.agent_type,
+                assignee_id: actualAgentId,
+                failure_count,
+              };
+            }
+            return t;
+          });
+
           // Phase 1: waiting - Task assigned, waiting in queue
           if (taskState === 'waiting') {
             if (agentIndex !== -1) {
@@ -1116,17 +1138,11 @@ export const useAgentStore = create((set, get) => ({
                     content: taskContent,
                     status: 'waiting',
                     failure_count,
+                    worker_name,
+                    agent_type,
                   }],
                 };
               }
-            }
-
-            // Update taskRunning status to waiting
-            const taskExists = updatedTaskRunning.some(t => t.id === actualTaskId);
-            if (taskExists) {
-              updatedTaskRunning = updatedTaskRunning.map(t =>
-                t.id === actualTaskId ? { ...t, status: 'waiting' } : t
-              );
             }
           }
           // Phase 2: running - Task actively being executed (or default for backward compatibility)
@@ -1142,6 +1158,8 @@ export const useAgentStore = create((set, get) => ({
                   ...updatedTasks[existingTaskIndex],
                   status: 'running',
                   failure_count,
+                  worker_name,
+                  agent_type,
                 };
                 updatedTaskAssigning[agentIndex] = {
                   ...updatedTaskAssigning[agentIndex],
@@ -1156,15 +1174,12 @@ export const useAgentStore = create((set, get) => ({
                     content: taskContent,
                     status: 'running',
                     failure_count,
+                    worker_name,
+                    agent_type,
                   }],
                 };
               }
             }
-
-            // Update taskRunning status to running
-            updatedTaskRunning = updatedTaskRunning.map(t =>
-              t.id === actualTaskId ? { ...t, status: 'running' } : t
-            );
           }
 
           updateTask({

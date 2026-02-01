@@ -1,0 +1,461 @@
+"""
+AMI Task Executor - Lightweight task execution system.
+
+This module replaces CAMEL Workforce with a simpler, more controllable system:
+- Direct control over prompt format (workflow_guide as explicit instruction)
+- Sequential execution with dependency resolution
+- SSE event emission for real-time UI updates
+- Pause/resume support for multi-turn conversations
+
+No CAMEL Workforce dependencies - just uses ChatAgent for execution.
+"""
+
+import asyncio
+import logging
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from camel.agents import ChatAgent
+
+from ..events import (
+    SubtaskStateData,
+    AssignTaskData,
+    WorkerAssignedData,
+    NoticeData,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class SubtaskState(Enum):
+    """State of a subtask during execution."""
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    DONE = "DONE"
+    FAILED = "FAILED"
+
+
+@dataclass
+class AMISubtask:
+    """
+    Subtask representation for AMI task execution.
+
+    Contains all information needed for execution including workflow guidance.
+    This is a simpler alternative to CAMEL's Task object.
+    """
+    id: str
+    content: str
+    agent_type: str  # "browser" | "document" | "code" | "multi_modal"
+    depends_on: List[str] = field(default_factory=list)
+
+    # Memory/workflow guidance - injected directly into prompt
+    workflow_guide: Optional[str] = None
+    memory_level: str = "L3"  # L1=exact match, L2=partial, L3=no match
+
+    # Execution state
+    state: SubtaskState = SubtaskState.PENDING
+    result: Optional[str] = None
+    error: Optional[str] = None
+    retry_count: int = 0
+
+
+class AMITaskExecutor:
+    """
+    Task executor that replaces CAMEL Workforce.
+
+    Key features:
+    - workflow_guide is injected as an explicit instruction in the prompt
+    - Sequential execution with dependency resolution
+    - SSE events for real-time UI updates
+    - Pause/resume for multi-turn conversations
+    - Simple retry logic
+
+    Unlike CAMEL Workforce:
+    - No agent pooling or cloning
+    - No complex coordinator agent
+    - Direct control over prompt format
+    - ~250 lines vs ~6000 lines
+    """
+
+    def __init__(
+        self,
+        task_id: str,
+        task_state: Any,  # TaskState for SSE events
+        agents: Dict[str, "ChatAgent"],  # {"browser": agent, "document": agent, ...}
+        max_retries: int = 2,
+    ):
+        """
+        Initialize the executor.
+
+        Args:
+            task_id: Unique task identifier for events.
+            task_state: TaskState instance for SSE event emission.
+            agents: Dictionary mapping agent_type to ChatAgent instances.
+            max_retries: Maximum retry attempts for failed subtasks.
+        """
+        self.task_id = task_id
+        self._task_state = task_state
+        self._agents = agents
+        self._max_retries = max_retries
+
+        # Subtask management
+        self._subtasks: List[AMISubtask] = []
+        self._subtask_map: Dict[str, AMISubtask] = {}
+
+        # Pause/resume control
+        self._paused = False
+        self._pause_event = asyncio.Event()
+        self._pause_event.set()  # Not paused initially
+
+        # Stop control
+        self._stopped = False
+
+        logger.info(
+            f"[AMITaskExecutor] Initialized for task {task_id} "
+            f"with agents: {list(agents.keys())}"
+        )
+
+    def set_subtasks(self, subtasks: List[AMISubtask]) -> None:
+        """Set subtasks to execute."""
+        self._subtasks = subtasks
+        self._subtask_map = {s.id: s for s in subtasks}
+        logger.info(f"[AMITaskExecutor] Set {len(subtasks)} subtasks")
+
+    async def execute(self) -> Dict[str, Any]:
+        """
+        Execute all subtasks respecting dependencies.
+
+        Returns:
+            Dictionary with execution results:
+            - completed: number of completed subtasks
+            - failed: number of failed subtasks
+            - stopped: whether execution was stopped
+        """
+        logger.info(
+            f"[AMITaskExecutor] Starting execution of {len(self._subtasks)} subtasks"
+        )
+
+        completed = 0
+        failed = 0
+
+        while not self._stopped:
+            # Wait if paused
+            await self._wait_if_paused()
+
+            if self._stopped:
+                break
+
+            # Find next executable subtask (dependencies satisfied)
+            subtask = self._get_next_subtask()
+            if subtask is None:
+                # No more subtasks to execute
+                break
+
+            # Execute the subtask
+            success = await self._execute_subtask(subtask)
+
+            if success:
+                completed += 1
+            else:
+                failed += 1
+                # Continue with other subtasks even if one fails
+                # (unless they depend on the failed one)
+
+        result = {
+            "completed": completed,
+            "failed": failed,
+            "stopped": self._stopped,
+            "total": len(self._subtasks),
+        }
+
+        logger.info(f"[AMITaskExecutor] Execution finished: {result}")
+        return result
+
+    def _get_next_subtask(self) -> Optional[AMISubtask]:
+        """
+        Get the next subtask that can be executed.
+
+        A subtask can execute if:
+        - Its state is PENDING
+        - All its dependencies are DONE
+        """
+        for subtask in self._subtasks:
+            if subtask.state != SubtaskState.PENDING:
+                continue
+
+            # Check if all dependencies are satisfied
+            deps_satisfied = True
+            for dep_id in subtask.depends_on:
+                dep = self._subtask_map.get(dep_id)
+                if dep is None or dep.state != SubtaskState.DONE:
+                    deps_satisfied = False
+                    break
+
+            if deps_satisfied:
+                return subtask
+
+        return None
+
+    async def _execute_subtask(self, subtask: AMISubtask) -> bool:
+        """
+        Execute a single subtask.
+
+        For agents with execute() method (e.g., ListenBrowserAgent):
+        - Sets memory context (workflow_guide)
+        - Calls execute() for full multi-turn execution with tools
+
+        For regular agents:
+        - Builds prompt with workflow_guide
+        - Calls astep() for single LLM call
+
+        Returns:
+            True if successful, False otherwise.
+        """
+        # Get the appropriate agent
+        agent = self._agents.get(subtask.agent_type)
+        if agent is None:
+            logger.error(
+                f"[AMITaskExecutor] No agent for type: {subtask.agent_type}"
+            )
+            subtask.state = SubtaskState.FAILED
+            subtask.error = f"No agent available for type: {subtask.agent_type}"
+            await self._emit_subtask_state(subtask)
+            return False
+
+        # Mark as running and emit event
+        subtask.state = SubtaskState.RUNNING
+        await self._emit_subtask_running(subtask)
+
+        # Execute with retries
+        while subtask.retry_count <= self._max_retries:
+            try:
+                if self._stopped:
+                    return False
+
+                await self._wait_if_paused()
+
+                logger.info(
+                    f"[AMITaskExecutor] Executing subtask {subtask.id} "
+                    f"(attempt {subtask.retry_count + 1}/{self._max_retries + 1})"
+                )
+
+                # Check if agent has execute() method (e.g., ListenBrowserAgent)
+                if hasattr(agent, 'execute') and callable(getattr(agent, 'execute')):
+                    # Set memory context before execution
+                    if hasattr(agent, 'set_memory_context') and subtask.workflow_guide:
+                        agent.set_memory_context(
+                            memory_result=None,
+                            memory_level=subtask.memory_level,
+                            workflow_guide=subtask.workflow_guide,
+                        )
+                        logger.info(
+                            f"[AMITaskExecutor] Set memory context for {type(agent).__name__}: "
+                            f"level={subtask.memory_level}, workflow_guide_len={len(subtask.workflow_guide)}"
+                        )
+
+                    # Use agent's execute() method for full multi-turn execution
+                    logger.info(
+                        f"[AMITaskExecutor] Using {type(agent).__name__}.execute() "
+                        f"for subtask {subtask.id}"
+                    )
+                    result_content = await agent.execute(subtask.content)
+                    subtask.result = result_content if result_content else "Task completed"
+
+                else:
+                    # Regular agent: build prompt and call astep()
+                    prompt = self._build_prompt(subtask)
+                    response = await agent.astep(prompt)
+
+                    # Extract result
+                    if hasattr(response, 'msg') and response.msg:
+                        subtask.result = response.msg.content
+                    else:
+                        subtask.result = str(response)
+
+                subtask.state = SubtaskState.DONE
+                await self._emit_subtask_state(subtask)
+
+                logger.info(f"[AMITaskExecutor] Subtask {subtask.id} completed")
+                return True
+
+            except Exception as e:
+                subtask.retry_count += 1
+                subtask.error = str(e)
+
+                logger.warning(
+                    f"[AMITaskExecutor] Subtask {subtask.id} failed "
+                    f"(attempt {subtask.retry_count}): {e}"
+                )
+
+                if subtask.retry_count > self._max_retries:
+                    subtask.state = SubtaskState.FAILED
+                    await self._emit_subtask_state(subtask)
+                    return False
+
+        return False
+
+    def _build_prompt(self, subtask: AMISubtask) -> str:
+        """
+        Build the execution prompt for a subtask.
+
+        The workflow_guide is injected as an explicit instruction,
+        not just as metadata. This ensures the LLM follows the steps.
+        """
+        parts = []
+
+        # Task content
+        parts.append(f"## Task\n{subtask.content}")
+
+        # Workflow guide - as explicit instruction
+        if subtask.workflow_guide:
+            parts.append(f"""
+## Workflow Guide (FOLLOW THESE STEPS)
+
+The following is a proven workflow for this type of task. You MUST follow these steps in order:
+
+{subtask.workflow_guide}
+
+**Important**:
+- Follow the above steps exactly as described
+- Complete each step before moving to the next
+- These steps are based on successful past executions
+""")
+        else:
+            parts.append("""
+## Note
+No historical workflow guide available. Please explore and complete the task using your best judgment.
+""")
+
+        # Previous results from dependencies
+        dep_results = []
+        for dep_id in subtask.depends_on:
+            dep = self._subtask_map.get(dep_id)
+            if dep and dep.result:
+                # Truncate long results
+                result_preview = dep.result[:2000]
+                if len(dep.result) > 2000:
+                    result_preview += "... (truncated)"
+                dep_results.append(f"### Result from task '{dep_id}':\n{result_preview}")
+
+        if dep_results:
+            parts.append("## Results from Previous Tasks\n" + "\n\n".join(dep_results))
+
+        return "\n\n".join(parts)
+
+    # =========================================================================
+    # SSE Event Emission
+    # =========================================================================
+
+    async def _emit_subtask_running(self, subtask: AMISubtask) -> None:
+        """Emit events when subtask starts running."""
+        if not self._task_state:
+            return
+
+        # Get agent name for display
+        agent = self._agents.get(subtask.agent_type)
+        agent_name = getattr(agent, 'agent_name', subtask.agent_type)
+
+        # Emit assign_task event (for compatibility)
+        await self._task_state.put_event(AssignTaskData(
+            task_id=self.task_id,
+            assignee_id=subtask.agent_type,
+            subtask_id=subtask.id,
+            content=subtask.content,
+            state="running",
+            failure_count=subtask.retry_count,
+            worker_name=agent_name,
+            agent_type=subtask.agent_type,
+            agent_id=subtask.agent_type,
+        ))
+
+        # Emit subtask state
+        await self._task_state.put_event(SubtaskStateData(
+            task_id=self.task_id,
+            subtask_id=subtask.id,
+            state="RUNNING",
+        ))
+
+    async def _emit_subtask_state(self, subtask: AMISubtask) -> None:
+        """Emit SSE event for subtask state change."""
+        if not self._task_state:
+            return
+
+        await self._task_state.put_event(SubtaskStateData(
+            task_id=self.task_id,
+            subtask_id=subtask.id,
+            state=subtask.state.value,
+        ))
+
+    # =========================================================================
+    # Pause/Resume/Stop Control
+    # =========================================================================
+
+    async def _wait_if_paused(self) -> None:
+        """Wait if execution is paused."""
+        if self._paused:
+            logger.info(f"[AMITaskExecutor] Waiting (paused)")
+            await self._pause_event.wait()
+
+    def pause(self) -> None:
+        """Pause execution."""
+        self._paused = True
+        self._pause_event.clear()
+        logger.info(f"[AMITaskExecutor] Paused")
+
+    def resume(self) -> None:
+        """Resume execution."""
+        self._paused = False
+        self._pause_event.set()
+        logger.info(f"[AMITaskExecutor] Resumed")
+
+    def stop(self) -> None:
+        """Stop execution."""
+        self._stopped = True
+        self._pause_event.set()  # Unblock if paused
+        logger.info(f"[AMITaskExecutor] Stopped")
+
+    @property
+    def is_paused(self) -> bool:
+        """Check if executor is paused."""
+        return self._paused
+
+    @property
+    def is_stopped(self) -> bool:
+        """Check if executor is stopped."""
+        return self._stopped
+
+    # =========================================================================
+    # Progress Tracking
+    # =========================================================================
+
+    def get_progress(self) -> Dict[str, int]:
+        """Get execution progress."""
+        counts = {
+            "total": len(self._subtasks),
+            "pending": 0,
+            "running": 0,
+            "done": 0,
+            "failed": 0,
+        }
+
+        for subtask in self._subtasks:
+            if subtask.state == SubtaskState.PENDING:
+                counts["pending"] += 1
+            elif subtask.state == SubtaskState.RUNNING:
+                counts["running"] += 1
+            elif subtask.state == SubtaskState.DONE:
+                counts["done"] += 1
+            elif subtask.state == SubtaskState.FAILED:
+                counts["failed"] += 1
+
+        return counts
+
+    def get_subtask(self, subtask_id: str) -> Optional[AMISubtask]:
+        """Get a subtask by ID."""
+        return self._subtask_map.get(subtask_id)
+
+    def get_results(self) -> Dict[str, Optional[str]]:
+        """Get all subtask results."""
+        return {s.id: s.result for s in self._subtasks}

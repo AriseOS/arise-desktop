@@ -39,10 +39,53 @@ from ..events import (
     ActivateToolkitData,
     DeactivateToolkitData,
     NoticeData,
+    AgentThinkingData,
 )
 from ..events.toolkit_listen import _run_async_safely
 
 logger = logging.getLogger(__name__)
+
+# Tool name prefix to Toolkit name mapping
+# Used to infer toolkit name from tool function name when no decorator is present
+_TOOL_PREFIX_TO_TOOLKIT = {
+    "browser": "Browser Toolkit",
+    "shell": "Terminal Toolkit",
+    "terminal": "Terminal Toolkit",
+    "search": "Search Toolkit",
+    "note": "Note Taking Toolkit",
+    "human": "Human Toolkit",
+    "memory": "Memory Toolkit",
+    "task": "Task Planning Toolkit",
+    "calendar": "Calendar Toolkit",
+    # Internal task management tools (ListenBrowserAgent)
+    "get": "Task Planning Toolkit",      # get_current_plan
+    "complete": "Task Planning Toolkit", # complete_subtask
+    "report": "Task Planning Toolkit",   # report_subtask_failure
+    "replan": "Task Planning Toolkit",   # replan_task
+}
+
+
+def _infer_toolkit_name(tool_name: str) -> str:
+    """Infer toolkit name from tool function name.
+
+    Used as fallback when tool has no decorator or toolkit instance.
+
+    Args:
+        tool_name: Tool function name (e.g., "complete_subtask", "browser_click")
+
+    Returns:
+        Toolkit name (e.g., "Task Planning Toolkit", "Browser Toolkit")
+    """
+    # Extract prefix (first word before underscore)
+    prefix = tool_name.split("_")[0].lower() if "_" in tool_name else tool_name.lower()
+
+    # Look up in mapping
+    if prefix in _TOOL_PREFIX_TO_TOOLKIT:
+        return _TOOL_PREFIX_TO_TOOLKIT[prefix]
+
+    # Fallback: Title case the prefix
+    return f"{prefix.title()} Toolkit"
+
 
 # Shared thread pool executor for sync-to-async tool execution
 # BUG-13: This is intentionally global to be shared across agents
@@ -215,6 +258,107 @@ class ListenChatAgent(ChatAgent):
     def set_task_state(self, task_state: Any) -> None:
         """Update the task state for event emission."""
         self._task_state = task_state
+
+    def _build_conversation_text_from_messages(
+        self,
+        messages: List[Any],
+        include_summaries: bool = False,
+    ) -> Tuple[str, List[str]]:
+        """Build conversation text from messages for summarization.
+
+        This override fixes a bug in CAMEL where tool result messages don't include
+        the tool name (OpenAI's tool message format doesn't have 'name' field).
+        We build a tool_call_id -> func_name mapping first, then use it to resolve
+        tool names in tool result messages.
+
+        Args:
+            messages: List of messages to convert.
+            include_summaries: Whether to include [CONTEXT_SUMMARY] messages.
+
+        Returns:
+            Tuple of (formatted conversation text, list of user messages).
+        """
+        conversation_lines = []
+        user_messages: List[str] = []
+
+        # First pass: build tool_call_id -> func_name mapping
+        tool_call_id_to_name: Dict[str, str] = {}
+        for message in messages:
+            tool_calls = message.get('tool_calls')
+            if tool_calls and isinstance(tool_calls, (list, tuple)):
+                for tool_call in tool_calls:
+                    if isinstance(tool_call, dict):
+                        tc_id = tool_call.get('id', '')
+                        func_name = tool_call.get('function', {}).get('name', '')
+                        if tc_id and func_name:
+                            tool_call_id_to_name[tc_id] = func_name
+                    else:
+                        # Handle object format
+                        tc_id = getattr(tool_call, 'id', '') or getattr(
+                            getattr(tool_call, 'function', None), 'id', ''
+                        )
+                        func_name = getattr(
+                            getattr(tool_call, 'function', None), 'name', ''
+                        )
+                        if tc_id and func_name:
+                            tool_call_id_to_name[tc_id] = func_name
+
+        # Second pass: build conversation text
+        for message in messages:
+            role = message.get('role', 'unknown')
+            content = message.get('content', '')
+
+            # Skip summary messages if include_summaries is False
+            if not include_summaries and isinstance(content, str):
+                if content.startswith('[CONTEXT_SUMMARY]'):
+                    continue
+
+            # Handle tool call messages (assistant calling tools)
+            tool_calls = message.get('tool_calls')
+            if tool_calls and isinstance(tool_calls, (list, tuple)):
+                for tool_call in tool_calls:
+                    if isinstance(tool_call, dict):
+                        func_name = tool_call.get('function', {}).get('name', 'unknown_tool')
+                        func_args_str = tool_call.get('function', {}).get('arguments', '{}')
+                    else:
+                        func_name = getattr(
+                            getattr(tool_call, 'function', None), 'name', 'unknown_tool'
+                        )
+                        func_args_str = getattr(
+                            getattr(tool_call, 'function', None), 'arguments', '{}'
+                        )
+
+                    # Format arguments
+                    try:
+                        args_dict = json.loads(func_args_str) if func_args_str else {}
+                        args_formatted = ', '.join(f"{k}={v}" for k, v in args_dict.items())
+                    except (json.JSONDecodeError, ValueError, TypeError):
+                        args_formatted = func_args_str
+
+                    conversation_lines.append(f"[TOOL CALL] {func_name}({args_formatted})")
+
+            # Handle tool response messages
+            elif role == 'tool':
+                # Try to get tool name from message, then fall back to tool_call_id mapping
+                tool_name = message.get('name')
+                if not tool_name:
+                    tool_call_id = message.get('tool_call_id', '')
+                    tool_name = tool_call_id_to_name.get(tool_call_id, 'unknown_tool')
+
+                result_content = content if content else str(message.get('content', ''))
+                # Truncate very long results for readability
+                if len(result_content) > 500:
+                    result_content = result_content[:500] + '...[truncated]'
+                conversation_lines.append(f"[TOOL RESULT] {tool_name} → {result_content}")
+
+            # Handle regular content messages (user/assistant/system)
+            elif content:
+                content = str(content)
+                if role == 'user':
+                    user_messages.append(content)
+                conversation_lines.append(f"{role}: {content}")
+
+        return "\n".join(conversation_lines).strip(), user_messages
 
     def set_progress_callback(self, callback: Callable) -> None:
         """Set callback for progress updates (P2).
@@ -445,13 +589,12 @@ Target: {next_hint.get('target_description', 'N/A')}
         # Register the tool for execution
         self._internal_tools[tool_name] = hint_tool
 
-        # Register the tool schema so LLM can see it
-        # The schema needs to be added to model_backend's tool list
-        tool_schema = hint_tool.get_openai_tool_schema()
-        if hasattr(self.model_backend, 'tool_schemas'):
-            self.model_backend.tool_schemas.append(tool_schema)
-        elif hasattr(self.model_backend, '_tool_schemas'):
-            self.model_backend._tool_schemas.append(tool_schema)
+        # Register with CAMEL's ChatAgent so LLM can see the tool
+        # Use inherited add_tool() method which properly updates tool list
+        try:
+            self.add_tool(hint_tool)
+        except Exception as e:
+            logger.debug(f"[ListenChatAgent] add_tool for {tool_name} failed: {e}")
 
         logger.info(
             f"[ListenChatAgent] {self.agent_name} registered workflow_hint_done tool "
@@ -858,6 +1001,13 @@ No complete path found in memory. Use your judgment to complete the task step by
         if not self._workflow_guide_content:
             return message
 
+        # Check if workflow guide is already injected to avoid duplication
+        # This can happen when _build_loop_message() already added _build_decision_guide()
+        msg_content = message.content if isinstance(message, BaseMessage) else message
+        if "## Workflow Guide" in msg_content or "## Memory Guidance" in msg_content:
+            logger.debug("[ListenChatAgent] Skipping workflow guide injection - already present")
+            return message
+
         # Build header based on memory level
         if self._memory_level == "L1":
             header = """## Memory Guidance [L1 - Complete Path]
@@ -1119,6 +1269,37 @@ No matching workflow found. Proceed with:
             total_tokens = usage_info.get("total_tokens", 0)
             logger.info(f"[ListenChatAgent] {self.agent_name} completed, tokens={total_tokens}")
 
+            # Emit thinking event for frontend AgentTab display
+            # This shows the agent's response/reasoning in the timeline
+            tool_calls = res.info.get("tool_calls") or []
+            if message:
+                # LLM returned text content - use as thinking
+                thinking_preview = message[:500] if len(message) > 500 else message
+                await self._emit_event(AgentThinkingData(
+                    task_id=task_id,
+                    agent_name=self.agent_name,
+                    thinking=thinking_preview,
+                    step=self._step_count,
+                ))
+            elif tool_calls:
+                # LLM only returned tool calls - show what tools are being called
+                tool_names = []
+                for tc in tool_calls:
+                    if hasattr(tc, 'func_name'):
+                        tool_names.append(tc.func_name)
+                    elif hasattr(tc, 'function') and hasattr(tc.function, 'name'):
+                        tool_names.append(tc.function.name)
+                    elif isinstance(tc, dict):
+                        tool_names.append(tc.get('name', tc.get('function', {}).get('name', 'unknown')))
+                if tool_names:
+                    thinking_preview = f"Calling tools: {', '.join(tool_names)}"
+                    await self._emit_event(AgentThinkingData(
+                        task_id=task_id,
+                        agent_name=self.agent_name,
+                        thinking=thinking_preview,
+                        step=self._step_count,
+                    ))
+
         assert message is not None
 
         # P2: Notify progress callback of step completion
@@ -1189,7 +1370,8 @@ No matching workflow found. Proceed with:
                     if hasattr(toolkit_instance, "toolkit_name") and callable(toolkit_instance.toolkit_name):
                         toolkit_name = toolkit_instance.toolkit_name()
             if not toolkit_name:
-                toolkit_name = "unknown_toolkit"
+                # Infer toolkit name from function name prefix
+                toolkit_name = _infer_toolkit_name(func_name)
 
             logger.debug(f"[ListenChatAgent] {self.agent_name} executing tool: {func_name}")
 
@@ -1269,7 +1451,8 @@ No matching workflow found. Proceed with:
                 if hasattr(toolkit_instance, "toolkit_name") and callable(toolkit_instance.toolkit_name):
                     toolkit_name = toolkit_instance.toolkit_name()
         if not toolkit_name:
-            toolkit_name = "unknown_toolkit"
+            # Infer toolkit name from function name prefix
+            toolkit_name = _infer_toolkit_name(func_name)
 
         logger.debug(f"[ListenChatAgent] {self.agent_name} executing async tool: {func_name}")
 

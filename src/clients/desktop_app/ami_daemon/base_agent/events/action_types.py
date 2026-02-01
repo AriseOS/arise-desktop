@@ -669,6 +669,9 @@ class AssignTaskData(BaseActionData):
     content: str  # Task content/description
     state: str  # "waiting" or "running"
     failure_count: int = 0
+    # Worker info for frontend display
+    worker_name: Optional[str] = None  # Human-readable worker name (e.g., "BrowserAgent")
+    agent_type: Optional[str] = None  # Worker type: "browser", "document", "code"
     # DS-2: Backward compatible aliases for frontend
     agent_id: Optional[str] = None  # Alias for assignee_id
     task_id: Optional[str] = None  # Alias for subtask_id (note: conflicts with base task_id)

@@ -62,14 +62,20 @@ from .task_orchestrator import (
     SubTaskState,
 )
 
-# Workforce components (CAMEL-based)
-from .ami_workforce import AMIWorkforce
+# Workforce components (CAMEL-based) - Legacy, being replaced by AMI Task Executor
+from .ami_workforce import AMIWorkforce, CoarseSubtask
 from .ami_worker import AMISingleAgentWorker
 from .listen_chat_agent import ListenChatAgent
+from .listen_browser_agent import ListenBrowserAgent, SubTask as BrowserSubTask, SubTaskState as BrowserSubTaskState
 from .ami_model_backend import AMIModelBackend
+
+# AMI Task Executor (replaces CAMEL Workforce)
+from .ami_task_executor import AMITaskExecutor, AMISubtask, SubtaskState
+from .ami_task_planner import AMITaskPlanner
 from .agent_factories import (
     create_model_backend,
     create_browser_agent,
+    create_listen_browser_agent,
     create_developer_agent,
     create_document_agent,
     create_multi_modal_agent,
@@ -144,13 +150,24 @@ __all__ = [
     "SubTask",
     "SubTaskState",
 
-    # Workforce (CAMEL-based)
+    # Workforce (CAMEL-based) - Legacy
     "AMIWorkforce",
+    "CoarseSubtask",
     "AMISingleAgentWorker",
     "ListenChatAgent",
+    "ListenBrowserAgent",
+    "BrowserSubTask",
+    "BrowserSubTaskState",
     "AMIModelBackend",
+
+    # AMI Task Executor (replaces CAMEL Workforce)
+    "AMITaskExecutor",
+    "AMISubtask",
+    "SubtaskState",
+    "AMITaskPlanner",
     "create_model_backend",
     "create_browser_agent",
+    "create_listen_browser_agent",
     "create_developer_agent",
     "create_document_agent",
     "create_multi_modal_agent",

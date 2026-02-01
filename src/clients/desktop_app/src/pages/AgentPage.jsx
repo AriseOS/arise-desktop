@@ -14,6 +14,8 @@ import { useAgentStore } from '../store';
 import { api } from '../utils/api';
 // Task decomposition panel for task planning
 import TaskDecomposition from '../components/TaskDecomposition';
+// Execution status panel for subtask tracking
+import ExecutionStatusPanel from '../components/ExecutionStatus';
 // Note: IntegrationList component is not yet implemented
 // import IntegrationList, { IntegrationStatusBar } from '../components/IntegrationList';
 import '../styles/AgentPage.css';
@@ -510,6 +512,20 @@ function AgentPage({ session, onNavigate, showStatus, version }) {
                     }
                   />
                 </div>
+
+                {/* Execution Status Panel - Shows subtask execution with agent assignments */}
+                {status === 'running' && taskRunning && taskRunning.length > 0 && (
+                  <ExecutionStatusPanel
+                    executionState={{
+                      subtasks: taskRunning,
+                      isActive: status === 'running',
+                      totalTasks: taskRunning.length,
+                      completedTasks: taskRunning.filter(t => t.status === 'completed').length,
+                      runningTasks: taskRunning.filter(t => t.status === 'running').length,
+                      failedTasks: taskRunning.filter(t => t.status === 'failed').length,
+                    }}
+                  />
+                )}
 
                 {/* Action Buttons */}
                 {(status === 'completed' || status === 'failed') && (

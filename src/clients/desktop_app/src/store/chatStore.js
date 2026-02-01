@@ -42,6 +42,16 @@ const createInitialTask = (taskId, type = TaskType.NORMAL) => ({
   streamingDecomposeText: '', // Streaming task decomposition
   isTaskEdit: false,
   hasWaitConfirm: false, // Simple query response flag
+  // Execution state - tracks subtask assignments and worker status
+  executionState: {
+    subtasks: [], // [{id, content, agent_type, state, assignee_id, worker_name}]
+    workers: [],  // [{id, name, type, status, current_task_id}]
+    isActive: false,
+    totalTasks: 0,
+    completedTasks: 0,
+    runningTasks: 0,
+    failedTasks: 0,
+  },
   // Agents
   agents: [],
   activeAgent: null,
@@ -515,6 +525,72 @@ const chatStore = createStore((set, get) => ({
           [taskId]: {
             ...task,
             taskAssigning,
+          },
+        },
+      };
+    });
+  },
+
+  /**
+   * Update execution state (subtask assignments and worker status)
+   */
+  updateExecutionState: (taskId, updates) => {
+    set((state) => {
+      const task = state.tasks[taskId];
+      if (!task) return state;
+
+      return {
+        tasks: {
+          ...state.tasks,
+          [taskId]: {
+            ...task,
+            executionState: {
+              ...task.executionState,
+              ...updates,
+            },
+          },
+        },
+      };
+    });
+  },
+
+  /**
+   * Update or add a subtask in execution state
+   */
+  upsertExecutionSubtask: (taskId, subtaskData) => {
+    set((state) => {
+      const task = state.tasks[taskId];
+      if (!task) return state;
+
+      const subtasks = [...(task.executionState?.subtasks || [])];
+      const existingIndex = subtasks.findIndex((s) => s.id === subtaskData.id);
+
+      if (existingIndex >= 0) {
+        // Update existing subtask
+        subtasks[existingIndex] = { ...subtasks[existingIndex], ...subtaskData };
+      } else {
+        // Add new subtask
+        subtasks.push(subtaskData);
+      }
+
+      // Recalculate counts
+      const completedTasks = subtasks.filter((s) => s.state === 'DONE' || s.state === 'completed').length;
+      const runningTasks = subtasks.filter((s) => s.state === 'RUNNING' || s.state === 'running').length;
+      const failedTasks = subtasks.filter((s) => s.state === 'FAILED' || s.state === 'failed').length;
+
+      return {
+        tasks: {
+          ...state.tasks,
+          [taskId]: {
+            ...task,
+            executionState: {
+              ...task.executionState,
+              subtasks,
+              totalTasks: subtasks.length,
+              completedTasks,
+              runningTasks,
+              failedTasks,
+            },
           },
         },
       };
@@ -1577,6 +1653,22 @@ const chatStore = createStore((set, get) => ({
       case 'task_decomposed':
         store.setTaskInfo(taskId, event.subtasks || event.tasks || []);
         store.setStreamingDecomposeText(taskId, '');
+        // Initialize execution state with subtasks (including agent_type)
+        {
+          const subtasks = (event.subtasks || event.tasks || []).map((st) => ({
+            id: st.id,
+            content: st.content,
+            state: st.state || st.status || 'OPEN',
+            agent_type: st.agent_type,
+          }));
+          store.updateExecutionState(taskId, {
+            subtasks,
+            totalTasks: subtasks.length,
+            completedTasks: 0,
+            runningTasks: 0,
+            failedTasks: 0,
+          });
+        }
         // Add message for confirmation
         store.addMessage(taskId, {
           role: 'agent',
@@ -1598,11 +1690,76 @@ const chatStore = createStore((set, get) => ({
 
       case 'task_assign':
       case 'assign_task':
+        // Legacy handling for backwards compatibility
         if (event.agent) {
           store.upsertAgent(taskId, event.agent);
         }
         if (event.tasks) {
           store.setTaskRunning(taskId, event.tasks);
+        }
+        // New: Update execution state with subtask assignment
+        if (event.subtask_id) {
+          store.upsertExecutionSubtask(taskId, {
+            id: event.subtask_id,
+            content: event.content,
+            state: event.state === 'running' ? 'RUNNING' : 'ASSIGNED',
+            assignee_id: event.assignee_id || event.agent_id,
+            worker_name: event.worker_name,
+            agent_type: event.agent_type,
+            failure_count: event.failure_count || 0,
+          });
+        }
+        break;
+
+      case 'workforce_started':
+        store.updateExecutionState(taskId, {
+          isActive: true,
+          totalTasks: event.total_tasks || 0,
+        });
+        break;
+
+      case 'workforce_completed':
+        store.updateExecutionState(taskId, {
+          isActive: false,
+        });
+        break;
+
+      case 'workforce_stopped':
+        store.updateExecutionState(taskId, {
+          isActive: false,
+        });
+        break;
+
+      case 'subtask_state':
+        // Update subtask state (OPEN, RUNNING, DONE, FAILED)
+        if (event.subtask_id) {
+          store.upsertExecutionSubtask(taskId, {
+            id: event.subtask_id,
+            state: event.state,
+            result: event.result,
+            failure_count: event.failure_count,
+          });
+        }
+        break;
+
+      case 'worker_completed':
+        if (event.subtask_id) {
+          store.upsertExecutionSubtask(taskId, {
+            id: event.subtask_id,
+            state: 'DONE',
+            result: event.result,
+          });
+        }
+        break;
+
+      case 'worker_failed':
+        if (event.subtask_id) {
+          store.upsertExecutionSubtask(taskId, {
+            id: event.subtask_id,
+            state: 'FAILED',
+            error: event.error,
+            failure_count: event.failure_count,
+          });
         }
         break;
 

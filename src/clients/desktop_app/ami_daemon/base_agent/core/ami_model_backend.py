@@ -495,3 +495,50 @@ class AMIModelBackend(BaseModelBackend):
     def stream(self) -> bool:
         """Whether streaming is enabled."""
         return self.model_config_dict.get("stream", False)
+
+    @property
+    def token_limit(self) -> int:
+        """Returns the maximum token limit for the model.
+
+        Override parent's token_limit to provide sensible defaults for
+        models not in CAMEL's ModelType enum (which defaults to 999_999_999).
+
+        This is critical for CAMEL's automatic context summarization to work.
+        Without this, the summarize_threshold check never triggers because
+        context never exceeds the 999_999_999 token "limit".
+        """
+        # Check if explicitly set in model_config_dict
+        if "token_limit" in self.model_config_dict:
+            return self.model_config_dict["token_limit"]
+
+        # Map model names to their actual context limits
+        model_name = str(self.model_type).lower()
+
+        # GLM models (智谱)
+        if "glm-4" in model_name or "glm4" in model_name:
+            # GLM-4 series has ~128k context, GLM-4-Long has ~1M
+            if "long" in model_name:
+                return 900_000  # Leave room for response
+            return 120_000  # GLM-4 standard
+
+        # Claude models
+        if "claude" in model_name:
+            if "opus" in model_name or "sonnet" in model_name:
+                return 180_000  # Claude 3/4 has 200k context
+            return 180_000
+
+        # DeepSeek models
+        if "deepseek" in model_name:
+            return 60_000  # Conservative for DeepSeek
+
+        # Qwen models
+        if "qwen" in model_name:
+            return 30_000  # Qwen varies, use conservative default
+
+        # Default for unknown models - use a conservative 100k
+        # This ensures summarization kicks in before hitting real limits
+        logger.warning(
+            f"[AMIModelBackend] Unknown model '{model_name}': "
+            f"using default token_limit=100000"
+        )
+        return 100_000

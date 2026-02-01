@@ -283,10 +283,14 @@ class HumanToolkit(BaseToolkit):
         Returns:
             List of FunctionTool objects.
         """
-        return [
-            FunctionTool(self.ask_human_async, name="ask_human"),
-            FunctionTool(self.send_message_async, name="send_message"),
-        ]
+        # Create tools and rename to match expected names
+        ask_tool = FunctionTool(self.ask_human_async)
+        ask_tool.set_function_name("ask_human")
+
+        send_tool = FunctionTool(self.send_message_async)
+        send_tool.set_function_name("send_message")
+
+        return [ask_tool, send_tool]
 
     @classmethod
     def toolkit_name(cls) -> str:

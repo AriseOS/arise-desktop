@@ -307,15 +307,29 @@ function AgentTab({
       });
     });
 
-    // Add toolkit events
-    toolkitEvents.forEach((event, index) => {
-      events.push({
-        type: 'toolkit',
-        ...event,
-        timestamp: toTimestampMs(event.timestamp, now - (toolkitEvents.length - index) * 100),
-        id: `toolkit-${index}`,
+    // Internal plan tools to filter out (these are agent's internal logic, not user-facing)
+    const INTERNAL_PLAN_TOOLS = [
+      'get_current_plan',
+      'complete_subtask',
+      'add_subtask',
+      'update_subtask',
+      'replan_task',
+    ];
+
+    // Add toolkit events (filter out internal plan tools)
+    toolkitEvents
+      .filter((event) => {
+        const toolName = event.name || event.tool || event.method || '';
+        return !INTERNAL_PLAN_TOOLS.includes(toolName);
+      })
+      .forEach((event, index) => {
+        events.push({
+          type: 'toolkit',
+          ...event,
+          timestamp: toTimestampMs(event.timestamp, now - (toolkitEvents.length - index) * 100),
+          id: `toolkit-${index}`,
+        });
       });
-    });
 
     // Sort by timestamp (all are now numeric ms)
     return events.sort((a, b) => a.timestamp - b.timestamp);

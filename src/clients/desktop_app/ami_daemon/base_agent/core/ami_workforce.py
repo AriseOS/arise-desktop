@@ -7,14 +7,19 @@ coordination. It extends CAMEL's Workforce with AMI-specific features:
 - Task decomposition with user confirmation flow
 - Integration with existing TaskState and event system
 - Uses configured LLM (not environment variables)
+- Coarse-grained task decomposition by agent type
+- Memory integration for workflow guidance
 """
 
 import asyncio
+import json
 import logging
+import re
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..tools.toolkits import MemoryToolkit
+    from ..tools.toolkits import MemoryToolkit, QueryResult
 
 from camel.agents import ChatAgent
 from camel.societies.workforce.workforce import (
@@ -26,6 +31,7 @@ from camel.societies.workforce.task_channel import TaskChannel
 from camel.societies.workforce.base import BaseNode
 from camel.tasks.task import Task, TaskState as CAMELTaskState, validate_task_content
 
+from src.common.llm import parse_json_with_repair
 from .agent_factories import create_model_backend
 from ..events import (
     TaskDecomposedData,
@@ -35,10 +41,42 @@ from ..events import (
     NoticeData,
     WorkerAssignedData,
     AssignTaskData,
+    MemoryLevelData,
 )
 from ..events.toolkit_listen import _run_async_safely
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Data Structures for Coarse-Grained Decomposition
+# =============================================================================
+
+@dataclass
+class CoarseSubtask:
+    """
+    Coarse-grained subtask - Workforce level task decomposition result.
+
+    This represents a high-level subtask that is categorized by the type of
+    agent needed to execute it (browser, document, code, etc.).
+
+    The Memory query result is attached after coarse decomposition, allowing
+    each subtask to have its own workflow guidance.
+    """
+    id: str
+    content: str  # Task description
+    agent_type: str  # "browser" | "document" | "code"
+    depends_on: List[str] = field(default_factory=list)  # Dependent subtask IDs
+
+    # Memory query result (populated by query_memory_for_coarse_subtasks)
+    memory_result: Optional["QueryResult"] = None
+    memory_level: str = "L3"  # L1/L2/L3
+    workflow_guide: Optional[str] = None  # Formatted guidance content
+
+
+# =============================================================================
+# Prompts for Task Decomposition
+# =============================================================================
 
 
 # System prompts for coordinator and task agents
@@ -60,6 +98,24 @@ Guidelines:
 - Each subtask should be specific and actionable
 - Consider the logical order of execution
 - Keep subtasks focused on a single objective"""
+
+# Coarse-grained decomposition prompt - splits by agent type
+COARSE_DECOMPOSE_PROMPT = """Split the task by work type. Keep related operations of the same type together.
+
+Types:
+- browser: Web browsing, research, online operations
+- document: Writing reports, creating files
+- code: Programming, terminal commands
+
+Output JSON:
+{{
+    "subtasks": [
+        {{"id": "1", "type": "browser", "content": "...", "depends_on": []}},
+        {{"id": "2", "type": "document", "content": "...", "depends_on": ["1"]}}
+    ]
+}}
+
+Task: {task}"""
 
 
 class AMIWorkforce(BaseWorkforce):
@@ -175,6 +231,9 @@ class AMIWorkforce(BaseWorkforce):
         self._global_path_actions: List[Any] = []  # L2 global path actions
         self._subtask_target_states: Dict[str, Any] = {}  # subtask_id -> target State
         self._subtask_memory_hints: Dict[str, str] = {}  # subtask_id -> workflow_guide
+
+        # Coarse-grained decomposition (by agent type)
+        self._coarse_subtasks: List[CoarseSubtask] = []  # Coarse subtasks with Memory results
 
         # Track subtasks and their states
         self._subtasks: List[Task] = []
@@ -459,6 +518,9 @@ class AMIWorkforce(BaseWorkforce):
             # Get worker name from node_id
             worker_name = self._get_worker_name(item.assignee_id)
 
+            # Get agent_type for frontend display
+            agent_type = self._get_agent_type_for_task(task_obj) if task_obj else None
+
             # Emit assign_task event with "waiting" state (Phase 1)
             await self._emit_event(AssignTaskData(
                 task_id=self.task_id,
@@ -467,6 +529,8 @@ class AMIWorkforce(BaseWorkforce):
                 content=content,
                 state="waiting",
                 failure_count=0,
+                worker_name=worker_name,
+                agent_type=agent_type,
                 # DS-2: Backward compatible fields
                 agent_id=item.assignee_id,
             ))
@@ -494,6 +558,9 @@ class AMIWorkforce(BaseWorkforce):
         - Phase 1 (in _find_assignee): state="waiting"
         - Phase 2 (here): state="running"
 
+        Note: Memory/workflow_guide is passed via task.additional_info,
+        which CAMEL's PROCESS_TASK_PROMPT automatically includes in the prompt.
+
         Args:
             task: Task being posted
             assignee_id: ID of assigned worker
@@ -510,6 +577,7 @@ class AMIWorkforce(BaseWorkforce):
         # Skip the main task itself
         if not (self._task and task.id == self._task.id):
             worker_name = self._get_worker_name(assignee_id)
+            agent_type = self._get_agent_type_for_task(task)
 
             # Emit assign_task event with "running" state (Phase 2)
             await self._emit_event(AssignTaskData(
@@ -519,6 +587,8 @@ class AMIWorkforce(BaseWorkforce):
                 content=task.content,
                 state="running",
                 failure_count=task.failure_count,
+                worker_name=worker_name,
+                agent_type=agent_type,
                 # DS-2: Backward compatible fields
                 agent_id=assignee_id,
             ))
@@ -566,6 +636,38 @@ class AMIWorkforce(BaseWorkforce):
                     return child.worker.agent_name
                 return getattr(child, 'description', node_id)
         return node_id
+
+    def _get_agent_type_for_task(self, task: Task) -> Optional[str]:
+        """
+        Get the agent type for a task.
+
+        Looks up agent_type from:
+        1. CoarseSubtask (if task ID matches coarse.X pattern)
+        2. Task's additional_info field
+
+        Args:
+            task: The task to look up.
+
+        Returns:
+            Agent type string ("browser", "document", "code") or None.
+        """
+        # Try to find from CoarseSubtask by task ID
+        if task.id.startswith("coarse."):
+            coarse_id = task.id.replace("coarse.", "")
+            coarse_subtask = self.get_coarse_subtask(coarse_id)
+            if coarse_subtask:
+                return coarse_subtask.agent_type
+
+        # Try to find from CoarseSubtask by content match
+        for cs in self._coarse_subtasks:
+            if cs.content == task.content:
+                return cs.agent_type
+
+        # Try to get from task's additional_info
+        if hasattr(task, 'additional_info') and task.additional_info:
+            return task.additional_info.get('agent_type')
+
+        return None
 
     async def add_subtasks(self, new_tasks: List[Task]) -> None:
         """
@@ -1175,3 +1277,322 @@ class AMIWorkforce(BaseWorkforce):
             Cached workflow guide for this subtask, or None if not cached.
         """
         return self._subtask_memory_hints.get(subtask_id)
+
+    # =========================================================================
+    # Coarse-Grained Decomposition Methods
+    # =========================================================================
+
+    async def coarse_decompose_task(self, task: str) -> List[CoarseSubtask]:
+        """
+        Coarse-grained task decomposition - split task by agent type.
+
+        This method analyzes the task and splits it into coarse-grained subtasks
+        based on the TYPE of work required (browser, document, code).
+
+        This is Phase 1 of the two-phase decomposition:
+        - Phase 1 (here): Split by agent type, get Memory for each
+        - Phase 2 (in Worker): Fine-grained decomposition within each agent
+
+        The key insight is that Memory queries work better on semantically
+        complete subtasks rather than fragmented steps. By keeping all browser
+        operations together, we can match complete workflows from Memory.
+
+        Args:
+            task: The original task description from user.
+
+        Returns:
+            List of CoarseSubtask objects, each tagged with agent_type.
+
+        Raises:
+            ValueError: If LLM response cannot be parsed.
+        """
+        logger.info(f"[AMIWorkforce] Coarse decomposing task: {task[:100]}...")
+
+        # Emit progress event
+        await self._emit_event(DecomposeProgressData(
+            task_id=self.task_id,
+            progress=0.1,
+            message="Analyzing task types...",
+            is_final=False,
+        ))
+
+        # Build the prompt
+        prompt = COARSE_DECOMPOSE_PROMPT.format(task=task)
+
+        # Call LLM for coarse decomposition
+        self.task_agent.reset()
+        response = self.task_agent.step(prompt)
+
+        if not response or not response.msg:
+            raise ValueError("Coarse decomposition returned empty response")
+
+        response_text = response.msg.content
+        logger.debug(f"[AMIWorkforce] Coarse decompose raw response: {response_text[:500]}...")
+
+        # Parse the JSON response
+        coarse_subtasks = self._parse_coarse_subtasks(response_text)
+
+        # Store in instance
+        self._coarse_subtasks = coarse_subtasks
+
+        # Log summary
+        type_counts = {}
+        for st in coarse_subtasks:
+            type_counts[st.agent_type] = type_counts.get(st.agent_type, 0) + 1
+        logger.info(
+            f"[AMIWorkforce] Coarse decomposition complete: {len(coarse_subtasks)} subtasks "
+            f"(types: {type_counts})"
+        )
+
+        # Emit progress event
+        await self._emit_event(DecomposeProgressData(
+            task_id=self.task_id,
+            progress=0.3,
+            message=f"Identified {len(coarse_subtasks)} coarse subtasks",
+            is_final=False,
+        ))
+
+        return coarse_subtasks
+
+    def _parse_coarse_subtasks(self, response_text: str) -> List[CoarseSubtask]:
+        """
+        Parse LLM response into CoarseSubtask objects.
+
+        Uses common/llm parse_json_with_repair for robust JSON parsing.
+
+        Args:
+            response_text: Raw LLM response text.
+
+        Returns:
+            List of parsed CoarseSubtask objects.
+
+        Raises:
+            ValueError: If response cannot be parsed or is missing required fields.
+        """
+        # Use common JSON parsing with repair
+        data = parse_json_with_repair(response_text)
+
+        # Check for fallback (parsing failed completely)
+        if "answer" in data and "subtasks" not in data:
+            logger.error(f"[AMIWorkforce] JSON parsing failed, got fallback: {response_text[:500]}")
+            raise ValueError("Invalid JSON in coarse decomposition response")
+
+        # Validate structure
+        if "subtasks" not in data:
+            raise ValueError("Coarse decomposition response missing 'subtasks' field")
+
+        subtasks = []
+        for item in data["subtasks"]:
+            # Validate required fields
+            if "id" not in item or "type" not in item or "content" not in item:
+                logger.warning(f"[AMIWorkforce] Skipping invalid subtask: {item}")
+                continue
+
+            # Validate agent type
+            agent_type = item["type"].lower()
+            if agent_type not in ("browser", "document", "code"):
+                logger.warning(
+                    f"[AMIWorkforce] Unknown agent type '{agent_type}', defaulting to 'browser'"
+                )
+                agent_type = "browser"
+
+            subtask = CoarseSubtask(
+                id=str(item["id"]),
+                content=item["content"],
+                agent_type=agent_type,
+                depends_on=item.get("depends_on", []),
+            )
+            subtasks.append(subtask)
+
+        if not subtasks:
+            raise ValueError("Coarse decomposition produced no valid subtasks")
+
+        return subtasks
+
+    async def query_memory_for_coarse_subtasks(self) -> None:
+        """
+        Query Memory for each coarse-grained subtask.
+
+        This method iterates over all coarse subtasks and queries Memory
+        for each one. The results are stored in the CoarseSubtask objects:
+        - memory_result: The raw QueryResult from Memory API
+        - memory_level: L1/L2/L3 based on match quality
+        - workflow_guide: Formatted guidance text for injection
+
+        This is the key integration point between coarse decomposition and
+        Memory. Each subtask gets its own Memory context, which will be
+        passed to the Worker when the task is assigned.
+        """
+        if not self._memory_toolkit:
+            logger.info("[AMIWorkforce] Memory toolkit not configured, skipping coarse subtask queries")
+            return
+
+        if not self._memory_toolkit.is_available():
+            logger.info("[AMIWorkforce] Memory service not available, skipping coarse subtask queries")
+            return
+
+        if not self._coarse_subtasks:
+            logger.warning("[AMIWorkforce] No coarse subtasks to query Memory for")
+            return
+
+        logger.info(
+            f"[AMIWorkforce] Querying Memory for {len(self._coarse_subtasks)} coarse subtasks..."
+        )
+
+        # Emit progress event
+        await self._emit_event(DecomposeProgressData(
+            task_id=self.task_id,
+            progress=0.4,
+            message="Querying Memory for each subtask...",
+            is_final=False,
+        ))
+
+        for i, subtask in enumerate(self._coarse_subtasks):
+            try:
+                logger.info(
+                    f"[AMIWorkforce] Querying Memory for subtask {subtask.id}: "
+                    f"{subtask.content[:50]}..."
+                )
+
+                result = await self._memory_toolkit.query_task(subtask.content)
+                subtask.memory_result = result
+
+                # Determine memory level and format guide
+                if result.cognitive_phrase:
+                    # L1: Complete workflow match
+                    subtask.memory_level = "L1"
+                    from ..tools.toolkits import MemoryToolkit
+                    subtask.workflow_guide = MemoryToolkit.format_cognitive_phrase(
+                        result.cognitive_phrase
+                    )
+                    states_count = len(result.cognitive_phrase.states) if hasattr(result.cognitive_phrase, 'states') else 0
+                    logger.info(
+                        f"[AMIWorkforce] Subtask {subtask.id}: L1 match with "
+                        f"{states_count} states"
+                    )
+
+                elif result.states:
+                    # L2: Partial path match
+                    subtask.memory_level = "L2"
+                    from ..tools.toolkits import MemoryToolkit
+                    subtask.workflow_guide = MemoryToolkit.format_navigation_path(
+                        result.states, result.actions or []
+                    )
+                    logger.info(
+                        f"[AMIWorkforce] Subtask {subtask.id}: L2 match with "
+                        f"{len(result.states)} states"
+                    )
+
+                else:
+                    # L3: No match
+                    subtask.memory_level = "L3"
+                    logger.info(f"[AMIWorkforce] Subtask {subtask.id}: L3 (no match)")
+
+                # Emit memory level event for this subtask
+                await self._emit_event(MemoryLevelData(
+                    task_id=self.task_id,
+                    level=subtask.memory_level,
+                    reason=f"Memory query for subtask {subtask.id}",
+                    states_count=len(result.states) if result.states else 0,
+                    method="coarse_subtask_query",
+                ))
+
+            except Exception as e:
+                logger.warning(
+                    f"[AMIWorkforce] Memory query failed for subtask {subtask.id}: {e}"
+                )
+                subtask.memory_level = "L3"
+
+            # Update progress
+            progress = 0.4 + (0.3 * (i + 1) / len(self._coarse_subtasks))
+            await self._emit_event(DecomposeProgressData(
+                task_id=self.task_id,
+                progress=progress,
+                message=f"Memory query {i + 1}/{len(self._coarse_subtasks)} complete",
+                is_final=False,
+            ))
+
+        # Log summary
+        level_counts = {"L1": 0, "L2": 0, "L3": 0}
+        for st in self._coarse_subtasks:
+            level_counts[st.memory_level] = level_counts.get(st.memory_level, 0) + 1
+        logger.info(
+            f"[AMIWorkforce] Memory queries complete: L1={level_counts['L1']}, "
+            f"L2={level_counts['L2']}, L3={level_counts['L3']}"
+        )
+
+    def get_coarse_subtask(self, subtask_id: str) -> Optional[CoarseSubtask]:
+        """
+        Get a coarse subtask by ID.
+
+        Args:
+            subtask_id: The subtask ID to look up.
+
+        Returns:
+            The CoarseSubtask if found, None otherwise.
+        """
+        for st in self._coarse_subtasks:
+            if st.id == subtask_id:
+                return st
+        return None
+
+    def get_coarse_subtasks_by_type(self, agent_type: str) -> List[CoarseSubtask]:
+        """
+        Get all coarse subtasks of a specific agent type.
+
+        Args:
+            agent_type: The agent type to filter by ("browser", "document", "code").
+
+        Returns:
+            List of matching CoarseSubtask objects.
+        """
+        return [st for st in self._coarse_subtasks if st.agent_type == agent_type]
+
+    @property
+    def coarse_subtasks(self) -> List[CoarseSubtask]:
+        """Get all coarse subtasks."""
+        return self._coarse_subtasks
+
+    def coarse_subtasks_to_tasks(self) -> List[Task]:
+        """
+        Convert coarse subtasks to CAMEL Task objects for execution.
+
+        This method converts the CoarseSubtask objects (with their Memory
+        context) into CAMEL Task objects that can be assigned to Workers.
+
+        The Memory context (workflow_guide, memory_level) is stored in the
+        Task's additional_info field. CAMEL's PROCESS_TASK_PROMPT will
+        automatically include this in the prompt sent to the Worker agent.
+
+        Returns:
+            List of CAMEL Task objects ready for execution.
+        """
+        tasks = []
+        for coarse_st in self._coarse_subtasks:
+            # Build additional_info with workflow guide
+            additional_info = {
+                "agent_type": coarse_st.agent_type,
+                "memory_level": coarse_st.memory_level,
+                "depends_on": coarse_st.depends_on,
+            }
+
+            # Include workflow guide directly in additional_info
+            # CAMEL's PROCESS_TASK_PROMPT will include this in the prompt
+            if coarse_st.workflow_guide:
+                additional_info["workflow_guide"] = coarse_st.workflow_guide
+
+            # Create CAMEL Task
+            task = Task(
+                content=coarse_st.content,
+                id=f"coarse.{coarse_st.id}",
+                additional_info=additional_info,
+            )
+            tasks.append(task)
+
+            # Track state
+            self._subtask_states[task.id] = "OPEN"
+
+        # Update subtasks list
+        self._subtasks.extend(tasks)
+
+        return tasks
