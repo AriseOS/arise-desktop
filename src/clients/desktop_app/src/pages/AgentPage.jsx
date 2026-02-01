@@ -46,6 +46,7 @@ function AgentPage({ session, onNavigate, showStatus, version }) {
     startTask,
     cancelTask,
     sendHumanResponse,
+    sendUserMessage,  // Eigent: multi-turn conversation
     // Decomposition methods (Eigent pattern: 30s auto-confirm in store)
     confirmDecomposition,
     cancelDecomposition,
@@ -152,11 +153,42 @@ function AgentPage({ session, onNavigate, showStatus, version }) {
   // Store sets up 30s timer when to_sub_tasks event is received
 
   // Submit task - delegates to store's startTask (Eigent pattern)
+  // Also handles multi-turn conversation when task is running or waiting
   const handleSubmit = async () => {
     if (!taskInput.trim()) return;
 
+    const inputText = taskInput.trim();
+
+    // Eigent pattern: Determine if we should continue conversation or start new task
+    const task = activeTaskId ? tasks[activeTaskId] : null;
+
+    // Check if we should continue the conversation (Eigent pattern)
+    // In multi-turn mode, status is 'waiting' after each response
+    const shouldContinueConversation = task && (
+      // Task is running - send as user_message
+      task.status === 'running' ||
+      // Task is waiting for user input (after wait_confirm)
+      task.status === 'waiting' ||
+      // Task has wait_confirm flag set (simple answer received)
+      task.hasWaitConfirm ||
+      // Task is paused
+      task.status === 'pause'
+    );
+
+    if (shouldContinueConversation) {
+      // Continue conversation with existing task
+      const result = await sendUserMessage(activeTaskId, inputText);
+      if (result.success) {
+        setTaskInput('');  // Clear input on success
+      } else {
+        showStatus(`Failed to send message: ${result.error}`, 'error');
+      }
+      return;
+    }
+
+    // Otherwise, start a new task
     // Create task in store (this sets activeTaskId automatically)
-    const newTaskId = createTask(taskInput.trim());
+    const newTaskId = createTask(inputText);
 
     // Start task execution (store handles SSE connection and events)
     const success = await startTask(newTaskId, showStatus);
@@ -462,15 +494,20 @@ function AgentPage({ session, onNavigate, showStatus, version }) {
                     }}
                     // Input control
                     inputValue={taskInput}
-                    onInputChange={(e) => setTaskInput(e.target.value)}
+                    onInputChange={(value) => setTaskInput(value)}
                     onSendMessage={handleSubmit}
                     // Task actions
                     onStartTask={() => handleDecompositionConfirm(subtasks)}
                     onEditTask={handleEditTask}
                     onPauseResume={() => console.log('Pause/Resume not implemented')}
-                    // Loading states
-                    isLoading={status === 'running'}
-                    disabled={status === 'running'}
+                    // Loading states - Eigent: allow input during running for multi-turn
+                    isLoading={false}
+                    disabled={false}
+                    // Eigent: Change placeholder when task is running
+                    placeholder={status === 'running'
+                      ? 'Ask a question or add more tasks...'
+                      : 'Ask Ami to automate your tasks'
+                    }
                   />
                 </div>
 

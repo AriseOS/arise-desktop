@@ -30,18 +30,28 @@ class BrowserToolkit(BaseToolkit):
     All methods are async for proper integration with async agent loops.
     Uses @listen_toolkit for automatic event emission on public methods.
 
+    Session Management:
+        Uses session_id for on-demand browser session creation.
+        Session is created when the first browser tool is called, using
+        HybridBrowserSession's singleton mechanism. Multiple toolkit instances
+        with the same session_id share the same browser instance, making this
+        clone-safe for CAMEL's agent pooling.
+
     Tool Filtering:
         Use `enabled_tools` parameter to control which tools are exposed to the LLM.
         This reduces request payload size and focuses the LLM on relevant actions.
 
         Example:
-            toolkit = BrowserToolkit(enabled_tools=[
-                "browser_visit_page",
-                "browser_click",
-                "browser_type",
-                "browser_enter",
-                "browser_get_page_snapshot",
-            ])
+            toolkit = BrowserToolkit(
+                session_id="task_123",
+                headless=False,
+                enabled_tools=[
+                    "browser_visit_page",
+                    "browser_click",
+                    "browser_type",
+                    "browser_enter",
+                    "browser_get_page_snapshot",
+                ])
     """
 
     # Agent name for event tracking
@@ -82,24 +92,40 @@ class BrowserToolkit(BaseToolkit):
 
     def __init__(
         self,
-        session: Optional["HybridBrowserSession"] = None,
+        session_id: str,
+        headless: bool = False,
+        user_data_dir: Optional[str] = None,
         timeout: Optional[float] = 30.0,
         return_snapshot: bool = True,
         enabled_tools: Optional[List[str]] = None,
+        agent: Optional[Any] = None,  # ListenChatAgent for URL change notifications
     ) -> None:
         """Initialize the BrowserToolkit.
 
         Args:
-            session: An existing HybridBrowserSession instance.
-                If not provided, tools will return errors until set.
+            session_id: Session identifier for browser session management.
+                Same session_id across multiple toolkit instances/clones will share
+                the same browser session via HybridBrowserSession's singleton mechanism.
+            headless: Whether to run browser in headless mode.
+            user_data_dir: Browser user data directory.
             timeout: Default timeout for browser operations.
             return_snapshot: Whether to return page snapshot after each action.
             enabled_tools: List of tool names to enable. If None, uses DEFAULT_ENABLED_TOOLS.
                 Only tools in this list will be returned by get_tools().
+            agent: Optional ListenChatAgent for URL change notifications.
+                When provided, BrowserToolkit will call agent.set_current_url()
+                after each browser action to enable IntentSequence cache management.
         """
         super().__init__(timeout=timeout)
-        self._session = session
         self._return_snapshot = return_snapshot
+
+        # Session configuration (session retrieved on-demand via singleton)
+        self._session_id = session_id
+        self._headless = headless
+        self._user_data_dir = user_data_dir
+
+        # Agent reference for URL change notifications (IntentSequence cache)
+        self._agent = agent
 
         # Set enabled tools
         if enabled_tools is None:
@@ -111,22 +137,68 @@ class BrowserToolkit(BaseToolkit):
                 logger.warning(f"Unknown tool names will be ignored: {invalid_tools}")
             self._enabled_tools = [t for t in enabled_tools if t in self.ALL_TOOLS]
 
-        logger.info(f"BrowserToolkit initialized (session={'set' if session else 'None'}, enabled_tools={len(self._enabled_tools)})")
+        logger.info(f"BrowserToolkit initialized (session_id={session_id}, enabled_tools={len(self._enabled_tools)})")
 
-    def set_session(self, session: "HybridBrowserSession") -> None:
-        """Set or update the browser session.
+    def set_agent(self, agent: Any) -> None:
+        """Set the agent reference for URL change notifications.
+
+        This enables IntentSequence cache management in ListenChatAgent.
+        Should be called when the toolkit is registered with an agent.
 
         Args:
-            session: The HybridBrowserSession instance to use.
+            agent: ListenChatAgent instance with set_current_url() method.
         """
-        self._session = session
-        logger.info("Browser session updated")
+        self._agent = agent
+        logger.debug(f"BrowserToolkit: agent reference set for URL notifications")
+
+    async def _notify_url_change(self) -> None:
+        """Notify the agent of current URL for IntentSequence cache management.
+
+        Called after each browser action to enable:
+        - Cache invalidation when URL changes
+        - Page operations cache injection
+        """
+        if not self._agent or not hasattr(self._agent, 'set_current_url'):
+            return
+
+        try:
+            session = await self._get_session()
+            page = await session.get_page()
+            current_url = page.url
+            self._agent.set_current_url(current_url)
+            logger.debug(f"BrowserToolkit: notified agent of URL: {current_url[:50]}...")
+        except Exception as e:
+            logger.debug(f"BrowserToolkit: URL notification failed: {e}")
+
+    async def _get_session(self) -> "HybridBrowserSession":
+        """Get browser session using HybridBrowserSession's singleton mechanism.
+
+        Each call creates a new HybridBrowserSession instance, but ensure_browser()
+        returns the singleton for this session_id. This approach is clone-safe because
+        we don't cache session references - each toolkit instance independently
+        retrieves the shared session via the singleton registry.
+
+        Returns:
+            HybridBrowserSession instance (shared singleton for this session_id).
+
+        Raises:
+            RuntimeError: If session cannot be created.
+        """
+        from ..eigent_browser.browser_session import HybridBrowserSession
+
+        # Create session instance - HybridBrowserSession's ensure_browser() handles
+        # singleton lookup/creation internally via _get_or_create_instance()
+        session = HybridBrowserSession(
+            session_id=self._session_id,
+            headless=self._headless,
+            user_data_dir=self._user_data_dir,
+            stealth=True,
+        )
+        await session.ensure_browser()
+        return session
 
     def _ensure_session(self) -> bool:
-        """Check if session is available."""
-        if self._session is None:
-            logger.error("Browser session not set")
-            return False
+        """Check if session can be created (always True since session_id is required)."""
         return True
 
     async def _get_snapshot(self, force_refresh: bool = False) -> str:
@@ -136,10 +208,13 @@ class BrowserToolkit(BaseToolkit):
             force_refresh: If True, forces re-injection of aria-ref attributes.
                           Use after switching tabs or when refs may be stale.
         """
-        if not self._return_snapshot or not self._session:
+        if not self._return_snapshot:
+            return ""
+        session = await self._get_session()
+        if not session:
             return ""
         try:
-            snapshot = await self._session.get_snapshot(force_refresh=force_refresh)
+            snapshot = await session.get_snapshot(force_refresh=force_refresh)
             return snapshot
         except Exception as e:
             logger.error(f"Failed to get snapshot: {e}")
@@ -154,10 +229,11 @@ class BrowserToolkit(BaseToolkit):
         Returns:
             Formatted string with current page URL and title.
         """
-        if not self._session:
+        session = await self._get_session()
+        if not session:
             return ""
         try:
-            page = await self._session.get_page()
+            page = await session.get_page()
             url = page.url
             title = await page.title()
             return f"**Current Page:** {title}\n**URL:** {url}"
@@ -171,10 +247,11 @@ class BrowserToolkit(BaseToolkit):
         Returns:
             Page title string, or empty string if unavailable.
         """
-        if not self._session:
+        session = await self._get_session()
+        if not session:
             return ""
         try:
-            page = await self._session.get_page()
+            page = await session.get_page()
             return await page.title()
         except Exception as e:
             logger.debug(f"Failed to get page title: {e}")
@@ -196,15 +273,16 @@ class BrowserToolkit(BaseToolkit):
         Args:
             timeout_ms: Timeout in milliseconds. If None, uses session's network_idle_timeout.
         """
-        if not self._session:
+        session = await self._get_session()
+        if not session:
             return
 
         # Use session's configured timeout if not specified
         if timeout_ms is None:
-            timeout_ms = self._session._network_idle_timeout or 5000
+            timeout_ms = getattr(session, '_network_idle_timeout', None) or 5000
 
         try:
-            page = await self._session.get_page()
+            page = await session.get_page()
 
             # Step 1: Wait for DOM content to be loaded
             await page.wait_for_load_state('domcontentloaded', timeout=timeout_ms)
@@ -227,12 +305,13 @@ class BrowserToolkit(BaseToolkit):
 
         Returns tab count and current tab info so LLM knows about tab changes.
         """
-        if not self._session:
+        session = await self._get_session()
+        if not session:
             return ""
 
         try:
-            tab_info = await self._session.get_tab_info()
-            current_tab_id = await self._session.get_current_tab_id()
+            tab_info = await session.get_tab_info()
+            current_tab_id = await session.get_current_tab_id()
 
             if not tab_info:
                 return ""
@@ -260,14 +339,18 @@ class BrowserToolkit(BaseToolkit):
         Following Eigent's pattern of sending browser screenshots for
         real-time display in the BrowserTab component.
         """
-        if not self._session or not hasattr(self, '_task_state') or self._task_state is None:
+        if not hasattr(self, '_task_state') or self._task_state is None:
+            return
+
+        session = await self._get_session()
+        if not session:
             return
 
         try:
-            page = await self._session.get_page()
+            page = await session.get_page()
             url = page.url
             title = await page.title()
-            tab_id = await self._session.get_current_tab_id()
+            tab_id = await session.get_current_tab_id()
 
             # Capture screenshot as PNG bytes
             screenshot_bytes = await page.screenshot(type='jpeg', quality=80)
@@ -351,6 +434,12 @@ class BrowserToolkit(BaseToolkit):
         except Exception as e:
             logger.debug(f"Screenshot event send failed (non-critical): {e}")
 
+        # Notify agent of URL change for IntentSequence cache management
+        try:
+            await self._notify_url_change()
+        except Exception as e:
+            logger.debug(f"URL change notification failed (non-critical): {e}")
+
         return "\n\n".join(parts)
 
     @listen_toolkit(
@@ -373,7 +462,8 @@ class BrowserToolkit(BaseToolkit):
             return "Error: Browser session not initialized"
 
         try:
-            await self._session.visit(url)
+            session = await self._get_session()
+            await session.visit(url)
             return await self._build_action_result(f"Navigated to {url}")
         except Exception as e:
             logger.error(f"browser_visit_page error: {e}")
@@ -409,6 +499,7 @@ class BrowserToolkit(BaseToolkit):
             return "Error: Must provide ref, element_text, or selector"
 
         try:
+            session = await self._get_session()
             action = {"type": "click"}
             if ref:
                 action["ref"] = ref
@@ -417,7 +508,7 @@ class BrowserToolkit(BaseToolkit):
             if selector:
                 action["selector"] = selector
 
-            result = await self._session.exec_action(action)
+            result = await session.exec_action(action)
 
             if result.get("success"):
                 details = result.get("details", {})
@@ -473,6 +564,7 @@ class BrowserToolkit(BaseToolkit):
             return "Error: Must provide ref or selector"
 
         try:
+            session = await self._get_session()
             action = {"type": "type", "text": input_text}
             if ref:
                 action["ref"] = ref
@@ -481,7 +573,7 @@ class BrowserToolkit(BaseToolkit):
             if clear_first:
                 action["clear"] = True
 
-            result = await self._session.exec_action(action)
+            result = await session.exec_action(action)
 
             if result.get("success"):
                 return await self._build_action_result("Typed text successfully")
@@ -513,13 +605,14 @@ class BrowserToolkit(BaseToolkit):
             return "Error: Browser session not initialized"
 
         try:
+            session = await self._get_session()
             action = {"type": "enter"}
             if ref:
                 action["ref"] = ref
             if selector:
                 action["selector"] = selector
 
-            result = await self._session.exec_action(action)
+            result = await session.exec_action(action)
 
             if result.get("success"):
                 return await self._build_action_result("Pressed Enter successfully")
@@ -543,7 +636,8 @@ class BrowserToolkit(BaseToolkit):
             return "Error: Browser session not initialized"
 
         try:
-            await self._session.exec_action({"type": "back"})
+            session = await self._get_session()
+            await session.exec_action({"type": "back"})
             return await self._build_action_result("Navigated back")
         except Exception as e:
             logger.error(f"browser_back error: {e}")
@@ -563,7 +657,8 @@ class BrowserToolkit(BaseToolkit):
             return "Error: Browser session not initialized"
 
         try:
-            await self._session.exec_action({"type": "forward"})
+            session = await self._get_session()
+            await session.exec_action({"type": "forward"})
             return await self._build_action_result("Navigated forward")
         except Exception as e:
             logger.error(f"browser_forward error: {e}")
@@ -591,12 +686,13 @@ class BrowserToolkit(BaseToolkit):
             return "Error: Browser session not initialized"
 
         try:
+            session = await self._get_session()
             action = {
                 "type": "scroll",
                 "direction": direction,
                 "amount": amount,
             }
-            await self._session.exec_action(action)
+            await session.exec_action(action)
             return await self._build_action_result(f"Scrolled {direction} by {amount}px")
         except Exception as e:
             logger.error(f"browser_scroll error: {e}")
@@ -629,13 +725,14 @@ class BrowserToolkit(BaseToolkit):
             return "Error: Must provide ref or selector"
 
         try:
+            session = await self._get_session()
             action = {"type": "select", "value": value}
             if ref:
                 action["ref"] = ref
             if selector:
                 action["selector"] = selector
 
-            result = await self._session.exec_action(action)
+            result = await session.exec_action(action)
 
             if result.get("success"):
                 return await self._build_action_result(f"Selected '{value}' successfully")
@@ -675,15 +772,16 @@ class BrowserToolkit(BaseToolkit):
             return "Error: Browser session not initialized"
 
         try:
+            session = await self._get_session()
             # Always get page URL and title
-            page = await self._session.get_page()
+            page = await session.get_page()
             url = page.url
             title = await page.title()
             header = f"**Current Page:**\n- URL: {url}\n- Title: {title}\n\n"
 
             if include_links:
                 # Get full result with elements map to extract links
-                full_result = await self._session.get_snapshot_with_elements()
+                full_result = await session.get_snapshot_with_elements()
                 snapshot = full_result.get("snapshotText", "")
                 elements = full_result.get("elements", {})
 
@@ -716,7 +814,7 @@ class BrowserToolkit(BaseToolkit):
 
                 return header + formatted_snapshot + links_section
             else:
-                snapshot = await self._session.get_snapshot()
+                snapshot = await session.get_snapshot()
                 return header + snapshot
         except Exception as e:
             logger.error(f"browser_get_page_snapshot error: {e}")
@@ -725,16 +823,17 @@ class BrowserToolkit(BaseToolkit):
     async def _format_tab_info(self) -> str:
         """Format tab information for display."""
         try:
-            tab_info = await self._session.get_tab_info()
+            session = await self._get_session()
+            if not session:
+                return "No session available."
+
+            tab_info = await session.get_tab_info()
             if not tab_info:
                 return "No tabs open."
 
-            current_tab_idx = None
             lines = [f"**Open Tabs ({len(tab_info)} total):**"]
-            for i, tab in enumerate(tab_info):
+            for tab in tab_info:
                 is_current = tab.get("is_current", False)
-                if is_current:
-                    current_tab_idx = i
                 marker = "→ " if is_current else "  "
                 tab_id = tab.get("tab_id", "unknown")
                 title = tab.get("title", "Untitled")[:50]
@@ -781,8 +880,9 @@ class BrowserToolkit(BaseToolkit):
             return "Error: keys must be a non-empty list of strings"
 
         try:
+            session = await self._get_session()
             action = {"type": "press_key", "keys": keys}
-            result = await self._session.exec_action(action)
+            result = await session.exec_action(action)
 
             if result.get("success"):
                 key_combo = "+".join(keys)
@@ -826,13 +926,14 @@ class BrowserToolkit(BaseToolkit):
             return f"Error: click_type must be 'click', 'dblclick', or 'right_click', got '{click_type}'"
 
         try:
+            session = await self._get_session()
             action = {
                 "type": "mouse_control",
                 "control": click_type,
                 "x": x,
                 "y": y,
             }
-            result = await self._session.exec_action(action)
+            result = await session.exec_action(action)
 
             if result.get("success"):
                 return await self._build_action_result(
@@ -889,7 +990,8 @@ class BrowserToolkit(BaseToolkit):
             return "Error: Browser session not initialized"
 
         try:
-            success = await self._session.switch_to_tab(tab_id)
+            session = await self._get_session()
+            success = await session.switch_to_tab(tab_id)
             if not success:
                 return f"Error: Failed to switch to tab '{tab_id}'. Use browser_get_tab_info to see available tabs."
 
@@ -934,7 +1036,8 @@ class BrowserToolkit(BaseToolkit):
             return "Error: Browser session not initialized"
 
         try:
-            tab_id = await self._session.create_new_tab(url)
+            session = await self._get_session()
+            tab_id = await session.create_new_tab(url)
             page_context = await self._get_page_context()
             tab_info = await self._format_tab_info()
             # Force refresh because new tab has its own window object
@@ -980,7 +1083,8 @@ class BrowserToolkit(BaseToolkit):
             return "Error: Browser session not initialized"
 
         try:
-            success = await self._session.close_tab(tab_id)
+            session = await self._get_session()
+            success = await session.close_tab(tab_id)
             if not success:
                 return f"Error: Failed to close tab '{tab_id}'. Use browser_get_tab_info to see available tabs."
 

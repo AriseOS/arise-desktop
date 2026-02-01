@@ -1,9 +1,6 @@
 """
 BaseAgent Core Module
-Provides Agent base framework, workflow engine and data structures
-
-Note: WorkflowEngine is NOT imported here to avoid circular imports.
-Import it directly: from .workflow_engine import WorkflowEngine
+Provides Agent base framework and data structures
 """
 
 from .base_agent import BaseAgent
@@ -12,10 +9,6 @@ from .schemas import (
     AgentConfig, AgentResult, AgentState, AgentStatus, AgentPriority,
     AgentCapabilitySpec, InterfaceSpec, ExtensionSpec,
     AgentContext, AgentInput, AgentOutput,
-
-    # Workflow related
-    AgentWorkflowStep, Workflow, WorkflowResult,
-    ExecutionContext, StepResult, StepType, ErrorHandling
 )
 
 # Budget management
@@ -79,19 +72,22 @@ from .agent_factories import (
     create_browser_agent,
     create_developer_agent,
     create_document_agent,
+    create_multi_modal_agent,
+    create_social_medium_agent,
+    create_task_summary_agent,
+    summarize_subtasks_results,
 )
 
-# Lazy import for WorkflowEngine to avoid circular imports
-def __getattr__(name):
-    if name == "WorkflowEngine":
-        from .workflow_engine import WorkflowEngine
-        return WorkflowEngine
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+# Orchestrator Agent (LLM-driven task classification)
+from .orchestrator_agent import (
+    create_orchestrator_agent,
+    run_orchestrator,
+    DecomposeTaskTool,
+)
 
 __all__ = [
     # Core classes
     "BaseAgent",
-    "WorkflowEngine",  # Available via __getattr__
 
     # Agent data structures
     "AgentConfig",
@@ -105,15 +101,6 @@ __all__ = [
     "AgentContext",
     "AgentInput",
     "AgentOutput",
-
-    # Workflow data structures
-    "AgentWorkflowStep",
-    "Workflow",
-    "WorkflowResult",
-    "ExecutionContext",
-    "StepResult",
-    "StepType",
-    "ErrorHandling",
 
     # Budget management
     "TokenUsage",
@@ -166,4 +153,13 @@ __all__ = [
     "create_browser_agent",
     "create_developer_agent",
     "create_document_agent",
+    "create_multi_modal_agent",
+    "create_social_medium_agent",
+    "create_task_summary_agent",
+    "summarize_subtasks_results",
+
+    # Orchestrator Agent
+    "create_orchestrator_agent",
+    "run_orchestrator",
+    "DecomposeTaskTool",
 ]

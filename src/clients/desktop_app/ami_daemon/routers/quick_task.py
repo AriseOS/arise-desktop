@@ -462,8 +462,12 @@ async def get_task_detail(task_id: str):
 
 class MessageRequest(BaseModel):
     """Message from client to server (used with SSE for bidirectional communication)."""
-    type: str = Field(..., description="Message type")
-    response: Optional[str] = Field(None, description="Human response text")
+    type: str = Field(..., description="Message type: 'human_response' or 'user_message'")
+    response: Optional[str] = Field(None, description="Human response text (for human_response type)")
+    message: Optional[str] = Field(None, description="User message text (for user_message type)")
+
+    # BUG-15 fix: Content validation is handled in endpoint based on message type
+    # This allows flexibility while still ensuring proper validation where needed
 
 
 @router.post("/message/{task_id}")
@@ -472,8 +476,9 @@ async def send_message(task_id: str, request: MessageRequest):
     Send a message to a running task.
 
     Used with SSE streaming to provide bidirectional communication.
-    Currently supports:
-    - human_response: Provide human response to agent question
+    Supports:
+    - human_response: Provide human response to agent's ask_human question
+    - user_message: Send new user message during task execution (Eigent pattern)
 
     Args:
         task_id: Task ID
@@ -486,6 +491,7 @@ async def send_message(task_id: str, request: MessageRequest):
         raise HTTPException(status_code=404, detail="Task not found")
 
     if request.type == "human_response":
+        # Legacy: respond to ask_human tool question
         if request.response is None:
             raise HTTPException(status_code=400, detail="Response text required")
 
@@ -495,6 +501,35 @@ async def send_message(task_id: str, request: MessageRequest):
             return {"success": True, "message": "Response delivered"}
         else:
             raise HTTPException(status_code=400, detail="Failed to deliver response - no pending question")
+
+    elif request.type == "user_message":
+        # New: multi-turn conversation (Eigent pattern)
+        message = request.message or request.response
+        if not message:
+            raise HTTPException(status_code=400, detail="Message text required")
+
+        # BUG-16 fix: More specific exception handling
+        try:
+            result = await service.handle_user_message(task_id, message)
+            logger.info(f"User message handled for task {task_id}: {result.get('type')}")
+            return {"success": True, **result}
+        except ValueError as e:
+            # Task not found or invalid state
+            raise HTTPException(status_code=404, detail=str(e))
+        except asyncio.TimeoutError:
+            # Operation timed out
+            logger.error(f"Timeout handling user message for task {task_id}")
+            raise HTTPException(status_code=504, detail="Request timed out")
+        except asyncio.CancelledError:
+            # Task was cancelled
+            logger.warning(f"User message handling cancelled for task {task_id}")
+            raise HTTPException(status_code=499, detail="Request cancelled")
+        except Exception as e:
+            # Log full traceback for unexpected errors
+            logger.exception(f"Error handling user message for task {task_id}: {e}")
+            # Return generic error without exposing internals
+            raise HTTPException(status_code=500, detail="Internal server error processing message")
+
     else:
         raise HTTPException(status_code=400, detail=f"Unknown message type: {request.type}")
 

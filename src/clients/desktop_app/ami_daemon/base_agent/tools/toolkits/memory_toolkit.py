@@ -429,6 +429,7 @@ class MemoryToolkit(BaseToolkit):
         ami_api_key: str,
         user_id: str,
         timeout: Optional[float] = 180.0,
+        agent: Optional[Any] = None,  # ListenChatAgent for page operations caching
     ) -> None:
         """Initialize MemoryToolkit.
 
@@ -437,16 +438,33 @@ class MemoryToolkit(BaseToolkit):
             ami_api_key: User's Ami API key for authentication.
             user_id: User ID for memory isolation.
             timeout: HTTP request timeout in seconds.
+            agent: Optional ListenChatAgent for caching page operations.
+                When provided, query_page_operations results will be cached
+                in the agent for injection into subsequent LLM calls.
         """
         super().__init__(timeout=timeout)
         self._memory_api_base_url = memory_api_base_url.rstrip("/")
         self._ami_api_key = ami_api_key
         self._user_id = user_id
+        self._agent = agent
 
         logger.info(
             f"MemoryToolkit initialized (user_id={user_id}, "
             f"api_base_url={memory_api_base_url})"
         )
+
+    def set_agent(self, agent: Any) -> None:
+        """Set the agent reference for page operations caching.
+
+        This enables IntentSequence cache management in ListenChatAgent.
+        When query_page_operations returns results, they will be cached
+        in the agent for injection into subsequent LLM calls.
+
+        Args:
+            agent: ListenChatAgent instance with cache_page_operations() method.
+        """
+        self._agent = agent
+        logger.debug("MemoryToolkit: agent reference set for page operations caching")
 
     def _write_query_path_report(self, task: str, result: Dict[str, Any]) -> Optional[str]:
         def _clean_inline(value: Any) -> str:
@@ -830,6 +848,10 @@ class MemoryToolkit(BaseToolkit):
         operations users have performed here before. This helps you understand
         what actions are possible on this page.
 
+        When an agent reference is set, successful query results are cached
+        in the agent for injection into subsequent LLM calls (avoiding
+        repeated queries for the same page).
+
         Args:
             url: Current page URL (e.g., "https://producthunt.com/products/xxx")
 
@@ -849,7 +871,21 @@ class MemoryToolkit(BaseToolkit):
                 f"[Memory] Found {len(result.intent_sequences)} operations, "
                 f"{len(result.outgoing_actions)} navigation actions"
             )
-            return self.format_page_operations(result.intent_sequences, result.outgoing_actions)
+            formatted_result = self.format_page_operations(
+                result.intent_sequences, result.outgoing_actions
+            )
+
+            # Cache in agent for subsequent LLM calls
+            if self._agent and hasattr(self._agent, 'cache_page_operations'):
+                try:
+                    self._agent.cache_page_operations(url, formatted_result)
+                    logger.debug(
+                        f"[Memory] Cached page operations in agent for: {url[:50]}..."
+                    )
+                except Exception as e:
+                    logger.debug(f"[Memory] Failed to cache page operations: {e}")
+
+            return formatted_result
 
         logger.info(f"[Memory] No recorded operations for this page")
         return ""

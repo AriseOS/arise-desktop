@@ -367,18 +367,17 @@ class BudgetController:
 
     def _emit_async(self, callback: Callable, event: Dict[str, Any]) -> None:
         """Emit event via callback (handles both sync and async)."""
-        try:
-            loop = asyncio.get_running_loop()
-            if asyncio.iscoroutinefunction(callback):
-                asyncio.create_task(callback(event))
-            else:
+        from ..events.toolkit_listen import _run_async_safely
+
+        if asyncio.iscoroutinefunction(callback):
+            # Use _run_async_safely for proper handling in both contexts
+            _run_async_safely(callback(event))
+        else:
+            try:
+                loop = asyncio.get_running_loop()
                 loop.call_soon(lambda: callback(event))
-        except RuntimeError:
-            # No event loop running, try direct call
-            if asyncio.iscoroutinefunction(callback):
-                # Can't run async callback without event loop
-                logger.warning("Cannot emit async callback without event loop")
-            else:
+            except RuntimeError:
+                # No event loop running, call directly
                 callback(event)
 
     def _get_percentage_used(self) -> Dict[str, float]:

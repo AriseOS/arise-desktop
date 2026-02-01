@@ -76,7 +76,7 @@ _log_dir: Optional[Path] = None
 def setup_logging(
     log_dir: Optional[Path] = None,
     console_level: int = logging.INFO,
-    file_level: int = logging.DEBUG,
+    file_level: int = logging.INFO,  # Default to INFO, not DEBUG
     max_bytes: int = 10 * 1024 * 1024,  # 10 MB
     backup_count: int = 5,
 ) -> Path:
@@ -157,6 +157,18 @@ def setup_logging(
         "asyncio",           # Async I/O internals
         "playwright",        # Playwright browser automation
         "camel.base_model",  # CAMEL model backend - logs full Tools/Messages (very verbose)
+        # LLM client libraries - log full request/response bodies including page snapshots
+        "anthropic",         # Anthropic API client
+        "anthropic._base_client",
+        "openai",            # OpenAI API client
+        "openai._base_client",
+        "groq",              # Groq API client
+        "google.genai",      # Google GenAI client
+        # CAMEL framework - logs full prompts and responses
+        "camel.agents.chat_agent",
+        "camel.camel.agents.chat_agent",
+        "camel.societies.workforce",
+        "camel.camel.societies.workforce",
     ]
     for logger_name in noisy_loggers:
         logging.getLogger(logger_name).setLevel(logging.WARNING)

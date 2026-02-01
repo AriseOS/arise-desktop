@@ -16,9 +16,8 @@ import asyncio
 import json
 import logging
 import os
-import subprocess
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 import aiohttp
 
@@ -96,7 +95,8 @@ class MCPClient:
         self.timeout = timeout
         self.working_dir = working_dir
 
-        self._process: Optional[subprocess.Popen] = None
+        # For async subprocess (local servers)
+        self._process: Optional[asyncio.subprocess.Process] = None
         self._tools: List[MCPTool] = []
         self._connected = False
         self._request_id = 0
@@ -133,28 +133,57 @@ class MCPClient:
         except Exception as e:
             logger.error(f"Failed to connect to MCP server: {e}")
             self._connected = False
+            # Clean up any partially created resources
+            await self._cleanup_on_failure()
             raise
 
+    async def _cleanup_on_failure(self) -> None:
+        """Clean up resources after connection failure."""
+        if self._process:
+            try:
+                self._process.terminate()
+                await asyncio.wait_for(self._process.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                # Force kill if terminate times out
+                logger.warning("MCP process did not terminate gracefully, forcing kill")
+                self._process.kill()
+                await self._process.wait()
+            except Exception as cleanup_error:
+                logger.warning(f"Error terminating MCP process during cleanup: {cleanup_error}")
+            finally:
+                self._process = None
+
+        if self._session:
+            try:
+                await self._session.close()
+            except Exception as cleanup_error:
+                logger.warning(f"Error closing session during cleanup: {cleanup_error}")
+            finally:
+                self._session = None
+
     async def _connect_local(self) -> None:
-        """Connect to local MCP server via subprocess."""
-        cmd = [self.command_or_url] + self.args
+        """Connect to local MCP server via async subprocess."""
+        cmd = self.command_or_url
+        args = self.args
 
         # Merge environment
         process_env = os.environ.copy()
         process_env.update(self.env)
 
-        logger.debug(f"Starting local MCP server: {' '.join(cmd)}")
+        logger.debug(f"Starting local MCP server: {cmd} {' '.join(args)}")
 
-        self._process = subprocess.Popen(
+        # Use asyncio.create_subprocess_exec for non-blocking I/O
+        self._process = await asyncio.create_subprocess_exec(
             cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            *args,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
             env=process_env,
             cwd=self.working_dir,
         )
 
-        # Wait for server to be ready (read initial output)
+        # Wait for server to be ready
         await asyncio.sleep(0.5)
 
         # Send initialize request
@@ -205,7 +234,7 @@ class MCPClient:
             self._tools = self._parse_tools(data.get("tools", []))
 
     async def _send_jsonrpc(self, method: str, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Send JSON-RPC request to local MCP server.
+        """Send JSON-RPC request to local MCP server using async I/O.
 
         Args:
             method: RPC method name
@@ -214,7 +243,7 @@ class MCPClient:
         Returns:
             Response data
         """
-        if not self._process:
+        if not self._process or not self._process.stdin or not self._process.stdout:
             raise RuntimeError("MCP server not started")
 
         self._request_id += 1
@@ -225,20 +254,21 @@ class MCPClient:
             "params": params
         }
 
-        # Write request
+        # Write request asynchronously
         request_bytes = (json.dumps(request) + "\n").encode()
         self._process.stdin.write(request_bytes)
-        self._process.stdin.flush()
+        await self._process.stdin.drain()
 
-        # Read response (with timeout)
+        # Read response asynchronously with timeout
         try:
             response_line = await asyncio.wait_for(
-                asyncio.get_event_loop().run_in_executor(
-                    None,
-                    self._process.stdout.readline
-                ),
+                self._process.stdout.readline(),
                 timeout=self.timeout
             )
+
+            if not response_line:
+                raise RuntimeError("MCP server closed connection")
+
             response = json.loads(response_line.decode())
 
             if "error" in response:
@@ -352,7 +382,7 @@ class MCPClient:
         if self._process:
             try:
                 self._process.terminate()
-                self._process.wait(timeout=5)
+                await asyncio.wait_for(self._process.wait(), timeout=5)
             except Exception as e:
                 logger.warning(f"Error terminating MCP process: {e}")
             self._process = None

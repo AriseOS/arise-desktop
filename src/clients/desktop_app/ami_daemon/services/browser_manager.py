@@ -1,7 +1,6 @@
 """Browser lifecycle management with health monitoring
 
-This module now uses WorkflowBrowserAdapter (based on HybridBrowserSession)
-instead of the browser-use based BrowserSessionManager.
+This module uses HybridBrowserSession for browser session management.
 """
 import asyncio
 import logging
@@ -18,8 +17,7 @@ logger = logging.getLogger(__name__)
 class BrowserManager:
     """Manage browser lifecycle with on-demand startup and health monitoring
 
-    Now uses WorkflowBrowserAdapter (HybridBrowserSession-based) instead of
-    the browser-use based BrowserSessionManager.
+    Uses HybridBrowserSession for browser session management.
     """
 
     def __init__(self, config_service=None):
@@ -31,11 +29,10 @@ class BrowserManager:
         self.config_service = config_service
         self.state = BrowserState.NOT_STARTED
 
-        # Browser session components - now uses WorkflowBrowserAdapter
-        self.session_manager = None
-        # Track all managed sessions (not just 'global')
-        # Key: session_id, Value: dict with session_info and metadata
-        self._managed_sessions: Dict[str, Dict[str, Any]] = {}
+        # Browser session - using HybridBrowserSession
+        self._session = None
+        self._session_id: Optional[str] = None
+        self._browser_pid: Optional[int] = None
 
         # Health monitoring
         self._health_check_task: Optional[asyncio.Task] = None
@@ -53,17 +50,12 @@ class BrowserManager:
         """Get global session (backward compatibility)
 
         Returns:
-            BrowserSessionInfo or None
+            HybridBrowserSession or None
         """
-        if "global" in self._managed_sessions:
-            return self._managed_sessions["global"].get("session_info")
-        return None
+        return self._session
 
     async def start_browser(self, headless: bool = False) -> Dict[str, Any]:
-        """Start browser for recording (creates 'global' session)
-
-        This is a convenience method for backward compatibility.
-        New code should use start_browser_for_recording() instead.
+        """Start browser session
 
         Args:
             headless: Whether to run browser in headless mode
@@ -74,183 +66,69 @@ class BrowserManager:
         Raises:
             RuntimeError: If browser fails to start
         """
-        return await self.start_browser_for_recording(headless=headless)
-
-    async def start_browser_for_recording(self, headless: bool = False) -> Dict[str, Any]:
-        """Start browser for recording scenario
-
-        Args:
-            headless: Whether to run browser in headless mode
-
-        Returns:
-            Dict with status, session_id, pid, and state
-
-        Raises:
-            RuntimeError: If browser fails to start
-        """
-        return await self._ensure_session(
-            session_id="global",
-            headless=headless,
-            keep_alive=True,
-            arrange_windows=not headless
-        )
-
-    async def start_browser_for_workflow(
-        self,
-        workflow_id: str,
-        headless: bool = False
-    ) -> Dict[str, Any]:
-        """Start browser for workflow execution
-
-        Args:
-            workflow_id: Unique workflow identifier
-            headless: Whether to run browser in headless mode
-
-        Returns:
-            Dict with status, session_id, pid, and state
-
-        Raises:
-            RuntimeError: If browser fails to start
-        """
-        session_id = f"workflow_{workflow_id}"
-        return await self._ensure_session(
-            session_id=session_id,
-            headless=headless,
-            keep_alive=True,
-            arrange_windows=not headless
-        )
-
-    async def _ensure_session(
-        self,
-        session_id: str,
-        headless: bool = False,
-        keep_alive: bool = True,
-        arrange_windows: bool = True
-    ) -> Dict[str, Any]:
-        """Ensure browser session exists and is managed
-
-        Args:
-            session_id: Session identifier
-            headless: Whether to run browser in headless mode
-            keep_alive: Whether to keep session alive
-            arrange_windows: Whether to arrange windows side-by-side
-
-        Returns:
-            Dict with status, session_id, pid, and state
-
-        Raises:
-            RuntimeError: If browser fails to start
-        """
         # Check if session already exists
-        if session_id in self._managed_sessions:
-            logger.info(f"Browser session already exists: {session_id}")
-            existing = self._managed_sessions[session_id]
+        if self._session is not None:
+            logger.info("Browser session already exists")
             return {
                 "status": "already_running",
-                "session_id": session_id,
-                "pid": existing.get("pid"),
+                "session_id": self._session_id,
+                "pid": self._browser_pid,
                 "state": self.state.value
             }
 
-        logger.info(f"Starting browser session: {session_id} (headless={headless})...")
-
-        # Update state if this is the first session
-        if self.state == BrowserState.NOT_STARTED:
-            self.state = BrowserState.STARTING
-            self._notify_status_change("starting")
+        logger.info(f"Starting browser session (headless={headless})...")
+        self.state = BrowserState.STARTING
+        self._notify_status_change("starting")
 
         try:
-            # Import WorkflowBrowserAdapter (HybridBrowserSession-based)
-            from src.clients.desktop_app.ami_daemon.base_agent.tools.workflow_browser_adapter import (
-                WorkflowBrowserAdapter
+            # Import HybridBrowserSession
+            from src.clients.desktop_app.ami_daemon.base_agent.tools.eigent_browser import (
+                HybridBrowserSession
             )
-
-            # Get or create session manager instance
-            if not self.session_manager:
-                self.session_manager = await WorkflowBrowserAdapter.get_instance()
 
             # Create browser session
-            session_info = await self.session_manager.get_or_create_session(
-                session_id=session_id,
+            self._session = HybridBrowserSession(
                 config_service=self.config_service,
-                headless=headless,
-                keep_alive=keep_alive
+                headless=headless
             )
 
+            # Initialize browser
+            await self._session.initialize()
+
             # Get browser PID
-            browser_pid = await self._get_browser_pid_from_session(session_info)
+            self._browser_pid = await self._get_browser_pid()
+            self._session_id = "global"
 
-            # Track this session
-            self._managed_sessions[session_id] = {
-                "session_info": session_info,
-                "pid": browser_pid,
-                "headless": headless,
-                "created_at": datetime.now()
-            }
-
-            # Start health check if not already running
+            # Start health check
             if not self._health_check_task or self._health_check_task.done():
                 self._start_health_check()
 
-            # Update global state
-            if self.state == BrowserState.STARTING:
-                self.state = BrowserState.RUNNING
-                self._last_health_check = datetime.now()
-                self._notify_status_change("running")
+            # Update state
+            self.state = BrowserState.RUNNING
+            self._last_health_check = datetime.now()
+            self._notify_status_change("running")
 
-            logger.info(f"✅ Browser session started: {session_id} (PID: {browser_pid})")
+            logger.info(f"✅ Browser session started (PID: {self._browser_pid})")
 
             return {
                 "status": "started",
-                "session_id": session_id,
-                "pid": browser_pid,
+                "session_id": self._session_id,
+                "pid": self._browser_pid,
                 "state": self.state.value
             }
 
         except Exception as e:
-            logger.error(f"❌ Failed to start browser session {session_id}: {e}")
-
-            # Only update global state to ERROR if no other sessions are running
-            if not self._managed_sessions:
-                self.state = BrowserState.ERROR
-                self._notify_status_change("error")
+            logger.error(f"❌ Failed to start browser session: {e}")
+            self.state = BrowserState.ERROR
+            self._notify_status_change("error")
 
             # Cleanup failed session
-            await self._cleanup_failed_session(session_id)
+            await self._cleanup_failed_session()
 
-            raise RuntimeError(f"Failed to start browser session {session_id}: {e}")
-
-    def get_session(self, session_id: str) -> Optional[Any]:
-        """Get browser session by ID
-
-        Args:
-            session_id: Session identifier
-
-        Returns:
-            BrowserSessionInfo object or None if not found
-        """
-        managed = self._managed_sessions.get(session_id)
-        if managed:
-            return managed.get("session_info")
-        return None
-
-    def get_all_sessions(self) -> Dict[str, Any]:
-        """Get all managed browser sessions
-
-        Returns:
-            Dict mapping session_id to session metadata
-        """
-        result = {}
-        for session_id, managed in self._managed_sessions.items():
-            result[session_id] = {
-                "pid": managed.get("pid"),
-                "headless": managed.get("headless"),
-                "created_at": managed.get("created_at").isoformat() if managed.get("created_at") else None
-            }
-        return result
+            raise RuntimeError(f"Failed to start browser session: {e}")
 
     async def stop_browser(self, force: bool = False) -> Dict[str, Any]:
-        """Stop all browser sessions gracefully
+        """Stop browser session gracefully
 
         Args:
             force: If True, force close even if tasks are running
@@ -269,7 +147,7 @@ class BrowserManager:
             logger.warning("Browser is already stopping")
             return {"status": "stopping", "state": self.state.value}
 
-        logger.info(f"Stopping all browser sessions ({len(self._managed_sessions)} sessions)...")
+        logger.info("Stopping browser session...")
         self.state = BrowserState.STOPPING
         self._notify_status_change("stopping")
 
@@ -283,25 +161,25 @@ class BrowserManager:
                     pass
                 logger.debug("Health check task stopped")
 
-            # Close all managed sessions
-            if self.session_manager:
-                session_ids = list(self._managed_sessions.keys())
-                for session_id in session_ids:
-                    try:
-                        await self.session_manager.close_session(session_id, force=True)
-                        logger.debug(f"Browser session closed: {session_id}")
-                    except Exception as e:
-                        logger.error(f"Error closing session {session_id}: {e}")
+            # Close session
+            if self._session:
+                try:
+                    await self._session.close()
+                    logger.debug("Browser session closed")
+                except Exception as e:
+                    logger.error(f"Error closing session: {e}")
 
-            # Clear all references
-            self._managed_sessions.clear()
+            # Clear references
+            self._session = None
+            self._session_id = None
+            self._browser_pid = None
             self._last_health_check = None
 
             # Update state
             self.state = BrowserState.STOPPED
             self._notify_status_change("stopped")
 
-            logger.info("✅ All browser sessions stopped successfully")
+            logger.info("✅ Browser session stopped successfully")
 
             return {"status": "stopped", "state": self.state.value}
 
@@ -315,13 +193,18 @@ class BrowserManager:
         """Get current browser status
 
         Returns:
-            Dict with detailed status information including all sessions
+            Dict with detailed status information
         """
         return {
             "state": self.state.value,
             "is_running": self.state == BrowserState.RUNNING,
-            "total_sessions": len(self._managed_sessions),
-            "sessions": self.get_all_sessions(),
+            "total_sessions": 1 if self._session else 0,
+            "sessions": {
+                self._session_id: {
+                    "pid": self._browser_pid,
+                    "headless": getattr(self._session, '_headless', False) if self._session else None
+                }
+            } if self._session else {},
             "last_health_check": self._last_health_check.isoformat() if self._last_health_check else None,
             "health_monitoring": self._health_check_task is not None and not self._health_check_task.done()
         }
@@ -330,52 +213,9 @@ class BrowserManager:
         """Check if browser is ready for use
 
         Returns:
-            True if browser is running and has at least one session
+            True if browser is running
         """
-        return self.state == BrowserState.RUNNING and len(self._managed_sessions) > 0
-
-    async def close_workflow_session(self, session_id: str) -> Dict[str, Any]:
-        """Close a specific workflow browser session
-
-        Args:
-            session_id: Session identifier (e.g., "workflow_task_xxx")
-
-        Returns:
-            Dict with status of the close operation
-        """
-        if session_id not in self._managed_sessions:
-            logger.debug(f"Session not found (may already be closed): {session_id}")
-            return {"status": "not_found", "session_id": session_id}
-
-        logger.info(f"Closing workflow browser session: {session_id}")
-
-        try:
-            # Close session via session manager
-            if self.session_manager:
-                await self.session_manager.close_session(session_id, force=True)
-
-            # Remove from managed sessions
-            if session_id in self._managed_sessions:
-                del self._managed_sessions[session_id]
-
-            logger.info(f"✅ Workflow browser session closed: {session_id}")
-
-            # Update global state if no more sessions
-            if not self._managed_sessions:
-                self.state = BrowserState.STOPPED
-                # Stop health check if no sessions left
-                if self._health_check_task and not self._health_check_task.done():
-                    self._health_check_task.cancel()
-                self._notify_status_change("stopped")
-
-            return {"status": "closed", "session_id": session_id}
-
-        except Exception as e:
-            logger.error(f"Error closing workflow session {session_id}: {e}")
-            # Still remove from managed sessions to avoid stale references
-            if session_id in self._managed_sessions:
-                del self._managed_sessions[session_id]
-            return {"status": "error", "session_id": session_id, "error": str(e)}
+        return self.state == BrowserState.RUNNING and self._session is not None
 
     def subscribe_status_change(self, callback: Callable[[str], None]):
         """Subscribe to browser status change events
@@ -398,25 +238,19 @@ class BrowserManager:
             except Exception as e:
                 logger.error(f"Error in status callback: {e}")
 
-    async def _get_browser_pid_from_session(self, session_info) -> Optional[int]:
-        """Get browser process PID from session info
-
-        Args:
-            session_info: WorkflowBrowserSessionInfo object
+    async def _get_browser_pid(self) -> Optional[int]:
+        """Get browser process PID
 
         Returns:
             Browser PID or None if not found
         """
         try:
-            if not session_info:
+            if not self._session:
                 return None
 
-            # Get browser session (HybridBrowserSession)
-            session = session_info.session
-
             # Try to get PID from browser launcher (subprocess-based)
-            if hasattr(session, '_browser_launcher') and session._browser_launcher:
-                launcher = session._browser_launcher
+            if hasattr(self._session, '_browser_launcher') and self._session._browser_launcher:
+                launcher = self._session._browser_launcher
                 if hasattr(launcher, '_process') and launcher._process:
                     pid = launcher._process.pid
                     logger.info(f"Found browser process from launcher: PID={pid}")
@@ -427,7 +261,6 @@ class BrowserManager:
                 try:
                     proc_name = proc.info['name'].lower()
                     if 'chrome' in proc_name or 'chromium' in proc_name:
-                        # Return first found Chrome process
                         logger.info(f"Found browser process: PID={proc.info['pid']}, Name={proc.info['name']}")
                         return proc.info['pid']
                 except (psutil.NoSuchProcess, psutil.AccessDenied, AttributeError):
@@ -440,21 +273,17 @@ class BrowserManager:
             logger.warning(f"Could not get browser PID: {e}")
             return None
 
-    async def _cleanup_failed_session(self, session_id: str):
-        """Cleanup resources after failed session start
-
-        Args:
-            session_id: Session identifier to cleanup
-        """
+    async def _cleanup_failed_session(self):
+        """Cleanup resources after failed session start"""
         try:
-            if self.session_manager:
-                await self.session_manager.close_session(session_id, force=True)
+            if self._session:
+                await self._session.close()
         except Exception as e:
             logger.debug(f"Error during session cleanup: {e}")
 
-        # Remove from managed sessions if it exists
-        if session_id in self._managed_sessions:
-            del self._managed_sessions[session_id]
+        self._session = None
+        self._session_id = None
+        self._browser_pid = None
 
     def _start_health_check(self):
         """Start background health check task"""
@@ -481,7 +310,6 @@ class BrowserManager:
                 is_alive = await self._check_cdp_alive()
 
                 if is_alive:
-                    # Update last check time
                     self._last_health_check = datetime.now()
                     logger.debug("✓ Browser health check passed")
                 else:
@@ -493,85 +321,54 @@ class BrowserManager:
                 break
             except Exception as e:
                 logger.error(f"Error in health check loop: {e}")
-                # Continue checking despite errors
                 await asyncio.sleep(self._health_check_interval)
 
     async def _check_cdp_alive(self) -> bool:
-        """Check if any browser session is alive
+        """Check if browser session is alive
 
         Returns:
-            True if at least one browser session is responsive, False otherwise
+            True if browser session is responsive, False otherwise
         """
-        if not self._managed_sessions:
+        if not self._session:
             return False
 
-        # Check all managed sessions
-        any_alive = False
-        for session_id, managed in list(self._managed_sessions.items()):
-            session_info = managed.get("session_info")
-            if not session_info:
-                continue
-
-            try:
-                session = session_info.session
-
-                # Check if session has active page
-                if session._page is not None and not session._page.is_closed():
-                    # Try to get page URL as health check
+        try:
+            # Check if session has active page
+            if hasattr(self._session, '_page') and self._session._page is not None:
+                if not self._session._page.is_closed():
                     try:
-                        url = session._page.url
-                        any_alive = True
-                        logger.debug(f"✓ Session {session_id} health check passed (url: {url[:50]}...)")
+                        url = self._session._page.url
+                        logger.debug(f"✓ Health check passed (url: {url[:50]}...)")
+                        return True
                     except Exception:
-                        logger.warning(f"✗ Session {session_id} health check failed")
-                else:
-                    logger.debug(f"Session {session_id} has no active page")
+                        logger.warning("✗ Health check failed - page unresponsive")
+                        return False
+            return False
 
-            except Exception as e:
-                logger.debug(f"Health check failed for session {session_id}: {type(e).__name__}: {e}")
-
-        return any_alive
+        except Exception as e:
+            logger.debug(f"Health check failed: {type(e).__name__}: {e}")
+            return False
 
     async def _handle_connection_lost(self):
-        """Handle CDP connection loss for all sessions
+        """Handle CDP connection loss"""
+        logger.warning("🔴 Handling connection loss...")
 
-        This method determines whether browser sessions were:
-        1. Closed by user (process does not exist)
-        2. Crashed or connection issue (process exists but unresponsive)
-        """
-        logger.warning("🔴 Handling connection loss for all sessions...")
+        process_exists = self._check_process_exists(self._browser_pid)
 
-        # Check each managed session
-        all_closed = True
-        for session_id, managed in list(self._managed_sessions.items()):
-            pid = managed.get("pid")
-            process_exists = self._check_process_exists(pid)
-
-            if not process_exists:
-                # Session was closed by user or crashed
-                logger.info(f"🔴 Browser session {session_id} was closed (PID {pid} not found)")
-                # Remove from managed sessions
-                del self._managed_sessions[session_id]
-            else:
-                # Process exists but connection lost
-                logger.warning(f"⚠️ Browser session {session_id} process exists but CDP connection lost (PID {pid})")
-                all_closed = False
-
-        # Update global state based on remaining sessions
-        if not self._managed_sessions:
-            # All sessions closed
-            logger.info("🔴 All browser sessions closed")
+        if not process_exists:
+            logger.info(f"🔴 Browser was closed (PID {self._browser_pid} not found)")
+            self._session = None
+            self._session_id = None
+            self._browser_pid = None
             self.state = BrowserState.STOPPED
 
             # Stop health check
             if self._health_check_task and not self._health_check_task.done():
                 self._health_check_task.cancel()
 
-            # Notify listeners
             self._notify_status_change("closed_by_user")
-        elif not all_closed:
-            # Some sessions have connection issues
-            logger.warning("⚠️ Some browser sessions have connection issues")
+        else:
+            logger.warning(f"⚠️ Browser process exists but CDP connection lost (PID {self._browser_pid})")
             self.state = BrowserState.ERROR
             self._notify_status_change("connection_error")
 
@@ -593,7 +390,6 @@ class BrowserManager:
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             return False
 
-
     async def cleanup(self):
         """Cleanup all browser resources
 
@@ -607,12 +403,5 @@ class BrowserManager:
                 await self.stop_browser(force=True)
             except Exception as e:
                 logger.error(f"Error stopping browser during cleanup: {e}")
-
-        # Final cleanup
-        if self.session_manager:
-            try:
-                await self.session_manager.close_all_sessions()
-            except Exception as e:
-                logger.error(f"Error closing all sessions: {e}")
 
         logger.info("✅ Browser manager cleanup complete")

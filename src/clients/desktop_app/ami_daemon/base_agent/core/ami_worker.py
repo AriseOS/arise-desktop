@@ -234,13 +234,14 @@ class AMISingleAgentWorker(BaseSingleAgentWorker):
             duration = (datetime.datetime.now() - start_time).total_seconds()
 
             # Emit failure events
+            # BUG-2 fix: Use failure_count instead of retry_count
             await self._emit_event(WorkerFailedData(
                 task_id=task_id,
                 worker_name=self.worker.agent_name,
                 worker_id=self.worker.agent_id,
                 subtask_id=task.id,
                 error=str(e),
-                retry_count=task.failure_count,
+                failure_count=task.failure_count,
                 will_retry=task.failure_count < 3,
             ))
             await self._emit_event(SubtaskStateData(
@@ -290,13 +291,14 @@ class AMISingleAgentWorker(BaseSingleAgentWorker):
             logger.error(f"[AMISingleAgentWorker] Task {task.id} failed: {task_result.content}")
             task.result = task_result.content
 
+            # BUG-2 fix: Use failure_count instead of retry_count
             await self._emit_event(WorkerFailedData(
                 task_id=task_id,
                 worker_name=self.worker.agent_name,
                 worker_id=self.worker.agent_id,
                 subtask_id=task.id,
                 error=task_result.content,
-                retry_count=task.failure_count,
+                failure_count=task.failure_count,
                 will_retry=task.failure_count < 3,
             ))
             await self._emit_event(SubtaskStateData(
@@ -314,13 +316,14 @@ class AMISingleAgentWorker(BaseSingleAgentWorker):
         if is_task_result_insufficient(task):
             logger.warning(f"[AMISingleAgentWorker] Task {task.id} content validation failed")
 
+            # BUG-2 fix: Use failure_count instead of retry_count
             await self._emit_event(WorkerFailedData(
                 task_id=task_id,
                 worker_name=self.worker.agent_name,
                 worker_id=self.worker.agent_id,
                 subtask_id=task.id,
                 error="Content validation failed",
-                retry_count=task.failure_count,
+                failure_count=task.failure_count,
             ))
 
             return TaskState.FAILED

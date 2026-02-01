@@ -176,7 +176,7 @@ async def _emit_activate(
             toolkit_name=toolkit_name,
             method_name=display_name,
             agent_name=agent_name,
-            process_task_id=process_task.get(''),
+            process_task_id=process_task.get(),
             input_preview=args_str,
             message=f"Executing {display_name}",
         ))
@@ -224,7 +224,7 @@ async def _emit_deactivate(
             toolkit_name=toolkit_name,
             method_name=display_name,
             agent_name=agent_name,
-            process_task_id=process_task.get(''),
+            process_task_id=process_task.get(),
             output_preview=result_msg,
             success=success,
             duration_ms=duration_ms,

@@ -21,6 +21,10 @@ function TaskCard({
   taskType = 1, // 1: manual tasks, 2: agent-assigned tasks
   // Worker assignments (from agentStore.subtaskAssignments)
   subtaskAssignments = {},
+  // Decomposition progress (Phase 5)
+  decompositionProgress = 0,
+  decompositionMessage = '',
+  decompositionStatus = 'pending', // pending | decomposing | completed
   // Interaction
   isExpanded: initialExpanded = true,
   onTaskClick,
@@ -31,6 +35,7 @@ function TaskCard({
   showToolkits = true,
   showProgress = true,
   showWorkerAssignments = true,
+  showDecompositionProgress = true,
   maxToolkitEvents = 5,
   editable = false,
 }) {
@@ -103,12 +108,13 @@ function TaskCard({
       case 'running':
       case 'in_progress':
         return <span className="status-icon running"><span className="spinner small"></span></span>;
+      case 'waiting':
+        return <span className="status-icon waiting">⏳</span>;
       case 'failed':
         return <span className="status-icon error">✗</span>;
       case 'blocked':
         return <span className="status-icon warning">⚠</span>;
       case 'skipped':
-      case 'waiting':
       case '':
       default:
         return <span className="status-icon pending">○</span>;
@@ -125,6 +131,8 @@ function TaskCard({
       case 'running':
       case 'in_progress':
         return 'task-running';
+      case 'waiting':
+        return 'task-waiting';
       case 'failed':
         return 'task-failed';
       case 'blocked':
@@ -138,8 +146,21 @@ function TaskCard({
   const formatTaskId = (taskId) => {
     if (!taskId) return '';
     const parts = taskId.split('.');
-    parts.shift(); // Remove prefix
-    return parts.map(p => Number(p)).join('.');
+
+    // Handle different ID formats:
+    // - "task.1.2" -> "1.2"
+    // - "abc123.main" -> "main"
+    // - "abc123.1" -> "1"
+    if (parts.length === 1) return parts[0];
+
+    // Remove the prefix (first part)
+    parts.shift();
+
+    // Convert numeric parts to numbers, keep non-numeric as-is
+    return parts.map(p => {
+      const num = Number(p);
+      return isNaN(num) ? p : num;
+    }).join('.');
   };
 
   // Get worker assignment for a task
@@ -172,6 +193,26 @@ function TaskCard({
             className="task-progress-fill"
             style={{ width: `${progressValue}%` }}
           />
+        </div>
+      )}
+
+      {/* Decomposition progress bar (Phase 5) */}
+      {showDecompositionProgress && decompositionStatus === 'decomposing' && (
+        <div className="decomposition-progress-container">
+          <div className="decomposition-progress-bar">
+            <div
+              className="decomposition-progress-fill"
+              style={{ width: `${decompositionProgress}%` }}
+            />
+          </div>
+          <div className="decomposition-progress-text">
+            <span className="progress-message">
+              {decompositionMessage || 'Decomposing...'}
+            </span>
+            <span className="progress-percent">
+              {decompositionProgress}%
+            </span>
+          </div>
         </div>
       )}
 

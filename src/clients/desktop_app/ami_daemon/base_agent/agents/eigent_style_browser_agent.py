@@ -442,8 +442,11 @@ class EigentStyleBrowserAgent(BaseStepAgent):
         # LLM Provider (from common/llm module)
         self._llm_provider: Optional[AnthropicProvider] = None
 
-        # Browser session
+        # Browser session configuration
         self._session: Optional[HybridBrowserSession] = None
+        self._session_id: str = "default"
+        self._headless: bool = False
+        self._browser_data_dir: Optional[str] = None
 
         # Toolkits (initialized in execute)
         self._note_toolkit: Optional[NoteTakingToolkit] = None
@@ -709,7 +712,9 @@ Remember: This is a GUIDE. Adapt to your actual task goal.
             message_callback=self._human_message_callback,
         )
         self._browser_toolkit = BrowserToolkit(
-            session=self._session,
+            session_id=self._session_id,
+            headless=self._headless,
+            user_data_dir=self._browser_data_dir,
             return_snapshot=True,
         )
 
@@ -2274,9 +2279,15 @@ Execute the appropriate browser action now."""
             # Initialize browser session with task-specific data directory
             # Use context.browser_session_id for session sharing across workflow steps
             browser_data_dir = _get_browser_data_dir(browser_data_directory)
-            session_id = getattr(context, 'browser_session_id', None) or "default"
+            session_id = getattr(context, 'browser_session_id', None) or task_id or "default"
             logger.info(f"Using browser session_id: {session_id}")
 
+            # Store session config for toolkit (session created on-demand)
+            self._session_id = session_id
+            self._headless = headless
+            self._browser_data_dir = browser_data_dir
+
+            # Create session on-demand when first used
             self._session = HybridBrowserSession(
                 headless=headless,
                 stealth=True,

@@ -25,18 +25,23 @@ export const SSEEventTypes = {
   TASK_PAUSED: 'task_paused',
   TASK_RESUMED: 'task_resumed',
 
-  // Agent lifecycle
+  // Agent lifecycle (DS-1: Added missing events)
   AGENT_CREATED: 'agent_created',
   AGENT_ACTIVATED: 'agent_activated',
   AGENT_DEACTIVATED: 'agent_deactivated',
   AGENT_COMPLETED: 'agent_completed',
   AGENT_ERROR: 'agent_error',
+  ACTIVATE_AGENT: 'activate_agent',
+  DEACTIVATE_AGENT: 'deactivate_agent',
+  AGENT_THINKING: 'agent_thinking',
 
   // Toolkit events
   TOOLKIT_STARTED: 'toolkit_started',
   TOOLKIT_COMPLETED: 'toolkit_completed',
   TOOLKIT_FAILED: 'toolkit_failed',
   TOOLKIT_PROGRESS: 'toolkit_progress',
+  ACTIVATE_TOOLKIT: 'activate_toolkit',
+  DEACTIVATE_TOOLKIT: 'deactivate_toolkit',
 
   // Tool events
   TOOL_STARTED: 'tool_started',
@@ -55,6 +60,7 @@ export const SSEEventTypes = {
   BROWSER_NAVIGATED: 'browser_navigated',
   BROWSER_ACTION: 'browser_action',
   BROWSER_SCREENSHOT: 'browser_screenshot',
+  SCREENSHOT: 'screenshot',
 
   // Conversation events
   MESSAGE_ADDED: 'message_added',
@@ -65,12 +71,17 @@ export const SSEEventTypes = {
   HUMAN_QUESTION: 'human_question',
   HUMAN_RESPONSE_RECEIVED: 'human_response_received',
   HUMAN_MESSAGE: 'human_message',
+  WAIT_CONFIRM: 'wait_confirm',      // Simple answer waiting for user (Eigent pattern)
+  CONFIRMED: 'confirmed',            // Task confirmed as complex, starting decomposition
+  ASK: 'ask',
 
   // Memory events
   MEMORY_LOADED: 'memory_loaded',
   MEMORY_RESULT: 'memory_result',  // Backend MemoryResultData event
   MEMORY_QUERY: 'memory_query',
   MEMORY_UPDATED: 'memory_updated',
+  MEMORY_LEVEL: 'memory_level',
+  MEMORY_EVENT: 'memory_event',
 
   // Reasoner events
   REASONER_QUERY_STARTED: 'reasoner_query_started',
@@ -89,6 +100,7 @@ export const SSEEventTypes = {
   // Terminal events
   TERMINAL_OUTPUT: 'terminal_output',
   TERMINAL_COMMAND: 'terminal_command',
+  TERMINAL: 'terminal',
 
   // Progress and status
   PROGRESS_UPDATE: 'progress_update',
@@ -97,11 +109,33 @@ export const SSEEventTypes = {
   // Notes
   NOTES_UPDATED: 'notes_updated',
 
+  // Task decomposition events (DS-1: Added missing events)
+  TASK_DECOMPOSED: 'task_decomposed',
+  SUBTASK_STATE: 'subtask_state',
+  TASK_REPLANNED: 'task_replanned',
+  STREAMING_DECOMPOSE: 'streaming_decompose',
+  DECOMPOSE_PROGRESS: 'decompose_progress',
+
+  // Workforce events (DS-1: Added missing events)
+  WORKFORCE_STARTED: 'workforce_started',
+  WORKFORCE_COMPLETED: 'workforce_completed',
+  WORKFORCE_STOPPED: 'workforce_stopped',
+  WORKER_ASSIGNED: 'worker_assigned',
+  WORKER_STARTED: 'worker_started',
+  WORKER_COMPLETED: 'worker_completed',
+  WORKER_FAILED: 'worker_failed',
+  ASSIGN_TASK: 'assign_task',
+  DYNAMIC_TASKS_ADDED: 'dynamic_tasks_added',
+
   // Heartbeat
   HEARTBEAT: 'heartbeat',
 
   // Error
   ERROR: 'error',
+
+  // System
+  NOTICE: 'notice',
+  END: 'end',
 
   // Connection
   CONNECTED: 'connected',

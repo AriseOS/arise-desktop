@@ -14,7 +14,6 @@ from ..core.schemas import AgentContext, AgentInput, AgentOutput
 
 # Import from eigent_browser
 from ..tools.eigent_browser.browser_session import HybridBrowserSession
-from ..tools.workflow_browser_adapter import WorkflowBrowserSessionInfo
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +66,6 @@ class AutonomousBrowserAgent(BaseStepAgent):
 
         # Browser session (HybridBrowserSession)
         self.browser_session: Optional[HybridBrowserSession] = None
-        self.session_info: Optional[WorkflowBrowserSessionInfo] = None
 
         # LLM provider
         self.provider = None
@@ -79,8 +77,7 @@ class AutonomousBrowserAgent(BaseStepAgent):
         """Initialize Agent"""
         try:
             # Get shared browser session from context
-            self.session_info = await context.get_browser_session()
-            self.browser_session = self.session_info.session
+            self.browser_session = await context.get_browser_session()
             logger.info("AutonomousBrowserAgent using shared browser session")
 
             # Get provider from context

@@ -283,6 +283,13 @@ class TerminalToolkit(BaseToolkit):
             logger.warning(error_msg)
             return error_msg
 
+        # Convert timeout to int if string (LLM may pass string values)
+        if timeout is not None and isinstance(timeout, str):
+            try:
+                timeout = int(timeout)
+            except ValueError:
+                timeout = None
+
         effective_timeout = timeout if timeout is not None else self.timeout
 
         logger.info(f"Executing async command: {command[:100]}{'...' if len(command) > 100 else ''}")

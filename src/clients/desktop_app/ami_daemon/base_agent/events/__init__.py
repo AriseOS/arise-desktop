@@ -23,6 +23,7 @@ from .action_types import (
     SubtaskStateData,
     TaskReplannedData,
     StreamingDecomposeData,
+    DecomposeProgressData,
     # Agent lifecycle
     ActivateAgentData,
     DeactivateAgentData,
@@ -43,6 +44,8 @@ from .action_types import (
     AskData,
     NoticeData,
     HumanResponseData,
+    WaitConfirmData,
+    ConfirmedData,
     # Memory events
     MemoryQueryData,
     MemoryResultData,
@@ -60,6 +63,7 @@ from .action_types import (
     WorkerCompletedData,
     WorkerFailedData,
     DynamicTasksAddedData,
+    AssignTaskData,
 )
 
 from .sse import (
@@ -96,6 +100,8 @@ __all__ = [
     "TaskDecomposedData",
     "SubtaskStateData",
     "TaskReplannedData",
+    "StreamingDecomposeData",
+    "DecomposeProgressData",
     # Agent lifecycle
     "ActivateAgentData",
     "DeactivateAgentData",
@@ -116,6 +122,8 @@ __all__ = [
     "AskData",
     "NoticeData",
     "HumanResponseData",
+    "WaitConfirmData",
+    "ConfirmedData",
     # Memory events
     "MemoryQueryData",
     "MemoryResultData",
@@ -133,6 +141,7 @@ __all__ = [
     "WorkerCompletedData",
     "WorkerFailedData",
     "DynamicTasksAddedData",
+    "AssignTaskData",
     # SSE utilities
     "sse_json",
     "sse_action",

@@ -64,6 +64,9 @@ class BehaviorRecorder:
         self._last_scroll_time: Optional[datetime] = None
         self._dataload_window_seconds = 3  # Only record dataload within 3s after scroll
 
+        # Background task tracking for proper cleanup
+        self._background_tasks: Set[asyncio.Task] = set()
+
     def set_operation_callback(self, callback: Callable[[Dict[str, Any]], None]):
         """Set callback for real-time operation events."""
         self._operation_callback = callback
@@ -123,7 +126,18 @@ class BehaviorRecorder:
         # Cancel cleanup task
         if self._dataload_cleanup_task:
             self._dataload_cleanup_task.cancel()
+            try:
+                await self._dataload_cleanup_task
+            except asyncio.CancelledError:
+                pass
             self._dataload_cleanup_task = None
+
+        # Cancel all background tasks
+        for task in list(self._background_tasks):
+            task.cancel()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        self._background_tasks.clear()
 
         return result
 
@@ -228,13 +242,20 @@ class BehaviorRecorder:
     # Event Handling
     # ------------------------------------------------------------------
 
+    def _create_background_task(self, coro) -> asyncio.Task:
+        """Create and track a background task for proper cleanup."""
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
+
     def _handle_binding_event(self, event: Dict[str, Any], tab_id: str) -> None:
         """Handle CDP binding event from JavaScript."""
         if event.get("name") != "reportUserBehavior":
             return
 
         payload = event.get("payload", "")
-        asyncio.create_task(self._process_operation(payload, tab_id))
+        self._create_background_task(self._process_operation(payload, tab_id))
 
     async def _process_operation(self, payload: str, tab_id: str) -> None:
         """Process operation data from JavaScript."""
@@ -287,7 +308,7 @@ class BehaviorRecorder:
             if self._enable_snapshot_capture and data["type"] == "navigate":
                 url = data.get("url", "")
                 if url and url not in ["about:blank", "chrome://newtab/"]:
-                    asyncio.create_task(self._capture_snapshot(url, tab_id))
+                    self._create_background_task(self._capture_snapshot(url, tab_id))
 
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to parse operation data: {e}")
@@ -333,7 +354,7 @@ class BehaviorRecorder:
 
         # Capture snapshot
         if self._enable_snapshot_capture and url not in self.snapshots:
-            asyncio.create_task(self._capture_snapshot(url, tab_id))
+            self._create_background_task(self._capture_snapshot(url, tab_id))
 
     # ------------------------------------------------------------------
     # Dataload Detection (Network-based)
@@ -344,7 +365,7 @@ class BehaviorRecorder:
         if not self._is_recording:
             return
 
-        asyncio.create_task(self._process_response(response, tab_id))
+        self._create_background_task(self._process_response(response, tab_id))
 
     async def _process_response(self, response: "Response", tab_id: str) -> None:
         """Process network response to detect data loading.

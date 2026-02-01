@@ -439,12 +439,38 @@ class AnthropicProvider(BaseProvider):
                 if tools:
                     create_kwargs["tools"] = tools
 
+                # Log the full prompt being sent to the model
+                logger.info("=" * 80)
+                logger.info("[LLM Request] System prompt (first 1000 chars):")
+                logger.info(system_prompt[:1000] if len(system_prompt) > 1000 else system_prompt)
+                logger.info("-" * 40)
+                for i, msg in enumerate(messages):
+                    role = msg.get("role", "unknown")
+                    content = msg.get("content", "")
+                    if isinstance(content, str):
+                        content_preview = content[:2000] if len(content) > 2000 else content
+                    else:
+                        content_preview = str(content)[:2000]
+                    logger.info(f"[LLM Request] Message {i} ({role}): {content_preview}")
+                    # Check if workflow guide is in the message
+                    if "Memory Guidance" in str(content):
+                        logger.info("[LLM Request] ✅ WORKFLOW GUIDE DETECTED in message!")
+                logger.info("=" * 80)
+
                 response = await asyncio.to_thread(
                     self._client.messages.create,
                     **create_kwargs,
                 )
 
                 logger.info(f"Anthropic API call successful (stop={response.stop_reason}, blocks={len(response.content)})")
+
+                # Log full response for debugging
+                for i, block in enumerate(response.content):
+                    if hasattr(block, 'type'):
+                        if block.type == "text":
+                            logger.info(f"[LLM Response] Block {i} text: {block.text[:500] if block.text else '(empty)'}")
+                        elif block.type == "tool_use":
+                            logger.info(f"[LLM Response] Block {i} tool_use: {block.name}({json.dumps(block.input, ensure_ascii=False)[:200]})")
 
                 # Record token usage (Eigent Migration)
                 self._record_usage(response)

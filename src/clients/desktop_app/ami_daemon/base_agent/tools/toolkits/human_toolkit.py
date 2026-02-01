@@ -11,6 +11,7 @@ from typing import Callable, List, Optional, Awaitable, Union
 
 from .base_toolkit import BaseToolkit, FunctionTool
 from ...events import listen_toolkit
+from ...events.toolkit_listen import _run_async_safely
 
 logger = logging.getLogger(__name__)
 
@@ -187,12 +188,8 @@ class HumanToolkit(BaseToolkit):
             try:
                 result = self._message_callback(title, description)
                 if asyncio.iscoroutine(result):
-                    try:
-                        loop = asyncio.get_running_loop()
-                        # We're in async context
-                        asyncio.create_task(result)
-                    except RuntimeError:
-                        asyncio.run(result)
+                    # Use _run_async_safely for proper handling in both contexts
+                    _run_async_safely(result, toolkit=self)
                 return f"Message sent: {title}"
             except Exception as e:
                 logger.error(f"Error calling message_callback: {e}")

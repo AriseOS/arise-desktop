@@ -7,43 +7,60 @@ Tool integrations for agents.
 ```
 tools/
 ├── base_tool.py              # BaseTool abstract class
-├── workflow_browser_adapter.py # Browser session adapter for workflow engine
 ├── browser_use/              # Browser automation (DEPRECATED - use eigent_browser)
 ├── eigent_browser/           # Eigent browser automation (primary browser system)
 ├── toolkits/                 # LLM tool-calling toolkits (Eigent migration)
 └── android_use/              # Android automation (TODO)
 ```
 
-## Workflow Browser Adapter
+## Browser Session Management
 
-The `workflow_browser_adapter.py` provides a unified interface for workflow agents to interact with browsers:
+Browser sessions are managed through two mechanisms:
+
+### 1. Agent-level: BrowserToolkit with session_id mode (for Workforce)
+
+BrowserToolkit supports session_id mode for clone-safe browser access:
 
 ```python
-from .workflow_browser_adapter import WorkflowBrowserAdapter
+from .toolkits import BrowserToolkit
 
-adapter = await WorkflowBrowserAdapter.get_instance()
-session_info = await adapter.get_or_create_session(
-    session_id="workflow_123",
-    config_service=config_service,
-    headless=False
+# Create toolkit with session_id (clone-safe)
+toolkit = BrowserToolkit(
+    session_id="task_123",  # Use task_id for session isolation
+    headless=False,
+    user_data_dir="/path/to/browser/data",
 )
 
+# Session is created on-demand when first browser tool is called
+# Multiple agent clones with same session_id share the same browser
+```
+
+**Key features:**
+- Clone-safe: session_id is a string, safe to copy during agent cloning
+- On-demand: Browser is only started when first tool is called
+- Shared: Same session_id = same browser instance (via HybridBrowserSession singleton)
+
+### 2. Daemon-level: BrowserManager (for UI/window management)
+
+BrowserManager in services layer provides global browser control:
+
+```python
+from src.clients.desktop_app.ami_daemon.services.browser_manager import BrowserManager
+
+browser_manager = BrowserManager(config_service=config)
+await browser_manager.start_browser(headless=False)
+
+# Get the session
+session = browser_manager.global_session
+
 # Navigate
-await adapter.navigate(session_info, "https://example.com")
-
-# Get page snapshot for LLM
-snapshot_text = await adapter.get_page_snapshot(session_info)
-
-# Execute actions
-await adapter.click(session_info, ref="e1")
-await adapter.type_text(session_info, ref="e2", text="hello")
+await session.visit("https://example.com")
 ```
 
 **Key Features:**
-- Wraps HybridBrowserSession for workflow compatibility
-- Session lifecycle management with reference counting
-- Automatic cleanup of expired sessions
-- Multi-tab support
+- Single global HybridBrowserSession for UI-controlled browser
+- Health monitoring and automatic reconnection
+- Window layout management
 
 ## Toolkits (toolkits/)
 
@@ -61,7 +78,7 @@ LLM function-calling toolkits ported from Eigent/CAMEL-AI:
 | `terminal_toolkit.py` | Shell command execution |
 | `search_toolkit.py` | Web search (Google/DuckDuckGo) |
 | `human_toolkit.py` | Human-in-the-loop interaction |
-| `memory_toolkit.py` | Query workflow memory |
+| `memory_toolkit.py` | Query memory system |
 | `note_taking_toolkit.py` | Markdown note management (for data storage) |
 | `task_planning_toolkit.py` | Task decomposition and re-planning (from CAMEL) |
 
@@ -216,6 +233,6 @@ result = await recorder.stop_recording()
 
 **Note: This module is deprecated. Use eigent_browser instead.**
 
-Previously built on the browser-use library. The workflow engine and agents have been migrated to use eigent_browser via WorkflowBrowserAdapter.
+Previously built on the browser-use library. All browser automation has been migrated to use eigent_browser directly via BrowserToolkit's session_id mode.
 
-Legacy files remain for reference but should not be used in new code.
+**Remaining files:** Only `user_behavior/monitor.py` is still used by `cdp_recorder.py` for behavior recording. Other files are legacy and should not be used in new code.

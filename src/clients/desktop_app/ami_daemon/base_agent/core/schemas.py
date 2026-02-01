@@ -1,41 +1,15 @@
 """
-Core data structures for BaseAgent and Workflow system
-定义BaseAgent和工作流系统的核心数据结构
+Core data structures for BaseAgent system
+定义BaseAgent系统的核心数据结构
 """
-import asyncio
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, PrivateAttr
 import logging
 
 logger = logging.getLogger(__name__)
-
-
-# ==================== Workflow Control ====================
-
-class StopSignal:
-    """Signal for stopping workflow execution.
-
-    Used to cooperatively stop a running workflow. The workflow engine
-    checks this signal at step boundaries and loop iterations.
-    """
-
-    def __init__(self):
-        self._stop_event = asyncio.Event()
-
-    def request_stop(self):
-        """Request workflow to stop at next checkpoint."""
-        self._stop_event.set()
-
-    def is_stop_requested(self) -> bool:
-        """Check if stop was requested."""
-        return self._stop_event.is_set()
-
-    def reset(self):
-        """Reset the signal (for reuse)."""
-        self._stop_event.clear()
 
 
 # ==================== Agent Core Schemas ====================
@@ -83,10 +57,6 @@ class AgentConfig(BaseModel):
     max_execution_time: int = Field(default=3600, description="最大执行时间(秒)")
     max_memory_mb: int = Field(default=1024, description="最大内存使用(MB)")
     log_level: str = Field(default="INFO", description="日志级别")
-    
-    # 工作流配置
-    default_workflow: Optional[str] = Field(default=None, description="默认工作流名称")
-    enable_workflow_cache: bool = Field(default=True, description="是否启用工作流缓存")
 
 
 class AgentState(BaseModel):
@@ -101,7 +71,7 @@ class AgentState(BaseModel):
     
     # 执行信息
     execution_count: int = Field(default=0, description="执行次数")
-    current_workflow: Optional[str] = Field(default=None, description="当前工作流")
+    current_task: Optional[str] = Field(default=None, description="当前任务")
     current_step: Optional[str] = Field(default=None, description="当前步骤")
     step_index: int = Field(default=0, description="当前步骤索引")
     
@@ -119,12 +89,12 @@ class AgentResult(BaseModel):
     success: bool = Field(..., description="执行是否成功")
     data: Any = Field(default=None, description="返回数据")
     message: str = Field(default="", description="执行消息")
-    
+
     # 执行信息
     execution_time: float = Field(default=0.0, description="执行时间(秒)")
-    workflow_id: Optional[str] = Field(default=None, description="工作流ID")
+    task_id: Optional[str] = Field(default=None, description="任务ID")
     step_count: int = Field(default=0, description="执行步骤数")
-    
+
     # 元数据
     metadata: Dict[str, Any] = Field(default_factory=dict, description="额外元数据")
     timestamp: datetime = Field(default_factory=datetime.now, description="执行时间戳")
@@ -148,8 +118,8 @@ class AgentOutput(BaseModel):
 
 class AgentContext(BaseModel):
     """Agent执行上下文"""
-    # 工作流信息
-    workflow_id: str = Field(..., description="工作流ID (用于脚本组织)")
+    # 任务信息
+    workflow_id: str = Field(..., description="任务ID (用于数据隔离，历史原因保留名称)")
     step_id: str = Field(..., description="当前步骤ID")
     user_id: str = Field(default="default_user", description="用户ID")
     browser_session_id: str = Field(default="global", description="浏览器会话ID (用于会话共享)")
@@ -184,6 +154,9 @@ class AgentContext(BaseModel):
 
         第一次调用时从 BrowserManager 获取会话，后续调用返回已有会话。
         所有浏览器会话必须通过 BrowserManager 统一管理。
+
+        Returns:
+            HybridBrowserSession: 浏览器会话实例
         """
         if not self._browser_session_info:
             # 获取 browser_manager（必须存在）
@@ -200,12 +173,13 @@ class AgentContext(BaseModel):
                     logger.error(error_msg)
                 raise RuntimeError(error_msg)
 
-            # 获取 session_id（必须存在）
-            session_id = getattr(self.agent_instance, 'browser_session_id', None)
-            if not session_id:
+            # 通过 BrowserManager 获取全局会话
+            session = browser_manager.global_session
+
+            if not session:
                 error_msg = (
-                    "browser_session_id is required but not found in agent_instance. "
-                    "BaseAgent must be initialized with browser_session_id parameter."
+                    "Browser session not found in BrowserManager. "
+                    "BrowserManager.start_browser() must be called first."
                 )
                 if self.logger:
                     self.logger.error(error_msg)
@@ -213,30 +187,15 @@ class AgentContext(BaseModel):
                     logger.error(error_msg)
                 raise RuntimeError(error_msg)
 
-            # 通过 BrowserManager 获取会话（BrowserManager 应该已经创建好了）
-            self._browser_session_info = browser_manager.get_session(session_id)
-
-            if not self._browser_session_info:
-                error_msg = (
-                    f"Browser session '{session_id}' not found in BrowserManager. "
-                    f"BrowserManager.start_browser_for_workflow() or "
-                    f"BrowserManager.start_browser_for_recording() must be called first."
-                )
-                if self.logger:
-                    self.logger.error(error_msg)
-                else:
-                    logger.error(error_msg)
-                raise RuntimeError(error_msg)
+            self._browser_session_info = session
 
             if self.logger:
                 self.logger.info(
-                    f"Workflow {self.workflow_id} retrieved browser session {session_id} "
-                    "from BrowserManager"
+                    f"AgentContext retrieved browser session from BrowserManager"
                 )
             else:
                 logger.info(
-                    f"Workflow {self.workflow_id} retrieved browser session {session_id} "
-                    "from BrowserManager"
+                    f"AgentContext retrieved browser session from BrowserManager"
                 )
 
         return self._browser_session_info
@@ -250,202 +209,16 @@ class AgentContext(BaseModel):
         if self._browser_session_info:
             if self.logger:
                 self.logger.info(
-                    f"Workflow {self.workflow_id} cleanup browser session reference "
-                    f"(actual session managed by BrowserManager)"
+                    "AgentContext cleanup browser session reference "
+                    "(actual session managed by BrowserManager)"
                 )
             else:
                 logger.info(
-                    f"Workflow {self.workflow_id} cleanup browser session reference "
-                    f"(actual session managed by BrowserManager)"
+                    "AgentContext cleanup browser session reference "
+                    "(actual session managed by BrowserManager)"
                 )
 
             self._browser_session_info = None
-
-
-# ==================== Workflow Schemas ====================
-
-class StepType(str, Enum):
-    """工作流步骤类型"""
-    AGENT = "agent"        # 调用其他Agent
-    TOOL = "tool"          # 调用工具
-    CODE = "code"          # 执行代码
-    MEMORY = "memory"      # 内存操作
-    IF = "if"              # 条件分支控制
-    WHILE = "while"        # 循环控制
-
-
-class ErrorHandling(str, Enum):
-    """错误处理策略"""
-    STOP = "stop"          # 停止整个工作流
-    CONTINUE = "continue"  # 继续执行下一步
-    RETRY = "retry"        # 重试当前步骤
-    SKIP = "skip"          # 跳过当前步骤
-
-
-class AgentWorkflowStep(BaseModel):
-    """Agent工作流步骤"""
-    # 基础信息
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    name: str = Field(..., description="步骤名称")
-    description: str = Field(default="", description="步骤描述")
-    
-    # Agent配置
-    agent_type: str = Field(..., description="Agent类型: text_agent | browser_agent | scraper_agent | storage_agent | variable | if | while | foreach")
-    user_task: Optional[str] = Field(default=None, description="用户具体任务内容")
-    
-    # 输入配置
-    inputs: Dict[str, Any] = Field(default_factory=dict, description="输入映射")
-    constraints: List[str] = Field(default_factory=list, description="约束条件")
-    
-    # Tool Agent 特有配置
-    allowed_tools: List[str] = Field(default_factory=list, description="允许使用的工具列表")
-    fallback_tools: List[str] = Field(default_factory=list, description="备选工具列表")
-    confidence_threshold: float = Field(default=0.8, description="工具选择置信度阈值")
-
-    # Text Agent 特有配置
-    response_style: str = Field(default="professional", description="回答风格")
-    max_length: int = Field(default=500, description="最大回答长度")
-    
-    # 输出配置  
-    outputs: Dict[str, str] = Field(default_factory=dict, description="输出映射")
-    
-    # 执行控制
-    condition: Optional[str] = Field(default=None, description="执行条件")
-    timeout: Optional[int] = Field(default=None, description="超时时间，None表示无超时")
-    retry_count: int = Field(default=0, description="重试次数")
-
-    # 控制流相关字段 (仅当agent_type为if/while/foreach时使用)
-    then: Optional[List['AgentWorkflowStep']] = Field(default=None, description="if条件为真时执行的步骤")
-    else_: Optional[List['AgentWorkflowStep']] = Field(default=None, alias="else", description="if条件为假时执行的步骤")
-    steps: Optional[List['AgentWorkflowStep']] = Field(default=None, description="while/foreach循环体步骤")
-    max_iterations: Optional[int] = Field(default=None, description="while/foreach最大循环次数，None表示无限制")
-    loop_timeout: Optional[int] = Field(default=None, description="while/foreach循环超时时间，None表示无超时")
-
-    # foreach 特有配置
-    # source: 支持变量引用 "{{list_var}}" 或字面量列表 [1, 2, 3]
-    source: Optional[Union[str, List[Any]]] = Field(default=None, description="foreach遍历的源：变量引用如 '{{items}}' 或字面量列表如 [1, 2, 3]")
-    item_var: Optional[str] = Field(default="item", description="foreach当前项的变量名")
-    index_var: Optional[str] = Field(default="index", description="foreach当前索引的变量名")
-
-    # Variable Agent 特有配置
-    operation: Optional[str] = Field(default=None, description="Variable operation type")
-    data: Optional[Union[Dict[str, Any], List[Any], str]] = Field(default=None, description="Data for variable operations: Dict for set, List or variable reference string for filter/slice/extend")
-    # Note: 'source' field is shared with foreach, defined above
-    field: Optional[str] = Field(default=None, description="Field for extract operation")
-    value: Optional[Any] = Field(default=None, description="Value for increment/decrement")
-    expression: Optional[str] = Field(default=None, description="Expression for calculate")
-    updates: Optional[Dict[str, Any]] = Field(default=None, description="Updates for update operation")
-    current_page: Optional[Any] = Field(default=None, description="Current page for condition check")
-    max_pages: Optional[Any] = Field(default=None, description="Max pages for condition check")
-    items_found: Optional[Any] = Field(default=None, description="Items found for condition check")
-
-
-class StepResult(BaseModel):
-    """单步执行结果"""
-    step_id: str = Field(..., description="步骤ID")
-    success: bool = Field(..., description="执行是否成功")
-    data: Any = Field(default=None, description="步骤输出数据")
-    message: str = Field(default="", description="执行消息")
-    
-    # 执行信息
-    execution_time: float = Field(default=0.0, description="执行时间(秒)")
-    retry_count: int = Field(default=0, description="实际重试次数")
-    
-    # 状态信息
-    started_at: datetime = Field(default_factory=datetime.now, description="开始时间")
-    completed_at: Optional[datetime] = Field(default=None, description="完成时间")
-    
-    # 错误信息
-    error: Optional[str] = Field(default=None, description="错误信息")
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="额外元数据")
-    
-    # 控制流相关字段 (仅当step_type为控制流时使用)
-    step_type: Optional[str] = Field(default="agent", description="步骤类型：agent/if/while")
-    condition_result: Optional[bool] = Field(default=None, description="条件评估结果")
-    branch_executed: Optional[str] = Field(default=None, description="执行的分支：then/else/loop")
-    iterations_executed: Optional[int] = Field(default=None, description="实际执行的循环次数")
-    exit_reason: Optional[str] = Field(default=None, description="退出原因")
-    sub_step_results: List['StepResult'] = Field(default_factory=list, description="子步骤执行结果")
-
-
-class ExecutionContext(BaseModel):
-    """工作流执行上下文"""
-    workflow_id: str = Field(..., description="工作流ID")
-    
-    # 执行状态
-    current_step_index: int = Field(default=0, description="当前步骤索引")
-    completed_steps: List[str] = Field(default_factory=list, description="已完成步骤")
-    failed_steps: List[str] = Field(default_factory=list, description="失败步骤")
-    
-    # 数据存储
-    variables: Dict[str, Any] = Field(default_factory=dict, description="执行变量")
-    step_results: Dict[str, Any] = Field(default_factory=dict, description="步骤结果")
-    
-    # 时间信息
-    started_at: datetime = Field(default_factory=datetime.now, description="开始时间")
-    
-    # 配置信息
-    max_execution_time: int = Field(default=3600, description="最大执行时间")
-    enable_parallel: bool = Field(default=False, description="是否启用并行执行")
-
-
-class Workflow(BaseModel):
-    """完整工作流定义"""
-    # 基础信息
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="内部UUID")
-    workflow_id: Optional[str] = Field(default=None, description="系统标识符 (如 workflow_75a80ae0a48f)，用于文件路径和API")
-    name: str = Field(..., description="人类可读名称 (如 watcha-extract-all-products)")
-    description: str = Field(default="", description="工作流描述")
-    version: str = Field(default="1.0.0", description="版本号")
-    
-    # 步骤定义
-    steps: List['AgentWorkflowStep'] = Field(..., description="工作流步骤")
-    
-    # 输入输出定义
-    input_schema: Dict[str, Any] = Field(default_factory=dict, description="输入参数定义")
-    output_schema: Dict[str, Any] = Field(default_factory=dict, description="输出结果定义")
-    
-    # 执行配置
-    max_execution_time: int = Field(default=3600, description="最大执行时间(秒)")
-    enable_parallel: bool = Field(default=False, description="是否启用并行执行")
-    enable_cache: bool = Field(default=True, description="是否启用缓存")
-    
-    # 元数据
-    tags: List[str] = Field(default_factory=list, description="标签")
-    author: str = Field(default="Ami", description="作者")
-    created_at: datetime = Field(default_factory=datetime.now, description="创建时间")
-    updated_at: datetime = Field(default_factory=datetime.now, description="更新时间")
-
-
-class WorkflowResult(BaseModel):
-    """工作流执行结果"""
-    # 基础结果
-    success: bool = Field(..., description="执行是否成功")
-    workflow_id: str = Field(..., description="工作流ID")
-    stopped: bool = Field(default=False, description="是否被用户停止")
-
-    # 执行统计
-    completed_steps: List[str] = Field(default_factory=list, description="已完成步骤")
-    failed_steps: List[str] = Field(default_factory=list, description="失败步骤")
-    step_results: Dict[str, Any] = Field(default_factory=dict, description="步骤结果")
-    steps: List['StepResult'] = Field(default_factory=list, description="步骤执行结果列表")
-
-    # 时间信息
-    total_execution_time: float = Field(default=0.0, description="总执行时间(秒)")
-    started_at: datetime = Field(default_factory=datetime.now, description="开始时间")
-    completed_at: Optional[datetime] = Field(default=None, description="完成时间")
-
-    # 输出数据
-    final_result: Any = Field(default=None, description="最终结果")
-    output_variables: Dict[str, Any] = Field(default_factory=dict, description="输出变量")
-
-    # 错误信息
-    error_message: Optional[str] = Field(default=None, description="错误消息")
-    error_details: List[Dict[str, Any]] = Field(default_factory=list, description="详细错误信息")
-
-    # 性能信息
-    memory_usage_mb: float = Field(default=0.0, description="内存使用量(MB)")
-    step_execution_times: Dict[str, float] = Field(default_factory=dict, description="各步骤执行时间")
 
 
 # ==================== Extension Schemas ====================

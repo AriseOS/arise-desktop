@@ -4,16 +4,18 @@
  * Displays task decomposition plan with editable subtasks and auto-confirm timer.
  * Based on Eigent's task confirmation workflow (to_sub_tasks event).
  *
+ * Note: Agent assignment is handled by Coordinator during execution, not shown
+ * in the planning phase (following Eigent's pattern).
+ *
  * Features:
  * - Editable subtask list
  * - Auto-confirm countdown timer (30s default)
  * - Add/remove subtasks
  * - Reorder subtasks
- * - Agent assignment display
  */
 import React, { useState, useEffect, useRef } from 'react';
 import Icon from './Icons';
-import { AgentBadge, getAgentConfig } from './AgentNode';
+import { AgentBadge } from './AgentNode';
 
 // Default auto-confirm delay in seconds
 const DEFAULT_AUTO_CONFIRM_DELAY = 30;
@@ -113,7 +115,6 @@ function TaskDecomposition({
     const newTask = {
       id: `task_${Date.now()}`,
       content: '',
-      agent_type: 'browser_agent',
       dependencies: [],
       priority: editedSubtasks.length + 1,
     };
@@ -226,8 +227,6 @@ function SubtaskItem({
   const [isEditing, setIsEditing] = useState(false);
   const inputRef = useRef(null);
 
-  const agentConfig = getAgentConfig(task.agent_type);
-
   // Focus input when editing starts
   useEffect(() => {
     if (isEditing && inputRef.current) {
@@ -238,10 +237,6 @@ function SubtaskItem({
 
   const handleContentChange = (e) => {
     onEdit('content', e.target.value);
-  };
-
-  const handleAgentChange = (e) => {
-    onEdit('agent_type', e.target.value);
   };
 
   const handleKeyDown = (e) => {
@@ -281,21 +276,6 @@ function SubtaskItem({
             {task.content || task.description || 'Click to edit...'}
           </span>
         )}
-      </div>
-
-      {/* Agent Type Selector */}
-      <div className="subtask-agent">
-        <select
-          value={task.agent_type || 'browser_agent'}
-          onChange={handleAgentChange}
-          className="agent-select"
-        >
-          <option value="browser_agent">🌐 Browser</option>
-          <option value="developer_agent">💻 Developer</option>
-          <option value="document_agent">📄 Document</option>
-          <option value="social_medium_agent">📧 Social</option>
-          <option value="question_confirm_agent">❓ Confirm</option>
-        </select>
       </div>
 
       {/* Actions */}

@@ -11,7 +11,10 @@ coordination. It extends CAMEL's Workforce with AMI-specific features:
 
 import asyncio
 import logging
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..tools.toolkits import MemoryToolkit
 
 from camel.agents import ChatAgent
 from camel.societies.workforce.workforce import (
@@ -28,9 +31,12 @@ from ..events import (
     TaskDecomposedData,
     SubtaskStateData,
     StreamingDecomposeData,
+    DecomposeProgressData,
     NoticeData,
     WorkerAssignedData,
+    AssignTaskData,
 )
+from ..events.toolkit_listen import _run_async_safely
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +91,7 @@ class AMIWorkforce(BaseWorkforce):
         llm_api_key: str,  # Required: API key for LLM calls
         llm_model: str,  # Required: Model name for LLM
         llm_base_url: Optional[str] = None,
+        memory_toolkit: Optional["MemoryToolkit"] = None,  # Memory toolkit for workflow queries
         description: str = "AMI Task Coordinator",
         children: Optional[List[BaseNode]] = None,
         coordinator_agent: Optional[ChatAgent] = None,
@@ -100,6 +107,7 @@ class AMIWorkforce(BaseWorkforce):
             llm_api_key: API key for LLM calls (required)
             llm_model: Model name for LLM (required)
             llm_base_url: Base URL for LLM API (optional, for proxy)
+            memory_toolkit: MemoryToolkit for querying historical workflows
             description: Workforce description
             children: Initial worker nodes
             coordinator_agent: Custom coordinator agent (created if None)
@@ -157,6 +165,17 @@ class AMIWorkforce(BaseWorkforce):
         self.task_id = task_id
         self._task_state = task_state
 
+        # Memory integration for workflow guidance
+        self._memory_toolkit = memory_toolkit
+        self._workflow_guide_content: Optional[str] = None
+        self._memory_level: str = "L3"  # L1=strong, L2=medium, L3=weak guidance
+
+        # Subtask Memory mapping (from L3 subtasks query result)
+        self._global_path_states: List[Any] = []  # L2 global path states
+        self._global_path_actions: List[Any] = []  # L2 global path actions
+        self._subtask_target_states: Dict[str, Any] = {}  # subtask_id -> target State
+        self._subtask_memory_hints: Dict[str, str] = {}  # subtask_id -> workflow_guide
+
         # Track subtasks and their states
         self._subtasks: List[Task] = []
         self._subtask_states: Dict[str, str] = {}  # subtask_id -> state
@@ -164,6 +183,13 @@ class AMIWorkforce(BaseWorkforce):
         # Progress tracking
         self._completed_count = 0
         self._failed_count = 0
+
+        # Pause/resume mechanism (Eigent pattern for multi-turn conversation)
+        # BUG-6 fix: Use Lock to make pause/resume atomic
+        self._paused = False
+        self._pause_event = asyncio.Event()
+        self._pause_event.set()  # Initially not paused (event is set)
+        self._pause_lock = asyncio.Lock()  # BUG-6 fix: Protect state changes
 
         logger.info(f"[AMIWorkforce] Initialization complete")
 
@@ -188,7 +214,8 @@ class AMIWorkforce(BaseWorkforce):
         This method:
         1. Calls the task_agent to decompose the task
         2. Streams decomposition text to frontend via SSE
-        3. Returns list of CAMEL Task objects
+        3. Emits progress events during decomposition
+        4. Returns list of CAMEL Task objects
 
         Args:
             task: Task description to decompose
@@ -199,8 +226,18 @@ class AMIWorkforce(BaseWorkforce):
         """
         logger.info(f"[AMIWorkforce] Decomposing task: {task[:100]}...")
 
+        # Emit initial progress event
+        await self._emit_event(DecomposeProgressData(
+            task_id=self.task_id,
+            progress=0.0,
+            message="Starting task decomposition...",
+            is_final=False,
+        ))
+
         # Create the main task
-        main_task = Task(content=task, id=f"{self.task_id}.main")
+        # Use "task" as prefix instead of task_id for cleaner subtask IDs
+        # This generates subtask IDs like "task.1", "task.2" instead of "abc123.main.1"
+        main_task = Task(content=task, id="task")
 
         if not validate_task_content(main_task.content, main_task.id):
             logger.warning(f"[AMIWorkforce] Invalid task content")
@@ -213,6 +250,14 @@ class AMIWorkforce(BaseWorkforce):
         self._state = WorkforceState.RUNNING
         main_task.state = CAMELTaskState.OPEN
 
+        # Emit progress: analyzing task
+        await self._emit_event(DecomposeProgressData(
+            task_id=self.task_id,
+            progress=0.2,
+            message="Analyzing task complexity...",
+            is_final=False,
+        ))
+
         # Perform decomposition with streaming
         accumulated_text = ""
 
@@ -224,6 +269,15 @@ class AMIWorkforce(BaseWorkforce):
             await self._emit_event(StreamingDecomposeData(
                 task_id=self.task_id,
                 text=accumulated_text,
+            ))
+
+            # Emit progress: generating subtasks (50-80% based on text length)
+            progress = min(0.8, 0.5 + len(accumulated_text) / 2000 * 0.3)
+            await self._emit_event(DecomposeProgressData(
+                task_id=self.task_id,
+                progress=progress,
+                message="Generating subtasks...",
+                is_final=False,
             ))
 
             # Call external callback if provided
@@ -241,11 +295,13 @@ class AMIWorkforce(BaseWorkforce):
         logger.info(f"[AMIWorkforce] Decomposed into {len(subtasks)} subtasks")
 
         # Emit task_decomposed event
+        # DS-5: Use 'state' field for consistency with SubtaskStateData
         subtasks_data = [
             {
                 "id": st.id,
                 "content": st.content,
-                "status": "OPEN",
+                "state": "OPEN",
+                "status": "OPEN",  # Keep for backward compatibility
             }
             for st in subtasks
         ]
@@ -254,6 +310,15 @@ class AMIWorkforce(BaseWorkforce):
             subtasks=subtasks_data,
             summary_task=task,
             total_subtasks=len(subtasks),
+        ))
+
+        # Emit final progress event
+        await self._emit_event(DecomposeProgressData(
+            task_id=self.task_id,
+            progress=1.0,
+            message="Decomposition complete",
+            sub_tasks=subtasks_data,
+            is_final=True,
         ))
 
         return subtasks
@@ -298,11 +363,16 @@ class AMIWorkforce(BaseWorkforce):
 
         self.task_agent.reset()
 
+        # Create a sync wrapper for the async stream callback
+        # The lambda creates a task that is tracked via _run_async_safely
+        def sync_stream_callback(text):
+            _run_async_safely(stream_callback(text))
+
         # Call decompose with streaming callback
         result = task.decompose(
             self.task_agent,
             decompose_prompt,
-            stream_callback=lambda text: asyncio.create_task(stream_callback(text)),
+            stream_callback=sync_stream_callback,
         )
 
         # Handle generator or direct result
@@ -348,7 +418,11 @@ class AMIWorkforce(BaseWorkforce):
 
     async def _find_assignee(self, tasks: List[Task]):
         """
-        Override to emit worker_assigned events when tasks are assigned.
+        Override to emit assign_task events when tasks are assigned.
+
+        Emits two types of events:
+        1. assign_task with state="waiting" - Task assigned, in queue
+        2. worker_assigned - Legacy event for backwards compatibility
 
         Args:
             tasks: List of tasks to assign
@@ -359,6 +433,14 @@ class AMIWorkforce(BaseWorkforce):
         from camel.societies.workforce.utils import TaskAssignResult
 
         assigned = await super()._find_assignee(tasks)
+
+        # Log assignment summary for debugging
+        logger.info(f"[AMIWorkforce] Coordinator assigned {len(assigned.assignments)} tasks:")
+        for item in assigned.assignments:
+            task_obj = self._find_task_by_id(item.task_id, tasks)
+            content_preview = (task_obj.content[:50] + "...") if task_obj and len(task_obj.content) > 50 else (task_obj.content if task_obj else "N/A")
+            worker_name = self._get_worker_name(item.assignee_id)
+            logger.info(f"  - {item.task_id} -> {worker_name}: {content_preview}")
 
         for item in assigned.assignments:
             # Skip the main task itself
@@ -377,7 +459,20 @@ class AMIWorkforce(BaseWorkforce):
             # Get worker name from node_id
             worker_name = self._get_worker_name(item.assignee_id)
 
-            # Emit worker_assigned event
+            # Emit assign_task event with "waiting" state (Phase 1)
+            await self._emit_event(AssignTaskData(
+                task_id=self.task_id,
+                assignee_id=item.assignee_id,
+                subtask_id=item.task_id,
+                content=content,
+                state="waiting",
+                failure_count=0,
+                # DS-2: Backward compatible fields
+                agent_id=item.assignee_id,
+            ))
+
+            # DS-3: WorkerAssignedData is legacy, keeping for backward compatibility
+            # TODO: Remove once frontend fully migrates to assign_task
             await self._emit_event(WorkerAssignedData(
                 task_id=self.task_id,
                 worker_name=worker_name,
@@ -393,17 +488,43 @@ class AMIWorkforce(BaseWorkforce):
 
     async def _post_task(self, task: Task, assignee_id: str) -> None:
         """
-        Override to emit worker_assigned event with RUNNING state when task starts.
+        Override to emit assign_task event with RUNNING state when task starts.
+
+        This is Phase 2 of the two-phase assignment:
+        - Phase 1 (in _find_assignee): state="waiting"
+        - Phase 2 (here): state="running"
 
         Args:
             task: Task being posted
             assignee_id: ID of assigned worker
         """
+        # BUG-7 fix: Check if paused before executing task
+        # This is the primary checkpoint for pause/resume during multi-turn conversation
+        await self._wait_if_paused()
+
+        # Check if stopped (using getattr for safety since _stopped may come from parent class)
+        if getattr(self, '_stopped', False):
+            logger.info(f"[AMIWorkforce] Skipping task {task.id}: workforce stopped")
+            return
+
         # Skip the main task itself
         if not (self._task and task.id == self._task.id):
             worker_name = self._get_worker_name(assignee_id)
 
-            # Emit worker_assigned with running state
+            # Emit assign_task event with "running" state (Phase 2)
+            await self._emit_event(AssignTaskData(
+                task_id=self.task_id,
+                assignee_id=assignee_id,
+                subtask_id=task.id,
+                content=task.content,
+                state="running",
+                failure_count=task.failure_count,
+                # DS-2: Backward compatible fields
+                agent_id=assignee_id,
+            ))
+
+            # DS-3: WorkerAssignedData is legacy, keeping for backward compatibility
+            # TODO: Remove once frontend fully migrates to assign_task
             await self._emit_event(WorkerAssignedData(
                 task_id=self.task_id,
                 worker_name=worker_name,
@@ -419,6 +540,9 @@ class AMIWorkforce(BaseWorkforce):
                 subtask_id=task.id,
                 state="RUNNING",
             ))
+
+        # BUG-7 fix: Check again before calling parent (in case pause happened during event emission)
+        await self._wait_if_paused()
 
         # Call parent implementation
         await super()._post_task(task, assignee_id)
@@ -464,11 +588,13 @@ class AMIWorkforce(BaseWorkforce):
             self._subtasks.append(task)
 
         # Emit event for UI update
+        # DS-5: Use 'state' field for consistency with SubtaskStateData
         subtasks_data = [
             {
                 "id": st.id,
                 "content": st.content,
-                "status": self._subtask_states.get(st.id, "OPEN"),
+                "state": self._subtask_states.get(st.id, "OPEN"),
+                "status": self._subtask_states.get(st.id, "OPEN"),  # Backward compatibility
             }
             for st in self._subtasks
         ]
@@ -479,6 +605,31 @@ class AMIWorkforce(BaseWorkforce):
             total_subtasks=len(self._subtasks),
         ))
 
+    def _sync_subtask_to_parent(self, task: Task) -> None:
+        """
+        Sync completed subtask's result and state back to its parent.subtasks list.
+
+        CAMEL stores results in _completed_tasks but doesn't update parent.subtasks,
+        causing parent.subtasks[i].result to remain None. This ensures consistency.
+
+        Based on Eigent's _sync_subtask_to_parent pattern.
+
+        Args:
+            task: The completed subtask whose result/state should be synced
+        """
+        parent = task.parent
+        if not parent or not parent.subtasks:
+            return
+
+        for sub in parent.subtasks:
+            if sub.id == task.id:
+                sub.result = task.result
+                sub.state = task.state
+                logger.debug(f"[AMIWorkforce] Synced subtask {task.id} result to parent.subtasks")
+                return
+
+        logger.warning(f"[AMIWorkforce] Subtask {task.id} not found in parent.subtasks")
+
     async def _handle_completed_task(self, task: Task) -> None:
         """
         Override to emit subtask_state events on completion.
@@ -487,6 +638,12 @@ class AMIWorkforce(BaseWorkforce):
             task: Completed task
         """
         logger.info(f"[AMIWorkforce] Task completed: {task.id}")
+
+        # BUG-7 fix: Check if paused before handling completion
+        await self._wait_if_paused()
+
+        # Sync result to parent's subtasks list first (Eigent pattern)
+        self._sync_subtask_to_parent(task)
 
         # Update state tracking
         self._subtask_states[task.id] = "DONE"
@@ -508,29 +665,74 @@ class AMIWorkforce(BaseWorkforce):
         """
         Override to emit subtask_state events on failure.
 
+        Enhanced failure handling:
+        - Only notify user on final failure (after all retries exhausted)
+        - Retry silently to avoid UI noise
+        - Include error message in final failure notification
+
         Args:
             task: Failed task
 
         Returns:
             True if task was handled (retry/replan), False otherwise
         """
-        logger.info(f"[AMIWorkforce] Task failed: {task.id}, retry={task.failure_count}")
+        # BUG-7 fix: Check if paused before handling failure
+        await self._wait_if_paused()
+
+        # Call parent implementation first for retry/replan logic
+        # Note: parent increments task.failure_count before returning
+        result = await super()._handle_failed_task(task)
+
+        # Get max retries from config
+        max_retries = self.failure_handling_config.max_retries
+
+        logger.info(f"[AMIWorkforce] Task failed: {task.id}, attempt {task.failure_count}/{max_retries}")
+
+        # Only send failure notification when all retries are exhausted
+        if task.failure_count < max_retries:
+            # Silent retry - just log it
+            logger.info(f"[AMIWorkforce] Retrying task {task.id} silently")
+            return result
+
+        # Final failure - update state and notify user
+        logger.warning(f"[AMIWorkforce] Task {task.id} failed after {task.failure_count} attempts, max retries exhausted")
 
         # Update state tracking
         self._subtask_states[task.id] = "FAILED"
         self._failed_count += 1
 
-        # Emit subtask_state event
+        # Extract error message from task result
+        error_message = self._extract_error_message(task)
+
+        # Emit subtask_state event with failure details
         await self._emit_event(SubtaskStateData(
             task_id=self.task_id,
             subtask_id=task.id,
             state="FAILED",
-            result=str(task.result)[:500] if task.result else None,
+            result=error_message[:500] if error_message else None,
             failure_count=task.failure_count,
         ))
 
-        # Call parent implementation for retry/replan logic
-        return await super()._handle_failed_task(task)
+        return result
+
+    def _extract_error_message(self, task: Task) -> str:
+        """
+        Extract error message from a failed task.
+
+        Args:
+            task: Failed task
+
+        Returns:
+            Error message string
+        """
+        if task.result:
+            return str(task.result)
+
+        # Try to get from task's additional_info or other attributes
+        if hasattr(task, 'additional_info') and task.additional_info:
+            return str(task.additional_info)
+
+        return "Task failed after maximum retries"
 
     def get_progress(self) -> Dict[str, Any]:
         """
@@ -553,14 +755,423 @@ class AMIWorkforce(BaseWorkforce):
         }
 
     def stop(self) -> None:
-        """Override stop to emit notice event."""
+        """Override stop to emit notice event and cleanup workers."""
         logger.info(f"[AMIWorkforce] Stopping workforce")
+
+        # BUG-14 fix: Cleanup worker resources before stopping
+        self._cleanup_workers()
+
         super().stop()
 
-        # Emit notice asynchronously
-        asyncio.create_task(self._emit_event(NoticeData(
+        # Emit notice safely (handles both sync and async contexts)
+        _run_async_safely(self._emit_event(NoticeData(
             task_id=self.task_id,
             level="info",
             title="Workforce Stopped",
             message="Task execution has been stopped",
         )))
+
+    def _cleanup_workers(self) -> None:
+        """
+        BUG-14 fix: Cleanup worker resources.
+
+        Called when workforce is stopped to release resources held by workers.
+        """
+        try:
+            # Get all worker nodes
+            if hasattr(self, '_children') and self._children:
+                for worker_node in self._children:
+                    if hasattr(worker_node, 'worker'):
+                        worker = worker_node.worker
+                        # Reset agent state if possible
+                        if hasattr(worker, 'reset'):
+                            try:
+                                worker.reset()
+                                logger.debug(f"[AMIWorkforce] Reset worker: {getattr(worker, 'agent_name', 'unknown')}")
+                            except Exception as e:
+                                logger.warning(f"[AMIWorkforce] Failed to reset worker: {e}")
+
+            logger.info(f"[AMIWorkforce] Worker cleanup completed")
+        except Exception as e:
+            logger.warning(f"[AMIWorkforce] Error during worker cleanup: {e}")
+
+    # ===== Pause/Resume Mechanism (Eigent pattern for multi-turn conversation) =====
+
+    def pause(self) -> None:
+        """
+        Pause Workforce execution.
+
+        Used when user sends a new message during task execution.
+        The Workforce will pause at the next safe checkpoint.
+
+        BUG-6 fix: Made thread-safe with simple flag setting.
+        The asyncio.Event provides the actual synchronization.
+        """
+        # Simple atomic flag check - Event provides synchronization
+        if not self._paused:
+            self._paused = True
+            self._pause_event.clear()  # Block _wait_if_paused
+            logger.info(f"[AMIWorkforce] Pausing workforce for task {self.task_id}")
+
+            # Emit notice event safely (handles both sync and async contexts)
+            _run_async_safely(self._emit_event(NoticeData(
+                task_id=self.task_id,
+                level="info",
+                title="Workforce Paused",
+                message="Task execution paused for user input",
+            )))
+
+    def resume(self) -> None:
+        """
+        Resume Workforce execution.
+
+        Called after handling user's message during execution.
+
+        BUG-6 fix: Made thread-safe with simple flag setting.
+        """
+        if self._paused:
+            self._paused = False
+            self._pause_event.set()  # Unblock _wait_if_paused
+            logger.info(f"[AMIWorkforce] Resuming workforce for task {self.task_id}")
+
+            # Emit notice event safely (handles both sync and async contexts)
+            _run_async_safely(self._emit_event(NoticeData(
+                task_id=self.task_id,
+                level="info",
+                title="Workforce Resumed",
+                message="Task execution resumed",
+            )))
+
+    @property
+    def is_paused(self) -> bool:
+        """Check if Workforce is paused."""
+        return self._paused
+
+    async def _wait_if_paused(self) -> None:
+        """
+        Wait if Workforce is paused.
+
+        Called at safe checkpoints during execution to allow pause/resume.
+        """
+        if self._paused:
+            logger.info(f"[AMIWorkforce] Waiting for resume signal...")
+            await self._pause_event.wait()
+            logger.info(f"[AMIWorkforce] Resume signal received, continuing...")
+
+    async def add_dynamic_subtasks(self, new_tasks: List[Task]) -> None:
+        """
+        Add new subtasks during execution (Eigent pattern).
+
+        Used when user adds additional requirements during execution.
+        The new tasks will be added to the pending queue.
+
+        Args:
+            new_tasks: List of new tasks to add
+        """
+        logger.info(f"[AMIWorkforce] Adding {len(new_tasks)} dynamic subtasks")
+
+        # Add to pending queue
+        self._pending_tasks.extend(new_tasks)
+
+        # Track states
+        for task in new_tasks:
+            self._subtask_states[task.id] = "OPEN"
+            self._subtasks.append(task)
+
+        # Emit event for UI update
+        from ..events import DynamicTasksAddedData
+
+        await self._emit_event(DynamicTasksAddedData(
+            task_id=self.task_id,
+            # DS-5: Use 'state' field for consistency
+            new_tasks=[
+                {"id": t.id, "content": t.content, "state": "OPEN", "status": "OPEN"}
+                for t in new_tasks
+            ],
+            reason="User added additional requirements",
+            total_tasks_now=len(self._subtasks),
+            total_tasks=len(self._subtasks),  # DS-6: Both fields for compatibility
+        ))
+
+    # ===== Memory Integration Methods =====
+
+    async def query_memory_for_task(self, task: str) -> None:
+        """
+        Query memory for similar past workflows before task decomposition.
+
+        This method queries the Memory system (L1/L2/L3 hierarchy) for historical
+        workflows that match the given task. The result is stored in:
+        - self._workflow_guide_content: Formatted guidance text
+        - self._memory_level: L1 (cognitive_phrase), L2 (path), or L3 (none)
+
+        Memory Levels:
+        - L1: Complete cognitive_phrase match (strict guidance)
+        - L2: Partial path match (reference guidance)
+        - L3: No match (use judgment)
+
+        Args:
+            task: Task description to search for in memory.
+        """
+        if not self._memory_toolkit:
+            logger.info("[AMIWorkforce] Memory toolkit not configured, skipping query")
+            return
+
+        # Check if memory toolkit is available
+        if hasattr(self._memory_toolkit, 'is_available') and not self._memory_toolkit.is_available():
+            logger.info("[AMIWorkforce] Memory service not available, skipping query")
+            return
+
+        logger.info(f"[AMIWorkforce] Querying memory for task: {task[:100]}...")
+
+        # Emit memory query start event
+        await self._emit_event(NoticeData(
+            task_id=self.task_id,
+            level="info",
+            title="Memory Query",
+            message="Searching for similar past workflows...",
+        ))
+
+        try:
+            memory_result = await self._memory_toolkit.query_task(task)
+
+            if memory_result.cognitive_phrase:
+                # L1: Complete workflow match - strong guidance
+                from ..tools.toolkits import MemoryToolkit
+                self._workflow_guide_content = MemoryToolkit.format_cognitive_phrase(
+                    memory_result.cognitive_phrase
+                )
+                self._memory_level = "L1"
+                states_count = len(memory_result.cognitive_phrase.states) if hasattr(memory_result.cognitive_phrase, 'states') else 0
+                logger.info(
+                    f"[AMIWorkforce] Found cognitive_phrase (L1) with {states_count} states"
+                )
+                await self._emit_event(NoticeData(
+                    task_id=self.task_id,
+                    level="success",
+                    title="Memory Match Found",
+                    message=f"Found complete workflow with {states_count} steps (L1 - High confidence)",
+                ))
+
+            elif memory_result.subtasks:
+                # L3a: Subtasks with global path - build subtask memory mapping
+                from ..tools.toolkits import MemoryToolkit
+
+                # Store global path for navigation reference
+                self._global_path_states = memory_result.states or []
+                self._global_path_actions = memory_result.actions or []
+
+                # Build subtask to target state mapping
+                for st in memory_result.subtasks:
+                    subtask_id = getattr(st, 'task_id', None) or str(id(st))
+                    path_indices = getattr(st, 'path_state_indices', [])
+
+                    if path_indices and self._global_path_states:
+                        # Map subtask to its target state (last state in path_indices)
+                        last_idx = path_indices[-1]
+                        if last_idx < len(self._global_path_states):
+                            self._subtask_target_states[subtask_id] = self._global_path_states[last_idx]
+
+                # Format global path as workflow guide
+                if self._global_path_states:
+                    self._workflow_guide_content = MemoryToolkit.format_navigation_path(
+                        self._global_path_states, self._global_path_actions
+                    )
+                    self._memory_level = "L2"
+                    logger.info(
+                        f"[AMIWorkforce] Found subtasks with global path (L2) - "
+                        f"{len(memory_result.subtasks)} subtasks, {len(self._global_path_states)} states"
+                    )
+                    await self._emit_event(NoticeData(
+                        task_id=self.task_id,
+                        level="info",
+                        title="Subtask Plan Found",
+                        message=f"Found {len(memory_result.subtasks)} subtasks with navigation path (L2)",
+                    ))
+                else:
+                    # Subtasks without path (L3b)
+                    self._memory_level = "L3"
+                    logger.info(
+                        f"[AMIWorkforce] Found subtasks without path (L3) - "
+                        f"{len(memory_result.subtasks)} subtasks"
+                    )
+
+            elif memory_result.states:
+                # L2: Partial path match - reference guidance
+                from ..tools.toolkits import MemoryToolkit
+
+                # Store global path
+                self._global_path_states = memory_result.states
+                self._global_path_actions = memory_result.actions or []
+
+                self._workflow_guide_content = MemoryToolkit.format_navigation_path(
+                    memory_result.states, memory_result.actions
+                )
+                self._memory_level = "L2"
+                logger.info(
+                    f"[AMIWorkforce] Found navigation path (L2) with {len(memory_result.states)} states"
+                )
+                await self._emit_event(NoticeData(
+                    task_id=self.task_id,
+                    level="info",
+                    title="Partial Match Found",
+                    message=f"Found navigation path with {len(memory_result.states)} pages (L2 - Medium confidence)",
+                ))
+
+            else:
+                # L3: No match - use judgment
+                self._memory_level = "L3"
+                logger.info("[AMIWorkforce] No workflow found in memory (L3)")
+                await self._emit_event(NoticeData(
+                    task_id=self.task_id,
+                    level="info",
+                    title="No Memory Match",
+                    message="No similar workflow found. Agent will explore freely (L3)",
+                ))
+
+        except Exception as e:
+            logger.warning(f"[AMIWorkforce] Memory query failed: {e}")
+            self._memory_level = "L3"
+            await self._emit_event(NoticeData(
+                task_id=self.task_id,
+                level="warning",
+                title="Memory Query Failed",
+                message=f"Could not query memory: {str(e)[:100]}",
+            ))
+
+    def propagate_workflow_guide_to_workers(self) -> None:
+        """
+        Propagate workflow guide content to all workers' agents.
+
+        This method iterates over all child workers and sets the workflow_guide
+        on their underlying ListenChatAgent instances. The guide will be
+        injected into every LLM call made by the agent.
+
+        The memory_level is also propagated to adjust guidance strength:
+        - L1: Strict following instructions
+        - L2: Reference suggestions
+        - L3: No specific guidance
+        """
+        if not self._workflow_guide_content:
+            logger.debug("[AMIWorkforce] No workflow guide to propagate")
+            return
+
+        propagated_count = 0
+        for child in self._children:
+            # AMISingleAgentWorker.worker is ListenChatAgent
+            if hasattr(child, 'worker') and hasattr(child.worker, 'set_workflow_guide'):
+                child.worker.set_workflow_guide(
+                    self._workflow_guide_content,
+                    memory_level=self._memory_level
+                )
+                propagated_count += 1
+                worker_desc = getattr(child, 'description', 'Unknown')[:50]
+                logger.info(
+                    f"[AMIWorkforce] Propagated workflow guide (level={self._memory_level}) "
+                    f"to {worker_desc}"
+                )
+
+                # CRITICAL: Reinitialize agent pool so cloned agents get the workflow guide
+                # AgentPool clones agents at init time, before workflow guide is set.
+                # We need to reset the pool so new clones will have the guide.
+                has_pool = hasattr(child, 'agent_pool')
+                pool_value = getattr(child, 'agent_pool', None) if has_pool else None
+                logger.debug(f"[AMIWorkforce] Child {worker_desc}: has_pool={has_pool}, pool={pool_value}")
+                if has_pool and pool_value is not None:
+                    from camel.societies.workforce.single_agent_worker import AgentPool
+                    child.agent_pool = AgentPool(base_agent=child.worker)
+                    logger.info(f"[AMIWorkforce] Reinitialized agent pool for {worker_desc}")
+
+        if propagated_count > 0:
+            logger.info(
+                f"[AMIWorkforce] Workflow guide propagated to {propagated_count} workers"
+            )
+        else:
+            logger.warning("[AMIWorkforce] No workers found to propagate workflow guide")
+
+    @property
+    def memory_level(self) -> str:
+        """Get the current memory level (L1/L2/L3)."""
+        return self._memory_level
+
+    @property
+    def has_workflow_guide(self) -> bool:
+        """Check if a workflow guide is available."""
+        return self._workflow_guide_content is not None
+
+    @property
+    def global_path_states(self) -> List[Any]:
+        """Get the global path states from L2 query."""
+        return self._global_path_states
+
+    @property
+    def global_path_actions(self) -> List[Any]:
+        """Get the global path actions from L2 query."""
+        return self._global_path_actions
+
+    def get_subtask_target_state(self, subtask_id: str) -> Optional[Any]:
+        """Get the target state for a specific subtask.
+
+        Args:
+            subtask_id: The subtask ID to look up.
+
+        Returns:
+            The target State object if mapped, None otherwise.
+        """
+        return self._subtask_target_states.get(subtask_id)
+
+    async def query_memory_for_subtask(
+        self,
+        subtask_id: str,
+        subtask_content: str,
+    ) -> Optional[str]:
+        """Query Memory for a specific subtask and cache the result.
+
+        This method queries Memory for a single subtask, useful for getting
+        more specific guidance when the global path doesn't cover this subtask.
+
+        Args:
+            subtask_id: The subtask identifier.
+            subtask_content: The subtask description/content.
+
+        Returns:
+            Formatted workflow guide for this subtask, or None if not found.
+        """
+        if not self._memory_toolkit:
+            return None
+
+        # Check if already cached
+        if subtask_id in self._subtask_memory_hints:
+            return self._subtask_memory_hints[subtask_id]
+
+        try:
+            result = await self._memory_toolkit.query_task(subtask_content)
+
+            if result.states:
+                from ..tools.toolkits import MemoryToolkit
+                guide = MemoryToolkit.format_navigation_path(
+                    result.states, result.actions or []
+                )
+                self._subtask_memory_hints[subtask_id] = guide
+                logger.info(
+                    f"[AMIWorkforce] Found memory for subtask {subtask_id[:20]}: "
+                    f"{len(result.states)} states"
+                )
+                return guide
+
+        except Exception as e:
+            logger.warning(
+                f"[AMIWorkforce] Memory query for subtask {subtask_id[:20]} failed: {e}"
+            )
+
+        return None
+
+    def get_subtask_memory_hint(self, subtask_id: str) -> Optional[str]:
+        """Get cached memory hint for a subtask.
+
+        Args:
+            subtask_id: The subtask identifier.
+
+        Returns:
+            Cached workflow guide for this subtask, or None if not cached.
+        """
+        return self._subtask_memory_hints.get(subtask_id)

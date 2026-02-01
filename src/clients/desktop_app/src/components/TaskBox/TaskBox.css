@@ -119,6 +119,49 @@
   transition: width 0.3s ease;
 }
 
+/* Decomposition progress (Phase 5) */
+.decomposition-progress-container {
+  margin: 8px 12px;
+  padding: 8px 12px;
+  background: var(--bg-secondary, #f5f5f5);
+  border-radius: 6px;
+  border: 1px solid var(--border-color, #e0e0e0);
+}
+
+.decomposition-progress-bar {
+  height: 4px;
+  background: var(--border-color, #e0e0e0);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.decomposition-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary-color, #3b82f6), var(--info-color, #0ea5e9));
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.decomposition-progress-text {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.decomposition-progress-text .progress-message {
+  color: var(--text-secondary, #666);
+  flex: 1;
+}
+
+.decomposition-progress-text .progress-percent {
+  font-weight: 600;
+  color: var(--primary-color, #3b82f6);
+  min-width: 40px;
+  text-align: right;
+}
+
 /* Task summary */
 .task-summary {
   padding: 12px 16px 0;
@@ -219,6 +262,14 @@
   border-color: var(--info-color, #0ea5e9);
 }
 
+.task-item.task-waiting {
+  background: var(--warning-bg, #fffbeb);
+}
+
+.task-item.task-waiting:hover {
+  border-color: var(--warning-color, #f59e0b);
+}
+
 .task-item.task-failed {
   background: var(--error-bg, #fef2f2);
 }
@@ -248,6 +299,10 @@
 
 .status-icon.running {
   color: var(--info-color, #0ea5e9);
+}
+
+.status-icon.waiting {
+  color: var(--warning-color, #f59e0b);
 }
 
 .status-icon.error {

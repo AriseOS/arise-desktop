@@ -11,9 +11,11 @@ This allows CAMEL's ChatAgent and Workforce to use AMI's:
 - Consistent API calling patterns
 """
 
+import atexit
 import json
 import logging
 import asyncio
+import concurrent.futures
 from typing import Any, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel
@@ -32,6 +34,37 @@ from camel.utils import BaseTokenCounter
 from src.common.llm import AnthropicProvider
 
 logger = logging.getLogger(__name__)
+
+# Shared thread pool executor for sync-to-async conversion
+_shared_executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
+
+
+def _get_shared_executor() -> concurrent.futures.ThreadPoolExecutor:
+    """Get or create shared thread pool executor."""
+    global _shared_executor
+    if _shared_executor is None:
+        _shared_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=4,
+            thread_name_prefix="ami_model_"
+        )
+    return _shared_executor
+
+
+def _cleanup_shared_executor() -> None:
+    """Clean up shared thread pool executor on exit."""
+    global _shared_executor
+    if _shared_executor is not None:
+        try:
+            _shared_executor.shutdown(wait=False)
+            logger.debug("AMI model backend executor shutdown")
+        except Exception as e:
+            logger.warning(f"Error during executor cleanup: {e}")
+        finally:
+            _shared_executor = None
+
+
+# Register cleanup on exit
+atexit.register(_cleanup_shared_executor)
 
 
 class SimpleTokenCounter(BaseTokenCounter):
@@ -160,14 +193,12 @@ class AMIModelBackend(BaseModelBackend):
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                # Already in async context, create a new thread
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(
-                        asyncio.run,
-                        self._async_run(messages, response_format, tools)
-                    )
-                    return future.result()
+                # Already in async context, use shared thread pool
+                future = _get_shared_executor().submit(
+                    asyncio.run,
+                    self._async_run(messages, response_format, tools)
+                )
+                return future.result()
             else:
                 return loop.run_until_complete(
                     self._async_run(messages, response_format, tools)
