@@ -315,6 +315,25 @@
   box-shadow: none;
 }
 
+.btn-primary-alt {
+  background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+  color: white;
+  box-shadow: var(--shadow-md);
+}
+
+.btn-primary-alt:hover {
+  background: linear-gradient(135deg, #3b9ce8 0%, #00d4e6 100%);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
+
+.btn-primary-alt:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
 .btn-icon {
   font-size: 18px;
 }

@@ -64,6 +64,7 @@ from src.clients.desktop_app.ami_daemon.core.logging_config import setup_logging
 from src.clients.desktop_app.ami_daemon.services.storage_manager import StorageManager
 from src.clients.desktop_app.ami_daemon.services.browser_manager import BrowserManager
 from src.clients.desktop_app.ami_daemon.services.recording_service import RecordingService
+from src.clients.desktop_app.ami_daemon.services.replay import ReplayService
 from src.clients.desktop_app.ami_daemon.services.cloud_client import CloudClient
 from src.clients.desktop_app.ami_daemon.routers.quick_task import router as quick_task_router
 from src.clients.desktop_app.ami_daemon.routers.integrations import router as integrations_router
@@ -100,6 +101,7 @@ logger.info("App Backend daemon starting")
 storage_manager = StorageManager(config.get("storage.base_path"))
 browser_manager: Optional[BrowserManager] = None
 recording_service: Optional[RecordingService] = None
+replay_service: Optional[ReplayService] = None
 cloud_client: Optional[CloudClient] = None
 # Memory API is proxied to Cloud Backend via cloud_client (local memory disabled)
 
@@ -205,8 +207,7 @@ async def lifespan(app: FastAPI):
     - On startup: Initialize all services
     - On shutdown: Cleanup all resources (triggered by SIGTERM/SIGINT)
     """
-    global browser_manager
-    global recording_service, cloud_client, version_check_result
+    global browser_manager, workflow_executor, history_manager, cdp_recorder, recording_service, replay_service, cloud_client, version_check_result
 
     # ========== STARTUP ==========
     logger.info("=" * 60)
@@ -258,6 +259,10 @@ async def lifespan(app: FastAPI):
         # Initialize Recording service (using HybridBrowserSession)
         recording_service = RecordingService(storage_manager)
         logger.info("✓ Recording service initialized (HybridBrowserSession)")
+
+        # Initialize Replay service
+        replay_service = ReplayService(storage_manager)
+        logger.info("✓ Replay service initialized")
 
         # Inject cloud_client into quick_task router for memory queries
         from src.clients.desktop_app.ami_daemon.routers.quick_task import set_cloud_client
@@ -364,6 +369,129 @@ class UpdateRecordingMetadataRequest(BaseModel):
     user_query: str
     name: Optional[str] = None
     user_id: str  # session_id is in URL path
+
+
+class ReplayRecordingRequest(BaseModel):
+    """Request model for replaying a recording"""
+    user_id: str
+    wait_between_operations: float = 0.5
+    stop_on_error: bool = False
+    start_from_index: int = 0
+    end_at_index: Optional[int] = None
+
+
+class ReplayRecordingResponse(BaseModel):
+    """Response model for replay execution"""
+    replay_id: str
+    status: str
+    recording_session_id: Optional[str] = None
+    execution_summary: Optional[Dict[str, Any]] = None
+    timing: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+
+class ReplayPreviewResponse(BaseModel):
+    """Response model for recording preview before replay"""
+    session_id: str
+    created_at: str
+    operations_count: int
+    operation_summary: Dict[str, int]
+    task_metadata: Dict[str, Any]
+    operations: List[Dict[str, Any]]
+
+
+class GenerateWorkflowResponse(BaseModel):
+    """Unified workflow generation response"""
+    workflow_id: Optional[str] = None
+    workflow_name: str
+    local_path: str
+    status: str = "success"
+
+
+class ExecuteWorkflowRequest(BaseModel):
+    user_id: str
+
+
+class ExecuteWorkflowResponse(BaseModel):
+    task_id: str
+    status: str
+
+
+class WorkflowStatusResponse(BaseModel):
+    task_id: str
+    status: str
+    progress: int
+    current_step: int
+    total_steps: int
+    message: str
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+
+class WorkflowInfo(BaseModel):
+    agent_id: str
+    name: str
+    description: str
+    created_at: Optional[str] = None
+    last_run: Optional[str] = None
+    is_downloaded: bool = False
+    source: str = "unknown"  # "cloud", "local", or "both"
+
+
+class ListWorkflowsResponse(BaseModel):
+    workflows: list[WorkflowInfo]
+
+
+# Workflow History Models
+class WorkflowHistoryEntry(BaseModel):
+    """Entry in the workflow history list"""
+    task_id: str  # Unified execution identifier
+    workflow_id: str
+    workflow_name: str
+    started_at: str
+    status: str
+    error_summary: Optional[str] = None
+
+
+class WorkflowHistoryListResponse(BaseModel):
+    """Response for listing workflow history"""
+    runs: List[WorkflowHistoryEntry]
+    total: int
+
+
+class WorkflowRunDetail(BaseModel):
+    """Detailed information about a workflow run"""
+    task_id: str  # Unified execution identifier
+    workflow_id: str
+    workflow_name: str
+    user_id: str
+    device_id: str
+    app_version: str
+    started_at: str
+    finished_at: Optional[str] = None
+    status: str
+    error_summary: Optional[str] = None
+    steps_total: int
+    steps_completed: int
+
+
+class WorkflowRunLog(BaseModel):
+    """A single log entry from a workflow run"""
+    ts: str
+    step: int
+    action: str
+    target: Optional[str] = None
+    status: str
+    duration_ms: Optional[int] = None
+    message: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class WorkflowRunDetailResponse(BaseModel):
+    """Response for getting workflow run detail"""
+    meta: WorkflowRunDetail
+    logs: List[WorkflowRunLog]
+    workflow_yaml: Optional[str] = None
 
 
 # ============================================================================
@@ -845,6 +973,83 @@ async def get_current_operations():
 
     except Exception as e:
         logger.error(f"Failed to get current operations: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/recordings/{session_id}/replay/preview", response_model=ReplayPreviewResponse)
+async def get_replay_preview(session_id: str, user_id: str):
+    """Get recording preview before replay
+
+    Shows recording details and operation summary to help user decide
+    whether to replay and which range to replay.
+    """
+    try:
+        logger.info(f"Getting replay preview for session: {session_id}")
+        preview = replay_service.get_recording_preview(session_id, user_id)
+        return ReplayPreviewResponse(**preview)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Recording not found")
+    except Exception as e:
+        logger.error(f"Failed to get replay preview: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/recordings/{session_id}/replay", response_model=ReplayRecordingResponse)
+async def replay_recording_endpoint(session_id: str, request: ReplayRecordingRequest):
+    """Replay a recorded session
+
+    Executes operations from a recording step-by-step using the recorded
+    sequence. Opens a new browser and performs each operation exactly as
+    it was recorded (without intent extraction or optimization).
+    """
+    try:
+        logger.info(f"Starting replay for session: {session_id}")
+        logger.info(f"  User: {request.user_id}")
+        logger.info(f"  Options: wait={request.wait_between_operations}s, stop_on_error={request.stop_on_error}")
+
+        # Create a new browser session for replay
+        from src.clients.desktop_app.ami_daemon.base_agent.tools.eigent_browser import HybridBrowserSession
+
+        browser_session = HybridBrowserSession(
+            session_id=f"replay_{session_id}",
+            headless=False,  # Show browser window during replay
+            user_data_dir=None,  # Use temporary profile (no persistent data)
+            stealth=True  # Enable stealth mode to avoid detection
+        )
+
+        try:
+            # Ensure browser is started
+            await browser_session.ensure_browser()
+            logger.info("Browser session started for replay")
+
+            # Execute replay
+            report = await replay_service.replay_recording(
+                session_id=session_id,
+                user_id=request.user_id,
+                browser_session=browser_session,
+                wait_between_operations=request.wait_between_operations,
+                stop_on_error=request.stop_on_error,
+                start_from_index=request.start_from_index,
+                end_at_index=request.end_at_index
+            )
+
+            # Log completion status
+            if report.get('status') == 'completed' and 'execution_summary' in report:
+                logger.info(f"Replay completed: {report['execution_summary']['success_rate']*100:.1f}% success")
+            elif report.get('status') == 'failed':
+                logger.error(f"Replay failed: {report.get('error', 'Unknown error')}")
+
+            return ReplayRecordingResponse(**report)
+
+        finally:
+            # Keep browser open for user to inspect results
+            # User can manually close it or it will be cleaned up on exit
+            logger.info("Replay finished, browser remains open for inspection")
+
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Recording not found")
+    except Exception as e:
+        logger.error(f"Failed to replay recording: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1727,8 +1932,11 @@ def check_existing_daemon(host: str, port: int, timeout: float = 2.0) -> tuple[b
 
     url = f"http://{host}:{port}/api/v1/health"
     try:
+        # Disable proxy for localhost connections to avoid 502 errors
+        proxy_handler = urllib.request.ProxyHandler({})
+        opener = urllib.request.build_opener(proxy_handler)
         req = urllib.request.Request(url, method='GET')
-        with urllib.request.urlopen(req, timeout=timeout) as response:
+        with opener.open(req, timeout=timeout) as response:
             if response.status == 200:
                 # Check magic number to verify it's our daemon
                 data = json.loads(response.read().decode('utf-8'))
