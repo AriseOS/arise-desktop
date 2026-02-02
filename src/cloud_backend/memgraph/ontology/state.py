@@ -52,6 +52,7 @@ class State(BaseModel):
         user_id: User ID (optional).
         session_id: Session ID (optional).
         domain: Domain this state belongs to (e.g., "taobao.com").
+        path_sig: Stable path signature for cross-session deduplication.
         attributes: Additional metadata (optional).
         description: Natural language description of the state (e.g., "Product Detail Page").
         embedding_vector: Embedding vector for semantic search (optional).
@@ -92,6 +93,10 @@ class State(BaseModel):
     # NEW: Domain this state belongs to
     domain: Optional[str] = Field(
         default=None, description="Domain this state belongs to (e.g., 'taobao.com')"
+    )
+    path_sig: Optional[str] = Field(
+        default=None,
+        description="Stable path signature for cross-session deduplication"
     )
 
     # Additional metadata
