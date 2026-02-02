@@ -13,7 +13,9 @@ This module implements the new processing pipeline from memory-graph-ontology-de
 7. Store all structures to memory
 """
 
+import hashlib
 import json
+import re
 import logging
 import time
 import uuid
@@ -220,6 +222,29 @@ class WorkflowProcessor:
         intent_sequences = []
         new_state_count = 0
         reused_state_count = 0
+        domain_root_id_map: Dict[str, str] = {}
+        domain_root_sig_map: Dict[str, str] = {}
+        last_path_sig_by_domain: Dict[str, str] = {}
+        last_segment_by_domain: Dict[str, URLSegment] = {}
+        last_domain_key: Optional[str] = None
+
+        def _load_domain_root(domain_key: str) -> None:
+            if domain_key in domain_root_id_map:
+                return
+            if not self.memory:
+                return
+            try:
+                existing_domain = self.memory.get_domain(domain_key)
+            except Exception as exc:
+                print(f"Warning: Failed to load domain {domain_key}: {exc}")
+                return
+            if existing_domain and isinstance(existing_domain.attributes, dict):
+                root_id = existing_domain.attributes.get("root_state_id")
+                if root_id:
+                    domain_root_id_map[domain_key] = root_id
+                    domain_root_sig_map[domain_key] = self._hash_root_sig(
+                        domain_key, root_id
+                    )
 
         for segment in segments:
             # Skip segments with empty URL
@@ -227,15 +252,73 @@ class WorkflowProcessor:
                 logger.info(f"    Warning: Skipping segment with empty URL")
                 continue
 
+            domain_key = self._extract_domain_from_url(segment.url)
+            if domain_key:
+                _load_domain_root(domain_key)
+
+            candidate_path_sig = None
+            if domain_key and last_domain_key == domain_key:
+                prev_segment = last_segment_by_domain.get(domain_key)
+                prev_path_sig = last_path_sig_by_domain.get(domain_key)
+                if prev_segment and prev_path_sig:
+                    trigger_event = self._find_transition_trigger(prev_segment)
+                    action_sig = self._build_action_signature(trigger_event)
+                    candidate_path_sig = self._extend_path_sig(prev_path_sig, action_sig)
+
             # Find or create State
             state, is_new = self._find_or_create_state(
                 segment=segment,
                 user_id=None,  # user isolation disabled
                 session_id=session_id,
+                domain_key=domain_key,
+                path_sig=candidate_path_sig,
             )
             states.append(state)
             valid_segments.append(segment)  # Keep track of valid segments
             state_is_new_flags.append(is_new)
+
+            # Assign root for new domains (first-seen state)
+            if domain_key and domain_key not in domain_root_id_map:
+                domain_root_id_map[domain_key] = state.id
+                domain_root_sig_map[domain_key] = self._hash_root_sig(
+                    domain_key, state.id
+                )
+                if not state.path_sig:
+                    state.path_sig = domain_root_sig_map[domain_key]
+                    if self.memory:
+                        try:
+                            self.memory.state_manager.update_state(state)
+                        except Exception as exc:
+                            print(f"Warning: Failed to update root state path_sig: {exc}")
+            elif domain_key and domain_key in domain_root_id_map:
+                root_id = domain_root_id_map[domain_key]
+                if state.id == root_id and not state.path_sig:
+                    root_sig = domain_root_sig_map.get(domain_key) or self._hash_root_sig(
+                        domain_key, root_id
+                    )
+                    domain_root_sig_map[domain_key] = root_sig
+                    state.path_sig = root_sig
+                    if self.memory:
+                        try:
+                            self.memory.state_manager.update_state(state)
+                        except Exception as exc:
+                            print(f"Warning: Failed to update root state path_sig: {exc}")
+
+            # Backfill path_sig if missing and we have a stable candidate
+            if candidate_path_sig and not state.path_sig:
+                state.path_sig = candidate_path_sig
+                if self.memory:
+                    try:
+                        self.memory.state_manager.update_state(state)
+                    except Exception as exc:
+                        print(f"Warning: Failed to update state path_sig: {exc}")
+
+            if domain_key and state.path_sig:
+                last_path_sig_by_domain[domain_key] = state.path_sig
+                last_segment_by_domain[domain_key] = segment
+                last_domain_key = domain_key
+            else:
+                last_domain_key = domain_key
 
             if is_new:
                 new_state_count += 1
@@ -302,6 +385,7 @@ class WorkflowProcessor:
         domains, manages = self._extract_domains_and_manages(
             states=states,
             user_id=None,  # user isolation disabled
+            domain_root_id_map=domain_root_id_map,
         )
         logger.info(f"  Created {len(domains)} domains and {len(manages)} manage edges\n")
 
@@ -644,6 +728,8 @@ class WorkflowProcessor:
         segment: URLSegment,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        domain_key: Optional[str] = None,
+        path_sig: Optional[str] = None,
     ) -> tuple[State, bool]:
         """Find existing State by URL or create a new one.
 
@@ -654,12 +740,14 @@ class WorkflowProcessor:
             segment: URLSegment to process.
             user_id: User ID.
             session_id: Session ID.
+            domain_key: Normalized domain key (optional).
+            path_sig: Stable path signature (optional).
 
         Returns:
             Tuple of (State, is_new).
         """
         # Extract domain from URL
-        domain = self._extract_domain_from_url(segment.url)
+        domain = domain_key or self._extract_domain_from_url(segment.url)
 
         if self.memory:
             return self.memory.find_or_create_state(
@@ -669,6 +757,7 @@ class WorkflowProcessor:
                 domain=domain,
                 user_id=None,  # user isolation disabled
                 session_id=session_id,
+                path_sig=path_sig,
             )
 
         # No memory - create State without storage
@@ -677,6 +766,7 @@ class WorkflowProcessor:
             page_title=segment.page_title,
             timestamp=segment.timestamp,
             domain=domain,
+            path_sig=path_sig,
             user_id=None,  # user isolation disabled
             session_id=session_id,
             instances=[],
@@ -862,6 +952,99 @@ class WorkflowProcessor:
                 return event
         
         return None
+
+    def _normalize_action_text(self, text: str) -> str:
+        """Normalize action text for stable signatures."""
+        if not text:
+            return ""
+        normalized = text.strip().lower()
+        # Remove URLs and emails
+        normalized = re.sub(r"https?://\S+", " ", normalized)
+        normalized = re.sub(r"\bwww\.\S+", " ", normalized)
+        normalized = re.sub(r"\b[\w\.-]+@[\w\.-]+\.\w+\b", " ", normalized)
+        # Remove UUIDs / long hex tokens
+        normalized = re.sub(
+            r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
+            " ",
+            normalized,
+        )
+        normalized = re.sub(r"\b[0-9a-f]{8,}\b", " ", normalized)
+        # Normalize numbers
+        normalized = re.sub(r"\d+", "<n>", normalized)
+        # Collapse whitespace
+        normalized = " ".join(normalized.split())
+        return normalized[:80] if len(normalized) > 80 else normalized
+
+    def _normalize_xpath(self, xpath: str) -> str:
+        """Normalize xpath for stable signatures."""
+        if not xpath:
+            return ""
+        normalized = xpath.strip().lower()
+        normalized = re.sub(r"\[\d+\]", "[]", normalized)
+        normalized = re.sub(r"\s+", "", normalized)
+        return normalized[:200] if len(normalized) > 200 else normalized
+
+    def _normalize_href(self, href: str) -> str:
+        """Normalize href for stable signatures."""
+        if not href:
+            return ""
+        normalized = href.strip()
+        normalized = normalized.split("#")[0].split("?")[0]
+        if normalized.startswith("//"):
+            normalized = f"https:{normalized}"
+        if "://" in normalized:
+            try:
+                parsed = urlparse(normalized)
+                path = parsed.path or ""
+            except Exception:
+                path = re.sub(r"^[a-z]+://", "", normalized)
+                path = "/" + path.split("/", 1)[1] if "/" in path else ""
+        else:
+            path = normalized
+        if not path:
+            return ""
+        path = path.lower()
+        path = re.sub(r"/\d+(?=/|$)", "/<n>", path)
+        path = re.sub(r"/[0-9a-f]{8,}(?=/|$)", "/<id>", path)
+        path = re.sub(r"/+", "/", path)
+        return path[:200] if len(path) > 200 else path
+
+    def _build_action_signature(self, trigger_event: Optional[Dict[str, Any]]) -> str:
+        """Build a stable action signature from a trigger event."""
+        if not trigger_event:
+            return "auto_navigate"
+
+        event_type = (trigger_event.get("type") or "click").lower()
+        role = (trigger_event.get("role") or "").lower()
+        xpath = self._normalize_xpath(trigger_event.get("xpath") or "")
+        href = self._normalize_href(trigger_event.get("href") or "")
+        text = self._normalize_action_text(trigger_event.get("text") or "")
+        ref = (trigger_event.get("ref") or "").strip().lower()
+
+        hint = ""
+        if xpath:
+            hint = f"xpath:{xpath}"
+        elif href:
+            hint = f"href:{href}"
+        elif text:
+            hint = f"text:{text}"
+        elif ref:
+            hint = f"ref:{ref}"
+
+        base = f"{event_type}|{role}" if role else event_type
+        if hint:
+            return f"{base}|{hint}"
+        return base
+
+    def _hash_root_sig(self, domain_key: str, root_state_id: str) -> str:
+        """Hash root signature for a domain."""
+        content = f"{domain_key}|{root_state_id}"
+        return hashlib.sha1(content.encode("utf-8")).hexdigest()
+
+    def _extend_path_sig(self, prev_sig: str, action_sig: str) -> str:
+        """Extend a path signature with a new action signature."""
+        content = f"{prev_sig}>{action_sig}"
+        return hashlib.sha1(content.encode("utf-8")).hexdigest()
     
     def _create_actions(
         self,
@@ -956,20 +1139,23 @@ class WorkflowProcessor:
         """
         try:
             parsed = urlparse(url)
-            return parsed.netloc or url
+            host = parsed.netloc or url
         except Exception:
-            return url
+            host = url
+        return normalize_domain_url(host, "website")
 
     def _extract_domains_and_manages(
         self,
         states: List[State],
         user_id: Optional[str] = None,
+        domain_root_id_map: Optional[Dict[str, str]] = None,
     ) -> tuple[List[Domain], List[Manage]]:
         """Extract Domains and create Manage edges.
 
         Args:
             states: List of State objects.
             user_id: User ID.
+            domain_root_id_map: Optional domain -> root_state_id mapping.
 
         Returns:
             Tuple of (domains, manages).
@@ -977,6 +1163,7 @@ class WorkflowProcessor:
         # Collect unique domains from states
         domain_map: Dict[str, Domain] = {}
         manages = []
+        domain_root_id_map = domain_root_id_map or {}
 
         for state in states:
             domain_name = state.domain
@@ -988,12 +1175,25 @@ class WorkflowProcessor:
                 continue
 
             if domain_key not in domain_map:
-                domain = Domain(
-                    domain_name=domain_name,
-                    domain_url=domain_key,
-                    domain_type="website",
-                    user_id=None,  # user isolation disabled
-                )
+                existing_domain = self.memory.get_domain(domain_key) if self.memory else None
+                if existing_domain:
+                    domain = existing_domain
+                    if not domain.domain_name and domain_name:
+                        domain.domain_name = domain_name
+                else:
+                    domain = Domain(
+                        domain_name=domain_name,
+                        domain_url=domain_key,
+                        domain_type="website",
+                        user_id=None,  # user isolation disabled
+                    )
+
+                root_id = domain_root_id_map.get(domain_key)
+                if root_id:
+                    if domain.attributes is None:
+                        domain.attributes = {}
+                    if "root_state_id" not in domain.attributes:
+                        domain.attributes["root_state_id"] = root_id
                 domain_map[domain_key] = domain
 
             # Create Manage edge

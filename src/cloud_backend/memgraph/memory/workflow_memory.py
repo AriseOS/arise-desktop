@@ -2150,6 +2150,33 @@ class WorkflowMemory(Memory):
             return self.get_state(state_id)
         return None
 
+    def find_state_by_path_sig(self, domain: str, path_sig: str) -> Optional[State]:
+        """Find a State by domain + path signature.
+
+        This is a secondary deduplication method used when URL lookup fails.
+
+        Args:
+            domain: Normalized domain key (e.g., "example.com").
+            path_sig: Stable path signature.
+
+        Returns:
+            State object if found, None otherwise.
+        """
+        if not domain or not path_sig:
+            return None
+
+        try:
+            nodes = self.graph_store.query_nodes(
+                label="State",
+                filters={"domain": domain, "path_sig": path_sig},
+                limit=1,
+            )
+            if nodes:
+                return State.from_dict(nodes[0])
+        except Exception as e:
+            print(f"Error finding state by path_sig: {e}")
+        return None
+
     def find_or_create_state(
         self,
         url: str,
@@ -2159,11 +2186,13 @@ class WorkflowMemory(Memory):
         domain: Optional[str] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        path_sig: Optional[str] = None,
     ) -> tuple[State, bool]:
         """Find existing State by URL or create a new one.
 
         This implements the real-time merge logic from design doc 8.5:
         - Check URL index
+        - If URL miss and path_sig provided, try path-based lookup
         - If exists → reuse existing State
         - If not → create new State
 
@@ -2175,6 +2204,7 @@ class WorkflowMemory(Memory):
             domain: Domain this State belongs to.
             user_id: User ID.
             session_id: Session ID.
+            path_sig: Stable path signature (optional).
 
         Returns:
             Tuple of (State, is_new) where is_new is True if State was created.
@@ -2184,6 +2214,12 @@ class WorkflowMemory(Memory):
         if existing_state:
             return existing_state, False
 
+        # Optional: path-based deduplication (within same domain)
+        if path_sig and domain:
+            existing_state = self.find_state_by_path_sig(domain, path_sig)
+            if existing_state:
+                return existing_state, False
+
         # Create new State
         state = State(
             page_url=url,
@@ -2191,6 +2227,7 @@ class WorkflowMemory(Memory):
             timestamp=timestamp,
             description=description,
             domain=domain,
+            path_sig=path_sig,
             user_id=user_id,
             session_id=session_id,
             instances=[],
