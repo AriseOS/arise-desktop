@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import Icon from '../components/Icons';
 import { api } from '../utils/api';
+import { useAgentStore } from '../store';
 import '../styles/HomePage.css';
 
 /**
@@ -9,19 +10,33 @@ import '../styles/HomePage.css';
  *
  * Features:
  * - Welcome card with Ami branding
- * - Chat history area
+ * - Chat history area with real-time agent reports
  * - Bottom input area with text/voice/record actions
  * - Optional recording sandbox panel
+ * - Inline task execution (no page navigation)
  */
 function HomePage({ session, onNavigate, showStatus, version }) {
   const { t } = useTranslation();
 
-  // State
+  // Agent Store
+  const {
+    tasks,
+    activeTaskId,
+    createTask,
+    startTask,
+    sendUserMessage,
+  } = useAgentStore();
+
+  // Get active task state
+  const activeTask = activeTaskId ? tasks[activeTaskId] : null;
+  const taskStatus = activeTask?.status || 'idle';
+  const taskMessages = activeTask?.messages || [];
+
+  // Local State
   const [inputText, setInputText] = useState('');
   const [isRecordingSandboxOpen, setIsRecordingSandboxOpen] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isVoiceActive, setIsVoiceActive] = useState(false);
-  const [messages, setMessages] = useState([]);
   const [recordingSteps, setRecordingSteps] = useState([]);
   const [currentSessionId, setCurrentSessionId] = useState(null);
   const [isStartingRecording, setIsStartingRecording] = useState(false);
@@ -36,7 +51,7 @@ function HomePage({ session, onNavigate, showStatus, version }) {
     if (chatHistoryRef.current) {
       chatHistoryRef.current.scrollTop = chatHistoryRef.current.scrollHeight;
     }
-  }, [messages]);
+  }, [taskMessages]);
 
   // Poll for operations while recording
   useEffect(() => {
@@ -64,21 +79,33 @@ function HomePage({ session, onNavigate, showStatus, version }) {
   }, [isRecording]);
 
   // Handle text input submit
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!inputText.trim()) return;
 
-    // Add user message
-    const userMessage = {
-      id: Date.now(),
-      type: 'user',
-      content: inputText.trim(),
-      timestamp: new Date(),
-    };
-    setMessages(prev => [...prev, userMessage]);
-
-    // Navigate to agent page with task
-    onNavigate('agent', { initialTask: inputText.trim() });
+    const text = inputText.trim();
     setInputText('');
+
+    // Check if we should continue conversation or start new task
+    const shouldContinue = activeTask && (
+      taskStatus === 'running' ||
+      taskStatus === 'waiting' ||
+      activeTask.hasWaitConfirm
+    );
+
+    if (shouldContinue) {
+      // Continue conversation with existing task
+      const result = await sendUserMessage(activeTaskId, text);
+      if (!result.success) {
+        showStatus(`Failed to send message: ${result.error}`, 'error');
+      }
+    } else {
+      // Start new task
+      const newTaskId = createTask(text);
+      const success = await startTask(newTaskId, showStatus);
+      if (!success) {
+        showStatus('Failed to start task', 'error');
+      }
+    }
   };
 
   // Handle key press
@@ -247,16 +274,37 @@ function HomePage({ session, onNavigate, showStatus, version }) {
   );
 
   // Render message bubble
-  const renderMessage = (message) => (
-    <div key={message.id} className={`message ${message.type}`}>
-      <div className="message-bubble">
-        {message.content}
+  const renderMessage = (message, index) => {
+    const isUser = message.role === 'user';
+    const isAgent = message.role === 'agent';
+    const isAssistant = message.role === 'assistant';
+
+    // Determine message type for styling
+    let messageType = 'system';
+    if (isUser) messageType = 'user';
+    else if (isAgent || isAssistant) messageType = 'agent';
+
+    // Get report type for agent messages
+    const reportType = message.reportType || 'info';
+
+    // Format timestamp
+    const timestamp = message.timestamp
+      ? new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : '';
+
+    return (
+      <div key={message.id || index} className={`message ${messageType} ${isAgent ? `report-${reportType}` : ''}`}>
+        <div className="message-bubble">
+          {message.content}
+        </div>
+        {timestamp && (
+          <div className="message-time">
+            {timestamp}
+          </div>
+        )}
       </div>
-      <div className="message-time">
-        {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-      </div>
-    </div>
-  );
+    );
+  };
 
   // Render recording panel (only shown when recording)
   const renderRecordingPanel = () => {
@@ -289,12 +337,51 @@ function HomePage({ session, onNavigate, showStatus, version }) {
     );
   };
 
+  // Render task status indicator
+  const renderTaskStatus = () => {
+    if (!activeTask || taskStatus === 'idle') return null;
+
+    return (
+      <div className={`task-status-indicator ${taskStatus}`}>
+        {taskStatus === 'running' && (
+          <>
+            <div className="status-spinner"></div>
+            <span>Processing...</span>
+          </>
+        )}
+        {taskStatus === 'waiting' && (
+          <>
+            <Icon name="check" size={14} />
+            <span>Ready for input</span>
+          </>
+        )}
+        {taskStatus === 'completed' && (
+          <>
+            <Icon name="check" size={14} />
+            <span>Completed</span>
+          </>
+        )}
+        {taskStatus === 'failed' && (
+          <>
+            <Icon name="alert" size={14} />
+            <span>Failed</span>
+          </>
+        )}
+      </div>
+    );
+  };
+
+  // Input is always enabled - messages are queued when agent is running
+  // This follows the "queue instead of block" pattern
+  const isInputDisabled = false;
+
   return (
     <div className="home-page-v2">
       {/* Header */}
       <div className="home-header">
         <h1 className="home-title">Ami</h1>
         <div className="header-actions">
+          {renderTaskStatus()}
           <button
             className="header-btn"
             onClick={() => onNavigate('settings')}
@@ -305,18 +392,20 @@ function HomePage({ session, onNavigate, showStatus, version }) {
         </div>
       </div>
 
-      {/* Welcome Card */}
-      <div className="welcome-card">
-        <div className="welcome-content">
-          <div className="assistant-avatar">
-            <Icon name="robot" size={22} />
-          </div>
-          <div className="welcome-text">
-            <h2>Hi{session?.username ? `, ${session.username}` : ''}!</h2>
-            <p>I'm Ami, your automation assistant</p>
+      {/* Welcome Card - Hide when there are messages */}
+      {taskMessages.length === 0 && (
+        <div className="welcome-card">
+          <div className="welcome-content">
+            <div className="assistant-avatar">
+              <Icon name="robot" size={22} />
+            </div>
+            <div className="welcome-text">
+              <h2>Hi{session?.username ? `, ${session.username}` : ''}!</h2>
+              <p>I'm Ami, your automation assistant</p>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Recording Panel (shown when recording) */}
       {renderRecordingPanel()}
@@ -327,10 +416,10 @@ function HomePage({ session, onNavigate, showStatus, version }) {
           className="chat-history full-width"
           ref={chatHistoryRef}
         >
-          {messages.length === 0 ? (
+          {taskMessages.length === 0 ? (
             renderInstructions()
           ) : (
-            messages.map(renderMessage)
+            taskMessages.map(renderMessage)
           )}
         </div>
       </div>
@@ -342,23 +431,25 @@ function HomePage({ session, onNavigate, showStatus, version }) {
             ref={inputRef}
             type="text"
             className="text-input"
-            placeholder="Describe what you want to automate..."
+            placeholder={taskStatus === 'running' ? "Type here (queued while agent works)..." : "Describe what you want to automate..."}
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             onKeyPress={handleKeyPress}
+            disabled={isInputDisabled}
           />
           <div className="action-buttons">
             <button
               className={`action-btn voice-btn ${isVoiceActive ? 'active' : ''}`}
               onClick={handleVoiceInput}
               title="Voice Input"
+              disabled={isInputDisabled}
             >
               <Icon name="mic" size={20} />
             </button>
             <button
               className={`action-btn record-icon-btn ${isRecording ? 'active' : ''}`}
               onClick={toggleRecording}
-              disabled={isStartingRecording}
+              disabled={isStartingRecording || isInputDisabled}
               title={isRecording ? "Stop Recording" : "Start Recording"}
             >
               <Icon name={isRecording ? "stop" : "record"} size={20} />
@@ -366,7 +457,7 @@ function HomePage({ session, onNavigate, showStatus, version }) {
             <button
               className="action-btn send-btn"
               onClick={handleSubmit}
-              disabled={!inputText.trim()}
+              disabled={!inputText.trim() || isInputDisabled}
               title="Send"
             >
               <Icon name="send" size={20} />

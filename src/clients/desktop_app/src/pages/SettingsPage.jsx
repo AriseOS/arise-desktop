@@ -295,6 +295,56 @@ function SettingsPage({ navigate, showStatus, onLogout, language, onLanguageChan
           </div>
         </section>
 
+        {/* Data & Storage Section */}
+        <section className="settings-section">
+          <h2 className="section-title">{t('settings.dataStorage') || 'Data & Storage'}</h2>
+          <div className="info-card">
+            <div
+              className="info-row clickable-row"
+              onClick={() => navigate('recordings-library')}
+              style={{ cursor: 'pointer' }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <Icon name="video" size={20} />
+                <div>
+                  <span className="info-label" style={{ display: 'block', marginBottom: '4px' }}>
+                    {t('settings.recordingsLibrary') || 'Recordings Library'}
+                  </span>
+                  <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-tertiary)' }}>
+                    {t('settings.recordingsLibraryDesc') || 'View and manage your recorded sessions'}
+                  </p>
+                </div>
+              </div>
+              <Icon name="chevronRight" size={20} style={{ color: 'var(--text-tertiary)' }} />
+            </div>
+          </div>
+        </section>
+
+        {/* Developer Tools Section */}
+        <section className="settings-section">
+          <h2 className="section-title">{t('settings.developerTools') || 'Developer Tools'}</h2>
+          <div className="info-card">
+            <div
+              className="info-row clickable-row"
+              onClick={() => navigate('agent')}
+              style={{ cursor: 'pointer' }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <Icon name="terminal" size={20} />
+                <div>
+                  <span className="info-label" style={{ display: 'block', marginBottom: '4px' }}>
+                    {t('settings.agentDebugView') || 'Agent Debug View'}
+                  </span>
+                  <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-tertiary)' }}>
+                    {t('settings.agentDebugViewDesc') || 'View detailed agent execution logs, browser states, and debug info'}
+                  </p>
+                </div>
+              </div>
+              <Icon name="chevronRight" size={20} style={{ color: 'var(--text-tertiary)' }} />
+            </div>
+          </div>
+        </section>
+
         {/* Quota Section */}
         <section className="settings-section">
           <div className="section-header">

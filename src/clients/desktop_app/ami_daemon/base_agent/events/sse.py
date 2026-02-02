@@ -29,6 +29,7 @@ from .action_types import (
     EndData,
     ErrorData,
     NoticeData,
+    AgentReportData,
     # Task decomposition
     TaskDecomposedData,
     SubtaskStateData,
@@ -412,6 +413,23 @@ class SSEEmitter:
     async def emit_heartbeat(self) -> None:
         """Emit heartbeat event."""
         await self.emit(HeartbeatData(task_id=self._task_id))
+
+    async def emit_agent_report(
+        self,
+        message: str,
+        report_type: str = "info",
+    ) -> None:
+        """Emit agent report event for HomePage chat-style display.
+
+        Args:
+            message: Human-readable report message
+            report_type: Type of report (info, success, warning, error, thinking)
+        """
+        await self.emit(AgentReportData(
+            message=message,
+            report_type=report_type,
+            task_id=self._task_id,
+        ))
 
     async def emit_end(
         self,

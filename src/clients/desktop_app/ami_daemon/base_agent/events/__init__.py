@@ -46,6 +46,7 @@ from .action_types import (
     HumanResponseData,
     WaitConfirmData,
     ConfirmedData,
+    AgentReportData,
     # Memory events
     MemoryQueryData,
     MemoryResultData,
@@ -126,6 +127,7 @@ __all__ = [
     "HumanResponseData",
     "WaitConfirmData",
     "ConfirmedData",
+    "AgentReportData",
     # Memory events
     "MemoryQueryData",
     "MemoryResultData",

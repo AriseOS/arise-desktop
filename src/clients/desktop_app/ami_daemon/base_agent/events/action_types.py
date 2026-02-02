@@ -97,6 +97,9 @@ class Action(str, Enum):
     # Multi-turn conversation (Eigent pattern)
     confirmed = "confirmed"                 # Task confirmed as complex, starting decomposition
 
+    # Agent report (for HomePage chat-style display)
+    agent_report = "agent_report"           # Agent status report message for user
+
     # Memory events
     memory_query = "memory_query"           # Memory query started
     memory_result = "memory_result"         # Memory query result
@@ -494,6 +497,26 @@ class ConfirmedData(BaseActionData):
     question: str  # The confirmed task/question
 
 
+class AgentReportData(BaseActionData):
+    """Agent report message for HomePage chat-style display.
+
+    Used to emit human-readable status updates during task execution.
+    These messages are displayed in the chat interface to keep users
+    informed about what the agent is doing.
+
+    report_type values:
+    - "info": General status update (default)
+    - "success": Task/subtask completed successfully
+    - "warning": Something needs attention
+    - "error": Something failed
+    - "thinking": Agent is reasoning/planning
+    """
+
+    action: Literal[Action.agent_report] = Action.agent_report
+    message: str  # Human-readable report message
+    report_type: str = "info"  # info, success, warning, error, thinking
+
+
 # ===== Memory Events =====
 
 class MemoryQueryData(BaseActionData):
@@ -716,6 +739,7 @@ ActionData = Union[
     HumanResponseData,
     WaitConfirmData,
     ConfirmedData,
+    AgentReportData,
     # Memory events
     MemoryQueryData,
     MemoryResultData,

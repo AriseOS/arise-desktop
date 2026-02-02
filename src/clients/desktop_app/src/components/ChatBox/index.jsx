@@ -47,11 +47,10 @@ function formatElapsedTime(elapsed, taskTime) {
  *
  * State priority (Eigent pattern):
  * 1. splitting - Task is being decomposed (streamingDecomposeText active)
- * 2. confirm - Task decomposed, waiting for user confirmation (showDecomposition=true)
- * 3. running - Task is executing
- * 4. waiting/hasWaitConfirm - Waiting for user input after simple answer
- * 5. finished - Task completed, can continue conversation
- * 6. input - Default state
+ * 2. running - Task is executing
+ * 3. waiting/hasWaitConfirm - Waiting for user input after simple answer
+ * 4. finished - Task completed, can continue conversation
+ * 5. input - Default state
  */
 function getBottomBoxState(task) {
   if (!task) return 'input';
@@ -59,11 +58,6 @@ function getBottomBoxState(task) {
   // If decomposing tasks (streaming text active) - highest priority
   if (task.streamingDecomposeText || task.status === 'decomposing') {
     return 'splitting';
-  }
-
-  // Eigent pattern: If showDecomposition is true, show confirm UI
-  if (task.showDecomposition && task.taskInfo?.length > 0) {
-    return 'confirm';
   }
 
   // Task status mapping
@@ -111,8 +105,6 @@ function getBottomBoxState(task) {
  * @param {function} props.onInputChange - Input change callback
  * @param {Array} props.files - File attachments
  * @param {function} props.onFilesChange - Files change callback
- * @param {function} props.onStartTask - Start task callback
- * @param {function} props.onEditTask - Edit/back callback
  * @param {function} props.onReplay - Replay task callback
  * @param {function} props.onPauseResume - Pause/resume callback
  * @param {Array} props.queuedMessages - Queued messages
@@ -131,8 +123,6 @@ function ChatBox({
   onInputChange,
   files = [],
   onFilesChange,
-  onStartTask,
-  onEditTask,
   onReplay,
   onPauseResume,
   queuedMessages = [],

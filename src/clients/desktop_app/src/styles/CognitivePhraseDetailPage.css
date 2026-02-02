@@ -1,0 +1,365 @@
+/* ===================================
+   COGNITIVE PHRASE DETAIL PAGE
+   =================================== */
+
+.cognitive-phrase-detail-page {
+  min-height: 100vh;
+  background: var(--bg-app);
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 80px;
+}
+
+/* ===================================
+   PAGE HEADER
+   =================================== */
+
+.cognitive-phrase-detail-page .page-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 24px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.cognitive-phrase-detail-page .page-title {
+  flex: 1;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ===================================
+   DESCRIPTION SECTION
+   =================================== */
+
+.description-section {
+  padding: 16px 24px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.description-text {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+/* ===================================
+   STATS SECTION
+   =================================== */
+
+.stats-section {
+  padding: 20px 24px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.stats-grid {
+  display: flex;
+  gap: 32px;
+  margin-bottom: 12px;
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.stat-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.stat-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.meta-info {
+  display: flex;
+  gap: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.meta-info .meta-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-tertiary);
+}
+
+.meta-info .meta-item svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ===================================
+   GRAPH CONTAINER
+   =================================== */
+
+.graph-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 24px 24px;
+  min-height: 400px;
+}
+
+.graph-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.graph-header h2 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.graph-header h2 svg {
+  width: 18px;
+  height: 18px;
+}
+
+.graph-legend {
+  display: flex;
+  gap: 16px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.legend-color {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.graph-view {
+  flex: 1;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  min-height: 400px;
+  height: 400px;
+  width: 100%;
+}
+
+.empty-graph {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  gap: 12px;
+}
+
+.empty-graph svg {
+  width: 48px;
+  height: 48px;
+  opacity: 0.5;
+}
+
+/* ===================================
+   LOADING & ERROR STATES
+   =================================== */
+
+.cognitive-phrase-detail-page .loading-container,
+.cognitive-phrase-detail-page .error-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 40px;
+  gap: 16px;
+}
+
+.cognitive-phrase-detail-page .loading-container p,
+.cognitive-phrase-detail-page .error-container h3 {
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.cognitive-phrase-detail-page .error-container svg {
+  width: 48px;
+  height: 48px;
+  color: var(--text-tertiary);
+}
+
+/* ===================================
+   DELETE CONFIRMATION MODAL
+   =================================== */
+
+.cognitive-phrase-detail-page .modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn 0.2s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.cognitive-phrase-detail-page .modal-content {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  width: 90%;
+  max-width: 400px;
+  box-shadow: var(--shadow-float);
+  animation: slideUp 0.2s ease-out;
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.cognitive-phrase-detail-page .modal-header {
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.cognitive-phrase-detail-page .modal-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.cognitive-phrase-detail-page .modal-body {
+  padding: 24px;
+}
+
+.cognitive-phrase-detail-page .modal-body p {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.cognitive-phrase-detail-page .modal-body p:last-child {
+  margin-bottom: 0;
+}
+
+.cognitive-phrase-detail-page .modal-body strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.cognitive-phrase-detail-page .warning-text {
+  color: var(--status-error-text) !important;
+  font-size: 13px !important;
+}
+
+.cognitive-phrase-detail-page .modal-footer {
+  padding: 16px 24px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.cognitive-phrase-detail-page .btn-cancel {
+  padding: 10px 20px;
+  border-radius: var(--radius-lg);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.cognitive-phrase-detail-page .btn-cancel:hover {
+  background: var(--color-gray-100);
+  border-color: var(--color-gray-300);
+  color: var(--text-primary);
+}
+
+/* ===================================
+   RESPONSIVE
+   =================================== */
+
+@media (max-width: 768px) {
+  .cognitive-phrase-detail-page .page-header {
+    padding: 16px 20px;
+  }
+
+  .cognitive-phrase-detail-page .page-title {
+    font-size: 18px;
+  }
+
+  .description-section {
+    padding: 12px 20px;
+  }
+
+  .stats-section {
+    padding: 16px 20px;
+  }
+
+  .stats-grid {
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+
+  .stat-value {
+    font-size: 20px;
+  }
+
+  .graph-container {
+    padding: 16px 20px 20px;
+  }
+
+  .graph-view {
+    min-height: 300px;
+    height: 300px;
+  }
+}

@@ -82,6 +82,18 @@
     border-bottom: none;
 }
 
+.info-row.clickable-row {
+    padding: var(--spacing-md);
+    margin: calc(-1 * var(--spacing-md));
+    margin-bottom: 0;
+    border-radius: var(--radius-md);
+    transition: background-color var(--transition-fast);
+}
+
+.info-row.clickable-row:hover {
+    background-color: var(--bg-secondary);
+}
+
 .info-label {
     font-weight: 600;
     color: var(--text-secondary);

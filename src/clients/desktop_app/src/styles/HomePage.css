@@ -263,6 +263,7 @@
   text-align: right;
 }
 
+.home-page-v2 .message.agent,
 .home-page-v2 .message.ai {
   text-align: left;
 }
@@ -276,11 +277,43 @@
   line-height: 1.5;
 }
 
+.home-page-v2 .message.agent .message-bubble,
 .home-page-v2 .message.ai .message-bubble {
   background-color: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-bottom-left-radius: 4px;
   color: var(--text-primary);
+}
+
+/* Agent report type styles */
+.home-page-v2 .message.agent.report-info .message-bubble {
+  background-color: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+
+.home-page-v2 .message.agent.report-success .message-bubble {
+  background-color: var(--status-success-bg, #ecfdf5);
+  border-color: var(--status-success-border, #10b981);
+  color: var(--status-success-text, #065f46);
+}
+
+.home-page-v2 .message.agent.report-warning .message-bubble {
+  background-color: var(--status-warning-bg, #fffbeb);
+  border-color: var(--status-warning-border, #f59e0b);
+  color: var(--status-warning-text, #92400e);
+}
+
+.home-page-v2 .message.agent.report-error .message-bubble {
+  background-color: var(--status-error-bg, #fef2f2);
+  border-color: var(--status-error-border, #ef4444);
+  color: var(--status-error-text, #991b1b);
+}
+
+.home-page-v2 .message.agent.report-thinking .message-bubble {
+  background-color: var(--color-primary-50, #eef2ff);
+  border-color: var(--color-primary-300, #a5b4fc);
+  color: var(--color-primary-700, #4338ca);
+  font-style: italic;
 }
 
 .home-page-v2 .message.user .message-bubble {
@@ -293,6 +326,63 @@
   font-size: 11px;
   color: var(--text-tertiary);
   margin-top: 4px;
+}
+
+/* Task Status Indicator */
+.home-page-v2 .task-status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.home-page-v2 .task-status-indicator.running {
+  background-color: var(--color-primary-50, #eef2ff);
+  border-color: var(--color-primary-300, #a5b4fc);
+  color: var(--color-primary-700, #4338ca);
+}
+
+.home-page-v2 .task-status-indicator.waiting {
+  background-color: var(--status-success-bg, #ecfdf5);
+  border-color: var(--status-success-border, #10b981);
+  color: var(--status-success-text, #065f46);
+}
+
+.home-page-v2 .task-status-indicator.completed {
+  background-color: var(--status-success-bg, #ecfdf5);
+  border-color: var(--status-success-border, #10b981);
+  color: var(--status-success-text, #065f46);
+}
+
+.home-page-v2 .task-status-indicator.failed {
+  background-color: var(--status-error-bg, #fef2f2);
+  border-color: var(--status-error-border, #ef4444);
+  color: var(--status-error-text, #991b1b);
+}
+
+.home-page-v2 .task-status-indicator .status-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid transparent;
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* Recording Sandbox */

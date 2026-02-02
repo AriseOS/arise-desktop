@@ -17,9 +17,6 @@ const generateTaskId = () => {
 // SSE clients per task
 const sseClients = {};
 
-// Auto-confirm timers per task (Eigent pattern: 30s auto-confirm)
-const autoConfirmTimers = {};
-
 // Internal agent names to filter out (Eigent pattern)
 const INTERNAL_AGENT_NAMES = [
   'mcp_agent', 'new_worker_agent', 'task_agent',
@@ -130,10 +127,8 @@ const createInitialTaskState = (taskDescription = '', type = 'normal') => ({
   },
   currentModel: '',
 
-  // Subtask decomposition
+  // Subtask decomposition (display only, no confirmation needed)
   subtasks: [],
-  showDecomposition: false,
-  confirmedSubtasks: [],
   streamingDecomposeText: '',  // Eigent: streaming task decomposition text
 
   // Decomposition progress (Phase 5 enhancement)
@@ -143,7 +138,6 @@ const createInitialTaskState = (taskDescription = '', type = 'normal') => ({
 
   // Eigent flags
   isPending: false,
-  isTaskEdit: false,
   isTakeControl: false,
   isContextExceeded: false,
 
@@ -301,7 +295,23 @@ export const useAgentStore = create((set, get) => ({
     set((state) => {
       if (!state.tasks[taskId]) return state;
 
+      const existingMessages = state.tasks[taskId].messages;
+
+      // Deduplication: Skip if identical message exists within last 3 seconds
+      const now = Date.now();
+      const isDuplicate = existingMessages.some(m => {
+        if (m.role !== role || m.content !== content) return false;
+        const msgTime = new Date(m.timestamp).getTime();
+        return (now - msgTime) < 3000;
+      });
+
+      if (isDuplicate) {
+        console.warn('[AgentStore] Skipping duplicate message:', { role, contentPreview: content.substring(0, 50) });
+        return state;
+      }
+
       const newMessage = {
+        id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         role,
         content,
         timestamp: new Date().toISOString(),
@@ -937,33 +947,16 @@ export const useAgentStore = create((set, get) => ({
             agent_type: t.agent_type || null,  // Preserve agent_type from backend
           }));
 
-          // Update task with decomposition data (Eigent pattern)
-          // Clear streamingDecomposeText when decomposition is complete
+          // Update task with decomposition data (display only, no confirmation needed)
           updateTask({
             subtasks: normalizedSubtasks,
             taskInfo: normalizedSubtasks,
             taskRunning: normalizedSubtasks.map(t => ({ ...t })),
             summaryTask: summaryTask,
-            showDecomposition: true,
-            isTaskEdit: false,
             streamingDecomposeText: '',  // Clear streaming text on completion
           });
 
           addNotice('info', 'Task Decomposed', `${newSubtasks.length} subtasks planned`);
-
-          // Eigent: Setup 30 second auto-confirm timer
-          if (autoConfirmTimers[taskId]) {
-            clearTimeout(autoConfirmTimers[taskId]);
-          }
-          autoConfirmTimers[taskId] = setTimeout(() => {
-            const task = get().tasks[taskId];
-            // Only auto-confirm if not edited and not taken control
-            if (task && !task.isTaskEdit && !task.isTakeControl && task.showDecomposition) {
-              get().confirmDecomposition(taskId, task.subtasks);
-              get().addNotice(taskId, 'info', 'Auto-Confirmed', 'Task plan auto-confirmed after 30 seconds');
-            }
-            delete autoConfirmTimers[taskId];
-          }, 30000);
         }
         break;
 
@@ -1049,9 +1042,7 @@ export const useAgentStore = create((set, get) => ({
         }
         break;
 
-      // TaskPlanningToolkit: task_replanned event
-      // Note: Replan is an automatic plan adjustment during execution, NOT requiring user confirmation.
-      // Therefore, showDecomposition should remain false to avoid triggering confirm UI.
+      // TaskPlanningToolkit: task_replanned event (automatic plan adjustment during execution)
       case 'task_replanned':
         {
           const newSubtasks = event.subtasks || event.data?.subtasks || [];
@@ -1061,13 +1052,10 @@ export const useAgentStore = create((set, get) => ({
           if (!currentTask) break;
 
           // Replace subtasks with new plan
-          // Note: showDecomposition is NOT set to true because replan is automatic
-          // and doesn't require user confirmation (unlike initial task_decomposed)
           updateTask({
             subtasks: newSubtasks,
             taskInfo: newSubtasks,
             taskRunning: newSubtasks.map(t => ({ ...t, status: 'pending' })),
-            // showDecomposition: false - keep it false to not trigger confirm UI
           });
 
           addNotice('info', 'Task Re-planned', `${newSubtasks.length} new subtasks${reason ? `: ${reason}` : ''}`);
@@ -1200,7 +1188,6 @@ export const useAgentStore = create((set, get) => ({
           notesContent: event.notes,
           executionPhase: 'failed',
           // Clear decomposition state
-          showDecomposition: false,
           taskInfo: [],
           streamingDecomposeText: '',
           // Reset decomposition progress (Phase 5)
@@ -1246,7 +1233,6 @@ export const useAgentStore = create((set, get) => ({
               taskRunning: updatedTaskRunning,
               progressValue: 100,
               // Clear decomposition state for next round
-              showDecomposition: false,
               taskInfo: [],
               streamingDecomposeText: '',
               decompositionProgress: 0,
@@ -1261,7 +1247,6 @@ export const useAgentStore = create((set, get) => ({
               elapsed,
               taskRunning: updatedTaskRunning,
               // Clear decomposition state
-              showDecomposition: false,
               taskInfo: [],
             });
           } else if (event.status === 'cancelled') {
@@ -1273,7 +1258,6 @@ export const useAgentStore = create((set, get) => ({
               elapsed,
               taskRunning: updatedTaskRunning,
               // Clear decomposition state
-              showDecomposition: false,
               taskInfo: [],
             });
             addNotice('warning', 'Task Cancelled', 'Task was cancelled by user');
@@ -1322,12 +1306,8 @@ export const useAgentStore = create((set, get) => ({
               thinkingLogs: [...(currentTask?.thinkingLogs || []), thinkingLog],
             });
 
-            // Also add as message for backward compatibility
-            addMessage('thinking', thinking, {
-              step,
-              agentName,
-              timestamp,
-            });
+            // Note: Don't add as message here - wait_confirm will handle the final response
+            // This avoids duplicate messages in the chat view
           }
 
           // Update agent's current thinking state
@@ -1736,6 +1716,17 @@ export const useAgentStore = create((set, get) => ({
         }
         break;
 
+      // ===== Agent Report Events (for HomePage chat-style display) =====
+      case 'agent_report':
+        {
+          const { message, report_type } = event;
+          if (message) {
+            // Add agent report as a message for display in chat
+            addMessage('agent', message, { reportType: report_type || 'info' });
+          }
+        }
+        break;
+
       default:
         console.log('[AgentStore] Unknown SSE event:', eventType, event);
     }
@@ -1860,12 +1851,16 @@ export const useAgentStore = create((set, get) => ({
 
     // Eigent pattern: If task is 'waiting', update status to 'running' before sending
     // This prevents UI from staying in input mode while waiting for response
+    // If task is already 'running', message will be queued by backend
     if (task.status === 'waiting') {
       get().setTaskStatus(taskId, 'running');
       get().updateTask(taskId, {
         hasWaitConfirm: false,  // Reset the flag until next wait_confirm
       });
     }
+
+    // Note: If status is 'running', backend will queue the message
+    // and process it when the current operation completes
 
     try {
       const response = await api.callAppBackend(`/api/v1/quick-task/message/${backendTaskId}`, {
@@ -1920,100 +1915,6 @@ export const useAgentStore = create((set, get) => ({
       console.error('[AgentStore] Failed to send user message:', error);
       return { success: false, error: error.message };
     }
-  },
-
-  /**
-   * Confirm task decomposition (Eigent pattern)
-   * Called after user confirms or 30s auto-confirm
-   */
-  confirmDecomposition: async (taskId, subtasks) => {
-    const task = get().tasks[taskId];
-    if (!task) return false;
-
-    // Don't confirm if task is already completed, failed, or cancelled
-    const terminalStates = ['completed', 'finished', 'failed', 'cancelled'];
-    if (terminalStates.includes(task.status)) {
-      console.log(`[AgentStore] Ignoring confirmation for ${taskId}: task already ${task.status}`);
-      return false;
-    }
-
-    // Don't confirm if decomposition is not showing (already confirmed or not in decomposition phase)
-    if (!task.showDecomposition && !task.isTaskEdit) {
-      console.log(`[AgentStore] Ignoring confirmation for ${taskId}: not in decomposition phase`);
-      return false;
-    }
-
-    // Clear auto-confirm timer
-    if (autoConfirmTimers[taskId]) {
-      clearTimeout(autoConfirmTimers[taskId]);
-      delete autoConfirmTimers[taskId];
-    }
-
-    // Update local state
-    get().updateTask(taskId, {
-      confirmedSubtasks: subtasks.map(t => ({ ...t, status: 'pending' })),
-      showDecomposition: false,
-      isTaskEdit: false,
-    });
-
-    // Call backend to confirm subtasks
-    const backendTaskId = task.backendTaskId;
-    if (backendTaskId) {
-      try {
-        await api.callAppBackend(`/api/v1/quick-task/${backendTaskId}/confirm-subtasks`, {
-          method: 'POST',
-          body: JSON.stringify({ subtasks })
-        });
-        get().addNotice(taskId, 'info', 'Plan Confirmed', `Executing ${subtasks.length} subtasks`);
-        return true;
-      } catch (error) {
-        console.error('[AgentStore] Failed to confirm subtasks:', error);
-        return false;
-      }
-    }
-
-    return true;
-  },
-
-  /**
-   * Cancel task decomposition
-   */
-  cancelDecomposition: async (taskId) => {
-    const task = get().tasks[taskId];
-    if (!task) return false;
-
-    // Clear auto-confirm timer
-    if (autoConfirmTimers[taskId]) {
-      clearTimeout(autoConfirmTimers[taskId]);
-      delete autoConfirmTimers[taskId];
-    }
-
-    get().updateTask(taskId, {
-      showDecomposition: false,
-      subtasks: [],
-      isTaskEdit: false,
-    });
-
-    // Call backend to cancel
-    const backendTaskId = task.backendTaskId;
-    if (backendTaskId) {
-      try {
-        await api.callAppBackend(`/api/v1/quick-task/${backendTaskId}/cancel-subtasks`, {
-          method: 'POST'
-        });
-      } catch (error) {
-        console.error('[AgentStore] Failed to cancel subtasks:', error);
-      }
-    }
-
-    return true;
-  },
-
-  /**
-   * Set task edit mode (Eigent: prevents auto-confirm while editing)
-   */
-  setTaskEdit: (taskId, isEditing) => {
-    get().updateTask(taskId, { isTaskEdit: isEditing });
   },
 
   /**

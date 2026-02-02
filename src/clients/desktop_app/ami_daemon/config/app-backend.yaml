@@ -20,6 +20,12 @@ data:
     kv: ${storage.base_path}/databases/kv.db
     storage: ${storage.base_path}/databases/storage.db
 
+# CAMEL Framework Configuration
+camel:
+  # Working directory for CAMEL context files
+  # Prevents context files from being written in src-tauri/ which triggers Tauri rebuild
+  workdir: ${storage.base_path}/camel
+
 browser:
   headless: false
   timeout: 30

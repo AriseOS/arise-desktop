@@ -49,10 +49,6 @@ function AgentPage({ session, onNavigate, showStatus, version }) {
     cancelTask,
     sendHumanResponse,
     sendUserMessage,  // Eigent: multi-turn conversation
-    // Decomposition methods (Eigent pattern: 30s auto-confirm in store)
-    confirmDecomposition,
-    cancelDecomposition,
-    setTaskEdit,
     budget: storeBudget,
   } = useAgentStore();
 
@@ -95,14 +91,11 @@ function AgentPage({ session, onNavigate, showStatus, version }) {
   const humanInteractionTimeout = activeTask?.humanInteractionTimeout || null;
   const humanMessages = activeTask?.humanMessages || [];
   const subtasks = activeTask?.subtasks || [];
-  const showDecomposition = activeTask?.showDecomposition || false;
-  const confirmedSubtasks = activeTask?.confirmedSubtasks || [];
   // Eigent: Additional task state for ChatBox BottomBox state machine
   const taskInfo = activeTask?.taskInfo || [];
   const taskRunning = activeTask?.taskRunning || [];
   const summaryTask = activeTask?.summaryTask || '';
   const streamingDecomposeText = activeTask?.streamingDecomposeText || '';
-  const isTaskEdit = activeTask?.isTaskEdit || false;
   const taskTime = activeTask?.taskTime || null;
   const elapsed = activeTask?.elapsed || 0;
 
@@ -212,33 +205,6 @@ function AgentPage({ session, onNavigate, showStatus, version }) {
     } else {
       showStatus('Failed to send response', 'error');
     }
-  };
-
-  // Handle task decomposition confirmation (Eigent pattern: delegates to store)
-  const handleDecompositionConfirm = async (editedSubtasks) => {
-    if (!activeTaskId) return;
-    const success = await confirmDecomposition(activeTaskId, editedSubtasks);
-    if (!success) {
-      showStatus('Failed to confirm plan', 'error');
-    }
-  };
-
-  // Handle task decomposition cancellation (Eigent pattern: delegates to store)
-  const handleDecompositionCancel = async () => {
-    if (!activeTaskId) return;
-    await cancelDecomposition(activeTaskId);
-  };
-
-  // Handle entering task edit mode (Eigent pattern: opens Modal for detailed editing)
-  const handleEditTask = () => {
-    if (!activeTaskId) return;
-    setTaskEdit(activeTaskId, true);
-  };
-
-  // Handle exiting task edit mode
-  const handleCloseEditTask = () => {
-    if (!activeTaskId) return;
-    setTaskEdit(activeTaskId, false);
   };
 
   // Handle budget configuration save
@@ -488,19 +454,15 @@ function AgentPage({ session, onNavigate, showStatus, version }) {
                       streamingDecomposeText: streamingDecomposeText,
                       summaryTask: summaryTask,
                       progressValue: progressValue,
-                      isTaskEdit: isTaskEdit,
                       taskTime: taskTime,
                       elapsed: elapsed,
                       tokens: tokenUsage?.inputTokens + tokenUsage?.outputTokens || 0,
-                      showDecomposition: showDecomposition,  // Eigent: Flag to show confirm UI
                     }}
                     // Input control
                     inputValue={taskInput}
                     onInputChange={(value) => setTaskInput(value)}
                     onSendMessage={handleSubmit}
-                    // Task actions
-                    onStartTask={() => handleDecompositionConfirm(subtasks)}
-                    onEditTask={handleEditTask}
+                    // Task actions (no longer needed, auto-execute)
                     onPauseResume={() => console.log('Pause/Resume not implemented')}
                     // Loading states - Eigent: allow input during running for multi-turn
                     isLoading={false}
@@ -669,25 +631,6 @@ function AgentPage({ session, onNavigate, showStatus, version }) {
         onDismiss={handleDismissHumanMessage}
         maxVisible={3}
       />
-
-      {/* Task Decomposition Panel - Show when decomposition is ready for confirmation or editing */}
-      {(showDecomposition || isTaskEdit) && subtasks.length > 0 && (
-        <div className="task-decomposition-overlay">
-          <TaskDecomposition
-            subtasks={subtasks}
-            onConfirm={(editedSubtasks) => {
-              handleDecompositionConfirm(editedSubtasks);
-              if (isTaskEdit) {
-                handleCloseEditTask();
-              }
-            }}
-            onCancel={isTaskEdit ? handleCloseEditTask : handleDecompositionCancel}
-            autoConfirmDelay={isTaskEdit ? 0 : 30}
-            isVisible={true}
-            title={isTaskEdit ? "Edit Task Plan" : "Task Plan"}
-          />
-        </div>
-      )}
 
       {/* Budget Configuration Dialog (Eigent Migration) */}
       <BudgetConfigDialog

@@ -1,0 +1,491 @@
+/* ===================================
+   COGNITIVE PHRASES PAGE
+   =================================== */
+
+.cognitive-phrases-page {
+  min-height: 100vh;
+  background: var(--bg-app);
+  padding-bottom: 80px;
+}
+
+/* ===================================
+   PAGE HEADER
+   =================================== */
+
+.cognitive-phrases-page .page-header {
+  display: flex;
+  align-items: center;
+  padding: 20px 30px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.cognitive-phrases-page .page-title {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cognitive-phrases-page .header-spacer {
+  flex: 1;
+}
+
+/* ===================================
+   SEARCH SECTION
+   =================================== */
+
+.cognitive-phrases-page .search-section {
+  padding: 20px 30px;
+  background: var(--bg-surface);
+}
+
+.cognitive-phrases-page .search-input-wrapper {
+  position: relative;
+  max-width: 600px;
+}
+
+.cognitive-phrases-page .search-icon {
+  position: absolute;
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 20px;
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+
+.cognitive-phrases-page .search-input {
+  width: 100%;
+  padding: 12px 50px 12px 48px;
+  background: var(--bg-app);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  color: var(--text-primary);
+  font-size: 15px;
+  transition: all 0.2s;
+}
+
+.cognitive-phrases-page .search-input:focus {
+  outline: none;
+  border-color: var(--primary-main);
+  background: var(--bg-surface);
+  box-shadow: 0 0 0 3px var(--color-primary-100);
+}
+
+.cognitive-phrases-page .search-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.cognitive-phrases-page .clear-search {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.cognitive-phrases-page .clear-search:hover {
+  background: var(--color-gray-200);
+  color: var(--text-primary);
+}
+
+.cognitive-phrases-page .clear-search svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ===================================
+   RESULTS INFO
+   =================================== */
+
+.cognitive-phrases-page .results-info {
+  padding: 15px 30px;
+  background: var(--bg-app);
+}
+
+.cognitive-phrases-page .results-count {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+/* ===================================
+   PHRASES LIST
+   =================================== */
+
+.phrases-list {
+  padding: 0 30px 30px;
+}
+
+.phrase-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  padding: 24px;
+  margin-bottom: 16px;
+  transition: all 0.2s;
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+}
+
+.phrase-card:hover {
+  border-color: var(--primary-main);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
+.phrase-header {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.phrase-icon {
+  font-size: 40px;
+  width: 50px;
+  height: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: var(--color-primary-100);
+  border-radius: var(--radius-lg);
+  color: var(--primary-main);
+}
+
+.phrase-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.phrase-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 8px 0;
+}
+
+.phrase-description {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin: 0 0 10px 0;
+  line-height: 1.5;
+}
+
+.phrase-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.phrase-meta .meta-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.phrase-meta .meta-item svg {
+  width: 14px;
+  height: 14px;
+  color: var(--text-tertiary);
+}
+
+/* ===================================
+   PHRASE ACTIONS
+   =================================== */
+
+.phrase-actions {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+}
+
+.phrase-actions .btn {
+  flex: 0 0 auto !important;
+  width: auto !important;
+  white-space: nowrap;
+}
+
+.phrase-actions .btn-icon-danger {
+  margin-left: auto !important;
+  flex: 0 0 auto !important;
+}
+
+/* ===================================
+   EMPTY STATE
+   =================================== */
+
+.cognitive-phrases-page .empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 20px;
+  text-align: center;
+}
+
+.cognitive-phrases-page .empty-icon {
+  font-size: 80px;
+  margin-bottom: 20px;
+  opacity: 0.5;
+}
+
+.cognitive-phrases-page .empty-state h3 {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 10px 0;
+}
+
+.cognitive-phrases-page .empty-state p {
+  font-size: 15px;
+  color: var(--text-secondary);
+  margin: 0 0 30px 0;
+  max-width: 400px;
+}
+
+.cognitive-phrases-page .btn-start-recording,
+.cognitive-phrases-page .btn-clear-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 24px;
+  background: var(--primary-main);
+  color: white;
+  border: none;
+  border-radius: var(--radius-lg);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: var(--shadow-md);
+}
+
+.cognitive-phrases-page .btn-start-recording:hover,
+.cognitive-phrases-page .btn-clear-search:hover {
+  background: var(--primary-hover);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
+
+.cognitive-phrases-page .button-icon {
+  font-size: 20px;
+}
+
+.cognitive-phrases-page .btn-clear-search {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  box-shadow: none;
+}
+
+.cognitive-phrases-page .btn-clear-search:hover {
+  background: var(--bg-surface);
+  border-color: var(--primary-main);
+  color: var(--primary-main);
+  transform: translateY(0);
+}
+
+/* ===================================
+   LOADING STATE
+   =================================== */
+
+.cognitive-phrases-page .loading-container {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 40px;
+}
+
+.cognitive-phrases-page .loading-container p {
+  color: var(--text-secondary);
+  font-size: 18px;
+  margin-top: 20px;
+}
+
+/* ===================================
+   DELETE CONFIRMATION MODAL
+   =================================== */
+
+.cognitive-phrases-page .modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn 0.2s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.cognitive-phrases-page .modal-content {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  width: 90%;
+  max-width: 500px;
+  box-shadow: var(--shadow-float);
+  animation: slideUp 0.2s ease-out;
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.cognitive-phrases-page .modal-header {
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.cognitive-phrases-page .modal-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.cognitive-phrases-page .modal-body {
+  padding: 24px;
+}
+
+.cognitive-phrases-page .modal-body p {
+  margin: 0 0 12px 0;
+  font-size: 15px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.cognitive-phrases-page .modal-body p:last-child {
+  margin-bottom: 0;
+}
+
+.cognitive-phrases-page .modal-body strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.cognitive-phrases-page .warning-text {
+  color: var(--status-error-text) !important;
+  font-size: 14px !important;
+}
+
+.cognitive-phrases-page .modal-footer {
+  padding: 16px 24px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.cognitive-phrases-page .btn-cancel {
+  padding: 10px 24px;
+  border-radius: var(--radius-lg);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.cognitive-phrases-page .btn-cancel:hover {
+  background: var(--color-gray-100);
+  border-color: var(--color-gray-300);
+  color: var(--text-primary);
+}
+
+/* ===================================
+   RESPONSIVE
+   =================================== */
+
+@media (max-width: 768px) {
+  .cognitive-phrases-page .page-header {
+    padding: 15px 20px;
+  }
+
+  .cognitive-phrases-page .page-title {
+    font-size: 20px;
+  }
+
+  .cognitive-phrases-page .search-section {
+    padding: 15px 20px;
+  }
+
+  .cognitive-phrases-page .results-info {
+    padding: 10px 20px;
+  }
+
+  .phrases-list {
+    padding: 0 20px 30px;
+  }
+
+  .phrase-card {
+    padding: 20px;
+  }
+
+  .phrase-header {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .phrase-icon {
+    font-size: 32px;
+    width: 40px;
+    height: 40px;
+  }
+
+  .phrase-meta {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .phrase-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+}

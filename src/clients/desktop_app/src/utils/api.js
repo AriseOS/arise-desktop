@@ -1025,5 +1025,41 @@ export const api = {
     return await this.callAppBackend(`/api/v1/memory?user_id=${userId}`, {
       method: 'DELETE'
     });
+  },
+
+  // ============================================================================
+  // CognitivePhrase APIs
+  // ============================================================================
+
+  /**
+   * List all cognitive phrases from memory
+   *
+   * @param {number} limit - Maximum number of phrases to return (default: 50)
+   * @returns {Promise<object>} Response with phrases array
+   */
+  async listCognitivePhrases(limit = 50) {
+    return await this.callAppBackend(`/api/v1/memory/phrases?limit=${limit}`);
+  },
+
+  /**
+   * Get a single cognitive phrase with full details
+   *
+   * @param {string} phraseId - CognitivePhrase ID
+   * @returns {Promise<object>} Response with phrase, states, and intent_sequences
+   */
+  async getCognitivePhrase(phraseId) {
+    return await this.callAppBackend(`/api/v1/memory/phrases/${phraseId}`);
+  },
+
+  /**
+   * Delete a cognitive phrase from memory
+   *
+   * @param {string} phraseId - CognitivePhrase ID to delete
+   * @returns {Promise<object>} Result with success status
+   */
+  async deleteCognitivePhrase(phraseId) {
+    return await this.callAppBackend(`/api/v1/memory/phrases/${phraseId}`, {
+      method: 'DELETE'
+    });
   }
 };
