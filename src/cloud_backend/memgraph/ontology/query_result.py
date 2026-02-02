@@ -22,9 +22,17 @@ class SubTaskResult(BaseModel):
 
     task_id: str = Field(..., description="Subtask identifier")
     target: str = Field(..., description="Subtask target description")
-    states: List[State] = Field(default_factory=list, description="States found for this subtask")
-    actions: List[Action] = Field(default_factory=list, description="Actions found for this subtask")
-    found: bool = Field(default=False, description="Whether navigation info was found for this subtask")
+
+    # Reference to global path by indices, not full path storage
+    path_state_indices: List[int] = Field(
+        default_factory=list,
+        description="Indices into global path states that this subtask operates on"
+    )
+
+    found: bool = Field(
+        default=False,
+        description="Whether this subtask has navigation info (path_state_indices non-empty)"
+    )
 
 
 class NavigationResult(BaseModel):

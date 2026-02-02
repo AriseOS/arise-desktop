@@ -350,6 +350,7 @@ class TaskOrchestrator:
         self.completed_tasks: Set[str] = set()
         self.failed_tasks: Set[str] = set()
         self.running_tasks: Set[str] = set()
+        self.replan_pending_confirmation: bool = False
 
         # Agent management
         self._registry = get_registry()
@@ -1437,18 +1438,30 @@ class TaskOrchestrator:
         # Emit SSE event
         self._emit_subtask_state_sync(subtask_id, "RUNNING")
 
-    def mark_completed(self, subtask_id: str, result: Any = None) -> None:
+    def mark_completed(self, subtask_id: str, result: Any = None) -> str | None:
         """Mark a subtask as completed and emit SSE event.
 
         Args:
             subtask_id: ID of the subtask to mark
             result: Result of the subtask execution
+
+        Returns:
+            Error message if validation fails, None on success.
         """
         if subtask_id not in self.subtasks:
             logger.warning(f"Subtask {subtask_id} not found")
-            return
+            return f"Error: subtask {subtask_id} not found"
 
         subtask = self.subtasks[subtask_id]
+        if subtask.state != SubTaskState.RUNNING:
+            logger.warning(
+                f"Subtask {subtask_id} is {subtask.state.name}, not RUNNING — cannot complete"
+            )
+            return (
+                f"Error: subtask {subtask_id} is {subtask.state.name}, not RUNNING. "
+                f"Only the current RUNNING subtask can be completed."
+            )
+
         subtask.state = SubTaskState.DONE
         subtask.result = result
         subtask.completed_at = datetime.now()
@@ -1652,16 +1665,25 @@ class TaskOrchestrator:
         """
         logger.info(f"Replan triggered: {reason}")
 
-        # Cancel specified tasks
+        # Auto-cancel currently RUNNING subtasks (they are being replaced by the new plan)
         cancelled_task_ids = cancelled_task_ids or []
+        for task_id in list(self.running_tasks):
+            if task_id not in cancelled_task_ids:
+                cancelled_task_ids.append(task_id)
+                logger.info(f"Subtask {task_id} auto-cancelled by replan (was RUNNING)")
+
+        # Cancel specified tasks, track insertion position
+        insert_after_id = None
         for task_id in cancelled_task_ids:
             if task_id in self.subtasks:
                 subtask = self.subtasks[task_id]
                 subtask.state = SubTaskState.DELETED
                 self.running_tasks.discard(task_id)
+                insert_after_id = task_id
                 logger.info(f"Subtask {task_id} cancelled via replan")
 
-        # Add new subtasks
+        # Build new subtask objects
+        new_subtask_objects = []
         for st_data in new_subtasks:
             subtask_id = st_data.get("id", f"subtask_{uuid.uuid4().hex[:8]}")
 
@@ -1681,8 +1703,24 @@ class TaskOrchestrator:
                 dependencies=valid_deps,
                 max_retries=self.config.max_retries_per_subtask,
             )
-            self.subtasks[subtask_id] = subtask
+            new_subtask_objects.append(subtask)
             logger.info(f"Added new subtask {subtask_id} via replan")
+
+        # Insert new subtasks after the cancelled task's position (not at the end)
+        if insert_after_id and insert_after_id in self.subtasks:
+            rebuilt = {}
+            for key, val in self.subtasks.items():
+                rebuilt[key] = val
+                if key == insert_after_id:
+                    for new_st in new_subtask_objects:
+                        rebuilt[new_st.id] = new_st
+            self.subtasks = rebuilt
+        else:
+            for new_st in new_subtask_objects:
+                self.subtasks[new_st.id] = new_st
+
+        # Mark replan as pending confirmation
+        self.replan_pending_confirmation = True
 
         # Emit replan event
         self._emit_replan_event_sync(reason, len(new_subtasks), len(cancelled_task_ids))
@@ -1831,41 +1869,55 @@ class TaskFailedException(Exception):
 
 
 class MessageHistoryManager:
-    """Manages message history for long-running tasks.
+    """Manages message history for long-running agent tasks.
 
-    Long-running tasks accumulate many messages and can exceed token limits.
-    This class implements a compression strategy to manage context size.
+    Implements a multi-layer compression strategy inspired by CAMEL/Eigent:
 
-    Based on docs/task-planning-system.md lines 648-723.
+    Layer 1 - Tool call pruning (after each LLM response):
+        Remove old tool_use/tool_result message pairs, keeping only the
+        assistant's text reasoning. This is the most effective compression
+        since browser snapshots in tool results are 30-100K chars each.
+
+    Layer 2 - Progressive summarization (when token threshold exceeded):
+        Use LLM to summarize old messages into a compact summary message.
+        Previous summaries are preserved; only new messages are summarized.
+
+    Layer 3 - Full compression (when summaries themselves grow too large):
+        Re-summarize everything including old summaries into a single summary.
     """
 
-    class MessageCategory(Enum):
-        """Categories for message classification."""
-        SYSTEM = "system"           # System prompt - always keep
-        PLAN_SUMMARY = "plan"       # Current plan - always keep (updated each loop)
-        CURRENT_SUBTASK = "current" # Current subtask messages - keep full detail
-        COMPLETED = "completed"     # Completed subtask messages - compress
-        TOOL_RESULT = "tool"        # Tool call results - compress after use
-
-    def __init__(self, max_tokens: int = 100000):
+    def __init__(
+        self,
+        max_tokens: int = 100000,
+        summarize_threshold: float = 0.5,
+        summary_ratio: float = 0.6,
+        keep_recent: int = 4,
+    ):
         """Initialize MessageHistoryManager.
 
         Args:
-            max_tokens: Maximum estimated tokens before compression is triggered.
+            max_tokens: Estimated context window token budget.
+            summarize_threshold: Fraction of max_tokens that triggers
+                progressive summarization (default 0.5 = 50%).
+            summary_ratio: When accumulated summary tokens exceed
+                max_tokens * summary_ratio, trigger full compression.
+            keep_recent: Number of recent message pairs to always preserve
+                (each pair = 1 assistant + 1 user/tool_result).
         """
         self.max_tokens = max_tokens
-        self.compression_threshold = 0.8  # Compress when 80% full
-        self._chars_per_token = 4  # Rough estimate
+        self.summarize_threshold = summarize_threshold
+        self.summary_ratio = summary_ratio
+        self.keep_recent = keep_recent
+        self._chars_per_token = 4
+        self._summary_token_count = 0
+        self._llm_provider = None  # Set by agent before use
+
+    def set_llm_provider(self, provider: Any) -> None:
+        """Set the LLM provider for summarization calls."""
+        self._llm_provider = provider
 
     def _estimate_tokens(self, messages: List[Dict[str, Any]]) -> int:
-        """Estimate token count from messages.
-
-        Args:
-            messages: List of message dicts.
-
-        Returns:
-            Estimated token count.
-        """
+        """Estimate token count from messages."""
         total_chars = 0
         for msg in messages:
             content = msg.get("content", "")
@@ -1878,231 +1930,296 @@ class MessageHistoryManager:
                         total_chars += len(str(item.get("text", "")))
         return total_chars // self._chars_per_token
 
-    def manage_history(
+    # ------------------------------------------------------------------
+    # Layer 1: Tool call pruning
+    # ------------------------------------------------------------------
+
+    def prune_tool_calls(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Remove old tool_use/tool_result pairs, keeping recent ones and text reasoning.
+
+        After LLM responds and tools execute, the message history looks like:
+            ... assistant(text + tool_use) -> user(tool_result) -> assistant(text + tool_use) -> user(tool_result) ...
+
+        For older exchanges we:
+        - Strip tool_use blocks from assistant messages (keep text blocks)
+        - Replace tool_result content with a short "[result truncated]" marker
+        - Always keep the most recent `keep_recent` exchanges intact
+
+        This is applied in-place (mutates the list) for efficiency.
+        """
+        if len(messages) <= self.keep_recent * 2 + 1:
+            return messages
+
+        # Find boundary: keep last keep_recent assistant+user pairs
+        # Walk backwards to find the cutoff index
+        pair_count = 0
+        cutoff_idx = len(messages)
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "assistant":
+                pair_count += 1
+                if pair_count >= self.keep_recent:
+                    cutoff_idx = i
+                    break
+
+        pruned_count = 0
+        for i in range(cutoff_idx):
+            msg = messages[i]
+            role = msg.get("role", "")
+            content = msg.get("content")
+
+            if role == "assistant" and isinstance(content, list):
+                # Strip tool_use blocks, keep text blocks
+                text_blocks = [b for b in content if isinstance(b, dict) and b.get("type") == "text"]
+                tool_blocks = [b for b in content if isinstance(b, dict) and b.get("type") == "tool_use"]
+                if tool_blocks:
+                    # Keep text reasoning + minimal tool_use stubs (needed for API format)
+                    pruned_content = list(text_blocks)
+                    for tb in tool_blocks:
+                        pruned_content.append({
+                            "type": "tool_use",
+                            "id": tb.get("id", ""),
+                            "name": tb.get("name", ""),
+                            "input": {},  # Empty input to save tokens
+                        })
+                    msg["content"] = pruned_content
+                    pruned_count += 1
+
+            elif role == "user" and isinstance(content, list):
+                # Truncate tool_result content
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "tool_result":
+                        original = item.get("content", "")
+                        if isinstance(original, str) and len(original) > 200:
+                            # Keep first line (usually status) + truncation marker
+                            first_line = original.split("\n")[0][:200]
+                            item["content"] = f"{first_line}\n[...result truncated]"
+                            pruned_count += 1
+
+        if pruned_count > 0:
+            logger.info(f"[MessageHistory] Pruned {pruned_count} old tool call messages")
+
+        return messages
+
+    # ------------------------------------------------------------------
+    # Layer 2 & 3: Summarization
+    # ------------------------------------------------------------------
+
+    async def manage_history(
         self,
         messages: List[Dict[str, Any]],
-        current_subtask_id: Optional[str],
-        completed_subtask_ids: Optional[Set[str]] = None,
     ) -> List[Dict[str, Any]]:
-        """Compress history if approaching token limit.
+        """Check token usage and compress if needed.
 
-        Args:
-            messages: Full message history.
-            current_subtask_id: ID of the currently executing subtask.
-            completed_subtask_ids: Set of completed subtask IDs.
+        Called each loop iteration before LLM call.
 
         Returns:
             Potentially compressed message list.
         """
         estimated_tokens = self._estimate_tokens(messages)
 
-        if estimated_tokens < self.max_tokens * self.compression_threshold:
-            return messages  # No compression needed
+        # Layer 3: Full compression if summaries grew too large
+        if self._summary_token_count > self.max_tokens * self.summary_ratio:
+            logger.warning(
+                f"[MessageHistory] Summary tokens ({self._summary_token_count}) exceed "
+                f"ratio ({self.max_tokens * self.summary_ratio:.0f}), full compression"
+            )
+            return await self._summarize_messages(messages, include_summaries=True)
 
-        logger.info(
-            f"[MessageHistoryManager] Token estimate {estimated_tokens} exceeds "
-            f"threshold ({self.max_tokens * self.compression_threshold:.0f}), compressing"
+        # Layer 2: Progressive summarization at threshold
+        threshold = self._calculate_threshold()
+        if estimated_tokens > threshold:
+            logger.info(
+                f"[MessageHistory] Tokens {estimated_tokens} > threshold {threshold}, "
+                f"progressive summarization"
+            )
+            return await self._summarize_messages(messages, include_summaries=False)
+
+        return messages
+
+    def _calculate_threshold(self) -> int:
+        """Calculate the token threshold that triggers summarization.
+
+        Adapts based on accumulated summary size:
+        - First time: max_tokens * summarize_threshold
+        - Later: (max_tokens - summary_tokens) * summarize_threshold + summary_tokens
+        """
+        if self._summary_token_count == 0:
+            return int(self.max_tokens * self.summarize_threshold)
+        return int(
+            (self.max_tokens - self._summary_token_count) * self.summarize_threshold
+            + self._summary_token_count
         )
 
-        return self._compress_messages(
-            messages, current_subtask_id, completed_subtask_ids or set()
-        )
-
-    def _compress_messages(
+    async def _summarize_messages(
         self,
         messages: List[Dict[str, Any]],
-        current_subtask_id: Optional[str],
-        completed_subtask_ids: Set[str],
+        include_summaries: bool,
     ) -> List[Dict[str, Any]]:
-        """Compress old messages while preserving important context.
+        """Summarize old messages using LLM, keeping recent ones.
 
         Args:
             messages: Full message history.
-            current_subtask_id: ID of currently executing subtask.
-            completed_subtask_ids: Set of completed subtask IDs.
+            include_summaries: If True, re-summarize existing summaries too
+                (full compression). If False, keep existing summaries and
+                only summarize new messages (progressive).
 
         Returns:
-            Compressed message list.
+            Compressed message list with summary prepended.
+        """
+        if not self._llm_provider:
+            logger.warning("[MessageHistory] No LLM provider for summarization, falling back to truncation")
+            return self._fallback_truncate(messages)
+
+        # Split messages: find recent ones to keep
+        # Keep the last keep_recent assistant+user pairs
+        pair_count = 0
+        split_idx = len(messages)
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "assistant":
+                pair_count += 1
+                if pair_count >= self.keep_recent:
+                    split_idx = i
+                    break
+
+        old_messages = messages[:split_idx]
+        recent_messages = messages[split_idx:]
+
+        if not old_messages:
+            return messages
+
+        # Build conversation text from old messages
+        conversation_lines = []
+        for msg in old_messages:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+
+            # Skip existing summary messages if not including them
+            if not include_summaries and isinstance(content, str) and content.startswith("[CONTEXT_SUMMARY]"):
+                # Preserve summary messages as-is in output
+                continue
+
+            if isinstance(content, str):
+                # Truncate very long text content
+                if len(content) > 1000:
+                    content = content[:1000] + "..."
+                conversation_lines.append(f"{role}: {content}")
+            elif isinstance(content, list):
+                parts = []
+                for item in content:
+                    if isinstance(item, dict):
+                        if item.get("type") == "text":
+                            parts.append(item.get("text", "")[:500])
+                        elif item.get("type") == "tool_use":
+                            parts.append(f"[called {item.get('name', '?')}]")
+                        elif item.get("type") == "tool_result":
+                            result_text = item.get("content", "")
+                            if isinstance(result_text, str):
+                                parts.append(f"[tool result: {result_text[:200]}]")
+                conversation_lines.append(f"{role}: {' | '.join(parts)}")
+
+        conversation_text = "\n".join(conversation_lines)
+
+        # Limit conversation text to avoid recursive token explosion
+        max_summary_input = 50000  # chars
+        if len(conversation_text) > max_summary_input:
+            conversation_text = conversation_text[:max_summary_input] + "\n...[truncated for summarization]"
+
+        # Call LLM to generate summary
+        summary_prompt = (
+            "You are a summarization assistant. Summarize the following agent conversation "
+            "into a concise context summary. Focus on:\n"
+            "- What task is being performed\n"
+            "- What has been accomplished so far (key results, data collected)\n"
+            "- What pages/URLs were visited\n"
+            "- Any errors encountered and how they were handled\n"
+            "- Current state and what needs to happen next\n\n"
+            "Be concise but preserve all important facts and data.\n\n"
+            f"CONVERSATION:\n{conversation_text}"
+        )
+
+        try:
+            summary = await self._llm_provider.generate_response(
+                system_prompt="You are a concise summarizer. Output only the summary, no preamble.",
+                user_prompt=summary_prompt,
+            )
+            summary = summary.strip()
+            logger.info(f"[MessageHistory] Generated summary: {len(summary)} chars")
+        except Exception as e:
+            logger.error(f"[MessageHistory] Summarization LLM call failed: {e}")
+            return self._fallback_truncate(messages)
+
+        # Build new message list
+        summary_msg = {
+            "role": "user",
+            "content": f"[CONTEXT_SUMMARY] The following is a summary of previous conversation:\n\n{summary}",
+        }
+
+        # Update summary token count
+        summary_tokens = len(summary) // self._chars_per_token
+        if include_summaries:
+            # Full compression: reset count
+            self._summary_token_count = summary_tokens
+        else:
+            # Progressive: accumulate
+            self._summary_token_count += summary_tokens
+
+        # Collect existing summaries if preserving them
+        result = []
+        if not include_summaries:
+            for msg in old_messages:
+                content = msg.get("content", "")
+                if isinstance(content, str) and content.startswith("[CONTEXT_SUMMARY]"):
+                    result.append(msg)
+
+        result.append(summary_msg)
+        # Need a dummy assistant response after summary to maintain valid message format
+        result.append({"role": "assistant", "content": [{"type": "text", "text": "Understood, continuing with the task."}]})
+        result.extend(recent_messages)
+
+        before_tokens = self._estimate_tokens(messages)
+        after_tokens = self._estimate_tokens(result)
+        logger.info(
+            f"[MessageHistory] Summarized {before_tokens} -> {after_tokens} tokens "
+            f"({(1 - after_tokens / max(before_tokens, 1)) * 100:.1f}% reduction, "
+            f"{'full' if include_summaries else 'progressive'} compression)"
+        )
+
+        return result
+
+    def _fallback_truncate(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Fallback compression when LLM is not available.
+
+        Keeps recent messages and aggressively truncates old tool results.
         """
         import copy
 
-        compressed = []
-        completed_summaries = []
+        if len(messages) <= self.keep_recent * 2 + 1:
+            return messages
 
+        # Find split point
+        pair_count = 0
+        split_idx = len(messages)
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "assistant":
+                pair_count += 1
+                if pair_count >= self.keep_recent:
+                    split_idx = i
+                    break
+
+        # Keep recent messages intact, heavily truncate old ones
+        result = []
         for i, msg in enumerate(messages):
-            role = msg.get("role", "")
-            content = msg.get("content", "")
+            if i >= split_idx:
+                result.append(msg)
+            else:
+                role = msg.get("role", "")
+                content = msg.get("content")
+                if role == "assistant" and isinstance(content, list):
+                    # Keep only text blocks
+                    text_only = [b for b in content if isinstance(b, dict) and b.get("type") == "text"]
+                    if text_only:
+                        result.append({"role": "assistant", "content": text_only})
+                # Skip old user/tool_result messages entirely
 
-            # Always keep system messages
-            if role == "system":
-                compressed.append(copy.deepcopy(msg))
-                continue
-
-            # Check if this is a plan summary message
-            if isinstance(content, str) and "## Current Task Plan" in content:
-                # Only keep the most recent plan summary
-                if i == len(messages) - 1 or not any(
-                    "## Current Task Plan" in str(m.get("content", ""))
-                    for m in messages[i+1:]
-                ):
-                    compressed.append(copy.deepcopy(msg))
-                continue
-
-            # Check if this is tool result from current subtask
-            if role == "user" and isinstance(content, list):
-                # This is likely tool results - check if recent
-                is_recent = i >= len(messages) - 4  # Keep last few exchanges
-                if is_recent:
-                    compressed.append(copy.deepcopy(msg))
-                else:
-                    # Compress older tool results
-                    compressed_msg = copy.deepcopy(msg)
-                    for item in compressed_msg.get("content", []):
-                        if isinstance(item, dict) and item.get("type") == "tool_result":
-                            original = item.get("content", "")
-                            if isinstance(original, str) and len(original) > 500:
-                                item["content"] = self._truncate_tool_result(original)
-                    compressed.append(compressed_msg)
-                continue
-
-            # Keep assistant messages (they're usually smaller)
-            compressed.append(copy.deepcopy(msg))
-
-        # Add completed summaries if any
-        if completed_summaries:
-            summary_msg = {
-                "role": "system",
-                "content": "## Completed Subtasks Summary\n" + "\n".join(completed_summaries)
-            }
-            # Insert after first system message
-            insert_idx = 1 if compressed and compressed[0].get("role") == "system" else 0
-            compressed.insert(insert_idx, summary_msg)
-
-        before_tokens = self._estimate_tokens(messages)
-        after_tokens = self._estimate_tokens(compressed)
-        logger.info(
-            f"[MessageHistoryManager] Compressed {before_tokens} -> {after_tokens} tokens "
-            f"({(1 - after_tokens/before_tokens)*100:.1f}% reduction)"
-        )
-
-        return compressed
-
-    def _truncate_tool_result(self, content: str, max_length: int = 500) -> str:
-        """Truncate long tool results.
-
-        Args:
-            content: Original tool result content.
-            max_length: Maximum length to keep.
-
-        Returns:
-            Truncated content.
-        """
-        if len(content) <= max_length:
-            return content
-        return content[:max_length] + f"\n...[truncated from {len(content)} chars]"
-
-    def _summarize_subtask_messages(
-        self,
-        subtask_id: str,
-        result: Optional[str],
-    ) -> str:
-        """Create brief summary of completed subtask.
-
-        Args:
-            subtask_id: The subtask ID.
-            result: The result string.
-
-        Returns:
-            Summary line.
-        """
-        result_preview = result[:100] if result else "completed"
-        return f"- Subtask {subtask_id}: {result_preview}"
-
-
-class SnapshotManager:
-    """Manages periodic snapshots for very long tasks.
-
-    For tasks with many subtasks, this manager creates periodic snapshots
-    of progress and allows cleaning old message history while preserving
-    a summary of what was accomplished.
-
-    Based on docs/task-planning-system.md lines 730-766.
-    """
-
-    def __init__(self, snapshot_interval: int = 10):
-        """Initialize SnapshotManager.
-
-        Args:
-            snapshot_interval: Create snapshot every N completed subtasks.
-        """
-        self.snapshot_interval = snapshot_interval
-        self.snapshots: List[Dict[str, Any]] = []
-        self._last_snapshot_count = 0
-
-    def maybe_create_snapshot(
-        self,
-        orchestrator: "TaskOrchestrator",
-    ) -> bool:
-        """Create snapshot if enough subtasks completed.
-
-        Args:
-            orchestrator: The TaskOrchestrator instance.
-
-        Returns:
-            True if a snapshot was created.
-        """
-        completed_count = len(orchestrator.completed_tasks)
-
-        # Check if we've passed another interval
-        if completed_count > 0 and completed_count >= self._last_snapshot_count + self.snapshot_interval:
-            snapshot = {
-                "timestamp": datetime.now().isoformat(),
-                "completed_subtasks": list(orchestrator.completed_tasks),
-                "results": {
-                    tid: str(orchestrator.subtasks[tid].result)[:200]
-                    for tid in orchestrator.completed_tasks
-                    if orchestrator.subtasks.get(tid)
-                },
-                "failed_subtasks": list(orchestrator.failed_tasks),
-            }
-            self.snapshots.append(snapshot)
-            self._last_snapshot_count = completed_count
-
-            logger.info(
-                f"[SnapshotManager] Created snapshot #{len(self.snapshots)} "
-                f"with {completed_count} completed tasks"
-            )
-            return True
-
-        return False
-
-    def get_context_from_snapshots(self) -> str:
-        """Get compressed context from all snapshots.
-
-        Returns:
-            Summary string of all snapshots, or empty if none.
-        """
-        if not self.snapshots:
-            return ""
-
-        lines = ["## Previous Progress (from snapshots)"]
-        for i, snapshot in enumerate(self.snapshots, 1):
-            completed = len(snapshot.get("completed_subtasks", []))
-            failed = len(snapshot.get("failed_subtasks", []))
-            lines.append(f"- Snapshot {i}: {completed} completed, {failed} failed")
-
-            # Add key results if any
-            results = snapshot.get("results", {})
-            if results:
-                for tid, result in list(results.items())[:3]:  # Show up to 3 results
-                    lines.append(f"  - {tid}: {result[:50]}...")
-
-        return "\n".join(lines)
-
-    def should_reset_history(self) -> bool:
-        """Check if message history should be reset after snapshot.
-
-        Returns:
-            True if a new snapshot was just created.
-        """
-        return len(self.snapshots) > 0 and self._last_snapshot_count > 0
+        logger.info(f"[MessageHistory] Fallback truncation: {len(messages)} -> {len(result)} messages")
+        return result

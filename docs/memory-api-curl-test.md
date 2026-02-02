@@ -4,7 +4,7 @@
 
 ```bash
 # API 地址
-API_BASE="http://localhost:8000"
+API_BASE="http://localhost:9000"
 
 # API Key (替换成你的实际 key)
 API_KEY="your-api-key-here"
@@ -82,12 +82,19 @@ curl -X POST "$API_BASE/api/v1/memory/add" \
 
 ---
 
-## 2. 查询 Memory (V2 - 统一查询接口)
+## 2. 查询 Memory (统一查询接口)
 
-### 2.1 任务查询 (Task Query) - 默认
+**端点**: `POST /api/v1/memory/query`
+
+查询类型自动推断：
+- 提供 `target` → 任务查询 (Task)
+- 提供 `start_state` + `end_state` → 导航查询 (Navigation)
+- 提供 `current_state` → 动作查询 (Action)
+
+### 2.1 任务查询 (Task Query)
 
 ```bash
-curl -X POST "$API_BASE/api/v1/memory/v2/query" \
+curl -X POST "$API_BASE/api/v1/memory/query" \
   -H "Content-Type: application/json" \
   -H "X-Ami-API-Key: $API_KEY" \
   -d '{
@@ -97,11 +104,11 @@ curl -X POST "$API_BASE/api/v1/memory/v2/query" \
   }'
 ```
 
-### 2.2 导航查询 (Navigation Query) - 查找路径
+### 2.2 导航查询 (Navigation Query)
 
 ```bash
 # 使用描述
-curl -X POST "$API_BASE/api/v1/memory/v2/query" \
+curl -X POST "$API_BASE/api/v1/memory/query" \
   -H "Content-Type: application/json" \
   -H "X-Ami-API-Key: $API_KEY" \
   -d '{
@@ -111,7 +118,7 @@ curl -X POST "$API_BASE/api/v1/memory/v2/query" \
   }'
 
 # 使用 state_id
-curl -X POST "$API_BASE/api/v1/memory/v2/query" \
+curl -X POST "$API_BASE/api/v1/memory/query" \
   -H "Content-Type: application/json" \
   -H "X-Ami-API-Key: $API_KEY" \
   -d '{
@@ -121,26 +128,36 @@ curl -X POST "$API_BASE/api/v1/memory/v2/query" \
   }'
 ```
 
-### 2.3 动作查询 (Action Query) - 查找可用操作
+### 2.3 动作查询 (Action Query) - 通过 URL 查询页面操作
 
 ```bash
-# 查找当前页面的操作
-curl -X POST "$API_BASE/api/v1/memory/v2/query" \
+# 通过 URL 查询（Agent 使用场景）
+curl -X POST "$API_BASE/api/v1/memory/query" \
   -H "Content-Type: application/json" \
   -H "X-Ami-API-Key: $API_KEY" \
   -d '{
-    "target": "搜索",
-    "current_state": "state_abc123",
+    "current_state": "https://www.producthunt.com/",
+    "target": "",
     "user_id": "user123"
   }'
 
-# 探索当前页面 (target 为空)
-curl -X POST "$API_BASE/api/v1/memory/v2/query" \
+# 通过 state_id 查询
+curl -X POST "$API_BASE/api/v1/memory/query" \
   -H "Content-Type: application/json" \
   -H "X-Ami-API-Key: $API_KEY" \
   -d '{
-    "target": "",
     "current_state": "state_abc123",
+    "target": "",
+    "user_id": "user123"
+  }'
+
+# 查找特定操作
+curl -X POST "$API_BASE/api/v1/memory/query" \
+  -H "Content-Type: application/json" \
+  -H "X-Ami-API-Key: $API_KEY" \
+  -d '{
+    "current_state": "https://www.producthunt.com/",
+    "target": "搜索",
     "user_id": "user123"
   }'
 ```
@@ -148,7 +165,7 @@ curl -X POST "$API_BASE/api/v1/memory/v2/query" \
 ### 2.4 指定查询类型
 
 ```bash
-curl -X POST "$API_BASE/api/v1/memory/v2/query" \
+curl -X POST "$API_BASE/api/v1/memory/query" \
   -H "Content-Type: application/json" \
   -H "X-Ami-API-Key: $API_KEY" \
   -d '{
@@ -198,7 +215,14 @@ curl -X POST "$API_BASE/api/v1/memory/v2/query" \
     {
       "id": "seq_xxx",
       "description": "点击搜索按钮",
-      "intents": [...]
+      "intents": [
+        {
+          "type": "click",
+          "element_role": "button",
+          "text": "Search"
+        }
+      ],
+      "causes_navigation": false
     }
   ],
   "outgoing_actions": [...],
@@ -208,7 +232,54 @@ curl -X POST "$API_BASE/api/v1/memory/v2/query" \
 
 ---
 
-## 3. 获取 Memory 统计
+## 3. 通过 URL 查询 State 和 IntentSequences
+
+**端点**: `POST /api/v1/memory/state`
+
+专门用于通过 URL 查询对应的 State 和其关联的 IntentSequences。
+
+```bash
+curl -X POST "$API_BASE/api/v1/memory/state" \
+  -H "Content-Type: application/json" \
+  -H "X-Ami-API-Key: $API_KEY" \
+  -d '{
+    "user_id": "user123",
+    "url": "https://www.producthunt.com/"
+  }'
+```
+
+### 返回示例
+
+```json
+{
+  "success": true,
+  "state": {
+    "id": "state_xxx",
+    "description": "Product Hunt 首页",
+    "page_url": "https://www.producthunt.com/",
+    "page_title": "Product Hunt – The best new products in tech."
+  },
+  "intent_sequences": [
+    {
+      "id": "seq_xxx",
+      "description": "点击 Launches 链接",
+      "intents": [
+        {
+          "type": "click",
+          "element_role": "link",
+          "text": "Launches"
+        }
+      ],
+      "causes_navigation": true,
+      "navigation_target_state_id": "state_yyy"
+    }
+  ]
+}
+```
+
+---
+
+## 4. 获取 Memory 统计
 
 ```bash
 curl -X GET "$API_BASE/api/v1/memory/stats?user_id=$USER_ID" \
@@ -234,34 +305,70 @@ curl -X GET "$API_BASE/api/v1/memory/stats?user_id=$USER_ID" \
 
 ---
 
-## 完整测试流程
+## 5. 清除 Memory
 
 ```bash
-# 1. 添加数据
-curl -X POST "$API_BASE/api/v1/memory/add" \
+curl -X POST "$API_BASE/api/v1/memory/clear" \
   -H "Content-Type: application/json" \
   -H "X-Ami-API-Key: $API_KEY" \
   -d '{
     "user_id": "user123",
-    "session_id": "test_session",
-    "operations": [
-      {"action": "goto", "url": "https://producthunt.com", "timestamp": 1706500000000},
-      {"action": "click", "selector": "#search", "timestamp": 1706500001000},
-      {"action": "goto", "url": "https://producthunt.com/posts/1", "timestamp": 1706500002000}
-    ]
+    "delete_all": true
   }'
+```
 
-# 2. 查看统计
-curl -X GET "$API_BASE/api/v1/memory/stats?user_id=user123" \
+### 返回示例
+
+```json
+{
+  "success": true,
+  "deleted_states": 10,
+  "deleted_domains": 2,
+  "deleted_phrases": 5,
+  "deleted_sequences": 25
+}
+```
+
+---
+
+## 完整测试流程
+
+```bash
+# 设置环境变量
+API_BASE="http://localhost:9000"
+API_KEY="your-api-key"
+USER_ID="user123"
+
+# 1. 查看统计
+curl -X GET "$API_BASE/api/v1/memory/stats?user_id=$USER_ID" \
   -H "X-Ami-API-Key: $API_KEY"
 
-# 3. 任务查询
-curl -X POST "$API_BASE/api/v1/memory/v2/query" \
+# 2. 任务查询
+curl -X POST "$API_BASE/api/v1/memory/query" \
   -H "Content-Type: application/json" \
   -H "X-Ami-API-Key: $API_KEY" \
   -d '{
     "target": "在 Product Hunt 搜索内容",
-    "user_id": "user123"
+    "user_id": "'"$USER_ID"'"
+  }'
+
+# 3. 通过 URL 查询页面操作（Agent 场景）
+curl -X POST "$API_BASE/api/v1/memory/query" \
+  -H "Content-Type: application/json" \
+  -H "X-Ami-API-Key: $API_KEY" \
+  -d '{
+    "current_state": "https://www.producthunt.com/",
+    "target": "",
+    "user_id": "'"$USER_ID"'"
+  }'
+
+# 4. 查询 State 详情
+curl -X POST "$API_BASE/api/v1/memory/state" \
+  -H "Content-Type: application/json" \
+  -H "X-Ami-API-Key: $API_KEY" \
+  -d '{
+    "url": "https://www.producthunt.com/",
+    "user_id": "'"$USER_ID"'"
   }'
 ```
 
@@ -272,6 +379,6 @@ curl -X POST "$API_BASE/api/v1/memory/v2/query" \
 | 状态码 | 说明 |
 |--------|------|
 | 400 | 缺少必要参数 |
-| 404 | Recording 不存在 |
+| 404 | Recording/State 不存在 |
 | 500 | 服务器内部错误 |
 | 503 | Memory 服务未初始化 |

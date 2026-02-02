@@ -2765,20 +2765,6 @@
   cursor: text;
 }
 
-.task-decomposition-panel .subtask-agent {
-  flex-shrink: 0;
-}
-
-.task-decomposition-panel .agent-select {
-  padding: 6px 10px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  background: var(--bg-surface);
-  color: var(--text-primary);
-  font-size: 12px;
-  cursor: pointer;
-}
-
 .task-decomposition-panel .subtask-actions {
   display: flex;
   gap: 4px;

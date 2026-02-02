@@ -20,6 +20,7 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import MessageList from './MessageList';
 import BottomBox from './BottomBox';
+import { WorkforceStatusPanel } from '../Workforce';
 import './ChatBox.css';
 
 /**
@@ -43,31 +44,56 @@ function formatElapsedTime(elapsed, taskTime) {
 
 /**
  * Map task status to BottomBox state
+ *
+ * State priority (Eigent pattern):
+ * 1. splitting - Task is being decomposed (streamingDecomposeText active)
+ * 2. confirm - Task decomposed, waiting for user confirmation (showDecomposition=true)
+ * 3. running - Task is executing
+ * 4. waiting/hasWaitConfirm - Waiting for user input after simple answer
+ * 5. finished - Task completed, can continue conversation
+ * 6. input - Default state
  */
 function getBottomBoxState(task) {
   if (!task) return 'input';
 
-  // Task status mapping - check terminal states first
+  // If decomposing tasks (streaming text active) - highest priority
+  if (task.streamingDecomposeText || task.status === 'decomposing') {
+    return 'splitting';
+  }
+
+  // Eigent pattern: If showDecomposition is true, show confirm UI
+  if (task.showDecomposition && task.taskInfo?.length > 0) {
+    return 'confirm';
+  }
+
+  // Task status mapping
   switch (task.status) {
-    case 'finished':
-    case 'completed':
     case 'failed':
     case 'cancelled':
+      // Failed/cancelled tasks show finished state (no input allowed)
       return 'finished';
     case 'running':
       return 'running';
     case 'pause':
       return 'running'; // Keep running UI, just change pause button state
+    case 'waiting':
+      // Eigent pattern: waiting for user input after wait_confirm
+      return 'input';
+    case 'finished':
+    case 'completed':
+      // Eigent pattern: finished tasks can still accept input for multi-turn
+      // Check if task was manually stopped (no natural 'end' message)
+      const wasTaskStopped = !task.messages?.some(m => m.step === 'end');
+      if (wasTaskStopped) {
+        return 'finished';  // Manually stopped, no more input
+      }
+      // Natural completion - allow continued conversation
+      return 'input';
   }
 
-  // If decomposing tasks
-  if (task.streamingDecomposeText || task.status === 'decomposing') {
-    return 'splitting';
-  }
-
-  // If waiting for confirmation (only in pending/waiting states)
-  if (task.taskInfo?.length > 0 && task.status === 'waiting_confirmation') {
-    return 'confirm';
+  // Eigent pattern: If hasWaitConfirm is true, allow input for multi-turn
+  if (task.hasWaitConfirm) {
+    return 'input';
   }
 
   return 'input';
@@ -179,9 +205,10 @@ function ChatBox({
   }, [task?.taskInfo]);
 
   // Determine if input should be disabled
+  // Eigent pattern: Allow input during 'running' state for multi-turn conversation
+  // Only disable during 'splitting' (task decomposition in progress)
   const isInputDisabled = disabled || isLoading ||
-    bottomBoxState === 'splitting' ||
-    bottomBoxState === 'running';
+    bottomBoxState === 'splitting';
 
   // Calculate token count
   const tokens = task?.tokens || 0;
@@ -215,6 +242,12 @@ function ChatBox({
 
   return (
     <div className="chat-box">
+      {/* Workforce Status Panel - shows when workforce is active */}
+      <WorkforceStatusPanel
+        workforce={task?.workforce}
+        subtaskAssignments={task?.subtaskAssignments}
+      />
+
       {/* Message List with inline TaskCard (Eigent pattern) */}
       <MessageList
         messages={messages}

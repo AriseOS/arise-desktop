@@ -171,6 +171,10 @@ function MessageList({
                 taskType={taskType}
                 showToolkits={false}
                 editable={task.isTaskEdit}
+                subtaskAssignments={task.subtaskAssignments || {}}
+                decompositionProgress={task.decompositionProgress || 0}
+                decompositionMessage={task.decompositionMessage || ''}
+                decompositionStatus={task.decompositionStatus || 'pending'}
               />
             </div>
           )}

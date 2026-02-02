@@ -15,7 +15,6 @@ This agent:
 """
 
 import asyncio
-import copy
 import json
 import logging
 import platform
@@ -38,7 +37,6 @@ from ..tools.toolkits import (
     HumanToolkit,
     BrowserToolkit,
     MemoryToolkit,
-    TaskPlanningToolkit,
 )
 from ..core.task_orchestrator import TaskOrchestrator, OrchestratorConfig, SubTaskState
 from ..workspace import get_working_directory, get_current_manager
@@ -334,23 +332,24 @@ successful workflows. This is a REFERENCE, not a script.
 <batch_processing>
 ## Efficient Batch Processing
 
-When dealing with multiple items (e.g., a list of products on a leaderboard):
+When dealing with multiple items (e.g., a list of products, search results, entries):
 
-### Strategy 1: Extract All Items First
-1. Use `browser_get_page_snapshot(include_url=True)` to see all items on the page
-2. The snapshot shows all links with [ref=eN] markers
-3. Plan which items to process before clicking into each one
+### Step 1: Extract All Items with URLs
+1. Call `browser_get_page_snapshot(include_links=True)` to get all links on the page
+2. Save the full link list to a note with `create_note` — this is your index for later
+3. Scroll down and repeat if the page has more items below the fold
 
-### Strategy 2: Use Replan for Dynamic Discovery
-When you discover multiple items to process:
-1. Call `replan_task` to create a subtask for EACH item
-2. This ensures systematic tracking and prevents loops
-3. Complete each subtask with `complete_subtask` when done
+### Step 2: Replan with URLs in Subtask Content
+When creating subtasks for each item, **always include the URL** in the subtask content:
+- GOOD: `"Visit DataFast detail page (https://producthunt.com/products/datafast), extract team info"`
+- BAD: `"Visit DataFast detail page, extract team info"`
+This way you can navigate directly without going back to the list page.
 
-### Avoid Common Mistakes
-- DON'T process items one-by-one without tracking
-- DON'T forget which items you've already processed
-- DO use the task planning tools to track progress
+### Step 3: Process Each Item Efficiently
+- Use `browser_visit_page(url)` to go directly to each item — do NOT navigate back to the list page to click
+- Extract the information you need from the current page
+- If you only need names/text visible on the page, read them from the snapshot — do NOT click into sub-pages unnecessarily
+- Save findings to notes with `append_note`, then call `complete_subtask`
 </batch_processing>
 
 <web_search_workflow>
@@ -443,8 +442,11 @@ class EigentStyleBrowserAgent(BaseStepAgent):
         # LLM Provider (from common/llm module)
         self._llm_provider: Optional[AnthropicProvider] = None
 
-        # Browser session
+        # Browser session configuration
         self._session: Optional[HybridBrowserSession] = None
+        self._session_id: str = "default"
+        self._headless: bool = False
+        self._browser_data_dir: Optional[str] = None
 
         # Toolkits (initialized in execute)
         self._note_toolkit: Optional[NoteTakingToolkit] = None
@@ -488,6 +490,17 @@ class EigentStyleBrowserAgent(BaseStepAgent):
         # Workflow guide content (from CognitivePhrase or Path)
         # Stored for injection into each LLM call
         self._workflow_guide_content: Optional[str] = None
+
+        # IntentSequence cache for page operations
+        # Cached when LLM calls query_page_operations, cleared on URL change
+        self._cached_page_operations: Optional[str] = None
+        self._cached_page_operations_url: Optional[str] = None
+
+        # Memory query results: global path and subtask mappings
+        self._global_path_states: List[Any] = []  # L2 global path states
+        self._global_path_actions: List[Any] = []  # L2 global path actions
+        self._subtask_target_states: Dict[str, Any] = {}  # task_id -> target State
+        self._subtask_plan: List[Dict[str, Any]] = []  # Subtask plan from memory
 
     def set_progress_callback(self, callback: Callable):
         """Set callback for progress updates."""
@@ -552,10 +565,6 @@ class EigentStyleBrowserAgent(BaseStepAgent):
 
     async def _notify_progress(self, event: str, data: Dict[str, Any]):
         """Notify progress to callback if set."""
-        # Debug: Log callback status for key events
-        if event in ("llm_reasoning", "agent_started", "agent_completed"):
-            logger.info(f"[_notify_progress] event={event}, callback_set={self._progress_callback is not None}")
-
         if self._progress_callback:
             try:
                 if asyncio.iscoroutinefunction(self._progress_callback):
@@ -703,7 +712,9 @@ Remember: This is a GUIDE. Adapt to your actual task goal.
             message_callback=self._human_message_callback,
         )
         self._browser_toolkit = BrowserToolkit(
-            session=self._session,
+            session_id=self._session_id,
+            headless=self._headless,
+            user_data_dir=self._browser_data_dir,
             return_snapshot=True,
         )
 
@@ -719,30 +730,8 @@ Remember: This is a GUIDE. Adapt to your actual task goal.
             self._memory_toolkit = None
             logger.info("MemoryToolkit not configured (missing api_base_url, api_key, or user_id)")
 
-        # Initialize TaskOrchestrator for task management (single-agent mode)
-        # This handles task decomposition, state tracking, and SSE events
-        # Note: Pass _sse_emitter from TaskState, not TaskState itself
-        sse_emitter = None
-        if self._task_state and hasattr(self._task_state, '_sse_emitter'):
-            sse_emitter = self._task_state._sse_emitter
-        self._task_orchestrator = TaskOrchestrator(
-            task_id=task_id,
-            emitter=sse_emitter,
-            llm_client=self._llm_provider if hasattr(self, '_llm_provider') else None,
-            config=OrchestratorConfig(
-                single_agent_mode=True,
-                max_retries_per_subtask=3,
-            ),
-        )
-        logger.info(f"TaskOrchestrator initialized for task {task_id}")
-
-        # Initialize TaskPlanningToolkit as interface to TaskOrchestrator
-        # This provides LLM-callable tools: complete_subtask, replan_task, etc.
-        self._task_planning_toolkit = TaskPlanningToolkit(
-            orchestrator=self._task_orchestrator,
-            task_id=task_id,
-        )
-        logger.info("TaskPlanningToolkit initialized with orchestrator")
+        # Note: TaskPlanningToolkit removed - task decomposition moved to Workforce layer
+        # See AMIWorkforce for task decomposition functionality
 
         # Collect all tools
         self._tools = [
@@ -751,7 +740,6 @@ Remember: This is a GUIDE. Adapt to your actual task goal.
             *self._terminal_toolkit.get_tools(),
             *self._human_toolkit.get_tools(),
             *self._browser_toolkit.get_tools(),
-            *self._task_planning_toolkit.get_tools(),  # Task planning tools
         ]
 
         # Add memory tools if available
@@ -774,14 +762,13 @@ Remember: This is a GUIDE. Adapt to your actual task goal.
                 self._human_toolkit,
                 self._browser_toolkit,
                 self._memory_toolkit,
-                self._task_planning_toolkit,  # Include task planning toolkit
             ]
             for toolkit in all_toolkits:
                 if toolkit and hasattr(toolkit, 'set_task_state'):
                     toolkit.set_task_state(self._task_state)
             logger.info("Task state propagated to all toolkits for event emission")
 
-        toolkit_count = 7 if self._memory_toolkit else 6  # +1 for task planning
+        toolkit_count = 6 if self._memory_toolkit else 5
         logger.info(f"Initialized {len(self._tools)} tools from {toolkit_count} toolkits")
 
     def _build_tools_schema(self) -> List[Dict[str, Any]]:
@@ -796,123 +783,6 @@ Remember: This is a GUIDE. Adapt to your actual task goal.
             working_directory=_get_working_dir(),
             current_date=datetime.now().strftime("%Y-%m-%d"),
         )
-
-    def _clean_snapshot_content(self, content: str) -> str:
-        """Clean snapshot content by removing interactive element markers.
-
-        This removes [ref=eXX] markers and simplifies element descriptions
-        since historical snapshots are for context only, not interaction.
-
-        Args:
-            content: The original snapshot content.
-
-        Returns:
-            Cleaned content with markers removed.
-        """
-        if not content:
-            return content
-
-        # Remove [ref=eXX] markers - they're only useful for current snapshot
-        cleaned = re.sub(r'\[ref=e\d+\]', '', content)
-
-        # Remove excessive whitespace that results from cleaning
-        cleaned = re.sub(r' +', ' ', cleaned)
-        cleaned = re.sub(r'\n\s*\n\s*\n', '\n\n', cleaned)
-
-        return cleaned.strip()
-
-    def _clean_tool_result_content(self, content: str) -> str:
-        """Clean a tool result string, removing snapshot data if present.
-
-        Browser tool results typically have format:
-        "Some status message\n\n[snapshot content with refs]"
-
-        We keep the status message but clean or truncate the snapshot.
-
-        Args:
-            content: The tool result string.
-
-        Returns:
-            Cleaned content.
-        """
-        if not content:
-            return content
-
-        # Check if this looks like a browser tool result with snapshot
-        # Snapshots typically contain [ref=eXX] markers or element descriptions
-        if '[ref=e' not in content and '- link ' not in content and '- button ' not in content:
-            # Not a browser snapshot, return as-is (but truncate if very long)
-            if len(content) > 5000:
-                return content[:5000] + f"\n... [truncated, total {len(content)} chars]"
-            return content
-
-        # Split into status message and snapshot
-        parts = content.split('\n\n', 1)
-        if len(parts) == 1:
-            # No clear separator, just clean the whole thing
-            return self._clean_snapshot_content(content)
-
-        status_msg = parts[0]
-        snapshot = parts[1] if len(parts) > 1 else ""
-
-        # For historical snapshots, provide a summary instead of full content
-        # Count interactive elements as a rough indicator
-        ref_count = len(re.findall(r'\[ref=e\d+\]', snapshot))
-
-        if ref_count > 0:
-            # This is a snapshot - replace with summary
-            cleaned_summary = f"[Previous page snapshot: {ref_count} interactive elements - details cleaned to save context]"
-            return f"{status_msg}\n\n{cleaned_summary}"
-        else:
-            # Clean but keep the content
-            cleaned = self._clean_snapshot_content(snapshot)
-            if len(cleaned) > 2000:
-                cleaned = cleaned[:2000] + f"\n... [truncated]"
-            return f"{status_msg}\n\n{cleaned}"
-
-    def _clean_historical_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Clean historical messages by removing old snapshot data.
-
-        This preserves:
-        - The most recent tool results (last user message) - kept intact
-        - Status messages from all tool results
-        - Summary of what pages were visited
-
-        This removes/cleans:
-        - Full snapshot content from older messages
-        - [ref=eXX] markers from historical snapshots
-
-        Args:
-            messages: The full message history.
-
-        Returns:
-            Cleaned message history for LLM consumption.
-        """
-        if len(messages) <= 2:
-            # Only initial message or one round - nothing to clean
-            return messages
-
-        # Deep copy to avoid modifying original
-        cleaned_messages = copy.deepcopy(messages)
-
-        # Clean all but the last user message (which contains current tool results)
-        for i, msg in enumerate(cleaned_messages[:-1]):
-            if msg.get("role") == "user":
-                content = msg.get("content")
-
-                # Handle tool_result format (list of tool results)
-                if isinstance(content, list):
-                    for item in content:
-                        if isinstance(item, dict) and item.get("type") == "tool_result":
-                            original_content = item.get("content", "")
-                            if isinstance(original_content, str):
-                                item["content"] = self._clean_tool_result_content(original_content)
-
-                # Handle plain string content (less common)
-                elif isinstance(content, str):
-                    msg["content"] = self._clean_tool_result_content(content)
-
-        return cleaned_messages
 
     def _estimate_message_size(self, messages: List[Dict[str, Any]]) -> int:
         """Roughly estimate the character count of messages for logging."""
@@ -929,41 +799,20 @@ Remember: This is a GUIDE. Adapt to your actual task goal.
         return total
 
     async def _call_llm(self) -> ToolCallResponse:
-        """Call LLM with tools using AnthropicProvider.
-
-        Uses the common/llm module's AnthropicProvider which handles
-        async wrapping internally via asyncio.to_thread().
-
-        Before sending to LLM, cleans historical snapshots to reduce token usage.
-        """
-        logger.info("[_call_llm] Building system prompt...")
+        """Call LLM with tools using AnthropicProvider."""
         system_prompt = self._build_system_prompt()
-
-        logger.info("[_call_llm] Building tools schema...")
         tools_schema = self._build_tools_schema()
-        logger.info(f"[_call_llm] Tools schema count: {len(tools_schema)}")
 
-        # Clean historical messages to reduce token count
-        # This removes old snapshot content while preserving context
-        logger.info("[_call_llm] Estimating message size...")
-        original_size = self._estimate_message_size(self._messages)
-        logger.info("[_call_llm] Cleaning historical messages...")
-        cleaned_messages = self._clean_historical_messages(self._messages)
-        cleaned_size = self._estimate_message_size(cleaned_messages)
+        msg_size = self._estimate_message_size(self._messages)
+        logger.info(f"[_call_llm] msgs={len(self._messages)}, tools={len(tools_schema)}, size={msg_size:,}")
 
-        if original_size != cleaned_size:
-            reduction = original_size - cleaned_size
-            reduction_pct = (reduction / original_size * 100) if original_size > 0 else 0
-            logger.info(f"[Snapshot Clean] Reduced message size: {original_size:,} -> {cleaned_size:,} chars ({reduction_pct:.1f}% reduction)")
-
-        logger.info(f"[_call_llm] Calling LLM with {len(cleaned_messages)} messages...")
         response = await self._llm_provider.generate_with_tools(
             system_prompt=system_prompt,
-            messages=cleaned_messages,
+            messages=self._messages,
             tools=tools_schema,
             max_tokens=4096,
         )
-        logger.info("[_call_llm] LLM call completed successfully")
+        logger.debug("[_call_llm] LLM call completed")
 
         return response
 
@@ -976,6 +825,9 @@ Remember: This is a GUIDE. Adapt to your actual task goal.
 
         Uses set_process_task context manager to track tool execution
         for @listen_toolkit event emission.
+
+        Special handling for query_page_operations: caches result for
+        subsequent loops until URL changes.
         """
         tool = self._tool_map.get(tool_name)
         if not tool:
@@ -1001,6 +853,18 @@ Remember: This is a GUIDE. Adapt to your actual task goal.
                     result = tool.func(**tool_input)
 
             result_str = str(result) if result is not None else "(no output)"
+
+            # Cache query_page_operations result for subsequent loops
+            if tool_name == "query_page_operations" and result_str:
+                url = tool_input.get("url", "")
+                if url and result_str != "(no output)":
+                    self._cached_page_operations = result_str
+                    self._cached_page_operations_url = url
+                    logger.info(f"[Memory Cache] Cached page operations for {url[:60]}...")
+                else:
+                    # No results found, clear cache
+                    self._cached_page_operations = None
+                    self._cached_page_operations_url = None
 
             # Notify tool execution complete
             await self._notify_progress("tool_completed", {
@@ -1424,7 +1288,6 @@ If you need navigation help, check the `workflow_guide` note.
         # Build the injection content: plan summary + workflow hints
         workflow_hint_section = ""
         if self._workflow_guide_content:
-            logger.info(f"[Agent Loop] Injecting workflow hints ({len(self._workflow_guide_content)} chars)")
             workflow_hint_section = f"""
 
 ## Workflow Guide (Navigation Reference)
@@ -1478,6 +1341,77 @@ Example:
                     if "## Current Task Plan" not in content:
                         msg["content"] = f"{content}{injection_text}"
                         logger.debug(f"Appended plan summary and workflow hints to user message")
+
+                break  # Only modify the last user message
+
+    async def _check_and_inject_page_operations_cache(self) -> None:
+        """Check URL change and manage page operations cache.
+
+        This method:
+        1. Gets current page URL from browser
+        2. If URL changed from cached URL, clears the cache
+        3. If cache exists and URL matches, injects cached content into messages
+        """
+        if not self._browser_toolkit:
+            return
+
+        # Get current URL
+        try:
+            page = await self._browser_toolkit._session.get_page()
+            current_url = page.url
+        except Exception as e:
+            logger.debug(f"[Memory Cache] Could not get current URL: {e}")
+            return
+
+        # Check if URL changed
+        if self._cached_page_operations_url and current_url != self._cached_page_operations_url:
+            logger.info(
+                f"[Memory Cache] URL changed from {self._cached_page_operations_url[:50]}... "
+                f"to {current_url[:50]}..., clearing cache"
+            )
+            self._cached_page_operations = None
+            self._cached_page_operations_url = None
+            return
+
+        # If cache exists and URL matches, inject into messages
+        if self._cached_page_operations and self._cached_page_operations_url == current_url:
+            self._inject_page_operations_to_messages(self._cached_page_operations)
+
+    def _inject_page_operations_to_messages(self, page_operations: str) -> None:
+        """Inject cached page operations into the last user message.
+
+        Args:
+            page_operations: Formatted page operations string.
+        """
+        if not self._messages or len(self._messages) < 2:
+            return
+
+        injection_text = f"\n\n---\n## Cached Page Operations (from previous query)\n{page_operations}"
+
+        # Find the last user message
+        for i in range(len(self._messages) - 1, -1, -1):
+            msg = self._messages[i]
+            if msg.get("role") == "user":
+                content = msg.get("content", "")
+
+                # If it's a list (tool_result), append as text block
+                if isinstance(content, list):
+                    # Check if already injected
+                    for block in content:
+                        if isinstance(block, dict) and "Cached Page Operations" in block.get("text", ""):
+                            return  # Already injected
+                    content.append({
+                        "type": "text",
+                        "text": injection_text,
+                    })
+                    msg["content"] = content
+                    logger.debug("[Memory Cache] Injected cached page operations into tool_result message")
+
+                # If it's a string, append
+                elif isinstance(content, str):
+                    if "Cached Page Operations" not in content:
+                        msg["content"] = f"{content}{injection_text}"
+                        logger.debug("[Memory Cache] Appended cached page operations to user message")
 
                 break  # Only modify the last user message
 
@@ -1873,8 +1807,7 @@ Execute the appropriate browser action now."""
         2. Loop continues until all subtasks are done (orchestrator.all_done())
         3. Plan summary injected into context each iteration
         4. LLM calls complete_subtask() to progress through subtasks
-        5. MessageHistoryManager compresses old messages when token limit approached
-        6. SnapshotManager creates periodic snapshots for very long tasks
+        5. MessageHistoryManager prunes tool calls and summarizes when token limit approached
 
         Memory-first strategy:
         - cognitive_phrase: User-recorded complete workflow (highest value)
@@ -1889,10 +1822,10 @@ Execute the appropriate browser action now."""
         # Import memory types
         from ..tools.toolkits.memory_toolkit import MemoryToolkit
 
-        # === Initialize Message History and Snapshot Managers ===
-        from ..core.task_orchestrator import MessageHistoryManager, SnapshotManager
+        # === Initialize Message History Manager ===
+        from ..core.task_orchestrator import MessageHistoryManager
         history_manager = MessageHistoryManager(max_tokens=100000)
-        snapshot_manager = SnapshotManager(snapshot_interval=10)
+        history_manager.set_llm_provider(self._llm_provider)
 
         # === Store workflow guide as a note (before task decomposition) ===
         memory_source = "none"
@@ -2083,83 +2016,71 @@ Execute the appropriate browser action now."""
                 })
                 return f"Task completed successfully.\n\n{final_result}"
 
-            # Mark current subtask as RUNNING if not already
-            current_subtask = self._task_orchestrator.get_next_subtask()
-            if current_subtask and current_subtask.state == SubTaskState.OPEN:
-                self._task_orchestrator.mark_running(current_subtask.id)
-                logger.info(f"[Agent Loop] Started subtask {current_subtask.id}: {current_subtask.content[:50]}")
+            # Only schedule a new subtask if none is currently RUNNING
+            current_subtask = self._task_orchestrator.get_current_subtask()
+            if not current_subtask:
+                current_subtask = self._task_orchestrator.get_next_subtask()
+                if current_subtask and current_subtask.state == SubTaskState.OPEN:
+                    self._task_orchestrator.mark_running(current_subtask.id)
+                    logger.info(f"[Agent Loop] Started subtask {current_subtask.id}: {current_subtask.content[:50]}")
 
-                # === Query Memory for subtask navigation guidance ===
-                # Use Navigation Query: page_title -> subtask goal
-                if self._memory_toolkit and self._memory_toolkit.is_available() and self._browser_toolkit:
-                    try:
-                        # Get current page title as starting point
-                        page_title = await self._browser_toolkit.get_page_title()
-                        if page_title:
-                            # Query navigation path from current page to subtask goal
-                            nav_result = await self._memory_toolkit.query_navigation(
-                                start_state=page_title,
-                                end_state=current_subtask.content,
-                            )
-                            if nav_result.success and (nav_result.states or nav_result.actions):
-                                # Format and save as note
-                                nav_guide = MemoryToolkit.format_navigation_path(
-                                    nav_result.states, nav_result.actions
+                    # === Query Memory for subtask navigation guidance ===
+                    if self._memory_toolkit and self._memory_toolkit.is_available() and self._browser_toolkit:
+                        try:
+                            # Get current page URL for start_state
+                            page = await self._browser_toolkit._session.get_page()
+                            current_url = page.url if page else None
+
+                            # Get target state for this subtask from path_state_indices
+                            target_state = getattr(self, '_subtask_target_states', {}).get(current_subtask.id)
+
+                            if current_url and target_state:
+                                # Use state ID for precise navigation query
+                                nav_result = await self._memory_toolkit.query_navigation(
+                                    start_state=current_url,
+                                    end_state=target_state.id,
                                 )
-                                if nav_guide and self._note_toolkit:
-                                    # Add reference disclaimer
-                                    nav_guide = (
-                                        "## Memory Reference (参考信息)\n\n"
-                                        "以下是 Memory 中记录的相关路径，仅供参考。\n"
-                                        "页面可能已变化，前面步骤可能出错导致当前状态与预期不符。\n"
-                                        "请结合实际页面内容判断。\n\n"
-                                        + nav_guide
+                                if nav_result.success and (nav_result.states or nav_result.actions):
+                                    nav_guide = MemoryToolkit.format_navigation_path(
+                                        nav_result.states, nav_result.actions
                                     )
-                                    self._note_toolkit.create_note(
-                                        note_name="navigation_guide",
-                                        content=nav_guide,
-                                        overwrite=True,
-                                    )
-                                    logger.info(
-                                        f"[Memory] Navigation guide saved for subtask {current_subtask.id}: "
-                                        f"{len(nav_result.states)} states"
-                                    )
+                                    if nav_guide and self._note_toolkit:
+                                        nav_guide = (
+                                            "## Memory Reference (参考信息)\n\n"
+                                            "以下是 Memory 中记录的相关路径，仅供参考。\n"
+                                            "页面可能已变化，前面步骤可能出错导致当前状态与预期不符。\n"
+                                            "请结合实际页面内容判断。\n\n"
+                                            + nav_guide
+                                        )
+                                        self._note_toolkit.create_note(
+                                            note_name="navigation_guide",
+                                            content=nav_guide,
+                                            overwrite=True,
+                                        )
+                                        logger.info(
+                                            f"[Memory] Navigation guide saved for subtask {current_subtask.id}: "
+                                            f"{len(nav_result.states)} states"
+                                        )
+                                else:
+                                    logger.debug("[Memory] No navigation path found for subtask")
                             else:
-                                logger.debug(f"[Memory] No navigation path found for subtask")
-                        else:
-                            logger.debug("[Memory] No page title available, skipping navigation query")
-                    except Exception as e:
-                        logger.warning(f"[Memory] Navigation query failed: {e}")
+                                logger.debug(
+                                    f"[Memory] Skipping navigation query: "
+                                    f"current_url={bool(current_url)}, target_state={bool(target_state)}"
+                                )
+                        except Exception as e:
+                            logger.warning(f"[Memory] Navigation query failed: {e}")
 
-            # === Check if we should create a snapshot (for very long tasks) ===
-            logger.info("[Agent Loop] Checking snapshot...")
-            if snapshot_manager.maybe_create_snapshot(self._task_orchestrator):
-                # Reset message history, keep only snapshot context
-                snapshot_context = snapshot_manager.get_context_from_snapshots()
-                plan_summary = self._task_orchestrator.get_plan_summary()
-                fresh_message = f"""{snapshot_context}
+            # === Check URL change and manage page operations cache ===
+            await self._check_and_inject_page_operations_cache()
 
-{plan_summary}
-
-Continue with the current subtask. When done, call `complete_subtask()` to proceed."""
-                self._messages = [{"role": "user", "content": fresh_message}]
-                logger.info("[Agent Loop] Message history reset after snapshot")
-
-            # === Compress message history if approaching token limit ===
-            logger.info("[Agent Loop] Managing history...")
-            current_subtask_for_history = self._task_orchestrator.get_current_subtask()
-            self._messages = history_manager.manage_history(
-                self._messages,
-                current_subtask_id=current_subtask_for_history.id if current_subtask_for_history else None,
-                completed_subtask_ids=self._task_orchestrator.completed_tasks,
-            )
-            logger.info("[Agent Loop] History managed")
+            # === Manage message history (prune + summarize if needed) ===
+            self._messages = history_manager.prune_tool_calls(self._messages)
+            self._messages = await history_manager.manage_history(self._messages)
 
             # Get updated plan summary and inject into messages
-            logger.info("[Agent Loop] Injecting plan summary...")
             plan_summary = self._task_orchestrator.get_plan_summary()
             self._inject_plan_summary_to_messages(plan_summary)
-            logger.info("[Agent Loop] Plan summary injected")
 
             # Call LLM
             try:
@@ -2262,6 +2183,34 @@ Continue with the current subtask. When done, call `complete_subtask()` to proce
                 "subtasks_total": len(self._task_orchestrator.subtasks),
             })
 
+            # === Wait for user confirmation if replan occurred ===
+            if self._task_orchestrator.replan_pending_confirmation:
+                self._task_orchestrator.replan_pending_confirmation = False
+                subtask_list = [
+                    {"id": st.id, "content": st.content, "state": st.state.value}
+                    for st in self._task_orchestrator.subtasks.values()
+                    if st.state not in (SubTaskState.DELETED, SubTaskState.DONE)
+                ]
+                await self._notify_progress("subtasks_pending_confirmation", {
+                    "task": "Replan",
+                    "subtasks": subtask_list,
+                    "memory_source": "replan",
+                })
+                logger.info(f"[Agent Loop] Waiting for replan confirmation ({len(subtask_list)} subtasks)...")
+
+                if self._task_state and hasattr(self._task_state, 'wait_for_subtask_confirmation'):
+                    confirmed = await self._task_state.wait_for_subtask_confirmation(timeout=30.0)
+                    if not confirmed:
+                        logger.info("[Agent Loop] Replan confirmation cancelled, exiting")
+                        return "Task cancelled: replan not confirmed."
+
+                    edited_subtasks = self._task_state.get_confirmed_subtasks()
+                    if edited_subtasks:
+                        logger.info(f"[Agent Loop] Applying {len(edited_subtasks)} user-edited subtasks from replan")
+                        self._task_orchestrator.update_subtasks_from_confirmation(edited_subtasks)
+
+                logger.info("[Agent Loop] Replan confirmed, continuing execution")
+
         # Max steps reached
         logger.warning(f"Agent reached max steps ({self._max_steps})")
         return f"Task processing stopped after {self._max_steps} steps. Partial results may be in notes."
@@ -2330,9 +2279,15 @@ Continue with the current subtask. When done, call `complete_subtask()` to proce
             # Initialize browser session with task-specific data directory
             # Use context.browser_session_id for session sharing across workflow steps
             browser_data_dir = _get_browser_data_dir(browser_data_directory)
-            session_id = getattr(context, 'browser_session_id', None) or "default"
+            session_id = getattr(context, 'browser_session_id', None) or task_id or "default"
             logger.info(f"Using browser session_id: {session_id}")
 
+            # Store session config for toolkit (session created on-demand)
+            self._session_id = session_id
+            self._headless = headless
+            self._browser_data_dir = browser_data_dir
+
+            # Create session on-demand when first used
             self._session = HybridBrowserSession(
                 headless=headless,
                 stealth=True,
@@ -2373,47 +2328,61 @@ Continue with the current subtask. When done, call `complete_subtask()` to proce
                         f"with {len(cognitive_phrase.states)} states"
                     )
                 elif memory_result.subtasks:
-                    # L3: Subtask decomposition with per-subtask navigation guidance
-                    # Build subtask plan with navigation info for each subtask
-                    from ..tools.toolkits.memory_toolkit import CognitivePhrase as MemPath
-                    # Collect all states/actions across subtasks that found results
-                    all_states = []
-                    all_actions = []
+                    # L3: Subtask decomposition with optional L2 global path
+                    # Store global path (L2) separately from subtasks
+                    # Each subtask uses path_state_indices to reference global path
+
+                    # Store global path if available
+                    has_global_path = bool(memory_result.states)
+                    if has_global_path:
+                        self._global_path_states = memory_result.states
+                        self._global_path_actions = memory_result.actions
+                    else:
+                        self._global_path_states = []
+                        self._global_path_actions = []
+
+                    # Build subtask plan with target state mapping
                     subtask_plan = []
+                    subtasks_with_nav = 0
+                    self._subtask_target_states = {}  # task_id -> target State
+
                     for st in memory_result.subtasks:
                         subtask_info = {
                             "task_id": st.task_id,
                             "target": st.target,
                             "found": st.found,
-                            "states": st.states,
-                            "actions": st.actions,
+                            "path_state_indices": st.path_state_indices,
                         }
                         subtask_plan.append(subtask_info)
-                        if st.found:
-                            all_states.extend(st.states)
-                            all_actions.extend(st.actions)
 
-                    if all_states:
-                        path = MemPath(
-                            id="subtask_composed_path",
-                            description="Subtask-decomposed navigation path",
-                            states=all_states,
-                            actions=all_actions,
-                        )
-                        memory_source = "subtasks"
-                        execution_mode = "agent_loop_with_path"
-                        logger.info(
-                            f"[Memory] Found subtask plan with {len(memory_result.subtasks)} subtasks, "
-                            f"{len(all_states)} states total"
-                        )
-                    else:
-                        memory_source = "subtasks_no_nav"
-                        logger.info(
-                            f"[Memory] Subtask plan with {len(memory_result.subtasks)} subtasks but no navigation states"
-                        )
+                        if st.found and st.path_state_indices and has_global_path:
+                            subtasks_with_nav += 1
+                            # Map subtask to its target state (last state in indices)
+                            last_idx = st.path_state_indices[-1]
+                            if last_idx < len(self._global_path_states):
+                                self._subtask_target_states[st.task_id] = self._global_path_states[last_idx]
+
+                    memory_source = "subtasks"
+                    execution_mode = "agent_loop_with_subtasks"
+                    logger.info(
+                        f"[Memory] Found subtask plan with {len(memory_result.subtasks)} subtasks, "
+                        f"{subtasks_with_nav} with navigation info, "
+                        f"global_path has {len(self._global_path_states)} states"
+                    )
 
                     # Store subtask plan for agent loop to use
                     self._subtask_plan = subtask_plan
+
+                    # Create path from global_path for workflow_guide
+                    if has_global_path:
+                        from ..tools.toolkits.memory_toolkit import CognitivePhrase as MemPath
+                        path = MemPath(
+                            id="global_path",
+                            description="Global navigation path from L2",
+                            states=self._global_path_states,
+                            actions=self._global_path_actions,
+                        )
+                        memory_source = "subtasks_with_path"
                 elif memory_result.states and not memory_result.subtasks:
                     # L2: Overall navigation path (no subtask decomposition)
                     from ..tools.toolkits.memory_toolkit import CognitivePhrase as MemPath
@@ -2537,3 +2506,7 @@ Continue with the current subtask. When done, call `complete_subtask()` to proce
         self._step_count = 0
         self._tools = []
         self._tool_map = {}
+
+        # Reset page operations cache
+        self._cached_page_operations = None
+        self._cached_page_operations_url = None

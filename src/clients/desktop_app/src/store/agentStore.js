@@ -116,6 +116,9 @@ const createInitialTaskState = (taskDescription = '', type = 'normal') => ({
   humanInteractionTimeout: null,
   humanMessages: [],
   hasWaitConfirm: false,  // Eigent: waiting for confirmation flag
+  lastSimpleAnswer: null,  // Eigent: last simple answer content
+  lastSimpleQuestion: null,  // Eigent: last simple question content
+  isComplexTask: false,  // Eigent: whether task was classified as complex
 
   // Token usage
   tokenUsage: {
@@ -133,6 +136,11 @@ const createInitialTaskState = (taskDescription = '', type = 'normal') => ({
   confirmedSubtasks: [],
   streamingDecomposeText: '',  // Eigent: streaming task decomposition text
 
+  // Decomposition progress (Phase 5 enhancement)
+  decompositionProgress: 0,        // 0-100 percentage
+  decompositionMessage: '',        // Current stage description (e.g., "Analyzing task complexity...")
+  decompositionStatus: 'pending',  // pending | decomposing | completed
+
   // Eigent flags
   isPending: false,
   isTaskEdit: false,
@@ -142,6 +150,21 @@ const createInitialTaskState = (taskDescription = '', type = 'normal') => ({
   // Timing (Eigent: for statistics)
   taskTime: null,  // When task started
   elapsed: 0,      // Task duration in ms
+
+  // Workforce state (CAMEL-based multi-agent coordination)
+  workforce: {
+    workers: [],          // Array of worker objects with status
+    pendingTasks: 0,      // Count of pending tasks
+    runningTasks: 0,      // Count of currently running tasks
+    completedTasks: 0,    // Count of completed tasks
+    failedTasks: 0,       // Count of failed tasks
+    totalTasks: 0,        // Total task count
+    isActive: false,      // Whether workforce is currently active
+  },
+
+  // Subtask to worker assignment mapping
+  // Format: { subtask_id: { workerId, workerName, status } }
+  subtaskAssignments: {},
 });
 
 /**
@@ -798,6 +821,50 @@ export const useAgentStore = create((set, get) => ({
         addNotice('info', 'Human Input Required', event.question || event.content);
         break;
 
+      // ===== Eigent Multi-turn Conversation Events =====
+
+      // wait_confirm: Simple question answered directly (no Workforce)
+      // Display the answer and wait for next user input
+      case 'wait_confirm':
+        {
+          const content = event.content || '';
+          const question = event.question || '';
+
+          // Add the simple answer as an assistant message
+          store.addMessage(taskId, 'assistant', content, {
+            type: 'simple_answer',
+          });
+
+          // Mark task as having a wait_confirm response
+          // Eigent pattern: Set status to 'waiting' to enable input
+          setStatus('waiting');
+          updateTask({
+            hasWaitConfirm: true,
+            lastSimpleAnswer: content,
+            lastSimpleQuestion: question,
+          });
+
+          console.log('[AgentStore] wait_confirm: Simple answer displayed, status=waiting', { question: question.substring(0, 50) });
+        }
+        break;
+
+      // confirmed: Task classified as complex, starting decomposition
+      // Frontend should prepare for task decomposition events
+      case 'confirmed':
+        {
+          const question = event.question || '';
+
+          // Update execution phase to indicate decomposition starting
+          updateTask({
+            executionPhase: 'decomposing',
+            isComplexTask: true,
+          });
+
+          addNotice('info', 'Task Confirmed', 'Complex task detected, starting decomposition...');
+          console.log('[AgentStore] confirmed: Complex task, starting decomposition', { question: question.substring(0, 50) });
+        }
+        break;
+
       // Eigent: streaming_decompose event for real-time task decomposition text
       case 'streaming_decompose':
       case 'decomposing':
@@ -808,6 +875,30 @@ export const useAgentStore = create((set, get) => ({
               streamingDecomposeText: text,
             });
           }
+        }
+        break;
+
+      // Phase 5: decompose_progress event for decomposition progress tracking
+      case 'decompose_progress':
+        {
+          const { progress, message, sub_tasks, is_final } = event.data || event;
+
+          const progressPercent = Math.round((progress || 0) * 100);
+
+          updateTask({
+            decompositionProgress: progressPercent,
+            decompositionMessage: message || '',
+            decompositionStatus: is_final ? 'completed' : 'decomposing',
+          });
+
+          // If final and has subtasks, also update taskInfo
+          if (is_final && sub_tasks && Array.isArray(sub_tasks)) {
+            updateTask({
+              taskInfo: sub_tasks,
+            });
+          }
+
+          console.log(`[SSE] decompose_progress: ${progressPercent}% - ${message || ''}`);
         }
         break;
 
@@ -825,6 +916,7 @@ export const useAgentStore = create((set, get) => ({
           }
 
           // Map TaskPlanningToolkit states to UI states
+          // DS-4: Added ABANDONED, ASSIGNED, WAITING state handling
           const mapState = (s) => {
             if (!s) return 'pending';
             const stateUpper = s.toUpperCase();
@@ -832,13 +924,17 @@ export const useAgentStore = create((set, get) => ({
             if (stateUpper === 'FAILED') return 'failed';
             if (stateUpper === 'RUNNING') return 'running';
             if (stateUpper === 'DELETED') return 'deleted';
+            if (stateUpper === 'ABANDONED') return 'abandoned';
+            if (stateUpper === 'ASSIGNED') return 'assigned';
+            if (stateUpper === 'WAITING') return 'waiting';
             return 'pending'; // OPEN -> pending
           };
 
-          // Normalize subtasks with mapped status
+          // Normalize subtasks with mapped status and agent_type
           const normalizedSubtasks = newSubtasks.map(t => ({
             ...t,
             status: mapState(t.state || t.status),
+            agent_type: t.agent_type || null,  // Preserve agent_type from backend
           }));
 
           // Update task with decomposition data (Eigent pattern)
@@ -884,6 +980,7 @@ export const useAgentStore = create((set, get) => ({
           if (!currentTask) break;
 
           // Map TaskPlanningToolkit states to UI states
+          // DS-4: Added ABANDONED, ASSIGNED, WAITING state handling
           const mapState = (s) => {
             if (!s) return 'pending';
             const stateUpper = s.toUpperCase();
@@ -891,6 +988,9 @@ export const useAgentStore = create((set, get) => ({
             if (stateUpper === 'FAILED') return 'failed';
             if (stateUpper === 'RUNNING') return 'running';
             if (stateUpper === 'DELETED') return 'deleted';
+            if (stateUpper === 'ABANDONED') return 'abandoned';
+            if (stateUpper === 'ASSIGNED') return 'assigned';
+            if (stateUpper === 'WAITING') return 'waiting';
             return 'pending'; // OPEN -> pending
           };
 
@@ -950,6 +1050,8 @@ export const useAgentStore = create((set, get) => ({
         break;
 
       // TaskPlanningToolkit: task_replanned event
+      // Note: Replan is an automatic plan adjustment during execution, NOT requiring user confirmation.
+      // Therefore, showDecomposition should remain false to avoid triggering confirm UI.
       case 'task_replanned':
         {
           const newSubtasks = event.subtasks || event.data?.subtasks || [];
@@ -959,49 +1061,126 @@ export const useAgentStore = create((set, get) => ({
           if (!currentTask) break;
 
           // Replace subtasks with new plan
+          // Note: showDecomposition is NOT set to true because replan is automatic
+          // and doesn't require user confirmation (unlike initial task_decomposed)
           updateTask({
             subtasks: newSubtasks,
             taskInfo: newSubtasks,
             taskRunning: newSubtasks.map(t => ({ ...t, status: 'pending' })),
-            showDecomposition: true,
+            // showDecomposition: false - keep it false to not trigger confirm UI
           });
 
           addNotice('info', 'Task Re-planned', `${newSubtasks.length} new subtasks${reason ? `: ${reason}` : ''}`);
         }
         break;
 
-      // Eigent: assign_task event for task assignment to agents
+      // Eigent: assign_task event for task assignment to agents (Phase 5: two-phase state)
       case 'assign_task':
         {
-          const { agent_id, task_id: assignedTaskId, agent_name } = event.data || event;
-          if (!agent_id || !assignedTaskId) break;
+          // Support both new format (assignee_id, subtask_id) and old format (agent_id, task_id)
+          const {
+            assignee_id,
+            subtask_id,
+            content,
+            state: taskState,  // "waiting" | "running"
+            failure_count = 0,
+            worker_name,      // New: human-readable worker name
+            agent_type,       // New: worker type (browser/document/code)
+            // Backward compatible fields
+            agent_id,
+            task_id: assignedTaskId,
+          } = event.data || event;
+
+          const actualAgentId = assignee_id || agent_id;
+          const actualTaskId = subtask_id || assignedTaskId;
+
+          if (!actualAgentId || !actualTaskId) break;
 
           const currentTask = store.tasks[taskId];
           if (!currentTask) break;
 
-          // Find the task in taskRunning
-          const taskToAssign = (currentTask.taskRunning || []).find(t => t.id === assignedTaskId);
-          if (!taskToAssign) break;
-
-          // Update taskAssigning - add task to agent
           let updatedTaskAssigning = [...(currentTask.taskAssigning || [])];
-          const agentIndex = updatedTaskAssigning.findIndex(a => a.agent_id === agent_id);
+          let updatedTaskRunning = [...(currentTask.taskRunning || [])];
 
-          if (agentIndex !== -1) {
-            // Agent exists, add task to it
-            const existingTaskIndex = updatedTaskAssigning[agentIndex].tasks?.findIndex(t => t.id === assignedTaskId);
-            if (existingTaskIndex === -1 || existingTaskIndex === undefined) {
-              updatedTaskAssigning[agentIndex] = {
-                ...updatedTaskAssigning[agentIndex],
-                tasks: [...(updatedTaskAssigning[agentIndex].tasks || []), { ...taskToAssign, status: 'running' }],
+          const agentIndex = updatedTaskAssigning.findIndex(a => a.agent_id === actualAgentId);
+
+          // Find the task in taskRunning for content fallback
+          const taskInRunning = updatedTaskRunning.find(t => t.id === actualTaskId);
+          const taskContent = content || taskInRunning?.content || '';
+
+          // Update taskRunning with worker_name and agent_type
+          updatedTaskRunning = updatedTaskRunning.map(t => {
+            if (t.id === actualTaskId) {
+              return {
+                ...t,
+                status: taskState === 'waiting' ? 'waiting' : 'running',
+                worker_name: worker_name || t.worker_name,
+                agent_type: agent_type || t.agent_type,
+                assignee_id: actualAgentId,
+                failure_count,
               };
             }
-          }
+            return t;
+          });
 
-          // Update taskRunning status to running
-          const updatedTaskRunning = (currentTask.taskRunning || []).map(t =>
-            t.id === assignedTaskId ? { ...t, status: 'running' } : t
-          );
+          // Phase 1: waiting - Task assigned, waiting in queue
+          if (taskState === 'waiting') {
+            if (agentIndex !== -1) {
+              const existingTaskIndex = updatedTaskAssigning[agentIndex].tasks?.findIndex(
+                t => t.id === actualTaskId
+              );
+              if (existingTaskIndex === -1 || existingTaskIndex === undefined) {
+                // Add task with waiting status
+                updatedTaskAssigning[agentIndex] = {
+                  ...updatedTaskAssigning[agentIndex],
+                  tasks: [...(updatedTaskAssigning[agentIndex].tasks || []), {
+                    id: actualTaskId,
+                    content: taskContent,
+                    status: 'waiting',
+                    failure_count,
+                    worker_name,
+                    agent_type,
+                  }],
+                };
+              }
+            }
+          }
+          // Phase 2: running - Task actively being executed (or default for backward compatibility)
+          else if (taskState === 'running' || !taskState) {
+            if (agentIndex !== -1) {
+              const existingTaskIndex = updatedTaskAssigning[agentIndex].tasks?.findIndex(
+                t => t.id === actualTaskId
+              );
+              if (existingTaskIndex !== -1 && existingTaskIndex !== undefined) {
+                // Update existing task status to running (immutable update)
+                const updatedTasks = [...updatedTaskAssigning[agentIndex].tasks];
+                updatedTasks[existingTaskIndex] = {
+                  ...updatedTasks[existingTaskIndex],
+                  status: 'running',
+                  failure_count,
+                  worker_name,
+                  agent_type,
+                };
+                updatedTaskAssigning[agentIndex] = {
+                  ...updatedTaskAssigning[agentIndex],
+                  tasks: updatedTasks,
+                };
+              } else {
+                // Add new task with running status
+                updatedTaskAssigning[agentIndex] = {
+                  ...updatedTaskAssigning[agentIndex],
+                  tasks: [...(updatedTaskAssigning[agentIndex].tasks || []), {
+                    id: actualTaskId,
+                    content: taskContent,
+                    status: 'running',
+                    failure_count,
+                    worker_name,
+                    agent_type,
+                  }],
+                };
+              }
+            }
+          }
 
           updateTask({
             taskRunning: updatedTaskRunning,
@@ -1010,30 +1189,12 @@ export const useAgentStore = create((set, get) => ({
         }
         break;
 
-      case 'task_completed':
-        setStatus('completed');
-        updateTask({
-          result: event.output,
-          notesContent: event.notes,
-          executionPhase: 'completed',
-          progressValue: 100,
-          // Clear decomposition state to avoid showing confirm button after completion
-          showDecomposition: false,
-          taskInfo: [],
-          streamingDecomposeText: '',
-        });
-        if (event.output) {
-          addMessage('assistant', typeof event.output === 'string' ? event.output : JSON.stringify(event.output, null, 2));
-        }
-        // Disconnect SSE
-        if (sseClients[taskId]) {
-          sseClients[taskId].disconnect();
-          delete sseClients[taskId];
-        }
-        break;
+      // NOTE: task_completed event removed - Eigent multi-turn pattern uses wait_confirm instead
+      // The task stays in conversation loop until user explicitly ends or navigates away
 
       case 'task_failed':
-        setStatus('failed');
+        // NOTE: Don't disconnect SSE or set terminal status - Eigent multi-turn pattern
+        // allows retry after failure via wait_confirm event that follows
         updateTask({
           error: event.error,
           notesContent: event.notes,
@@ -1042,30 +1203,17 @@ export const useAgentStore = create((set, get) => ({
           showDecomposition: false,
           taskInfo: [],
           streamingDecomposeText: '',
+          // Reset decomposition progress (Phase 5)
+          decompositionProgress: 0,
+          decompositionMessage: '',
+          decompositionStatus: 'pending',
         });
         addNotice('error', 'Task Failed', event.error);
-        if (sseClients[taskId]) {
-          sseClients[taskId].disconnect();
-          delete sseClients[taskId];
-        }
+        // SSE stays connected - wait_confirm will follow for multi-turn retry
         break;
 
-      case 'task_cancelled':
-        setStatus('cancelled');
-        updateTask({
-          error: 'Task was cancelled',
-          executionPhase: 'cancelled',
-          // Clear decomposition state
-          showDecomposition: false,
-          taskInfo: [],
-          streamingDecomposeText: '',
-        });
-        addNotice('warning', 'Task Cancelled', 'Task was cancelled by user');
-        if (sseClients[taskId]) {
-          sseClients[taskId].disconnect();
-          delete sseClients[taskId];
-        }
-        break;
+      // NOTE: task_cancelled event removed - cancellation is now handled via 'end' event
+      // with status='cancelled', which properly disconnects SSE
 
       case 'end':
         {
@@ -1088,43 +1236,65 @@ export const useAgentStore = create((set, get) => ({
           });
 
           if (event.status === 'completed') {
-            setStatus('completed');
+            // Eigent multi-turn pattern: DON'T set status to 'completed'
+            // Instead, set to 'waiting' to allow follow-up messages
+            setStatus('waiting');
             updateTask({
               executionPhase: 'completed',
               result: event.result,
               elapsed,
               taskRunning: updatedTaskRunning,
               progressValue: 100,
+              // Clear decomposition state for next round
+              showDecomposition: false,
+              taskInfo: [],
+              streamingDecomposeText: '',
+              decompositionProgress: 0,
+              decompositionMessage: '',
             });
           } else if (event.status === 'failed') {
-            setStatus('failed');
+            // On failure, also stay in 'waiting' for multi-turn retry
+            setStatus('waiting');
             updateTask({
               executionPhase: 'failed',
               error: event.message || 'Task failed',
               elapsed,
               taskRunning: updatedTaskRunning,
+              // Clear decomposition state
+              showDecomposition: false,
+              taskInfo: [],
             });
           } else if (event.status === 'cancelled') {
+            // User explicitly cancelled - end the session
             setStatus('cancelled');
             updateTask({
               executionPhase: 'cancelled',
               error: 'Task cancelled',
               elapsed,
               taskRunning: updatedTaskRunning,
+              // Clear decomposition state
+              showDecomposition: false,
+              taskInfo: [],
             });
+            addNotice('warning', 'Task Cancelled', 'Task was cancelled by user');
+            // Disconnect SSE on user cancel
+            if (sseClients[taskId]) {
+              sseClients[taskId].disconnect();
+              delete sseClients[taskId];
+            }
           }
 
-          // Cleanup SSE connection
-          if (sseClients[taskId]) {
-            sseClients[taskId].disconnect();
-            delete sseClients[taskId];
-          }
+          // Eigent multi-turn pattern: DON'T disconnect SSE for completed/failed
+          // Keep connection alive for follow-up messages
+          // The SSE will only be disconnected when user explicitly cancels or navigates away
 
           // Clear auto-confirm timer if exists
           if (autoConfirmTimers[taskId]) {
             clearTimeout(autoConfirmTimers[taskId]);
             delete autoConfirmTimers[taskId];
           }
+
+          console.log('[AgentStore] end event: Task completed, staying in multi-turn mode (SSE kept alive)');
         }
         break;
 
@@ -1222,14 +1392,34 @@ export const useAgentStore = create((set, get) => ({
       // ===== Browser Action Events =====
       // Note: browser_action events are supplementary - toolkit events are already
       // handled by activate_toolkit/deactivate_toolkit from @listen_toolkit decorator.
-      // We only use browser_action for additional context, NOT for adding toolkit events.
+      // We use browser_action to enrich existing toolkit events with browser-specific params.
       case 'browser_action':
         {
-          // Do NOT add toolkit events here - they are already added by
-          // activate_toolkit/deactivate_toolkit events from the @listen_toolkit decorator.
-          // This prevents duplicate entries in the timeline.
+          // Update the latest Browser toolkit event with browser-specific params
+          // This adds action_type, target, page_url etc. for display in AgentTab
+          const currentTask = store.tasks[taskId];
+          if (currentTask) {
+            const toolkitEvents = [...(currentTask.toolkitEvents || [])];
+            // Find the last running Browser toolkit event
+            for (let i = toolkitEvents.length - 1; i >= 0; i--) {
+              const evt = toolkitEvents[i];
+              if (evt.toolkit_name?.toLowerCase().includes('browser') && evt.status === 'running') {
+                // Enrich with browser action params
+                toolkitEvents[i] = {
+                  ...evt,
+                  action_type: event.action_type,
+                  target: event.target,
+                  value: event.value,
+                  page_url: event.page_url,
+                  page_title: event.page_title,
+                };
+                updateTask({ toolkitEvents });
+                break;
+              }
+            }
+          }
 
-          // Only update browser URL if provided (for BrowserTab display)
+          // Also update browser URL for BrowserTab display
           if (event.page_url) {
             updateTask({ browserUrl: event.page_url });
           }
@@ -1303,6 +1493,246 @@ export const useAgentStore = create((set, get) => ({
           if (url) {
             updateTask({ browserUrl: url });
           }
+        }
+        break;
+
+      // ===== Workforce Events (CAMEL-based multi-agent coordination) =====
+      case 'workforce_started':
+        {
+          updateTask({
+            workforce: {
+              ...store.tasks[taskId]?.workforce,
+              isActive: true,
+              pendingTasks: event.total_tasks || 0,
+              totalTasks: event.total_tasks || 0,
+              runningTasks: 0,
+              completedTasks: 0,
+              failedTasks: 0,
+            },
+          });
+          addNotice('info', 'Workforce Started', 'Multi-agent coordination active');
+        }
+        break;
+
+      case 'workforce_completed':
+        {
+          const currentWorkforce = store.tasks[taskId]?.workforce || {};
+          updateTask({
+            workforce: {
+              ...currentWorkforce,
+              isActive: false,
+            },
+          });
+          addNotice('success', 'Workforce Completed', `${currentWorkforce.completedTasks || 0} tasks completed`);
+        }
+        break;
+
+      case 'workforce_stopped':
+        {
+          updateTask({
+            workforce: {
+              ...store.tasks[taskId]?.workforce,
+              isActive: false,
+            },
+          });
+          addNotice('warning', 'Workforce Stopped', event.message || 'Coordination stopped');
+        }
+        break;
+
+      case 'worker_assigned':
+        {
+          const { worker_id, worker_name, subtask_id, subtask_content } = event;
+          if (!subtask_id) break;
+
+          const currentTask = store.tasks[taskId];
+          if (!currentTask) break;
+
+          // Update subtaskAssignments
+          const updatedAssignments = {
+            ...currentTask.subtaskAssignments,
+            [subtask_id]: {
+              workerId: worker_id,
+              workerName: worker_name,
+              status: 'assigned',
+            },
+          };
+
+          // Update workforce workers list
+          const existingWorkers = currentTask.workforce?.workers || [];
+          let updatedWorkers = [...existingWorkers];
+          const workerIndex = updatedWorkers.findIndex(w => w.id === worker_id);
+          if (workerIndex === -1) {
+            updatedWorkers.push({
+              id: worker_id,
+              name: worker_name,
+              status: 'idle',
+              currentTaskId: null,
+            });
+          }
+
+          updateTask({
+            subtaskAssignments: updatedAssignments,
+            workforce: {
+              ...currentTask.workforce,
+              workers: updatedWorkers,
+            },
+          });
+        }
+        break;
+
+      case 'worker_started':
+        {
+          const { worker_id, worker_name, subtask_id } = event;
+          const currentTask = store.tasks[taskId];
+          if (!currentTask) break;
+
+          // Update worker status
+          const workers = (currentTask.workforce?.workers || []).map(w =>
+            w.id === worker_id
+              ? { ...w, status: 'running', currentTaskId: subtask_id }
+              : w
+          );
+
+          // Update subtask assignment status
+          const assignments = { ...currentTask.subtaskAssignments };
+          if (subtask_id && assignments[subtask_id]) {
+            assignments[subtask_id] = {
+              ...assignments[subtask_id],
+              status: 'running',
+            };
+          }
+
+          // Update workforce counts
+          const workforce = currentTask.workforce || {};
+          updateTask({
+            workforce: {
+              ...workforce,
+              workers,
+              runningTasks: (workforce.runningTasks || 0) + 1,
+              pendingTasks: Math.max(0, (workforce.pendingTasks || 0) - 1),
+            },
+            subtaskAssignments: assignments,
+          });
+
+          addNotice('info', 'Worker Started', `${worker_name} started task`);
+        }
+        break;
+
+      case 'worker_completed':
+        {
+          const { worker_id, worker_name, subtask_id, result } = event;
+          const currentTask = store.tasks[taskId];
+          if (!currentTask) break;
+
+          // Update worker status
+          const workers = (currentTask.workforce?.workers || []).map(w =>
+            w.id === worker_id
+              ? { ...w, status: 'idle', currentTaskId: null }
+              : w
+          );
+
+          // Update subtask assignment status
+          const assignments = { ...currentTask.subtaskAssignments };
+          if (subtask_id && assignments[subtask_id]) {
+            assignments[subtask_id] = {
+              ...assignments[subtask_id],
+              status: 'completed',
+              result: result,
+            };
+          }
+
+          // Update workforce counts
+          const workforce = currentTask.workforce || {};
+          updateTask({
+            workforce: {
+              ...workforce,
+              workers,
+              runningTasks: Math.max(0, (workforce.runningTasks || 0) - 1),
+              completedTasks: (workforce.completedTasks || 0) + 1,
+            },
+            subtaskAssignments: assignments,
+          });
+
+          addNotice('success', 'Worker Completed', `${worker_name} completed task`);
+        }
+        break;
+
+      case 'worker_failed':
+        {
+          const { worker_id, worker_name, subtask_id, error, failure_count } = event;
+          const currentTask = store.tasks[taskId];
+          if (!currentTask) break;
+
+          // Update worker status
+          const workers = (currentTask.workforce?.workers || []).map(w =>
+            w.id === worker_id
+              ? { ...w, status: 'idle', currentTaskId: null }
+              : w
+          );
+
+          // Update subtask assignment status
+          const assignments = { ...currentTask.subtaskAssignments };
+          if (subtask_id && assignments[subtask_id]) {
+            assignments[subtask_id] = {
+              ...assignments[subtask_id],
+              status: 'failed',
+              error: error,
+              failureCount: failure_count,
+            };
+          }
+
+          // Update workforce counts
+          const workforce = currentTask.workforce || {};
+          updateTask({
+            workforce: {
+              ...workforce,
+              workers,
+              runningTasks: Math.max(0, (workforce.runningTasks || 0) - 1),
+              failedTasks: (workforce.failedTasks || 0) + 1,
+            },
+            subtaskAssignments: assignments,
+          });
+
+          addNotice('error', 'Worker Failed', `${worker_name} failed: ${error || 'Unknown error'}`);
+        }
+        break;
+
+      case 'dynamic_tasks_added':
+        {
+          const { new_tasks, total_tasks } = event;
+          const currentTask = store.tasks[taskId];
+          if (!currentTask) break;
+
+          // Add new tasks to subtasks list
+          const existingSubtasks = currentTask.subtasks || [];
+          const newSubtasksList = new_tasks || [];
+          const updatedSubtasks = [...existingSubtasks, ...newSubtasksList.map(t => ({
+            id: t.id,
+            content: t.content,
+            status: 'pending',
+          }))];
+
+          // Update taskRunning as well
+          const existingTaskRunning = currentTask.taskRunning || [];
+          const updatedTaskRunning = [...existingTaskRunning, ...newSubtasksList.map(t => ({
+            id: t.id,
+            content: t.content,
+            status: 'pending',
+          }))];
+
+          // Update workforce counts
+          const workforce = currentTask.workforce || {};
+          updateTask({
+            subtasks: updatedSubtasks,
+            taskRunning: updatedTaskRunning,
+            workforce: {
+              ...workforce,
+              totalTasks: total_tasks || updatedSubtasks.length,
+              pendingTasks: (workforce.pendingTasks || 0) + newSubtasksList.length,
+            },
+          });
+
+          addNotice('info', 'Tasks Added', `${newSubtasksList.length} new tasks discovered`);
         }
         break;
 
@@ -1397,6 +1827,98 @@ export const useAgentStore = create((set, get) => ({
     } catch (error) {
       console.error('[AgentStore] Failed to send human response:', error);
       return false;
+    }
+  },
+
+  /**
+   * Send user message during task execution (Eigent multi-turn conversation pattern)
+   *
+   * This method sends a new message while a task is running, allowing:
+   * - Simple questions to be answered directly without interrupting the task
+   * - Complex tasks to be decomposed and added to the execution queue
+   *
+   * @param {string} taskId - Task identifier
+   * @param {string} message - User's message
+   * @returns {Promise<{success: boolean, type?: string, answer?: string, newTasks?: number}>}
+   */
+  sendUserMessage: async (taskId, message) => {
+    const task = get().tasks[taskId];
+    if (!task) return { success: false, error: 'Task not found' };
+
+    const backendTaskId = task.backendTaskId;
+    if (!backendTaskId) return { success: false, error: 'No backend task ID' };
+
+    // Eigent multi-turn: Reconnect SSE if disconnected
+    // This allows conversation to resume after session timeout/disconnect
+    if (!sseClients[taskId]) {
+      console.log('[AgentStore] SSE disconnected, reconnecting for multi-turn...');
+      get().connectSSE(taskId, backendTaskId);
+    }
+
+    // Add user message to conversation immediately
+    get().addMessage(taskId, 'user', message);
+
+    // Eigent pattern: If task is 'waiting', update status to 'running' before sending
+    // This prevents UI from staying in input mode while waiting for response
+    if (task.status === 'waiting') {
+      get().setTaskStatus(taskId, 'running');
+      get().updateTask(taskId, {
+        hasWaitConfirm: false,  // Reset the flag until next wait_confirm
+      });
+    }
+
+    try {
+      const response = await api.callAppBackend(`/api/v1/quick-task/message/${backendTaskId}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          type: 'user_message',
+          message: message,
+        }),
+      });
+
+      if (response.success) {
+        console.log('[AgentStore] User message handled:', response);
+
+        // Handle response based on type
+        if (response.type === 'queued') {
+          // Eigent pattern: Message queued for multi-turn loop
+          // The response will come via SSE events (wait_confirm or confirmed)
+          console.log('[AgentStore] User message queued for multi-turn loop');
+        } else if (response.type === 'simple_answer' && response.answer) {
+          // Simple answer - add as assistant message
+          get().addMessage(taskId, 'assistant', response.answer, {
+            type: 'simple_answer',
+          });
+        } else if (response.type === 'tasks_added' && response.new_tasks > 0) {
+          get().addNotice(taskId, 'info', 'Tasks Added', `${response.new_tasks} new subtask(s) added`);
+        } else if (response.type === 'continued' && response.new_task_id) {
+          // Task was continued with a new backend task
+          // Update backendTaskId and reconnect SSE to new task
+          console.log('[AgentStore] Task continued with new task:', response.new_task_id);
+
+          // Disconnect old SSE
+          if (sseClients[taskId]) {
+            sseClients[taskId].disconnect();
+            delete sseClients[taskId];
+          }
+
+          // Update backend task ID and status
+          get().updateTask(taskId, {
+            backendTaskId: response.new_task_id,
+          });
+          get().setTaskStatus(taskId, 'running');
+
+          // Connect SSE to new backend task
+          get().connectSSE(taskId, response.new_task_id);
+        }
+
+        return response;
+      }
+
+      return { success: false, error: response.detail || 'Unknown error' };
+    } catch (error) {
+      console.error('[AgentStore] Failed to send user message:', error);
+      return { success: false, error: error.message };
     }
   },
 

@@ -314,6 +314,16 @@
   white-space: nowrap;
 }
 
+/* Browser action param */
+.toolkit-param {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Result Section */
 .result-section.success {
   border-color: var(--success);

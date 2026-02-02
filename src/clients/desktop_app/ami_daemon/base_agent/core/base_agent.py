@@ -5,12 +5,11 @@ Base class for all custom Agents, providing standardized interfaces and capabili
 import asyncio
 import logging
 import uuid
-from typing import Any, Dict, List, Optional, Callable, Union
+from typing import Any, Dict, List, Optional, Callable
 from datetime import datetime
 
 from .schemas import (
-    AgentConfig, AgentResult, AgentState, AgentStatus,
-    WorkflowResult, Workflow, AgentWorkflowStep, StopSignal
+    AgentConfig, AgentResult, AgentState, AgentStatus
 )
 from ..tools.base_tool import BaseTool, ToolResult, ToolStatus
 from ..memory.memory_manager import MemoryManager
@@ -90,15 +89,6 @@ class BaseAgent:
             config_service=config_service
         )
         logger.info(f"Memory system enabled, user_id: {memory_user_id}")
-
-        # Workflow engine - lazy import to avoid circular dependency
-        try:
-            from .workflow_engine import WorkflowEngine
-            self.workflow_engine = WorkflowEngine(agent_instance=self)
-            logger.info("Workflow engine initialized successfully")
-        except ImportError as e:
-            logger.error(f"Workflow engine initialization failed: {e}")
-            self.workflow_engine = None
 
         # State management
         self.state = AgentState(
@@ -195,56 +185,6 @@ class BaseAgent:
         except Exception as e:
             logger.error(f"Agent cleanup failed: {e}")
             return False
-
-    # ==================== Workflow Interface ====================
-
-    async def run_workflow(
-        self,
-        workflow: Union[Workflow, List[AgentWorkflowStep]],
-        input_data: Dict[str, Any] = None,
-        step_callback: Optional[Any] = None,
-        log_callback: Optional[Any] = None,
-        workflow_id: Optional[str] = None,
-        stop_signal: Optional[StopSignal] = None
-    ) -> WorkflowResult:
-        """Execute workflow with optional step progress and log callbacks
-
-        Args:
-            workflow: Workflow definition or list of steps
-            input_data: Input data dict
-            step_callback: Optional async callback function(step_index, step_name, status, result)
-            log_callback: Optional async callback function(level, message, metadata)
-            workflow_id: Optional workflow ID for resource path organization
-            stop_signal: Optional StopSignal for cooperative workflow stopping
-
-        Returns:
-            WorkflowResult: Workflow execution result
-        """
-        if isinstance(workflow, list):
-            if self.workflow_engine:
-                return await self.workflow_engine.execute_workflow(
-                    workflow,
-                    workflow_id=workflow_id,
-                    input_data=input_data or {},
-                    step_callback=step_callback,
-                    log_callback=log_callback,
-                    stop_signal=stop_signal
-                )
-            else:
-                raise RuntimeError("Workflow engine not initialized")
-        else:
-            if self.workflow_engine:
-                effective_workflow_id = workflow_id or workflow.workflow_id or workflow.name
-                return await self.workflow_engine.execute_workflow(
-                    workflow.steps,
-                    workflow_id=effective_workflow_id,
-                    input_data=input_data or {},
-                    step_callback=step_callback,
-                    log_callback=log_callback,
-                    stop_signal=stop_signal
-                )
-            else:
-                raise RuntimeError("Workflow engine not initialized")
 
     # ==================== Private Methods ====================
 
@@ -484,39 +424,3 @@ class BaseAgent:
             List[str]: Tool name list
         """
         return list(self.tools.keys())
-
-    # ==================== Agent Info ====================
-
-    def list_available_agents(self) -> List[str]:
-        """
-        List all available agents
-
-        Returns:
-            List[str]: Agent name list
-        """
-        if not self.workflow_engine:
-            return []
-
-        return list(self.workflow_engine.AGENT_TYPES.keys())
-
-    def get_agent_info(self, agent_name: str) -> Optional[Dict[str, Any]]:
-        """
-        Get agent info
-
-        Args:
-            agent_name: Agent name
-
-        Returns:
-            Optional[Dict[str, Any]]: Agent info dict
-        """
-        if not self.workflow_engine:
-            return None
-
-        agent_class = self.workflow_engine.AGENT_TYPES.get(agent_name)
-        if agent_class:
-            return {
-                "name": agent_name,
-                "description": f"{agent_name} agent",
-            }
-
-        return None

@@ -6,48 +6,65 @@ Core framework components for BaseAgent.
 
 | File | Purpose |
 |------|---------|
-| `base_agent.py` | Main BaseAgent class - the container that executes workflows |
-| `workflow_engine.py` | Workflow execution engine with Agent dispatch |
-| `schemas.py` | Data structures (AgentContext, AgentResult, WorkflowStep, etc.) |
+| `base_agent.py` | Main BaseAgent class - the container for agent execution |
+| `schemas.py` | Data structures (AgentContext, AgentResult, etc.) |
 | `token_usage.py` | TokenUsage and SessionTokenUsage for LLM cost tracking |
 | `cost_calculator.py` | Model pricing and cost calculation utilities |
 | `budget_controller.py` | Budget enforcement during task execution |
 | `agent_registry.py` | Central agent registration and lookup |
 | `task_router.py` | Routes tasks to appropriate specialized agents |
 | `task_orchestrator.py` | Multi-agent task coordination (Eigent Workforce pattern) |
+| `ami_workforce.py` | CAMEL-based Workforce (task decomposition + worker management) |
+| `ami_worker.py` | Worker wrapper for agents (AMISingleAgentWorker) |
+| `listen_chat_agent.py` | ChatAgent with SSE event emission (ported from Eigent) |
+| `agent_factories.py` | Factory functions to create configured agents (browser_agent, etc.) |
+| `orchestrator_agent.py` | **NEW** Top-level Orchestrator that decides task handling approach |
 
 ## Key Concepts
+
+### Orchestrator Agent (NEW - LLM-driven Task Classification)
+
+The Orchestrator Agent replaces hardcoded classification rules with LLM-powered decisions.
+Instead of `_classify_task()` determining simple vs complex tasks, the Orchestrator decides:
+
+1. **Direct Reply**: Simple questions, greetings, clarifications
+2. **Tool Use**: Single operations (search, browse one page, read file)
+3. **decompose_task**: Complex multi-step tasks requiring Workforce
+
+```python
+from .orchestrator_agent import create_orchestrator_agent, DecomposeTaskTool
+
+# Create Orchestrator
+orchestrator, decompose_tool = await create_orchestrator_agent(
+    task_state=state,
+    task_id=task_id,
+    working_directory=working_directory,
+    ...
+)
+
+# Run Orchestrator
+response = await orchestrator.astep(user_message)
+
+# Check if Workforce should be triggered
+if decompose_tool.triggered:
+    task_description = decompose_tool.task_description
+    # Start Workforce execution...
+else:
+    # Use orchestrator's direct response
+    reply = response.msg.content
+```
 
 ### BaseAgent
 
 Stateless container that:
-- Loads and executes workflows
+- Manages agent lifecycle and tools
 - Provides memory access (via user_id)
+- Coordinates with BrowserManager for browser sessions
 
 ```python
-agent = BaseAgent(config, user_id="user123")
-result = await agent.run_workflow(workflow, input_data)
-```
-
-### WorkflowEngine
-
-Executes workflow steps with:
-- Agent type dispatch via `AGENT_TYPES` dict
-- Conditional execution (`if/else`)
-- Loop control (`while`, `foreach`)
-- Variable passing via template syntax `{{variable_name}}`
-- Single-step execution support (`execute_step()`)
-- Resume from step (`execute_workflow_from()`)
-
-```python
-AGENT_TYPES = {
-    'text_agent': TextAgent,
-    'variable': VariableAgent,
-    'scraper_agent': ScraperAgent,
-    'storage_agent': StorageAgent,
-    'browser_agent': BrowserAgent,
-    'autonomous_browser_agent': AutonomousBrowserAgent,
-}
+agent = BaseAgent(config, user_id="user123", browser_manager=browser_manager)
+await agent.initialize()
+result = await agent.execute(task_input)
 ```
 
 ### Budget Management (Eigent Migration)
@@ -105,41 +122,70 @@ result = await orchestrator.execute(
 
 ### AgentContext
 
-Carries state through workflow execution:
-- `variables`: Dict of workflow variables
+Carries state through task execution:
+- `variables`: Dict of task variables
 - `memory_manager`: Reference to MemoryManager
 - `agent_instance`: Reference to BaseAgent
 
-## Workflow Execution Flow
+## AMIWorkforce (CAMEL-based)
+
+CAMEL Workforce integration for multi-agent task coordination.
+Ported from Eigent's Workforce pattern.
+
+### Architecture
 
 ```
-1. Parse YAML → List[WorkflowStep]
-2. Initialize AgentContext
-3. For each step:
-   a. Resolve templates in parameters
-   b. Create Agent instance from AGENT_TYPES
-   c. Execute agent
-   d. Store outputs in context
-4. Return final result
+Orchestrator Agent (entry point)
+├── Decides: direct reply / tool use / decompose_task
+└── If decompose_task → triggers:
+
+AMIWorkforce (extends CAMEL Workforce)
+├── task_agent: LLM for task decomposition
+├── pending_tasks: CAMEL TaskChannel
+├── workers:
+│   └── AMISingleAgentWorker → ListenChatAgent (with toolkits)
+└── failure_handling: retry + replan (CAMEL built-in)
 ```
 
-## Single-Step Execution
-
-For debugging or testing individual steps:
+### Usage
 
 ```python
-engine = WorkflowEngine(agent)
+from .ami_workforce import AMIWorkforce
+from .ami_worker import AMISingleAgentWorker
+from .agent_factories import create_browser_agent
 
-# Execute single step with provided variables
-result = await engine.execute_step(
-    step=some_step,
-    variables={"url": "https://example.com"}
+# Create Workforce
+workforce = AMIWorkforce(task_id, task_state, ...)
+
+# Create browser agent using factory (Eigent pattern)
+browser_agent = create_browser_agent(
+    task_state=state,
+    task_id=task_id,
+    working_directory=working_directory,
+    ...
 )
 
-# Execute workflow from specific step
-result = await engine.execute_workflow_from(
-    steps=workflow.steps,
-    start_from="scrape",
-    variables={"category_url": "https://example.com/products"}
+# Create worker wrapping the ListenChatAgent
+worker = AMISingleAgentWorker(
+    description="Web research",
+    worker=browser_agent,
+    task_state=state,
 )
+workforce.add_single_agent_worker(worker)
+
+# Decompose and execute
+subtasks = await workforce.decompose_task(task)
+await workforce.start_with_subtasks(subtasks)
 ```
+
+### SSE Events
+
+| Event | Trigger |
+|-------|---------|
+| `streaming_decompose` | During task decomposition |
+| `task_decomposed` | After decomposition complete |
+| `subtask_state` | Subtask state change (RUNNING/DONE/FAILED) |
+| `workforce_started` | Workforce begins |
+| `workforce_completed` | All tasks done |
+| `worker_assigned` | Task assigned to worker |
+| `dynamic_tasks_added` | New subtasks discovered |

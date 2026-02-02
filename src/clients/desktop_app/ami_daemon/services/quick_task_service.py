@@ -8,7 +8,7 @@ Features:
 - Tool-calling architecture with Anthropic tool_use API
 - Complete Toolkit system (NoteTaking, Search, Terminal, Human, Browser, Memory)
 - Memory-guided planning with semantic search
-- Real-time progress streaming via SSE/WebSocket
+- Real-time progress streaming via SSE
 - Typed event system with 30+ action types
 """
 
@@ -19,7 +19,6 @@ from enum import Enum
 import asyncio
 import uuid
 import logging
-import inspect
 
 from ..base_agent.workspace import (
     WorkingDirectoryManager,
@@ -33,9 +32,7 @@ from ..base_agent.events import (
     SSEEmitter,
     # Task lifecycle
     TaskStateData,
-    TaskCompletedData,
     TaskFailedData,
-    TaskCancelledData,
     # Planning
     PlanGeneratedData,
     # Agent lifecycle
@@ -53,12 +50,28 @@ from ..base_agent.events import (
     # User interaction
     AskData,
     NoticeData,
+    WaitConfirmData,
+    ConfirmedData,
     # Memory events
     MemoryResultData,
+    # Task decomposition
+    TaskDecomposedData,
+    SubtaskStateData,
+    TaskReplannedData,
+    StreamingDecomposeData,
     # System events
     HeartbeatData,
     EndData,
     ErrorData,
+    # Workforce events
+    WorkforceStartedData,
+    WorkforceCompletedData,
+    WorkforceStoppedData,
+    WorkerAssignedData,
+    WorkerStartedData,
+    WorkerCompletedData,
+    WorkerFailedData,
+    DynamicTasksAddedData,
 )
 from ..base_agent.core.task_router import TaskRouter, RoutingResult, get_router
 from ..base_agent.core.agent_registry import (
@@ -66,13 +79,62 @@ from ..base_agent.core.agent_registry import (
     register_default_agents,
     AgentType,
 )
+from ..base_agent.core.cost_calculator import DEFAULT_MODEL
+from ..base_agent.core.orchestrator_agent import (
+    create_orchestrator_agent,
+    run_orchestrator,
+    DecomposeTaskTool,
+)
 
 logger = logging.getLogger(__name__)
+
+
+# Tool name prefix to Toolkit name mapping
+# Used to format toolkit_name consistently with @listen_toolkit decorator
+TOOL_PREFIX_TO_TOOLKIT = {
+    "browser": "Browser Toolkit",
+    "shell": "Terminal Toolkit",
+    "terminal": "Terminal Toolkit",
+    "search": "Search Toolkit",
+    "note": "Note Taking Toolkit",
+    "human": "Human Toolkit",
+    "memory": "Memory Toolkit",
+    "task": "Task Planning Toolkit",
+    "calendar": "Calendar Toolkit",
+    # Internal task management tools (ListenBrowserAgent)
+    "get": "Task Planning Toolkit",      # get_current_plan
+    "complete": "Task Planning Toolkit", # complete_subtask
+    "report": "Task Planning Toolkit",   # report_subtask_failure
+    "replan": "Task Planning Toolkit",   # replan_task
+}
+
+
+def get_toolkit_name(tool_name: str) -> str:
+    """Get formatted toolkit name from tool name.
+
+    Matches the format used by @listen_toolkit decorator.
+
+    Args:
+        tool_name: Raw tool name (e.g., "browser_click", "shell_exec")
+
+    Returns:
+        Formatted toolkit name (e.g., "Browser Toolkit", "Terminal Toolkit")
+    """
+    # Extract prefix (first word before underscore)
+    prefix = tool_name.split("_")[0].lower() if "_" in tool_name else tool_name.lower()
+
+    # Look up in mapping
+    if prefix in TOOL_PREFIX_TO_TOOLKIT:
+        return TOOL_PREFIX_TO_TOOLKIT[prefix]
+
+    # Fallback: Title case the prefix
+    return prefix.title() + " Toolkit"
 
 
 class TaskStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
+    WAITING = "waiting"  # Eigent pattern: waiting for user input after simple answer
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -121,7 +183,6 @@ class TaskState:
     project_id: str = "default"
 
     # Execution state
-    plan: list = field(default_factory=list)
     current_step: Optional[Dict] = None
     progress: float = 0.0
     result: Optional[Dict[str, Any]] = None
@@ -150,7 +211,6 @@ class TaskState:
 
     # Internal state - created lazily to avoid dataclass issues
     _cancel_event: Optional[asyncio.Event] = field(default=None, repr=False)
-    _progress_queue: Optional[asyncio.Queue] = field(default=None, repr=False)
 
     # Event queue for typed events (SSE streaming)
     _event_queue: Optional[asyncio.Queue] = field(default=None, repr=False)
@@ -160,27 +220,36 @@ class TaskState:
     _human_response_queue: Optional[asyncio.Queue] = field(default=None, repr=False)
     _pending_human_question: Optional[str] = field(default=None, repr=False)
 
-    # Subtask confirmation state
-    _subtask_confirmation_event: Optional[asyncio.Event] = field(default=None, repr=False)
-    _confirmed_subtasks: Optional[List[Dict]] = field(default=None, repr=False)
-    _subtasks_cancelled: bool = field(default=False, repr=False)
+    # User message queue for multi-turn conversation (Eigent pattern)
+    _user_message_queue: Optional[asyncio.Queue] = field(default=None, repr=False)
 
     # Working directory manager
     _dir_manager: Optional[WorkingDirectoryManager] = field(default=None, repr=False)
 
+    # Task decomposition state (Eigent-style confirmation flow)
+    subtasks: List[Dict] = field(default_factory=list)  # Decomposed subtasks
+    summary_task: Optional[str] = None  # Summary of the main task
+    _confirmation_event: Optional[asyncio.Event] = field(default=None, repr=False)  # Set when user confirms
+    _confirmation_cancelled: bool = field(default=False, repr=False)  # Set when user cancels
+    awaiting_confirmation: bool = field(default=False, repr=False)  # Whether waiting for confirmation
+
+    # Workforce reference for pause/resume (Eigent pattern)
+    _workforce: Optional[Any] = field(default=None, repr=False)  # AMIWorkforce instance
+
     def __post_init__(self):
         if self._cancel_event is None:
             self._cancel_event = asyncio.Event()
-        if self._progress_queue is None:
-            self._progress_queue = asyncio.Queue()
         if self._human_response_queue is None:
             self._human_response_queue = asyncio.Queue()
-        if self._subtask_confirmation_event is None:
-            self._subtask_confirmation_event = asyncio.Event()
+        if self._confirmation_event is None:
+            self._confirmation_event = asyncio.Event()
+        if self._user_message_queue is None:
+            self._user_message_queue = asyncio.Queue()
 
         # Initialize event queue and SSE emitter
+        # BUG-8 fix: Use bounded queue to prevent memory leak
         if self._event_queue is None:
-            self._event_queue = asyncio.Queue()
+            self._event_queue = asyncio.Queue(maxsize=1000)
         if self._sse_emitter is None:
             self._sse_emitter = SSEEmitter(self._event_queue)
             self._sse_emitter.configure(task_id=self.task_id)
@@ -237,88 +306,77 @@ class TaskState:
         """
         Put event into queue for SSE streaming.
 
-        Also puts into legacy progress queue for backward compatibility.
-
         Args:
             event: ActionData instance or dict (for backward compatibility)
         """
+        # BUG-8 fix: Handle full queue gracefully
+        async def safe_put(evt):
+            try:
+                # Use put_nowait to avoid blocking if queue is full
+                self._event_queue.put_nowait(evt)
+            except asyncio.QueueFull:
+                # Log and drop old events if queue is full
+                logger.warning(f"[Task {self.task_id}] Event queue full, dropping oldest event")
+                try:
+                    self._event_queue.get_nowait()  # Remove oldest
+                    self._event_queue.put_nowait(evt)  # Add new
+                except (asyncio.QueueEmpty, asyncio.QueueFull):
+                    pass  # Best effort
+
         # Handle typed ActionData
         if isinstance(event, BaseActionData):
-            await self._event_queue.put(event)
-            # Also convert to dict for legacy queue
-            legacy_dict = {"event": event.action.value if hasattr(event.action, 'value') else event.action}
-            legacy_dict.update(event.model_dump(exclude={"action", "timestamp"}))
-            await self._progress_queue.put(legacy_dict)
+            await safe_put(event)
         else:
-            # Handle legacy dict format
-            await self._progress_queue.put(event)
-            # Try to convert to typed event
+            # Handle legacy dict format - convert to typed event
             event_type = event.get("event", "notice")
+            typed_event = None
+
             try:
-                action = Action(event_type)
-                typed_event = BaseActionData(action=action, task_id=self.task_id)
-                await self._event_queue.put(typed_event)
-            except (ValueError, Exception):
-                pass
+                # Map event types to their corresponding ActionData classes
+                if event_type == "task_decomposed":
+                    typed_event = TaskDecomposedData(
+                        task_id=self.task_id,
+                        subtasks=event.get("subtasks", []),
+                        summary_task=event.get("summary_task"),
+                        original_task_id=event.get("original_task_id"),
+                        total_subtasks=event.get("total_subtasks", len(event.get("subtasks", []))),
+                    )
+                elif event_type == "subtask_state":
+                    typed_event = SubtaskStateData(
+                        task_id=self.task_id,
+                        subtask_id=event.get("subtask_id", ""),
+                        state=event.get("state", "OPEN"),
+                        result=event.get("result"),
+                        failure_count=event.get("failure_count", 0),
+                    )
+                elif event_type == "task_replanned":
+                    typed_event = TaskReplannedData(
+                        task_id=self.task_id,
+                        subtasks=event.get("subtasks", []),
+                        original_task_id=event.get("original_task_id"),
+                        reason=event.get("reason"),
+                    )
+                elif event_type == "streaming_decompose":
+                    # DS-8: Only use 'text' field, 'content' doesn't exist in StreamingDecomposeData
+                    typed_event = StreamingDecomposeData(
+                        task_id=self.task_id,
+                        text=event.get("text") or event.get("content", ""),
+                    )
+                else:
+                    # Generic fallback - try basic ActionData
+                    action = Action(event_type)
+                    typed_event = BaseActionData(action=action, task_id=self.task_id)
+
+                if typed_event:
+                    await safe_put(typed_event)
+
+            except (ValueError, Exception) as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Failed to convert event '{event_type}' to typed: {e}")
 
     async def get_event(self) -> ActionData:
         """Get next event from typed event queue."""
         return await self._event_queue.get()
-
-    # ===== Subtask Confirmation Methods =====
-
-    async def wait_for_subtask_confirmation(self, timeout: float = 30.0) -> bool:
-        """
-        Wait for subtask confirmation from frontend.
-
-        Args:
-            timeout: Maximum time to wait in seconds (default 30s)
-
-        Returns:
-            True if confirmed and should proceed, False if cancelled by user
-        """
-        try:
-            # Clear the event and cancelled flag before waiting
-            self._subtask_confirmation_event.clear()
-            self._subtasks_cancelled = False
-            logger.info(f"[Task {self.task_id}] Waiting for subtask confirmation (timeout={timeout}s)...")
-
-            # Wait with timeout
-            await asyncio.wait_for(
-                self._subtask_confirmation_event.wait(),
-                timeout=timeout
-            )
-
-            # Check if user cancelled (cancel_subtasks sets this flag before triggering event)
-            if self._subtasks_cancelled:
-                logger.info(f"[Task {self.task_id}] Subtask confirmation cancelled by user")
-                return False
-
-            logger.info(f"[Task {self.task_id}] Subtask confirmation received")
-            return True
-        except asyncio.TimeoutError:
-            logger.info(f"[Task {self.task_id}] Subtask confirmation timeout, auto-confirming")
-            return True  # Auto-confirm on timeout
-        except asyncio.CancelledError:
-            logger.info(f"[Task {self.task_id}] Subtask confirmation cancelled")
-            return False
-
-    def confirm_subtasks(self, subtasks: List[Dict]) -> None:
-        """
-        Confirm subtasks from frontend.
-
-        Called by confirm-subtasks endpoint to unblock the agent.
-
-        Args:
-            subtasks: List of confirmed (possibly edited) subtasks
-        """
-        self._confirmed_subtasks = subtasks
-        self._subtask_confirmation_event.set()
-        logger.info(f"[Task {self.task_id}] Subtasks confirmed: {len(subtasks)} subtasks")
-
-    def get_confirmed_subtasks(self) -> Optional[List[Dict]]:
-        """Get the confirmed subtasks (may be edited by user)."""
-        return self._confirmed_subtasks
 
     # ===== Conversation History Methods (Eigent TaskLock pattern) =====
 
@@ -377,6 +435,44 @@ class TaskState:
             Total characters in all conversation content.
         """
         return sum(entry.content_length() for entry in self.conversation_history)
+
+    async def put_user_message(self, message: str) -> None:
+        """
+        Put a user message into the queue for multi-turn conversation.
+
+        Called when frontend sends a new message via the message API.
+        The _execute_task_workforce loop will receive this message.
+        """
+        if self._user_message_queue is not None:
+            await self._user_message_queue.put(message)
+            logger.debug(f"User message queued: {message[:50]}...")
+
+    async def get_user_message(self, timeout: Optional[float] = None) -> Optional[str]:
+        """
+        Wait for and get the next user message from the queue.
+
+        Args:
+            timeout: Optional timeout in seconds (None = wait indefinitely)
+
+        Returns:
+            The user message, or None if cancelled/timeout
+        """
+        if self._user_message_queue is None:
+            return None
+
+        try:
+            if timeout is not None:
+                message = await asyncio.wait_for(
+                    self._user_message_queue.get(),
+                    timeout=timeout
+                )
+            else:
+                message = await self._user_message_queue.get()
+            return message
+        except asyncio.TimeoutError:
+            return None
+        except asyncio.CancelledError:
+            return None
 
     def get_recent_context(
         self,
@@ -509,7 +605,7 @@ class QuickTaskService:
     def configure_llm(
         self,
         api_key: str,
-        model: Optional[str] = None,
+        model: str,
         base_url: Optional[str] = None,
         user_id: Optional[str] = None
     ):
@@ -517,51 +613,21 @@ class QuickTaskService:
 
         Args:
             api_key: User's Ami API key (ami_xxxxx format)
-            model: LLM model name (optional)
+            model: LLM model name (required)
             base_url: CRS proxy URL (e.g., https://api.ariseos.com/api)
             user_id: User ID for memory queries (optional)
         """
+        if not api_key:
+            raise ValueError("api_key is required for LLM configuration")
+        if not model:
+            raise ValueError("model is required for LLM configuration")
+
         self._llm_api_key = api_key
-        if model:
-            self._llm_model = model
+        self._llm_model = model
         if base_url:
             self._llm_base_url = base_url
         if user_id:
             self._user_id = user_id
-
-    async def _cleanup_agent(
-        self,
-        agent: Any,
-        context: Any,
-        close_browser: bool = True,
-    ) -> None:
-        """Best-effort cleanup for agents with varying cleanup signatures."""
-        if not agent or not context:
-            return
-
-        cleanup = getattr(agent, "cleanup", None)
-        if not cleanup:
-            return
-
-        try:
-            signature = inspect.signature(cleanup)
-            supports_close = (
-                "close_browser" in signature.parameters
-                or any(
-                    param.kind == inspect.Parameter.VAR_KEYWORD
-                    for param in signature.parameters.values()
-                )
-            )
-        except (TypeError, ValueError):
-            supports_close = False
-
-        try:
-            if supports_close:
-                await cleanup(context, close_browser=close_browser)
-            else:
-                await cleanup(context)
-        except Exception as e:
-            logger.warning(f"Failed to cleanup agent: {e}")
 
     async def submit_task(
         self,
@@ -604,12 +670,12 @@ class QuickTaskService:
         # Set as current manager for toolkits
         set_current_manager(state.dir_manager)
 
-        # Execute task asynchronously
+        # Execute task asynchronously using AMI Executor
         asyncio.create_task(
-            self._execute_task(task_id, headless=headless)
+            self._execute_task_ami(task_id, headless=headless)
         )
-
         logger.info(f"Task submitted: {task_id} (workspace: {state.working_directory})")
+
         return task_id
 
     async def continue_task(
@@ -666,9 +732,9 @@ class QuickTaskService:
             # Set as current manager
             set_current_manager(new_state.dir_manager)
 
-            # Execute new task
+            # Execute new task using AMI Executor
             asyncio.create_task(
-                self._execute_task(new_task_id, headless=headless)
+                self._execute_task_ami(new_task_id, headless=headless)
             )
 
             logger.info(
@@ -687,15 +753,17 @@ class QuickTaskService:
             old_state.tools_called = []
             old_state.updated_at = datetime.now()
 
-            # Reset events for new execution
+            # Reset events and queues for new execution
             old_state._cancel_event = asyncio.Event()
+            # Clear any stale messages from previous session
+            old_state._user_message_queue = asyncio.Queue()
 
             # Set as current manager
             set_current_manager(old_state.dir_manager)
 
-            # Execute continued task
+            # Execute continued task using AMI Executor
             asyncio.create_task(
-                self._execute_task(task_id, headless=headless)
+                self._execute_task_ami(task_id, headless=headless)
             )
 
             logger.info(
@@ -713,7 +781,7 @@ class QuickTaskService:
         return {
             "task_id": state.task_id,
             "status": state.status.value,
-            "plan": state.plan,
+            "subtasks": state.subtasks,
             "current_step": state.current_step,
             "progress": state.progress,
             "error": state.error,
@@ -739,9 +807,9 @@ class QuickTaskService:
                 "task_id": task_id,
                 "success": state.result.get("success", False),
                 "output": state.result.get("data", {}).get("result"),
-                "plan": state.plan,
+                "subtasks": state.subtasks,
                 "steps_executed": state.result.get("data", {}).get("steps_taken", 0),
-                "total_steps": len(state.plan) if state.plan else 0,
+                "total_steps": len(state.subtasks) if state.subtasks else 0,
                 "duration_seconds": duration,
                 "error": state.error,
                 "action_history": state.result.get("data", {}).get("action_history", []),
@@ -751,9 +819,9 @@ class QuickTaskService:
                 "task_id": task_id,
                 "success": False,
                 "output": None,
-                "plan": state.plan,
+                "subtasks": state.subtasks,
                 "steps_executed": 0,
-                "total_steps": len(state.plan) if state.plan else 0,
+                "total_steps": len(state.subtasks) if state.subtasks else 0,
                 "duration_seconds": duration,
                 "error": state.error or "Task not completed"
             }
@@ -771,11 +839,7 @@ class QuickTaskService:
         state.status = TaskStatus.CANCELLED
         state.updated_at = datetime.now()
 
-        # Send typed cancel events
-        await state.put_event(TaskCancelledData(
-            task_id=task_id,
-            reason="User cancelled",
-        ))
+        # Send end event with cancelled status
         await state.put_event(EndData(
             task_id=task_id,
             status="cancelled",
@@ -784,30 +848,6 @@ class QuickTaskService:
 
         logger.info(f"Task cancelled: {task_id}")
         return True
-
-    async def subscribe_progress(self, task_id: str) -> AsyncGenerator[Dict, None]:
-        """Subscribe to task progress."""
-        state = self._tasks.get(task_id)
-        if not state:
-            yield {"event": "error", "message": "Task not found"}
-            return
-
-        while True:
-            try:
-                # Wait for progress update, timeout 30 seconds
-                event = await asyncio.wait_for(
-                    state._progress_queue.get(),
-                    timeout=30.0
-                )
-                yield event
-
-                # If terminal event, exit
-                if event.get("event") in ["task_completed", "task_failed", "task_cancelled"]:
-                    break
-
-            except asyncio.TimeoutError:
-                # Send heartbeat
-                yield {"event": "heartbeat"}
 
     async def provide_human_response(self, task_id: str, response: str) -> bool:
         """Provide a human response to a pending question.
@@ -957,28 +997,477 @@ class QuickTaskService:
             logger.warning(f"Memory query failed: {e}")
             return []
 
-    async def _execute_task(
+    async def _decompose_task(self, state: TaskState) -> List[Dict]:
+        """
+        Decompose a task into subtasks using LLM with streaming (Eigent-style).
+
+        This is called BEFORE agent execution to let user review/edit the plan.
+        Streams the decomposition text to frontend via streaming_decompose events.
+
+        Args:
+            state: TaskState containing the task to decompose
+
+        Returns:
+            List of subtask dicts with id, content, status fields
+        """
+        task = state.task
+        task_id = state.task_id
+        logger.info(f"[Task {task_id}] Decomposing task with streaming: {task[:100]}...")
+
+        if not self._llm_api_key:
+            logger.warning(f"[Task {task_id}] No LLM API key, skipping decomposition")
+            return []
+
+        try:
+            from anthropic import Anthropic
+
+            # Initialize Anthropic client
+            client_kwargs = {"api_key": self._llm_api_key}
+            if self._llm_base_url:
+                client_kwargs["base_url"] = self._llm_base_url
+
+            client = Anthropic(**client_kwargs)
+
+            # Task decomposition prompt (based on Eigent's TASK_DECOMPOSE_PROMPT)
+            decompose_prompt = f"""You are a task planning assistant. Break down the following task into 2-5 concrete, actionable subtasks.
+
+Task: {task}
+
+Requirements:
+1. Each subtask should be specific and completable
+2. Subtasks should be in logical order
+3. Each subtask should be achievable with web browsing, searching, or data extraction
+4. Keep subtasks focused - avoid overly broad steps
+
+Respond with a JSON array of subtasks. Each subtask should have:
+- "id": A unique identifier like "task.1", "task.2", etc.
+- "content": A clear description of what needs to be done
+- "status": Always "OPEN" for new tasks
+
+Example response:
+[
+  {{"id": "task.1", "content": "Search for relevant information about X", "status": "OPEN"}},
+  {{"id": "task.2", "content": "Navigate to the website and extract data", "status": "OPEN"}},
+  {{"id": "task.3", "content": "Compile findings into a summary", "status": "OPEN"}}
+]
+
+Respond ONLY with the JSON array, no other text."""
+
+            # Call LLM for decomposition with streaming
+            model = self._llm_model or DEFAULT_MODEL
+
+            # Use streaming to show decomposition progress
+            response_text = ""
+            with client.messages.stream(
+                model=model,
+                max_tokens=1024,
+                messages=[{"role": "user", "content": decompose_prompt}],
+            ) as stream:
+                for text in stream.text_stream:
+                    response_text += text
+                    # Send streaming_decompose event to frontend (Eigent-style)
+                    await state.put_event(StreamingDecomposeData(
+                        task_id=task_id,
+                        text=response_text,
+                    ))
+
+            response_text = response_text.strip()
+
+            # Try to extract JSON from response
+            import json
+            import re
+
+            # Handle markdown code blocks
+            if "```json" in response_text:
+                match = re.search(r"```json\s*([\s\S]*?)\s*```", response_text)
+                if match:
+                    response_text = match.group(1)
+            elif "```" in response_text:
+                match = re.search(r"```\s*([\s\S]*?)\s*```", response_text)
+                if match:
+                    response_text = match.group(1)
+
+            subtasks = json.loads(response_text)
+
+            # Validate and normalize subtasks
+            normalized_subtasks = []
+            for i, subtask in enumerate(subtasks):
+                normalized_subtasks.append({
+                    "id": subtask.get("id", f"task.{i+1}"),
+                    "content": subtask.get("content", ""),
+                    "status": "OPEN",
+                })
+
+            logger.info(f"[Task {task_id}] Decomposed into {len(normalized_subtasks)} subtasks")
+            for st in normalized_subtasks:
+                logger.info(f"  - {st['id']}: {st['content'][:60]}...")
+
+            return normalized_subtasks
+
+        except Exception as e:
+            logger.warning(f"[Task {task_id}] Task decomposition failed: {e}")
+            # Return a single fallback subtask
+            return [{
+                "id": "task.1",
+                "content": task,
+                "status": "OPEN",
+            }]
+
+    async def _wait_for_confirmation(
+        self,
+        state: TaskState,
+        timeout_seconds: float = 120.0,  # BUG-4 fix: Add backend timeout
+    ) -> bool:
+        """
+        Wait for user confirmation of the task plan (Eigent-style).
+
+        The frontend handles the 30-second auto-confirm timer and calls
+        the /confirm-subtasks API. Backend has a fallback timeout in case
+        frontend fails to respond.
+
+        Note: awaiting_confirmation should already be set to True before calling
+        this method (to avoid race condition with frontend confirm request).
+
+        Args:
+            state: TaskState with subtasks to confirm
+            timeout_seconds: Maximum wait time (default 120s as safety net)
+
+        Returns:
+            True if confirmed, False if cancelled or timeout
+        """
+        logger.info(f"[Task {state.task_id}] Waiting for confirmation from frontend")
+        # Note: awaiting_confirmation is set before TaskDecomposedData event is sent
+        # to avoid race condition. We ensure it's True here as a safety check.
+        if not state.awaiting_confirmation:
+            state.awaiting_confirmation = True
+
+        # Check if already confirmed (race condition: frontend confirmed before we got here)
+        if state._confirmation_event.is_set():
+            logger.info(f"[Task {state.task_id}] Confirmation already received")
+            cancelled = state._confirmation_cancelled
+            state.awaiting_confirmation = False
+            state._confirmation_event.clear()
+            state._confirmation_cancelled = False
+            return not cancelled
+
+        try:
+            # BUG-4 fix: Add timeout to prevent indefinite waiting
+            await asyncio.wait_for(
+                state._confirmation_event.wait(),
+                timeout=timeout_seconds
+            )
+            logger.info(f"[Task {state.task_id}] Received confirmation from frontend")
+        except asyncio.TimeoutError:
+            # BUG-4 fix: Auto-confirm on timeout (frontend should have confirmed by now)
+            logger.warning(f"[Task {state.task_id}] Confirmation timeout, auto-confirming")
+            # Emit notice about auto-confirm
+            await state.put_event(NoticeData(
+                task_id=state.task_id,
+                level="warning",
+                title="Auto-confirmed",
+                message="Task plan auto-confirmed due to timeout",
+            ))
+            state.awaiting_confirmation = False
+            return True
+
+        # Check if cancelled (before resetting flags)
+        cancelled = state._confirmation_cancelled
+
+        # Reset state for potential reuse
+        state.awaiting_confirmation = False
+        state._confirmation_event.clear()
+        state._confirmation_cancelled = False
+
+        if cancelled:
+            logger.info(f"[Task {state.task_id}] Task plan was cancelled by user")
+            return False
+
+        return True
+
+    async def confirm_task_plan(self, task_id: str, subtasks: List[Dict]) -> bool:
+        """
+        Confirm task plan and allow execution to proceed.
+
+        Called by the /confirm-subtasks endpoint.
+
+        Args:
+            task_id: Task ID
+            subtasks: Confirmed (possibly edited) subtasks
+
+        Returns:
+            True if confirmation was delivered
+        """
+        state = self._tasks.get(task_id)
+        if not state:
+            logger.warning(f"Task {task_id} not found for confirmation")
+            return False
+
+        if not state.awaiting_confirmation:
+            # Detailed debug info to diagnose race condition
+            logger.warning(
+                f"Task {task_id} is not awaiting confirmation. "
+                f"State: status={state.status}, "
+                f"awaiting_confirmation={state.awaiting_confirmation}, "
+                f"subtasks_count={len(state.subtasks) if state.subtasks else 0}, "
+                f"confirmation_event_set={state._confirmation_event.is_set()}"
+            )
+            return False
+
+        # Update subtasks with user edits
+        state.subtasks = subtasks
+
+        # Signal confirmation
+        state._confirmation_event.set()
+        logger.info(f"Task {task_id} plan confirmed with {len(subtasks)} subtasks")
+        return True
+
+    async def cancel_task_plan(self, task_id: str) -> bool:
+        """
+        Cancel task plan and stop execution.
+
+        Called by the /cancel-subtasks endpoint.
+
+        Args:
+            task_id: Task ID
+
+        Returns:
+            True if cancellation was delivered
+        """
+        state = self._tasks.get(task_id)
+        if not state:
+            logger.warning(f"Task {task_id} not found for cancellation")
+            return False
+
+        if not state.awaiting_confirmation:
+            logger.warning(f"Task {task_id} is not awaiting confirmation")
+            return False
+
+        # Signal cancellation
+        state._confirmation_cancelled = True
+        state._confirmation_event.set()
+        logger.info(f"Task {task_id} plan cancelled by user")
+        return True
+
+    # ===== Task Classification (Eigent question_confirm pattern) =====
+
+    async def _classify_task(self, task: str, state: "TaskState") -> bool:
+        """
+        Determine if user query is a complex task or simple question.
+
+        This implements Eigent's question_confirm pattern:
+        - Complex task: Requires tools, code execution, file operations, multi-step planning
+        - Simple question: Can be answered directly with knowledge, no action needed
+
+        Args:
+            task: User's input query/task
+            state: TaskState for conversation context
+
+        Returns:
+            True: Complex task, needs Workforce
+            False: Simple question, answer directly
+        """
+        logger.info(f"[Task {state.task_id}] Classifying task: {task[:100]}...")
+
+        # Build conversation context (Eigent pattern)
+        context_prompt = ""
+        if state.conversation_history:
+            context_prompt = "=== Previous Conversation ===\n"
+            for entry in state.conversation_history[-10:]:  # Last 10 entries
+                role = entry.role.upper()
+                content = entry.content
+                if isinstance(content, dict):
+                    content = str(content)
+                context_prompt += f"{role}: {content[:500]}\n"
+            context_prompt += "=== End Conversation ===\n\n"
+
+        # Classification prompt (based on Eigent's question_confirm)
+        classify_prompt = f"""{context_prompt}User Query: {task}
+
+Determine if this user query is a complex task or a simple question.
+
+**Complex task** (answer "yes"): Requires tools, code execution, file operations, multi-step planning, or creating/modifying content
+- Examples: "create a file", "search for X", "implement feature Y", "write code", "analyze data", "build something", "download X", "scrape website"
+
+**Simple question** (answer "no"): Can be answered directly with knowledge or conversation history, no action needed
+- Examples: greetings ("hello", "hi", "你好"), fact queries ("what is X?"), clarifications ("what did you mean?"), status checks ("how are you?"), explanations ("explain X"), opinions ("which is better?")
+
+Answer only "yes" or "no". Do not provide any explanation.
+
+Is this a complex task? (yes/no):"""
+
+        try:
+            # Use lightweight LLM call for classification
+            from ..base_agent.core.agent_factories import create_model_backend
+
+            model = create_model_backend(
+                llm_api_key=self._llm_api_key,
+                llm_model=self._llm_model,
+                llm_base_url=self._llm_base_url,
+            )
+
+            # Make LLM call with OpenAI message format (dict)
+            response = model.run(
+                messages=[{"role": "user", "content": classify_prompt}]
+            )
+
+            content = response.choices[0].message.content.strip().lower()
+            is_complex = "yes" in content
+
+            logger.info(f"[Task {state.task_id}] Classification result: {'complex' if is_complex else 'simple'} (response: {content})")
+            return is_complex
+
+        except Exception as e:
+            logger.error(f"[Task {state.task_id}] Classification error: {e}")
+            # BUG-9 fix: Notify user about classification failure
+            await state.put_event(NoticeData(
+                task_id=state.task_id,
+                level="warning",
+                title="Classification Failed",
+                message="Could not classify task, treating as complex task",
+            ))
+            # Default to complex task on error (safer)
+            return True
+
+    async def _answer_simple_question(self, question: str, state: "TaskState") -> str:
+        """
+        Directly answer a simple question without Workforce.
+
+        Used when _classify_task returns False. Generates a conversational
+        response using conversation history for context.
+
+        Args:
+            question: User's simple question
+            state: TaskState for conversation context
+
+        Returns:
+            LLM-generated answer string
+        """
+        logger.info(f"[Task {state.task_id}] Answering simple question: {question[:100]}...")
+
+        # Build conversation context
+        context_prompt = ""
+        if state.conversation_history:
+            context_prompt = "=== Previous Conversation ===\n"
+            for entry in state.conversation_history[-10:]:
+                role = entry.role.upper()
+                content = entry.content
+                if isinstance(content, dict):
+                    content = str(content)
+                context_prompt += f"{role}: {content[:500]}\n"
+            context_prompt += "=== End Conversation ===\n\n"
+
+        answer_prompt = f"""{context_prompt}User Query: {question}
+
+You are AMI, a helpful AI assistant. Provide a direct, helpful, and conversational response to the user's question.
+
+Guidelines:
+- Be friendly and natural
+- Keep the response concise but complete
+- If the question is a greeting, respond warmly
+- If you need to clarify something, ask
+- Use the conversation history for context when relevant
+
+Response:"""
+
+        try:
+            from ..base_agent.core.agent_factories import create_model_backend
+
+            model = create_model_backend(
+                llm_api_key=self._llm_api_key,
+                llm_model=self._llm_model,
+                llm_base_url=self._llm_base_url,
+            )
+
+            # Make LLM call with OpenAI message format (dict)
+            response = model.run(
+                messages=[{"role": "user", "content": answer_prompt}]
+            )
+
+            answer = response.choices[0].message.content.strip()
+            logger.info(f"[Task {state.task_id}] Simple answer generated: {answer[:100]}...")
+            return answer
+
+        except Exception as e:
+            logger.error(f"[Task {state.task_id}] Failed to answer simple question: {e}")
+            return f"I apologize, but I encountered an error: {str(e)}"
+
+    async def _wait_for_user_message(
+        self,
+        task_id: str,
+        state: "TaskState",
+        timeout: Optional[float] = None,
+    ) -> Optional[str]:
+        """
+        Wait for the next user message in multi-turn conversation.
+
+        Called after wait_confirm event is sent. Waits for user to send
+        a new message via the message API.
+
+        Args:
+            task_id: Task identifier
+            state: TaskState containing the message queue
+            timeout: Optional timeout in seconds (None = wait indefinitely)
+
+        Returns:
+            User message string, or None if cancelled/timeout
+        """
+        logger.info(f"[Task {task_id}] Waiting for next user message...")
+
+        try:
+            # Wait for message with cancellation support
+            message = await state.get_user_message(timeout=timeout)
+
+            if message is None:
+                logger.info(f"[Task {task_id}] No user message received (timeout or cancelled)")
+                return None
+
+            logger.info(f"[Task {task_id}] Received user message: {message[:100]}...")
+            return message
+
+        except asyncio.CancelledError:
+            logger.info(f"[Task {task_id}] Wait for user message cancelled")
+            return None
+        except Exception as e:
+            logger.error(f"[Task {task_id}] Error waiting for user message: {e}")
+            return None
+
+    async def _execute_task_ami(
         self,
         task_id: str,
         headless: bool = False,
     ):
-        """Execute a task using EigentStyleBrowserAgent (Tool-calling architecture)."""
-        logger.info(f"[Task {task_id}] _execute_task started with EigentStyleBrowserAgent")
-        logger.info(f"[Task {task_id}] cloud_client={self._cloud_client is not None}, user_id={self._user_id}")
+        """
+        Execute a task using AMITaskPlanner + AMITaskExecutor.
+
+        This method replaces _execute_task_workforce with a simpler implementation:
+        - Uses AMITaskPlanner for coarse-grained decomposition + Memory query
+        - Uses AMITaskExecutor for sequential execution with workflow_guide injection
+        - No CAMEL Workforce dependency
+
+        Key differences from _execute_task_workforce:
+        - workflow_guide is injected as explicit instruction, not metadata
+        - ~650 lines vs ~2000 lines of code
+        - Direct prompt control
+
+        Args:
+            task_id: Task identifier
+            headless: Whether to run browser in headless mode
+        """
+        logger.info(f"[Task {task_id}] Starting AMI Executor-based session")
 
         state = self._tasks[task_id]
         state.status = TaskStatus.RUNNING
         state.started_at = datetime.now()
         state.updated_at = state.started_at
 
-        # Record user's task as first conversation entry (for restoration)
+        # Record user's task as first conversation entry
         state.add_conversation("user", state.task)
 
-        # Set current working directory manager for this task
+        # Set current working directory manager
         set_current_manager(state.dir_manager)
         logger.info(f"[Task {task_id}] Working directory: {state.working_directory}")
 
-        # Send task started event (typed + legacy)
+        # Send task started event
         await state.put_event(TaskStateData(
             task_id=task_id,
             status="running",
@@ -988,447 +1477,683 @@ class QuickTaskService:
             project_id=state.project_id,
         ))
 
-        agent = None
-        context = None
+        # ===== Create Orchestrator Agent =====
+        orchestrator, decompose_tool = await create_orchestrator_agent(
+            task_state=state,
+            task_id=task_id,
+            working_directory=state.working_directory,
+            notes_directory=state.notes_directory,
+            browser_data_directory=state.browser_data_directory,
+            headless=headless,
+            memory_api_base_url=self._cloud_client.api_url if self._cloud_client else None,
+            ami_api_key=self._llm_api_key,
+            user_id=self._user_id,
+            llm_api_key=self._llm_api_key,
+            llm_model=self._llm_model,
+            llm_base_url=self._llm_base_url,
+        )
+        logger.info(f"[Task {task_id}] Orchestrator Agent created")
 
-        try:
-            # Memory query is now handled inside Agent.execute() via MemoryToolkit
-            # No longer call _call_reasoner() here - Agent will query Memory itself
-            logger.info(f"[Task {task_id}] Memory query will be handled by Agent internally")
+        # AMI components (created lazily)
+        executor = None
+        agents_dict = None
+        current_question = state.task
+        loop_iteration = 0
 
-            # ==================== Task Routing (Eigent Migration) ====================
-            # Use TaskRouter to determine the best agent for this task
-            routing_result = self._task_router.route(state.task, context={
-                "user_id": state.user_id,
-            })
-            logger.info(
-                f"[Task {task_id}] TaskRouter: agent={routing_result.agent_type}, "
-                f"confidence={routing_result.confidence:.2f}, reasoning={routing_result.reasoning}"
-            )
+        # ===== Main Multi-turn Loop =====
+        while True:
+            loop_iteration += 1
+            logger.info(f"[Task {task_id}] Multi-turn loop iteration #{loop_iteration}")
 
-            # Store routing info in state for frontend display
-            state.routed_agent = routing_result.agent_type
-            state.routing_confidence = routing_result.confidence
-            state.routing_reasoning = routing_result.reasoning
+            try:
+                # ===== Run Orchestrator Agent =====
+                logger.info(f"[Task {task_id}] Running Orchestrator for: {current_question[:100]}...")
 
-            # Emit routing event for frontend
-            await state.put_event(ActivateAgentData(
-                task_id=task_id,
-                agent_name=routing_result.agent_type,
-                message=f"Selected {routing_result.agent_type} (confidence: {routing_result.confidence:.0%}): {routing_result.reasoning}",
-            ))
-
-            # ==================== Agent Selection ====================
-            from ..base_agent.core.schemas import AgentContext, AgentInput
-
-            # Get agent class from registry based on routing result
-            registry = get_registry()
-            agent_class = registry.get_class(routing_result.agent_type)
-
-            if agent_class is None:
-                # Fallback to EigentStyleBrowserAgent if agent not found
-                logger.warning(
-                    f"[Task {task_id}] Agent '{routing_result.agent_type}' not found in registry, "
-                    f"falling back to browser_agent"
+                orchestrator_reply = await run_orchestrator(
+                    orchestrator=orchestrator,
+                    decompose_tool=decompose_tool,
+                    user_message=current_question,
                 )
-                from ..base_agent.agents.eigent_style_browser_agent import EigentStyleBrowserAgent
-                agent_class = EigentStyleBrowserAgent
 
-            # Create agent instance from routed agent class
-            agent = agent_class()
-            agent_name = routing_result.agent_type
+                logger.info(f"[Task {task_id}] Orchestrator response: {orchestrator_reply[:200]}...")
 
-            # Set up progress callback to forward events to WebSocket
-            async def on_agent_progress(event: str, data: dict):
-                """Forward agent progress events using typed event system."""
+                # Check if decompose_task was called
+                if decompose_tool.triggered:
+                    # ===== AMI Executor Path =====
+                    task_to_decompose = decompose_tool.task_description or current_question
+                    logger.info(f"[Task {task_id}] decompose_task triggered, starting AMI Executor")
+
+                    # Emit confirmed event
+                    await state.put_event(ConfirmedData(
+                        task_id=task_id,
+                        question=task_to_decompose,
+                    ))
+
+                    try:
+                        # Create agents and executor if not yet created
+                        if agents_dict is None:
+                            agents_dict, task_agent = await self._create_agents_for_ami_executor(
+                                task_id, state, headless
+                            )
+                            logger.info(f"[Task {task_id}] Created agents for AMI Executor")
+
+                        # Create Memory Toolkit
+                        memory_toolkit = await self._create_memory_toolkit(task_id, state)
+
+                        # Create Task Planner
+                        from ..base_agent.core import AMITaskPlanner, AMITaskExecutor
+                        planner = AMITaskPlanner(
+                            task_id=task_id,
+                            task_state=state,
+                            task_agent=task_agent,
+                            memory_toolkit=memory_toolkit,
+                        )
+
+                        # Phase 1 & 2: Decompose and query Memory
+                        logger.info(f"[Task {task_id}] AMI: Decomposing and querying Memory...")
+                        subtasks = await planner.decompose_and_query_memory(task_to_decompose)
+
+                        if not subtasks:
+                            logger.warning(f"[Task {task_id}] Decomposition returned no subtasks")
+                            await state.put_event(NoticeData(
+                                task_id=task_id,
+                                level="warning",
+                                title="Decomposition Failed",
+                                message="Could not decompose task into subtasks.",
+                            ))
+                            state.add_conversation("assistant", orchestrator_reply)
+                            await state.put_event(WaitConfirmData(
+                                task_id=task_id,
+                                content=orchestrator_reply,
+                                question=current_question,
+                                context="initial",
+                            ))
+                        else:
+                            # Update state with subtasks
+                            state.subtasks = [
+                                {
+                                    "id": st.id,
+                                    "content": st.content,
+                                    "state": st.state.value,
+                                    "status": st.state.value,
+                                    "agent_type": st.agent_type,
+                                    "memory_level": st.memory_level,
+                                }
+                                for st in subtasks
+                            ]
+                            state.summary_task = task_to_decompose
+
+                            # Set awaiting_confirmation BEFORE emitting event
+                            # This fixes race condition where frontend sends confirm
+                            # before _wait_for_confirmation is called
+                            state.awaiting_confirmation = True
+                            state._confirmation_event.clear()
+                            state._confirmation_cancelled = False
+
+                            # Emit TaskDecomposedData event
+                            await state.put_event(TaskDecomposedData(
+                                task_id=task_id,
+                                subtasks=state.subtasks,
+                                summary_task=task_to_decompose,
+                                total_subtasks=len(subtasks),
+                            ))
+
+                            # Wait for confirmation
+                            confirmed = await self._wait_for_confirmation(state)
+
+                            if not confirmed:
+                                logger.info(f"[Task {task_id}] Task plan cancelled by user")
+                                await state.put_event(WorkforceStoppedData(
+                                    task_id=task_id,
+                                    reason="User cancelled task plan",
+                                    completed_count=0,
+                                    pending_count=len(subtasks),
+                                ))
+                                context = "mid_execution" if loop_iteration > 1 else "initial"
+                                await state.put_event(WaitConfirmData(
+                                    task_id=task_id,
+                                    content="Task plan cancelled. What would you like to do next?",
+                                    question=task_to_decompose,
+                                    context=context,
+                                ))
+                                state.subtasks = []
+                            else:
+                                # Execute subtasks with AMI Executor
+                                logger.info(f"[Task {task_id}] Starting AMI Executor with {len(subtasks)} subtasks...")
+                                start_time = datetime.now()
+
+                                await state.put_event(WorkforceStartedData(
+                                    task_id=task_id,
+                                    total_tasks=len(subtasks),
+                                    workers_count=len(agents_dict),
+                                    description=f"Starting execution with {len(subtasks)} subtasks",
+                                ))
+
+                                # Create executor
+                                executor = AMITaskExecutor(
+                                    task_id=task_id,
+                                    task_state=state,
+                                    agents=agents_dict,
+                                )
+                                executor.set_subtasks(subtasks)
+
+                                # Execute
+                                result = await executor.execute()
+
+                                duration = (datetime.now() - start_time).total_seconds()
+
+                                await state.put_event(WorkforceCompletedData(
+                                    task_id=task_id,
+                                    completed_count=result["completed"],
+                                    failed_count=result["failed"],
+                                    total_count=result["total"],
+                                    duration_seconds=duration,
+                                ))
+
+                                # Aggregate results
+                                final_output = await self._aggregate_ami_results(
+                                    task_id, state, subtasks, result, duration
+                                )
+
+                                # Record in conversation history
+                                state.add_conversation("task_result", {
+                                    "task_content": task_to_decompose,
+                                    "task_result": final_output,
+                                    "working_directory": state.working_directory,
+                                })
+
+                                # Update state
+                                state.result = {
+                                    "success": result["failed"] == 0,
+                                    "message": final_output,
+                                    "data": {
+                                        "completed": result["completed"],
+                                        "failed": result["failed"],
+                                        "duration": duration,
+                                    },
+                                }
+
+                                context = "mid_execution" if loop_iteration > 1 else "initial"
+                                await state.put_event(WaitConfirmData(
+                                    task_id=task_id,
+                                    content=final_output,
+                                    question=task_to_decompose,
+                                    context=context,
+                                ))
+
+                                logger.info(f"[Task {task_id}] AMI Executor completed, ready for multi-turn")
+
+                    except Exception as e:
+                        logger.exception(f"[Task {task_id}] AMI Executor failed: {e}")
+                        state.error = str(e)
+
+                        await state.put_event(WorkforceStoppedData(
+                            task_id=task_id,
+                            reason=str(e),
+                        ))
+                        await state.put_event(TaskFailedData(
+                            task_id=task_id,
+                            error=str(e),
+                        ))
+                        context = "mid_execution" if loop_iteration > 1 else "initial"
+                        await state.put_event(WaitConfirmData(
+                            task_id=task_id,
+                            content=f"Task execution failed: {e}\n\nYou can try again or ask me something else.",
+                            question=task_to_decompose,
+                            context=context,
+                        ))
+                        state.status = TaskStatus.WAITING
+                        state.updated_at = datetime.now()
+
+                else:
+                    # ===== Direct Response Path (No Execution) =====
+                    logger.info(f"[Task {task_id}] Orchestrator handled directly (no decompose_task)")
+
+                    state.add_conversation("assistant", orchestrator_reply)
+
+                    context = "initial" if loop_iteration == 1 else "mid_execution"
+                    await state.put_event(WaitConfirmData(
+                        task_id=task_id,
+                        content=orchestrator_reply,
+                        question=current_question,
+                        context=context,
+                    ))
+
+                # Set status to WAITING for multi-turn
+                state.status = TaskStatus.WAITING
                 state.updated_at = datetime.now()
 
-                if event == "agent_started":
-                    await state.put_event(ActivateAgentData(
-                        task_id=task_id,
-                        agent_name=agent_name,
-                        message=f"Starting task: {data.get('task', '')[:50]}",
-                    ))
+            except asyncio.CancelledError:
+                logger.info(f"[Task {task_id}] Task cancelled during execution")
+                break
+            except Exception as e:
+                logger.exception(f"[Task {task_id}] Orchestrator execution failed: {e}")
+                state.error = str(e)
 
-                elif event == "loop_iteration":
-                    state.loop_iteration = data.get("step", 0)
-                    tools_called = data.get("tools_called", [])
-                    state.tools_called.extend([
-                        {"name": t, "iteration": state.loop_iteration}
-                        for t in tools_called
-                    ])
-                    await state.put_event(StepStartedData(
-                        task_id=task_id,
-                        step_index=state.loop_iteration,
-                        step_name=f"Iteration {state.loop_iteration}",
-                        step_description=f"Tools: {', '.join(tools_called)}" if tools_called else None,
-                    ))
-
-                elif event == "tool_started":
-                    tool_name = data.get("tool", "unknown")
-                    tool_input = data.get("input", {})
-                    input_preview = str(tool_input)[:200] if tool_input else None
-                    toolkit_name = tool_name.split(".")[0] if "." in tool_name else tool_name
-                    method_name = tool_name.split(".")[-1] if "." in tool_name else tool_name
-                    timestamp = datetime.now().isoformat()
-
-                    # Save to state for persistence
-                    state.toolkit_events.append({
-                        "toolkit_name": toolkit_name,
-                        "method_name": method_name,
-                        "status": "running",
-                        "input_preview": input_preview,
-                        "output_preview": None,
-                        "timestamp": timestamp,
-                        "agent_name": agent_name,
-                    })
-
-                    await state.put_event(ActivateToolkitData(
-                        task_id=task_id,
-                        toolkit_name=toolkit_name,
-                        method_name=method_name,
-                        input_preview=input_preview,
-                        agent_name=agent_name,
-                    ))
-
-                elif event == "tool_completed":
-                    tool_name = data.get("tool", "unknown")
-                    result = str(data.get("result", ""))
-                    result_preview = result[:200]
-                    toolkit_name = tool_name.split(".")[0] if "." in tool_name else tool_name
-                    method_name = tool_name.split(".")[-1] if "." in tool_name else tool_name
-
-                    # Update the last running event with same toolkit/method
-                    for evt in reversed(state.toolkit_events):
-                        if evt["toolkit_name"] == toolkit_name and evt["method_name"] == method_name and evt["status"] == "running":
-                            evt["status"] = "completed"
-                            evt["output_preview"] = result_preview
-                            break
-
-                    await state.put_event(DeactivateToolkitData(
-                        task_id=task_id,
-                        toolkit_name=toolkit_name,
-                        method_name=method_name,
-                        output_preview=result_preview,
-                        success=True,
-                        agent_name=agent_name,
-                    ))
-
-                    # For terminal tools, also emit a specific terminal event
-                    if tool_name in ("shell_exec", "shell_exec_async", "terminal"):
-                        tool_input = data.get("input", {})
-                        command = tool_input.get("command", "")
-                        # Try to extract exit code from output
-                        exit_code = None
-                        if "[Exit code:" in result:
-                            try:
-                                exit_code = int(result.split("[Exit code:")[1].split("]")[0].strip())
-                            except (ValueError, IndexError):
-                                pass
-                        # Truncate output with indicator if too long
-                        output_display = result
-                        if len(result) > 2000:
-                            output_display = result[:2000] + "\n... [output truncated]"
-                        await state.put_event(TerminalData(
-                            task_id=task_id,
-                            command=command,
-                            output=output_display,
-                            exit_code=exit_code,
-                            working_directory=state.working_directory,
-                        ))
-
-                elif event == "tool_failed":
-                    tool_name = data.get("tool", "unknown")
-                    error = data.get("error", "unknown")
-                    toolkit_name = tool_name.split(".")[0] if "." in tool_name else tool_name
-                    method_name = tool_name.split(".")[-1] if "." in tool_name else tool_name
-
-                    # Update the last running event with same toolkit/method
-                    for evt in reversed(state.toolkit_events):
-                        if evt["toolkit_name"] == toolkit_name and evt["method_name"] == method_name and evt["status"] == "running":
-                            evt["status"] = "failed"
-                            evt["output_preview"] = f"Error: {error}"
-                            break
-
-                    await state.put_event(DeactivateToolkitData(
-                        task_id=task_id,
-                        toolkit_name=toolkit_name,
-                        method_name=method_name,
-                        output_preview=f"Error: {error}",
-                        success=False,
-                        agent_name=agent_name,
-                    ))
-
-                elif event == "tool_executed":
-                    # Legacy event - convert to deactivate_toolkit
-                    tool_name = data.get("tool_name", "unknown")
-                    await state.put_event(DeactivateToolkitData(
-                        task_id=task_id,
-                        toolkit_name=tool_name,
-                        method_name=tool_name,
-                        output_preview=data.get("result_preview", "")[:200],
-                        success=not data.get("error", False),
-                    ))
-
-                elif event == "browser_action":
-                    await state.put_event(BrowserActionData(
-                        task_id=task_id,
-                        action_type=data.get("action_type", "unknown"),
-                        target=data.get("target"),
-                        success=data.get("success", True),
-                        page_url=data.get("page_url"),
-                        page_title=data.get("page_title"),
-                    ))
-
-                elif event == "terminal":
-                    output = data.get("output", "")
-                    if len(output) > 2000:
-                        output = output[:2000] + "\n... [output truncated]"
-                    await state.put_event(TerminalData(
-                        task_id=task_id,
-                        command=data.get("command", ""),
-                        output=output,
-                        exit_code=data.get("exit_code"),
-                        working_directory=data.get("working_directory"),
-                    ))
-
-                elif event == "llm_reasoning":
-                    reasoning_text = data.get("reasoning", "")
-                    step = data.get("step", state.loop_iteration)
-                    timestamp = datetime.now().isoformat()
-                    logger.info(f"[Task {task_id}] on_agent_progress received llm_reasoning event")
-                    logger.info(f"[Task {task_id}] Emitting agent_thinking event: {reasoning_text[:100]}...")
-
-                    # Save to state for persistence
-                    state.thinking_logs.append({
-                        "content": reasoning_text[:500],  # Truncate for storage
-                        "step": step,
-                        "agent_name": agent_name,
-                        "timestamp": timestamp,
-                    })
-
-                    thinking_event = AgentThinkingData(
-                        task_id=task_id,
-                        agent_name=agent_name,
-                        thinking=reasoning_text,
-                        step=step,
-                    )
-                    logger.info(f"[Task {task_id}] AgentThinkingData created: action={thinking_event.action}")
-                    await state.put_event(thinking_event)
-                    logger.info(f"[Task {task_id}] agent_thinking event put to queue")
-
-                elif event == "agent_completed":
-                    state.progress = 1.0
-                    await state.put_event(DeactivateAgentData(
-                        task_id=task_id,
-                        agent_name=agent_name,
-                        message=data.get("response", "")[:200],
-                    ))
-
-                elif event == "agent_error":
-                    await state.put_event(ErrorData(
-                        task_id=task_id,
-                        error=data.get("error", "Unknown error"),
-                        recoverable=True,
-                        details={"step": data.get("step")},
-                    ))
-
-                # Reasoner-specific events - forward to legacy queue for now
-                elif event in ("reasoner_query_started", "reasoner_workflow_started",
-                               "reasoner_navigate", "reasoner_intent_executed",
-                               "reasoner_intent_failed", "reasoner_workflow_completed",
-                               "reasoner_fallback"):
-                    # Forward to legacy queue
-                    await state._progress_queue.put({"event": event, **data})
-
-            agent.set_progress_callback(on_agent_progress)
-
-            # Set up human interaction callbacks
-            async def on_human_ask(question: str, context: Optional[str] = None) -> str:
-                """Handle ask_human tool calls from the agent."""
-                logger.info(f"[Task {task_id}] Agent asking human: {question[:100]}...")
-
-                # Store the pending question
-                state._pending_human_question = question
-
-                # Send typed ask event
-                await state.put_event(AskData(
-                    task_id=task_id,
-                    question=question,
-                    context=context,
-                    timeout_seconds=300,
-                ))
-
-                # Wait for human response (timeout after 5 minutes)
-                try:
-                    response = await asyncio.wait_for(
-                        state._human_response_queue.get(),
-                        timeout=300.0
-                    )
-                    logger.info(f"[Task {task_id}] Human responded: {response[:50]}...")
-                    return response
-                except asyncio.TimeoutError:
-                    logger.warning(f"[Task {task_id}] Human response timeout")
-                    state._pending_human_question = None
-                    return "[No response from human - timeout after 5 minutes]"
-
-            async def on_human_message(title: str, description: str) -> None:
-                """Handle send_message tool calls from the agent."""
-                logger.info(f"[Task {task_id}] Agent sending message: {title}")
-
-                # Send typed notice event
                 await state.put_event(NoticeData(
                     task_id=task_id,
-                    level="info",
-                    title=title,
-                    message=description,
+                    level="error",
+                    title="Execution Error",
+                    message=str(e),
                 ))
-
-            agent.set_human_callbacks(
-                ask_callback=on_human_ask,
-                message_callback=on_human_message
-            )
-
-            # Set task state for toolkit event emission via @listen_toolkit decorators
-            agent.set_task_state(state)
-
-            # Configure memory toolkit (for MemoryToolkit to work within Agent loop)
-            if self._cloud_client and self._llm_api_key:
-                agent.set_memory_config(
-                    memory_api_base_url=self._cloud_client.api_url,
-                    ami_api_key=self._llm_api_key,
-                    user_id=self._user_id,
-                )
-
-            # Create agent context with LLM configuration
-            context = AgentContext(
-                workflow_id="quick_task",
-                step_id=task_id,
-                user_id=state.user_id,
-                variables={
-                    "llm_api_key": self._llm_api_key,
-                    "llm_model": self._llm_model,
-                    "llm_base_url": self._llm_base_url,
-                },
-            )
-
-            # Initialize agent
-            init_success = await agent.initialize(context)
-            if not init_success:
-                raise Exception(f"Failed to initialize {agent_name}")
-
-            # Build conversation context for multi-turn task continuation
-            conversation_context = ""
-            if state.conversation_history:
-                from .context_builder import build_conversation_context
-                conversation_context = build_conversation_context(
-                    state,
-                    max_entries=15,  # Limit context to last 15 entries
-                    skip_files=True,  # Don't include file listings in context
-                )
-                logger.info(f"[Task {task_id}] Including conversation context ({len(conversation_context)} chars)")
-
-            # Prepare input - Memory query is handled inside Agent via MemoryToolkit
-            input_data = AgentInput(
-                data={
-                    "task": state.task,
-                    "task_id": task_id,  # For notes directory isolation
-                    "headless": headless,
-                    # Working directory info for toolkits
-                    "working_directory": state.working_directory,
-                    "notes_directory": state.notes_directory,
-                    "browser_data_directory": state.browser_data_directory,
-                    "user_id": state.user_id,
-                    "project_id": state.project_id,
-                    # Conversation context for multi-turn tasks
-                    "conversation_context": conversation_context,
-                }
-            )
-
-            # Execute
-            result = await agent.execute(input_data, context)
-
-            # Extract notes content from result
-            notes_content = None
-            if result.data and result.data.get("notes"):
-                notes_content = result.data.get("notes")
-                state.notes_content = notes_content
-
-            # Save result
-            state.result = {
-                "success": result.success,
-                "message": result.message,
-                "data": result.data,
-            }
-            state.status = TaskStatus.COMPLETED if result.success else TaskStatus.FAILED
-            state.error = result.message if not result.success else None
-            state.completed_at = datetime.now()
-            state.updated_at = state.completed_at
-
-            # Record task result in conversation history for multi-turn context
-            task_result_content = {
-                "task": state.task,
-                "summary": result.message or "",
-                "status": "completed" if result.success else "failed",
-                "working_directory": state.working_directory,
-            }
-            if notes_content:
-                task_result_content["notes_preview"] = notes_content[:500] if len(notes_content) > 500 else notes_content
-            if state.tools_called:
-                task_result_content["tools_used"] = list(set(t.get("name", "") for t in state.tools_called[:20]))
-            state.add_conversation("task_result", task_result_content)
-            logger.info(f"[Task {task_id}] Recorded task result to conversation history")
-
-            # Push completion event with notes (typed events)
-            duration = (state.completed_at - state.started_at).total_seconds() if state.started_at else 0
-            if result.success:
-                await state.put_event(TaskCompletedData(
+                context = "mid_execution" if loop_iteration > 1 else "initial"
+                await state.put_event(WaitConfirmData(
                     task_id=task_id,
-                    output=result.data.get("result") if result.data else None,
-                    notes=notes_content,
-                    tools_called=state.tools_called,
-                    loop_iterations=state.loop_iteration,
-                    duration_seconds=duration,
+                    content=f"An error occurred: {e}\n\nYou can try again or ask me something else.",
+                    question=current_question,
+                    context=context,
                 ))
-                # Also send end event
-                await state.put_event(EndData(
-                    task_id=task_id,
-                    status="completed",
-                    message="Task completed successfully",
-                    result=result.data,
-                ))
+                state.status = TaskStatus.WAITING
+
+            # ===== Wait for Next User Message =====
+            logger.info(f"[Task {task_id}] Waiting for next user message...")
+
+            try:
+                next_message = await self._wait_for_user_message(task_id, state)
+                if next_message is None:
+                    logger.info(f"[Task {task_id}] No more user messages, ending session")
+                    break
+
+                state.add_conversation("user", next_message)
+                current_question = next_message
+                logger.info(f"[Task {task_id}] Received next user message: {next_message[:100]}...")
+
+            except asyncio.CancelledError:
+                logger.info(f"[Task {task_id}] Task cancelled while waiting")
+                break
+            except Exception as e:
+                logger.error(f"[Task {task_id}] Error waiting for user message: {e}")
+                break
+
+        # ===== Session End Cleanup =====
+        logger.info(f"[Task {task_id}] AMI session ended after {loop_iteration} iterations")
+        state.status = TaskStatus.COMPLETED
+        state.completed_at = datetime.now()
+
+        await state.put_event(EndData(
+            task_id=task_id,
+            status="completed",
+            message="Session ended",
+            result=state.result,
+        ))
+
+        # Close browser session
+        try:
+            from ..base_agent.tools.eigent_browser.browser_session import HybridBrowserSession
+            closed = await HybridBrowserSession.close_session_by_id(task_id)
+            if closed:
+                logger.info(f"[Task {task_id}] Browser session closed successfully")
+        except Exception as cleanup_error:
+            logger.warning(f"[Task {task_id}] Error closing browser session: {cleanup_error}")
+
+    async def _create_agents_for_ami_executor(
+        self,
+        task_id: str,
+        state: "TaskState",
+        headless: bool = False,
+    ):
+        """
+        Create agents for AMI Executor.
+
+        Returns a dictionary of agents keyed by agent_type for AMITaskExecutor,
+        plus the task_agent for AMITaskPlanner.
+
+        Args:
+            task_id: Task identifier
+            state: TaskState containing working directories
+            headless: Whether to run browser in headless mode
+
+        Returns:
+            Tuple of (agents_dict, task_agent)
+        """
+        from ..base_agent.core.agent_factories import (
+            create_listen_browser_agent,
+            create_developer_agent,
+            create_document_agent,
+            create_multi_modal_agent,
+            create_model_backend,
+        )
+        from camel.agents import ChatAgent
+
+        logger.info(f"[Task {task_id}] Creating agents for AMI Executor...")
+
+        # Create all agents in parallel
+        agent_results = await asyncio.gather(
+            create_listen_browser_agent(
+                task_state=state,
+                task_id=task_id,
+                working_directory=state.working_directory,
+                notes_directory=state.notes_directory,
+                browser_data_directory=state.browser_data_directory,
+                headless=headless,
+                memory_api_base_url=self._cloud_client.api_url if self._cloud_client else None,
+                ami_api_key=self._llm_api_key,
+                user_id=self._user_id,
+                llm_api_key=self._llm_api_key,
+                llm_model=self._llm_model,
+                llm_base_url=self._llm_base_url,
+            ),
+            asyncio.to_thread(
+                create_developer_agent,
+                task_state=state,
+                task_id=task_id,
+                working_directory=state.working_directory,
+                notes_directory=state.notes_directory,
+                llm_api_key=self._llm_api_key,
+                llm_model=self._llm_model,
+                llm_base_url=self._llm_base_url,
+            ),
+            create_document_agent(
+                task_state=state,
+                task_id=task_id,
+                working_directory=state.working_directory,
+                notes_directory=state.notes_directory,
+                llm_api_key=self._llm_api_key,
+                llm_model=self._llm_model,
+                llm_base_url=self._llm_base_url,
+            ),
+            asyncio.to_thread(
+                create_multi_modal_agent,
+                task_state=state,
+                task_id=task_id,
+                working_directory=state.working_directory,
+                notes_directory=state.notes_directory,
+                llm_api_key=self._llm_api_key,
+                llm_model=self._llm_model,
+                llm_base_url=self._llm_base_url,
+            ),
+            return_exceptions=True,
+        )
+
+        # Process results
+        agent_names = ["browser", "code", "document", "multi_modal"]
+        agents_dict = {}
+        failed_agents = []
+
+        for i, result in enumerate(agent_results):
+            if isinstance(result, Exception):
+                logger.warning(f"[Task {task_id}] {agent_names[i]} Agent creation failed: {result}")
+                failed_agents.append(agent_names[i])
             else:
-                await state.put_event(TaskFailedData(
+                agents_dict[agent_names[i]] = result
+
+        if not agents_dict:
+            raise RuntimeError(f"All agents failed to create: {failed_agents}")
+
+        if failed_agents:
+            await state.put_event(NoticeData(
+                task_id=task_id,
+                level="warning",
+                title="Partial Agent Availability",
+                message=f"Some agents failed to initialize: {', '.join(failed_agents)}. Continuing with available agents.",
+            ))
+
+        logger.info(f"[Task {task_id}] Agents created: {len(agents_dict)}/4 available")
+
+        # Create task_agent for AMITaskPlanner
+        model_backend = create_model_backend(
+            llm_api_key=self._llm_api_key,
+            llm_model=self._llm_model,
+            llm_base_url=self._llm_base_url,
+        )
+
+        task_agent = ChatAgent(
+            system_message="You are a task decomposition expert. Split tasks by work type (browser, document, code).",
+            model=model_backend,
+        )
+
+        return agents_dict, task_agent
+
+    async def _create_memory_toolkit(
+        self,
+        task_id: str,
+        state: "TaskState",
+    ):
+        """
+        Create Memory Toolkit for AMI components.
+
+        Args:
+            task_id: Task identifier
+            state: TaskState
+
+        Returns:
+            MemoryToolkit instance or None
+        """
+        if not self._cloud_client or not self._llm_api_key:
+            return None
+
+        try:
+            from ..base_agent.tools.toolkits import MemoryToolkit
+            memory_api_base_url = getattr(self._cloud_client, 'api_url', None)
+            if memory_api_base_url:
+                effective_user_id = state.user_id or self._user_id or "default"
+                memory_toolkit = MemoryToolkit(
+                    memory_api_base_url=memory_api_base_url,
+                    ami_api_key=self._llm_api_key,
+                    user_id=effective_user_id,
+                )
+                logger.info(f"[Task {task_id}] MemoryToolkit created for AMI Executor")
+                return memory_toolkit
+        except Exception as e:
+            logger.warning(f"[Task {task_id}] Failed to create MemoryToolkit: {e}")
+
+        return None
+
+    async def _aggregate_ami_results(
+        self,
+        task_id: str,
+        state: "TaskState",
+        subtasks,
+        result: dict,
+        duration: float,
+    ) -> str:
+        """
+        Aggregate results from AMI subtasks into a summary.
+
+        Args:
+            task_id: Task identifier
+            state: TaskState
+            subtasks: List of AMISubtask objects
+            result: Execution result dict
+            duration: Execution duration in seconds
+
+        Returns:
+            Summary string
+        """
+        summary_output = None
+
+        if len(subtasks) > 1:
+            try:
+                from ..base_agent.core.agent_factories import (
+                    create_task_summary_agent,
+                    summarize_subtasks_results,
+                )
+
+                logger.info(f"[Task {task_id}] Generating summary for {len(subtasks)} subtasks...")
+
+                subtasks_with_results = [
+                    {
+                        "id": st.id,
+                        "content": st.content,
+                        "result": str(st.result)[:2000] if st.result else "No result",
+                    }
+                    for st in subtasks
+                ]
+
+                summary_agent = create_task_summary_agent(
+                    llm_api_key=self._llm_api_key,
+                    llm_model=self._llm_model,
+                    llm_base_url=self._llm_base_url,
+                )
+                summary_output = await summarize_subtasks_results(
+                    agent=summary_agent,
+                    main_task=state.task,
+                    subtasks=subtasks_with_results,
+                )
+                logger.info(f"[Task {task_id}] Summary generated successfully")
+            except Exception as e:
+                logger.error(f"[Task {task_id}] Failed to generate summary: {e}")
+
+        elif len(subtasks) == 1:
+            single_result = subtasks[0].result
+            if single_result:
+                summary_output = str(single_result)
+                logger.info(f"[Task {task_id}] Using single subtask result directly")
+
+        if summary_output:
+            return summary_output
+        else:
+            return f"Completed {result['completed']}/{result['total']} subtasks"
+
+    # ===== Multi-turn Conversation Handling (Eigent pattern) =====
+
+    async def handle_user_message(self, task_id: str, message: str) -> Dict[str, Any]:
+        """
+        Handle user message during task execution (Eigent pattern).
+
+        This method implements multi-turn conversation support:
+        1. If task is WAITING → put message in queue for the multi-turn loop
+        2. If task is completed → delegate to continue_task
+        3. If task is running → pause Workforce, classify message, handle accordingly
+        4. Simple question → answer directly, resume Workforce
+        5. Complex task → decompose into new subtasks, add to queue, resume
+
+        Args:
+            task_id: Task identifier
+            message: User's new message
+
+        Returns:
+            Dict with handling result:
+            - {"type": "queued", "success": True} for WAITING state
+            - {"type": "simple_answer", "answer": str} for simple questions
+            - {"type": "tasks_added", "new_tasks": int} for complex tasks
+            - {"type": "continued", "new_task_id": str} for completed tasks
+        """
+        state = self._tasks.get(task_id)
+        if not state:
+            raise ValueError(f"Task {task_id} not found")
+
+        logger.info(f"[Task {task_id}] Handling user message (status={state.status.value}): {message[:100]}...")
+
+        # Case 0: Task is WAITING for user input (Eigent multi-turn pattern)
+        # Put message in queue for the _execute_task_workforce loop to receive
+        if state.status == TaskStatus.WAITING:
+            logger.info(f"[Task {task_id}] Task is WAITING, queuing message for multi-turn loop")
+            await state.put_user_message(message)
+            return {"type": "queued", "success": True}
+
+        # Record user message in conversation history
+        state.add_conversation("user", message)
+
+        # Case 1: Task already completed → continue with new task
+        if state.status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
+            logger.info(f"[Task {task_id}] Task already finished, delegating to continue_task")
+            new_task_id = await self.continue_task(task_id, message)
+            return {"type": "continued", "new_task_id": new_task_id}
+
+        # Case 2: Task running → pause Workforce and handle message
+        workforce = state._workforce
+        if workforce:
+            workforce.pause()
+            logger.info(f"[Task {task_id}] Workforce paused for user message handling")
+
+        try:
+            # Classify the new message
+            is_complex = await self._classify_task(message, state)
+
+            if not is_complex:
+                # Simple question → answer directly
+                logger.info(f"[Task {task_id}] Simple message, answering directly")
+
+                answer = await self._answer_simple_question(message, state)
+                state.add_conversation("assistant", answer)
+
+                # Emit wait_confirm event for frontend display
+                # DS-10: context='mid_execution' for simple answer during Workforce execution
+                await state.put_event(WaitConfirmData(
                     task_id=task_id,
-                    error=result.message,
-                    notes=notes_content,
-                    tools_called=state.tools_called,
+                    content=answer,
+                    question=message,
+                    context="mid_execution",
                 ))
-                await state.put_event(EndData(
+
+                # Resume Workforce if still running
+                if workforce:
+                    workforce.resume()
+
+                return {"type": "simple_answer", "answer": answer}
+
+            else:
+                # Complex task → decompose and add to Workforce
+                logger.info(f"[Task {task_id}] Complex message, decomposing into new subtasks")
+
+                # Emit confirmed event (Eigent pattern)
+                await state.put_event(ConfirmedData(
                     task_id=task_id,
-                    status="failed",
-                    message=result.message,
+                    question=message,
                 ))
+
+                # Decompose the new task into subtasks
+                if workforce:
+                    new_subtasks = await workforce.decompose_task(message)
+
+                    if new_subtasks:
+                        # Add new subtasks to the execution queue
+                        await workforce.add_dynamic_subtasks(new_subtasks)
+
+                        # Update state with new subtasks
+                        for st in new_subtasks:
+                            state.subtasks.append({
+                                "id": st.id,
+                                "content": st.content,
+                                "status": "OPEN"
+                            })
+
+                        # Resume Workforce to process new tasks
+                        workforce.resume()
+
+                        return {"type": "tasks_added", "new_tasks": len(new_subtasks)}
+                    else:
+                        # Decomposition failed, try to answer directly
+                        logger.warning(f"[Task {task_id}] Decomposition returned no subtasks, falling back to direct answer")
+                        answer = await self._answer_simple_question(message, state)
+                        state.add_conversation("assistant", answer)
+
+                        # DS-10: context='mid_execution' for fallback answer during Workforce execution
+                        await state.put_event(WaitConfirmData(
+                            task_id=task_id,
+                            content=answer,
+                            question=message,
+                            context="mid_execution",
+                        ))
+
+                        workforce.resume()
+                        return {"type": "simple_answer", "answer": answer}
+                else:
+                    # No active Workforce, treat as new task
+                    logger.warning(f"[Task {task_id}] No active Workforce, treating as continuation")
+                    new_task_id = await self.continue_task(task_id, message)
+                    return {"type": "continued", "new_task_id": new_task_id}
 
         except Exception as e:
-            logger.exception(f"Task {task_id} failed: {e}")
-            state.status = TaskStatus.FAILED
-            state.error = str(e)
-            state.completed_at = datetime.now()
-            state.updated_at = state.completed_at
+            logger.error(f"[Task {task_id}] Error handling user message: {e}")
 
-            await state.put_event(TaskFailedData(
+            # Resume Workforce on error
+            if workforce:
+                workforce.resume()
+
+            # Return error as answer
+            error_msg = f"Sorry, I encountered an error: {str(e)}"
+            state.add_conversation("assistant", error_msg)
+
+            await state.put_event(NoticeData(
                 task_id=task_id,
-                error=str(e),
-                tools_called=state.tools_called,
-            ))
-            await state.put_event(EndData(
-                task_id=task_id,
-                status="failed",
+                level="error",
+                title="Message Handling Error",
                 message=str(e),
             ))
-        finally:
-            await self._cleanup_agent(agent, context, close_browser=True)
+
+            return {"type": "error", "error": str(e)}
 
     def cleanup_old_tasks(self, max_age_seconds: int = 3600):
         """Clean up old completed/failed tasks."""

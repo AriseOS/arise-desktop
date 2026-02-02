@@ -126,18 +126,6 @@ class AnthropicProvider(BaseProvider):
         if not hasattr(response, 'usage'):
             return None
 
-        # Debug: Log the full usage object for non-Claude models
-        if not self.model_name.startswith('claude'):
-            logger.info(f"[DEBUG] Non-Claude model usage object:")
-            logger.info(f"  Model: {self.model_name}")
-            logger.info(f"  Usage type: {type(response.usage)}")
-            logger.info(f"  Usage attributes: {dir(response.usage)}")
-            logger.info(f"  Usage dict: {vars(response.usage) if hasattr(response.usage, '__dict__') else 'N/A'}")
-            logger.info(f"  input_tokens: {getattr(response.usage, 'input_tokens', None)}")
-            logger.info(f"  output_tokens: {getattr(response.usage, 'output_tokens', None)}")
-            logger.info(f"  cache_creation_input_tokens: {getattr(response.usage, 'cache_creation_input_tokens', None)}")
-            logger.info(f"  cache_read_input_tokens: {getattr(response.usage, 'cache_read_input_tokens', None)}")
-
         usage_data = {
             "input_tokens": getattr(response.usage, 'input_tokens', 0) or 0,
             "output_tokens": getattr(response.usage, 'output_tokens', 0) or 0,
@@ -202,6 +190,25 @@ class AnthropicProvider(BaseProvider):
         except Exception as e:
             logger.warning(f"Failed to emit usage event: {e}")
     
+    def _get_proxy_from_env(self) -> Optional[str]:
+        """Get proxy from environment variables only (ignore system proxy settings).
+
+        This explicitly reads from environment variables and ignores system-level
+        proxy settings (e.g., macOS System Preferences / Clash) to ensure
+        predictable behavior when connecting to CRS proxy.
+
+        Returns:
+            Proxy URL string or None if not set
+        """
+        return (
+            os.environ.get("HTTPS_PROXY")
+            or os.environ.get("https_proxy")
+            or os.environ.get("HTTP_PROXY")
+            or os.environ.get("http_proxy")
+            or os.environ.get("ALL_PROXY")
+            or os.environ.get("all_proxy")
+        )
+
     async def _initialize_client(self) -> None:
         """Initialize the Anthropic client"""
 
@@ -214,10 +221,26 @@ class AnthropicProvider(BaseProvider):
         if not self.model_name:
             self.model_name = "claude-sonnet-4-5-20250929"
 
-        # Initialize client with timeout
+        # Create custom httpx client to bypass system proxy detection
+        # Anthropic SDK uses urllib.request.getproxies() which reads macOS System Preferences
+        # This causes issues when Clash/V2Ray modifies system proxy settings
+        # We explicitly get proxy from env vars only (like cloud_client.py does)
+        import httpx
+        proxy = self._get_proxy_from_env()
+        if proxy:
+            logger.info(f"Using proxy from environment: {proxy}")
+        else:
+            logger.info("No proxy from environment, bypassing system proxy settings")
+
+        http_client = httpx.Client(
+            timeout=120.0,  # 2 minute timeout for API calls
+            proxy=proxy,  # None disables auto-detection, explicit URL enables proxy
+        )
+
+        # Initialize client with custom http_client
         client_kwargs = {
             "api_key": self.api_key,
-            "timeout": 120.0,  # 2 minute timeout for API calls
+            "http_client": http_client,
         }
 
         # Add custom base_url if provided (for API proxy)
@@ -269,8 +292,6 @@ class AnthropicProvider(BaseProvider):
         for attempt in range(MAX_RETRIES):
             try:
                 logger.info(f"Calling Anthropic API... (attempt {attempt + 1}/{MAX_RETRIES})")
-                logger.info(f"  Client type: {type(self._client)}")
-                logger.info(f"  Client base_url: {self._client.base_url}")
 
                 # Make the API call and catch any errors
                 try:
@@ -283,9 +304,7 @@ class AnthropicProvider(BaseProvider):
                         max_tokens=self.max_tokens
                     )
 
-                    logger.info(f"Anthropic API call successful, model: {self.model_name}")
-                    logger.info(f"Response type: {type(response)}")
-                    logger.info(f"Response: {response}")
+                    logger.info(f"Anthropic API call successful")
 
                     # Record token usage (Eigent Migration)
                     self._record_usage(response)
@@ -408,23 +427,50 @@ class AnthropicProvider(BaseProvider):
         for attempt in range(MAX_RETRIES):
             try:
                 logger.info(f"Calling Anthropic API with tools... (attempt {attempt + 1}/{MAX_RETRIES})")
-                logger.info(f"  Model: {self.model_name}")
-                logger.info(f"  Tools count: {len(tools)}")
-                logger.info(f"  Messages count: {len(messages)}")
 
                 # Use asyncio.to_thread() to run sync client in thread pool
+                # Only include tools parameter if there are tools (Anthropic may reject empty list)
+                create_kwargs = {
+                    "model": self.model_name,
+                    "max_tokens": max_tokens,
+                    "system": system_prompt,
+                    "messages": messages,
+                }
+                if tools:
+                    create_kwargs["tools"] = tools
+
+                # Log the full prompt being sent to the model
+                logger.info("=" * 80)
+                logger.info("[LLM Request] System prompt (first 1000 chars):")
+                logger.info(system_prompt[:1000] if len(system_prompt) > 1000 else system_prompt)
+                logger.info("-" * 40)
+                for i, msg in enumerate(messages):
+                    role = msg.get("role", "unknown")
+                    content = msg.get("content", "")
+                    if isinstance(content, str):
+                        content_preview = content[:2000] if len(content) > 2000 else content
+                    else:
+                        content_preview = str(content)[:2000]
+                    logger.info(f"[LLM Request] Message {i} ({role}): {content_preview}")
+                    # Check if workflow guide is in the message
+                    if "Memory Guidance" in str(content):
+                        logger.info("[LLM Request] ✅ WORKFLOW GUIDE DETECTED in message!")
+                logger.info("=" * 80)
+
                 response = await asyncio.to_thread(
                     self._client.messages.create,
-                    model=self.model_name,
-                    max_tokens=max_tokens,
-                    system=system_prompt,
-                    messages=messages,
-                    tools=tools,
+                    **create_kwargs,
                 )
 
-                logger.info(f"Anthropic API call successful")
-                logger.info(f"  Stop reason: {response.stop_reason}")
-                logger.info(f"  Content blocks: {len(response.content)}")
+                logger.info(f"Anthropic API call successful (stop={response.stop_reason}, blocks={len(response.content)})")
+
+                # Log full response for debugging
+                for i, block in enumerate(response.content):
+                    if hasattr(block, 'type'):
+                        if block.type == "text":
+                            logger.info(f"[LLM Response] Block {i} text: {block.text[:500] if block.text else '(empty)'}")
+                        elif block.type == "tool_use":
+                            logger.info(f"[LLM Response] Block {i} tool_use: {block.name}({json.dumps(block.input, ensure_ascii=False)[:200]})")
 
                 # Record token usage (Eigent Migration)
                 self._record_usage(response)

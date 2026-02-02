@@ -12,14 +12,46 @@ References:
 - Eigent: third-party/eigent/backend/app/utils/toolkit/google_calendar_toolkit.py
 """
 
+import atexit
+import asyncio
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Optional
+from functools import partial
+from typing import Any, Dict, List, Optional
 
 from .base_toolkit import BaseToolkit, FunctionTool
 
 logger = logging.getLogger(__name__)
+
+# Shared thread pool for Google API calls
+_google_api_executor: Optional[ThreadPoolExecutor] = None
+
+
+def _get_executor() -> ThreadPoolExecutor:
+    """Get or create shared thread pool executor for Google API calls."""
+    global _google_api_executor
+    if _google_api_executor is None:
+        _google_api_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="gcal_")
+    return _google_api_executor
+
+
+def _cleanup_executor() -> None:
+    """Clean up shared thread pool executor on exit."""
+    global _google_api_executor
+    if _google_api_executor is not None:
+        try:
+            _google_api_executor.shutdown(wait=False)
+            logger.debug("Google Calendar executor shutdown")
+        except Exception as e:
+            logger.warning(f"Error during Google Calendar executor cleanup: {e}")
+        finally:
+            _google_api_executor = None
+
+
+# Register cleanup on exit
+atexit.register(_cleanup_executor)
 
 
 class GoogleCalendarToolkit(BaseToolkit):
@@ -109,11 +141,17 @@ class GoogleCalendarToolkit(BaseToolkit):
             )
 
         try:
-            creds = Credentials.from_authorized_user_file(
-                self.credentials_path,
-                scopes=['https://www.googleapis.com/auth/calendar']
-            )
-            self._service = build('calendar', 'v3', credentials=creds)
+            # Run sync initialization in thread pool
+            loop = asyncio.get_running_loop()
+
+            def _init_service():
+                creds = Credentials.from_authorized_user_file(
+                    self.credentials_path,
+                    scopes=['https://www.googleapis.com/auth/calendar']
+                )
+                return build('calendar', 'v3', credentials=creds)
+
+            self._service = await loop.run_in_executor(_get_executor(), _init_service)
             self._initialized = True
 
             # Build FunctionTool wrappers
@@ -128,47 +166,30 @@ class GoogleCalendarToolkit(BaseToolkit):
 
     def _build_function_tools(self) -> None:
         """Build FunctionTool wrappers for calendar methods."""
+        # Helper to create tool with custom name
+        def make_tool(func, name, description):
+            tool = FunctionTool(func)
+            tool.set_function_name(name)
+            tool.set_function_description(description)
+            return tool
+
         self._function_tools = [
-            FunctionTool(
-                func=self.list_events,
-                name="calendar_list_events",
-                description="List calendar events within a time range",
-            ),
-            FunctionTool(
-                func=self.create_event,
-                name="calendar_create_event",
-                description="Create a new calendar event",
-            ),
-            FunctionTool(
-                func=self.update_event,
-                name="calendar_update_event",
-                description="Update an existing calendar event",
-            ),
-            FunctionTool(
-                func=self.delete_event,
-                name="calendar_delete_event",
-                description="Delete a calendar event",
-            ),
-            FunctionTool(
-                func=self.get_event,
-                name="calendar_get_event",
-                description="Get details of a specific calendar event",
-            ),
-            FunctionTool(
-                func=self.get_free_busy,
-                name="calendar_get_free_busy",
-                description="Get free/busy information for calendars",
-            ),
-            FunctionTool(
-                func=self.list_calendars,
-                name="calendar_list_calendars",
-                description="List all accessible calendars",
-            ),
-            FunctionTool(
-                func=self.quick_add,
-                name="calendar_quick_add",
-                description="Create event using natural language (like Google's quick add)",
-            ),
+            make_tool(self.list_events, "calendar_list_events",
+                     "List calendar events within a time range"),
+            make_tool(self.create_event, "calendar_create_event",
+                     "Create a new calendar event"),
+            make_tool(self.update_event, "calendar_update_event",
+                     "Update an existing calendar event"),
+            make_tool(self.delete_event, "calendar_delete_event",
+                     "Delete a calendar event"),
+            make_tool(self.get_event, "calendar_get_event",
+                     "Get details of a specific calendar event"),
+            make_tool(self.get_free_busy, "calendar_get_free_busy",
+                     "Get free/busy information for calendars"),
+            make_tool(self.list_calendars, "calendar_list_calendars",
+                     "List all accessible calendars"),
+            make_tool(self.quick_add, "calendar_quick_add",
+                     "Create event using natural language (like Google's quick add)"),
         ]
 
     def get_tools(self) -> List[FunctionTool]:
@@ -186,6 +207,23 @@ class GoogleCalendarToolkit(BaseToolkit):
             List of FunctionTool instances
         """
         return self._function_tools
+
+    async def _run_sync(self, func, *args, **kwargs):
+        """Run a synchronous function in the thread pool.
+
+        Args:
+            func: Sync function to run
+            *args: Positional arguments
+            **kwargs: Keyword arguments
+
+        Returns:
+            Function result
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            _get_executor(),
+            partial(func, *args, **kwargs)
+        )
 
     async def list_events(
         self,
@@ -229,7 +267,10 @@ class GoogleCalendarToolkit(BaseToolkit):
         if query:
             request_params["q"] = query
 
-        events_result = self._service.events().list(**request_params).execute()
+        def _list():
+            return self._service.events().list(**request_params).execute()
+
+        events_result = await self._run_sync(_list)
         return events_result.get("items", [])
 
     async def create_event(
@@ -282,11 +323,14 @@ class GoogleCalendarToolkit(BaseToolkit):
         if recurrence:
             event["recurrence"] = recurrence
 
-        return self._service.events().insert(
-            calendarId=calendar_id,
-            body=event,
-            sendUpdates="all" if attendees else "none",
-        ).execute()
+        def _insert():
+            return self._service.events().insert(
+                calendarId=calendar_id,
+                body=event,
+                sendUpdates="all" if attendees else "none",
+            ).execute()
+
+        return await self._run_sync(_insert)
 
     async def update_event(
         self,
@@ -317,32 +361,35 @@ class GoogleCalendarToolkit(BaseToolkit):
         if not self._initialized:
             raise RuntimeError("Toolkit not initialized, call initialize() first")
 
-        # Get existing event
-        event = self._service.events().get(
-            calendarId=calendar_id,
-            eventId=event_id,
-        ).execute()
+        def _update():
+            # Get existing event
+            event = self._service.events().get(
+                calendarId=calendar_id,
+                eventId=event_id,
+            ).execute()
 
-        # Update fields if provided
-        if summary is not None:
-            event["summary"] = summary
-        if description is not None:
-            event["description"] = description
-        if location is not None:
-            event["location"] = location
-        if start is not None:
-            event["start"]["dateTime"] = start
-        if end is not None:
-            event["end"]["dateTime"] = end
-        if attendees is not None:
-            event["attendees"] = [{"email": email} for email in attendees]
+            # Update fields if provided
+            if summary is not None:
+                event["summary"] = summary
+            if description is not None:
+                event["description"] = description
+            if location is not None:
+                event["location"] = location
+            if start is not None:
+                event["start"]["dateTime"] = start
+            if end is not None:
+                event["end"]["dateTime"] = end
+            if attendees is not None:
+                event["attendees"] = [{"email": email} for email in attendees]
 
-        return self._service.events().update(
-            calendarId=calendar_id,
-            eventId=event_id,
-            body=event,
-            sendUpdates="all" if attendees else "none",
-        ).execute()
+            return self._service.events().update(
+                calendarId=calendar_id,
+                eventId=event_id,
+                body=event,
+                sendUpdates="all" if attendees else "none",
+            ).execute()
+
+        return await self._run_sync(_update)
 
     async def delete_event(
         self,
@@ -363,12 +410,14 @@ class GoogleCalendarToolkit(BaseToolkit):
         if not self._initialized:
             raise RuntimeError("Toolkit not initialized, call initialize() first")
 
-        self._service.events().delete(
-            calendarId=calendar_id,
-            eventId=event_id,
-            sendUpdates=send_updates,
-        ).execute()
+        def _delete():
+            self._service.events().delete(
+                calendarId=calendar_id,
+                eventId=event_id,
+                sendUpdates=send_updates,
+            ).execute()
 
+        await self._run_sync(_delete)
         return {"deleted": True, "event_id": event_id}
 
     async def get_event(
@@ -388,10 +437,13 @@ class GoogleCalendarToolkit(BaseToolkit):
         if not self._initialized:
             raise RuntimeError("Toolkit not initialized, call initialize() first")
 
-        return self._service.events().get(
-            calendarId=calendar_id,
-            eventId=event_id,
-        ).execute()
+        def _get():
+            return self._service.events().get(
+                calendarId=calendar_id,
+                eventId=event_id,
+            ).execute()
+
+        return await self._run_sync(_get)
 
     async def get_free_busy(
         self,
@@ -419,7 +471,10 @@ class GoogleCalendarToolkit(BaseToolkit):
             "items": [{"id": cal_id} for cal_id in calendars],
         }
 
-        return self._service.freebusy().query(body=body).execute()
+        def _query():
+            return self._service.freebusy().query(body=body).execute()
+
+        return await self._run_sync(_query)
 
     async def list_calendars(self) -> List[Dict[str, Any]]:
         """List all accessible calendars.
@@ -430,7 +485,10 @@ class GoogleCalendarToolkit(BaseToolkit):
         if not self._initialized:
             raise RuntimeError("Toolkit not initialized, call initialize() first")
 
-        calendar_list = self._service.calendarList().list().execute()
+        def _list():
+            return self._service.calendarList().list().execute()
+
+        calendar_list = await self._run_sync(_list)
         return calendar_list.get("items", [])
 
     async def quick_add(
@@ -454,10 +512,13 @@ class GoogleCalendarToolkit(BaseToolkit):
         if not self._initialized:
             raise RuntimeError("Toolkit not initialized, call initialize() first")
 
-        return self._service.events().quickAdd(
-            calendarId=calendar_id,
-            text=text,
-        ).execute()
+        def _quick_add():
+            return self._service.events().quickAdd(
+                calendarId=calendar_id,
+                text=text,
+            ).execute()
+
+        return await self._run_sync(_quick_add)
 
     async def close(self) -> None:
         """Close the toolkit (cleanup if needed)."""

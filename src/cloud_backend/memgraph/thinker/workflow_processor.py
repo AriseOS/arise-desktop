@@ -16,6 +16,7 @@ This module implements the new processing pipeline from memory-graph-ontology-de
 import hashlib
 import json
 import re
+import logging
 import time
 import uuid
 from datetime import datetime
@@ -30,6 +31,9 @@ from src.cloud_backend.memgraph.ontology.domain import Domain, Manage, normalize
 from src.cloud_backend.memgraph.ontology.intent import Intent
 from src.cloud_backend.memgraph.ontology.intent_sequence import IntentSequence
 from src.cloud_backend.memgraph.ontology.page_instance import PageInstance
+
+logger = logging.getLogger(__name__)
+
 from src.cloud_backend.memgraph.ontology.state import State
 from src.cloud_backend.memgraph.services.embedding_model import EmbeddingModel
 from src.common.llm import AnthropicProvider
@@ -192,25 +196,25 @@ class WorkflowProcessor:
             ValueError: If input is invalid or processing fails.
         """
         start_time = datetime.now()
-        print(f"\n{'='*60}")
-        print("Starting Workflow Processing Pipeline (URL-based)")
-        print(f"{'='*60}\n")
+        logger.info(f"\n{'='*60}")
+        logger.info("Starting Workflow Processing Pipeline (URL-based)")
+        logger.info(f"{'='*60}\n")
 
         # Stage 0: Parse and validate input
-        print("Stage 0: Parsing input data...")
+        logger.info("Stage 0: Parsing input data...")
         events = self._parse_input(workflow_data)
-        print(f"  Parsed {len(events)} events\n")
+        logger.info(f"  Parsed {len(events)} events\n")
 
         # Stage 1: Segment events by URL
-        print("Stage 1: Segmenting events by URL...")
+        logger.info("Stage 1: Segmenting events by URL...")
         segments = self._segment_by_url(events)
-        print(f"  Created {len(segments)} URL segments")
+        logger.info(f"  Created {len(segments)} URL segments")
         for seg in segments:
-            print(f"    - {seg.url} ({len(seg.events)} events)")
-        print()
+            logger.info(f"    - {seg.url} ({len(seg.events)} events)")
+        logger.info()
 
         # Stage 2: Process segments - find/create States, PageInstances, IntentSequences
-        print("Stage 2: Processing segments...")
+        logger.info("Stage 2: Processing segments...")
         states = []
         valid_segments = []  # Track segments that have valid URLs (same order as states)
         state_is_new_flags = []  # Track which states are new
@@ -245,7 +249,7 @@ class WorkflowProcessor:
         for segment in segments:
             # Skip segments with empty URL
             if not segment.url:
-                print(f"    Warning: Skipping segment with empty URL")
+                logger.info(f"    Warning: Skipping segment with empty URL")
                 continue
 
             domain_key = self._extract_domain_from_url(segment.url)
@@ -318,10 +322,10 @@ class WorkflowProcessor:
 
             if is_new:
                 new_state_count += 1
-                print(f"    Created new State: {state.id[:8]}... for {segment.url}")
+                logger.info(f"    Created new State: {state.id[:8]}... for {segment.url}")
             else:
                 reused_state_count += 1
-                print(f"    Reused existing State: {state.id[:8]}... for {segment.url}")
+                logger.info(f"    Reused existing State: {state.id[:8]}... for {segment.url}")
 
             # Create PageInstance
             instance = self._create_page_instance(
@@ -361,12 +365,12 @@ class WorkflowProcessor:
             if sequence:
                 intent_sequences.append(sequence)
 
-        print(f"  New states: {new_state_count}, Reused states: {reused_state_count}")
-        print(f"  Page instances: {len(page_instances)}")
-        print(f"  Intent sequences: {len(intent_sequences)}\n")
+        logger.info(f"  New states: {new_state_count}, Reused states: {reused_state_count}")
+        logger.info(f"  Page instances: {len(page_instances)}")
+        logger.info(f"  Intent sequences: {len(intent_sequences)}\n")
 
         # Stage 3: Create Actions between consecutive States
-        print("Stage 3: Creating Actions...")
+        logger.info("Stage 3: Creating Actions...")
         actions = self._create_actions(
             segments=valid_segments,  # Use valid_segments (same order as states)
             states=states,
@@ -374,19 +378,19 @@ class WorkflowProcessor:
             user_id=None,  # user isolation disabled
             session_id=session_id,
         )
-        print(f"  Created {len(actions)} actions\n")
+        logger.info(f"  Created {len(actions)} actions\n")
 
         # Stage 4: Extract Domains and create Manage edges
-        print("Stage 4: Extracting Domains and Manage edges...")
+        logger.info("Stage 4: Extracting Domains and Manage edges...")
         domains, manages = self._extract_domains_and_manages(
             states=states,
             user_id=None,  # user isolation disabled
             domain_root_id_map=domain_root_id_map,
         )
-        print(f"  Created {len(domains)} domains and {len(manages)} manage edges\n")
+        logger.info(f"  Created {len(domains)} domains and {len(manages)} manage edges\n")
 
         # Stage 5: Generate descriptions using LLM
-        print("Stage 5: Generating descriptions...")
+        logger.info("Stage 5: Generating descriptions...")
         # Only generate descriptions for newly created states
         new_states = [s for s, is_new in zip(states, state_is_new_flags) if is_new]
         await self._generate_descriptions(
@@ -394,20 +398,20 @@ class WorkflowProcessor:
             intent_sequences=intent_sequences,
             actions=actions,
         )
-        print()
+        logger.info()
 
         # Stage 6: Generate embeddings
         if self.embedding_model:
-            print("Stage 6: Generating embeddings...")
+            logger.info("Stage 6: Generating embeddings...")
             self._generate_embeddings(
                 states=states,
                 intent_sequences=intent_sequences,
             )
-            print()
+            logger.info()
 
         # Stage 7: Store to memory
         if store_to_memory and self.memory:
-            print("Stage 7: Storing to memory...")
+            logger.info("Stage 7: Storing to memory...")
             self._store_to_memory(
                 domains=domains,
                 states=states,
@@ -416,7 +420,7 @@ class WorkflowProcessor:
                 actions=actions,
                 manages=manages,
             )
-            print("  Stored all structures to memory")
+            logger.info("  Stored all structures to memory")
 
             # Create cognitive phrase
             cognitive_phrase = await self._create_cognitive_phrase(
@@ -430,10 +434,10 @@ class WorkflowProcessor:
             if cognitive_phrase:
                 success = self.memory.create_phrase(cognitive_phrase)
                 if success:
-                    print(f"  Created cognitive phrase: {cognitive_phrase.description[:80]}...")
+                    logger.info(f"  Created cognitive phrase: {cognitive_phrase.description[:80]}...")
         else:
-            print("Stage 7: Skipping memory storage")
-        print()
+            logger.info("Stage 7: Skipping memory storage")
+        logger.info()
 
         # Calculate processing time
         end_time = datetime.now()
@@ -463,13 +467,13 @@ class WorkflowProcessor:
         )
 
         # Print summary
-        print(f"{'='*60}")
-        print("Processing Complete!")
-        print(f"{'='*60}")
+        logger.info(f"{'='*60}")
+        logger.info("Processing Complete!")
+        logger.info(f"{'='*60}")
         summary = result.get_summary()
         for key, value in summary.items():
-            print(f"  {key}: {value}")
-        print(f"{'='*60}\n")
+            logger.info(f"  {key}: {value}")
+        logger.info(f"{'='*60}\n")
 
         return result
 
@@ -657,7 +661,7 @@ class WorkflowProcessor:
                     continue
 
             # Fallback: return 0
-            print(f"Warning: Could not parse timestamp: {ts}")
+            logger.info(f"Warning: Could not parse timestamp: {ts}")
             return 0
         except Exception:
             return 0
@@ -766,7 +770,6 @@ class WorkflowProcessor:
             user_id=None,  # user isolation disabled
             session_id=session_id,
             instances=[],
-            intent_sequences=[],
         )
         return state, True
 
@@ -814,7 +817,8 @@ class WorkflowProcessor:
         """Create IntentSequence from segment events.
 
         Design decision: Don't create empty IntentSequences.
-        V2: Uses IntentSequenceManager to create independent nodes with HAS_SEQUENCE relationships.
+        Note: This method only creates the object, does NOT store to memory.
+        Storage happens in Stage 7 after embedding generation, enabling proper deduplication.
 
         Args:
             segment: URLSegment to process.
@@ -857,12 +861,9 @@ class WorkflowProcessor:
             navigation_target_state_id=navigation_target_state_id,
         )
 
-        # V2: Use IntentSequenceManager to create independent node and relationship
-        if self.memory and self.memory.intent_sequence_manager:
-            # Create independent IntentSequence node
-            self.memory.intent_sequence_manager.create_sequence(sequence)
-            # Create HAS_SEQUENCE relationship from State to IntentSequence
-            self.memory.intent_sequence_manager.link_to_state(state_id, sequence.id)
+        # Store state_id in sequence for later storage (Stage 7)
+        # This is a temporary attribute used by _store_intent_sequences
+        sequence._parent_state_id = state_id
 
         return sequence
 
@@ -919,7 +920,7 @@ class WorkflowProcessor:
             )
             return intent
         except Exception as e:
-            print(f"Warning: Failed to create Intent from event: {e}")
+            logger.info(f"Warning: Failed to create Intent from event: {e}")
             return None
 
     def _find_transition_trigger(self, segment: URLSegment) -> Optional[Dict[str, Any]]:
@@ -1226,13 +1227,13 @@ class WorkflowProcessor:
         for state in states:
             if not state.description:
                 state.description = await self._generate_state_description(state)
-                print(f"    Generated State description: {state.description[:50]}...")
+                logger.info(f"    Generated State description: {state.description[:50]}...")
 
         # Generate IntentSequence descriptions
         for sequence in intent_sequences:
             if not sequence.description:
                 sequence.description = await self._generate_intent_sequence_description(sequence)
-                print(f"    Generated IntentSequence description: {sequence.description[:50]}...")
+                logger.info(f"    Generated IntentSequence description: {sequence.description[:50]}...")
 
         # Generate Action descriptions (need state info for context)
         state_map = {s.id: s for s in states}
@@ -1244,7 +1245,7 @@ class WorkflowProcessor:
                     action, source_state, target_state
                 )
                 if action.description:
-                    print(f"    Generated Action description: {action.description[:50]}...")
+                    logger.info(f"    Generated Action description: {action.description[:50]}...")
 
     async def _generate_state_description(self, state: State) -> str:
         """Generate description for a State using LLM.
@@ -1280,7 +1281,7 @@ URL: {state.page_url}
             )
             return response.strip()
         except Exception as e:
-            print(f"Warning: Failed to generate state description: {e}")
+            logger.info(f"Warning: Failed to generate state description: {e}")
             return f"页面: {state.page_title or state.page_url}"
 
     async def _generate_intent_sequence_description(self, sequence: IntentSequence) -> str:
@@ -1338,7 +1339,7 @@ URL: {state.page_url}
             )
             return response.strip()
         except Exception as e:
-            print(f"Warning: Failed to generate sequence description: {e}")
+            logger.info(f"Warning: Failed to generate sequence description: {e}")
             return f"操作序列 ({len(sequence.intents)} 个操作)"
 
     async def _generate_action_description(
@@ -1413,7 +1414,7 @@ URL: {state.page_url}
                 )
                 return response.strip()
             except Exception as e:
-                print(f"Warning: Failed to generate action description: {e}")
+                logger.info(f"Warning: Failed to generate action description: {e}")
                 # Fallback to simple template
                 return f"点击 '{text}' 进入 {target_desc}"
         
@@ -1439,7 +1440,7 @@ URL: {state.page_url}
                 )
                 return response.strip()
             except Exception as e:
-                print(f"Warning: Failed to generate action description: {e}")
+                logger.info(f"Warning: Failed to generate action description: {e}")
                 return f"自动跳转到 {target_desc}"
 
     def _generate_embeddings(
@@ -1473,11 +1474,11 @@ URL: {state.page_url}
                 items.append(("sequence", sequence))
 
         if not texts:
-            print("    No descriptions to embed")
+            logger.info("    No descriptions to embed")
             return
 
         try:
-            print(f"    Generating embeddings for {len(texts)} items...")
+            logger.info(f"    Generating embeddings for {len(texts)} items...")
             responses = self.embedding_model.embed_batch(texts)
 
             for (item_type, item), response in zip(items, responses):
@@ -1486,9 +1487,9 @@ URL: {state.page_url}
                 else:
                     item.embedding_vector = response.to_list()
 
-            print(f"    Generated {len(responses)} embeddings")
+            logger.info(f"    Generated {len(responses)} embeddings")
         except Exception as e:
-            print(f"Warning: Failed to generate embeddings: {e}")
+            logger.info(f"Warning: Failed to generate embeddings: {e}")
 
     def _store_to_memory(
         self,
@@ -1505,7 +1506,7 @@ URL: {state.page_url}
             domains: Domains to store.
             states: States to store.
             page_instances: PageInstances (already added to states).
-            intent_sequences: IntentSequences (already added to states).
+            intent_sequences: IntentSequences to store (with embeddings for dedup).
             actions: Actions to store.
             manages: Manages to store.
         """
@@ -1517,9 +1518,9 @@ URL: {state.page_url}
             try:
                 self.memory.create_domain(domain)
             except Exception as e:
-                print(f"Warning: Failed to store domain {domain.id}: {e}")
+                logger.info(f"Warning: Failed to store domain {domain.id}: {e}")
 
-        # Note: States are already updated by add_page_instance and add_intent_sequence
+        # Note: States are already stored via _get_or_create_state.
         # We only need to update descriptions and embeddings for new states
         for state in states:
             # Re-read from memory to get the version with instances/sequences
@@ -1533,21 +1534,52 @@ URL: {state.page_url}
                 try:
                     self.memory.state_manager.update_state(memory_state)
                 except Exception as e:
-                    print(f"Warning: Failed to update state {state.id}: {e}")
+                    logger.info(f"Warning: Failed to update state {state.id}: {e}")
+
+        # Store IntentSequences with deduplication
+        # Now they have embeddings (from Stage 6), so both content hash and
+        # embedding similarity dedup will work
+        stored_count = 0
+        skipped_count = 0
+        if self.memory.intent_sequence_manager:
+            for sequence in intent_sequences:
+                state_id = getattr(sequence, '_parent_state_id', None)
+                if not state_id:
+                    logger.info(f"Warning: IntentSequence {sequence.id} has no _parent_state_id")
+                    continue
+
+                # Check for duplicate (now with embedding)
+                existing_id = self.memory.intent_sequence_manager.find_duplicate(
+                    sequence, state_id
+                )
+                if existing_id:
+                    skipped_count += 1
+                    continue
+
+                # Store new sequence
+                try:
+                    self.memory.intent_sequence_manager.create_sequence(sequence)
+                    self.memory.intent_sequence_manager.link_to_state(state_id, sequence.id)
+                    stored_count += 1
+                except Exception as e:
+                    logger.info(f"Warning: Failed to store IntentSequence {sequence.id}: {e}")
+
+        if stored_count > 0 or skipped_count > 0:
+            logger.info(f"  IntentSequences: {stored_count} stored, {skipped_count} skipped (duplicates)")
 
         # Store actions
         for action in actions:
             try:
                 self.memory.create_action(action)
             except Exception as e:
-                print(f"Warning: Failed to store action: {e}")
+                logger.info(f"Warning: Failed to store action: {e}")
 
         # Store manages
         for manage in manages:
             try:
                 self.memory.create_manage(manage)
             except Exception as e:
-                print(f"Warning: Failed to store manage edge: {e}")
+                logger.info(f"Warning: Failed to store manage edge: {e}")
 
     async def _create_cognitive_phrase(
         self,
@@ -1629,7 +1661,7 @@ URL: {state.page_url}
                 response = self.embedding_model.embed(description)
                 phrase.embedding_vector = response.to_list()
             except Exception as e:
-                print(f"Warning: Failed to generate phrase embedding: {e}")
+                logger.info(f"Warning: Failed to generate phrase embedding: {e}")
 
         return phrase
 
@@ -1670,25 +1702,30 @@ URL: {state.page_url}
         state_to_in_page_sequences: Dict[str, List[str]] = {s.id: [] for s in sorted_states}
         state_to_navigation_sequence: Dict[str, str] = {}
 
+        # Build state_id -> sequence mapping from HAS_SEQUENCE relationships
+        seq_to_state: Dict[str, str] = {}
+        if self.memory and self.memory.intent_sequence_manager:
+            for state in sorted_states:
+                state_seqs = self.memory.intent_sequence_manager.list_by_state(state.id)
+                for s in state_seqs:
+                    seq_to_state[s.id] = state.id
+
         for seq in intent_sequences:
+            owner_state_id = seq_to_state.get(seq.id)
             if seq.causes_navigation and seq.navigation_target_state_id:
                 # This sequence causes navigation - find its source state
-                for action in actions:
-                    if action.target == seq.navigation_target_state_id:
-                        source_state_id = action.source
-                        state_to_navigation_sequence[source_state_id] = seq.id
-                        break
+                if owner_state_id:
+                    state_to_navigation_sequence[owner_state_id] = seq.id
+                else:
+                    # Fallback: match via action target
+                    for action in actions:
+                        if action.target == seq.navigation_target_state_id:
+                            state_to_navigation_sequence[action.source] = seq.id
+                            break
             else:
-                # Non-navigation sequence - find the state it belongs to by timestamp
-                best_state_id = None
-                best_diff = float('inf')
-                for state in sorted_states:
-                    diff = abs(seq.timestamp - state.timestamp)
-                    if diff < best_diff:
-                        best_diff = diff
-                        best_state_id = state.id
-                if best_state_id and best_state_id in state_to_in_page_sequences:
-                    state_to_in_page_sequences[best_state_id].append(seq.id)
+                # Non-navigation sequence - use graph relationship
+                if owner_state_id and owner_state_id in state_to_in_page_sequences:
+                    state_to_in_page_sequences[owner_state_id].append(seq.id)
 
         # Build ExecutionSteps
         for i, state in enumerate(sorted_states):
@@ -1755,7 +1792,7 @@ URL: {state.page_url}
             )
             return response.strip()
         except Exception as e:
-            print(f"Warning: Failed to generate workflow description: {e}")
+            logger.info(f"Warning: Failed to generate workflow description: {e}")
             return f"用户工作流包含{len(workflow_data)}个操作事件"
 
 

@@ -51,12 +51,17 @@ class Reasoner:
     4. Convert results to workflow
     """
 
+    # Default similarity thresholds
+    DEFAULT_STATE_RESOLUTION_THRESHOLD = 0.5
+    DEFAULT_PATH_FINDING_THRESHOLD = 0.3
+
     def __init__(
         self,
         memory: Memory,
         llm_provider: Optional[Any] = None,
         embedding_service=None,
         max_depth: int = 3,
+        similarity_thresholds: Optional[Dict[str, float]] = None,
     ):
         """Initialize Reasoner.
 
@@ -65,11 +70,23 @@ class Reasoner:
             llm_provider: LLM provider (AnthropicProvider) for various LLM operations.
             embedding_service: Embedding service for vector search.
             max_depth: Maximum neighbor exploration depth.
+            similarity_thresholds: Optional dict with threshold values:
+                - state_resolution: Minimum score for state resolution (default 0.5)
+                - path_finding: Minimum score for path finding (default 0.3)
         """
         self.memory = memory
         self.llm_provider = llm_provider
         self.embedding_service = embedding_service
         self.max_depth = max_depth
+
+        # Similarity thresholds from config
+        thresholds = similarity_thresholds or {}
+        self.state_resolution_threshold = thresholds.get(
+            "state_resolution", self.DEFAULT_STATE_RESOLUTION_THRESHOLD
+        )
+        self.path_finding_threshold = thresholds.get(
+            "path_finding", self.DEFAULT_PATH_FINDING_THRESHOLD
+        )
 
         # Initialize components
         self.phrase_checker = CognitivePhraseChecker(memory, llm_provider)
@@ -91,6 +108,27 @@ class Reasoner:
             self.max_depth,
         )
         self.tools[retrieval_tool.name] = retrieval_tool
+
+    def _gather_state_sequences(self, state_ids: list) -> Dict[str, list]:
+        """Gather IntentSequences for each state from memory.
+
+        Args:
+            state_ids: List of state IDs to gather sequences for.
+
+        Returns:
+            Mapping of state_id -> List[IntentSequence].
+        """
+        result = {}
+        if not self.memory.intent_sequence_manager:
+            return result
+        for state_id in state_ids:
+            try:
+                sequences = self.memory.intent_sequence_manager.list_by_state(state_id)
+                if sequences:
+                    result[state_id] = sequences
+            except Exception:
+                continue
+        return result
 
     def register_tool(self, tool: TaskTool):
         """Register a custom tool.
@@ -141,7 +179,7 @@ class Reasoner:
             if state:
                 states.append(state)
             else:
-                print(f"Warning: State '{state_id}' not found in memory")
+                logger.warning(f"State '{state_id}' not found in memory")
 
         # Retrieve actions based on state transitions
         actions = []
@@ -155,7 +193,7 @@ class Reasoner:
             if found_action:
                 actions.append(found_action)
             else:
-                print(f"Warning: Action from '{source_id}' to '{target_id}' not found")
+                logger.warning(f"Action from '{source_id}' to '{target_id}' not found")
 
         if not states:
             return WorkflowResult(
@@ -168,12 +206,16 @@ class Reasoner:
                 }
             )
 
+        # Gather IntentSequences for each state
+        state_sequences = self._gather_state_sequences([s.id for s in states])
+
         # Convert to workflow
         workflow = self.workflow_converter.convert(
             phrase.description,
             states,
             actions,
-            [phrase]
+            [phrase],
+            state_sequences=state_sequences,
         )
 
         return WorkflowResult(
@@ -224,7 +266,7 @@ class Reasoner:
                         if state:
                             states_by_id[state_id] = state
                         else:
-                            print(f"Warning: State '{state_id}' not found in phrase {phrase.id}")
+                            logger.warning(f"State '{state_id}' not found in phrase {phrase.id}")
 
                 # Retrieve actions based on state transitions (deduplicate by source+target)
                 for i in range(len(phrase.state_path) - 1):
@@ -237,7 +279,7 @@ class Reasoner:
                         if action:
                             actions_by_key[action_key] = action
                         else:
-                            print(f"Warning: Action from '{source_id}' to '{target_id}' not found in phrase {phrase.id}")
+                            logger.warning(f"Action from '{source_id}' to '{target_id}' not found in phrase {phrase.id}")
 
             # Convert back to lists
             states = list(states_by_id.values())
@@ -245,9 +287,10 @@ class Reasoner:
 
             if not states:
                 # No valid states found, fall back to task decomposition
-                print("Warning: No valid states found in cognitive phrases, falling back to task decomposition")
+                logger.warning("No valid states found in cognitive phrases, falling back to task decomposition")
             else:
-                workflow = self.workflow_converter.convert(target, states, actions, phrases)
+                state_sequences = self._gather_state_sequences([s.id for s in states])
+                workflow = self.workflow_converter.convert(target, states, actions, phrases, state_sequences=state_sequences)
 
                 return WorkflowResult(
                     target=target,
@@ -328,7 +371,8 @@ class Reasoner:
         has_results = len(all_states) > 0
 
         # Step 4: Convert to workflow (only if we have states)
-        workflow = self.workflow_converter.convert(target, all_states, all_actions) if has_results else None
+        state_sequences = self._gather_state_sequences([s.id for s in all_states]) if has_results else None
+        workflow = self.workflow_converter.convert(target, all_states, all_actions, state_sequences=state_sequences) if has_results else None
 
         return WorkflowResult(
             target=target,
@@ -385,12 +429,11 @@ class Reasoner:
                 user_prompt=prompt_text
             )
 
-            # Print raw LLM response for debugging
-            print("\n" + "=" * 80)
-            print("TASK DECOMPOSITION - RAW LLM RESPONSE:")
-            print("=" * 80)
-            print(response)
-            print("=" * 80 + "\n")
+            # Log raw LLM response for debugging
+            logger.debug(
+                "TASK DECOMPOSITION - RAW LLM RESPONSE:\n%s",
+                response
+            )
 
             # Parse response
             output = self.decomposition_prompt.parse_response(response)
@@ -415,7 +458,7 @@ class Reasoner:
             )
 
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            print(f"LLM task decomposition failed: {exc}")
+            logger.error(f"LLM task decomposition failed: {exc}")
             return self._create_simple_dag(target)
 
     def _create_simple_dag(self, target: str) -> TaskDAG:
@@ -594,29 +637,30 @@ class Reasoner:
         path_result = await self._find_navigation_path(target)
 
         # === L3: Task decomposition ===
+        global_states: List[State] = []
+        global_actions: List[Action] = []
+
         if path_result and path_result["paths"]:
             best_path = path_result["paths"][0]
+            global_states = best_path["states"]   # L2 global path
+            global_actions = best_path["actions"]
             subtasks = await self._decompose_with_path(target, best_path)
+            method = "path_decomposition"
         else:
             subtasks = await self._decompose_without_path(target)
+            method = "direct_decomposition"
 
-        # Collect states/actions from subtasks that have navigation info
-        all_states: List[State] = []
-        all_actions: List[Action] = []
-        for st in subtasks:
-            if st.found:
-                all_states.extend(st.states)
-                all_actions.extend(st.actions)
+        has_global_path = len(global_states) > 0
 
-        has_results = len(all_states) > 0
-        method = "path_decomposition" if (path_result and path_result["paths"]) else "direct_decomposition"
-
-        if has_results:
+        if has_global_path or subtasks:
             return QueryResult.task_success(
-                states=all_states,
-                actions=all_actions,
-                subtasks=subtasks,
-                metadata={"method": method},
+                states=global_states,    # L2 global path (single copy)
+                actions=global_actions,  # L2 global path (single copy)
+                subtasks=subtasks,       # subtasks with path_state_indices only
+                metadata={
+                    "method": method,
+                    "has_global_path": has_global_path,
+                },
             )
         else:
             return QueryResult(
@@ -627,14 +671,14 @@ class Reasoner:
             )
 
     async def _find_navigation_path(
-        self, target: str, top_k: int = 10, min_score: float = 0.3
+        self, target: str, top_k: int = 10, min_score: Optional[float] = None
     ) -> Optional[Dict[str, Any]]:
         """L2: Find navigation path using embedding search + BFS reverse traversal.
 
         Args:
             target: Task target description.
             top_k: Number of top results.
-            min_score: Minimum embedding similarity score.
+            min_score: Minimum embedding similarity score. If None, uses configured threshold.
 
         Returns:
             Dict with target_query, key_queries, and paths (sorted by score),
@@ -642,6 +686,10 @@ class Reasoner:
         """
         if not self.llm_provider or not self.embedding_service:
             return None
+
+        # Use configured threshold if not explicitly provided
+        if min_score is None:
+            min_score = self.path_finding_threshold
 
         try:
             # Step 1: LLM query decomposition
@@ -839,7 +887,6 @@ class Reasoner:
     ) -> List[SubTaskResult]:
         """L3a: Decompose target into subtasks using path as navigation context."""
         path_states: List[State] = path["states"]
-        path_actions: List[Action] = path["actions"]
 
         # Build input for prompt
         path_state_dicts = []
@@ -872,13 +919,11 @@ class Reasoner:
             subtasks: List[SubTaskResult] = []
             for st_data in output.subtasks:
                 indices = st_data.get("path_state_indices", [])
-                # Every subtask carries the full path as navigation context.
-                # path_state_indices only marks where on the path this subtask operates.
+                # Only store indices, not full path - global path is in QueryResult.states/actions
                 subtasks.append(SubTaskResult(
                     task_id=st_data.get("task_id", f"task_{len(subtasks)+1}"),
                     target=st_data.get("target", ""),
-                    states=path_states,
-                    actions=path_actions,
+                    path_state_indices=indices,
                     found=len(indices) > 0,
                 ))
 
@@ -886,13 +931,13 @@ class Reasoner:
 
         except Exception as exc:
             logger.error(f"[L3a] Path decomposition failed: {exc}")
-            # Fallback: single subtask with all path data
+            # Fallback: single subtask covering all path states
+            all_indices = list(range(len(path_states)))
             return [SubTaskResult(
                 task_id="task_1",
                 target=target,
-                states=path_states,
-                actions=path_actions,
-                found=True,
+                path_state_indices=all_indices,
+                found=len(all_indices) > 0,
             )]
 
     async def _decompose_without_path(self, target: str) -> List[SubTaskResult]:
@@ -911,8 +956,7 @@ class Reasoner:
                 subtasks.append(SubTaskResult(
                     task_id=task_id,
                     target=node.get("target", node.get("description", "")),
-                    states=[],
-                    actions=[],
+                    path_state_indices=[],  # No path info
                     found=False,
                 ))
 
@@ -923,8 +967,7 @@ class Reasoner:
             return [SubTaskResult(
                 task_id="task_1",
                 target=target,
-                states=[],
-                actions=[],
+                path_state_indices=[],
                 found=False,
             )]
 
@@ -990,21 +1033,28 @@ class Reasoner:
         current_state: str,
         top_k: int = 10,
     ) -> QueryResult:
-        """Execute action-level query (v2).
+        """Execute action-level query.
 
-        Finds available actions in the current state.
+        Finds available IntentSequences in the current state.
 
         Args:
-            target: Action description to search for.
-            current_state: Current state ID.
+            target: Action description to search for (empty for exploration).
+            current_state: State ID, URL, or semantic description.
             top_k: Number of top results to return.
 
         Returns:
             QueryResult with matching IntentSequences.
         """
+        # Resolve current_state to state_id
+        state_id = await self._resolve_state_id(current_state)
+        if not state_id:
+            return QueryResult.action_failure(
+                error=f"State not found: {current_state}",
+            )
+
         # If target is empty, return exploration result (all possible actions)
         if not target.strip():
-            return await self._get_page_capabilities(current_state)
+            return await self._get_page_capabilities(state_id)
 
         # Search IntentSequences by embedding
         if not self.memory.intent_sequence_manager:
@@ -1013,41 +1063,38 @@ class Reasoner:
             )
 
         if self.embedding_service:
-            try:
-                query_vector = self.embedding_service.encode(target)
-                results = self.memory.intent_sequence_manager.search_by_embedding(
-                    query_vector=query_vector,
-                    state_id=current_state,
-                    top_k=top_k,
+            query_vector = self.embedding_service.encode(target)
+            results = self.memory.intent_sequence_manager.search_by_embedding(
+                query_vector=query_vector,
+                state_id=state_id,
+                top_k=top_k,
+            )
+
+            if results:
+                sequences = [seq for seq, _ in results]
+                return QueryResult.action_success(
+                    intent_sequences=sequences,
+                    metadata={
+                        "method": "embedding_search",
+                        "state_id": state_id,
+                        "num_results": len(sequences),
+                    },
                 )
 
-                if results:
-                    sequences = [seq for seq, _ in results]
-                    return QueryResult.action_success(
-                        intent_sequences=sequences,
-                        metadata={
-                            "method": "embedding_search",
-                            "state_id": current_state,
-                            "num_results": len(sequences),
-                        },
-                    )
-            except Exception as e:
-                print(f"Embedding search failed: {e}")
-
-        # Fallback: list all sequences for the state
-        sequences = self.memory.intent_sequence_manager.list_by_state(current_state)
+        # List all sequences for the state
+        sequences = self.memory.intent_sequence_manager.list_by_state(state_id)
 
         if sequences:
             return QueryResult.action_success(
                 intent_sequences=sequences,
                 metadata={
                     "method": "list_by_state",
-                    "state_id": current_state,
+                    "state_id": state_id,
                 },
             )
 
         return QueryResult.action_failure(
-            error=f"No actions found in state: {current_state}",
+            error=f"No actions found in state: {state_id}",
         )
 
     async def _get_page_capabilities(self, state_id: str) -> QueryResult:
@@ -1082,61 +1129,78 @@ class Reasoner:
         self,
         state_ref: str,
     ) -> Optional[str]:
-        """Resolve a state reference (ID or description) to an actual state ID.
+        """Resolve a state reference (ID, URL, or description) to an actual state ID.
+
+        Resolution order:
+        1. Direct ID lookup
+        2. URL lookup (if state_ref starts with http)
+        3. Embedding semantic search (with similarity threshold)
 
         Args:
-            state_ref: State ID or description.
+            state_ref: State ID, URL, or semantic description.
 
         Returns:
-            State ID if found, None otherwise.
+            State ID if found and above similarity threshold, None otherwise.
         """
-        print(f"[_resolve_state_id] Resolving state_ref: '{state_ref}'")
+        logger.info(f"[_resolve_state_id] Resolving state_ref: '{state_ref[:100]}...'")
 
-        # First, try direct ID lookup
+        # 1. Direct ID lookup
         state = self.memory.get_state(state_ref)
         if state:
-            print(f"[_resolve_state_id] Direct lookup found: {state.id}")
+            logger.info(f"[_resolve_state_id] Direct lookup found: {state.id}")
             return state.id
 
-        print(f"[_resolve_state_id] Direct lookup failed, trying embedding search...")
+        # 2. URL lookup
+        if state_ref.startswith("http://") or state_ref.startswith("https://"):
+            logger.info(f"[_resolve_state_id] Trying URL lookup...")
+            state = self.memory.find_state_by_url(state_ref)
+            if state:
+                logger.info(f"[_resolve_state_id] URL lookup found: {state.id}")
+                return state.id
+            logger.info(f"[_resolve_state_id] URL lookup failed")
 
-        # Try embedding search if available
+        # 3. Embedding semantic search
+        logger.info(f"[_resolve_state_id] Trying embedding search...")
         if not self.embedding_service:
-            print("[_resolve_state_id] ERROR: embedding_service is None!")
+            logger.error("[_resolve_state_id] embedding_service is None")
             return None
 
         try:
-            print(f"[_resolve_state_id] Encoding query: '{state_ref}'")
             query_vector = self.embedding_service.encode(state_ref)
-            print(f"[_resolve_state_id] Got vector of length: {len(query_vector) if query_vector else 'None'}")
-
             if query_vector is None:
-                print("[_resolve_state_id] ERROR: encode() returned None")
+                logger.error("[_resolve_state_id] encode() returned None")
                 return None
 
-            print(f"[_resolve_state_id] Calling search_states_by_embedding...")
             results = self.memory.state_manager.search_states_by_embedding(
                 query_vector, top_k=1
             )
-            print(f"[_resolve_state_id] Search returned {len(results) if results else 0} results")
 
             if results:
-                # results may be List[State] or List[Tuple[State, float]]
                 first_result = results[0]
                 if isinstance(first_result, tuple):
                     state_obj, score = first_result
-                    print(f"[_resolve_state_id] Found state: {state_obj.id} (score={score})")
-                    return state_obj.id
+                    # Apply similarity threshold
+                    if score >= self.state_resolution_threshold:
+                        logger.info(
+                            f"[_resolve_state_id] Embedding search found: {state_obj.id} "
+                            f"(score={score:.3f} >= threshold={self.state_resolution_threshold})"
+                        )
+                        return state_obj.id
+                    else:
+                        logger.info(
+                            f"[_resolve_state_id] Embedding search result below threshold: "
+                            f"{state_obj.id} (score={score:.3f} < threshold={self.state_resolution_threshold})"
+                        )
+                        return None
                 else:
-                    print(f"[_resolve_state_id] Found state: {first_result.id}")
+                    # Legacy format without score - accept it
+                    logger.info(f"[_resolve_state_id] Embedding search found: {first_result.id}")
                     return first_result.id
-            else:
-                print("[_resolve_state_id] No embedding search results")
+
+            logger.info("[_resolve_state_id] No embedding search results")
 
         except Exception as e:
-            import traceback
-            print(f"[_resolve_state_id] State embedding search failed: {e}")
-            print(f"[_resolve_state_id] Traceback: {traceback.format_exc()}")
+            logger.error(f"[_resolve_state_id] Embedding search failed: {e}")
 
         return None
 

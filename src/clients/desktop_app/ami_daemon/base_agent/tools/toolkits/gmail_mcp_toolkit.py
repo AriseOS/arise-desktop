@@ -111,14 +111,12 @@ class GmailMCPToolkit(BaseMCPToolkit):
             ) -> Any:
                 return await self.call_tool(_tool_name, kwargs)
 
-            # Create FunctionTool with proper schema
-            func_tool = FunctionTool(
-                func=tool_executor,
-                name=mcp_tool.name,
-                description=mcp_tool.description,
-            )
+            # Create FunctionTool and configure it
+            func_tool = FunctionTool(tool_executor)
+            func_tool.set_function_name(mcp_tool.name)
+            func_tool.set_function_description(mcp_tool.description)
             # Override parameters with MCP schema
-            func_tool.parameters = mcp_tool.input_schema
+            func_tool.openai_tool_schema["function"]["parameters"] = mcp_tool.input_schema
 
             self._function_tools.append(func_tool)
 

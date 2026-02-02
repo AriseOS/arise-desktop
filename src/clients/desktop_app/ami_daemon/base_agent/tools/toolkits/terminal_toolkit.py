@@ -283,6 +283,13 @@ class TerminalToolkit(BaseToolkit):
             logger.warning(error_msg)
             return error_msg
 
+        # Convert timeout to int if string (LLM may pass string values)
+        if timeout is not None and isinstance(timeout, str):
+            try:
+                timeout = int(timeout)
+            except ValueError:
+                timeout = None
+
         effective_timeout = timeout if timeout is not None else self.timeout
 
         logger.info(f"Executing async command: {command[:100]}{'...' if len(command) > 100 else ''}")
@@ -360,9 +367,10 @@ class TerminalToolkit(BaseToolkit):
         Returns:
             List of FunctionTool objects.
         """
-        return [
-            FunctionTool(self.shell_exec_async, name="shell_exec"),
-        ]
+        # Create tool and rename to match expected name (without _async suffix)
+        tool = FunctionTool(self.shell_exec_async)
+        tool.set_function_name("shell_exec")
+        return [tool]
 
     @classmethod
     def toolkit_name(cls) -> str:

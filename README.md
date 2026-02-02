@@ -236,64 +236,67 @@ Built with Tauri (Rust + React) for cross-platform desktop experience:
 - Workflow management and execution monitoring
 - Automatically manages App Backend daemon lifecycle
 
-### 2️⃣ App Backend (Execution Engine)
+### 2️⃣ App Backend Daemon (Execution Engine)
 
-**Location**: `src/app_backend/`
+**Location**: `src/clients/desktop_app/ami_daemon/`
 
-Runs on your computer to execute workflows:
+Python daemon running locally to execute workflows:
 - **Workflow Executor**: Loads and executes YAML workflows using BaseAgent
-- **Browser Manager**: Manages global browser session (reused across workflows)
+- **Browser Manager**: Manages global browser session via Playwright
 - **Storage Manager**: Local file system management (`~/.ami/`)
-- **Cloud Client**: Proxies requests to Cloud Backend (secure Token management)
+- **Cloud Client**: Proxies requests to Cloud Backend
+- **Quick Task**: Autonomous browser task execution
 
 ```python
-from src.app_backend.services.workflow_executor import WorkflowExecutor
+from ami_daemon.services.workflow_executor import WorkflowExecutor
 
 executor = WorkflowExecutor()
 task_id = await executor.execute_workflow_async(user_id, workflow_name)
 ```
 
-### 3️⃣ Cloud Backend (AI Analysis)
+### 3️⃣ Cloud Backend (AI & Memory)
 
 **Location**: `src/cloud_backend/`
 
-Runs on server to generate workflows:
+Server-side services for AI-powered workflow generation and memory system:
+- **Intent Builder**: Skills-based workflow generation using Claude Agent SDK
+- **Memory System (memgraph)**: Graph-based memory for learning from user operations
 - **Recording Service**: Receives and stores user operations
-- **Intent Extraction**: LLM-based semantic understanding
-- **MetaFlow Generation**: Intermediate workflow representation
-- **Workflow Generation**: Creates executable YAML from MetaFlow
-- **Storage Service**: File system + PostgreSQL database
+- **Storage Service**: File system + database management
+
+**Key Subsystems**:
+- `intent_builder/` - Recording → Intent → Workflow pipeline
+- `memgraph/` - Memory graph with Neo4j/NetworkX backend
+- `graph_builder/` - Converts recordings to graph structures
 
 ### 4️⃣ BaseAgent Framework
 
-**Location**: `src/base_app/`
+**Location**: `src/clients/desktop_app/ami_daemon/base_agent/`
 
-The core execution engine used by App Backend:
-- **Workflow Engine**: Executes YAML-based workflow definitions
-- **Memory System**: Three-layer architecture (Variables, KV Storage, Long-term Memory)
-- **Tool Integration**: Browser automation, Android tools, custom tools
-- **Agent Types**: TextAgent, ToolAgent, CodeAgent for different step types
+The core execution engine for workflows:
+- **Workflow Engine**: Executes YAML-based workflow definitions with conditional/loop support
+- **Memory System**: Three-layer architecture (Variables → KV Storage → Long-term Memory)
+- **Tool Integration**: Browser automation (Eigent), MCP tools (Gmail, Google Drive, Notion)
+- **Agent Types**: BrowserAgent, ScraperAgent, TextAgent, StorageAgent, VariableAgent
+
+**Browser Automation**:
+- Primary: Eigent browser system (`tools/eigent_browser/`)
+- Page snapshot, action execution, multi-tab session management
+- Supports autonomous browser tasks via AutonomousBrowserAgent
 
 ## 📖 Documentation
 
 ### Quick Links
 - **[CLAUDE.md](./CLAUDE.md)** - AI development guide and project overview
-- **[docs/README.md](./docs/README.md)** - Complete documentation index
+- **CONTEXT.md files** - Fractal documentation in each directory
 
 ### Architecture Documents
-- [v2.0 Architecture Overview](./docs/platform/architecture.md) - Complete system design
-- [Component Overview](./docs/platform/components_overview.md) - Four core components explained
-- [Refactoring Plan](./docs/platform/refactoring_plan_2025-11-07.md) - Migration to v2.0 architecture
-- [System Flow Analysis](./docs/platform/flow_analysis.md) - End-to-end data flow
+- [Memory System Design](./docs/memory-system-design.md) - Memory as Map architecture
+- [Workflow Execution Design](./docs/workflow-llm-execution-design.md) - LLM-based execution
+- [Task Management System](./docs/task-management-system.md) - Task planning and execution
 
 ### Component Documentation
-- [BaseAgent Architecture](./docs/baseagent/ARCHITECTURE.md) - Core execution framework
-- [App Backend README](./src/app_backend/README.md) - Local execution engine setup
-- [Cloud Backend README](./src/cloud_backend/README.md) - Cloud services setup
-
-### Developer Guides
-- [Development Guide](./docs/guides/DEVELOPMENT_GUIDE.md) - Developer quickstart
-- [Testing Guide](./tests/README.md) - How to run tests
+- Component CONTEXT.md files in respective directories
 
 ## 🎯 Use Cases
 
@@ -334,26 +337,31 @@ pytest --cov=tools --cov-report=html
 ### ✅ Phase 1: Architecture Refactoring (Completed)
 - [x] App Backend + Cloud Backend split architecture
 - [x] BaseAgent framework with workflow engine
-- [x] Browser tool integration with session reuse
+- [x] Browser tool integration with Eigent system
 - [x] Desktop App (Tauri) with automatic daemon management
-- [x] Intent Builder (Intent extraction, MetaFlow, Workflow generation)
+- [x] Intent Builder (Intent extraction, Workflow generation)
 - [x] Storage unification (~/.ami/)
 
-### 🔄 Phase 2: MVP Development (Current - Q1 2025)
+### ✅ Phase 2: Memory System (Completed)
+- [x] Memory Graph (memgraph) with Neo4j/NetworkX backend
+- [x] State/Action/IntentSequence ontology
+- [x] Workflow processor for recording analysis
+- [x] Graph-based reasoning and querying
+
+### 🔄 Phase 3: MVP Development (Current)
 - [x] Three independent workflow modules (Record, Generate, Manage)
 - [ ] Complete recording → generation → execution flow testing
 - [ ] Production deployment (Cloud Backend)
-- [ ] Beta testing with 50 users
+- [ ] Beta testing with users
 - [ ] Performance optimization (>95% success rate)
 
-### 🚀 Phase 3: Product Launch (Q2-Q3 2025)
-- [ ] Individual subscription ($20/month)
-- [ ] Freemium tier (100 executions/month)
-- [ ] 1,000 paying users
-- [ ] 5 enterprise pilots
+### 🚀 Phase 4: Product Launch
+- [ ] Individual subscription
+- [ ] Freemium tier
+- [ ] Enterprise pilots
 - [ ] Content marketing & PLG strategy
 
-### 🌟 Phase 4: Enterprise Scale (Q4 2025+)
+### 🌟 Phase 5: Enterprise Scale
 - [ ] Enterprise subscription with team features
 - [ ] Advanced Intent composition and sharing
 - [ ] Cross-platform integration (Windows, Linux)
@@ -385,10 +393,12 @@ This project is licensed under the MIT License - see the [LICENSE](./LICENSE) fi
 
 Ami is built on the shoulders of giants:
 
-- [browser-use](https://github.com/browser-use/browser-use) - AI browser automation
+- [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk) - Multi-turn agent framework
 - [Anthropic Claude](https://www.anthropic.com/) - Powerful AI capabilities
 - [FastAPI](https://fastapi.tiangolo.com/) - Modern Python web framework
 - [Playwright](https://playwright.dev/) - Cross-browser automation
+- [Neo4j](https://neo4j.com/) - Graph database for memory system
+- [Tauri](https://tauri.app/) - Desktop application framework
 
 ---
 

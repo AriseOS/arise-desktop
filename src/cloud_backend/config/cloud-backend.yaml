@@ -147,6 +147,24 @@ embedding:
   api_url: https://api.siliconflow.cn/v1  # SiliconFlow API base URL
   api_key: sk-nfveshrtleyiscbeivhxltvvlvbzelohzdwqgkozttaslmdu # Environment variable for API key
 
+# Reasoner Configuration
+# Memory retrieval and workflow planning
+reasoner:
+  max_depth: 3  # Maximum BFS traversal depth for path finding
+  # Similarity thresholds for embedding search
+  similarity_thresholds:
+    state_resolution: 0.5  # Minimum score to accept a state match when resolving state by URL/description
+    path_finding: 0.3  # Minimum score for candidate states in navigation path finding
+
+# Memory Configuration
+# IntentSequence and workflow storage settings
+memory:
+  # IntentSequence deduplication threshold
+  # Sequences with cosine similarity >= this threshold are considered duplicates
+  # Higher value = stricter dedup (only near-identical sequences are merged)
+  # Lower value = more aggressive dedup (semantically similar sequences are merged)
+  intent_sequence_dedup_threshold: 0.95
+
 # Rate Limiting (optional)
 # rate_limit:
 #   enabled: true

@@ -54,13 +54,6 @@ from .task_decomposition import (
     TASK_ROUTER_PROMPT,
     DEPENDENCY_RESOLUTION_PROMPT,
 )
-from .workflow_builder import (
-    WORKFLOW_BUILDER_PROMPT,
-    WORKFLOW_MODIFICATION_PROMPT,
-    WORKFLOW_OPTIMIZATION_PROMPT,
-    WORKFLOW_VALIDATION_PROMPT,
-    WORKFLOW_DOCUMENTATION_PROMPT,
-)
 
 
 # Main prompt registry - maps agent types to their system prompts
@@ -82,10 +75,6 @@ PROMPT_REGISTRY: Dict[str, PromptTemplate] = {
     "task_decomposition": TASK_DECOMPOSITION_PROMPT,
     "task_assignment": TASK_ASSIGNMENT_PROMPT,
     "task_router": TASK_ROUTER_PROMPT,
-
-    # Workflow prompts
-    "workflow_builder": WORKFLOW_BUILDER_PROMPT,
-    "workflow_modification": WORKFLOW_MODIFICATION_PROMPT,
 }
 
 
@@ -119,11 +108,6 @@ AUXILIARY_PROMPTS: Dict[str, PromptTemplate] = {
 
     # Task
     "dependency_resolution": DEPENDENCY_RESOLUTION_PROMPT,
-
-    # Workflow
-    "workflow_optimization": WORKFLOW_OPTIMIZATION_PROMPT,
-    "workflow_validation": WORKFLOW_VALIDATION_PROMPT,
-    "workflow_documentation": WORKFLOW_DOCUMENTATION_PROMPT,
 }
 
 

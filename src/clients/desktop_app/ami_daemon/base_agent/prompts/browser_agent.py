@@ -27,18 +27,6 @@ You must use the search/browser tools to get the information you need.
 </operating_environment>
 
 <mandatory_instructions>
-## Task Planning Requirements (CRITICAL)
-You MUST use the task planning tools to manage complex tasks:
-1. **decompose_task**: Break down complex tasks into subtasks BEFORE starting
-2. **update_task_state**: Mark tasks as RUNNING when you start, DONE when complete
-3. **get_current_plan**: Review your task plan to track progress
-4. **replan_tasks**: Re-plan if your original approach isn't working
-
-For complex tasks, ALWAYS:
-- First use `decompose_task` to create a clear plan
-- Update task states as you progress through the plan
-- Use `replan_tasks` if you encounter obstacles that require a new approach
-
 ## Note-Taking Requirements
 Use note-taking tools to record your findings and data. Notes are for
 storing extracted information, NOT for managing your task plan.
@@ -68,7 +56,7 @@ When encountering verification challenges (like login, CAPTCHAs or
 robot checks), you MUST request help using the ask_human tool.
 
 ## Task Completion
-You MUST diligently complete all tasks in the task plan. Do not skip steps
+You MUST diligently complete all assigned tasks. Do not skip steps
 or take shortcuts because a task seems tedious or repetitive. If the task
 requires processing 50 items, you MUST process all 50 items.
 
@@ -81,8 +69,6 @@ and extract real data from the pages you visit.
 
 <capabilities>
 Your capabilities include:
-- **Task Planning**: Use `decompose_task`, `replan_tasks`, `update_task_state`,
-  and `get_current_plan` to manage complex multi-step tasks.
 - Search and get information from the web using the search tools.
 - Use the rich browser related toolset to investigate websites.
 - Use the terminal tools to perform local operations. You can leverage
@@ -93,48 +79,6 @@ Your capabilities include:
 - **IMPORTANT**: Use the memory toolkit (`query_similar_workflows`) to search
   for similar historical workflows BEFORE starting a complex task.
 </capabilities>
-
-<task_planning_workflow>
-**MANDATORY: Always Start with Task Decomposition**
-Before executing ANY task, you MUST FIRST call `decompose_task` to break it down:
-
-1. **FIRST ACTION**: Call `decompose_task(original_task, [subtasks])` to create a plan
-   - This is REQUIRED for ALL tasks, no exceptions
-   - Break the task into 2-5 concrete, actionable subtasks
-   - Each subtask should be specific and completable
-
-2. **THEN Execute**: For each subtask in order:
-   - Call `update_task_state(task_id, "RUNNING")` when starting
-   - Execute the subtask using appropriate tools
-   - Call `update_task_state(task_id, "DONE", result)` when complete
-   - If a subtask fails, call `update_task_state(task_id, "FAILED", error)`
-
-3. **Replanning**: If your approach isn't working, use `replan_tasks` to adjust
-4. **Progress Check**: Use `get_current_plan` to review your progress at any time
-
-**Example Workflow:**
-Task: "Research top 3 AI companies and summarize their products"
-
-```
-# Step 1: ALWAYS decompose first
-decompose_task("Research AI companies", [
-  "Search for top AI companies",
-  "Visit each company website and extract product info",
-  "Compile findings into summary"
-])
-
-# Step 2: Execute each subtask
-update_task_state("task.main.1", "RUNNING")
-# ... perform search using search tools ...
-update_task_state("task.main.1", "DONE", "Found: OpenAI, Google, Anthropic")
-
-update_task_state("task.main.2", "RUNNING")
-# ... visit websites using browser tools ...
-update_task_state("task.main.2", "DONE", "Extracted product info from all companies")
-
-# Continue until all subtasks complete...
-```
-</task_planning_workflow>
 
 <web_search_workflow>
 **Standard Approach:**
@@ -170,12 +114,10 @@ and extract information as requested.
 </operating_environment>
 
 <instructions>
-1. For complex tasks, use `decompose_task` to plan your approach
-2. Use browser tools to navigate and interact with web pages
-3. Extract requested information accurately
-4. Use note-taking tools to record data you find
-5. Update task states as you progress through your plan
-6. Ask for help if you encounter login pages or CAPTCHAs
+1. Use browser tools to navigate and interact with web pages
+2. Extract requested information accurately
+3. Use note-taking tools to record data you find
+4. Ask for help if you encounter login pages or CAPTCHAs
 </instructions>
 
 <url_policy>
@@ -203,15 +145,12 @@ BROWSER_TOOL_CALLING_PROMPT = PromptTemplate(
 </operating_environment>
 
 <instructions>
-1. For complex tasks, use `decompose_task` to create a plan first
-2. Analyze the current page state and user's task
-3. Execute actions one at a time using the available tools
-4. Update task states (RUNNING/DONE) as you progress
-5. Use `replan_tasks` if your approach needs adjustment
+1. Analyze the current page state and user's task
+2. Execute actions one at a time using the available tools
+3. Be methodical and thorough
 </instructions>
 
 <available_tools>
-- **Task Planning**: decompose_task, replan_tasks, update_task_state, get_current_plan
 - **Browser Navigation**: go_to_url, go_back, go_forward, refresh
 - **Page Interaction**: click, type_text, select_option, scroll, press_key
 - **Information**: get_page_content, take_screenshot
@@ -225,7 +164,6 @@ BROWSER_TOOL_CALLING_PROMPT = PromptTemplate(
 - Be thorough: don't skip steps or take shortcuts
 - Be accurate: extract exact information, don't summarize
 - Be safe: ask for help with CAPTCHAs, logins, or sensitive actions
-- Track progress: update task states as you complete each subtask
 </guidelines>
 
 {memory_reference}

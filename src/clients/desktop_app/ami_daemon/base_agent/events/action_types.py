@@ -42,10 +42,23 @@ class Action(str, Enum):
     plan_progress = "plan_progress"         # Planning progress update
     plan_generated = "plan_generated"       # Plan complete
 
-    # Task decomposition (from TaskPlanningToolkit)
+    # Task decomposition (from TaskPlanningToolkit / Workforce)
     task_decomposed = "task_decomposed"       # Task broken into subtasks
     subtask_state = "subtask_state"           # Subtask state changed
     task_replanned = "task_replanned"         # Task re-planned with new subtasks
+    streaming_decompose = "streaming_decompose"  # Streaming decomposition text
+    decompose_progress = "decompose_progress"    # Decomposition progress percentage
+
+    # Workforce events (CAMEL-based multi-agent coordination)
+    workforce_started = "workforce_started"           # Workforce started processing
+    workforce_completed = "workforce_completed"       # Workforce finished all tasks
+    workforce_stopped = "workforce_stopped"           # Workforce stopped/cancelled
+    worker_assigned = "worker_assigned"               # Task assigned to a worker
+    worker_started = "worker_started"                 # Worker started processing
+    worker_completed = "worker_completed"             # Worker finished task
+    worker_failed = "worker_failed"                   # Worker failed task
+    dynamic_tasks_added = "dynamic_tasks_added"       # New tasks discovered during execution
+    assign_task = "assign_task"                       # Task assignment with state (waiting/running)
 
     # Agent lifecycle
     activate_agent = "activate_agent"       # Agent started working
@@ -79,12 +92,17 @@ class Action(str, Enum):
     notice = "notice"                       # Notification message
     human_question = "human_question"       # Question for human
     human_message = "human_message"         # Message to human
+    wait_confirm = "wait_confirm"           # Simple answer waiting for user (Eigent pattern)
+
+    # Multi-turn conversation (Eigent pattern)
+    confirmed = "confirmed"                 # Task confirmed as complex, starting decomposition
 
     # Memory events
     memory_query = "memory_query"           # Memory query started
     memory_result = "memory_result"         # Memory query result
     memory_loaded = "memory_loaded"         # Memory paths loaded
     memory_level = "memory_level"           # Memory level determination (L1/L2/L3)
+    memory_event = "memory_event"           # Generic memory event (workflow hint, cache, etc.)
 
     # Reasoner events
     reasoner_query_started = "reasoner_query_started"
@@ -227,6 +245,27 @@ class TaskReplannedData(BaseActionData):
     subtasks: List[Dict]  # New subtask list
     original_task_id: Optional[str] = None
     reason: Optional[str] = None  # Why re-planned
+
+
+class StreamingDecomposeData(BaseActionData):
+    """Streaming decomposition text event."""
+
+    action: Literal[Action.streaming_decompose] = Action.streaming_decompose
+    text: str  # Accumulated decomposition text
+
+
+class DecomposeProgressData(BaseActionData):
+    """Decomposition progress event.
+
+    Sent during task decomposition to show progress percentage.
+    Based on Eigent's decompose_progress event pattern.
+    """
+
+    action: Literal[Action.decompose_progress] = Action.decompose_progress
+    progress: float  # 0.0 to 1.0 (percentage)
+    message: Optional[str] = None  # Human-readable progress message
+    sub_tasks: Optional[List[Dict]] = None  # Current subtasks list
+    is_final: bool = False  # True when decomposition is complete
 
 
 # ===== Agent Lifecycle Events =====
@@ -404,12 +443,55 @@ class NoticeData(BaseActionData):
     duration_ms: Optional[int] = None  # Auto-dismiss duration
 
 
+class MemoryEventData(BaseActionData):
+    """Memory-related event for tracking workflow guidance.
+
+    Used to emit events related to:
+    - Workflow hint progress (hint_advance, hint_completed)
+    - Page operations cache (cache_hit, cache_miss, cache_clear)
+    - Memory query results (query_start, query_result)
+    """
+
+    action: Literal[Action.memory_event] = Action.memory_event
+    event_type: str  # "hint_advance", "hint_completed", "cache_hit", "cache_clear", etc.
+    data: Dict[str, Any] = Field(default_factory=dict)
+    memory_level: Optional[str] = None  # L1, L2, L3
+
+
 class HumanResponseData(BaseActionData):
     """Human response event (input from user)."""
 
     action: Literal[Action.human_response] = Action.human_response
     response: str
     question_id: Optional[str] = None
+
+
+class WaitConfirmData(BaseActionData):
+    """Wait for user confirmation with simple answer (Eigent pattern).
+
+    Used when task is classified as simple question - returns direct LLM answer
+    without creating Workforce. Frontend displays this and waits for next user input.
+
+    DS-10: Added context field to distinguish scenarios:
+    - 'initial': Simple question from task start (no Workforce created)
+    - 'mid_execution': Simple answer during Workforce execution (paused for response)
+    """
+
+    action: Literal[Action.wait_confirm] = Action.wait_confirm
+    content: str  # The simple answer content
+    question: str  # The original user question
+    context: str = "initial"  # DS-10: 'initial' or 'mid_execution'
+
+
+class ConfirmedData(BaseActionData):
+    """Task confirmed as complex, starting decomposition (Eigent pattern).
+
+    Emitted when question_confirm determines task is complex and needs Workforce.
+    Frontend should prepare for task decomposition events to follow.
+    """
+
+    action: Literal[Action.confirmed] = Action.confirmed
+    question: str  # The confirmed task/question
 
 
 # ===== Memory Events =====
@@ -488,6 +570,113 @@ class ContextWarningData(BaseActionData):
     entries_count: int = 0  # Number of conversation entries
 
 
+# ===== Workforce Events (CAMEL-based multi-agent) =====
+
+class WorkforceStartedData(BaseActionData):
+    """Workforce started processing event."""
+
+    action: Literal[Action.workforce_started] = Action.workforce_started
+    total_tasks: int
+    workers_count: int
+    description: Optional[str] = None
+
+
+class WorkforceCompletedData(BaseActionData):
+    """Workforce completed all tasks event."""
+
+    action: Literal[Action.workforce_completed] = Action.workforce_completed
+    completed_count: int
+    failed_count: int
+    total_count: int
+    duration_seconds: Optional[float] = None
+
+
+class WorkforceStoppedData(BaseActionData):
+    """Workforce stopped/cancelled event."""
+
+    action: Literal[Action.workforce_stopped] = Action.workforce_stopped
+    reason: Optional[str] = None
+    completed_count: int = 0
+    pending_count: int = 0
+
+
+class WorkerAssignedData(BaseActionData):
+    """Task assigned to a worker event."""
+
+    action: Literal[Action.worker_assigned] = Action.worker_assigned
+    worker_name: str
+    worker_id: Optional[str] = None
+    subtask_id: str
+    subtask_content: str
+
+
+class WorkerStartedData(BaseActionData):
+    """Worker started processing event."""
+
+    action: Literal[Action.worker_started] = Action.worker_started
+    worker_name: str
+    worker_id: Optional[str] = None
+    subtask_id: str
+
+
+class WorkerCompletedData(BaseActionData):
+    """Worker completed task event."""
+
+    action: Literal[Action.worker_completed] = Action.worker_completed
+    worker_name: str
+    worker_id: Optional[str] = None
+    subtask_id: str
+    result_preview: Optional[str] = None  # Truncated result
+    duration_seconds: Optional[float] = None
+
+
+class WorkerFailedData(BaseActionData):
+    """Worker failed task event."""
+
+    action: Literal[Action.worker_failed] = Action.worker_failed
+    worker_name: str
+    worker_id: Optional[str] = None
+    subtask_id: str
+    error: str
+    failure_count: int = 0  # DS-7: Renamed from retry_count to match frontend
+    will_retry: bool = False
+
+
+class DynamicTasksAddedData(BaseActionData):
+    """New tasks discovered and added during execution."""
+
+    action: Literal[Action.dynamic_tasks_added] = Action.dynamic_tasks_added
+    new_tasks: List[Dict]  # List of {id, content, status}
+    added_by_worker: Optional[str] = None
+    reason: Optional[str] = None
+    total_tasks_now: int = 0
+    total_tasks: int = 0  # DS-6: Alias for frontend compatibility
+
+
+class AssignTaskData(BaseActionData):
+    """Task assignment event with two-phase state tracking.
+
+    Based on Eigent's assign_task event pattern:
+    - Phase 1: state="waiting" - Task assigned, waiting in queue
+    - Phase 2: state="running" - Task actively being executed
+
+    This allows the frontend to show more accurate task status.
+    """
+
+    action: Literal[Action.assign_task] = Action.assign_task
+    assignee_id: str  # Worker/agent ID
+    subtask_id: str  # Task being assigned
+    content: str  # Task content/description
+    state: str  # "waiting" or "running"
+    failure_count: int = 0
+    # Worker info for frontend display
+    worker_name: Optional[str] = None  # Human-readable worker name (e.g., "BrowserAgent")
+    agent_type: Optional[str] = None  # Worker type: "browser", "document", "code"
+    # DS-2: Backward compatible aliases for frontend
+    agent_id: Optional[str] = None  # Alias for assignee_id
+    task_id: Optional[str] = None  # Alias for subtask_id (note: conflicts with base task_id)
+
+
 # ===== Type Alias for All Action Data Types =====
 
 ActionData = Union[
@@ -525,6 +714,8 @@ ActionData = Union[
     AskData,
     NoticeData,
     HumanResponseData,
+    WaitConfirmData,
+    ConfirmedData,
     # Memory events
     MemoryQueryData,
     MemoryResultData,
@@ -534,6 +725,18 @@ ActionData = Union[
     ErrorData,
     EndData,
     ContextWarningData,
+    # Workforce events
+    WorkforceStartedData,
+    WorkforceCompletedData,
+    WorkforceStoppedData,
+    WorkerAssignedData,
+    WorkerStartedData,
+    WorkerCompletedData,
+    WorkerFailedData,
+    DynamicTasksAddedData,
+    AssignTaskData,
+    # Task decomposition events
+    DecomposeProgressData,
     # Fallback
     BaseActionData,
 ]

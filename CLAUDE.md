@@ -63,6 +63,10 @@ Ami/
 - Client logs: `~/.ami/logs/app.log`
 - Server logs: `~/ami-server/logs/`
 
+## Debugging Tools
+
+- **`scripts/parse_task_log.py`** — Parses agent task execution logs (`~/.ami/logs/app.log`) to extract key events, useful for analyzing how an agent completed a task. Run `python scripts/parse_task_log.py` (auto-detects latest task) or `--task-id <id>` for a specific task.
+
 ## Development Commands
 
 ```bash

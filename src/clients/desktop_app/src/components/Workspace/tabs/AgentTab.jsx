@@ -131,6 +131,7 @@ function ThinkingItem({ content, timestamp }) {
  * - Toolkit name (e.g., "Browser Toolkit")
  * - Method name (e.g., "visit page")
  * - Message/input preview
+ * - For browser actions: show action_type, target, page_url, etc.
  */
 function ToolkitItem({ event }) {
   const {
@@ -141,6 +142,9 @@ function ToolkitItem({ event }) {
     output_preview,
     timestamp,
     duration_ms,
+    // Browser action specific fields
+    target,
+    page_url,
   } = event;
 
   // Format method name for display (similar to Eigent's approach)
@@ -150,6 +154,12 @@ function ToolkitItem({ event }) {
 
   // Combine input and output for message display
   const message = output_preview || input_preview || '';
+
+  // Build browser action param display (simplified: just show target or url)
+  const browserParam = useMemo(() => {
+    // Show target (element/URL) or page_url, whichever is available
+    return target || page_url || null;
+  }, [target, page_url]);
 
   return (
     <div className={`timeline-item toolkit-item ${status}`}>
@@ -171,6 +181,12 @@ function ToolkitItem({ event }) {
             </span>
           )}
         </div>
+        {/* Browser action target/url */}
+        {browserParam && (
+          <div className="toolkit-param" title={browserParam}>
+            {browserParam.length > 60 ? browserParam.substring(0, 60) + '...' : browserParam}
+          </div>
+        )}
         {timestamp && (
           <div className="timeline-time">
             {new Date(timestamp).toLocaleTimeString()}
@@ -291,15 +307,29 @@ function AgentTab({
       });
     });
 
-    // Add toolkit events
-    toolkitEvents.forEach((event, index) => {
-      events.push({
-        type: 'toolkit',
-        ...event,
-        timestamp: toTimestampMs(event.timestamp, now - (toolkitEvents.length - index) * 100),
-        id: `toolkit-${index}`,
+    // Internal plan tools to filter out (these are agent's internal logic, not user-facing)
+    const INTERNAL_PLAN_TOOLS = [
+      'get_current_plan',
+      'complete_subtask',
+      'add_subtask',
+      'update_subtask',
+      'replan_task',
+    ];
+
+    // Add toolkit events (filter out internal plan tools)
+    toolkitEvents
+      .filter((event) => {
+        const toolName = event.name || event.tool || event.method || '';
+        return !INTERNAL_PLAN_TOOLS.includes(toolName);
+      })
+      .forEach((event, index) => {
+        events.push({
+          type: 'toolkit',
+          ...event,
+          timestamp: toTimestampMs(event.timestamp, now - (toolkitEvents.length - index) * 100),
+          id: `toolkit-${index}`,
+        });
       });
-    });
 
     // Sort by timestamp (all are now numeric ms)
     return events.sort((a, b) => a.timestamp - b.timestamp);

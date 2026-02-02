@@ -3,6 +3,7 @@
 This module uses LLM to identify Actions (state transitions that cause navigation).
 """
 
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -13,6 +14,8 @@ from src.cloud_backend.memgraph.thinker.prompts.action_extraction_prompt import 
     ActionExtractionInput,
     ActionExtractionPrompt,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class ActionExtractionResult:
@@ -54,13 +57,16 @@ class ActionExtractor:
     def __init__(
         self,
         llm_client: LLMClient,
-        model_name: str = "gpt-4"
+        model_name: str = "gpt-4",
+        intent_sequence_manager=None,
     ):
         """Initialize ActionExtractor.
 
         Args:
             llm_client: LLM client for extraction (required)
             model_name: Name of LLM model to use
+            intent_sequence_manager: Optional IntentSequenceManager for fetching
+                IntentSequences per State via graph relationships.
 
         Raises:
             ValueError: If llm_client is None
@@ -71,6 +77,7 @@ class ActionExtractor:
         self.llm_client = llm_client
         self.model_name = model_name
         self.prompt = ActionExtractionPrompt()
+        self.intent_sequence_manager = intent_sequence_manager
 
     def extract_actions(
         self,
@@ -151,11 +158,11 @@ class ActionExtractor:
 
             # Validate indices
             if source_idx not in state_id_map or target_idx not in state_id_map:
-                print(f"Warning: Invalid state index {source_idx} or {target_idx}")
+                logger.warning(f" Invalid state index {source_idx} or {target_idx}")
                 continue
 
             if source_idx == target_idx:
-                print(f"Warning: Source and target are the same ({source_idx})")
+                logger.warning(f" Source and target are the same ({source_idx})")
                 continue
 
             # Create Action with description and element info
@@ -173,7 +180,7 @@ class ActionExtractor:
                     type=action_data.type,
                     description=action_data.description,  # Now required
                     timestamp=action_data.timestamp,
-                    trigger_intent_id=action_data.trigger_intent_id,
+                    trigger_sequence_id=getattr(action_data, 'trigger_intent_id', None),
                     user_id=user_id,
                     session_id=session_id,
                     attributes=attrs
@@ -181,7 +188,7 @@ class ActionExtractor:
                 actions.append(action)
 
             except Exception as action_err:
-                print(f"Warning: Failed to create action: {str(action_err)}")
+                logger.warning(f" Failed to create action: {str(action_err)}")
                 continue
 
         # Build metadata
@@ -220,15 +227,13 @@ class ActionExtractor:
                 f"   - Duration: {duration}ms"
             )
 
-            # Include Intent details so LLM knows what elements were clicked
+            # Fetch intents from graph via IntentSequenceManager
             intents_to_show = []
-
-            # Extract intents from intent_sequences
-            if state.intent_sequences:
-                for seq in state.intent_sequences:
+            if self.intent_sequence_manager:
+                sequences = self.intent_sequence_manager.list_by_state(state.id)
+                for seq in sequences:
                     if hasattr(seq, 'intents') and seq.intents:
-                        for intent in seq.intents:
-                            intents_to_show.append(intent)
+                        intents_to_show.extend(seq.intents)
 
             if intents_to_show:
                 state_desc += f"\n   - Operations ({len(intents_to_show)}):"

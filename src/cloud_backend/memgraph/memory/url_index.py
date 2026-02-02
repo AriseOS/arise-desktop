@@ -10,9 +10,13 @@ Design Decision (from memory-graph-ontology-design.md 8.4):
     - Build from graph on startup
 """
 
+import logging
 from typing import Dict, List, Optional
 
 from src.cloud_backend.memgraph.graphstore.graph_store import GraphStore
+
+logger = logging.getLogger(__name__)
+
 from src.cloud_backend.memgraph.ontology.state import State
 
 
@@ -137,7 +141,7 @@ class URLIndex:
             return url_count
 
         except Exception as e:
-            print(f"Error building URL index from graph: {e}")
+            logger.error(f"Error building URL index from graph: {e}")
             return 0
 
     def get_stats(self) -> Dict[str, int]:

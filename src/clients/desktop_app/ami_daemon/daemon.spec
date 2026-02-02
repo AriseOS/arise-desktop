@@ -68,7 +68,6 @@ a = Analysis(
         # Ami daemon services
         'src.clients.desktop_app.ami_daemon.services.storage_manager',
         'src.clients.desktop_app.ami_daemon.services.browser_manager',
-        'src.clients.desktop_app.ami_daemon.services.workflow_executor',
         'src.clients.desktop_app.ami_daemon.services.cdp_recorder',
         'src.clients.desktop_app.ami_daemon.services.cloud_client',
         'src.clients.desktop_app.ami_daemon.services.browser_window_manager',

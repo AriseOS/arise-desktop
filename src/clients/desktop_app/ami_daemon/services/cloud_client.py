@@ -1388,39 +1388,37 @@ class CloudClient:
     ) -> Dict[str, Any]:
         """Query user's workflow memory using natural language
 
-        The system automatically analyzes the query and returns the most relevant
-        operation paths with States, Actions, and IntentSequences.
+        The system uses a unified query interface that supports:
+        - Task queries: Complete workflow retrieval (default)
+        - Navigation queries: Find path between two states
+        - Action queries: Find available actions in current state
 
         Args:
             user_id: User ID
             query: Natural language query describing the task
-            top_k: Number of paths to return (default: 3)
-            min_score: Minimum similarity score (0.0-1.0)
-            domain: Filter by domain (optional)
+            top_k: Number of results to return (default: 3)
+            min_score: Minimum similarity score (0.0-1.0) - currently unused by server
+            domain: Filter by domain (optional) - currently unused by server
 
         Returns:
             dict with:
                 - success: bool
-                - query: str
-                - paths: list of matching operation paths
-                - total_paths: int
-
-            Each path contains:
-                - score: float (relevance score)
-                - description: str (auto-generated path description)
-                - steps: list of {state, action, intent_sequence}
+                - query_type: "task" | "navigation" | "action"
+                - states: list of State dicts (for task/navigation)
+                - actions: list of Action dicts (for task/navigation)
+                - intent_sequences: list (for action queries)
+                - cognitive_phrase: dict (for task queries, if found)
+                - execution_plan: list (for task queries, if found)
+                - metadata: dict with query metadata
         """
         if not self.user_api_key:
             raise ValueError("User API key is required for memory query")
 
         payload = {
             "user_id": user_id,
-            "query": query,
+            "target": query,
             "top_k": top_k,
-            "min_score": min_score,
         }
-        if domain:
-            payload["domain"] = domain
 
         logger.info(f"[CloudClient] Querying memory for user {user_id}: {query[:50]}...")
 
@@ -1432,7 +1430,10 @@ class CloudClient:
         response.raise_for_status()
         result = response.json()
 
-        logger.info(f"[CloudClient] Memory query result: {result.get('total_paths')} paths")
+        query_type = result.get('query_type', 'unknown')
+        states_count = len(result.get('states', []))
+        actions_count = len(result.get('actions', []))
+        logger.info(f"[CloudClient] Memory query result: type={query_type}, states={states_count}, actions={actions_count}")
         return result
 
     async def get_memory_stats(

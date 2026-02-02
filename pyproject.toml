@@ -65,6 +65,10 @@ dependencies = [
 
     # Browser automation (using eigent_browser)
     "playwright>=1.40.0",
+
+    # Multi-agent framework
+    "camel-ai>=0.2.0",
+
 ]
 
 [project.optional-dependencies]

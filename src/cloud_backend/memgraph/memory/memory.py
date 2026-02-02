@@ -10,7 +10,6 @@ from typing import Any, Dict, List, Optional, Tuple
 from src.cloud_backend.memgraph.ontology.action import Action
 from src.cloud_backend.memgraph.ontology.cognitive_phrase import CognitivePhrase
 from src.cloud_backend.memgraph.ontology.domain import Domain, Manage
-from src.cloud_backend.memgraph.ontology.intent import Intent
 from src.cloud_backend.memgraph.ontology.intent_sequence import IntentSequence
 from src.cloud_backend.memgraph.ontology.state import State
 
@@ -263,7 +262,7 @@ class StateManager(ABC):
     @abstractmethod
     def search_states_by_embedding(
         self, query_vector: List[float], top_k: int = 10
-    ) -> List[State]:
+    ) -> List[tuple[State, float]]:
         """Search states by embedding vector similarity.
 
         Args:
@@ -271,7 +270,7 @@ class StateManager(ABC):
             top_k: Number of top results to return.
 
         Returns:
-            List of top-k similar State objects.
+            List of (State, similarity_score) tuples for top-k similar states.
         """
 
     @abstractmethod
@@ -313,23 +312,6 @@ class StateManager(ABC):
             List of State objects that are exactly k hops away.
         """
 
-    @abstractmethod
-    def search_intents_by_embedding(
-        self, query_vector: List[float], top_k: int = 10
-    ) -> List[tuple[Intent, State, float]]:
-        """Search intents by embedding vector similarity.
-
-        Since intents are embedded within states, this method searches through
-        all states and their contained intents to find the most similar ones.
-
-        Args:
-            query_vector: Query embedding vector.
-            top_k: Number of top results to return.
-
-        Returns:
-            List of tuples (Intent, State, similarity_score) for top-k similar intents,
-            where State is the parent state containing the intent.
-        """
 
 
 class ActionManager(ABC):
@@ -390,6 +372,7 @@ class ActionManager(ABC):
         source_id: Optional[str] = None,
         target_id: Optional[str] = None,
         action_type: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> List[Action]:
         """List actions with optional filters.
 
@@ -397,6 +380,7 @@ class ActionManager(ABC):
             source_id: Filter by source state ID.
             target_id: Filter by target state ID.
             action_type: Filter by action type.
+            user_id: Filter by user ID.
 
         Returns:
             List of Action objects matching the filters.
