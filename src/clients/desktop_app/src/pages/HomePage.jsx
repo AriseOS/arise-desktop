@@ -371,8 +371,9 @@ function HomePage({ session, onNavigate, showStatus, version }) {
     );
   };
 
-  // Check if input should be disabled
-  const isInputDisabled = taskStatus === 'running' && !activeTask?.hasWaitConfirm;
+  // Input is always enabled - messages are queued when agent is running
+  // This follows the "queue instead of block" pattern
+  const isInputDisabled = false;
 
   return (
     <div className="home-page-v2">
@@ -430,7 +431,7 @@ function HomePage({ session, onNavigate, showStatus, version }) {
             ref={inputRef}
             type="text"
             className="text-input"
-            placeholder={taskStatus === 'running' ? "Agent is working..." : "Describe what you want to automate..."}
+            placeholder={taskStatus === 'running' ? "Type here (queued while agent works)..." : "Describe what you want to automate..."}
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             onKeyPress={handleKeyPress}

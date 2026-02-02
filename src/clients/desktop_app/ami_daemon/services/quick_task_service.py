@@ -227,20 +227,15 @@ class TaskState:
     # Working directory manager
     _dir_manager: Optional[WorkingDirectoryManager] = field(default=None, repr=False)
 
-    # Task decomposition state (Eigent-style confirmation flow)
+    # Task decomposition state
     subtasks: List[Dict] = field(default_factory=list)  # Decomposed subtasks
     summary_task: Optional[str] = None  # Summary of the main task
-    _confirmation_event: Optional[asyncio.Event] = field(default=None, repr=False)  # Set when user confirms
-    _confirmation_cancelled: bool = field(default=False, repr=False)  # Set when user cancels
-    awaiting_confirmation: bool = field(default=False, repr=False)  # Whether waiting for confirmation
 
     def __post_init__(self):
         if self._cancel_event is None:
             self._cancel_event = asyncio.Event()
         if self._human_response_queue is None:
             self._human_response_queue = asyncio.Queue()
-        if self._confirmation_event is None:
-            self._confirmation_event = asyncio.Event()
         if self._user_message_queue is None:
             self._user_message_queue = asyncio.Queue()
 
@@ -1111,141 +1106,6 @@ Respond ONLY with the JSON array, no other text."""
                 "status": "OPEN",
             }]
 
-    async def _wait_for_confirmation(
-        self,
-        state: TaskState,
-        timeout_seconds: float = 120.0,  # BUG-4 fix: Add backend timeout
-    ) -> bool:
-        """
-        Wait for user confirmation of the task plan (Eigent-style).
-
-        The frontend handles the 30-second auto-confirm timer and calls
-        the /confirm-subtasks API. Backend has a fallback timeout in case
-        frontend fails to respond.
-
-        Note: awaiting_confirmation should already be set to True before calling
-        this method (to avoid race condition with frontend confirm request).
-
-        Args:
-            state: TaskState with subtasks to confirm
-            timeout_seconds: Maximum wait time (default 120s as safety net)
-
-        Returns:
-            True if confirmed, False if cancelled or timeout
-        """
-        logger.info(f"[Task {state.task_id}] Waiting for confirmation from frontend")
-        # Note: awaiting_confirmation is set before TaskDecomposedData event is sent
-        # to avoid race condition. We ensure it's True here as a safety check.
-        if not state.awaiting_confirmation:
-            state.awaiting_confirmation = True
-
-        # Check if already confirmed (race condition: frontend confirmed before we got here)
-        if state._confirmation_event.is_set():
-            logger.info(f"[Task {state.task_id}] Confirmation already received")
-            cancelled = state._confirmation_cancelled
-            state.awaiting_confirmation = False
-            state._confirmation_event.clear()
-            state._confirmation_cancelled = False
-            return not cancelled
-
-        try:
-            # BUG-4 fix: Add timeout to prevent indefinite waiting
-            await asyncio.wait_for(
-                state._confirmation_event.wait(),
-                timeout=timeout_seconds
-            )
-            logger.info(f"[Task {state.task_id}] Received confirmation from frontend")
-        except asyncio.TimeoutError:
-            # BUG-4 fix: Auto-confirm on timeout (frontend should have confirmed by now)
-            logger.warning(f"[Task {state.task_id}] Confirmation timeout, auto-confirming")
-            # Emit notice about auto-confirm
-            await state.put_event(NoticeData(
-                task_id=state.task_id,
-                level="warning",
-                title="Auto-confirmed",
-                message="Task plan auto-confirmed due to timeout",
-            ))
-            state.awaiting_confirmation = False
-            return True
-
-        # Check if cancelled (before resetting flags)
-        cancelled = state._confirmation_cancelled
-
-        # Reset state for potential reuse
-        state.awaiting_confirmation = False
-        state._confirmation_event.clear()
-        state._confirmation_cancelled = False
-
-        if cancelled:
-            logger.info(f"[Task {state.task_id}] Task plan was cancelled by user")
-            return False
-
-        return True
-
-    async def confirm_task_plan(self, task_id: str, subtasks: List[Dict]) -> bool:
-        """
-        Confirm task plan and allow execution to proceed.
-
-        Called by the /confirm-subtasks endpoint.
-
-        Args:
-            task_id: Task ID
-            subtasks: Confirmed (possibly edited) subtasks
-
-        Returns:
-            True if confirmation was delivered
-        """
-        state = self._tasks.get(task_id)
-        if not state:
-            logger.warning(f"Task {task_id} not found for confirmation")
-            return False
-
-        if not state.awaiting_confirmation:
-            # Detailed debug info to diagnose race condition
-            logger.warning(
-                f"Task {task_id} is not awaiting confirmation. "
-                f"State: status={state.status}, "
-                f"awaiting_confirmation={state.awaiting_confirmation}, "
-                f"subtasks_count={len(state.subtasks) if state.subtasks else 0}, "
-                f"confirmation_event_set={state._confirmation_event.is_set()}"
-            )
-            return False
-
-        # Update subtasks with user edits
-        state.subtasks = subtasks
-
-        # Signal confirmation
-        state._confirmation_event.set()
-        logger.info(f"Task {task_id} plan confirmed with {len(subtasks)} subtasks")
-        return True
-
-    async def cancel_task_plan(self, task_id: str) -> bool:
-        """
-        Cancel task plan and stop execution.
-
-        Called by the /cancel-subtasks endpoint.
-
-        Args:
-            task_id: Task ID
-
-        Returns:
-            True if cancellation was delivered
-        """
-        state = self._tasks.get(task_id)
-        if not state:
-            logger.warning(f"Task {task_id} not found for cancellation")
-            return False
-
-        if not state.awaiting_confirmation:
-            logger.warning(f"Task {task_id} is not awaiting confirmation")
-            return False
-
-        # Signal cancellation
-        state._confirmation_cancelled = True
-        state._confirmation_event.set()
-        logger.info(f"Task {task_id} plan cancelled by user")
-        return True
-
     # ===== Task Classification (Eigent question_confirm pattern) =====
 
     async def _classify_task(self, task: str, state: "TaskState") -> bool:
@@ -1475,13 +1335,6 @@ Response:"""
             project_id=state.project_id,
         ))
 
-        # Report: Task received
-        await state.put_event(AgentReportData(
-            task_id=task_id,
-            message="收到任务，正在分析...",
-            report_type="info",
-        ))
-
         # ===== Create Orchestrator Agent =====
         orchestrator, decompose_tool = await create_orchestrator_agent(
             task_state=state,
@@ -1595,14 +1448,7 @@ Response:"""
                             ]
                             state.summary_task = task_to_decompose
 
-                            # Set awaiting_confirmation BEFORE emitting event
-                            # This fixes race condition where frontend sends confirm
-                            # before _wait_for_confirmation is called
-                            state.awaiting_confirmation = True
-                            state._confirmation_event.clear()
-                            state._confirmation_cancelled = False
-
-                            # Emit TaskDecomposedData event
+                            # Emit TaskDecomposedData event (for frontend display only, no confirmation needed)
                             await state.put_event(TaskDecomposedData(
                                 task_id=task_id,
                                 subtasks=state.subtasks,
@@ -1610,111 +1456,91 @@ Response:"""
                                 total_subtasks=len(subtasks),
                             ))
 
-                            # Wait for confirmation
-                            confirmed = await self._wait_for_confirmation(state)
+                            # Execute subtasks directly (no confirmation wait)
+                            logger.info(f"[Task {task_id}] Starting AMI Executor with {len(subtasks)} subtasks...")
+                            start_time = datetime.now()
 
-                            if not confirmed:
-                                logger.info(f"[Task {task_id}] Task plan cancelled by user")
-                                await state.put_event(WorkforceStoppedData(
-                                    task_id=task_id,
-                                    reason="User cancelled task plan",
-                                    completed_count=0,
-                                    pending_count=len(subtasks),
-                                ))
-                                context = "mid_execution" if loop_iteration > 1 else "initial"
-                                await state.put_event(WaitConfirmData(
-                                    task_id=task_id,
-                                    content="Task plan cancelled. What would you like to do next?",
-                                    question=task_to_decompose,
-                                    context=context,
-                                ))
-                                state.subtasks = []
-                            else:
-                                # Execute subtasks with AMI Executor
-                                logger.info(f"[Task {task_id}] Starting AMI Executor with {len(subtasks)} subtasks...")
-                                start_time = datetime.now()
+                            # Report: Starting execution
+                            await state.put_event(AgentReportData(
+                                task_id=task_id,
+                                message=f"开始执行 {len(subtasks)} 个子任务...",
+                                report_type="info",
+                            ))
 
-                                # Report: Starting execution
+                            await state.put_event(WorkforceStartedData(
+                                task_id=task_id,
+                                total_tasks=len(subtasks),
+                                workers_count=len(agents_dict),
+                                description=f"Starting execution with {len(subtasks)} subtasks",
+                            ))
+
+                            # Create executor
+                            executor = AMITaskExecutor(
+                                task_id=task_id,
+                                task_state=state,
+                                agents=agents_dict,
+                            )
+                            executor.set_subtasks(subtasks)
+
+                            # Execute
+                            result = await executor.execute()
+
+                            duration = (datetime.now() - start_time).total_seconds()
+
+                            await state.put_event(WorkforceCompletedData(
+                                task_id=task_id,
+                                completed_count=result["completed"],
+                                failed_count=result["failed"],
+                                total_count=result["total"],
+                                duration_seconds=duration,
+                            ))
+
+                            # Report: Execution completed
+                            if result["failed"] == 0:
                                 await state.put_event(AgentReportData(
                                     task_id=task_id,
-                                    message=f"计划已确认，开始执行 {len(subtasks)} 个子任务...",
-                                    report_type="info",
+                                    message=f"全部 {result['completed']} 个子任务执行完成！",
+                                    report_type="success",
+                                ))
+                            else:
+                                await state.put_event(AgentReportData(
+                                    task_id=task_id,
+                                    message=f"执行完成：{result['completed']} 成功，{result['failed']} 失败",
+                                    report_type="warning",
                                 ))
 
-                                await state.put_event(WorkforceStartedData(
-                                    task_id=task_id,
-                                    total_tasks=len(subtasks),
-                                    workers_count=len(agents_dict),
-                                    description=f"Starting execution with {len(subtasks)} subtasks",
-                                ))
+                            # Aggregate results
+                            final_output = await self._aggregate_ami_results(
+                                task_id, state, subtasks, result, duration
+                            )
 
-                                # Create executor
-                                executor = AMITaskExecutor(
-                                    task_id=task_id,
-                                    task_state=state,
-                                    agents=agents_dict,
-                                )
-                                executor.set_subtasks(subtasks)
+                            # Record in conversation history
+                            state.add_conversation("task_result", {
+                                "task_content": task_to_decompose,
+                                "task_result": final_output,
+                                "working_directory": state.working_directory,
+                            })
 
-                                # Execute
-                                result = await executor.execute()
+                            # Update state
+                            state.result = {
+                                "success": result["failed"] == 0,
+                                "message": final_output,
+                                "data": {
+                                    "completed": result["completed"],
+                                    "failed": result["failed"],
+                                    "duration": duration,
+                                },
+                            }
 
-                                duration = (datetime.now() - start_time).total_seconds()
+                            context = "mid_execution" if loop_iteration > 1 else "initial"
+                            await state.put_event(WaitConfirmData(
+                                task_id=task_id,
+                                content=final_output,
+                                question=task_to_decompose,
+                                context=context,
+                            ))
 
-                                await state.put_event(WorkforceCompletedData(
-                                    task_id=task_id,
-                                    completed_count=result["completed"],
-                                    failed_count=result["failed"],
-                                    total_count=result["total"],
-                                    duration_seconds=duration,
-                                ))
-
-                                # Report: Execution completed
-                                if result["failed"] == 0:
-                                    await state.put_event(AgentReportData(
-                                        task_id=task_id,
-                                        message=f"全部 {result['completed']} 个子任务执行完成！",
-                                        report_type="success",
-                                    ))
-                                else:
-                                    await state.put_event(AgentReportData(
-                                        task_id=task_id,
-                                        message=f"执行完成：{result['completed']} 成功，{result['failed']} 失败",
-                                        report_type="warning",
-                                    ))
-
-                                # Aggregate results
-                                final_output = await self._aggregate_ami_results(
-                                    task_id, state, subtasks, result, duration
-                                )
-
-                                # Record in conversation history
-                                state.add_conversation("task_result", {
-                                    "task_content": task_to_decompose,
-                                    "task_result": final_output,
-                                    "working_directory": state.working_directory,
-                                })
-
-                                # Update state
-                                state.result = {
-                                    "success": result["failed"] == 0,
-                                    "message": final_output,
-                                    "data": {
-                                        "completed": result["completed"],
-                                        "failed": result["failed"],
-                                        "duration": duration,
-                                    },
-                                }
-
-                                context = "mid_execution" if loop_iteration > 1 else "initial"
-                                await state.put_event(WaitConfirmData(
-                                    task_id=task_id,
-                                    content=final_output,
-                                    question=task_to_decompose,
-                                    context=context,
-                                ))
-
-                                logger.info(f"[Task {task_id}] AMI Executor completed, ready for multi-turn")
+                            logger.info(f"[Task {task_id}] AMI Executor completed, ready for multi-turn")
 
                     except Exception as e:
                         logger.exception(f"[Task {task_id}] AMI Executor failed: {e}")
@@ -2072,58 +1898,28 @@ Response:"""
             await state.put_user_message(message)
             return {"type": "queued", "success": True}
 
-        # Record user message in conversation history
-        state.add_conversation("user", message)
+        # Case 0.5: Task is RUNNING - queue the message, it will be processed after current operation
+        # This allows users to type while agent is working (queue instead of block pattern)
+        if state.status == TaskStatus.RUNNING:
+            logger.info(f"[Task {task_id}] Task is RUNNING, queuing message for later processing")
+            # Don't add to conversation here - the main loop will do it when it processes the message
+            # Queue for processing after current operation completes
+            await state.put_user_message(message)
+            return {"type": "queued", "success": True}
 
         # Case 1: Task already completed → continue with new task
         if state.status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
             logger.info(f"[Task {task_id}] Task already finished, delegating to continue_task")
+            # Record in conversation history before continuing
+            state.add_conversation("user", message)
             new_task_id = await self.continue_task(task_id, message)
             return {"type": "continued", "new_task_id": new_task_id}
 
-        # Case 2: Task running → classify and handle message
-        try:
-            # Classify the new message
-            is_complex = await self._classify_task(message, state)
-
-            if not is_complex:
-                # Simple question → answer directly
-                logger.info(f"[Task {task_id}] Simple message, answering directly")
-
-                answer = await self._answer_simple_question(message, state)
-                state.add_conversation("assistant", answer)
-
-                # Emit wait_confirm event for frontend display
-                await state.put_event(WaitConfirmData(
-                    task_id=task_id,
-                    content=answer,
-                    question=message,
-                    context="mid_execution",
-                ))
-
-                return {"type": "simple_answer", "answer": answer}
-
-            else:
-                # Complex task → treat as continuation (will trigger new decomposition)
-                logger.info(f"[Task {task_id}] Complex message, treating as continuation")
-                new_task_id = await self.continue_task(task_id, message)
-                return {"type": "continued", "new_task_id": new_task_id}
-
-        except Exception as e:
-            logger.error(f"[Task {task_id}] Error handling user message: {e}")
-
-            # Return error as answer
-            error_msg = f"Sorry, I encountered an error: {str(e)}"
-            state.add_conversation("assistant", error_msg)
-
-            await state.put_event(NoticeData(
-                task_id=task_id,
-                level="error",
-                title="Message Handling Error",
-                message=str(e),
-            ))
-
-            return {"type": "error", "error": str(e)}
+        # Case 2: Task is PENDING - this shouldn't normally happen
+        # Queue it anyway for safety (don't add to conversation - loop will do it)
+        logger.warning(f"[Task {task_id}] Task is in PENDING state, queuing message")
+        await state.put_user_message(message)
+        return {"type": "queued", "success": True, "message": "Message queued - task is starting"}
 
     def cleanup_old_tasks(self, max_age_seconds: int = 3600):
         """Clean up old completed/failed tasks."""
