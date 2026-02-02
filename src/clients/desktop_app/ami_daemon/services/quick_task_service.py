@@ -52,6 +52,7 @@ from ..base_agent.events import (
     NoticeData,
     WaitConfirmData,
     ConfirmedData,
+    AgentReportData,
     # Memory events
     MemoryResultData,
     # Task decomposition
@@ -232,9 +233,6 @@ class TaskState:
     _confirmation_event: Optional[asyncio.Event] = field(default=None, repr=False)  # Set when user confirms
     _confirmation_cancelled: bool = field(default=False, repr=False)  # Set when user cancels
     awaiting_confirmation: bool = field(default=False, repr=False)  # Whether waiting for confirmation
-
-    # Workforce reference for pause/resume (Eigent pattern)
-    _workforce: Optional[Any] = field(default=None, repr=False)  # AMIWorkforce instance
 
     def __post_init__(self):
         if self._cancel_event is None:
@@ -441,7 +439,7 @@ class TaskState:
         Put a user message into the queue for multi-turn conversation.
 
         Called when frontend sends a new message via the message API.
-        The _execute_task_workforce loop will receive this message.
+        The multi-turn loop will receive this message.
         """
         if self._user_message_queue is not None:
             await self._user_message_queue.put(message)
@@ -1263,7 +1261,7 @@ Respond ONLY with the JSON array, no other text."""
             state: TaskState for conversation context
 
         Returns:
-            True: Complex task, needs Workforce
+            True: Complex task, needs decomposition and execution
             False: Simple question, answer directly
         """
         logger.info(f"[Task {state.task_id}] Classifying task: {task[:100]}...")
@@ -1330,7 +1328,7 @@ Is this a complex task? (yes/no):"""
 
     async def _answer_simple_question(self, question: str, state: "TaskState") -> str:
         """
-        Directly answer a simple question without Workforce.
+        Directly answer a simple question without task decomposition.
 
         Used when _classify_task returns False. Generates a conversational
         response using conversation history for context.
@@ -1477,6 +1475,13 @@ Response:"""
             project_id=state.project_id,
         ))
 
+        # Report: Task received
+        await state.put_event(AgentReportData(
+            task_id=task_id,
+            message="收到任务，正在分析...",
+            report_type="info",
+        ))
+
         # ===== Create Orchestrator Agent =====
         orchestrator, decompose_tool = await create_orchestrator_agent(
             task_state=state,
@@ -1527,6 +1532,13 @@ Response:"""
                     await state.put_event(ConfirmedData(
                         task_id=task_id,
                         question=task_to_decompose,
+                    ))
+
+                    # Report: Starting task decomposition
+                    await state.put_event(AgentReportData(
+                        task_id=task_id,
+                        message="这是一个复杂任务，正在拆解为子任务...",
+                        report_type="thinking",
                     ))
 
                     try:
@@ -1622,6 +1634,13 @@ Response:"""
                                 logger.info(f"[Task {task_id}] Starting AMI Executor with {len(subtasks)} subtasks...")
                                 start_time = datetime.now()
 
+                                # Report: Starting execution
+                                await state.put_event(AgentReportData(
+                                    task_id=task_id,
+                                    message=f"计划已确认，开始执行 {len(subtasks)} 个子任务...",
+                                    report_type="info",
+                                ))
+
                                 await state.put_event(WorkforceStartedData(
                                     task_id=task_id,
                                     total_tasks=len(subtasks),
@@ -1649,6 +1668,20 @@ Response:"""
                                     total_count=result["total"],
                                     duration_seconds=duration,
                                 ))
+
+                                # Report: Execution completed
+                                if result["failed"] == 0:
+                                    await state.put_event(AgentReportData(
+                                        task_id=task_id,
+                                        message=f"全部 {result['completed']} 个子任务执行完成！",
+                                        report_type="success",
+                                    ))
+                                else:
+                                    await state.put_event(AgentReportData(
+                                        task_id=task_id,
+                                        message=f"执行完成：{result['completed']} 成功，{result['failed']} 失败",
+                                        report_type="warning",
+                                    ))
 
                                 # Aggregate results
                                 final_output = await self._aggregate_ami_results(
@@ -2014,9 +2047,7 @@ Response:"""
         This method implements multi-turn conversation support:
         1. If task is WAITING → put message in queue for the multi-turn loop
         2. If task is completed → delegate to continue_task
-        3. If task is running → pause Workforce, classify message, handle accordingly
-        4. Simple question → answer directly, resume Workforce
-        5. Complex task → decompose into new subtasks, add to queue, resume
+        3. If task is running → classify message, handle accordingly
 
         Args:
             task_id: Task identifier
@@ -2026,7 +2057,6 @@ Response:"""
             Dict with handling result:
             - {"type": "queued", "success": True} for WAITING state
             - {"type": "simple_answer", "answer": str} for simple questions
-            - {"type": "tasks_added", "new_tasks": int} for complex tasks
             - {"type": "continued", "new_task_id": str} for completed tasks
         """
         state = self._tasks.get(task_id)
@@ -2036,7 +2066,7 @@ Response:"""
         logger.info(f"[Task {task_id}] Handling user message (status={state.status.value}): {message[:100]}...")
 
         # Case 0: Task is WAITING for user input (Eigent multi-turn pattern)
-        # Put message in queue for the _execute_task_workforce loop to receive
+        # Put message in queue for the multi-turn loop to receive
         if state.status == TaskStatus.WAITING:
             logger.info(f"[Task {task_id}] Task is WAITING, queuing message for multi-turn loop")
             await state.put_user_message(message)
@@ -2051,12 +2081,7 @@ Response:"""
             new_task_id = await self.continue_task(task_id, message)
             return {"type": "continued", "new_task_id": new_task_id}
 
-        # Case 2: Task running → pause Workforce and handle message
-        workforce = state._workforce
-        if workforce:
-            workforce.pause()
-            logger.info(f"[Task {task_id}] Workforce paused for user message handling")
-
+        # Case 2: Task running → classify and handle message
         try:
             # Classify the new message
             is_complex = await self._classify_task(message, state)
@@ -2069,7 +2094,6 @@ Response:"""
                 state.add_conversation("assistant", answer)
 
                 # Emit wait_confirm event for frontend display
-                # DS-10: context='mid_execution' for simple answer during Workforce execution
                 await state.put_event(WaitConfirmData(
                     task_id=task_id,
                     content=answer,
@@ -2077,70 +2101,16 @@ Response:"""
                     context="mid_execution",
                 ))
 
-                # Resume Workforce if still running
-                if workforce:
-                    workforce.resume()
-
                 return {"type": "simple_answer", "answer": answer}
 
             else:
-                # Complex task → decompose and add to Workforce
-                logger.info(f"[Task {task_id}] Complex message, decomposing into new subtasks")
-
-                # Emit confirmed event (Eigent pattern)
-                await state.put_event(ConfirmedData(
-                    task_id=task_id,
-                    question=message,
-                ))
-
-                # Decompose the new task into subtasks
-                if workforce:
-                    new_subtasks = await workforce.decompose_task(message)
-
-                    if new_subtasks:
-                        # Add new subtasks to the execution queue
-                        await workforce.add_dynamic_subtasks(new_subtasks)
-
-                        # Update state with new subtasks
-                        for st in new_subtasks:
-                            state.subtasks.append({
-                                "id": st.id,
-                                "content": st.content,
-                                "status": "OPEN"
-                            })
-
-                        # Resume Workforce to process new tasks
-                        workforce.resume()
-
-                        return {"type": "tasks_added", "new_tasks": len(new_subtasks)}
-                    else:
-                        # Decomposition failed, try to answer directly
-                        logger.warning(f"[Task {task_id}] Decomposition returned no subtasks, falling back to direct answer")
-                        answer = await self._answer_simple_question(message, state)
-                        state.add_conversation("assistant", answer)
-
-                        # DS-10: context='mid_execution' for fallback answer during Workforce execution
-                        await state.put_event(WaitConfirmData(
-                            task_id=task_id,
-                            content=answer,
-                            question=message,
-                            context="mid_execution",
-                        ))
-
-                        workforce.resume()
-                        return {"type": "simple_answer", "answer": answer}
-                else:
-                    # No active Workforce, treat as new task
-                    logger.warning(f"[Task {task_id}] No active Workforce, treating as continuation")
-                    new_task_id = await self.continue_task(task_id, message)
-                    return {"type": "continued", "new_task_id": new_task_id}
+                # Complex task → treat as continuation (will trigger new decomposition)
+                logger.info(f"[Task {task_id}] Complex message, treating as continuation")
+                new_task_id = await self.continue_task(task_id, message)
+                return {"type": "continued", "new_task_id": new_task_id}
 
         except Exception as e:
             logger.error(f"[Task {task_id}] Error handling user message: {e}")
-
-            # Resume Workforce on error
-            if workforce:
-                workforce.resume()
 
             # Return error as answer
             error_msg = f"Sorry, I encountered an error: {str(e)}"

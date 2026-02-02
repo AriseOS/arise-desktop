@@ -301,7 +301,23 @@ export const useAgentStore = create((set, get) => ({
     set((state) => {
       if (!state.tasks[taskId]) return state;
 
+      const existingMessages = state.tasks[taskId].messages;
+
+      // Deduplication: Skip if identical message exists within last 3 seconds
+      const now = Date.now();
+      const isDuplicate = existingMessages.some(m => {
+        if (m.role !== role || m.content !== content) return false;
+        const msgTime = new Date(m.timestamp).getTime();
+        return (now - msgTime) < 3000;
+      });
+
+      if (isDuplicate) {
+        console.warn('[AgentStore] Skipping duplicate message:', { role, contentPreview: content.substring(0, 50) });
+        return state;
+      }
+
       const newMessage = {
+        id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         role,
         content,
         timestamp: new Date().toISOString(),
@@ -1322,12 +1338,8 @@ export const useAgentStore = create((set, get) => ({
               thinkingLogs: [...(currentTask?.thinkingLogs || []), thinkingLog],
             });
 
-            // Also add as message for backward compatibility
-            addMessage('thinking', thinking, {
-              step,
-              agentName,
-              timestamp,
-            });
+            // Note: Don't add as message here - wait_confirm will handle the final response
+            // This avoids duplicate messages in the chat view
           }
 
           // Update agent's current thinking state
@@ -1733,6 +1745,17 @@ export const useAgentStore = create((set, get) => ({
           });
 
           addNotice('info', 'Tasks Added', `${newSubtasksList.length} new tasks discovered`);
+        }
+        break;
+
+      // ===== Agent Report Events (for HomePage chat-style display) =====
+      case 'agent_report':
+        {
+          const { message, report_type } = event;
+          if (message) {
+            // Add agent report as a message for display in chat
+            addMessage('agent', message, { reportType: report_type || 'info' });
+          }
         }
         break;
 

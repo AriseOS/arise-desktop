@@ -1909,6 +1909,230 @@ async def clear_memory(
         raise HTTPException(500, f"Failed to clear memory: {str(e)}")
 
 
+# ===== CognitivePhrase API =====
+# Endpoints for listing, getting, and deleting CognitivePhrases from memory
+
+@app.get("/api/v1/memory/phrases")
+async def list_cognitive_phrases(
+    limit: Optional[int] = 50,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id")
+):
+    """
+    List CognitivePhrases from memory.
+
+    Returns a list of CognitivePhrases with minimal info (id, label, description).
+    Results are ordered by access_count (most accessed first).
+
+    Headers:
+        X-Ami-API-Key: User's API key (optional)
+        X-User-Id: User ID for filtering (optional)
+
+    Query Parameters:
+        limit: Maximum number of phrases to return (default: 50)
+
+    Returns:
+        {
+            "success": true,
+            "phrases": [
+                {
+                    "id": "uuid",
+                    "label": "short label",
+                    "description": "natural language description",
+                    "access_count": 5,
+                    "created_at": 1234567890
+                }
+            ],
+            "total": 10
+        }
+
+    Errors:
+        503: Memory service not initialized
+        500: Failed to list phrases
+    """
+    if workflow_memory is None:
+        raise HTTPException(503, "Memory service not initialized")
+
+    try:
+        # List all phrases
+        # Note: user_id filtering is disabled for now (single-user mode)
+        # If x_user_id is provided, it's ignored to show all phrases
+        phrases = workflow_memory.phrase_manager.list_phrases(
+            user_id=None,  # Don't filter by user_id for now
+            limit=limit
+        )
+
+        # Return minimal info for list view
+        phrase_list = []
+        for phrase in phrases:
+            phrase_list.append({
+                "id": phrase.id,
+                "label": phrase.label,
+                "description": phrase.description,
+                "access_count": phrase.access_count,
+                "success_count": phrase.success_count,
+                "created_at": phrase.created_at,
+            })
+
+        return {
+            "success": True,
+            "phrases": phrase_list,
+            "total": len(phrase_list)
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to list cognitive phrases: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Failed to list cognitive phrases: {str(e)}")
+
+
+@app.get("/api/v1/memory/phrases/{phrase_id}")
+async def get_cognitive_phrase(
+    phrase_id: str,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """
+    Get CognitivePhrase detail with States and IntentSequences.
+
+    Returns full phrase details including the states and intent sequences
+    for visualization in a graph.
+
+    Headers:
+        X-Ami-API-Key: User's API key (optional)
+
+    Path Parameters:
+        phrase_id: CognitivePhrase ID
+
+    Returns:
+        {
+            "success": true,
+            "phrase": {
+                "id": "uuid",
+                "label": "short label",
+                "description": "description",
+                "state_path": ["state1", "state2"],
+                "action_path": ["action1"],
+                "access_count": 5,
+                "success_count": 3,
+                "created_at": 1234567890,
+                "duration": 5000,
+                "execution_plan": [...]
+            },
+            "states": [...],
+            "intent_sequences": [...]
+        }
+
+    Errors:
+        404: Phrase not found
+        503: Memory service not initialized
+        500: Failed to get phrase
+    """
+    if workflow_memory is None:
+        raise HTTPException(503, "Memory service not initialized")
+
+    try:
+        # Get the phrase
+        phrase = workflow_memory.phrase_manager.get_phrase(phrase_id)
+        if not phrase:
+            raise HTTPException(404, f"CognitivePhrase not found: {phrase_id}")
+
+        # Get states from state_path
+        states = []
+        for state_id in phrase.state_path:
+            state = workflow_memory.state_manager.get_state(state_id)
+            if state:
+                states.append(state.to_dict())
+
+        # Get IntentSequences from execution_plan
+        intent_sequences = []
+        if phrase.execution_plan:
+            for step in phrase.execution_plan:
+                # Get in-page sequences
+                for seq_id in step.in_page_sequence_ids:
+                    seq = workflow_memory.intent_sequence_manager.get_sequence(seq_id)
+                    if seq:
+                        intent_sequences.append(seq.to_dict())
+                # Get navigation sequence if exists
+                if step.navigation_sequence_id:
+                    seq = workflow_memory.intent_sequence_manager.get_sequence(step.navigation_sequence_id)
+                    if seq:
+                        intent_sequences.append(seq.to_dict())
+
+        return {
+            "success": True,
+            "phrase": phrase.to_dict(),
+            "states": states,
+            "intent_sequences": intent_sequences
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get cognitive phrase: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Failed to get cognitive phrase: {str(e)}")
+
+
+@app.delete("/api/v1/memory/phrases/{phrase_id}")
+async def delete_cognitive_phrase(
+    phrase_id: str,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """
+    Delete a CognitivePhrase from memory.
+
+    Note: This only deletes the CognitivePhrase node. States and IntentSequences
+    are NOT deleted as they may be shared by other phrases.
+
+    Headers:
+        X-Ami-API-Key: User's API key (optional)
+
+    Path Parameters:
+        phrase_id: CognitivePhrase ID to delete
+
+    Returns:
+        {
+            "success": true,
+            "message": "CognitivePhrase deleted"
+        }
+
+    Errors:
+        404: Phrase not found
+        503: Memory service not initialized
+        500: Failed to delete phrase
+    """
+    if workflow_memory is None:
+        raise HTTPException(503, "Memory service not initialized")
+
+    try:
+        # Check if phrase exists
+        phrase = workflow_memory.phrase_manager.get_phrase(phrase_id)
+        if not phrase:
+            raise HTTPException(404, f"CognitivePhrase not found: {phrase_id}")
+
+        # Delete the phrase
+        success = workflow_memory.phrase_manager.delete_phrase(phrase_id)
+        if not success:
+            raise HTTPException(500, "Failed to delete phrase")
+
+        logger.info(f"CognitivePhrase deleted: {phrase_id}")
+
+        return {
+            "success": True,
+            "message": "CognitivePhrase deleted"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete cognitive phrase: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Failed to delete cognitive phrase: {str(e)}")
+
+
 # ===== Helper Functions for NL Query =====
 
 async def _ensure_user_memory_loaded(user_id: str, session_id: Optional[str] = None):

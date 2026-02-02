@@ -1434,8 +1434,10 @@ URL: {state.page_url}
         end_timestamp = sorted_states[-1].end_timestamp or sorted_states[-1].timestamp
         duration = end_timestamp - start_timestamp
 
-        # Generate description (async)
-        description = await self._generate_workflow_description(workflow_data)
+        # Generate label and description (async)
+        workflow_info = await self._generate_workflow_description(workflow_data)
+        label = workflow_info.get("label")
+        description = workflow_info.get("description")
 
         current_time = int(time.time() * 1000)
 
@@ -1443,6 +1445,7 @@ URL: {state.page_url}
         effective_session_id = session_id or f"session_{current_time}"
 
         phrase = CognitivePhrase(
+            label=label,
             description=description,
             user_id=None,  # user isolation disabled
             session_id=effective_session_id,
@@ -1555,45 +1558,67 @@ URL: {state.page_url}
 
     async def _generate_workflow_description(
         self, workflow_data: List[Dict[str, Any]]
-    ) -> str:
-        """Generate description for the workflow using LLM.
+    ) -> Dict[str, str]:
+        """Generate label and description for the workflow using LLM.
 
         Args:
             workflow_data: List of workflow events.
 
         Returns:
-            Description string.
+            Dict with 'label' and 'description' keys.
         """
-        # If no LLM provider, return default description
+        default_result = {
+            "label": f"Workflow ({len(workflow_data)} steps)",
+            "description": f"用户工作流包含{len(workflow_data)}个操作事件"
+        }
+
+        # If no LLM provider, return default
         if not self.simple_llm_provider:
-            return f"用户工作流包含{len(workflow_data)}个操作事件"
+            return default_result
 
         workflow_summary = json.dumps(workflow_data[:20], ensure_ascii=False, indent=2)
 
-        prompt = f"""请根据以下用户操作事件序列生成一个简洁的自然语言描述。
+        prompt = f"""请根据以下用户操作事件序列生成一个简短的名称和详细描述。
 
 事件序列:
 {workflow_summary}
 
 要求:
-1. 用一到两句话描述整个工作流的核心目标和关键步骤
-2. 突出用户的主要意图和操作路径
-3. 使用通俗易懂的语言
-4. 只返回描述文本
+1. name: 一个简短的名称（5-15个字），用于快速识别这个工作流
+2. description: 用一到两句话描述整个工作流的核心目标和关键步骤
 
-示例: "用户浏览商品列表页，搜索咖啡相关商品，查看产品详情并复制了价格信息"
+请严格按照以下JSON格式返回（不要添加任何其他内容）:
+{{"name": "简短名称", "description": "详细描述"}}
 
-描述:"""
+示例:
+{{"name": "搜索并查看咖啡商品", "description": "用户浏览商品列表页，搜索咖啡相关商品，查看产品详情并复制了价格信息"}}
+
+JSON:"""
 
         try:
             response = await self.simple_llm_provider.generate_response(
-                system_prompt="",
+                system_prompt="你是一个JSON生成助手，只返回有效的JSON格式。",
                 user_prompt=prompt
             )
-            return response.strip()
+            # Parse JSON response
+            import re
+            # Try to extract JSON from response
+            json_match = re.search(r'\{[^}]+\}', response)
+            if json_match:
+                result = json.loads(json_match.group())
+                return {
+                    "label": result.get("name", default_result["label"]),
+                    "description": result.get("description", default_result["description"])
+                }
+            else:
+                # Fallback: treat entire response as description
+                return {
+                    "label": default_result["label"],
+                    "description": response.strip()
+                }
         except Exception as e:
             logger.info(f"Warning: Failed to generate workflow description: {e}")
-            return f"用户工作流包含{len(workflow_data)}个操作事件"
+            return default_result
 
 
 __all__ = [

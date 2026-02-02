@@ -13,16 +13,23 @@ const AGENT_COLORS = {
   storage_agent: { border: '#10b981', bg: '#d1fae5', text: '#047857', label: 'STORAGE' }, // Emerald
   text_agent: { border: '#3b82f6', bg: '#dbeafe', text: '#1d4ed8', label: 'TEXT' }, // Blue
   tavily_agent: { border: '#ec4899', bg: '#fce7f3', text: '#be185d', label: 'TAVILY' }, // Pink
+  // CognitivePhrase graph node types
+  state: { border: '#3b82f6', bg: '#dbeafe', text: '#1d4ed8', label: 'STATE' }, // Blue for State
+  intent_sequence: { border: '#10b981', bg: '#d1fae5', text: '#047857', label: 'SEQUENCE' }, // Green for IntentSequence
   default: { border: '#94a3b8', bg: '#f1f5f9', text: '#475569', label: 'STEP' } // Slate
 };
 
 const getAgentStyle = (type) => AGENT_COLORS[type] || AGENT_COLORS['default'];
 
 const CustomNode = ({ id, data }) => {
-  const { label, description, type, isLoop, agent, isExpanded, onToggleExpand } = data;
+  const { label, description, type, isLoop, agent, isExpanded, onToggleExpand, nodeType, intents, isNavigation } = data;
   // Map internal types to our color keys (v2 format uses 'agent' instead of 'agent_type')
-  const styleKey = agent || (isLoop ? 'loop' : 'default');
+  // For CognitivePhrase graph, use nodeType (state/intent_sequence)
+  const styleKey = nodeType || agent || (isLoop ? 'loop' : 'default');
   const style = getAgentStyle(styleKey);
+
+  // Check if this node is expandable (has intents to show)
+  const isExpandable = nodeType === 'intent_sequence' && intents && intents.length > 0;
 
   return (
     <div style={{
@@ -60,11 +67,11 @@ const CustomNode = ({ id, data }) => {
             letterSpacing: '0.05em',
             textTransform: 'uppercase'
           }}>
-            {style.label}
+            {isNavigation ? 'NAVIGATION' : style.label}
           </span>
 
-          {/* Collapsible Toggle for Loops */}
-          {isLoop && onToggleExpand && (
+          {/* Collapsible Toggle for Loops or IntentSequences */}
+          {(isLoop || isExpandable) && onToggleExpand && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -81,7 +88,7 @@ const CustomNode = ({ id, data }) => {
                 color: '#6b7280',
                 borderRadius: '4px'
               }}
-              title={isExpanded ? "Collapse Loop" : "Expand Loop"}
+              title={isExpanded ? "Collapse" : "Expand"}
             >
               {isExpanded ? (
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -107,7 +114,7 @@ const CustomNode = ({ id, data }) => {
         </div>
 
         {/* Description */}
-        {description && (
+        {description && !isExpanded && (
           <div style={{
             fontSize: '13px',
             color: '#6b7280',
@@ -118,6 +125,48 @@ const CustomNode = ({ id, data }) => {
             overflow: 'hidden'
           }}>
             {description}
+          </div>
+        )}
+
+        {/* Expanded Intents List */}
+        {isExpanded && isExpandable && (
+          <div style={{
+            fontSize: '12px',
+            color: '#374151',
+            background: '#f9fafb',
+            borderRadius: '8px',
+            padding: '8px',
+            marginTop: '4px'
+          }}>
+            {intents.map((intent, idx) => (
+              <div key={idx} style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '8px',
+                marginBottom: idx < intents.length - 1 ? '6px' : 0,
+                paddingBottom: idx < intents.length - 1 ? '6px' : 0,
+                borderBottom: idx < intents.length - 1 ? '1px solid #e5e7eb' : 'none'
+              }}>
+                <span style={{
+                  fontSize: '10px',
+                  fontWeight: '600',
+                  color: '#9ca3af',
+                  minWidth: '18px'
+                }}>
+                  {idx + 1}.
+                </span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: '500', color: '#111827' }}>
+                    {intent.text || intent.type}
+                  </div>
+                  {intent.value && (
+                    <div style={{ color: '#6b7280', fontSize: '11px', marginTop: '2px' }}>
+                      {intent.value}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>

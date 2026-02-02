@@ -24,6 +24,7 @@ from ..events import (
     AssignTaskData,
     WorkerAssignedData,
     NoticeData,
+    AgentReportData,
 )
 
 logger = logging.getLogger(__name__)
@@ -357,6 +358,17 @@ No historical workflow guide available. Please explore and complete the task usi
         agent = self._agents.get(subtask.agent_type)
         agent_name = getattr(agent, 'agent_name', subtask.agent_type)
 
+        # Report: Subtask starting
+        # Truncate content for display
+        content_preview = subtask.content[:80]
+        if len(subtask.content) > 80:
+            content_preview += "..."
+        await self._task_state.put_event(AgentReportData(
+            task_id=self.task_id,
+            message=f"正在执行: {content_preview}",
+            report_type="info",
+        ))
+
         # Emit assign_task event (for compatibility)
         await self._task_state.put_event(AssignTaskData(
             task_id=self.task_id,
@@ -381,6 +393,24 @@ No historical workflow guide available. Please explore and complete the task usi
         """Emit SSE event for subtask state change."""
         if not self._task_state:
             return
+
+        # Report: Subtask state change
+        content_preview = subtask.content[:50]
+        if len(subtask.content) > 50:
+            content_preview += "..."
+
+        if subtask.state == SubtaskState.DONE:
+            await self._task_state.put_event(AgentReportData(
+                task_id=self.task_id,
+                message=f"✓ 完成: {content_preview}",
+                report_type="success",
+            ))
+        elif subtask.state == SubtaskState.FAILED:
+            await self._task_state.put_event(AgentReportData(
+                task_id=self.task_id,
+                message=f"✗ 失败: {content_preview}",
+                report_type="error",
+            ))
 
         await self._task_state.put_event(SubtaskStateData(
             task_id=self.task_id,

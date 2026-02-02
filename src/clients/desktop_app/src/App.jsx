@@ -28,6 +28,8 @@ import ExecutionMonitorPage from "./pages/ExecutionMonitorPage";
 import ExecutionResultPage from "./pages/ExecutionResultPage";
 import RecordingsLibraryPage from "./pages/RecordingsLibraryPage";
 import RecordingDetailPage from "./pages/RecordingDetailPage";
+import CognitivePhrasesPage from "./pages/CognitivePhrasesPage";
+import CognitivePhraseDetailPage from "./pages/CognitivePhraseDetailPage";
 // MetaflowPreviewPage removed - MetaFlow is now internal, users work with Workflows directly
 // DataManagementPage removed - Data is now per-workflow, see WorkflowDetailPage "Data" tab
 import WorkflowExecutionLivePage from "./pages/WorkflowExecutionLivePage";
@@ -843,6 +845,27 @@ function App() {
           />
         );
 
+      case "memories":
+        return (
+          <CognitivePhrasesPage
+            session={session}
+            onNavigate={navigate}
+            showStatus={showStatus}
+            version={versionInfo?.version || '1.0.0'}
+          />
+        );
+
+      case "memory-detail":
+        return (
+          <CognitivePhraseDetailPage
+            session={session}
+            onNavigate={navigate}
+            showStatus={showStatus}
+            phraseId={pageParams.phraseId}
+            version={versionInfo?.version || '1.0.0'}
+          />
+        );
+
 
       case "recording-analysis":
         return (
@@ -901,10 +924,10 @@ function App() {
       return null;
     }
 
-    // New navigation: Ami (main), Library (recordings), Explore (discover workflows)
+    // New navigation: Ami (main), Memories (learned workflows), Explore (discover workflows)
     const navItems = [
       { id: "main", icon: "robot", label: "Ami" },
-      { id: "recordings-library", icon: "library", label: "Library" },
+      { id: "memories", icon: "brain", label: "Memories" },
       { id: "workflows", icon: "compass", label: "Explore" },
     ];
 

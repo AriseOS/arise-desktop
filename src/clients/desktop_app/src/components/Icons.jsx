@@ -331,6 +331,38 @@ export const Icon = ({ name, size = 24, className = "", ...props }) => {
             </>
         ),
 
+        // Brain icon for cognitive phrases
+        brain: (
+            <>
+                <path d="M12 4.5a2.5 2.5 0 0 0-4.96-.46 2.5 2.5 0 0 0-1.98 3 2.5 2.5 0 0 0-1.32 4.24 3 3 0 0 0 .34 5.58 2.5 2.5 0 0 0 2.96 3.08A2.5 2.5 0 0 0 12 19.5a2.5 2.5 0 0 0 4.96.46 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 12 4.5" />
+                <path d="M12 4.5v15" />
+                <path d="M15.5 6.5L12 10" />
+                <path d="M8.5 6.5L12 10" />
+                <path d="M17 9L12 13" />
+                <path d="M7 9l5 4" />
+                <path d="M17 14l-5-1" />
+                <path d="M7 14l5-1" />
+            </>
+        ),
+
+        // Route icon for workflow paths
+        route: (
+            <>
+                <circle cx="6" cy="19" r="3" />
+                <path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15" />
+                <circle cx="18" cy="5" r="3" />
+            </>
+        ),
+
+        // Alert Circle icon
+        alertCircle: (
+            <>
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+            </>
+        ),
+
         // MCP/Integration icons
         server: (
             <>

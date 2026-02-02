@@ -1459,6 +1459,133 @@ async def clear_memory(
 
 
 # ============================================================================
+# CognitivePhrase API Endpoints
+# ============================================================================
+
+@app.get("/api/v1/memory/phrases")
+async def list_cognitive_phrases(
+    limit: int = 50,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """
+    List CognitivePhrases from Memory
+
+    Returns a list of CognitivePhrases with minimal info (id, label, description).
+
+    Query Parameters:
+        limit: Maximum number of phrases to return (default: 50)
+
+    Headers:
+        X-Ami-API-Key: User's API key (optional)
+
+    Returns:
+        {
+            "success": true,
+            "phrases": [
+                {
+                    "id": "uuid",
+                    "label": "short label",
+                    "description": "natural language description",
+                    "access_count": 5,
+                    "created_at": 1234567890
+                }
+            ],
+            "total": 10
+        }
+    """
+    try:
+        logger.info(f"Listing cognitive phrases (limit={limit})")
+
+        # Set user API key on cloud client
+        if x_ami_api_key:
+            cloud_client.set_user_api_key(x_ami_api_key)
+
+        # Forward to Cloud Backend (no user_id filter for single-user mode)
+        result = await cloud_client.list_cognitive_phrases(limit=limit)
+
+        logger.info(f"Found {result.get('total', 0)} cognitive phrases")
+        return result
+
+    except Exception as e:
+        logger.error(f"Failed to list cognitive phrases: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/memory/phrases/{phrase_id}")
+async def get_cognitive_phrase(
+    phrase_id: str,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """
+    Get CognitivePhrase Detail
+
+    Returns full phrase details including states and intent sequences for visualization.
+
+    Path Parameters:
+        phrase_id: CognitivePhrase ID
+
+    Returns:
+        {
+            "success": true,
+            "phrase": {...},
+            "states": [...],
+            "intent_sequences": [...]
+        }
+    """
+    try:
+        logger.info(f"Getting cognitive phrase: {phrase_id}")
+
+        # Set user API key on cloud client
+        if x_ami_api_key:
+            cloud_client.set_user_api_key(x_ami_api_key)
+
+        # Forward to Cloud Backend
+        result = await cloud_client.get_cognitive_phrase(phrase_id=phrase_id)
+
+        logger.info(f"Got cognitive phrase: {phrase_id}")
+        return result
+
+    except Exception as e:
+        logger.error(f"Failed to get cognitive phrase: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/v1/memory/phrases/{phrase_id}")
+async def delete_cognitive_phrase(
+    phrase_id: str,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """
+    Delete a CognitivePhrase from Memory
+
+    Path Parameters:
+        phrase_id: CognitivePhrase ID to delete
+
+    Returns:
+        {
+            "success": true,
+            "message": "CognitivePhrase deleted"
+        }
+    """
+    try:
+        logger.info(f"Deleting cognitive phrase: {phrase_id}")
+
+        # Set user API key on cloud client
+        if x_ami_api_key:
+            cloud_client.set_user_api_key(x_ami_api_key)
+
+        # Forward to Cloud Backend
+        result = await cloud_client.delete_cognitive_phrase(phrase_id=phrase_id)
+
+        logger.info(f"Deleted cognitive phrase: {phrase_id}")
+        return result
+
+    except Exception as e:
+        logger.error(f"Failed to delete cognitive phrase: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
 # Intent Builder API Endpoints
 # ============================================================================
 

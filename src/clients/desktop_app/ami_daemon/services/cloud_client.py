@@ -1498,6 +1498,105 @@ class CloudClient:
                    f"{result.get('deleted_actions')} actions")
         return result
 
+    # ============================================================================
+    # CognitivePhrase APIs
+    # ============================================================================
+
+    async def list_cognitive_phrases(
+        self,
+        limit: int = 50,
+        user_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """List all cognitive phrases from memory
+
+        Args:
+            limit: Maximum number of phrases to return
+            user_id: Optional user ID filter
+
+        Returns:
+            dict with:
+                - success: bool
+                - phrases: list of phrase objects
+                - total: int
+        """
+        headers = {}
+        if self.user_api_key:
+            headers["X-Ami-API-Key"] = self.user_api_key
+        if user_id:
+            headers["X-User-Id"] = user_id
+
+        logger.info(f"[CloudClient] Listing cognitive phrases (limit={limit})")
+
+        response = await self.client.get(
+            "/api/v1/memory/phrases",
+            params={"limit": limit},
+            headers=headers
+        )
+        response.raise_for_status()
+        result = response.json()
+
+        logger.info(f"[CloudClient] Found {result.get('total', 0)} cognitive phrases")
+        return result
+
+    async def get_cognitive_phrase(
+        self,
+        phrase_id: str
+    ) -> Dict[str, Any]:
+        """Get a single cognitive phrase with full details
+
+        Args:
+            phrase_id: CognitivePhrase ID
+
+        Returns:
+            dict with:
+                - success: bool
+                - phrase: phrase object
+                - states: list of state objects
+                - intent_sequences: list of intent sequence objects
+        """
+        headers = {}
+        if self.user_api_key:
+            headers["X-Ami-API-Key"] = self.user_api_key
+
+        logger.info(f"[CloudClient] Getting cognitive phrase: {phrase_id}")
+
+        response = await self.client.get(
+            f"/api/v1/memory/phrases/{phrase_id}",
+            headers=headers
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def delete_cognitive_phrase(
+        self,
+        phrase_id: str
+    ) -> Dict[str, Any]:
+        """Delete a cognitive phrase from memory
+
+        Args:
+            phrase_id: CognitivePhrase ID to delete
+
+        Returns:
+            dict with:
+                - success: bool
+                - message: str
+        """
+        headers = {}
+        if self.user_api_key:
+            headers["X-Ami-API-Key"] = self.user_api_key
+
+        logger.info(f"[CloudClient] Deleting cognitive phrase: {phrase_id}")
+
+        response = await self.client.delete(
+            f"/api/v1/memory/phrases/{phrase_id}",
+            headers=headers
+        )
+        response.raise_for_status()
+        result = response.json()
+
+        logger.info(f"[CloudClient] Cognitive phrase deleted: {phrase_id}")
+        return result
+
     async def close(self):
         """Close HTTP client"""
         await self.client.aclose()
