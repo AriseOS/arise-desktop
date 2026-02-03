@@ -88,6 +88,7 @@ from ..base_agent.core.orchestrator_agent import (
     create_orchestrator_agent,
     run_orchestrator,
     DecomposeTaskTool,
+    AttachFileTool,
 )
 
 logger = logging.getLogger(__name__)
@@ -1339,7 +1340,7 @@ Response:"""
         ))
 
         # ===== Create Orchestrator Agent =====
-        orchestrator, decompose_tool = await create_orchestrator_agent(
+        orchestrator, decompose_tool, attach_tool = await create_orchestrator_agent(
             task_state=state,
             task_id=task_id,
             working_directory=state.working_directory,
@@ -1370,13 +1371,14 @@ Response:"""
                 # ===== Run Orchestrator Agent =====
                 logger.info(f"[Task {task_id}] Running Orchestrator for: {current_question[:100]}...")
 
-                orchestrator_reply = await run_orchestrator(
+                orchestrator_reply, attached_files = await run_orchestrator(
                     orchestrator=orchestrator,
                     decompose_tool=decompose_tool,
+                    attach_tool=attach_tool,
                     user_message=current_question,
                 )
 
-                logger.info(f"[Task {task_id}] Orchestrator response: {orchestrator_reply[:200]}...")
+                logger.info(f"[Task {task_id}] Orchestrator response: {orchestrator_reply[:200]}... | Attached: {len(attached_files)} files")
 
                 # Check if decompose_task was called
                 if decompose_tool.triggered:
@@ -1578,12 +1580,26 @@ Response:"""
 
                     state.add_conversation("assistant", orchestrator_reply)
 
+                    # Convert attached file paths to FileAttachment objects
+                    attachments = []
+                    if attached_files:
+                        from pathlib import Path
+                        for file_path_str in attached_files:
+                            try:
+                                attachment = await self._create_file_attachment(Path(file_path_str))
+                                if attachment:
+                                    attachments.append(attachment)
+                                    logger.info(f"[Task {task_id}] Created attachment for: {file_path_str}")
+                            except Exception as e:
+                                logger.warning(f"[Task {task_id}] Failed to create attachment for {file_path_str}: {e}")
+
                     context = "initial" if loop_iteration == 1 else "mid_execution"
                     await state.put_event(WaitConfirmData(
                         task_id=task_id,
                         content=orchestrator_reply,
                         question=current_question,
                         context=context,
+                        attachments=attachments if attachments else None,
                     ))
 
                 # Set status to WAITING for multi-turn
@@ -1897,30 +1913,35 @@ Response:"""
         attachments = []
         workspace = Path(state.working_directory)
 
-        # Scan output directory (primary location for task outputs)
-        output_dir = workspace / "output"
-        if output_dir.exists():
-            for file_path in self._walk_directory(output_dir):
-                try:
-                    attachment = await self._create_file_attachment(file_path)
-                    if attachment:
-                        attachments.append(attachment)
-                except Exception as e:
-                    logger.warning(f"[Task {task_id}] Failed to create attachment for {file_path}: {e}")
+        # Scan entire workspace directory for output files
+        # Exclude internal directories and files
+        excluded_dirs = {"notes", ".git", "__pycache__", ".venv", "node_modules"}
+        excluded_extensions = {".pyc", ".pyo", ".log"}
+        excluded_prefixes = (".", "note_")
 
-        # Also check notes directory for generated reports
-        notes_dir = workspace / "notes"
-        if notes_dir.exists():
-            for file_path in self._walk_directory(notes_dir):
-                # Skip internal note files
-                if file_path.suffix == ".md" and file_path.stem.startswith("note_"):
+        if workspace.exists():
+            for item in workspace.rglob("*"):
+                if not item.is_file():
                     continue
+
+                # Skip excluded directories
+                if any(part in excluded_dirs for part in item.parts):
+                    continue
+
+                # Skip hidden files and internal notes
+                if item.name.startswith(excluded_prefixes):
+                    continue
+
+                # Skip certain file types
+                if item.suffix.lower() in excluded_extensions:
+                    continue
+
                 try:
-                    attachment = await self._create_file_attachment(file_path)
+                    attachment = await self._create_file_attachment(item)
                     if attachment:
                         attachments.append(attachment)
                 except Exception as e:
-                    logger.warning(f"[Task {task_id}] Failed to create attachment for {file_path}: {e}")
+                    logger.warning(f"[Task {task_id}] Failed to create attachment for {item}: {e}")
 
         logger.info(f"[Task {task_id}] Collected {len(attachments)} file attachments")
         return attachments

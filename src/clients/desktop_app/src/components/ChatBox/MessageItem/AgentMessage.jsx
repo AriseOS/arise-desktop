@@ -20,6 +20,11 @@ function AgentMessage({ message }) {
   // DS-11: Use new attachments field, fallback to legacy attaches
   const fileAttachments = attachments || attaches || [];
 
+  // DEBUG
+  if (fileAttachments.length > 0) {
+    console.log('[AgentMessage] Rendering with attachments:', fileAttachments);
+  }
+
   // Format timestamp
   const formatTime = (ts) => {
     if (!ts) return '';

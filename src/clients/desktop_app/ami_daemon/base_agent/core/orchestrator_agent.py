@@ -5,6 +5,7 @@ The Orchestrator Agent replaces the hardcoded question_confirm classification wi
 an LLM-powered decision system. It has access to:
 - Basic tools (search, browse_url, file operations, terminal, notes)
 - A special `decompose_task` tool to trigger Workforce for complex tasks
+- An `attach_file` tool to include file references in responses
 
 When the user sends a message, the Orchestrator decides:
 1. Reply directly (simple questions, greetings)
@@ -18,14 +19,16 @@ the best approach, rather than using hardcoded classification rules.
 import asyncio
 import datetime
 import logging
+import os
 import platform
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 from camel.toolkits import FunctionTool
 from camel.messages import BaseMessage
 
 from .listen_chat_agent import ListenChatAgent
-from .agent_factories import create_model_backend, _extract_callable, _get_now_str
+from .agent_factories import create_model_backend, _get_now_str
 from ..tools.toolkits import (
     NoteTakingToolkit,
     SearchToolkit,
@@ -74,7 +77,20 @@ Structure: `{{task_id}}/workspace/` - each task folder contains output files (re
 - search_google: Quick web search for simple questions
 - write_note, read_note: Take notes (shared with other agents)
 - ask_human_via_console: Ask user for clarification
+- attach_file: Attach a file to your response (user can click to open/preview it)
 - decompose_task: Delegate work to your team (for browsing, coding, document creation)
+
+## Important Guidelines
+When user asks to find files or past work:
+1. Use shell_exec to locate the files
+2. Use attach_file to attach found files to your response
+3. Do NOT copy files to Desktop - just attach them directly
+
+Example workflow:
+- User: "帮我找到昨天的报告"
+- You: shell_exec to find the report file
+- You: attach_file to attach the found file
+- You: "找到了您昨天的报告，请点击下方文件查看"
 """
 
 
@@ -146,6 +162,61 @@ class DecomposeTaskTool:
         )
 
 
+class AttachFileTool:
+    """
+    Tool for attaching files to Orchestrator's response.
+
+    When the Orchestrator finds files that the user requested, it can use this
+    tool to attach them to the response. The frontend will display these as
+    clickable file cards with previews.
+    """
+
+    def __init__(self):
+        """Initialize AttachFileTool."""
+        self._attached_files: List[str] = []
+
+    @property
+    def attached_files(self) -> List[str]:
+        """Get list of attached file paths."""
+        return self._attached_files
+
+    def reset(self) -> None:
+        """Reset attached files list."""
+        self._attached_files = []
+
+    def attach_file(self, file_path: str) -> str:
+        """
+        Attach a file to your response so user can view/open it directly.
+
+        Use this when you find a file the user asked for. The file will appear
+        as a clickable card in the chat - user can preview or open it.
+
+        Args:
+            file_path: Absolute path to the file to attach.
+                      Must be an existing file or directory.
+
+        Returns:
+            Confirmation message.
+        """
+        # Expand user home directory
+        expanded_path = os.path.expanduser(file_path)
+
+        # Validate file exists
+        if not os.path.exists(expanded_path):
+            return f"Error: File not found: {file_path}"
+
+        # Store absolute path
+        abs_path = os.path.abspath(expanded_path)
+
+        # Avoid duplicates
+        if abs_path not in self._attached_files:
+            self._attached_files.append(abs_path)
+            logger.info(f"[AttachFileTool] Attached: {abs_path}")
+
+        file_type = "folder" if os.path.isdir(abs_path) else "file"
+        return f"Successfully attached {file_type}: {os.path.basename(abs_path)}"
+
+
 async def create_orchestrator_agent(
     task_state: Any,
     task_id: str,
@@ -160,7 +231,7 @@ async def create_orchestrator_agent(
     llm_model: Optional[str] = None,
     llm_base_url: Optional[str] = None,
     decompose_callback: Optional[Callable[[str], Any]] = None,
-) -> tuple[ListenChatAgent, DecomposeTaskTool]:
+) -> tuple[ListenChatAgent, DecomposeTaskTool, AttachFileTool]:
     """
     Create the Orchestrator Agent with all basic toolkits and decompose_task.
 
@@ -186,7 +257,7 @@ async def create_orchestrator_agent(
         decompose_callback: Callback function for decompose_task tool
 
     Returns:
-        Tuple of (ListenChatAgent, DecomposeTaskTool)
+        Tuple of (ListenChatAgent, DecomposeTaskTool, AttachFileTool)
     """
     logger.info(f"[OrchestratorAgent] Creating for task {task_id}")
     logger.info(f"[OrchestratorAgent] Working directory: {working_directory}")
@@ -216,10 +287,10 @@ async def create_orchestrator_agent(
     logger.info("[OrchestratorAgent] TerminalToolkit added (user workspace root)")
 
     tools = [
-        *[_extract_callable(t) for t in note_toolkit.get_tools()],
-        *[_extract_callable(t) for t in search_toolkit.get_tools()],
-        *[_extract_callable(t) for t in human_toolkit.get_tools()],
-        *[_extract_callable(t) for t in terminal_toolkit.get_tools()],
+        *note_toolkit.get_tools(),
+        *search_toolkit.get_tools(),
+        *human_toolkit.get_tools(),
+        *terminal_toolkit.get_tools(),
     ]
 
     # Add memory toolkit if configured
@@ -230,7 +301,7 @@ async def create_orchestrator_agent(
             user_id=user_id,
         )
         memory_toolkit.set_task_state(task_state)
-        tools.extend([_extract_callable(t) for t in memory_toolkit.get_tools()])
+        tools.extend(memory_toolkit.get_tools())
         logger.info("[OrchestratorAgent] MemoryToolkit added")
 
     # Create and add decompose_task tool
@@ -241,6 +312,12 @@ async def create_orchestrator_agent(
     decompose_tool.decompose_task.__func__._toolkit_name = "orchestrator"
     tools.append(decompose_tool.decompose_task)
     logger.info("[OrchestratorAgent] DecomposeTaskTool added")
+
+    # Create and add attach_file tool
+    attach_tool = AttachFileTool()
+    attach_tool.attach_file.__func__._toolkit_name = "orchestrator"
+    tools.append(attach_tool.attach_file)
+    logger.info("[OrchestratorAgent] AttachFileTool added")
 
     # Build system prompt
     system_message = ORCHESTRATOR_SYSTEM_PROMPT.format(
@@ -276,103 +353,51 @@ async def create_orchestrator_agent(
     if memory_api_base_url and ami_api_key and user_id:
         memory_toolkit.set_agent(agent)
 
-    logger.info(f"[OrchestratorAgent] Created with {len(tools)} tools (including decompose_task)")
-    return agent, decompose_tool
+    logger.info(f"[OrchestratorAgent] Created with {len(tools)} tools (including decompose_task, attach_file)")
+    return agent, decompose_tool, attach_tool
 
 
 async def run_orchestrator(
     orchestrator: ListenChatAgent,
     decompose_tool: DecomposeTaskTool,
+    attach_tool: AttachFileTool,
     user_message: str,
     max_iterations: int = MAX_ORCHESTRATOR_ITERATIONS,
-) -> str:
+) -> tuple[str, List[str]]:
     """
     Run the Orchestrator Agent until it completes or calls decompose_task.
 
-    The loop terminates when:
-    1. response.terminated is True (CAMEL's built-in termination detection)
-    2. decompose_task is called (hand off to Workforce)
-    3. Max iterations reached (safety limit)
+    CAMEL's astep() handles multi-turn tool execution internally.
+    We just need to call it once and check if decompose_task was triggered.
 
     Args:
         orchestrator: The Orchestrator ListenChatAgent instance
         decompose_tool: The DecomposeTaskTool to monitor for triggers
+        attach_tool: The AttachFileTool to collect attached files
         user_message: The user's input message
-        max_iterations: Maximum tool-use iterations (default 20)
+        max_iterations: Unused (kept for API compatibility)
 
     Returns:
-        The Orchestrator's final response content
+        Tuple of (final_content, attached_file_paths)
     """
     logger.info(f"[OrchestratorAgent] Starting execution for: {user_message[:100]}...")
 
-    # Get task_state for SSE emission (if available)
-    task_state = getattr(orchestrator, '_task_state', None)
-
-    # Reset decompose_tool state
+    # Reset tool states
     decompose_tool.reset()
+    attach_tool.reset()
 
-    # First step with user message
+    # Single call to astep - CAMEL handles multi-turn tool execution internally
     response = await orchestrator.astep(user_message)
     final_content = response.msg.content if response.msg else ""
 
-    # Log response details for debugging
-    logger.info(f"[OrchestratorAgent] Response terminated={response.terminated}, content={final_content[:200] if final_content else '(empty)'}")
+    # Log response
+    tool_calls = response.info.get("tool_calls") or []
+    logger.info(f"[OrchestratorAgent] Completed: content={final_content[:100] if final_content else '(empty)'}, tool_calls={len(tool_calls)}, decompose_triggered={decompose_tool.triggered}")
 
-    # Stream initial response to frontend if it has content
-    if final_content and task_state:
-        await _emit_orchestrator_message(task_state, final_content)
+    # Note: Don't emit WaitConfirmData here - quick_task_service handles that
+    # to avoid duplicate events
 
-    iteration = 1
-    while iteration < max_iterations:
-        # Check if decompose_task was called
-        if decompose_tool.triggered:
-            logger.info(f"[OrchestratorAgent] decompose_task triggered at iteration {iteration}")
-            break
+    attached_files = attach_tool.attached_files
+    logger.info(f"[OrchestratorAgent] Final response: {final_content[:200]}... | Attached files: {len(attached_files)}")
 
-        # Check CAMEL's termination flag - this is the proper way to detect completion
-        if response.terminated:
-            logger.info(f"[OrchestratorAgent] Completed at iteration {iteration} (terminated=True)")
-            break
-
-        # Continue the conversation after tool execution
-        iteration += 1
-        logger.debug(f"[OrchestratorAgent] Iteration {iteration}, continuing after tool execution")
-
-        # Continue with a prompt that asks the agent to proceed
-        response = await orchestrator.astep("Continue based on the tool results above.")
-
-        # Update content and stream to frontend
-        if response.msg and response.msg.content:
-            new_content = response.msg.content
-            # Only emit if content is different and substantive
-            if new_content != final_content and len(new_content) > 20:
-                final_content = new_content
-                if task_state:
-                    await _emit_orchestrator_message(task_state, final_content)
-
-    if iteration >= max_iterations:
-        logger.warning(f"[OrchestratorAgent] Reached max iterations ({max_iterations})")
-
-    logger.info(f"[OrchestratorAgent] Final response: {final_content[:200]}...")
-
-    return final_content
-
-
-async def _emit_orchestrator_message(task_state, content: str) -> None:
-    """
-    Emit Orchestrator's intermediate message to frontend via SSE.
-
-    This allows users to see Orchestrator's responses in real-time,
-    not just the final result.
-    """
-    from ..events import AgentReportData
-
-    try:
-        await task_state.put_event(AgentReportData(
-            task_id=getattr(task_state, 'task_id', None),
-            message=content,
-            report_type="info",
-        ))
-        logger.debug(f"[OrchestratorAgent] Emitted message: {content[:100]}...")
-    except Exception as e:
-        logger.warning(f"[OrchestratorAgent] Failed to emit message: {e}")
+    return final_content, attached_files
