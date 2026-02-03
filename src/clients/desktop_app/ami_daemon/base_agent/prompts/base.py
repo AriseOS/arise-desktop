@@ -323,3 +323,33 @@ OPERATING_ENVIRONMENT_SECTION = PromptSection(
 - Current Date: {current_date}""",
     condition_var=""  # Always included
 )
+
+
+# Conversation Memory Section - guides Agent to search history when needed
+CONVERSATION_MEMORY_SECTION = PromptSection(
+    title="## Conversation Memory",
+    content="""You have access to the user's conversation history. Before answering questions about:
+- Previous tasks or conversations ("上次", "之前", "last time", "before")
+- User preferences or habits ("我喜欢", "我通常", "I prefer")
+- Past decisions or outcomes ("之前决定", "上次结果", "we decided")
+- Anything the user mentioned "before" or "previously"
+
+**You MUST first search memory:**
+
+1. Call `search_conversations(query)` to find relevant past conversations
+2. If results found, call `get_conversation_messages(conversation_id)` for details
+3. Then answer based on the retrieved context
+
+If no relevant memory found after search, acknowledge that you checked but found nothing.
+
+**Available memory tools:**
+- `search_conversations(query)` - Search past conversations by keyword
+- `get_conversation_messages(conversation_id)` - Get messages from a conversation
+- `get_recent_conversations()` - List recent conversations
+
+**Example usage:**
+- User: "上次在哪个网站找的产品？" → Call search_conversations("产品") first
+- User: "继续之前的任务" → Call get_recent_conversations() to find latest task
+- User: "我通常喜欢什么格式？" → Call search_conversations("格式 偏好")""",
+    condition_var="enable_conversation_memory"  # Only include when memory toolkit is enabled
+)

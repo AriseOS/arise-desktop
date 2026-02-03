@@ -302,6 +302,8 @@ export const useAgentStore = create((set, get) => ({
       attachmentsCount: extra.attachments?.length || 0,
     });
 
+    let newMessageId = null;
+
     set((state) => {
       if (!state.tasks[taskId]) return state;
 
@@ -320,8 +322,10 @@ export const useAgentStore = create((set, get) => ({
         return state;
       }
 
+      newMessageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
       const newMessage = {
-        id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        id: newMessageId,
         role,
         content,
         timestamp: new Date().toISOString(),
@@ -345,6 +349,26 @@ export const useAgentStore = create((set, get) => ({
         },
       };
     });
+
+    // Async: Persist message to session (simple API)
+    if (newMessageId && role) {
+      // Map frontend role to backend role
+      const backendRole = role === 'agent' ? 'assistant' : role;
+
+      // Only persist user, assistant, system messages
+      if (['user', 'assistant', 'system'].includes(backendRole)) {
+        api.appendSessionMessage(backendRole, content || '', {
+          messageId: newMessageId,
+          attachments: extra.attachments || [],
+          metadata: {
+            taskId,
+            reportType: extra.reportType,
+          },
+        }).catch((error) => {
+          console.warn(`[AgentStore] Failed to persist message:`, error.message);
+        });
+      }
+    }
   },
 
   /**
@@ -549,6 +573,12 @@ export const useAgentStore = create((set, get) => ({
       return false;
     }
 
+    const content = task.taskDescription;
+    if (!content || !content.trim()) {
+      console.error('[AgentStore] No task description');
+      return false;
+    }
+
     try {
       // Eigent: Check if backend is ready (15 second timeout)
       const isBackendReady = await checkBackendReady(15000, 500);
@@ -575,13 +605,13 @@ export const useAgentStore = create((set, get) => ({
       });
 
       // Add user message
-      get().addMessage(taskId, 'user', task.taskDescription);
+      get().addMessage(taskId, 'user', content);
 
       // Submit to backend
       const response = await api.callAppBackend('/api/v1/quick-task/execute', {
         method: 'POST',
         body: JSON.stringify({
-          task: task.taskDescription.trim()
+          task: content.trim()
         })
       });
 

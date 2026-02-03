@@ -1,30 +1,40 @@
 # base_agent/memory/
 
-Three-layer memory system for BaseAgent.
+Multi-layer memory system for BaseAgent.
 
 ## Architecture
 
 ```
-MemoryManager
-├── Layer 1: Variables (in-memory)
-│   └── Python dict, workflow variable passing
-├── Layer 2: KV Storage (persistent)
-│   └── SQLite, script caching, config storage
-└── Layer 3: Long-term Memory (semantic)
-    └── mem0 + ChromaDB (TODO: not yet enabled)
+Memory Systems
+├── Layer 1-3: MemoryManager (workflow state)
+│   ├── Layer 1: Variables (in-memory)
+│   │   └── Python dict, workflow variable passing
+│   ├── Layer 2: KV Storage (persistent)
+│   │   └── SQLite, script caching, config storage
+│   └── Layer 3: Long-term Memory (semantic)
+│       └── mem0 + ChromaDB (TODO: not yet enabled)
+│
+└── Conversation Memory (session history)
+    ├── ConversationStore
+    │   └── Manages index.json and conversation lifecycle
+    └── TranscriptManager
+        └── Manages JSONL transcript files
 ```
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `memory_manager.py` | Unified interface for all memory layers |
+| `memory_manager.py` | Unified interface for workflow memory layers |
 | `sqlite_kv_storage.py` | Layer 2: SQLite-based key-value storage |
 | `mem0_memory.py` | Layer 3: Semantic memory via mem0 |
+| `conversation_types.py` | Type definitions for conversation storage |
+| `conversation_store.py` | Conversation index management |
+| `transcript_manager.py` | JSONL transcript file management |
 
 ## Key Principle
 
-**Memory belongs to users, not BaseAgent instances.**
+**Memory belongs to users, not Agent instances.**
 
 ```python
 # Correct: specify user_id
@@ -36,21 +46,39 @@ agent2 = BaseAgent(..., user_id="user123")
 agent = BaseAgent(...)  # Gets random agent_xxx-uuid
 ```
 
-## Layer Details
+## Conversation Memory
 
-### Layer 1: Variables
-- Storage: Python `Dict[str, Any]`
-- Lifetime: Process memory (lost on restart)
-- Use: Workflow step-to-step data passing
+Session history storage based on OpenClaw's design.
 
-### Layer 2: KV Storage
-- Storage: SQLite database
-- Lifetime: Disk persistent
-- Use: Script caching, configuration, session state
-- User isolation: Data keyed by `user_id`
+### File Structure
+```
+~/.ami/conversations/
+├── index.json                    # Conversation index
+└── {user_id}/
+    └── {conversation_id}.jsonl   # Transcript file
+```
 
-### Layer 3: Long-term Memory
-- Storage: mem0 + ChromaDB
-- Lifetime: Disk persistent
-- Use: Semantic search, learning from history
-- Status: TODO - not yet enabled
+### JSONL Format
+```jsonl
+{"type":"header","version":1,"conversation_id":"conv_abc","user_id":"user1","created_at":"..."}
+{"type":"message","id":"msg_1","role":"user","content":"Hello","timestamp":"..."}
+{"type":"message","id":"msg_2","role":"assistant","content":"Hi!","timestamp":"..."}
+{"type":"event","event_type":"task_started","task_id":"task_1","timestamp":"..."}
+```
+
+### Agent Integration
+Agent uses ConversationMemoryToolkit to search history:
+- `search_conversations(query)` - Search by keyword
+- `get_conversation_messages(conversation_id)` - Get messages
+- `get_recent_conversations()` - List recent
+
+### Design Principle (from OpenClaw)
+- Agent decides when to search (guided by System Prompt)
+- Memory is a tool, not auto-injected context
+- Search before answering questions about past work
+
+## References
+
+- Design doc: `docs/conversation-memory-design.md`
+- OpenClaw memory: `third-party/openclaw/docs/concepts/memory.md`
+- Toolkit: `base_agent/tools/toolkits/conversation_memory_toolkit.py`

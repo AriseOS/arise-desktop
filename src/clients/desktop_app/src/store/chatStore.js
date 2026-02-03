@@ -5,10 +5,16 @@
  * Manages task lifecycle, messages, agents, and SSE connections.
  *
  * Ported from Eigent's chatStore with adaptations for 2ami.
+ *
+ * Conversation Memory Integration:
+ * - createTask: Creates a conversation record for persistence
+ * - addMessage: Asynchronously persists messages to conversation history
+ * - loadConversationHistory: Loads historical conversations
  */
 
 import { createStore } from 'zustand/vanilla';
 import { SSEClient, SSEEventTypes } from '../utils/sseClient';
+import { api } from '../utils/api';
 
 // Task status types
 export const TaskStatus = {
@@ -31,6 +37,8 @@ const createInitialTask = (taskId, type = TaskType.NORMAL) => ({
   id: taskId,
   type,
   status: TaskStatus.PENDING,
+  // Conversation persistence
+  conversationId: null, // Linked conversation ID for history persistence
   // Messages and conversation
   messages: [],
   summaryTask: '',
@@ -109,6 +117,9 @@ const chatStore = createStore((set, get) => ({
 
   /**
    * Create a new task
+   *
+   * Also creates a conversation record for message persistence.
+   * The conversation is created asynchronously to avoid blocking.
    */
   createTask: (taskId, type = TaskType.NORMAL) => {
     set((state) => ({
@@ -118,6 +129,35 @@ const chatStore = createStore((set, get) => ({
       },
       activeTaskId: taskId,
     }));
+
+    // Asynchronously create conversation for persistence
+    // Don't block task creation, handle errors silently
+    api.createConversation({
+      title: `Task ${taskId}`,
+      taskId: taskId,
+      tags: [type],
+    }).then((result) => {
+      if (result.conversation_id) {
+        // Update task with conversation ID
+        set((state) => {
+          const task = state.tasks[taskId];
+          if (!task) return state;
+          return {
+            tasks: {
+              ...state.tasks,
+              [taskId]: {
+                ...task,
+                conversationId: result.conversation_id,
+              },
+            },
+          };
+        });
+        console.log(`[ChatStore] Created conversation ${result.conversation_id} for task ${taskId}`);
+      }
+    }).catch((error) => {
+      console.warn(`[ChatStore] Failed to create conversation for task ${taskId}:`, error.message);
+    });
+
     return taskId;
   },
 
@@ -194,8 +234,13 @@ const chatStore = createStore((set, get) => ({
 
   /**
    * Add a message to a task
+   *
+   * Also persists the message to conversation history asynchronously.
    */
   addMessage: (taskId, message) => {
+    const messageId = `msg_${Date.now()}`;
+    const timestamp = new Date().toISOString();
+
     set((state) => {
       const task = state.tasks[taskId];
       if (!task) return state;
@@ -208,8 +253,8 @@ const chatStore = createStore((set, get) => ({
             messages: [
               ...task.messages,
               {
-                id: `msg_${Date.now()}`,
-                timestamp: new Date().toISOString(),
+                id: messageId,
+                timestamp,
                 ...message,
               },
             ],
@@ -217,6 +262,30 @@ const chatStore = createStore((set, get) => ({
         },
       };
     });
+
+    // Asynchronously persist message to conversation history
+    const task = get().tasks[taskId];
+    if (task?.conversationId && message.role) {
+      // Map frontend role to backend role (user, assistant, system)
+      const role = message.role === 'agent' ? 'assistant' : message.role;
+
+      // Only persist user, assistant, system messages (not internal events)
+      if (['user', 'assistant', 'system'].includes(role)) {
+        api.appendConversationMessage(task.conversationId, {
+          role,
+          content: message.content || '',
+          agentId: message.agent_id || message.agentId,
+          attachments: message.attachments || [],
+          metadata: {
+            step: message.step,
+            data: message.data,
+            messageId,
+          },
+        }).catch((error) => {
+          console.warn(`[ChatStore] Failed to persist message ${messageId}:`, error.message);
+        });
+      }
+    }
   },
 
   /**
@@ -349,6 +418,8 @@ const chatStore = createStore((set, get) => ({
 
   /**
    * Set summary task
+   *
+   * Also updates the conversation title for persistence.
    */
   setSummaryTask: (taskId, summaryTask) => {
     set((state) => {
@@ -365,6 +436,11 @@ const chatStore = createStore((set, get) => ({
         },
       };
     });
+
+    // Update conversation title asynchronously
+    if (summaryTask) {
+      get().updateConversationInfo(taskId, { title: summaryTask });
+    }
   },
 
   /**
@@ -1207,6 +1283,12 @@ const chatStore = createStore((set, get) => ({
         },
       };
     });
+
+    // Update conversation status when task ends
+    if (status === TaskStatus.FINISHED || status === TaskStatus.FAILED) {
+      const conversationStatus = status === TaskStatus.FINISHED ? 'completed' : 'failed';
+      get().updateConversationStatus(taskId, conversationStatus);
+    }
   },
 
   /**
@@ -2134,6 +2216,159 @@ const chatStore = createStore((set, get) => ({
       tasks: {},
       activeTaskId: null,
     });
+  },
+
+  // === Conversation History ===
+
+  /**
+   * Load a conversation from history into a task
+   *
+   * @param {string} conversationId - Conversation ID to load
+   * @returns {Promise<string|null>} Task ID if loaded successfully, null otherwise
+   */
+  loadConversation: async (conversationId) => {
+    try {
+      // Get conversation details
+      const conversation = await api.getConversation(conversationId);
+      if (!conversation) {
+        console.error(`[ChatStore] Conversation not found: ${conversationId}`);
+        return null;
+      }
+
+      // Get conversation messages
+      const messagesResult = await api.getConversationMessages(conversationId, { limit: 100 });
+
+      // Create a task ID (use original task_id if available, otherwise generate)
+      const taskId = conversation.task_ids?.[0] || `loaded_${conversationId}`;
+
+      // Map messages from backend format to frontend format
+      const messages = (messagesResult.messages || []).map((msg, index) => ({
+        id: `msg_loaded_${index}`,
+        timestamp: msg.timestamp,
+        role: msg.role === 'assistant' ? 'agent' : msg.role,
+        content: msg.content,
+        agent_id: msg.agent_id,
+        attachments: msg.attachments || [],
+        step: msg.metadata?.step,
+        data: msg.metadata?.data,
+      }));
+
+      // Create task with loaded messages
+      set((state) => ({
+        tasks: {
+          ...state.tasks,
+          [taskId]: {
+            ...createInitialTask(taskId, TaskType.NORMAL),
+            conversationId,
+            messages,
+            hasMessages: messages.length > 0,
+            summaryTask: conversation.summary || conversation.title,
+            status: conversation.status === 'completed' ? TaskStatus.FINISHED :
+                    conversation.status === 'failed' ? TaskStatus.FAILED :
+                    TaskStatus.PENDING,
+          },
+        },
+        activeTaskId: taskId,
+      }));
+
+      console.log(`[ChatStore] Loaded conversation ${conversationId} as task ${taskId} with ${messages.length} messages`);
+      return taskId;
+    } catch (error) {
+      console.error(`[ChatStore] Failed to load conversation ${conversationId}:`, error);
+      return null;
+    }
+  },
+
+  /**
+   * List recent conversations
+   *
+   * @param {number} limit - Maximum number of conversations to return
+   * @returns {Promise<Array>} List of conversation summaries
+   */
+  listRecentConversations: async (limit = 20) => {
+    try {
+      const result = await api.listConversations({ limit, status: null });
+      return result.conversations || [];
+    } catch (error) {
+      console.error('[ChatStore] Failed to list conversations:', error);
+      return [];
+    }
+  },
+
+  /**
+   * Search conversations
+   *
+   * @param {string} query - Search query
+   * @param {number} limit - Maximum number of results
+   * @returns {Promise<Array>} List of matching conversations
+   */
+  searchConversations: async (query, limit = 10) => {
+    try {
+      const result = await api.searchConversations(query, { limit });
+      return result.results || [];
+    } catch (error) {
+      console.error('[ChatStore] Failed to search conversations:', error);
+      return [];
+    }
+  },
+
+  /**
+   * Update conversation status when task ends
+   *
+   * @param {string} taskId - Task ID
+   * @param {string} status - New status (completed, failed)
+   */
+  updateConversationStatus: async (taskId, status) => {
+    const task = get().tasks[taskId];
+    if (!task?.conversationId) return;
+
+    try {
+      await api.updateConversation(task.conversationId, { status });
+      console.log(`[ChatStore] Updated conversation ${task.conversationId} status to ${status}`);
+    } catch (error) {
+      console.warn(`[ChatStore] Failed to update conversation status:`, error.message);
+    }
+  },
+
+  /**
+   * Update conversation title and summary
+   *
+   * @param {string} taskId - Task ID
+   * @param {object} updates - Updates (title, summary)
+   */
+  updateConversationInfo: async (taskId, { title, summary }) => {
+    const task = get().tasks[taskId];
+    if (!task?.conversationId) return;
+
+    const updates = {};
+    if (title) updates.title = title;
+    if (summary) updates.summary = summary;
+
+    if (Object.keys(updates).length === 0) return;
+
+    try {
+      await api.updateConversation(task.conversationId, updates);
+      console.log(`[ChatStore] Updated conversation ${task.conversationId} info`);
+    } catch (error) {
+      console.warn(`[ChatStore] Failed to update conversation info:`, error.message);
+    }
+  },
+
+  /**
+   * Delete a conversation
+   *
+   * @param {string} conversationId - Conversation ID to delete
+   * @returns {Promise<boolean>} True if deleted successfully
+   */
+  deleteConversation: async (conversationId) => {
+    try {
+      await api.deleteConversation(conversationId);
+      console.log(`[ChatStore] Deleted conversation ${conversationId}`);
+      return true;
+    } catch (error) {
+      console.error(`[ChatStore] Failed to delete conversation ${conversationId}:`, error);
+      return false;
+    }
   },
 }));
 
