@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import Icon from '../components/Icons';
 import { api } from '../utils/api';
 import { useAgentStore } from '../store';
@@ -294,8 +296,12 @@ function HomePage({ session, onNavigate, showStatus, version }) {
 
     return (
       <div key={message.id || index} className={`message ${messageType} ${isAgent ? `report-${reportType}` : ''}`}>
-        <div className="message-bubble">
-          {message.content}
+        <div className="message-bubble markdown-content">
+          {isUser ? (
+            message.content
+          ) : (
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+          )}
         </div>
         {timestamp && (
           <div className="message-time">

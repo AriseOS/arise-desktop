@@ -86,6 +86,7 @@ class AMITaskExecutor:
         task_state: Any,  # TaskState for SSE events
         agents: Dict[str, "ChatAgent"],  # {"browser": agent, "document": agent, ...}
         max_retries: int = 2,
+        user_request: str = "",  # User's original request for context
     ):
         """
         Initialize the executor.
@@ -95,11 +96,13 @@ class AMITaskExecutor:
             task_state: TaskState instance for SSE event emission.
             agents: Dictionary mapping agent_type to ChatAgent instances.
             max_retries: Maximum retry attempts for failed subtasks.
+            user_request: The user's original request (for agent context).
         """
         self.task_id = task_id
         self._task_state = task_state
         self._agents = agents
         self._max_retries = max_retries
+        self._user_request = user_request
 
         # Subtask management
         self._subtasks: List[AMISubtask] = []
@@ -256,6 +259,14 @@ class AMITaskExecutor:
                             f"level={subtask.memory_level}, workflow_guide_len={len(subtask.workflow_guide)}"
                         )
 
+                    # Set user's original request for context
+                    if hasattr(agent, 'set_user_request') and self._user_request:
+                        agent.set_user_request(self._user_request)
+                        logger.info(
+                            f"[AMITaskExecutor] Set user_request for {type(agent).__name__}: "
+                            f"{self._user_request[:50]}..."
+                        )
+
                     # Use agent's execute() method for full multi-turn execution
                     logger.info(
                         f"[AMITaskExecutor] Using {type(agent).__name__}.execute() "
@@ -306,8 +317,12 @@ class AMITaskExecutor:
         """
         parts = []
 
+        # User's original request - for context
+        if self._user_request:
+            parts.append(f"## User's Original Request\n{self._user_request}")
+
         # Task content
-        parts.append(f"## Task\n{subtask.content}")
+        parts.append(f"## Your Task\n{subtask.content}")
 
         # Workflow guide - as explicit instruction
         if subtask.workflow_guide:

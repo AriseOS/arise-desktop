@@ -1474,11 +1474,12 @@ Response:"""
                                 description=f"Starting execution with {len(subtasks)} subtasks",
                             ))
 
-                            # Create executor
+                            # Create executor with user's original request
                             executor = AMITaskExecutor(
                                 task_id=task_id,
                                 task_state=state,
                                 agents=agents_dict,
+                                user_request=current_question,  # Pass original request for context
                             )
                             executor.set_subtasks(subtasks)
 

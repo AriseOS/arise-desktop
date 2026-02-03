@@ -600,7 +600,7 @@ class DocumentAgent(BaseStepAgent):
                 system_prompt=system_prompt,
                 messages=self._messages,
                 tools=tools,
-                max_tokens=4096,
+                max_tokens=16384,
             )
 
             # Check for completion

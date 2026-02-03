@@ -9,6 +9,7 @@
 
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import Icon from '../../Icons';
 
 function AgentMessage({ message }) {
@@ -42,7 +43,7 @@ function AgentMessage({ message }) {
       <div className="message-content">
         {content && (
           <div className="message-text markdown-content">
-            <ReactMarkdown>{content}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
           </div>
         )}
         {/* File attachments from agent response (Eigent pattern) */}

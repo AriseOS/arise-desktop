@@ -40,15 +40,6 @@ if _args.debug:
     os.environ["AMI_DEBUG"] = "1"
     print("[DEBUG MODE ENABLED] Browser operations will log detailed information")
 
-# Set CAMEL_WORKDIR from config to prevent context files from being written in src-tauri/
-# This avoids Tauri dev mode triggering rebuild when agent writes files
-from .core.config_service import get_config
-_config = get_config()
-_camel_workdir = _config.get("camel.workdir")
-if _camel_workdir:
-    Path(_camel_workdir).mkdir(parents=True, exist_ok=True)
-    os.environ["CAMEL_WORKDIR"] = _camel_workdir
-
 # Detect if running in PyInstaller bundle
 def get_project_root() -> Path:
     """Get project root, handling both development and PyInstaller environments"""
@@ -82,6 +73,13 @@ from src.clients.desktop_app.ami_daemon.routers.settings import router as settin
 
 # Load configuration first (needed for logging setup)
 config = get_config()
+
+# Set CAMEL_WORKDIR from config to prevent context files from being written in src-tauri/
+# This avoids Tauri dev mode triggering rebuild when agent writes files
+_camel_workdir = config.get("camel.workdir")
+if _camel_workdir:
+    Path(_camel_workdir).mkdir(parents=True, exist_ok=True)
+    os.environ["CAMEL_WORKDIR"] = _camel_workdir
 
 # Configure logging with rotating file handlers from config
 # - app.log: Main system log (rotates based on config)

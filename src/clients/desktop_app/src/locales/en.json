@@ -512,6 +512,10 @@
         "cancel": "Cancel",
         "saving": "Saving...",
         "confirmBtn": "Confirm & Generate Workflow",
+        "addToMemoryBtn": "Add to Memory",
+        "addingToMemory": "Adding...",
+        "addedToMemory": "Added to memory: {{states}} states, {{merged}} merged, {{sequences}} sequences",
+        "addToMemoryFailed": "Failed to add to memory: {{error}}",
         "tips": {
             "title": "Tips",
             "tip1": "The task description helps AI understand the workflow's purpose",

@@ -106,18 +106,24 @@ class DecomposeTaskTool:
 
     def decompose_task(self, task_description: str) -> str:
         """
-        Trigger Workforce execution for a complex task.
+        Delegate a task to specialized agents (Browser, Developer, Document, etc.)
 
-        Call this when the task requires multiple steps, parallel execution,
-        or coordination between specialized agents (Browser, Developer,
-        Document, Multi-Modal).
+        Call this when the task requires browsing websites, writing code, or
+        creating documents - things you cannot do yourself.
 
         Args:
-            task_description: Clear description of the complex task to execute.
-                Should include all requirements and expected outcomes.
+            task_description: The user's request in their own words.
+                - Summarize what the user asked for, nothing more
+                - Do NOT add requirements the user didn't mention
+                - Do NOT specify output formats unless user asked
+                - Do NOT add "suggested steps" or implementation details
+                - Keep the original intent and scope
+
+                Good: "看看 Amazon 上卖的最好的 10 个 AI 眼镜"
+                Bad:  "访问亚马逊，收集 AI 眼镜详细信息包括价格、评分、品牌..."
 
         Returns:
-            Confirmation that the task has been queued for Workforce execution.
+            Confirmation that the task has been queued for execution.
         """
         self._triggered = True
         self._task_description = task_description
