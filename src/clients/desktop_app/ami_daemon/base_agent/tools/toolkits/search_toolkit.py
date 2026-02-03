@@ -146,52 +146,10 @@ class SearchToolkit(BaseToolkit):
     ) -> List[Dict[str, Any]]:
         """Search using DuckDuckGo HTML scraping.
 
-        Note: This is a simple implementation that may break if DDG changes their HTML.
-        For production use, consider using the duckduckgo-search library.
+        Always uses HTML scraping (httpx) instead of duckduckgo-search library
+        to avoid proxy/redirect issues with the library's primp/rquest backend.
         """
-        try:
-            # Try using duckduckgo-search library if available
-            try:
-                from duckduckgo_search import DDGS
-                import asyncio
-                import concurrent.futures
-
-                # DDGS is synchronous, run in thread pool to avoid blocking
-                # Use a dedicated executor for proper cleanup on cancellation
-                def _sync_search():
-                    ddgs = None
-                    try:
-                        ddgs = DDGS()
-                        results = []
-                        for r in ddgs.text(query, max_results=num_results):
-                            results.append({
-                                "title": r.get("title", ""),
-                                "link": r.get("href", r.get("link", "")),
-                                "snippet": r.get("body", r.get("snippet", "")),
-                            })
-                        return results
-                    finally:
-                        if ddgs is not None:
-                            try:
-                                ddgs.close()
-                            except Exception:
-                                pass
-
-                loop = asyncio.get_running_loop()
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    results = await loop.run_in_executor(executor, _sync_search)
-
-                logger.info(f"DuckDuckGo search for '{query}' returned {len(results)} results")
-                return results
-
-            except ImportError:
-                # Fallback to simple HTML scraping
-                logger.warning("duckduckgo-search not available, using HTML scraping")
-                return await self._search_duckduckgo_html(query, num_results)
-
-        except Exception as e:
-            logger.error(f"DuckDuckGo search error: {e}")
-            return [{"error": f"Search failed: {str(e)}"}]
+        return await self._search_duckduckgo_html(query, num_results)
 
     async def _search_duckduckgo_html(
         self,
