@@ -1802,7 +1802,11 @@ Response:"""
         Returns:
             MemoryToolkit instance or None
         """
-        if not self._cloud_client or not self._llm_api_key:
+        if not self._cloud_client:
+            logger.info(f"[Task {task_id}] MemoryToolkit not created: cloud_client missing")
+            return None
+        if not self._llm_api_key:
+            logger.info(f"[Task {task_id}] MemoryToolkit not created: llm_api_key missing")
             return None
 
         try:
@@ -1810,6 +1814,10 @@ Response:"""
             memory_api_base_url = getattr(self._cloud_client, 'api_url', None)
             if memory_api_base_url:
                 effective_user_id = state.user_id or self._user_id or "default"
+                logger.info(
+                    f"[Task {task_id}] MemoryToolkit config: api_url={memory_api_base_url}, "
+                    f"user_id={effective_user_id}"
+                )
                 memory_toolkit = MemoryToolkit(
                     memory_api_base_url=memory_api_base_url,
                     ami_api_key=self._llm_api_key,
@@ -1817,6 +1825,7 @@ Response:"""
                 )
                 logger.info(f"[Task {task_id}] MemoryToolkit created for AMI Executor")
                 return memory_toolkit
+            logger.info(f"[Task {task_id}] MemoryToolkit not created: api_url missing")
         except Exception as e:
             logger.warning(f"[Task {task_id}] Failed to create MemoryToolkit: {e}")
 

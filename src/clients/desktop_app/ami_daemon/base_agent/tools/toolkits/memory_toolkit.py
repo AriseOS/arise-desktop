@@ -739,7 +739,15 @@ class MemoryToolkit(BaseToolkit):
                 response.raise_for_status()
                 data = response.json()
 
-            return QueryResult.from_api_response(data)
+            result = QueryResult.from_api_response(data)
+            logger.info(
+                "[Memory] V2 query result: "
+                f"type={result.query_type.value}, success={result.success}, "
+                f"states={len(result.states)}, actions={len(result.actions)}, "
+                f"intent_sequences={len(result.intent_sequences)}, "
+                f"outgoing_actions={len(result.outgoing_actions)}"
+            )
+            return result
 
         except Exception as e:
             logger.warning(f"[Memory] V2 query failed: {e}")

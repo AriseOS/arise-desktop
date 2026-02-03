@@ -150,7 +150,9 @@ class CloudClient:
         user_query: Optional[str] = None,
         user_id: str = "default_user",
         recording_id: Optional[str] = None,
-        dom_snapshots: Optional[Dict[str, dict]] = None
+        dom_snapshots: Optional[Dict[str, dict]] = None,
+        add_to_memory: Optional[bool] = None,
+        generate_embeddings: Optional[bool] = None
     ) -> str:
         """Upload recording data to Cloud Backend
 
@@ -161,6 +163,8 @@ class CloudClient:
             user_id: User ID (default: "default_user")
             recording_id: Optional recording ID (use App Backend's session_id to keep IDs in sync)
             dom_snapshots: Optional URL -> DOM dict mapping for pre-generating scripts
+            add_to_memory: Optional toggle to add to workflow memory
+            generate_embeddings: Optional toggle for embedding generation
 
         Returns:
             recording_id: Cloud Backend recording ID
@@ -173,6 +177,11 @@ class CloudClient:
             "operations": operations,
             "recording_id": recording_id
         }
+
+        if add_to_memory is not None:
+            payload["add_to_memory"] = add_to_memory
+        if generate_embeddings is not None:
+            payload["generate_embeddings"] = generate_embeddings
 
         # Include DOM snapshots if provided
         if dom_snapshots:

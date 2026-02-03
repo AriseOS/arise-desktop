@@ -211,7 +211,7 @@ class WorkflowProcessor:
         logger.info(f"  Created {len(segments)} URL segments")
         for seg in segments:
             logger.info(f"    - {seg.url} ({len(seg.events)} events)")
-        logger.info()
+        logger.info("")
 
         # Stage 2: Process segments - find/create States, PageInstances, IntentSequences
         logger.info("Stage 2: Processing segments...")
@@ -382,7 +382,7 @@ class WorkflowProcessor:
             intent_sequences=intent_sequences,
             actions=actions,
         )
-        logger.info()
+        logger.info("")
 
         # Stage 6: Generate embeddings
         if self.embedding_model:
@@ -391,7 +391,7 @@ class WorkflowProcessor:
                 states=states,
                 intent_sequences=intent_sequences,
             )
-            logger.info()
+            logger.info("")
 
         # Stage 7: Store to memory
         if store_to_memory and self.memory:
@@ -421,7 +421,7 @@ class WorkflowProcessor:
                     logger.info(f"  Created cognitive phrase: {cognitive_phrase.description[:80]}...")
         else:
             logger.info("Stage 7: Skipping memory storage")
-        logger.info()
+        logger.info("")
 
         # Calculate processing time
         end_time = datetime.now()

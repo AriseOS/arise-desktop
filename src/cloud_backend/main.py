@@ -1578,6 +1578,13 @@ async def query_memory(
             as_type=as_type,
             top_k=top_k,
         )
+        # Log IntentSequence usage for debugging quick-task behavior
+        intent_seq_used = result.query_type == "action"
+        intent_seq_count = len(result.intent_sequences) if result.intent_sequences else 0
+        logger.info(
+            f"[MemoryQuery] type={result.query_type}, success={result.success}, "
+            f"uses_intent_sequences={intent_seq_used}, intent_sequences={intent_seq_count}"
+        )
 
         # Convert to API response format
         response = {
@@ -1617,6 +1624,31 @@ async def query_memory(
                 seq.to_dict() if hasattr(seq, 'to_dict') else seq
                 for seq in result.intent_sequences
             ]
+            # Log intent sequence details for debugging (exclude embeddings to reduce noise)
+            try:
+                intent_sequences_detail = []
+                for seq in result.intent_sequences:
+                    seq_dict = seq.to_dict() if hasattr(seq, "to_dict") else seq
+                    if isinstance(seq_dict, dict):
+                        seq_dict = dict(seq_dict)
+                        seq_dict.pop("embedding_vector", None)
+                        intents = seq_dict.get("intents", [])
+                        cleaned_intents = []
+                        for intent in intents:
+                            intent_dict = intent.to_dict() if hasattr(intent, "to_dict") else intent
+                            if isinstance(intent_dict, dict):
+                                intent_dict = dict(intent_dict)
+                                intent_dict.pop("embedding_vector", None)
+                            cleaned_intents.append(intent_dict)
+                        seq_dict["intents"] = cleaned_intents
+                    intent_sequences_detail.append(seq_dict)
+                if intent_sequences_detail:
+                    logger.info(
+                        "[MemoryQuery] action intent_sequences detail: "
+                        f"{json.dumps(intent_sequences_detail, ensure_ascii=False)}"
+                    )
+            except Exception as log_error:
+                logger.warning(f"[MemoryQuery] failed to log intent_sequences detail: {log_error}")
             # Also include outgoing actions for exploration
             if result.actions:
                 response["outgoing_actions"] = [
