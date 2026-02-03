@@ -352,7 +352,7 @@ class AMIModelBackend(BaseModelBackend):
                 system_prompt=system_prompt,
                 messages=anthropic_messages,
                 tools=anthropic_tools,
-                max_tokens=self.model_config_dict.get("max_tokens", 4096),
+                max_tokens=self.model_config_dict.get("max_tokens", 16384),
             )
 
             # Convert response to ChatCompletion format
@@ -364,7 +364,7 @@ class AMIModelBackend(BaseModelBackend):
                 system_prompt=system_prompt,
                 messages=anthropic_messages,
                 tools=[],  # Empty tools list
-                max_tokens=self.model_config_dict.get("max_tokens", 4096),
+                max_tokens=self.model_config_dict.get("max_tokens", 16384),
             )
 
             # Extract text from response

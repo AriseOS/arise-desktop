@@ -9,44 +9,35 @@ function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
   const userId = session?.username;
   const [taskDescription, setTaskDescription] = useState(pageData?.taskDescription || '');
   const [userQuery, setUserQuery] = useState(pageData?.userQuery || '');
-  const [isSaving, setIsSaving] = useState(false);
+  const [isAdding, setIsAdding] = useState(false);
+  const [isAdded, setIsAdded] = useState(false);
 
   const detectedPatterns = pageData?.detectedPatterns || {};
   const sessionId = pageData?.sessionId;
   const recordingName = pageData?.name || t('analysis.unnamedTask');
 
-  const handleConfirmAndGenerate = async () => {
-    if (!taskDescription.trim() || !userQuery.trim()) {
-      showStatus(t('analysis.validation'), "error");
-      return;
-    }
-
+  const handleAddToMemory = async () => {
     try {
-      setIsSaving(true);
+      setIsAdding(true);
 
-      // Save metadata first
-      showStatus(t('analysis.savingMetadata'), "info");
-      await api.callAppBackend(`/api/v1/recordings/${sessionId}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          task_description: taskDescription,
-          user_query: userQuery,
-          user_id: userId
-        })
-      });
-
-      // Navigate to GenerationPage with all params - it will auto-start generation
-      onNavigate('generation', {
+      // Call the memory add API with the recording ID
+      const result = await api.addToMemory(userId, {
         recordingId: sessionId,
-        recordingName: recordingName,
-        taskDescription: taskDescription,
-        userQuery: userQuery
+        generateEmbeddings: true
       });
+
+      setIsAdded(true);
+      showStatus(t('analysis.addedToMemory', {
+        states: result.states_added || 0,
+        merged: result.states_merged || 0,
+        sequences: result.intent_sequences_added || 0
+      }), "success");
 
     } catch (error) {
-      console.error("Save metadata error:", error);
-      setIsSaving(false);
-      showStatus(t('analysis.saveFailed', { error: error.message }), "error");
+      console.error("Add to memory error:", error);
+      showStatus(t('analysis.addToMemoryFailed', { error: error.message }), "error");
+    } finally {
+      setIsAdding(false);
     }
   };
 
@@ -162,11 +153,11 @@ function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
           </button>
           <button
             className="btn-primary"
-            onClick={handleConfirmAndGenerate}
-            disabled={isSaving || !taskDescription.trim() || !userQuery.trim()}
+            onClick={handleAddToMemory}
+            disabled={isAdding || isAdded}
           >
-            <span className="btn-icon"><Icon icon="zap" /></span>
-            <span>{isSaving ? t('analysis.saving') : t('analysis.confirmBtn')}</span>
+            <span className="btn-icon"><Icon icon={isAdded ? "checkCircle" : "database"} /></span>
+            <span>{isAdding ? t('analysis.addingToMemory') : (isAdded ? t('common.success') : t('analysis.addToMemoryBtn'))}</span>
           </button>
         </div>
 

@@ -41,6 +41,9 @@ dependencies = [
     # HTTP client
     "httpx>=0.25.2",
 
+    # Web search
+    "duckduckgo-search>=7.0.0",
+
     # Authentication
     "python-jose[cryptography]>=3.3.0",
     "passlib[bcrypt]>=1.7.4",
@@ -56,8 +59,12 @@ dependencies = [
     # Graph and data processing
     "networkx>=3.0",
     "numpy>=1.24.0",
+    # Neo4j backend
     "neo4j>=5.0.0",
     "graphdatascience>=1.6",
+    # SurrealDB backend
+    "surrealdb>=1.0.0",
+    "nest-asyncio>=1.6.0",
 
     # LLM providers
     "anthropic>=0.25.0",

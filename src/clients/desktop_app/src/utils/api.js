@@ -1061,5 +1061,256 @@ export const api = {
     return await this.callAppBackend(`/api/v1/memory/phrases/${phraseId}`, {
       method: 'DELETE'
     });
+  },
+
+  // ============================================================================
+  // Session APIs (Simple conversation persistence)
+  // ============================================================================
+
+  /**
+   * Get current session with messages
+   *
+   * If session has expired (> 30 min), automatically creates a new session
+   * and carries context from previous session.
+   *
+   * @param {number} limit - Maximum messages to return (default: 50)
+   * @returns {Promise<object>} Session info with messages
+   */
+  async getSession(limit = 50) {
+    return await this.callAppBackend(`/api/v1/session?limit=${limit}`);
+  },
+
+  /**
+   * Append a message to current session
+   *
+   * @param {string} role - Message role (user, assistant, system)
+   * @param {string} content - Message content
+   * @param {object} options - Optional parameters
+   * @param {string} options.messageId - Message ID (auto-generated if not provided)
+   * @param {Array} options.attachments - Attachments
+   * @param {object} options.metadata - Metadata
+   * @returns {Promise<object>} Created message info
+   */
+  async appendSessionMessage(role, content, { messageId, attachments, metadata } = {}) {
+    return await this.callAppBackend('/api/v1/session/message', {
+      method: 'POST',
+      body: JSON.stringify({
+        role,
+        content,
+        message_id: messageId,
+        attachments,
+        metadata,
+      })
+    });
+  },
+
+  /**
+   * Force create a new session
+   *
+   * @returns {Promise<object>} New session info
+   */
+  async createNewSession() {
+    return await this.callAppBackend('/api/v1/session/new', {
+      method: 'POST'
+    });
+  },
+
+  /**
+   * Touch session to keep it alive
+   */
+  async touchSession() {
+    return await this.callAppBackend('/api/v1/session/touch', {
+      method: 'POST'
+    });
+  },
+
+  // ============================================================================
+  // Conversation Memory APIs
+  // ============================================================================
+
+  /**
+   * Create a new conversation
+   *
+   * Note: user_id is automatically injected from the current session.
+   *
+   * @param {object} options - Conversation options
+   * @param {string} options.title - Conversation title
+   * @param {string} options.taskId - Associated task ID (optional)
+   * @param {Array<string>} options.tags - Tags (optional)
+   * @returns {Promise<object>} Created conversation with conversation_id
+   */
+  async createConversation({ title, taskId = null, tags = [] }) {
+    // Get user_id from session
+    const session = await auth.getSession();
+    const userId = session?.username;
+
+    if (!userId) {
+      throw new Error('User not logged in');
+    }
+
+    return await this.callAppBackend('/api/v1/conversations', {
+      method: 'POST',
+      body: JSON.stringify({
+        user_id: userId,
+        title,
+        task_id: taskId,
+        tags
+      })
+    });
+  },
+
+  /**
+   * Get conversation details
+   *
+   * @param {string} conversationId - Conversation ID
+   * @returns {Promise<object>} Conversation details
+   */
+  async getConversation(conversationId) {
+    return await this.callAppBackend(`/api/v1/conversations/${conversationId}`);
+  },
+
+  /**
+   * List conversations
+   *
+   * @param {object} options - Query options
+   * @param {number} options.limit - Max results (default: 20)
+   * @param {number} options.offset - Offset for pagination (default: 0)
+   * @param {string} options.status - Filter by status (optional)
+   * @returns {Promise<object>} Conversations list
+   */
+  async listConversations({ limit = 20, offset = 0, status = null } = {}) {
+    let url = `/api/v1/conversations?limit=${limit}&offset=${offset}`;
+    if (status) {
+      url += `&status=${status}`;
+    }
+    return await this.callAppBackend(url);
+  },
+
+  /**
+   * Update conversation
+   *
+   * @param {string} conversationId - Conversation ID
+   * @param {object} updates - Fields to update (title, summary, status, tags, memory_level)
+   * @returns {Promise<object>} Updated conversation
+   */
+  async updateConversation(conversationId, updates) {
+    return await this.callAppBackend(`/api/v1/conversations/${conversationId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(updates)
+    });
+  },
+
+  /**
+   * Delete conversation
+   *
+   * @param {string} conversationId - Conversation ID
+   * @returns {Promise<object>} Deletion result
+   */
+  async deleteConversation(conversationId) {
+    return await this.callAppBackend(`/api/v1/conversations/${conversationId}`, {
+      method: 'DELETE'
+    });
+  },
+
+  /**
+   * Get messages from a conversation
+   *
+   * @param {string} conversationId - Conversation ID
+   * @param {object} options - Query options
+   * @param {number} options.limit - Max messages (default: 50)
+   * @param {number} options.fromLine - Start from line (optional)
+   * @returns {Promise<object>} Messages list
+   */
+  async getConversationMessages(conversationId, { limit = 50, fromLine = null } = {}) {
+    let url = `/api/v1/conversations/${conversationId}/messages?limit=${limit}`;
+    if (fromLine) {
+      url += `&from_line=${fromLine}`;
+    }
+    return await this.callAppBackend(url);
+  },
+
+  /**
+   * Append a message to conversation
+   *
+   * @param {string} conversationId - Conversation ID
+   * @param {object} message - Message to append
+   * @param {string} message.role - Message role (user/assistant/system)
+   * @param {string} message.content - Message content
+   * @param {string} message.agentId - Agent ID (optional)
+   * @param {Array} message.attachments - Attachments (optional)
+   * @param {object} message.metadata - Additional metadata (optional)
+   * @param {number} message.inputTokens - Input tokens used (optional)
+   * @param {number} message.outputTokens - Output tokens used (optional)
+   * @returns {Promise<object>} Created message
+   */
+  async appendConversationMessage(conversationId, {
+    role,
+    content,
+    agentId = null,
+    attachments = [],
+    metadata = {},
+    inputTokens = null,
+    outputTokens = null
+  }) {
+    return await this.callAppBackend(`/api/v1/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({
+        role,
+        content,
+        agent_id: agentId,
+        attachments,
+        metadata,
+        input_tokens: inputTokens,
+        output_tokens: outputTokens
+      })
+    });
+  },
+
+  /**
+   * Append an event to conversation
+   *
+   * @param {string} conversationId - Conversation ID
+   * @param {object} event - Event to append
+   * @param {string} event.eventType - Event type (task_started, browser_navigated, etc.)
+   * @param {object} event.data - Event data
+   * @returns {Promise<object>} Created event
+   */
+  async appendConversationEvent(conversationId, { eventType, data = {} }) {
+    return await this.callAppBackend(`/api/v1/conversations/${conversationId}/events`, {
+      method: 'POST',
+      body: JSON.stringify({
+        event_type: eventType,
+        data
+      })
+    });
+  },
+
+  /**
+   * Search conversations
+   *
+   * @param {string} query - Search query
+   * @param {object} options - Search options
+   * @param {number} options.limit - Max results (default: 10)
+   * @param {boolean} options.searchContent - Search in message content (default: true)
+   * @returns {Promise<object>} Search results
+   */
+  async searchConversations(query, { limit = 10, searchContent = true } = {}) {
+    return await this.callAppBackend('/api/v1/conversations/search', {
+      method: 'POST',
+      body: JSON.stringify({
+        query,
+        limit,
+        search_content: searchContent
+      })
+    });
+  },
+
+  /**
+   * Get conversation statistics
+   *
+   * @returns {Promise<object>} Statistics
+   */
+  async getConversationStats() {
+    return await this.callAppBackend('/api/v1/conversations/stats');
   }
 };

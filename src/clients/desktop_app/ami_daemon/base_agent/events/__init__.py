@@ -67,6 +67,9 @@ from .action_types import (
     WorkerFailedData,
     DynamicTasksAddedData,
     AssignTaskData,
+    # DS-11: File attachment for task summary
+    FileAttachment,
+    FilePreviewData,
 )
 
 from .sse import (
@@ -148,6 +151,9 @@ __all__ = [
     "WorkerFailedData",
     "DynamicTasksAddedData",
     "AssignTaskData",
+    # DS-11: File attachment for task summary
+    "FileAttachment",
+    "FilePreviewData",
     # SSE utilities
     "sse_json",
     "sse_action",

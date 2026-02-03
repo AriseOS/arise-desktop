@@ -981,7 +981,7 @@ class BrowserToolkit(BaseToolkit):
         Use browser_get_tab_info first to see available tabs and their IDs.
 
         Args:
-            tab_id: The tab ID to switch to (e.g., "tab_1", "tab_2").
+            tab_id: The tab ID to switch to (e.g., "tab-001", "tab-002").
 
         Returns:
             Result message with current page info (URL, title), tab list, and page snapshot.

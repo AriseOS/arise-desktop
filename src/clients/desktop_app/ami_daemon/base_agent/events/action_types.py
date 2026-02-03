@@ -469,6 +469,48 @@ class HumanResponseData(BaseActionData):
     question_id: Optional[str] = None
 
 
+class FilePreviewData(BaseModel):
+    """Preview content for file attachment."""
+
+    # For images: base64 thumbnail (data URI)
+    thumbnail: Optional[str] = None
+
+    # For CSV/Excel: first N rows as list of lists
+    table_preview: Optional[List[List[str]]] = None
+    table_total_rows: Optional[int] = None
+    table_headers: Optional[List[str]] = None
+
+    # For code/text: first N lines
+    text_preview: Optional[str] = None
+    text_total_lines: Optional[int] = None
+
+    # For folders: file list summary
+    folder_files: Optional[List[str]] = None
+    folder_total_size: Optional[int] = None
+    folder_file_count: Optional[int] = None
+
+    # For PDF: page count
+    pdf_page_count: Optional[int] = None
+
+
+class FileAttachment(BaseModel):
+    """File attachment metadata for summary display.
+
+    Attached to WaitConfirmData to show files created during task execution.
+    Frontend renders these as expandable cards with type-specific previews.
+    """
+
+    file_name: str
+    file_path: str
+    # File type category for rendering: image, html, csv, excel, code, pdf, office, folder, other
+    file_type: str
+    mime_type: Optional[str] = None
+    file_size: Optional[int] = None
+
+    # Preview data (optional, generated based on file_type)
+    preview: Optional[FilePreviewData] = None
+
+
 class WaitConfirmData(BaseActionData):
     """Wait for user confirmation with simple answer (Eigent pattern).
 
@@ -478,12 +520,17 @@ class WaitConfirmData(BaseActionData):
     DS-10: Added context field to distinguish scenarios:
     - 'initial': Simple question from task start (no Workforce created)
     - 'mid_execution': Simple answer during Workforce execution (paused for response)
+
+    DS-11: Added attachments field to include files created during task execution.
+    These are displayed as expandable file cards with type-specific previews.
     """
 
     action: Literal[Action.wait_confirm] = Action.wait_confirm
     content: str  # The simple answer content
     question: str  # The original user question
     context: str = "initial"  # DS-10: 'initial' or 'mid_execution'
+    # DS-11: Files created during task execution
+    attachments: Optional[List[FileAttachment]] = None
 
 
 class ConfirmedData(BaseActionData):

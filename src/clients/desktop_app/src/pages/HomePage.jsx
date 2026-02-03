@@ -1,8 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import Icon from '../components/Icons';
 import { api } from '../utils/api';
 import { useAgentStore } from '../store';
+import FileAttachmentCard from '../components/ChatBox/MessageItem/FileAttachmentCard';
 import '../styles/HomePage.css';
 
 /**
@@ -14,6 +17,12 @@ import '../styles/HomePage.css';
  * - Bottom input area with text/voice/record actions
  * - Optional recording sandbox panel
  * - Inline task execution (no page navigation)
+ *
+ * Message Display Architecture:
+ * - sessionMessages: Historical messages loaded from session (JSONL)
+ * - taskMessages: Current task's messages (for active execution)
+ * - Display = sessionMessages + taskMessages (continuous conversation)
+ * - Each new task has its own workspace, but messages appear continuous
  */
 function HomePage({ session, onNavigate, showStatus, version }) {
   const { t } = useTranslation();
@@ -41,17 +50,68 @@ function HomePage({ session, onNavigate, showStatus, version }) {
   const [currentSessionId, setCurrentSessionId] = useState(null);
   const [isStartingRecording, setIsStartingRecording] = useState(false);
 
+  // Session messages (historical, loaded from backend)
+  const [sessionMessages, setSessionMessages] = useState([]);
+  // Track which message IDs we've already shown (to avoid duplicates)
+  const [shownMessageIds, setShownMessageIds] = useState(new Set());
+
   const userId = session?.username;
 
   const chatHistoryRef = useRef(null);
   const inputRef = useRef(null);
+
+  // Combine session messages with current task messages for display
+  // Session messages are history, task messages are current execution
+  const displayMessages = React.useMemo(() => {
+    // Start with session messages
+    const messages = [...sessionMessages];
+
+    // Add task messages that aren't already in session (new messages from current execution)
+    taskMessages.forEach(msg => {
+      if (!shownMessageIds.has(msg.id)) {
+        messages.push(msg);
+      }
+    });
+
+    return messages;
+  }, [sessionMessages, taskMessages, shownMessageIds]);
 
   // Scroll to bottom when new messages arrive
   useEffect(() => {
     if (chatHistoryRef.current) {
       chatHistoryRef.current.scrollTop = chatHistoryRef.current.scrollHeight;
     }
-  }, [taskMessages]);
+  }, [displayMessages]);
+
+  // Load session messages on app start/reload
+  useEffect(() => {
+    const loadSession = async () => {
+      try {
+        // Get current session (handles timeout automatically)
+        const result = await api.getSession(100);
+
+        if (result.messages && result.messages.length > 0) {
+          const messages = result.messages.map(msg => ({
+            id: msg.id,
+            role: msg.role === 'assistant' ? 'assistant' : msg.role,
+            content: msg.content,
+            timestamp: msg.timestamp,
+            attachments: msg.attachments || [],
+            isContext: msg.is_context,
+          }));
+
+          setSessionMessages(messages);
+          setShownMessageIds(new Set(messages.map(m => m.id)));
+
+          console.log(`[HomePage] Loaded ${messages.length} messages from session`);
+        }
+      } catch (error) {
+        console.warn('[HomePage] Failed to load session:', error.message);
+      }
+    };
+
+    loadSession();
+  }, []);
 
   // Poll for operations while recording
   useEffect(() => {
@@ -99,7 +159,7 @@ function HomePage({ session, onNavigate, showStatus, version }) {
         showStatus(`Failed to send message: ${result.error}`, 'error');
       }
     } else {
-      // Start new task
+      // Start new task (each new request gets its own workspace)
       const newTaskId = createTask(text);
       const success = await startTask(newTaskId, showStatus);
       if (!success) {
@@ -292,11 +352,33 @@ function HomePage({ session, onNavigate, showStatus, version }) {
       ? new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       : '';
 
+    // DS-11: Get file attachments
+    const attachments = message.attachments || message.attaches || [];
+
     return (
       <div key={message.id || index} className={`message ${messageType} ${isAgent ? `report-${reportType}` : ''}`}>
-        <div className="message-bubble">
-          {message.content}
+        <div className="message-bubble markdown-content">
+          {isUser ? (
+            message.content
+          ) : (
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+          )}
         </div>
+        {/* DS-11: Render file attachments */}
+        {attachments.length > 0 && (
+          <div className="message-attachments">
+            {attachments.map((file, idx) => (
+              file.file_path ? (
+                <FileAttachmentCard key={`file-${idx}`} file={file} />
+              ) : (
+                <div key={`attach-${idx}`} className="attachment-item legacy">
+                  <Icon name="file" size={14} />
+                  <span>{file.fileName || file.name}</span>
+                </div>
+              )
+            ))}
+          </div>
+        )}
         {timestamp && (
           <div className="message-time">
             {timestamp}
@@ -393,7 +475,7 @@ function HomePage({ session, onNavigate, showStatus, version }) {
       </div>
 
       {/* Welcome Card - Hide when there are messages */}
-      {taskMessages.length === 0 && (
+      {displayMessages.length === 0 && (
         <div className="welcome-card">
           <div className="welcome-content">
             <div className="assistant-avatar">
@@ -416,10 +498,10 @@ function HomePage({ session, onNavigate, showStatus, version }) {
           className="chat-history full-width"
           ref={chatHistoryRef}
         >
-          {taskMessages.length === 0 ? (
+          {displayMessages.length === 0 ? (
             renderInstructions()
           ) : (
-            taskMessages.map(renderMessage)
+            displayMessages.map(renderMessage)
           )}
         </div>
       </div>

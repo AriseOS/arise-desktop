@@ -484,7 +484,7 @@ class SocialMediumAgent(BaseStepAgent):
                 system_prompt=system_prompt,
                 messages=self._messages,
                 tools=tools,
-                max_tokens=4096,
+                max_tokens=16384,
             )
 
             if response.stop_reason == "end_turn":

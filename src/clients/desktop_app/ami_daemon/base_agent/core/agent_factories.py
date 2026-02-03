@@ -80,11 +80,13 @@ def create_model_backend(
 
 
 def _extract_callable(tool):
-    """Extract callable function from our custom FunctionTool wrapper."""
-    if hasattr(tool, 'func'):
-        # Our custom FunctionTool - extract the underlying callable
-        return tool.func
-    # Already a callable or CAMEL FunctionTool
+    """Pass through FunctionTool objects to preserve set_function_name().
+
+    Previously this extracted the underlying callable, which caused
+    set_function_name() to be lost when CAMEL recreated the FunctionTool.
+    Now we just return the tool as-is to preserve the custom name.
+    """
+    # Just return the tool as-is - CAMEL's convert_to_function_tool handles it
     return tool
 
 
@@ -274,6 +276,18 @@ resource you need.
 requirements, execute it, and verify the results. Your
 strength lies in your ability to engineer solutions.
 </philosophy>
+
+<forbidden_actions>
+NEVER do the following:
+- **Do NOT use `open` command**: Never use `open`, `xdg-open`, or similar
+  commands to open files in external applications. Your output files will
+  be automatically shown to the user through the UI. Opening files directly
+  interrupts the user's workflow and causes confusion.
+- **Do NOT copy files to Desktop**: Never copy output files to Desktop or
+  other user directories. Keep all files in the working directory.
+- **Do NOT launch GUI applications**: Do not open browsers, editors, or
+  other GUI apps to display results.
+</forbidden_actions>
 
 <terminal_tips>
 The terminal tools are session-based, identified by a unique `id`. Master

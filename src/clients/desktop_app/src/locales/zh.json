@@ -512,6 +512,10 @@
         "cancel": "取消",
         "saving": "保存中...",
         "confirmBtn": "确认并生成工作流",
+        "addToMemoryBtn": "添加到 Memory 库",
+        "addingToMemory": "添加中...",
+        "addedToMemory": "已添加到记忆: {{states}} 个状态, {{merged}} 个合并, {{sequences}} 个意图序列",
+        "addToMemoryFailed": "添加到记忆失败: {{error}}",
         "tips": {
             "title": "提示",
             "tip1": "任务描述帮助 AI 理解工作流的用途",

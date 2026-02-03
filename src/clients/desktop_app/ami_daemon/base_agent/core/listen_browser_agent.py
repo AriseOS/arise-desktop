@@ -264,6 +264,9 @@ class ListenBrowserAgent(ListenChatAgent):
         self._subtasks: List[SubTask] = []
         self._current_subtask_index: int = 0
 
+        # User's original request (for context)
+        self._user_request: str = ""
+
         # Memory context (set by Workforce via set_memory_context)
         self._memory_result: Optional["QueryResult"] = None
         # Note: _workflow_guide_content and _memory_level are inherited from ListenChatAgent
@@ -379,6 +382,21 @@ class ListenBrowserAgent(ListenChatAgent):
         logger.info(
             f"[ListenBrowserAgent] Memory context set: level={memory_level}, "
             f"has_cognitive_phrase={has_phrase}"
+        )
+
+    def set_user_request(self, user_request: str) -> None:
+        """
+        Set the user's original request for context.
+
+        This helps the agent understand the user's intent and avoid
+        over-executing the task.
+
+        Args:
+            user_request: The user's original request in their own words.
+        """
+        self._user_request = user_request
+        logger.info(
+            f"[ListenBrowserAgent] User request set: {user_request[:50]}..."
         )
 
     # =========================================================================
@@ -636,8 +654,15 @@ class ListenBrowserAgent(ListenChatAgent):
 
     def _build_initial_message(self, task: str) -> str:
         """Build the initial message for the execution loop."""
-        parts = [
-            f"## Task\n{task}",
+        parts = []
+
+        # User's original request - important for understanding intent
+        if self._user_request:
+            parts.append(f"## User's Original Request\n{self._user_request}")
+            parts.append("")
+
+        parts.extend([
+            f"## Your Task\n{task}",
             "",
             "## Instructions",
             "1. Call `get_current_plan()` to see the task breakdown",
@@ -647,7 +672,9 @@ class ListenBrowserAgent(ListenChatAgent):
             "   - Call `replan_task()` to add a subtask for EACH item",
             "   - Example: Found 10 products → add 10 subtasks to process each one",
             "5. Record all findings using note tools",
-        ]
+            "",
+            "**Keep the user's original intent in mind** - don't over-execute beyond what they asked for.",
+        ])
         return "\n".join(parts)
 
     async def _build_loop_message(self) -> str:
@@ -749,6 +776,49 @@ class ListenBrowserAgent(ListenChatAgent):
         lines.append(f"\nProgress: {completed}/{total} completed")
 
         return "\n".join(lines)
+
+    def _update_memory_with_summary(
+        self, summary: str, include_summaries: bool = False
+    ) -> None:
+        """Override CAMEL's memory update to inject plan summary after summarization.
+
+        When CAMEL compresses the conversation history, we need to ensure the LLM
+        still knows the current task progress. This method:
+        1. Calls parent's _update_memory_with_summary to do the standard compression
+        2. Injects the current plan summary so LLM knows where we are
+
+        This solves the "repeated subtask" problem where LLM loses track of progress
+        after context summarization.
+        """
+        # Call parent implementation first
+        super()._update_memory_with_summary(summary, include_summaries)
+
+        # Now inject plan summary if we have subtasks
+        if self._subtasks:
+            plan_summary = self._get_plan_summary()
+
+            # Build the injection message
+            injection_content = f"""
+---
+{plan_summary}
+
+Continue with the current subtask marked as CURRENT above. When done, call `complete_subtask()` to proceed.
+---
+"""
+            # Add as a user message to ensure LLM sees it
+            from camel.messages import BaseMessage
+            from camel.types import OpenAIBackendRole
+
+            plan_msg = BaseMessage.make_user_message(
+                role_name="user",
+                content=injection_content,
+            )
+            self.update_memory(plan_msg, OpenAIBackendRole.USER)
+
+            logger.info(
+                f"[ListenBrowserAgent] Injected plan summary after summarization: "
+                f"{len(self._subtasks)} subtasks, current index {self._current_subtask_index}"
+            )
 
     def _build_decision_guide(self) -> str:
         """

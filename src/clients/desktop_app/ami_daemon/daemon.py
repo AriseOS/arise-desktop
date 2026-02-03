@@ -40,15 +40,6 @@ if _args.debug:
     os.environ["AMI_DEBUG"] = "1"
     print("[DEBUG MODE ENABLED] Browser operations will log detailed information")
 
-# Set CAMEL_WORKDIR from config to prevent context files from being written in src-tauri/
-# This avoids Tauri dev mode triggering rebuild when agent writes files
-from .core.config_service import get_config
-_config = get_config()
-_camel_workdir = _config.get("camel.workdir")
-if _camel_workdir:
-    Path(_camel_workdir).mkdir(parents=True, exist_ok=True)
-    os.environ["CAMEL_WORKDIR"] = _camel_workdir
-
 # Detect if running in PyInstaller bundle
 def get_project_root() -> Path:
     """Get project root, handling both development and PyInstaller environments"""
@@ -79,9 +70,17 @@ from src.clients.desktop_app.ami_daemon.base_agent.tools.browser_use.extension_i
 from src.clients.desktop_app.ami_daemon.routers.quick_task import router as quick_task_router
 from src.clients.desktop_app.ami_daemon.routers.integrations import router as integrations_router
 from src.clients.desktop_app.ami_daemon.routers.settings import router as settings_router
+from src.clients.desktop_app.ami_daemon.routers.session import router as session_router
 
 # Load configuration first (needed for logging setup)
 config = get_config()
+
+# Set CAMEL_WORKDIR from config to prevent context files from being written in src-tauri/
+# This avoids Tauri dev mode triggering rebuild when agent writes files
+_camel_workdir = config.get("camel.workdir")
+if _camel_workdir:
+    Path(_camel_workdir).mkdir(parents=True, exist_ok=True)
+    os.environ["CAMEL_WORKDIR"] = _camel_workdir
 
 # Configure logging with rotating file handlers from config
 # - app.log: Main system log (rotates based on config)
@@ -306,6 +305,7 @@ app.add_middleware(
 app.include_router(quick_task_router)
 app.include_router(integrations_router)
 app.include_router(settings_router)
+app.include_router(session_router)
 
 
 # ============================================================================
