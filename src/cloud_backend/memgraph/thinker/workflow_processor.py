@@ -223,6 +223,7 @@ class WorkflowProcessor:
         new_state_count = 0
         reused_state_count = 0
         domain_root_id_map: Dict[str, str] = {}
+        # Cache for domain-level root signatures (domain|ROOT)
         domain_root_sig_map: Dict[str, str] = {}
         last_path_sig_by_domain: Dict[str, str] = {}
         last_segment_by_domain: Dict[str, URLSegment] = {}
@@ -242,9 +243,11 @@ class WorkflowProcessor:
                 root_id = existing_domain.attributes.get("root_state_id")
                 if root_id:
                     domain_root_id_map[domain_key] = root_id
-                    domain_root_sig_map[domain_key] = self._hash_root_sig(
-                        domain_key, root_id
-                    )
+
+        def _get_domain_root_sig(domain_key: str) -> str:
+            if domain_key not in domain_root_sig_map:
+                domain_root_sig_map[domain_key] = self._hash_domain_root_sig(domain_key)
+            return domain_root_sig_map[domain_key]
 
         for segment in segments:
             # Skip segments with empty URL
@@ -264,6 +267,10 @@ class WorkflowProcessor:
                     trigger_event = self._find_transition_trigger(prev_segment)
                     action_sig = self._build_action_signature(trigger_event)
                     candidate_path_sig = self._extend_path_sig(prev_path_sig, action_sig)
+            if domain_key and not candidate_path_sig:
+                root_sig = _get_domain_root_sig(domain_key)
+                entry_sig = self._build_entry_signature(segment.url)
+                candidate_path_sig = self._extend_path_sig(root_sig, entry_sig)
 
             # Find or create State
             state, is_new = self._find_or_create_state(
@@ -280,29 +287,6 @@ class WorkflowProcessor:
             # Assign root for new domains (first-seen state)
             if domain_key and domain_key not in domain_root_id_map:
                 domain_root_id_map[domain_key] = state.id
-                domain_root_sig_map[domain_key] = self._hash_root_sig(
-                    domain_key, state.id
-                )
-                if not state.path_sig:
-                    state.path_sig = domain_root_sig_map[domain_key]
-                    if self.memory:
-                        try:
-                            self.memory.state_manager.update_state(state)
-                        except Exception as exc:
-                            print(f"Warning: Failed to update root state path_sig: {exc}")
-            elif domain_key and domain_key in domain_root_id_map:
-                root_id = domain_root_id_map[domain_key]
-                if state.id == root_id and not state.path_sig:
-                    root_sig = domain_root_sig_map.get(domain_key) or self._hash_root_sig(
-                        domain_key, root_id
-                    )
-                    domain_root_sig_map[domain_key] = root_sig
-                    state.path_sig = root_sig
-                    if self.memory:
-                        try:
-                            self.memory.state_manager.update_state(state)
-                        except Exception as exc:
-                            print(f"Warning: Failed to update root state path_sig: {exc}")
 
             # Backfill path_sig if missing and we have a stable candidate
             if candidate_path_sig and not state.path_sig:
@@ -1009,6 +993,15 @@ class WorkflowProcessor:
         path = re.sub(r"/+", "/", path)
         return path[:200] if len(path) > 200 else path
 
+    def _normalize_url_path(self, url: str) -> str:
+        """Normalize URL/path for stable entry signatures."""
+        return self._normalize_href(url)
+
+    def _build_entry_signature(self, url: str) -> str:
+        """Build a stable entry signature from a URL."""
+        path = self._normalize_url_path(url) or "/"
+        return f"entry|path:{path}"
+
     def _build_action_signature(self, trigger_event: Optional[Dict[str, Any]]) -> str:
         """Build a stable action signature from a trigger event."""
         if not trigger_event:
@@ -1036,9 +1029,9 @@ class WorkflowProcessor:
             return f"{base}|{hint}"
         return base
 
-    def _hash_root_sig(self, domain_key: str, root_state_id: str) -> str:
-        """Hash root signature for a domain."""
-        content = f"{domain_key}|{root_state_id}"
+    def _hash_domain_root_sig(self, domain_key: str) -> str:
+        """Hash domain-level root signature."""
+        content = f"{domain_key}|ROOT"
         return hashlib.sha1(content.encode("utf-8")).hexdigest()
 
     def _extend_path_sig(self, prev_sig: str, action_sig: str) -> str:
