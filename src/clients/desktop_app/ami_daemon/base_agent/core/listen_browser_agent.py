@@ -698,11 +698,30 @@ class ListenBrowserAgent(ListenChatAgent):
             parts.append(self._build_decision_guide())
 
         # Query page operations if on new page
-        if self._memory_toolkit:
+        task_id = self._task_state.task_id if self._task_state else "unknown"
+        if not self._memory_toolkit:
+            logger.info(
+                f"[Task {task_id}] [Memory] Page operations skipped: MemoryToolkit not available"
+            )
+        else:
             current_url = await self._get_current_url()
-            if current_url:
+            if not current_url:
+                logger.info(
+                    f"[Task {task_id}] [Memory] Page operations skipped: current URL unavailable"
+                )
+            else:
+                logger.info(
+                    f"[Task {task_id}] [Memory] Page operations check: url={current_url[:120]}..."
+                )
+                logger.debug(
+                    f"[Memory] Page operations check: url={current_url[:120]}..."
+                )
                 cached = self.get_cached_page_operations(current_url)
                 if not cached:
+                    logger.info(
+                        f"[Task {task_id}] [Memory] Page operations cache miss, querying Memory"
+                    )
+                    logger.debug("[Memory] Page operations cache miss, querying Memory")
                     # Query Memory for page operations
                     try:
                         ops = await self._memory_toolkit.query_page_operations(
@@ -710,9 +729,34 @@ class ListenBrowserAgent(ListenChatAgent):
                         )
                         if ops:
                             self.cache_page_operations(current_url, ops)
+                            logger.info(
+                                f"[Task {task_id}] [Memory] Page operations fetched "
+                                f"(length={len(ops)})"
+                            )
+                            logger.debug(
+                                "[Memory] Page operations appended to loop message "
+                                f"(length={len(ops)})"
+                            )
                             parts.append(f"\n## Page Operations (from Memory)\n{ops}")
+                        else:
+                            logger.info(
+                                f"[Task {task_id}] [Memory] Page operations empty"
+                            )
+                            logger.debug("[Memory] Page operations query returned empty")
                     except Exception as e:
+                        logger.warning(
+                            f"[Task {task_id}] [Memory] Page operations query failed: {e}"
+                        )
                         logger.debug(f"Page operations query failed: {e}")
+                else:
+                    logger.info(
+                        f"[Task {task_id}] [Memory] Page operations cache hit "
+                        f"(length={len(cached)})"
+                    )
+                    logger.debug(
+                        "[Memory] Page operations cache hit "
+                        f"(length={len(cached)})"
+                    )
 
         parts.append("\nContinue with the current subtask. When done, call `complete_subtask()` to proceed.")
 

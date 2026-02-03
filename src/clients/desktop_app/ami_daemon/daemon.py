@@ -974,6 +974,7 @@ async def analyze_recording(
             raise HTTPException(status_code=404, detail="Recording not found")
 
         operations = recording_data.get("operations", [])
+        dom_snapshots = recording_data.get("dom_snapshots") or None
         logger.info(f"Loaded {len(operations)} operations from recording")
 
         # 2. Call Cloud Backend to analyze
@@ -988,6 +989,25 @@ async def analyze_recording(
         logger.info(f"  Task Description: {analysis_result['task_description'][:100]}...")
         logger.info(f"  User Query: {analysis_result['user_query'][:100]}...")
         logger.info(f"  Patterns: {analysis_result['patterns']}")
+
+        # Best-effort: upload to Cloud Backend so recordings are stored in ami-server
+        if cloud_client.user_api_key:
+            try:
+                await cloud_client.upload_recording(
+                    operations=operations,
+                    task_description=analysis_result.get("task_description", ""),
+                    user_query=analysis_result.get("user_query"),
+                    user_id=request.user_id,
+                    recording_id=session_id,
+                    dom_snapshots=dom_snapshots,
+                    add_to_memory=False,
+                    generate_embeddings=False
+                )
+                logger.info(f"Auto-uploaded recording to Cloud Backend: {session_id}")
+            except Exception as upload_error:
+                logger.warning(f"Auto-upload to Cloud Backend failed: {upload_error}")
+        else:
+            logger.warning("No API key available; skipping auto-upload to Cloud Backend")
 
         return AnalyzeRecordingResponse(
             name=analysis_result.get("name", "Unnamed Task"),

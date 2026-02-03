@@ -739,7 +739,15 @@ class MemoryToolkit(BaseToolkit):
                 response.raise_for_status()
                 data = response.json()
 
-            return QueryResult.from_api_response(data)
+            result = QueryResult.from_api_response(data)
+            logger.info(
+                "[Memory] V2 query result: "
+                f"type={result.query_type.value}, success={result.success}, "
+                f"states={len(result.states)}, actions={len(result.actions)}, "
+                f"intent_sequences={len(result.intent_sequences)}, "
+                f"outgoing_actions={len(result.outgoing_actions)}"
+            )
+            return result
 
         except Exception as e:
             logger.warning(f"[Memory] V2 query failed: {e}")
@@ -897,6 +905,12 @@ class MemoryToolkit(BaseToolkit):
             formatted_result = self.format_page_operations(
                 result.intent_sequences, result.outgoing_actions
             )
+            logger.debug(
+                "[Memory] page_operations formatted "
+                f"(intent_sequences={len(result.intent_sequences)}, "
+                f"outgoing_actions={len(result.outgoing_actions)}, "
+                f"length={len(formatted_result)})"
+            )
 
             # Cache in agent for subsequent LLM calls
             if self._agent and hasattr(self._agent, 'cache_page_operations'):
@@ -911,6 +925,12 @@ class MemoryToolkit(BaseToolkit):
             return formatted_result
 
         logger.info(f"[Memory] No recorded operations for this page")
+        if result.success:
+            logger.debug(
+                "[Memory] page_operations empty "
+                f"(intent_sequences={len(result.intent_sequences)}, "
+                f"outgoing_actions={len(result.outgoing_actions)})"
+            )
         return ""
 
     # =========================================================================

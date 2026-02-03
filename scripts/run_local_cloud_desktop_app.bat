@@ -46,7 +46,10 @@ if "!CLOUD_READY!"=="1" (
 ) else (
     echo Starting Cloud Backend on port !CLOUD_PORT!...
     echo [%date% %time%] Starting cloud backend from %PROJECT_ROOT%>>"%CLOUD_BOOT_LOG%"
-    start "Ami Cloud Backend" /MIN cmd /c "chcp 65001>nul & set PYTHONUTF8=1& ""!PYTHON_EXE!"" "%PROJECT_ROOT%\src\cloud_backend\main.py" 1>>"%CLOUD_BOOT_LOG%" 2>>&1"
+    set "CLOUD_ENTRY=%PROJECT_ROOT%\src\cloud_backend\main.py"
+    echo [%date% %time%] Launch cmd: "!PYTHON_EXE!" "!CLOUD_ENTRY!">>"%CLOUD_BOOT_LOG%"
+    set "PYTHONUTF8=1"
+    start "Ami Cloud Backend" /MIN cmd /s /c ""!PYTHON_EXE!" "!CLOUD_ENTRY!" 1>>"%CLOUD_BOOT_LOG%" 2>>&1"
 
     REM Wait for Cloud Backend to be ready
     echo Waiting for Cloud Backend to be ready ^(timeout: !CLOUD_TIMEOUT_SECONDS!s^)...
@@ -85,6 +88,11 @@ if defined AMI_PYTHON_EXE (
     ) else (
         echo [WARNING] AMI_PYTHON_EXE is set but not found: %AMI_PYTHON_EXE%
     )
+)
+
+if not defined PYTHON_EXE if exist "%PROJECT_ROOT%\.venv312\Scripts\python.exe" (
+    set "PYTHON_EXE=%PROJECT_ROOT%\.venv312\Scripts\python.exe"
+    set "PYTHON_SOURCE=project-.venv312"
 )
 
 if not defined PYTHON_EXE if exist "%PROJECT_ROOT%\.venv\Scripts\python.exe" (

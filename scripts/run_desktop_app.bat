@@ -104,7 +104,8 @@ IF "!DAEMON_READY!"=="1" (
 
     echo Starting daemon in background...
     echo [%date% %time%] Starting daemon from %PROJECT_ROOT%>>"%DAEMON_BOOT_LOG%"
-    start "Ami Daemon" /MIN cmd /c "chcp 65001>nul & set PYTHONUTF8=1& ""!PYTHON_EXE!"" "%PROJECT_ROOT%\src\clients\desktop_app\ami_daemon\daemon.py" 1>>"%DAEMON_BOOT_LOG%" 2>>&1"
+    set "PYTHONUTF8=1"
+    start "Ami Daemon" /MIN cmd /s /c ""!PYTHON_EXE!" -m src.clients.desktop_app.ami_daemon.daemon 1>>"%DAEMON_BOOT_LOG%" 2>>&1"
 
     REM Wait for daemon to start
     echo Waiting for daemon to be ready ^(timeout: !DAEMON_TIMEOUT_SECONDS!s^)...
@@ -160,6 +161,11 @@ if defined AMI_PYTHON_EXE (
     ) else (
         echo [WARNING] AMI_PYTHON_EXE is set but not found: %AMI_PYTHON_EXE%
     )
+)
+
+if not defined PYTHON_EXE if exist "%PROJECT_ROOT%\.venv312\Scripts\python.exe" (
+    set "PYTHON_EXE=%PROJECT_ROOT%\.venv312\Scripts\python.exe"
+    set "PYTHON_SOURCE=project-.venv312"
 )
 
 if not defined PYTHON_EXE if exist "%PROJECT_ROOT%\.venv\Scripts\python.exe" (

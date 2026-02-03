@@ -781,6 +781,10 @@ Call `workflow_hint_done` when this navigation step is complete.
         Returns:
             Message with page operations appended.
         """
+        logger.debug(
+            "[Memory] Injecting page operations into message "
+            f"(length={len(page_operations)})"
+        )
         operations_section = f"""
 
 ## Available Page Operations (from Memory)
