@@ -674,8 +674,12 @@ class ListenBrowserAgent(ListenChatAgent):
         if self._memory_toolkit:
             current_url = await self._get_current_url()
             if current_url:
+                logger.debug(
+                    f"[Memory] Page operations check: url={current_url[:120]}..."
+                )
                 cached = self.get_cached_page_operations(current_url)
                 if not cached:
+                    logger.debug("[Memory] Page operations cache miss, querying Memory")
                     # Query Memory for page operations
                     try:
                         ops = await self._memory_toolkit.query_page_operations(
@@ -683,9 +687,20 @@ class ListenBrowserAgent(ListenChatAgent):
                         )
                         if ops:
                             self.cache_page_operations(current_url, ops)
+                            logger.debug(
+                                "[Memory] Page operations appended to loop message "
+                                f"(length={len(ops)})"
+                            )
                             parts.append(f"\n## Page Operations (from Memory)\n{ops}")
+                        else:
+                            logger.debug("[Memory] Page operations query returned empty")
                     except Exception as e:
                         logger.debug(f"Page operations query failed: {e}")
+                else:
+                    logger.debug(
+                        "[Memory] Page operations cache hit "
+                        f"(length={len(cached)})"
+                    )
 
         parts.append("\nContinue with the current subtask. When done, call `complete_subtask()` to proceed.")
 

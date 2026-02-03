@@ -897,6 +897,12 @@ class MemoryToolkit(BaseToolkit):
             formatted_result = self.format_page_operations(
                 result.intent_sequences, result.outgoing_actions
             )
+            logger.debug(
+                "[Memory] page_operations formatted "
+                f"(intent_sequences={len(result.intent_sequences)}, "
+                f"outgoing_actions={len(result.outgoing_actions)}, "
+                f"length={len(formatted_result)})"
+            )
 
             # Cache in agent for subsequent LLM calls
             if self._agent and hasattr(self._agent, 'cache_page_operations'):
@@ -911,6 +917,12 @@ class MemoryToolkit(BaseToolkit):
             return formatted_result
 
         logger.info(f"[Memory] No recorded operations for this page")
+        if result.success:
+            logger.debug(
+                "[Memory] page_operations empty "
+                f"(intent_sequences={len(result.intent_sequences)}, "
+                f"outgoing_actions={len(result.outgoing_actions)})"
+            )
         return ""
 
     # =========================================================================

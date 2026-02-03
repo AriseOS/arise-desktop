@@ -303,6 +303,10 @@ class AMITaskPlanner:
                         f"[AMITaskPlanner] Subtask {subtask.id}: L1 match with "
                         f"{states_count} states"
                     )
+                    logger.debug(
+                        f"[AMITaskPlanner] Subtask {subtask.id}: "
+                        f"workflow_guide_len={len(subtask.workflow_guide or '')}"
+                    )
 
                 elif result.states:
                     # L2: Partial path match
@@ -314,11 +318,18 @@ class AMITaskPlanner:
                         f"[AMITaskPlanner] Subtask {subtask.id}: L2 match with "
                         f"{len(result.states)} states"
                     )
+                    logger.debug(
+                        f"[AMITaskPlanner] Subtask {subtask.id}: "
+                        f"workflow_guide_len={len(subtask.workflow_guide or '')}"
+                    )
 
                 else:
                     # L3: No match
                     subtask.memory_level = "L3"
                     logger.info(f"[AMITaskPlanner] Subtask {subtask.id}: L3 (no match)")
+                    logger.debug(
+                        f"[AMITaskPlanner] Subtask {subtask.id}: workflow_guide_len=0"
+                    )
 
                 # Emit memory level event for this subtask
                 await self._emit_event(MemoryLevelData(
