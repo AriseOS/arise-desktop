@@ -1844,6 +1844,8 @@ const chatStore = createStore((set, get) => ({
             role: 'agent',
             content: typeof event.output === 'string' ? event.output : JSON.stringify(event.output),
             step: 'result',
+            // DS-11: Include file attachments if present
+            attachments: event.attachments || [],
           });
         }
         break;

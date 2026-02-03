@@ -161,6 +161,133 @@ fn check_browser_installed() -> serde_json::Value {
     })
 }
 
+/// DS-11: Open a file or folder with system default application
+#[tauri::command]
+fn open_path(path: String) -> serde_json::Value {
+    let path_ref = std::path::Path::new(&path);
+
+    if !path_ref.exists() {
+        return serde_json::json!({
+            "success": false,
+            "error": format!("Path does not exist: {}", path)
+        });
+    }
+
+    match open::that(&path) {
+        Ok(_) => {
+            println!("✓ Opened path: {}", path);
+            serde_json::json!({
+                "success": true,
+                "path": path
+            })
+        }
+        Err(e) => {
+            println!("✗ Failed to open path {}: {}", path, e);
+            serde_json::json!({
+                "success": false,
+                "error": format!("Failed to open: {}", e)
+            })
+        }
+    }
+}
+
+/// DS-11: Reveal a file in system file explorer (Finder on macOS, Explorer on Windows)
+#[tauri::command]
+fn reveal_in_folder(path: String) -> serde_json::Value {
+    let path_ref = std::path::Path::new(&path);
+
+    if !path_ref.exists() {
+        return serde_json::json!({
+            "success": false,
+            "error": format!("Path does not exist: {}", path)
+        });
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        match std::process::Command::new("open")
+            .args(["-R", &path])
+            .spawn()
+        {
+            Ok(_) => {
+                println!("✓ Revealed in Finder: {}", path);
+                return serde_json::json!({
+                    "success": true,
+                    "path": path
+                });
+            }
+            Err(e) => {
+                println!("✗ Failed to reveal in Finder: {}", e);
+                return serde_json::json!({
+                    "success": false,
+                    "error": format!("Failed to reveal: {}", e)
+                });
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        match std::process::Command::new("explorer")
+            .args(["/select,", &path])
+            .spawn()
+        {
+            Ok(_) => {
+                println!("✓ Revealed in Explorer: {}", path);
+                return serde_json::json!({
+                    "success": true,
+                    "path": path
+                });
+            }
+            Err(e) => {
+                println!("✗ Failed to reveal in Explorer: {}", e);
+                return serde_json::json!({
+                    "success": false,
+                    "error": format!("Failed to reveal: {}", e)
+                });
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // Linux doesn't have a standard "select file" command
+        // Open the parent directory instead
+        let parent = path_ref.parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.clone());
+
+        match std::process::Command::new("xdg-open")
+            .arg(&parent)
+            .spawn()
+        {
+            Ok(_) => {
+                println!("✓ Opened parent folder: {}", parent);
+                return serde_json::json!({
+                    "success": true,
+                    "path": parent,
+                    "note": "Opened parent folder (Linux limitation)"
+                });
+            }
+            Err(e) => {
+                println!("✗ Failed to open folder: {}", e);
+                return serde_json::json!({
+                    "success": false,
+                    "error": format!("Failed to open folder: {}", e)
+                });
+            }
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        serde_json::json!({
+            "success": false,
+            "error": "Unsupported platform"
+        })
+    }
+}
+
 fn main() {
     println!("========================================");
     println!("Ami Desktop Application Starting");
@@ -171,7 +298,13 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
-        .invoke_handler(tauri::generate_handler![check_browser_installed, read_daemon_logs, get_daemon_port])
+        .invoke_handler(tauri::generate_handler![
+            check_browser_installed,
+            read_daemon_logs,
+            get_daemon_port,
+            open_path,
+            reveal_in_folder
+        ])
         .setup(|app| {
             // Initialize HTTP daemon on startup
             println!("🚀 Initializing Python HTTP daemon...");

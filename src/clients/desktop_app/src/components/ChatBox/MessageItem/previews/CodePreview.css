@@ -1,0 +1,88 @@
+/**
+ * CodePreview CSS Styles
+ */
+
+.code-preview {
+  background: #1e1e1e;
+  border-top: 1px solid var(--border-color, #333);
+  font-family: 'Fira Code', 'Consolas', 'Monaco', monospace;
+}
+
+.code-preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 12px;
+  background: #2d2d2d;
+  border-bottom: 1px solid #3d3d3d;
+}
+
+.code-preview-language {
+  font-size: 11px;
+  font-weight: 600;
+  color: #9cdcfe;
+  text-transform: uppercase;
+}
+
+.code-preview-info {
+  font-size: 11px;
+  color: #808080;
+}
+
+.code-preview-content {
+  max-height: 300px;
+  overflow: auto;
+}
+
+.code-preview pre {
+  margin: 0;
+  padding: 8px 0;
+}
+
+.code-preview code {
+  display: block;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #d4d4d4;
+}
+
+.code-line {
+  display: flex;
+  padding: 0 12px;
+}
+
+.code-line:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.line-number {
+  flex-shrink: 0;
+  width: 40px;
+  padding-right: 12px;
+  text-align: right;
+  color: #5a5a5a;
+  user-select: none;
+}
+
+.line-content {
+  flex: 1;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.code-preview-footer {
+  padding: 8px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: #808080;
+  background: #2d2d2d;
+  border-top: 1px solid #3d3d3d;
+}
+
+.code-preview-empty {
+  padding: 16px;
+  text-align: center;
+  font-size: 13px;
+  color: #808080;
+  background: #1e1e1e;
+}

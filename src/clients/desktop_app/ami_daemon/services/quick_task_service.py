@@ -73,6 +73,9 @@ from ..base_agent.events import (
     WorkerCompletedData,
     WorkerFailedData,
     DynamicTasksAddedData,
+    # File attachment (DS-11)
+    FileAttachment,
+    FilePreviewData,
 )
 from ..base_agent.core.task_router import TaskRouter, RoutingResult, get_router
 from ..base_agent.core.agent_registry import (
@@ -1515,6 +1518,9 @@ Response:"""
                                 task_id, state, subtasks, result, duration
                             )
 
+                            # DS-11: Collect file attachments for summary
+                            attachments = await self._collect_file_attachments(task_id, state)
+
                             # Record in conversation history
                             state.add_conversation("task_result", {
                                 "task_content": task_to_decompose,
@@ -1539,6 +1545,7 @@ Response:"""
                                 content=final_output,
                                 question=task_to_decompose,
                                 context=context,
+                                attachments=attachments if attachments else None,
                             ))
 
                             logger.info(f"[Task {task_id}] AMI Executor completed, ready for multi-turn")
@@ -1864,6 +1871,384 @@ Response:"""
             return summary_output
         else:
             return f"Completed {result['completed']}/{result['total']} subtasks"
+
+    async def _collect_file_attachments(
+        self,
+        task_id: str,
+        state: "TaskState",
+    ) -> List[FileAttachment]:
+        """
+        Collect files from task workspace and generate attachments.
+
+        DS-11: Simply scans the workspace output directory for all files.
+        Each task has an isolated workspace, so all files in output/ are
+        from this task execution.
+
+        Args:
+            task_id: Task identifier
+            state: TaskState with working_directory
+
+        Returns:
+            List of FileAttachment objects with previews
+        """
+        import os
+        from pathlib import Path
+
+        attachments = []
+        workspace = Path(state.working_directory)
+
+        # Scan output directory (primary location for task outputs)
+        output_dir = workspace / "output"
+        if output_dir.exists():
+            for file_path in self._walk_directory(output_dir):
+                try:
+                    attachment = await self._create_file_attachment(file_path)
+                    if attachment:
+                        attachments.append(attachment)
+                except Exception as e:
+                    logger.warning(f"[Task {task_id}] Failed to create attachment for {file_path}: {e}")
+
+        # Also check notes directory for generated reports
+        notes_dir = workspace / "notes"
+        if notes_dir.exists():
+            for file_path in self._walk_directory(notes_dir):
+                # Skip internal note files
+                if file_path.suffix == ".md" and file_path.stem.startswith("note_"):
+                    continue
+                try:
+                    attachment = await self._create_file_attachment(file_path)
+                    if attachment:
+                        attachments.append(attachment)
+                except Exception as e:
+                    logger.warning(f"[Task {task_id}] Failed to create attachment for {file_path}: {e}")
+
+        logger.info(f"[Task {task_id}] Collected {len(attachments)} file attachments")
+        return attachments
+
+    def _walk_directory(self, directory: "Path") -> List["Path"]:
+        """Walk directory and return all file paths."""
+        from pathlib import Path
+        files = []
+        for item in directory.rglob("*"):
+            if item.is_file():
+                files.append(item)
+        return files
+
+    async def _create_file_attachment(self, file_path: "Path") -> Optional[FileAttachment]:
+        """
+        Create a FileAttachment with preview data.
+
+        Args:
+            file_path: Path to the file
+
+        Returns:
+            FileAttachment object or None if creation fails
+        """
+        import mimetypes
+
+        if not file_path.exists():
+            return None
+
+        # Determine file type category
+        file_type = self._detect_file_type(file_path)
+        mime_type = mimetypes.guess_type(str(file_path))[0]
+        file_size = file_path.stat().st_size
+
+        # Generate preview based on type
+        preview = await self._generate_file_preview(file_path, file_type)
+
+        return FileAttachment(
+            file_name=file_path.name,
+            file_path=str(file_path),
+            file_type=file_type,
+            mime_type=mime_type,
+            file_size=file_size,
+            preview=preview,
+        )
+
+    def _detect_file_type(self, path: "Path") -> str:
+        """
+        Detect file type category from extension.
+
+        Returns one of: image, html, csv, excel, code, pdf, office, folder, other
+        """
+        if path.is_dir():
+            return "folder"
+
+        suffix = path.suffix.lower()
+
+        # Image types
+        if suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".ico"}:
+            return "image"
+
+        # HTML
+        if suffix in {".html", ".htm"}:
+            return "html"
+
+        # CSV
+        if suffix == ".csv":
+            return "csv"
+
+        # Excel
+        if suffix in {".xlsx", ".xls", ".xlsm"}:
+            return "excel"
+
+        # PDF
+        if suffix == ".pdf":
+            return "pdf"
+
+        # Office documents
+        if suffix in {".docx", ".doc", ".pptx", ".ppt", ".odt", ".odp"}:
+            return "office"
+
+        # Code/text files
+        code_extensions = {
+            ".py", ".js", ".ts", ".jsx", ".tsx", ".json", ".yaml", ".yml",
+            ".md", ".txt", ".sh", ".bash", ".zsh", ".css", ".scss", ".less",
+            ".java", ".c", ".cpp", ".h", ".hpp", ".go", ".rs", ".rb", ".php",
+            ".sql", ".xml", ".toml", ".ini", ".cfg", ".conf", ".log",
+        }
+        if suffix in code_extensions:
+            return "code"
+
+        return "other"
+
+    async def _generate_file_preview(
+        self,
+        path: "Path",
+        file_type: str,
+    ) -> Optional[FilePreviewData]:
+        """
+        Generate preview data based on file type.
+
+        Args:
+            path: Path to the file
+            file_type: Type category (image, html, csv, etc.)
+
+        Returns:
+            FilePreviewData object or None
+        """
+        try:
+            if file_type == "image":
+                return await self._generate_image_preview(path)
+            elif file_type == "csv":
+                return await self._generate_csv_preview(path)
+            elif file_type == "excel":
+                return await self._generate_excel_preview(path)
+            elif file_type == "code":
+                return await self._generate_code_preview(path)
+            elif file_type == "pdf":
+                return await self._generate_pdf_preview(path)
+            elif file_type == "folder":
+                return await self._generate_folder_preview(path)
+            # HTML doesn't need preview data - rendered directly in frontend
+            elif file_type == "html":
+                return FilePreviewData()
+            else:
+                return None
+        except Exception as e:
+            logger.warning(f"Failed to generate preview for {path}: {e}")
+            return None
+
+    async def _generate_image_preview(self, path: "Path") -> FilePreviewData:
+        """Generate thumbnail for image file."""
+        import base64
+
+        # For small images, use directly; for large ones, create thumbnail
+        file_size = path.stat().st_size
+        max_thumbnail_size = 500 * 1024  # 500KB
+
+        if file_size <= max_thumbnail_size:
+            # Use original image as base64
+            with open(path, "rb") as f:
+                data = f.read()
+            b64 = base64.b64encode(data).decode("utf-8")
+
+            # Determine MIME type for data URI
+            suffix = path.suffix.lower()
+            mime_map = {
+                ".png": "image/png",
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".gif": "image/gif",
+                ".webp": "image/webp",
+                ".svg": "image/svg+xml",
+                ".bmp": "image/bmp",
+                ".ico": "image/x-icon",
+            }
+            mime = mime_map.get(suffix, "image/png")
+            thumbnail = f"data:{mime};base64,{b64}"
+        else:
+            # Create thumbnail using PIL if available
+            try:
+                from PIL import Image
+                import io
+
+                with Image.open(path) as img:
+                    # Resize to max 300x300 maintaining aspect ratio
+                    img.thumbnail((300, 300), Image.Resampling.LANCZOS)
+
+                    # Convert to RGB if needed (for JPEG output)
+                    if img.mode in ("RGBA", "P"):
+                        img = img.convert("RGB")
+
+                    # Save to bytes
+                    buffer = io.BytesIO()
+                    img.save(buffer, format="JPEG", quality=85)
+                    buffer.seek(0)
+
+                    b64 = base64.b64encode(buffer.read()).decode("utf-8")
+                    thumbnail = f"data:image/jpeg;base64,{b64}"
+            except ImportError:
+                # PIL not available, skip thumbnail
+                logger.warning("PIL not available for thumbnail generation")
+                return FilePreviewData()
+
+        return FilePreviewData(thumbnail=thumbnail)
+
+    async def _generate_csv_preview(self, path: "Path") -> FilePreviewData:
+        """Generate table preview for CSV file."""
+        import csv
+
+        rows = []
+        total_rows = 0
+        max_preview_rows = 6  # 1 header + 5 data rows
+
+        # Try different encodings
+        encodings = ["utf-8", "utf-8-sig", "gbk", "gb2312", "latin-1"]
+
+        for encoding in encodings:
+            try:
+                with open(path, "r", encoding=encoding, newline="") as f:
+                    reader = csv.reader(f)
+                    for i, row in enumerate(reader):
+                        total_rows += 1
+                        if i < max_preview_rows:
+                            # Truncate long cells
+                            rows.append([cell[:100] for cell in row])
+                break
+            except (UnicodeDecodeError, csv.Error):
+                continue
+
+        if not rows:
+            return FilePreviewData()
+
+        headers = rows[0] if rows else []
+        table_preview = rows[1:] if len(rows) > 1 else []
+
+        return FilePreviewData(
+            table_headers=headers,
+            table_preview=table_preview,
+            table_total_rows=total_rows - 1,  # Exclude header
+        )
+
+    async def _generate_excel_preview(self, path: "Path") -> FilePreviewData:
+        """Generate table preview for Excel file."""
+        try:
+            import openpyxl
+
+            wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+            sheet = wb.active
+
+            rows = []
+            total_rows = 0
+            max_preview_rows = 6
+
+            for i, row in enumerate(sheet.iter_rows(values_only=True)):
+                total_rows += 1
+                if i < max_preview_rows:
+                    # Convert to strings, truncate long cells
+                    row_data = [str(cell)[:100] if cell is not None else "" for cell in row]
+                    rows.append(row_data)
+
+            wb.close()
+
+            headers = rows[0] if rows else []
+            table_preview = rows[1:] if len(rows) > 1 else []
+
+            return FilePreviewData(
+                table_headers=headers,
+                table_preview=table_preview,
+                table_total_rows=total_rows - 1,
+            )
+        except ImportError:
+            logger.warning("openpyxl not available for Excel preview")
+            return FilePreviewData()
+
+    async def _generate_code_preview(self, path: "Path") -> FilePreviewData:
+        """Generate text preview for code/text files."""
+        max_lines = 20
+        max_chars = 2000
+
+        # Try different encodings
+        encodings = ["utf-8", "utf-8-sig", "gbk", "gb2312", "latin-1"]
+
+        for encoding in encodings:
+            try:
+                with open(path, "r", encoding=encoding) as f:
+                    lines = []
+                    total_lines = 0
+                    total_chars = 0
+
+                    for line in f:
+                        total_lines += 1
+                        if len(lines) < max_lines and total_chars < max_chars:
+                            # Truncate long lines
+                            line = line.rstrip("\n\r")
+                            if len(line) > 200:
+                                line = line[:200] + "..."
+                            lines.append(line)
+                            total_chars += len(line)
+
+                    preview_text = "\n".join(lines)
+                    return FilePreviewData(
+                        text_preview=preview_text,
+                        text_total_lines=total_lines,
+                    )
+            except UnicodeDecodeError:
+                continue
+
+        return FilePreviewData()
+
+    async def _generate_pdf_preview(self, path: "Path") -> FilePreviewData:
+        """Generate preview info for PDF file."""
+        try:
+            import pypdf
+
+            with open(path, "rb") as f:
+                reader = pypdf.PdfReader(f)
+                page_count = len(reader.pages)
+
+            return FilePreviewData(pdf_page_count=page_count)
+        except ImportError:
+            logger.warning("pypdf not available for PDF preview")
+            return FilePreviewData()
+        except Exception as e:
+            logger.warning(f"Failed to read PDF: {e}")
+            return FilePreviewData()
+
+    async def _generate_folder_preview(self, path: "Path") -> FilePreviewData:
+        """Generate preview info for folder."""
+        import os
+
+        files = []
+        total_size = 0
+
+        try:
+            for item in os.listdir(path):
+                item_path = path / item
+                files.append(item)
+                if item_path.is_file():
+                    total_size += item_path.stat().st_size
+
+            return FilePreviewData(
+                folder_files=files[:10],  # First 10 files
+                folder_file_count=len(files),
+                folder_total_size=total_size,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to list folder: {e}")
+            return FilePreviewData()
 
     # ===== Multi-turn Conversation Handling (Eigent pattern) =====
 

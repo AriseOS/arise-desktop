@@ -31,7 +31,9 @@ from ..tools.toolkits import (
     SearchToolkit,
     HumanToolkit,
     MemoryToolkit,
+    TerminalToolkit,
 )
+from ..workspace import WorkingDirectoryManager
 
 if TYPE_CHECKING:
     from ..events import SSEEmitter
@@ -47,7 +49,10 @@ ORCHESTRATOR_SYSTEM_PROMPT = """\
 You are AMI, a coordinator in a multi-agent system.
 
 ## Your Role
-You are the first point of contact for user requests. You can answer simple questions directly, or delegate complex work to your team via `decompose_task`. You yourself cannot browse websites or write code.
+You are the first point of contact for user requests. You can:
+- Answer simple questions directly
+- Use terminal commands to explore user's files and help them find past work
+- Delegate complex work (browsing websites, writing code, creating documents) to your team via `decompose_task`
 
 ## Your Team
 - **Browser Agent**: Browse websites, click buttons, fill forms, extract content, take screenshots, multi-page navigation
@@ -57,14 +62,19 @@ You are the first point of contact for user requests. You can answer simple ques
 
 ## Environment
 - System: {platform_system} ({platform_machine})
-- Working Directory: {working_directory}
 - Current Date: {now_str}
 
+## User's Workspace
+Task files location: `{user_workspace}`
+
+Structure: `{{task_id}}/workspace/` - each task folder contains output files (reports, documents, data, etc.)
+
 ## Your Tools
+- shell_exec: Execute terminal commands to explore user's files
 - search_google: Quick web search for simple questions
 - write_note, read_note: Take notes (shared with other agents)
 - ask_human_via_console: Ask user for clarification
-- decompose_task: Delegate work to your team
+- decompose_task: Delegate work to your team (for browsing, coding, document creation)
 """
 
 
@@ -163,7 +173,7 @@ async def create_orchestrator_agent(
     Args:
         task_state: TaskState for SSE event emission
         task_id: Task identifier (used as session_id for browser)
-        working_directory: Directory for file operations
+        working_directory: Directory for current task (passed to decompose_task/Workforce)
         notes_directory: Directory for notes (defaults to working_directory)
         browser_data_directory: Directory for browser user data
         headless: Whether to run browser in headless mode
@@ -184,7 +194,12 @@ async def create_orchestrator_agent(
     agent_name = "orchestrator_agent"
     notes_dir = notes_directory or working_directory
 
-    # Initialize toolkits (lightweight - no browser/terminal for Orchestrator)
+    # Determine user workspace root (for Orchestrator to explore all user files)
+    # Point directly to tasks directory for easier navigation
+    user_workspace = str(WorkingDirectoryManager.USERS_DIR / (user_id or "default") / "projects" / "default" / "tasks")
+    logger.info(f"[OrchestratorAgent] User workspace: {user_workspace}")
+
+    # Initialize toolkits
     note_toolkit = NoteTakingToolkit(notes_directory=notes_dir)
     note_toolkit.set_task_state(task_state)
 
@@ -194,10 +209,17 @@ async def create_orchestrator_agent(
     human_toolkit = HumanToolkit()
     human_toolkit.set_task_state(task_state)
 
+    # Terminal toolkit for Orchestrator - uses user workspace root (not task workspace)
+    # This allows Orchestrator to explore all user's past tasks and files
+    terminal_toolkit = TerminalToolkit(working_directory=user_workspace)
+    terminal_toolkit.set_task_state(task_state)
+    logger.info("[OrchestratorAgent] TerminalToolkit added (user workspace root)")
+
     tools = [
         *[_extract_callable(t) for t in note_toolkit.get_tools()],
         *[_extract_callable(t) for t in search_toolkit.get_tools()],
         *[_extract_callable(t) for t in human_toolkit.get_tools()],
+        *[_extract_callable(t) for t in terminal_toolkit.get_tools()],
     ]
 
     # Add memory toolkit if configured
@@ -224,7 +246,7 @@ async def create_orchestrator_agent(
     system_message = ORCHESTRATOR_SYSTEM_PROMPT.format(
         platform_system=platform.system(),
         platform_machine=platform.machine(),
-        working_directory=working_directory,
+        user_workspace=user_workspace,
         now_str=_get_now_str(),
     )
 
@@ -267,12 +289,8 @@ async def run_orchestrator(
     """
     Run the Orchestrator Agent until it completes or calls decompose_task.
 
-    This function implements a complete execution loop similar to ChatAgent.run(),
-    allowing the Orchestrator to make multiple tool calls before producing a final
-    response.
-
     The loop terminates when:
-    1. LLM produces a response without tool calls (task complete)
+    1. response.terminated is True (CAMEL's built-in termination detection)
     2. decompose_task is called (hand off to Workforce)
     3. Max iterations reached (safety limit)
 
@@ -287,6 +305,9 @@ async def run_orchestrator(
     """
     logger.info(f"[OrchestratorAgent] Starting execution for: {user_message[:100]}...")
 
+    # Get task_state for SSE emission (if available)
+    task_state = getattr(orchestrator, '_task_state', None)
+
     # Reset decompose_tool state
     decompose_tool.reset()
 
@@ -294,10 +315,12 @@ async def run_orchestrator(
     response = await orchestrator.astep(user_message)
     final_content = response.msg.content if response.msg else ""
 
-    # Log LLM response details for debugging
-    tool_calls = response.info.get("tool_calls") or []
-    logger.info(f"[OrchestratorAgent] LLM response content: {final_content[:300] if final_content else '(empty)'}")
-    logger.info(f"[OrchestratorAgent] LLM tool_calls: {[tc.func_name if hasattr(tc, 'func_name') else str(tc) for tc in tool_calls]}")
+    # Log response details for debugging
+    logger.info(f"[OrchestratorAgent] Response terminated={response.terminated}, content={final_content[:200] if final_content else '(empty)'}")
+
+    # Stream initial response to frontend if it has content
+    if final_content and task_state:
+        await _emit_orchestrator_message(task_state, final_content)
 
     iteration = 1
     while iteration < max_iterations:
@@ -306,27 +329,26 @@ async def run_orchestrator(
             logger.info(f"[OrchestratorAgent] decompose_task triggered at iteration {iteration}")
             break
 
-        # Check if there are pending tool calls
-        # CAMEL's ChatAgent returns tool_calls in info when tools were executed
-        tool_calls = response.info.get("tool_calls") or []
-
-        # If no tool calls or LLM already gave a final response, we're done
-        if not tool_calls:
-            logger.info(f"[OrchestratorAgent] Completed at iteration {iteration} (no tool calls)")
+        # Check CAMEL's termination flag - this is the proper way to detect completion
+        if response.terminated:
+            logger.info(f"[OrchestratorAgent] Completed at iteration {iteration} (terminated=True)")
             break
 
-        # CAMEL ChatAgent handles tool execution internally during astep.
-        # After tool execution, we need to continue the conversation.
-        # Use a continuation prompt to let the agent process tool results.
+        # Continue the conversation after tool execution
         iteration += 1
         logger.debug(f"[OrchestratorAgent] Iteration {iteration}, continuing after tool execution")
 
         # Continue with a prompt that asks the agent to proceed
         response = await orchestrator.astep("Continue based on the tool results above.")
 
-        # Accumulate content
+        # Update content and stream to frontend
         if response.msg and response.msg.content:
-            final_content = response.msg.content
+            new_content = response.msg.content
+            # Only emit if content is different and substantive
+            if new_content != final_content and len(new_content) > 20:
+                final_content = new_content
+                if task_state:
+                    await _emit_orchestrator_message(task_state, final_content)
 
     if iteration >= max_iterations:
         logger.warning(f"[OrchestratorAgent] Reached max iterations ({max_iterations})")
@@ -334,3 +356,23 @@ async def run_orchestrator(
     logger.info(f"[OrchestratorAgent] Final response: {final_content[:200]}...")
 
     return final_content
+
+
+async def _emit_orchestrator_message(task_state, content: str) -> None:
+    """
+    Emit Orchestrator's intermediate message to frontend via SSE.
+
+    This allows users to see Orchestrator's responses in real-time,
+    not just the final result.
+    """
+    from ..events import AgentReportData
+
+    try:
+        await task_state.put_event(AgentReportData(
+            task_id=getattr(task_state, 'task_id', None),
+            message=content,
+            report_type="info",
+        ))
+        logger.debug(f"[OrchestratorAgent] Emitted message: {content[:100]}...")
+    except Exception as e:
+        logger.warning(f"[OrchestratorAgent] Failed to emit message: {e}")

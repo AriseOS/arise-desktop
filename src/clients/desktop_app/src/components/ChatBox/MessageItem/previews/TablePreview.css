@@ -1,0 +1,65 @@
+/**
+ * TablePreview CSS Styles
+ */
+
+.table-preview {
+  background: var(--bg-tertiary, #f8f9fa);
+  border-top: 1px solid var(--border-color, #e0e0e0);
+}
+
+.table-preview-wrapper {
+  overflow-x: auto;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.table-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.table-preview th,
+.table-preview td {
+  padding: 6px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color, #e0e0e0);
+  white-space: nowrap;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.table-preview th {
+  background: var(--bg-secondary, #e9ecef);
+  font-weight: 600;
+  color: var(--text-primary, #333);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.table-preview td {
+  background: white;
+  color: var(--text-secondary, #555);
+}
+
+.table-preview tr:hover td {
+  background: var(--bg-hover, #f5f5f5);
+}
+
+.table-preview-footer {
+  padding: 8px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-secondary, #666);
+  background: var(--bg-secondary, #e9ecef);
+  border-top: 1px solid var(--border-color, #e0e0e0);
+}
+
+.table-preview-empty {
+  padding: 16px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-secondary, #666);
+}

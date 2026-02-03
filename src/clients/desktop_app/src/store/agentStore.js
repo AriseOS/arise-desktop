@@ -839,10 +839,13 @@ export const useAgentStore = create((set, get) => ({
         {
           const content = event.content || '';
           const question = event.question || '';
+          // DS-11: File attachments from task execution
+          const attachments = event.attachments || [];
 
-          // Add the simple answer as an assistant message
+          // Add the simple answer as an assistant message with attachments
           store.addMessage(taskId, 'assistant', content, {
             type: 'simple_answer',
+            attachments: attachments,
           });
 
           // Mark task as having a wait_confirm response
@@ -854,7 +857,10 @@ export const useAgentStore = create((set, get) => ({
             lastSimpleQuestion: question,
           });
 
-          console.log('[AgentStore] wait_confirm: Simple answer displayed, status=waiting', { question: question.substring(0, 50) });
+          console.log('[AgentStore] wait_confirm: Simple answer displayed, status=waiting', {
+            question: question.substring(0, 50),
+            attachmentsCount: attachments.length,
+          });
         }
         break;
 
