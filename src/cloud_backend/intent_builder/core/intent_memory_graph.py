@@ -5,7 +5,7 @@ Based on: docs/intent_builder/03_intent_memory_graph_specification.md
 
 Architecture:
 - Semantic Layer (this file): Defines the interface and business logic
-- Persistence Layer: Different storage implementations (in-memory, JSON, SQLite, Neo4j, etc.)
+- Persistence Layer: Different storage implementations (in-memory, JSON, SQLite, SurrealDB, etc.)
 """
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -21,7 +21,7 @@ class IntentStorageBackend(ABC):
     - InMemoryIntentStorage: Memory-based (for MVP)
     - JSONIntentStorage: JSON file-based
     - SQLiteIntentStorage: SQLite database
-    - Neo4jIntentStorage: Graph database (future)
+    - SurrealDBIntentStorage: Graph database (future)
     """
 
     @abstractmethod

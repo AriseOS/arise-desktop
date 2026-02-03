@@ -528,7 +528,7 @@ class GraphStateManager(StateManager):
         Returns:
             List of tuples (State, similarity_score).
         """
-        # Try Neo4j native vector search first
+        # Try GraphStore native vector search first
         try:
             results = self.graph_store.vector_search(
                 label="State",
@@ -543,7 +543,7 @@ class GraphStateManager(StateManager):
             return states
         except Exception as e:
             # Fallback to in-memory search if vector index not available
-            logger.warning(f"Neo4j vector search failed, using fallback: {e}")
+            logger.warning(f"Vector search failed, using fallback: {e}")
             return self._fallback_embedding_search(query_vector, top_k)
 
     def _fallback_embedding_search(
@@ -1225,7 +1225,7 @@ class GraphCognitivePhraseManager(CognitivePhraseManager):
     """GraphStore-based CognitivePhrase Manager.
 
     Manages CognitivePhrase entities using GraphStore for persistent storage.
-    This enables CognitivePhrases to be stored in Neo4j alongside States and Actions.
+    This enables CognitivePhrases to be stored in the graph database alongside States and Actions.
 
     Attributes:
         graph_store: GraphStore instance for persistence.
@@ -1806,8 +1806,8 @@ class GraphIntentSequenceManager(IntentSequenceManager):
         results = self.graph_store.vector_search(
             label=self.node_label,
             property_key="embedding_vector",
-            vector=query_vector,
-            limit=top_k * 2 if state_id else top_k,
+            query_text_or_vector=query_vector,
+            topk=top_k * 2 if state_id else top_k,
         )
 
         sequences_with_scores = []

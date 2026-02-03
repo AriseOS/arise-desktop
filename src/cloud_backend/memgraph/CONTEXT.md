@@ -28,17 +28,20 @@
 
 ## 存储后端
 
-默认使用 **Neo4j** 持久化存储，支持：
+默认使用 **SurrealDB** 持久化存储，支持：
 - 持久化（重启不丢数据）
 - 向量索引（语义搜索）
-- 图查询（路径查找）
+- 图查询（关系遍历）
+- 原生复杂类型存储（无需 JSON 序列化）
 
 配置见 `cloud-backend.yaml`:
 ```yaml
 graph_store:
-  backend: neo4j  # 或 networkx (内存，重启丢失)
-  uri: neo4j://localhost:7687
-  user: neo4j
+  backend: surrealdb  # 或 networkx (内存，重启丢失)
+  url: ws://localhost:8000/rpc
+  namespace: ami
+  database: memory
+  username: root
   password: your_password
 ```
 
@@ -46,7 +49,7 @@ graph_store:
 
 - `memory/` - WorkflowMemory 核心实现，管理用户的操作图
 - `ontology/` - 数据模型定义（State, Action, IntentSequence, QueryResult 等）
-- `graphstore/` - 图存储抽象层（Neo4j / NetworkX）
+- `graphstore/` - 图存储抽象层（SurrealDB / NetworkX）
 - `services/` - 服务层（EmbeddingService 等）
 - `thinker/` - Recording 解析器（WorkflowProcessor）
 - `reasoner/` - 图推理和查询接口（query, navigate, plan）

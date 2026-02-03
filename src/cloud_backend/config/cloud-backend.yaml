@@ -122,20 +122,35 @@ cors:
 # Graph Store Configuration
 # Backend for Memory graph storage
 #
-# To enable Neo4j persistent storage:
-# 1. Start Neo4j:
-#    docker run -d --name neo4j -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/your_password neo4j:5.15
-# 2. Change backend to: neo4j
-# 3. Set password below (or via NEO4J_PASSWORD env var)
+# Available backends:
+#   - networkx: In-memory (development, data lost on restart)
+#   - neo4j: Persistent graph database (production option 1)
+#   - surrealdb: Multi-model database (production option 2)
+#
+# Neo4j setup:
+#   docker run -d --name neo4j -p 7474:7474 -p 7687:7687 \
+#     -e NEO4J_AUTH=neo4j/your_password neo4j:5.15
+#
+# SurrealDB setup:
+#   docker run -d --name surrealdb -p 8000:8000 \
+#     surrealdb/surrealdb:latest start --user root --pass your_password
 #
 graph_store:
-  # backend: networkx  # Options: networkx (in-memory, data lost on restart), neo4j (persistent)
-  backend: neo4j # Options: networkx (in-memory, data lost on restart), neo4j (persistent)
+  backend: neo4j  # Options: networkx, neo4j, surrealdb
+
   # Neo4j Configuration (used when backend: neo4j)
-  uri: neo4j://localhost:7687  # Or use NEO4J_URI env var
-  user: neo4j                   # Or use NEO4J_USER env var
-  password: Ami@2024 # Or use NEO4J_PASSWORD env var
-  database: neo4j               # Or use NEO4J_DATABASE env var
+  uri: neo4j://localhost:7687    # Or use NEO4J_URI env var
+  user: neo4j                     # Or use NEO4J_USER env var
+  # password: your_password       # Or use NEO4J_PASSWORD env var
+  database: neo4j                 # Or use NEO4J_DATABASE env var
+
+  # SurrealDB Configuration (used when backend: surrealdb)
+  # url: ws://localhost:8000/rpc  # Or use SURREALDB_URL env var
+  # namespace: ami                # Or use SURREALDB_NAMESPACE env var
+  # database: memory              # Or use SURREALDB_DATABASE env var
+  # username: root                # Or use SURREALDB_USER env var
+  # password: your_password       # Or use SURREALDB_PASSWORD env var
+  # vector_dimensions: 1024
 
 # Embedding Model Configuration
 # For semantic search in Memory system
