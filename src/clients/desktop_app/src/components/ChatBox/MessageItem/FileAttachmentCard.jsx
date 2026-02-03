@@ -94,15 +94,17 @@ function FileAttachmentCard({ file }) {
 
   // Open file with system default application
   const handleOpen = async () => {
+    console.log('[FileAttachmentCard] Opening file:', file_path);
     setLoading(true);
     setError(null);
     try {
       const result = await invoke('open_path', { path: file_path });
+      console.log('[FileAttachmentCard] open_path result:', result);
       if (!result.success) {
         setError(result.error);
       }
     } catch (e) {
-      console.error('Failed to open file:', e);
+      console.error('[FileAttachmentCard] Failed to open file:', e);
       setError(e.message || 'Failed to open file');
     } finally {
       setLoading(false);
@@ -111,15 +113,17 @@ function FileAttachmentCard({ file }) {
 
   // Reveal file in system file explorer
   const handleReveal = async () => {
+    console.log('[FileAttachmentCard] Revealing file:', file_path);
     setLoading(true);
     setError(null);
     try {
       const result = await invoke('reveal_in_folder', { path: file_path });
+      console.log('[FileAttachmentCard] reveal_in_folder result:', result);
       if (!result.success) {
         setError(result.error);
       }
     } catch (e) {
-      console.error('Failed to reveal in folder:', e);
+      console.error('[FileAttachmentCard] Failed to reveal in folder:', e);
       setError(e.message || 'Failed to reveal in folder');
     } finally {
       setLoading(false);

@@ -292,6 +292,16 @@ export const useAgentStore = create((set, get) => ({
    * Add a message to task
    */
   addMessage: (taskId, role, content, extra = {}) => {
+    // DEBUG: Log what we're adding
+    console.log('[AgentStore] addMessage called:', {
+      taskId,
+      role,
+      contentPreview: content?.substring(0, 50),
+      extraKeys: Object.keys(extra),
+      hasAttachments: !!extra.attachments,
+      attachmentsCount: extra.attachments?.length || 0,
+    });
+
     set((state) => {
       if (!state.tasks[taskId]) return state;
 
@@ -317,6 +327,13 @@ export const useAgentStore = create((set, get) => ({
         timestamp: new Date().toISOString(),
         ...extra,
       };
+
+      // DEBUG: Log the created message
+      console.log('[AgentStore] Created message:', {
+        id: newMessage.id,
+        hasAttachments: !!newMessage.attachments,
+        attachmentsCount: newMessage.attachments?.length || 0,
+      });
 
       return {
         tasks: {
@@ -841,6 +858,15 @@ export const useAgentStore = create((set, get) => ({
           const question = event.question || '';
           // DS-11: File attachments from task execution
           const attachments = event.attachments || [];
+
+          // DEBUG: Log full event to see what backend sends
+          console.log('[AgentStore] wait_confirm event received:', {
+            hasAttachments: !!event.attachments,
+            attachmentsType: typeof event.attachments,
+            attachmentsIsArray: Array.isArray(event.attachments),
+            attachmentsCount: attachments.length,
+            attachmentsRaw: event.attachments,
+          });
 
           // Add the simple answer as an assistant message with attachments
           store.addMessage(taskId, 'assistant', content, {

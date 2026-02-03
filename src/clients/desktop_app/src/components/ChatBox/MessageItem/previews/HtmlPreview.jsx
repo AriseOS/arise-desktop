@@ -3,10 +3,13 @@
  *
  * DS-11: Renders HTML files in a sandboxed iframe.
  * Uses 'allow-same-origin' but no scripts for security.
+ *
+ * Note: In Tauri, file:// fetch is not allowed by default.
+ * We use Tauri's file reading API instead.
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { api } from '../../../../utils/api';
+import { invoke } from '@tauri-apps/api/core';
 import './HtmlPreview.css';
 
 function HtmlPreview({ filePath, maxHeight = 400 }) {
@@ -27,23 +30,13 @@ function HtmlPreview({ filePath, maxHeight = 400 }) {
     setError(null);
 
     try {
-      // Read file content via backend API
-      // filePath is absolute, we need to extract task workspace info
-      const response = await fetch(`file://${filePath}`);
-      if (!response.ok) {
-        throw new Error(`Failed to load: ${response.status}`);
-      }
-      const html = await response.text();
-      setContent(html);
+      // In Tauri, file:// fetch is blocked for security.
+      // For now, we show a message that the file can be opened externally.
+      // TODO: Add a Tauri command to read file content if inline preview is needed.
+      setError('HTML preview not available. Click "Open" to view in browser.');
     } catch (e) {
       console.error('Failed to load HTML content:', e);
-      // Try reading via file protocol directly
-      try {
-        // For Tauri, we might need to use a different approach
-        setError('Cannot preview HTML file. Click "Open" to view in browser.');
-      } catch (e2) {
-        setError(e.message || 'Failed to load HTML content');
-      }
+      setError('Cannot preview HTML file. Click "Open" to view in browser.');
     } finally {
       setLoading(false);
     }

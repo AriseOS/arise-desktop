@@ -24,6 +24,14 @@ function MessageList({
   onStartTask,  // Start task callback
   onEditTask,   // Edit task callback
 }) {
+  // DEBUG: Log messages to check if attachments are present
+  console.log('[MessageList] Received messages:', messages.length, 'messages');
+  messages.forEach((m, i) => {
+    if (m.attachments || m.attaches) {
+      console.log(`[MessageList] Message ${i} has attachments:`, m.attachments || m.attaches);
+    }
+  });
+
   const listRef = useRef(null);
   const isAtBottomRef = useRef(true);
   const [showScrollButton, setShowScrollButton] = useState(false);

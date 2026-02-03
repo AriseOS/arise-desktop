@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm';
 import Icon from '../components/Icons';
 import { api } from '../utils/api';
 import { useAgentStore } from '../store';
+import FileAttachmentCard from '../components/ChatBox/MessageItem/FileAttachmentCard';
 import '../styles/HomePage.css';
 
 /**
@@ -294,6 +295,9 @@ function HomePage({ session, onNavigate, showStatus, version }) {
       ? new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       : '';
 
+    // DS-11: Get file attachments
+    const attachments = message.attachments || message.attaches || [];
+
     return (
       <div key={message.id || index} className={`message ${messageType} ${isAgent ? `report-${reportType}` : ''}`}>
         <div className="message-bubble markdown-content">
@@ -303,6 +307,21 @@ function HomePage({ session, onNavigate, showStatus, version }) {
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
           )}
         </div>
+        {/* DS-11: Render file attachments */}
+        {attachments.length > 0 && (
+          <div className="message-attachments">
+            {attachments.map((file, idx) => (
+              file.file_path ? (
+                <FileAttachmentCard key={`file-${idx}`} file={file} />
+              ) : (
+                <div key={`attach-${idx}`} className="attachment-item legacy">
+                  <Icon name="file" size={14} />
+                  <span>{file.fileName || file.name}</span>
+                </div>
+              )
+            ))}
+          </div>
+        )}
         {timestamp && (
           <div className="message-time">
             {timestamp}
