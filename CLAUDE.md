@@ -100,9 +100,22 @@ isort . --profile black
   - ✅ `if not api_key: raise ValueError("API key required")`
   - ❌ `api_key = provided_key or env_key or mock_key or "default"`
 
+**Implementation Quality:**
+- Do NOT consider backward compatibility - just implement the right solution
+- Do NOT mock data or interfaces - implement real functionality
+- Do NOT add fallback logic - fail explicitly when requirements are not met
+- Do NOT skimp on tokens - read all relevant context thoroughly
+- Every feature must be fully implemented, not partially or with stubs
+- Re-read design documents when context is lost or when crossing module boundaries
+- Read all related context code before starting implementation of any feature
+
 **Testing:**
 - DO NOT automatically run tests
 - Only create test scripts when explicitly requested
+
+**Task Completion Checklist:**
+- After completing a major task, verify the feature is fully implemented
+- After completing a major task, check for bugs in the implementation
 
 **Code Style:**
 - English only for comments, logs, and identifiers

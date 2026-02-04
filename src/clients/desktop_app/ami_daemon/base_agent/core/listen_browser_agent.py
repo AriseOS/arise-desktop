@@ -156,6 +156,13 @@ If a workflow_guide is provided:
 3. Actions = how to navigate between page types
 4. Adapt to current context - URLs may differ
 </workflow_guide_usage>
+
+<language_policy>
+**CRITICAL**: You MUST respond in the same language as the user's original request.
+- If the user writes in Chinese, ALL your outputs must be in Chinese (notes, summaries, reports).
+- If the user writes in English, respond in English.
+- This applies to: notes you write, summaries, and any text you generate.
+</language_policy>
 """
 
 

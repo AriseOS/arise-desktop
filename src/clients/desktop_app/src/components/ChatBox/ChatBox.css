@@ -877,6 +877,14 @@
   color: var(--status-success-text);
 }
 
+.box-action-btn.stop {
+  color: var(--status-error-text);
+}
+
+.box-action-btn.stop:hover:not(:disabled) {
+  background: var(--status-error-bg);
+}
+
 .box-action-btn.replay {
   color: var(--primary-main);
 }

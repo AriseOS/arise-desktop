@@ -188,6 +188,21 @@ async def startup_event():
             )
             graph_store.initialize_schema()
             print(f"✅ Graph Store: Neo4j ({graph_config.get('uri', 'from env')})")
+
+        elif graph_backend == "surrealdb":
+            import os
+            graph_store = create_graph_store(
+                "surrealdb",
+                url=graph_config.get("url") or os.getenv("SURREALDB_URL", "ws://localhost:8000/rpc"),
+                namespace=graph_config.get("namespace") or os.getenv("SURREALDB_NAMESPACE", "ami"),
+                database=graph_config.get("database") or os.getenv("SURREALDB_DATABASE", "memory"),
+                username=graph_config.get("username") or os.getenv("SURREALDB_USER", "root"),
+                password=graph_config.get("password") or os.getenv("SURREALDB_PASSWORD", ""),
+                vector_dimensions=graph_config.get("vector_dimensions", 1024),
+            )
+            graph_store.initialize_schema()
+            print(f"✅ Graph Store: SurrealDB ({graph_config.get('url', 'from env')})")
+
         else:
             graph_store = create_graph_store("networkx")
             print("✅ Graph Store: NetworkX (in-memory)")
@@ -1880,7 +1895,7 @@ async def clear_memory(
         500: Failed to clear memory
     """
     try:
-        # Check if GraphStore supports bulk deletion (Neo4j)
+        # Check if GraphStore supports bulk deletion
         graph_store = workflow_memory.graph_store
         has_delete_all = hasattr(graph_store, 'delete_all_nodes_by_label')
 

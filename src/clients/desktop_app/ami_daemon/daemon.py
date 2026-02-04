@@ -205,7 +205,8 @@ async def lifespan(app: FastAPI):
     - On startup: Initialize all services
     - On shutdown: Cleanup all resources (triggered by SIGTERM/SIGINT)
     """
-    global browser_manager, cdp_recorder, recording_service, cloud_client, version_check_result
+    global browser_manager
+    global cdp_recorder, recording_service, cloud_client, version_check_result
 
     # ========== STARTUP ==========
     logger.info("=" * 60)
@@ -242,9 +243,23 @@ async def lifespan(app: FastAPI):
         else:
             logger.warning("⚠️ Browser extensions not available (may need to download from Google)")
 
-        # Initialize browser manager (but do NOT start browser yet - on-demand startup)
+        # Initialize HybridBrowserSession with daemon lifecycle (V3)
+        from src.clients.desktop_app.ami_daemon.base_agent.tools.eigent_browser.browser_session import HybridBrowserSession
+
+        auto_start = config.get("browser.auto_start", True)
+        if auto_start:
+            try:
+                await HybridBrowserSession.start_daemon_session(config=config)
+                logger.info("✓ Browser session started (HybridBrowserSession V3)")
+            except Exception as e:
+                logger.warning(f"⚠️ Browser auto-start failed: {e}")
+                logger.info("  Browser will start on first task")
+        else:
+            logger.info("✓ Browser auto-start disabled (will start on first task)")
+
+        # Initialize legacy browser manager (kept for backward compatibility)
         browser_manager = BrowserManager(config_service=config)
-        logger.info("✓ Browser manager initialized (browser not started - will start on demand)")
+        logger.info("✓ Legacy browser manager initialized")
 
         # Initialize CDP recorder (legacy, kept for compatibility)
         cdp_recorder = CDPRecorder(storage_manager, browser_manager)
@@ -1770,7 +1785,8 @@ async def cleanup_resources():
     This function is called by the lifespan shutdown context manager
     when uvicorn receives SIGTERM/SIGINT from the parent process (Tauri).
     """
-    global browser_manager, cdp_recorder, recording_service, cloud_client, _browser2_session
+    global browser_manager
+    global cdp_recorder, recording_service, cloud_client, _browser2_session
 
     logger.info("🧹 Cleaning up resources...")
 
@@ -1816,7 +1832,24 @@ async def cleanup_resources():
                 logger.error(f"⚠️  Browser2 session close error: {e}")
                 cleanup_errors.append(f"Browser2: {e}")
 
-        # 3. Stop all browser sessions through BrowserManager
+        # 3. Stop HybridBrowserSession daemon session (V3)
+        from src.clients.desktop_app.ami_daemon.base_agent.tools.eigent_browser.browser_session import HybridBrowserSession
+        if HybridBrowserSession.get_daemon_session():
+            logger.info("Stopping HybridBrowserSession daemon session...")
+            try:
+                await asyncio.wait_for(
+                    HybridBrowserSession.stop_daemon_session(),
+                    timeout=5.0
+                )
+                logger.info("✓ HybridBrowserSession daemon session stopped")
+            except asyncio.TimeoutError:
+                logger.warning("⚠️  HybridBrowserSession stop timeout")
+                cleanup_errors.append("HybridBrowserSession: timeout")
+            except Exception as e:
+                logger.error(f"⚠️  HybridBrowserSession error: {e}")
+                cleanup_errors.append(f"HybridBrowserSession: {e}")
+
+        # 4. Stop legacy browser manager
         if browser_manager:
             try:
                 # Check if there are any managed sessions
@@ -1839,7 +1872,7 @@ async def cleanup_resources():
                 logger.error(f"⚠️  Browser manager cleanup error: {e}")
                 cleanup_errors.append(f"Browser manager: {e}")
 
-        # 5. Close cloud client connection
+        # 6. Close cloud client connection
         if cloud_client:
             logger.info("Closing cloud client...")
             try:
@@ -1852,7 +1885,7 @@ async def cleanup_resources():
                 logger.error(f"⚠️  Failed to close cloud client: {e}")
                 cleanup_errors.append(f"Cloud: {e}")
 
-        # 6. Summary
+        # 7. Summary
         if cleanup_errors:
             logger.warning(f"⚠️  Cleanup completed with {len(cleanup_errors)} errors: {cleanup_errors}")
         else:

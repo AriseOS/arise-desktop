@@ -231,6 +231,9 @@ class TaskState:
     # Working directory manager
     _dir_manager: Optional[WorkingDirectoryManager] = field(default=None, repr=False)
 
+    # AMI Executor reference for cancellation support
+    _executor: Optional[Any] = field(default=None, repr=False)
+
     # Task decomposition state
     subtasks: List[Dict] = field(default_factory=list)  # Decomposed subtasks
     summary_task: Optional[str] = None  # Summary of the main task
@@ -824,7 +827,14 @@ class QuickTaskService:
             }
 
     async def cancel_task(self, task_id: str) -> bool:
-        """Cancel a task."""
+        """Cancel a task.
+
+        Stops the current execution by:
+        1. Setting the cancel event signal
+        2. Calling executor.stop() if executor is running
+        3. Updating task status to CANCELLED
+        4. Sending EndData event to frontend
+        """
         state = self._tasks.get(task_id)
         if not state:
             return False
@@ -832,7 +842,14 @@ class QuickTaskService:
         if state.status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
             return False
 
+        # Set cancel signal
         state._cancel_event.set()
+
+        # Stop executor if running
+        if state._executor is not None:
+            state._executor.stop()
+            logger.info(f"Task {task_id}: executor.stop() called")
+
         state.status = TaskStatus.CANCELLED
         state.updated_at = datetime.now()
 
@@ -1576,6 +1593,11 @@ Response:"""
             loop_iteration += 1
             logger.info(f"[Task {task_id}] Multi-turn loop iteration #{loop_iteration}")
 
+            # ===== Check for cancellation at loop start =====
+            if state._cancel_event.is_set():
+                logger.info(f"[Task {task_id}] Cancellation detected at loop start, exiting")
+                break
+
             try:
                 # ===== Run Orchestrator Agent =====
                 logger.info(f"[Task {task_id}] Running Orchestrator for: {current_question[:100]}...")
@@ -1730,8 +1752,19 @@ Response:"""
                             )
                             executor.set_subtasks(subtasks)
 
+                            # Save executor reference for cancellation support
+                            state._executor = executor
+
                             # Execute
                             result = await executor.execute()
+
+                            # Clear executor reference after execution
+                            state._executor = None
+
+                            # Check if execution was stopped by cancellation
+                            if result.get("stopped"):
+                                logger.info(f"[Task {task_id}] Executor was stopped by cancellation")
+                                break
 
                             duration = (datetime.now() - start_time).total_seconds()
 
@@ -1892,15 +1925,24 @@ Response:"""
 
         # ===== Session End Cleanup =====
         logger.info(f"[Task {task_id}] AMI session ended after {loop_iteration} iterations")
-        state.status = TaskStatus.COMPLETED
-        state.completed_at = datetime.now()
 
-        await state.put_event(EndData(
-            task_id=task_id,
-            status="completed",
-            message="Session ended",
-            result=state.result,
-        ))
+        # Clear executor reference
+        state._executor = None
+
+        # Only update status if not already cancelled
+        if state.status != TaskStatus.CANCELLED:
+            state.status = TaskStatus.COMPLETED
+            state.completed_at = datetime.now()
+
+            await state.put_event(EndData(
+                task_id=task_id,
+                status="completed",
+                message="Session ended",
+                result=state.result,
+            ))
+        else:
+            # Already cancelled, just log
+            logger.info(f"[Task {task_id}] Task was cancelled, skipping completion event")
 
         # Close browser session
         try:
@@ -1910,6 +1952,17 @@ Response:"""
                 logger.info(f"[Task {task_id}] Browser session closed successfully")
         except Exception as cleanup_error:
             logger.warning(f"[Task {task_id}] Error closing browser session: {cleanup_error}")
+
+        # Close Tab Group via HybridBrowserSession (V3)
+        try:
+            from ..base_agent.tools.eigent_browser.browser_session import HybridBrowserSession
+            session = HybridBrowserSession.get_daemon_session()
+            if session:
+                closed_group = await session.close_tab_group(task_id)
+                if closed_group:
+                    logger.info(f"[Task {task_id}] Tab Group closed successfully")
+        except Exception as cleanup_error:
+            logger.warning(f"[Task {task_id}] Error closing Tab Group: {cleanup_error}")
 
     async def _create_agents_for_ami_executor(
         self,

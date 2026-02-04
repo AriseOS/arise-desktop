@@ -41,9 +41,6 @@ dependencies = [
     # HTTP client
     "httpx>=0.25.2",
 
-    # Web search
-    "duckduckgo-search>=7.0.0",
-
     # Authentication
     "python-jose[cryptography]>=3.3.0",
     "passlib[bcrypt]>=1.7.4",

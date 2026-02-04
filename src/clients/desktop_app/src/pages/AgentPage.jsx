@@ -464,6 +464,7 @@ function AgentPage({ session, onNavigate, showStatus, version }) {
                     onSendMessage={handleSubmit}
                     // Task actions (no longer needed, auto-execute)
                     onPauseResume={() => console.log('Pause/Resume not implemented')}
+                    onStop={handleCancel}
                     // Loading states - Eigent: allow input during running for multi-turn
                     isLoading={false}
                     disabled={false}

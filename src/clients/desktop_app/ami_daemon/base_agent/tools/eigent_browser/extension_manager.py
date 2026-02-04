@@ -209,14 +209,16 @@ class ExtensionManager:
         if not extension_paths:
             return []
 
+        extensions_str = ",".join(extension_paths)
+
+        # Critical: Both --disable-extensions-except and --load-extension are required
+        # for Chrome to properly load unpacked extensions via command line
+        # See: https://playwright.dev/docs/chrome-extensions
         args = [
             '--enable-extensions',
-            '--disable-extensions-file-access-check',
-            '--disable-extensions-http-throttling',
+            f'--disable-extensions-except={extensions_str}',
+            f'--load-extension={extensions_str}',
         ]
-
-        if extension_paths:
-            args.append(f'--load-extension={",".join(extension_paths)}')
 
         return args
 

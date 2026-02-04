@@ -8,7 +8,7 @@
  * - State-based UI changes (background color, header variants)
  * - Queued messages display
  * - File attachments
- * - Action buttons (replay, pause/resume)
+ * - Action buttons (stop, replay, pause/resume)
  * - Token count and task time display
  *
  * Ported from Eigent's BottomBox component.
@@ -17,7 +17,7 @@
  * - input: Default state, user can type and send messages
  * - splitting: System is splitting tasks, shows loading indicator
  * - confirm: Waiting for user confirmation, shows Start Task button
- * - running: Task is running, shows pause button
+ * - running: Task is running, shows stop and pause buttons
  * - finished: Task completed, shows replay button
  */
 
@@ -50,6 +50,8 @@ import QueuedBox from './QueuedBox';
  * @param {boolean} props.replayLoading - Replay loading state
  * @param {function} props.onPauseResume - Pause/resume callback
  * @param {boolean} props.pauseResumeLoading - Pause/resume loading state
+ * @param {function} props.onStop - Stop task callback
+ * @param {boolean} props.stopLoading - Stop loading state
  * @param {Object} props.inputProps - Props for InputBox component
  * @param {boolean} props.loading - General loading state
  * @param {boolean} props.enableQueuedBox - Enable queued box display
@@ -69,6 +71,8 @@ function BottomBox({
   replayLoading = false,
   onPauseResume,
   pauseResumeLoading = false,
+  onStop,
+  stopLoading = false,
   inputProps = {},
   loading = false,
   enableQueuedBox = false,
@@ -125,6 +129,8 @@ function BottomBox({
             onReplay={onReplay}
             onPauseResume={onPauseResume}
             pauseResumeLoading={pauseResumeLoading}
+            onStop={onStop}
+            stopLoading={stopLoading}
           />
         )}
       </div>

@@ -107,6 +107,7 @@ function getBottomBoxState(task) {
  * @param {function} props.onFilesChange - Files change callback
  * @param {function} props.onReplay - Replay task callback
  * @param {function} props.onPauseResume - Pause/resume callback
+ * @param {function} props.onStop - Stop task callback
  * @param {Array} props.queuedMessages - Queued messages
  * @param {function} props.onRemoveQueuedMessage - Remove queued message callback
  * @param {boolean} props.isLoading - General loading state
@@ -125,6 +126,7 @@ function ChatBox({
   onFilesChange,
   onReplay,
   onPauseResume,
+  onStop,
   queuedMessages = [],
   onRemoveQueuedMessage,
   isLoading = false,
@@ -135,6 +137,7 @@ function ChatBox({
   // Local state for UI
   const [replayLoading, setReplayLoading] = useState(false);
   const [pauseResumeLoading, setPauseResumeLoading] = useState(false);
+  const [stopLoading, setStopLoading] = useState(false);
   const [taskTimeDisplay, setTaskTimeDisplay] = useState('');
 
   // Calculate BottomBox state from task
@@ -187,6 +190,17 @@ function ChatBox({
       setPauseResumeLoading(false);
     }
   }, [onPauseResume]);
+
+  // Handle stop task
+  const handleStop = useCallback(async () => {
+    if (!onStop) return;
+    setStopLoading(true);
+    try {
+      await onStop();
+    } finally {
+      setStopLoading(false);
+    }
+  }, [onStop]);
 
   // Calculate subtitle for confirm state
   const confirmSubtitle = useMemo(() => {
@@ -263,6 +277,8 @@ function ChatBox({
         replayLoading={replayLoading}
         onPauseResume={handlePauseResume}
         pauseResumeLoading={pauseResumeLoading}
+        onStop={handleStop}
+        stopLoading={stopLoading}
         inputProps={{
           value: inputValue,
           onChange: onInputChange,
