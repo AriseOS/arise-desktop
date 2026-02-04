@@ -13,6 +13,8 @@ import asyncio
 import concurrent.futures
 import json
 import logging
+import re
+from datetime import datetime
 from threading import Event
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -253,7 +255,97 @@ class ListenChatAgent(ChatAgent):
         # NoteTakingToolkit reference for saving workflow guide to file
         self._note_toolkit: Optional[Any] = None
 
+        # Export model-visible snapshots (quick-task only)
+        self._export_model_visible_snapshots: bool = False
+        self._snapshot_export_subdir: str = "model_visible_snapshots"
+        self._snapshot_export_counter: int = 0
+        self._current_tool_call_id: Optional[str] = None
+
         logger.info(f"[ListenChatAgent] Created: {agent_name}, agent_id={agent_id}")
+
+    def enable_model_visible_snapshot_export(
+        self,
+        enabled: bool = True,
+        export_subdir: str = "model_visible_snapshots",
+    ) -> None:
+        """Enable exporting model-visible page snapshots to workspace."""
+        self._export_model_visible_snapshots = enabled
+        if export_subdir:
+            self._snapshot_export_subdir = export_subdir
+        logger.info(
+            f"[ListenChatAgent] Model-visible snapshot export "
+            f"{'enabled' if enabled else 'disabled'}: {self._snapshot_export_subdir}"
+        )
+
+    def _write_model_visible_snapshot(
+        self,
+        func_name: str,
+        content: str,
+        was_truncated: bool,
+    ) -> None:
+        if not self._export_model_visible_snapshots:
+            return
+
+        dir_manager = getattr(self._task_state, "dir_manager", None) if self._task_state else None
+        if not dir_manager:
+            return
+
+        try:
+            self._snapshot_export_counter += 1
+            tool_call_id = self._current_tool_call_id or "unknown"
+            safe_tool = re.sub(r"[^A-Za-z0-9_-]+", "_", func_name) or "tool"
+            safe_id = re.sub(r"[^A-Za-z0-9_-]+", "_", tool_call_id) or "unknown"
+            filename = (
+                f"{self._snapshot_export_subdir}/"
+                f"snapshot_{self._snapshot_export_counter:04d}_{safe_tool}_{safe_id}.md"
+            )
+
+            header = [
+                "# Model-visible page snapshot",
+                f"tool: {func_name}",
+                f"tool_call_id: {tool_call_id}",
+                f"truncated: {str(was_truncated).lower()}",
+                f"timestamp_utc: {datetime.utcnow().isoformat()}Z",
+                "",
+            ]
+            dir_manager.write_file(filename, "\n".join(header) + content)
+        except Exception as e:
+            logger.warning(f"[ListenChatAgent] Failed to export model-visible snapshot: {e}")
+
+    def _truncate_tool_result(
+        self, func_name: str, result: Any
+    ) -> Tuple[Any, bool]:
+        truncated_result, was_truncated = super()._truncate_tool_result(func_name, result)
+
+        if self._export_model_visible_snapshots:
+            result_for_memory = truncated_result if was_truncated else result
+            content_str = self._serialize_tool_result(result_for_memory)
+            if content_str and "Page Snapshot" in content_str:
+                self._write_model_visible_snapshot(func_name, content_str, was_truncated)
+
+        return truncated_result, was_truncated
+
+    def _record_tool_calling(
+        self,
+        func_name: str,
+        args: Dict[str, Any],
+        result: Any,
+        tool_call_id: str,
+        mask_output: bool = False,
+        extra_content: Optional[Dict[str, Any]] = None,
+    ):
+        self._current_tool_call_id = tool_call_id
+        try:
+            return super()._record_tool_calling(
+                func_name=func_name,
+                args=args,
+                result=result,
+                tool_call_id=tool_call_id,
+                mask_output=mask_output,
+                extra_content=extra_content,
+            )
+        finally:
+            self._current_tool_call_id = None
 
     def set_task_state(self, task_state: Any) -> None:
         """Update the task state for event emission."""

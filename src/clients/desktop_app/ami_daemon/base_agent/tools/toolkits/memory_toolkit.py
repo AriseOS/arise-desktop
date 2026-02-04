@@ -32,6 +32,8 @@ logger = logging.getLogger(__name__)
 _MAX_LOG_STEPS = 8
 _MAX_TEXT_LEN = 160
 _MAX_SELECTOR_LEN = 120
+_MAX_GUIDE_SEQUENCES = 3
+_MAX_GUIDE_INTENTS = 20
 
 
 def _truncate_text(value: str, max_len: int) -> str:
@@ -198,6 +200,7 @@ class Intent:
     element_role: Optional[str] = None
     text: Optional[str] = None
     value: Optional[str] = None
+    attributes: Optional[Dict[str, Any]] = None
 
     @classmethod
     def from_dict(cls, data: Dict) -> "Intent":
@@ -207,6 +210,7 @@ class Intent:
             element_role=data.get("element_role"),
             text=data.get("text"),
             value=data.get("value"),
+            attributes=data.get("attributes"),
         )
 
 
@@ -1043,6 +1047,65 @@ class MemoryToolkit(BaseToolkit):
         return ""
 
     @staticmethod
+    def _format_intent_brief(intent: Intent) -> str:
+        line = MemoryToolkit._format_intent_compact(intent)
+        if not line:
+            line = MemoryToolkit._format_intent(intent)
+        if line.startswith("- "):
+            return line[2:]
+        return line
+
+    @staticmethod
+    def _format_action_trigger(action: Action) -> str:
+        if not action.trigger:
+            return ""
+        trigger = action.trigger
+        text = trigger.get("text")
+        role = trigger.get("role") or trigger.get("element_role")
+        ref = trigger.get("ref") or trigger.get("element_ref")
+        parts = []
+        if text:
+            parts.append(f'text="{text}"')
+        if role:
+            parts.append(f"role={role}")
+        if ref:
+            parts.append(f"ref={ref}")
+        return ", ".join(parts)
+
+    @staticmethod
+    def _append_intent_sequences(
+        lines: List[str],
+        intent_sequences: List[IntentSequence],
+        indent: str = "  ",
+    ) -> None:
+        if not intent_sequences:
+            return
+        lines.append(f"{indent}Intent sequences:")
+        for idx, seq in enumerate(intent_sequences[:_MAX_GUIDE_SEQUENCES], 1):
+            desc = seq.description or "Operation"
+            seq_id = seq.id or ""
+            label = f"{idx}. {desc}"
+            if seq_id:
+                label += f" (id: {seq_id})"
+            lines.append(f"{indent}  {label}")
+
+            if seq.causes_navigation and seq.navigation_target_state_id:
+                lines.append(f"{indent}     navigates_to: {seq.navigation_target_state_id}")
+
+            if seq.intents:
+                lines.append(f"{indent}     intents:")
+                for intent in seq.intents[:_MAX_GUIDE_INTENTS]:
+                    intent_line = MemoryToolkit._format_intent_brief(intent)
+                    if intent_line:
+                        lines.append(f"{indent}       - {intent_line}")
+            else:
+                lines.append(f"{indent}     intents: (none)")
+
+        remaining = len(intent_sequences) - _MAX_GUIDE_SEQUENCES
+        if remaining > 0:
+            lines.append(f"{indent}  ... ({remaining} more sequences)")
+
+    @staticmethod
     def format_cognitive_phrase(phrase: CognitivePhrase) -> str:
         """Format CognitivePhrase for LLM context.
 
@@ -1063,6 +1126,10 @@ class MemoryToolkit(BaseToolkit):
                 lines.append(f"Step {step.index}: {state.description}")
                 if state.page_url:
                     lines.append(f"  URL: {state.page_url}")
+                if state.intent_sequences:
+                    MemoryToolkit._append_intent_sequences(
+                        lines, state.intent_sequences, indent="  "
+                    )
 
                 # Navigation to next
                 if step.navigation_action_id:
@@ -1072,16 +1139,37 @@ class MemoryToolkit(BaseToolkit):
                         if action.trigger and action.trigger.get("text"):
                             nav_desc += f" (click \"{action.trigger['text']}\")"
                         lines.append(f"  -> {nav_desc}")
+                        trigger_line = MemoryToolkit._format_action_trigger(action)
+                        if trigger_line:
+                            lines.append(f"     trigger: {trigger_line}")
+                        if action.trigger_sequence_id:
+                            lines.append(
+                                f"     trigger_sequence_id: {action.trigger_sequence_id}"
+                            )
         else:
             # Fallback: list states and actions
             for i, state in enumerate(phrase.states, 1):
                 lines.append(f"Step {i}: {state.description}")
                 if state.page_url:
                     lines.append(f"  URL: {state.page_url}")
+                if state.intent_sequences:
+                    MemoryToolkit._append_intent_sequences(
+                        lines, state.intent_sequences, indent="  "
+                    )
 
                 if i <= len(phrase.actions):
                     action = phrase.actions[i - 1]
-                    lines.append(f"  -> {action.description or 'Next'}")
+                    nav_desc = action.description or "Next"
+                    if action.trigger and action.trigger.get("text"):
+                        nav_desc += f" (click \"{action.trigger['text']}\")"
+                    lines.append(f"  -> {nav_desc}")
+                    trigger_line = MemoryToolkit._format_action_trigger(action)
+                    if trigger_line:
+                        lines.append(f"     trigger: {trigger_line}")
+                    if action.trigger_sequence_id:
+                        lines.append(
+                            f"     trigger_sequence_id: {action.trigger_sequence_id}"
+                        )
 
         return "\n".join(lines)
 
@@ -1101,6 +1189,10 @@ class MemoryToolkit(BaseToolkit):
             lines.append(f"Step {i}: {state.description}")
             if state.page_url:
                 lines.append(f"  URL: {state.page_url}")
+            if state.intent_sequences:
+                MemoryToolkit._append_intent_sequences(
+                    lines, state.intent_sequences, indent="  "
+                )
 
             # Show action to next state
             if i <= len(actions):
@@ -1109,6 +1201,13 @@ class MemoryToolkit(BaseToolkit):
                 if action.trigger and action.trigger.get("text"):
                     nav_desc += f" (click \"{action.trigger['text']}\")"
                 lines.append(f"  -> {nav_desc}")
+                trigger_line = MemoryToolkit._format_action_trigger(action)
+                if trigger_line:
+                    lines.append(f"     trigger: {trigger_line}")
+                if action.trigger_sequence_id:
+                    lines.append(
+                        f"     trigger_sequence_id: {action.trigger_sequence_id}"
+                    )
 
         return "\n".join(lines)
 
@@ -1205,6 +1304,7 @@ class MemoryToolkit(BaseToolkit):
         intent_type = intent.type.lower()
         role = intent.element_role or ""
         text = intent.text or ""
+        attrs = intent.attributes if isinstance(intent.attributes, dict) else {}
 
         if intent_type in ["click", "clickelement"]:
             if role and text:
@@ -1217,7 +1317,15 @@ class MemoryToolkit(BaseToolkit):
             target = text or role or "field"
             return f"- type in {target}"
         elif intent_type in ["scroll", "scrolldown", "scrollup"]:
-            direction = "down" if "down" in intent_type else "up" if "up" in intent_type else ""
+            direction = attrs.get("scroll_direction") or (
+                "down" if "down" in intent_type else "up" if "up" in intent_type else ""
+            )
+            distance = attrs.get("scroll_distance")
+            if distance is not None and str(distance) != "":
+                distance_str = str(distance)
+                if distance_str.isdigit():
+                    distance_str = f"{distance_str}px"
+                return f"- scroll {direction} {distance_str}".strip()
             return f"- scroll {direction}".strip()
 
         return ""
@@ -1226,6 +1334,7 @@ class MemoryToolkit(BaseToolkit):
     def _format_intent(intent: Intent) -> str:
         """Format single intent for display."""
         intent_type = intent.type.lower()
+        attrs = intent.attributes if isinstance(intent.attributes, dict) else {}
 
         if intent_type in ["click", "clickelement"]:
             if intent.text:
@@ -1235,7 +1344,18 @@ class MemoryToolkit(BaseToolkit):
         elif intent_type in ["type", "input", "typetext"]:
             return f"- Type: \"{intent.value or intent.text or ''}\""
         elif intent_type in ["scroll", "scrolldown", "scrollup"]:
-            return f"- Scroll: {intent.text or 'page'}"
+            direction = attrs.get("scroll_direction") or (
+                "down" if "down" in intent_type else "up" if "up" in intent_type else ""
+            )
+            distance = attrs.get("scroll_distance")
+            if distance is not None and str(distance) != "":
+                distance_str = str(distance)
+                if distance_str.isdigit():
+                    distance_str = f"{distance_str}px"
+                return f"- Scroll: {direction} {distance_str}".strip()
+            if direction:
+                return f"- Scroll: {direction}"
+            return "- Scroll"
         elif intent_type in ["navigate", "goto"]:
             return f"- Navigate: {intent.value or intent.text or ''}"
         else:

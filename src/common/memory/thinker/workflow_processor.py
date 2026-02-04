@@ -587,6 +587,16 @@ class WorkflowProcessor:
 
             return normalized
 
+        # Ref-less scroll events from behavior recorder may still carry
+        # direction/amount at top level; normalize them here as fallback.
+        if event.get("type", "").lower() == "scroll":
+            if "direction" in event and "scroll_direction" not in normalized:
+                normalized["scroll_direction"] = event.get("direction")
+            if "amount" in event and "scroll_distance" not in normalized:
+                normalized["scroll_distance"] = event.get("amount")
+            if "distance" in event and "scroll_distance" not in normalized:
+                normalized["scroll_distance"] = event.get("distance")
+
         # Old format: xpath-based (nested element/data objects)
         # Flatten element object
         element = event.get("element", {})
@@ -917,6 +927,15 @@ class WorkflowProcessor:
             intent_type = event.get("type", "Unknown")
 
         try:
+            attributes: Dict[str, Any] = {}
+            if event_type == "scroll":
+                if event.get("scroll_direction") is not None:
+                    attributes["scroll_direction"] = event.get("scroll_direction")
+                if event.get("scroll_distance") is not None:
+                    attributes["scroll_distance"] = event.get("scroll_distance")
+                if event.get("height_change") is not None:
+                    attributes["height_change"] = event.get("height_change")
+
             intent = Intent(
                 type=intent_type,
                 timestamp=event.get("timestamp", 0),
@@ -929,6 +948,7 @@ class WorkflowProcessor:
                 # Page information
                 page_url=event.get("url", ""),
                 page_title=event.get("title", ""),
+                attributes=attributes,
             )
             return intent
         except Exception as e:
