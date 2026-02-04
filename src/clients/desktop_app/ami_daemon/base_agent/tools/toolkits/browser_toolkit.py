@@ -663,6 +663,9 @@ class BrowserToolkit(BaseToolkit):
             session = await self._get_session_with_page()
             await session.visit(url)
             return await self._build_action_result(f"Navigated to {url}")
+        except BrowserPageClosedError as e:
+            # Return friendly message to Agent - page was recovered but needs re-navigation
+            return str(e)
         except Exception as e:
             logger.error(f"browser_visit_page error: {e}")
             return f"Error visiting page: {e}"
@@ -729,6 +732,9 @@ class BrowserToolkit(BaseToolkit):
                     f"Click failed: {result.get('message')}",
                     wait_for_stability=False,
                 )
+        except BrowserPageClosedError as e:
+            # Return friendly message to Agent - page was recovered but needs re-navigation
+            return str(e)
         except Exception as e:
             logger.error(f"browser_click error: {e}")
             return f"Error clicking element: {e}"
@@ -777,6 +783,9 @@ class BrowserToolkit(BaseToolkit):
                 return await self._build_action_result("Typed text successfully")
             else:
                 return await self._build_action_result(f"Type failed: {result.get('message')}")
+        except BrowserPageClosedError as e:
+            # Return friendly message to Agent - page was recovered but needs re-navigation
+            return str(e)
         except Exception as e:
             logger.error(f"browser_type error: {e}")
             return f"Error typing text: {e}"
@@ -816,6 +825,9 @@ class BrowserToolkit(BaseToolkit):
                 return await self._build_action_result("Pressed Enter successfully")
             else:
                 return await self._build_action_result(f"Enter failed: {result.get('message')}")
+        except BrowserPageClosedError as e:
+            # Return friendly message to Agent - page was recovered but needs re-navigation
+            return str(e)
         except Exception as e:
             logger.error(f"browser_enter error: {e}")
             return f"Error pressing Enter: {e}"
@@ -837,6 +849,9 @@ class BrowserToolkit(BaseToolkit):
             session = await self._get_session_with_page()
             await session.exec_action({"type": "back"})
             return await self._build_action_result("Navigated back")
+        except BrowserPageClosedError as e:
+            # Return friendly message to Agent - page was recovered but needs re-navigation
+            return str(e)
         except Exception as e:
             logger.error(f"browser_back error: {e}")
             return f"Error navigating back: {e}"
