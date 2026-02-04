@@ -1,13 +1,25 @@
 #!/usr/bin/env python3
 """
-Interactive Browser Test Script
+Interactive Browser Test Script (V3)
 
 This script allows you to test browser tools interactively,
 simulating what the LLM can see and do.
 
+V3 Features:
+- Daemon session with browser reuse
+- Internal tab group management
+
 Usage:
     cd /path/to/2ami
-    python scripts/browser_interactive_test.py [--headless]
+    source .venv/bin/activate
+    python scripts/browser_interactive_test.py [--headless] [--session-id <id>]
+
+Options:
+    --headless              Run browser in headless mode
+    --session-id <id>       Session ID for the toolkit (default: "daemon")
+                            Use "daemon" to see all tabs including user-opened ones
+                            Use any other ID (e.g., "task-001") to simulate a task session
+                            which only sees its own tabs
 
 Commands:
     visit <url>           - Navigate to URL
@@ -22,17 +34,26 @@ Commands:
     switch <tab_id>       - Switch to tab
     new_tab [url]         - Open new tab
     close_tab <tab_id>    - Close tab
-    links [ref1,ref2,...] - Get links info
-    console               - View console logs
+    links                 - Get page snapshot with all links
+    console               - View recent console logs
     exec <js_code>        - Execute JavaScript
     back                  - Go back
     forward               - Go forward
+    info                  - Get page info (URL, title, viewport)
+    status                - Show browser session status
     help                  - Show this help
     quit/exit             - Exit
+
+Tab Group commands (internal tracking):
+    group_create <task_id> [title] - Create a Tab Group
+    group_list                     - List all Tab Groups
+    group_tab <task_id> [url]      - Create tab in a group
+    group_close <task_id>          - Close a Tab Group
 
 Debug commands:
     debug_session         - Show raw session info
     debug_click <ref>     - Show raw click result (bypassing toolkit)
+    debug_groups          - Show Tab Groups internal state
 
 The script shows exactly what the LLM receives after each action.
 """
@@ -74,14 +95,18 @@ class InteractiveBrowserTester:
     COMMANDS = [
         "visit", "click", "click_text", "select", "type", "enter", "scroll",
         "snapshot", "tabs", "switch", "new_tab", "close_tab", "links",
-        "console", "exec", "back", "forward", "info", "help",
-        "debug_session", "debug_click", "debug_snapshot",
+        "console", "exec", "back", "forward", "info", "status", "help",
+        # Tab Group commands (internal tracking)
+        "group_create", "group_list", "group_tab", "group_close",
+        # Debug commands
+        "debug_session", "debug_click", "debug_snapshot", "debug_groups",
         "raw_click", "raw_ctrl_click",
         "quit", "exit", "q"
     ]
 
-    def __init__(self, headless: bool = False):
+    def __init__(self, headless: bool = False, session_id: str = "daemon"):
         self.headless = headless
+        self.session_id = session_id
         self.session: HybridBrowserSession = None
         self.toolkit: BrowserToolkit = None
 
@@ -94,33 +119,54 @@ class InteractiveBrowserTester:
         )
 
     async def setup(self):
-        """Initialize browser session and toolkit."""
+        """Initialize browser session and toolkit.
+
+        Always uses daemon session mode to ensure browser reuse,
+        matching production behavior.
+        """
         print("\n" + "="*60)
-        print("Starting browser session...")
+        print("Starting browser session (daemon mode)...")
         print(f"  Headless: {self.headless}")
+        print(f"  Session ID: {self.session_id}")
         print("="*60 + "\n")
 
-        # Create browser session
-        self.session = HybridBrowserSession(
+        # Use a persistent user_data_dir for browser reuse
+        user_data_dir = str(Path.home() / ".ami" / "browser-profile")
+        print(f"  Using browser profile: {user_data_dir}")
+
+        print("Starting daemon session...")
+        self.session = await HybridBrowserSession.start_daemon_session(
+            config={
+                "browser": {
+                    "headless": self.headless,
+                    "auto_restart": True,
+                    "user_data_dir": user_data_dir,
+                }
+            },
+        )
+        print("  Daemon session started")
+
+        # Create toolkit with specified session_id
+        # If session_id is "daemon", toolkit uses daemon session directly
+        # Otherwise, toolkit creates a task session that only sees its own tabs
+        self.toolkit = BrowserToolkit(
+            session_id=self.session_id,
             headless=self.headless,
-            stealth=True,
         )
 
-        # Ensure browser is started
-        await self.session.ensure_browser()
-
-        # Create toolkit with session
-        self.toolkit = BrowserToolkit(session=self.session)
+        if self.session_id == "daemon":
+            print("  Using daemon session (sees all tabs including user-opened)")
+        else:
+            print(f"  Using task session '{self.session_id}' (only sees own tabs)")
 
         print("Browser ready!")
         print("\nType 'help' for available commands.\n")
 
     async def cleanup(self):
         """Close browser session."""
-        if self.session:
-            print("\nClosing browser...")
-            await self.session.close()
-            print("Browser closed.")
+        print("\nStopping daemon session...")
+        await HybridBrowserSession.stop_daemon_session()
+        print("Daemon session stopped.")
 
     def print_result(self, title: str, result: str):
         """Print result in a formatted box."""
@@ -239,23 +285,34 @@ class InteractiveBrowserTester:
                     self.print_result("LLM sees after close_tab", result)
 
             elif command == "links":
-                refs = [r.strip() for r in args.split(",")] if args else []
-                print(f"\n>>> Getting links info for refs: {refs if refs else 'all'}")
-                result = await self.toolkit.browser_get_page_links(refs=refs)
+                print("\n>>> Getting page snapshot with links")
+                result = await self.toolkit.browser_get_page_snapshot(include_links=True)
                 self.print_result("LLM sees (links)", result)
 
             elif command == "console":
                 print("\n>>> Getting console logs")
-                result = await self.toolkit.browser_console_view()
-                self.print_result("LLM sees (console)", result)
+                try:
+                    logs = await self.session.get_console_logs()
+                    recent_logs = list(logs)[-20:]  # Last 20 entries
+                    if recent_logs:
+                        result = "\n".join([f"[{log['type']}] {log['text']}" for log in recent_logs])
+                    else:
+                        result = "(No console logs)"
+                    self.print_result("Console logs", result)
+                except Exception as e:
+                    print(f"  Error: {e}")
 
             elif command == "exec":
                 if not args:
                     print("Usage: exec <javascript_code>")
                 else:
                     print(f"\n>>> Executing JS: {args[:50]}...")
-                    result = await self.toolkit.browser_console_exec(code=args)
-                    self.print_result("LLM sees after exec", result)
+                    try:
+                        page = await self.session.get_page()
+                        result = await page.evaluate(args)
+                        self.print_result("JS execution result", str(result))
+                    except Exception as e:
+                        print(f"  Error: {e}")
 
             elif command == "back":
                 print("\n>>> Going back")
@@ -269,10 +326,82 @@ class InteractiveBrowserTester:
 
             elif command == "info":
                 print("\n>>> Getting page info")
-                result = await self.toolkit.browser_get_page_info()
-                self.print_result("LLM sees (page info)", result)
+                try:
+                    page = await self.session.get_page()
+                    url = page.url
+                    title = await page.title()
+                    viewport = page.viewport_size
+                    result = f"URL: {url}\nTitle: {title}\nViewport: {viewport}"
+                    self.print_result("Page info", result)
+                except Exception as e:
+                    print(f"  Error: {e}")
 
-            # Debug commands - show raw internal state
+            # =========================================================
+            # V3 Tab Group commands
+            # =========================================================
+            elif command == "group_create":
+                group_parts = args.split(maxsplit=1)
+                if not group_parts:
+                    print("Usage: group_create <task_id> [title]")
+                else:
+                    task_id = group_parts[0]
+                    title = group_parts[1] if len(group_parts) > 1 else None
+                    print(f"\n>>> Creating Tab Group for task {task_id}" + (f" with title '{title}'" if title else ""))
+                    group = await self.session.create_tab_group(task_id, title)
+                    print(f"  Created: {group.title} (color={group.color})")
+
+            elif command == "group_list":
+                print("\n>>> Listing Tab Groups")
+                groups_info = self.session.get_tab_groups_info()
+                if not groups_info:
+                    print("  No Tab Groups")
+                else:
+                    for g in groups_info:
+                        print(f"  [{g['color']}] {g['title']} ({g['tab_count']} tabs)")
+                        print(f"       task_id: {g['task_id']}")
+                        print(f"       chrome_group_id: {g['chrome_group_id']}")
+                        for t in g['tabs']:
+                            marker = "*" if t['is_current'] else " "
+                            print(f"       {marker} {t['tab_id']}: {t['url']}")
+
+            elif command == "group_tab":
+                group_parts = args.split(maxsplit=1)
+                if not group_parts:
+                    print("Usage: group_tab <task_id> [url]")
+                else:
+                    task_id = group_parts[0]
+                    url = group_parts[1] if len(group_parts) > 1 else None
+                    print(f"\n>>> Creating tab in group {task_id}" + (f" with URL: {url}" if url else ""))
+                    tab_id, page = await self.session.create_tab_in_group(task_id, url)
+                    print(f"  Created tab: {tab_id}")
+                    print(f"  URL: {page.url}")
+
+            elif command == "group_close":
+                if not args:
+                    print("Usage: group_close <task_id>")
+                else:
+                    print(f"\n>>> Closing Tab Group for task {args}")
+                    closed = await self.session.close_tab_group(args)
+                    print(f"  Closed: {closed}")
+
+            # =========================================================
+            # Daemon status command
+            # =========================================================
+            elif command == "status":
+                print("\n>>> Browser session status")
+                daemon = HybridBrowserSession.get_daemon_session()
+                ext_bridge = HybridBrowserSession.get_extension_bridge()
+                print(f"  Daemon session: {'Active' if daemon else 'Not running'}")
+                print(f"  Extension bridge: {'Connected' if (ext_bridge and ext_bridge.is_connected) else 'Not connected'}")
+                if daemon:
+                    print(f"  Browser PID: {HybridBrowserSession._browser_pid}")
+                    print(f"  CDP URL: {HybridBrowserSession._cdp_url}")
+                    print(f"  Tab Groups: {len(daemon._tab_groups)}")
+                    print(f"  Pages: {len(daemon._pages)}")
+
+            # =========================================================
+            # Debug commands
+            # =========================================================
             elif command == "debug_session":
                 print("\n>>> Debug: Session internal state")
                 print(f"  Session object: {self.session}")
@@ -286,6 +415,18 @@ class InteractiveBrowserTester:
                 print(f"  get_tab_info(): {tab_info}")
                 current = await self.session.get_current_tab_id()
                 print(f"  get_current_tab_id(): {current}")
+
+            elif command == "debug_groups":
+                print("\n>>> Debug: Tab Groups internal state")
+                print(f"  _tab_groups: {list(self.session._tab_groups.keys())}")
+                print(f"  _color_index: {self.session._color_index}")
+                for task_id, group in self.session._tab_groups.items():
+                    print(f"  [{task_id}]:")
+                    print(f"    title: {group.title}")
+                    print(f"    color: {group.color}")
+                    print(f"    chrome_group_id: {group.chrome_group_id}")
+                    print(f"    tabs: {list(group.tabs.keys())}")
+                    print(f"    current_tab_id: {group.current_tab_id}")
 
             elif command == "debug_click":
                 if not args:
@@ -390,7 +531,7 @@ class InteractiveBrowserTester:
         await self.setup()
 
         print("="*60)
-        print("Interactive Browser Test")
+        print("Interactive Browser Test (V3)")
         print("="*60)
         print("\nThis simulates what the LLM can see and do with the browser.")
         print("Every result shows exactly what would be returned to the LLM.\n")
@@ -398,9 +539,14 @@ class InteractiveBrowserTester:
         print("  - Arrow keys: navigate command history (up/down) and edit (left/right)")
         print("  - Tab: auto-complete commands")
         print("  - History is saved across sessions\n")
+        print("V3 Features:")
+        print("  - Browser reuse via daemon session (single browser instance)")
+        print("  - Internal Tab Groups: group_create, group_tab, group_list, group_close\n")
         print("Tips:")
+        print("  - Use 'status' to see browser session status")
         print("  - Use 'debug_click <ref>' to see raw click results")
         print("  - Use 'debug_session' to see internal tab state")
+        print("  - Use 'debug_groups' to see Tab Groups state")
         print("  - Use 'tabs' to see what LLM knows about tabs\n")
 
         try:
@@ -419,16 +565,19 @@ class InteractiveBrowserTester:
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Interactive Browser Test")
+    parser = argparse.ArgumentParser(description="Interactive Browser Test (V3)")
     parser.add_argument("--headless", action="store_true", help="Run browser in headless mode")
     parser.add_argument("--no-debug", action="store_true", help="Disable debug logging")
+    parser.add_argument("--session-id", "-s", default="daemon",
+                        help="Session ID for the toolkit (default: daemon). "
+                             "Use 'daemon' to see all tabs, or any other ID to simulate a task session.")
     args = parser.parse_args()
 
     if args.no_debug:
         os.environ["AMI_DEBUG"] = ""
         logging.getLogger().setLevel(logging.INFO)
 
-    tester = InteractiveBrowserTester(headless=args.headless)
+    tester = InteractiveBrowserTester(headless=args.headless, session_id=args.session_id)
     await tester.run()
 
 

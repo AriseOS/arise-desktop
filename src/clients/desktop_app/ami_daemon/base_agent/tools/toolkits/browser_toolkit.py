@@ -7,9 +7,10 @@ browser operations. Ported from CAMEL-AI/Eigent project architecture.
 All methods are async to work properly in async execution contexts.
 """
 
+import asyncio
 import base64
 import logging
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from .base_toolkit import BaseToolkit, FunctionTool
 from ...events import listen_toolkit
@@ -19,6 +20,15 @@ if TYPE_CHECKING:
     from ..eigent_browser.browser_session import HybridBrowserSession
 
 logger = logging.getLogger(__name__)
+
+
+class BrowserPageClosedError(Exception):
+    """Raised when the browser page was closed and had to be recovered.
+
+    This exception carries a user-friendly message that should be returned
+    to the Agent so it knows to re-navigate to the target page.
+    """
+    pass
 
 
 class BrowserToolkit(BaseToolkit):
@@ -162,7 +172,7 @@ class BrowserToolkit(BaseToolkit):
             return
 
         try:
-            session = await self._get_session()
+            session = await self._get_session_with_page()
             page = await session.get_page()
             current_url = page.url
             self._agent.set_current_url(current_url)
@@ -178,11 +188,11 @@ class BrowserToolkit(BaseToolkit):
         we don't cache session references - each toolkit instance independently
         retrieves the shared session via the singleton registry.
 
-        Returns:
-            HybridBrowserSession instance (shared singleton for this session_id).
+        Note: This returns the session even if _page is closed. Methods that need
+        a valid page should call _ensure_valid_page() separately.
 
-        Raises:
-            RuntimeError: If session cannot be created.
+        Returns:
+            HybridBrowserSession instance (the actual singleton, not a copy).
         """
         from ..eigent_browser.browser_session import HybridBrowserSession
 
@@ -195,6 +205,189 @@ class BrowserToolkit(BaseToolkit):
             stealth=True,
         )
         await session.ensure_browser()
+
+        # Return the actual singleton instance, not a copy
+        # This ensures that any updates to _page are reflected globally
+        singleton = await HybridBrowserSession._get_or_create_instance(session)
+        return singleton
+
+    async def _ensure_valid_page(self, session: "HybridBrowserSession") -> Tuple[bool, Optional[str]]:
+        """Ensure session has a valid (non-closed) page.
+
+        If current _page is closed, tries to switch to another valid page in _pages.
+        If no valid pages exist, creates a new one.
+        If browser/context is closed, restarts the browser (lazy mode).
+
+        Uses retry logic to handle race conditions where user closes tabs quickly.
+
+        Args:
+            session: The browser session to check/fix.
+
+        Returns:
+            Tuple of (success, recovery_message):
+            - success: True if a valid page is available
+            - recovery_message: If not None, indicates page was recovered and Agent
+              should be notified to re-navigate. None means page was already valid.
+        """
+        max_retries = 3
+        browser_was_restarted = False
+        page_was_recovered = False
+
+        for attempt in range(max_retries):
+            # Check if browser/context is still valid
+            browser_valid = (
+                session._browser is not None
+                and session._context is not None
+                and session._browser.is_connected()
+            )
+            if not browser_valid:
+                logger.info("Browser/context is closed, restarting browser (lazy mode)")
+                try:
+                    await self._restart_browser(session)
+                    browser_was_restarted = True
+                except Exception as e:
+                    logger.error(f"Failed to restart browser: {e}")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(1)
+                        continue
+                    return (False, None)
+
+            # Check if current page is valid
+            if session._page and not session._page.is_closed():
+                # Page is valid - check if we had to recover
+                if browser_was_restarted or page_was_recovered:
+                    return (True, "The browser page was closed unexpectedly. A new page has been created. Please use browser_visit_page to navigate to your target URL.")
+                return (True, None)
+
+            # Try to find another valid page in _pages
+            found_valid = False
+            for tab_id, page in list(session._pages.items()):
+                if not page.is_closed():
+                    logger.info(f"Current page was closed, switching to existing tab {tab_id}")
+                    session._page = page
+                    session._current_tab_id = tab_id
+
+                    # Re-initialize snapshot and executor with the existing page
+                    from ..eigent_browser.page_snapshot import PageSnapshot
+                    from ..eigent_browser.action_executor import ActionExecutor
+                    session.snapshot = PageSnapshot(page)
+                    session.executor = ActionExecutor(
+                        page,
+                        session,
+                        default_timeout=session._default_timeout,
+                        short_timeout=session._short_timeout,
+                    )
+                    found_valid = True
+                    page_was_recovered = True
+                    break
+
+            if found_valid:
+                # Verify the page is still valid after switching
+                if session._page and not session._page.is_closed():
+                    return (True, "Your previous browser tab was closed. Switched to another existing tab. Please check if this is the correct page or use browser_visit_page to navigate to your target URL.")
+                else:
+                    logger.warning(f"Switched page was closed immediately, retrying (attempt {attempt + 1}/{max_retries})")
+                    continue
+
+            # No valid pages exist - try to create a new one
+            if session._context:
+                logger.info("All pages closed, creating new page in existing context")
+                try:
+                    # Create new page - _on_new_page event will auto-register it
+                    new_page = await session._context.new_page()
+
+                    # Wait a moment for the event handler to register the page
+                    await asyncio.sleep(0.1)
+
+                    # Verify page is still valid (user might have closed it already)
+                    if new_page.is_closed():
+                        logger.warning(f"New page was closed immediately, retrying (attempt {attempt + 1}/{max_retries})")
+                        continue
+
+                    # Find the newly registered page in _pages
+                    for tab_id, registered_page in session._pages.items():
+                        if registered_page is new_page:
+                            session._page = new_page
+                            session._current_tab_id = tab_id
+
+                            # Re-initialize snapshot and executor
+                            from ..eigent_browser.page_snapshot import PageSnapshot
+                            from ..eigent_browser.action_executor import ActionExecutor
+                            session.snapshot = PageSnapshot(new_page)
+                            session.executor = ActionExecutor(
+                                new_page,
+                                session,
+                                default_timeout=session._default_timeout,
+                                short_timeout=session._short_timeout,
+                            )
+
+                            new_page.set_default_navigation_timeout(session._navigation_timeout)
+                            new_page.set_default_timeout(session._navigation_timeout)
+                            page_was_recovered = True
+                            return (True, "The browser page was closed. A new blank page has been created. Please use browser_visit_page to navigate to your target URL.")
+
+                    logger.error("New page was not registered by event handler")
+                except Exception as e:
+                    logger.error(f"Failed to create new page: {e}")
+                    # Context might be invalid, mark for restart and retry
+                    session._context = None
+                    continue
+
+        logger.error(f"Failed to get valid page after {max_retries} attempts")
+        return (False, None)
+
+    async def _restart_browser(self, session: "HybridBrowserSession") -> None:
+        """Restart browser when it's been closed.
+
+        This implements lazy mode - browser is only restarted when needed.
+        """
+        from ..eigent_browser.browser_session import HybridBrowserSession
+
+        logger.info("Restarting browser...")
+
+        # Clear old state
+        session._page = None
+        session._pages = {}
+        session._console_logs = {}
+        session._context = None
+        session._browser = None
+        if session._playwright:
+            try:
+                await session._playwright.stop()
+            except Exception:
+                pass
+        session._playwright = None
+        session._browser_launcher = None
+        session._tab_groups = {}
+
+        # Re-initialize browser
+        await session._ensure_browser_inner()
+
+        # Update lock file if this is daemon session
+        if session is HybridBrowserSession._daemon_session:
+            await HybridBrowserSession._write_lock_file(session)
+
+        logger.info("Browser restarted successfully")
+
+    async def _get_session_with_page(self) -> "HybridBrowserSession":
+        """Get browser session and ensure it has a valid page.
+
+        This is a convenience method for operations that require a valid page.
+        It combines _get_session() and _ensure_valid_page().
+
+        Returns:
+            HybridBrowserSession instance with a valid page.
+
+        Raises:
+            BrowserPageClosedError: If page was closed and had to be recovered.
+            RuntimeError: If session cannot be created or no valid page available.
+        """
+        session = await self._get_session()
+        page_was_recovered, recovery_message = await self._ensure_valid_page(session)
+        if not page_was_recovered and not (session._page and not session._page.is_closed()):
+            raise RuntimeError("Could not get a valid browser page")
+        if recovery_message:
+            raise BrowserPageClosedError(recovery_message)
         return session
 
     def _ensure_session(self) -> bool:
@@ -210,8 +403,9 @@ class BrowserToolkit(BaseToolkit):
         """
         if not self._return_snapshot:
             return ""
-        session = await self._get_session()
-        if not session:
+        try:
+            session = await self._get_session_with_page()
+        except Exception:
             return ""
         try:
             snapshot = await session.get_snapshot(force_refresh=force_refresh)
@@ -229,8 +423,9 @@ class BrowserToolkit(BaseToolkit):
         Returns:
             Formatted string with current page URL and title.
         """
-        session = await self._get_session()
-        if not session:
+        try:
+            session = await self._get_session_with_page()
+        except Exception:
             return ""
         try:
             page = await session.get_page()
@@ -247,8 +442,9 @@ class BrowserToolkit(BaseToolkit):
         Returns:
             Page title string, or empty string if unavailable.
         """
-        session = await self._get_session()
-        if not session:
+        try:
+            session = await self._get_session_with_page()
+        except Exception:
             return ""
         try:
             page = await session.get_page()
@@ -273,8 +469,9 @@ class BrowserToolkit(BaseToolkit):
         Args:
             timeout_ms: Timeout in milliseconds. If None, uses session's network_idle_timeout.
         """
-        session = await self._get_session()
-        if not session:
+        try:
+            session = await self._get_session_with_page()
+        except Exception:
             return
 
         # Use session's configured timeout if not specified
@@ -342,8 +539,9 @@ class BrowserToolkit(BaseToolkit):
         if not hasattr(self, '_task_state') or self._task_state is None:
             return
 
-        session = await self._get_session()
-        if not session:
+        try:
+            session = await self._get_session_with_page()
+        except Exception:
             return
 
         try:
@@ -462,7 +660,7 @@ class BrowserToolkit(BaseToolkit):
             return "Error: Browser session not initialized"
 
         try:
-            session = await self._get_session()
+            session = await self._get_session_with_page()
             await session.visit(url)
             return await self._build_action_result(f"Navigated to {url}")
         except Exception as e:
@@ -499,7 +697,7 @@ class BrowserToolkit(BaseToolkit):
             return "Error: Must provide ref, element_text, or selector"
 
         try:
-            session = await self._get_session()
+            session = await self._get_session_with_page()
             action = {"type": "click"}
             if ref:
                 action["ref"] = ref
@@ -564,7 +762,7 @@ class BrowserToolkit(BaseToolkit):
             return "Error: Must provide ref or selector"
 
         try:
-            session = await self._get_session()
+            session = await self._get_session_with_page()
             action = {"type": "type", "text": input_text}
             if ref:
                 action["ref"] = ref
@@ -605,7 +803,7 @@ class BrowserToolkit(BaseToolkit):
             return "Error: Browser session not initialized"
 
         try:
-            session = await self._get_session()
+            session = await self._get_session_with_page()
             action = {"type": "enter"}
             if ref:
                 action["ref"] = ref
@@ -636,7 +834,7 @@ class BrowserToolkit(BaseToolkit):
             return "Error: Browser session not initialized"
 
         try:
-            session = await self._get_session()
+            session = await self._get_session_with_page()
             await session.exec_action({"type": "back"})
             return await self._build_action_result("Navigated back")
         except Exception as e:
@@ -657,7 +855,7 @@ class BrowserToolkit(BaseToolkit):
             return "Error: Browser session not initialized"
 
         try:
-            session = await self._get_session()
+            session = await self._get_session_with_page()
             await session.exec_action({"type": "forward"})
             return await self._build_action_result("Navigated forward")
         except Exception as e:
@@ -686,7 +884,7 @@ class BrowserToolkit(BaseToolkit):
             return "Error: Browser session not initialized"
 
         try:
-            session = await self._get_session()
+            session = await self._get_session_with_page()
             action = {
                 "type": "scroll",
                 "direction": direction,
@@ -725,7 +923,7 @@ class BrowserToolkit(BaseToolkit):
             return "Error: Must provide ref or selector"
 
         try:
-            session = await self._get_session()
+            session = await self._get_session_with_page()
             action = {"type": "select", "value": value}
             if ref:
                 action["ref"] = ref
@@ -772,7 +970,7 @@ class BrowserToolkit(BaseToolkit):
             return "Error: Browser session not initialized"
 
         try:
-            session = await self._get_session()
+            session = await self._get_session_with_page()
             # Always get page URL and title
             page = await session.get_page()
             url = page.url
@@ -880,7 +1078,7 @@ class BrowserToolkit(BaseToolkit):
             return "Error: keys must be a non-empty list of strings"
 
         try:
-            session = await self._get_session()
+            session = await self._get_session_with_page()
             action = {"type": "press_key", "keys": keys}
             result = await session.exec_action(action)
 
@@ -926,7 +1124,7 @@ class BrowserToolkit(BaseToolkit):
             return f"Error: click_type must be 'click', 'dblclick', or 'right_click', got '{click_type}'"
 
         try:
-            session = await self._get_session()
+            session = await self._get_session_with_page()
             action = {
                 "type": "mouse_control",
                 "control": click_type,
@@ -1026,6 +1224,8 @@ class BrowserToolkit(BaseToolkit):
         Creates a new tab and switches to it. If a URL is provided, navigates to that URL.
         This is useful for opening links in new tabs while keeping the original page.
 
+        Bug #19 fix: Uses Tab Group to organize tabs by task (session_id).
+
         Args:
             url: Optional URL to navigate to in the new tab.
 
@@ -1037,7 +1237,17 @@ class BrowserToolkit(BaseToolkit):
 
         try:
             session = await self._get_session()
-            tab_id = await session.create_new_tab(url)
+
+            # Bug #19 fix: Use create_tab_in_group to auto-organize tabs by task
+            # session_id is used as task_id for Tab Group management
+            tab_id, page = await session.create_tab_in_group(
+                task_id=self._session_id,
+                url=url
+            )
+
+            # Switch to the new tab
+            await session.switch_to_tab(tab_id)
+
             page_context = await self._get_page_context()
             tab_info = await self._format_tab_info()
             # Force refresh because new tab has its own window object

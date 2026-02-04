@@ -91,7 +91,6 @@ a = Analysis(
         'src.clients.desktop_app.ami_daemon.base_agent.agents.browser_agent',
         'src.clients.desktop_app.ami_daemon.base_agent.agents.storage_agent',
         'src.clients.desktop_app.ami_daemon.base_agent.agents.variable_agent',
-        'src.clients.desktop_app.ami_daemon.base_agent.tools.browser_session_manager',
         'src.clients.desktop_app.ami_daemon.base_agent.memory.kv_storage',
 
         # Database

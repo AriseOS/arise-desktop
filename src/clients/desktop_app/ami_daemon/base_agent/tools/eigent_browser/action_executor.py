@@ -310,7 +310,10 @@ class ActionExecutor:
                 new_tab_index = await self.session.register_page(new_page)
                 if new_tab_index is not None:
                     await self.session.switch_to_tab(new_tab_index)
-                    self.page = new_page
+                    # Bug #20 fix: Update self.page from session to ensure consistency
+                    # switch_to_tab creates a new ActionExecutor in session.executor,
+                    # but we're still in this method, so sync our page reference
+                    self.page = self.session._page
                 tab_count_after = len(self.session._pages)
                 logger.debug(f"New tab registered: {new_tab_index}, tabs_after={tab_count_after}")
                 details.update({

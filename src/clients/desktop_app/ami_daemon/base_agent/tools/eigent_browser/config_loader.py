@@ -220,7 +220,8 @@ class BrowserConfig:
             '--disable-back-forward-cache',  # Avoid surprises during navigation
             '--disable-breakpad',
             '--disable-client-side-phishing-detection',
-            '--disable-component-extensions-with-background-pages',
+            # Note: removed '--disable-component-extensions-with-background-pages'
+            # as it may interfere with our Manifest V3 extensions that use service workers
             '--disable-component-update',
             '--disable-hang-monitor',
             '--disable-ipc-flooding-protection',

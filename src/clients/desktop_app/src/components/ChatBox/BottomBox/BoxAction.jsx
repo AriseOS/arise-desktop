@@ -2,7 +2,7 @@
  * BoxAction Component
  *
  * Action bar displayed at the bottom of BottomBox.
- * Shows token count, task time, and action buttons (replay, pause/resume).
+ * Shows token count, task time, and action buttons (stop, pause/resume, replay).
  *
  * Ported from Eigent's BoxAction component.
  */
@@ -22,6 +22,8 @@ import Icon from '../../Icons';
  * @param {function} props.onReplay - Callback when replay button is clicked
  * @param {function} props.onPauseResume - Callback for pause/resume
  * @param {boolean} props.pauseResumeLoading - Loading state for pause/resume
+ * @param {function} props.onStop - Callback when stop button is clicked
+ * @param {boolean} props.stopLoading - Loading state for stop action
  */
 function BoxAction({
   tokens = 0,
@@ -32,9 +34,12 @@ function BoxAction({
   onReplay,
   onPauseResume,
   pauseResumeLoading = false,
+  onStop,
+  stopLoading = false,
   className = '',
 }) {
-  // Determine if pause/resume should be shown
+  // Determine if stop/pause/resume should be shown
+  const showStopButton = status === 'running' || status === 'pause';
   const showPauseResume = status === 'running' || status === 'pause';
   const isPaused = status === 'pause';
 
@@ -55,6 +60,25 @@ function BoxAction({
 
       {/* Right: Action Buttons */}
       <div className="box-action-right">
+        {/* Stop Button */}
+        {showStopButton && onStop && (
+          <button
+            className="box-action-btn stop"
+            onClick={onStop}
+            disabled={stopLoading}
+            title="Stop task"
+          >
+            {stopLoading ? (
+              <span className="spinner small"></span>
+            ) : (
+              <>
+                <Icon name="x" size={14} />
+                <span>Stop</span>
+              </>
+            )}
+          </button>
+        )}
+
         {/* Pause/Resume Button */}
         {showPauseResume && onPauseResume && (
           <button

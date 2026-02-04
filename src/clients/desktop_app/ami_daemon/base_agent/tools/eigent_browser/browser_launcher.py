@@ -44,6 +44,7 @@ class BrowserLauncher:
         self._cdp_port: Optional[int] = None
         self._temp_user_data_dir: Optional[Path] = None
         self._reused_existing: bool = False  # Track if we reused an existing Chrome instance
+        self._reused_pid: Optional[int] = None  # PID of reused Chrome instance
 
     async def launch(self) -> str:
         """Launch browser and return CDP URL.
@@ -201,11 +202,14 @@ class BrowserLauncher:
 
                         # Verify the CDP is responding
                         try:
-                            async with aiohttp.ClientSession() as session:
+                            # Use trust_env=False to bypass system proxy for localhost
+                            async with aiohttp.ClientSession(trust_env=False) as session:
                                 async with session.get(f"{cdp_url}/json/version", timeout=2) as resp:
                                     if resp.status == 200:
                                         data = await resp.json()
                                         logger.info(f"Found existing Chrome instance at {cdp_url} (PID {pid_int}): {data.get('Browser', 'unknown')}")
+                                        # Save the PID for later use
+                                        self._reused_pid = pid_int
                                         return cdp_url
                         except Exception as e:
                             logger.debug(f"Existing Chrome CDP not responding: {e}")
@@ -375,7 +379,8 @@ class BrowserLauncher:
                             pass
                     raise RuntimeError(f"Browser process exited unexpectedly with code {self._process.returncode}")
 
-                async with aiohttp.ClientSession() as session:
+                # Use trust_env=False to bypass system proxy for localhost
+                async with aiohttp.ClientSession(trust_env=False) as session:
                     async with session.get(version_url, timeout=2) as resp:
                         if resp.status == 200:
                             data = await resp.json()
@@ -416,6 +421,15 @@ class BrowserLauncher:
         """Get CDP URL if browser is running."""
         if self._cdp_port:
             return f"http://127.0.0.1:{self._cdp_port}"
+        return None
+
+    @property
+    def browser_pid(self) -> Optional[int]:
+        """Get browser PID (either launched or reused)."""
+        if self._process is not None:
+            return self._process.pid
+        if self._reused_existing and self._reused_pid is not None:
+            return self._reused_pid
         return None
 
     @property
