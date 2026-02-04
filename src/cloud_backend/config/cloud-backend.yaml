@@ -141,7 +141,7 @@ graph_store:
   # Neo4j Configuration (used when backend: neo4j)
   uri: neo4j://localhost:7687    # Or use NEO4J_URI env var
   user: neo4j                     # Or use NEO4J_USER env var
-  # password: your_password       # Or use NEO4J_PASSWORD env var
+  password: Ami@2024              # Or use NEO4J_PASSWORD env var
   database: neo4j                 # Or use NEO4J_DATABASE env var
 
   # SurrealDB Configuration (used when backend: surrealdb)

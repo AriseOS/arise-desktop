@@ -29,6 +29,7 @@ camel:
 browser:
   headless: false
   timeout: 30
+  user_data_dir: ${storage.base_path}/browser_data
 
 # LLM Provider Configuration
 # All LLM calls go through Claude Relay Service (CRS)
@@ -40,6 +41,29 @@ llm:
   # Migration: Changed from old API Proxy to CRS
   use_proxy: true
   proxy_url: https://api.ariseos.com/api  # CRS production URL with /api prefix
+
+# Embedding Service Configuration
+# Used for semantic search in Personal Memory
+embedding:
+  provider: openai  # OpenAI-compatible API
+  model: BAAI/bge-m3
+  dimension: 1024
+  api_url: https://api.siliconflow.cn/v1
+  api_key_env: SILICONFLOW_API_KEY  # Read API key from environment variable
+
+# Personal Memory Configuration
+# Local graph database for storing user's operation knowledge
+memory:
+  # SurrealDB connection options:
+  #   - "surrealkv://path" (local embedded, persistent, recommended)
+  #   - "file://path" (local embedded, persistent)
+  #   - "memory://" (in-memory, non-persistent)
+  #   - "ws://host:port" (server mode, for debugging)
+  # Note: rocksdb:// is NOT supported in Python SDK 1.0.8
+  url: file://${storage.base_path}/memory.db
+  # SurrealDB namespace and database
+  namespace: ami
+  database: personal
 
 cloud:
   api_url: http://127.0.0.1:9000  # Local Cloud Backend for development

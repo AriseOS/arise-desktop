@@ -23,8 +23,8 @@ from typing import List
 from urllib.parse import urlparse
 from urllib.parse import urlunparse
 
-from src.cloud_backend.memgraph.ontology.intent_sequence import IntentSequence
-from src.cloud_backend.memgraph.ontology.page_instance import PageInstance
+from src.common.memory.ontology.intent_sequence import IntentSequence
+from src.common.memory.ontology.page_instance import PageInstance
 from .episode_segmenter import EpisodeSegmenter
 from .models import Action
 from .models import Episode

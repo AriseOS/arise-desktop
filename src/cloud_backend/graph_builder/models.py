@@ -20,9 +20,9 @@ from typing import List
 from typing import Optional
 
 # Import memgraph ontology for unified data model
-from src.cloud_backend.memgraph.ontology.state import State
-from src.cloud_backend.memgraph.ontology.intent import Intent
-from src.cloud_backend.memgraph.ontology.action import Action
+from src.common.memory.ontology.state import State
+from src.common.memory.ontology.intent import Intent
+from src.common.memory.ontology.action import Action
 
 
 @dataclass

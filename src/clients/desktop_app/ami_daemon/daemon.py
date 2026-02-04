@@ -71,6 +71,8 @@ from src.clients.desktop_app.ami_daemon.routers.quick_task import router as quic
 from src.clients.desktop_app.ami_daemon.routers.integrations import router as integrations_router
 from src.clients.desktop_app.ami_daemon.routers.settings import router as settings_router
 from src.clients.desktop_app.ami_daemon.routers.session import router as session_router
+# Note: Memory API is proxied to Cloud Backend via cloud_client
+# Local memory service is disabled for now
 
 # Load configuration first (needed for logging setup)
 config = get_config()
@@ -102,6 +104,7 @@ browser_manager: Optional[BrowserManager] = None
 cdp_recorder: Optional[CDPRecorder] = None
 recording_service: Optional[RecordingService] = None
 cloud_client: Optional[CloudClient] = None
+# Memory API is proxied to Cloud Backend via cloud_client (local memory disabled)
 
 # Version check result (populated on startup)
 version_check_result: Optional[Dict[str, Any]] = None
@@ -214,7 +217,7 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 60)
 
     try:
-        # Initialize cloud client first (needed for version check)
+        # Initialize cloud client (needed for version check and Memory API proxy)
         cloud_client = CloudClient(
             api_url=config.get("cloud.api_url", "https://api.ami.com")
         )
@@ -973,15 +976,9 @@ async def analyze_recording(
     """Analyze recording and generate suggested task_description and user_query using AI"""
     try:
         logger.info(f"Analyzing recording: session_id={session_id}")
-        logger.info(f"X-Ami-API-Key header received: {x_ami_api_key[:10] if x_ami_api_key else 'None'}...")
 
-        # Set user API key on cloud client
-        if x_ami_api_key:
-            cloud_client.set_user_api_key(x_ami_api_key)
-            logger.info(f"Set user API key on cloud client: {x_ami_api_key[:10]}...")
-            logger.info(f"CloudClient headers: {dict(cloud_client.client.headers)}")
-        else:
-            logger.warning("No X-Ami-API-Key header provided")
+        if not x_ami_api_key:
+            raise HTTPException(status_code=401, detail="X-Ami-API-Key header required")
 
         # 1. Load recording
         recording_data = storage_manager.get_recording(request.user_id, session_id)
@@ -989,40 +986,20 @@ async def analyze_recording(
             raise HTTPException(status_code=404, detail="Recording not found")
 
         operations = recording_data.get("operations", [])
-        dom_snapshots = recording_data.get("dom_snapshots") or None
         logger.info(f"Loaded {len(operations)} operations from recording")
 
-        # 2. Call Cloud Backend to analyze
-        logger.info("Calling Cloud Backend to analyze recording...")
-        analysis_result = await cloud_client.analyze_recording_operations(
+        # 2. Analyze locally using LLM
+        from src.clients.desktop_app.ami_daemon.services.recording_analyzer import analyze_recording as analyze_ops
+        analysis_result = await analyze_ops(
             operations=operations,
-            user_id=request.user_id
+            api_key=x_ami_api_key,
         )
 
         logger.info(f"Analysis complete:")
         logger.info(f"  Name: {analysis_result.get('name', 'NOT_GENERATED')}")
         logger.info(f"  Task Description: {analysis_result['task_description'][:100]}...")
-        logger.info(f"  User Query: {analysis_result['user_query'][:100]}...")
+        logger.info(f"  User Query: {analysis_result['user_query'][:100] if analysis_result['user_query'] else 'N/A'}...")
         logger.info(f"  Patterns: {analysis_result['patterns']}")
-
-        # Best-effort: upload to Cloud Backend so recordings are stored in ami-server
-        if cloud_client.user_api_key:
-            try:
-                await cloud_client.upload_recording(
-                    operations=operations,
-                    task_description=analysis_result.get("task_description", ""),
-                    user_query=analysis_result.get("user_query"),
-                    user_id=request.user_id,
-                    recording_id=session_id,
-                    dom_snapshots=dom_snapshots,
-                    add_to_memory=False,
-                    generate_embeddings=False
-                )
-                logger.info(f"Auto-uploaded recording to Cloud Backend: {session_id}")
-            except Exception as upload_error:
-                logger.warning(f"Auto-upload to Cloud Backend failed: {upload_error}")
-        else:
-            logger.warning("No API key available; skipping auto-upload to Cloud Backend")
 
         return AnalyzeRecordingResponse(
             name=analysis_result.get("name", "Unnamed Task"),
@@ -1031,6 +1008,8 @@ async def analyze_recording(
             detected_patterns=analysis_result["patterns"]
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to analyze recording: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1293,44 +1272,48 @@ async def upload_recording_to_cloud(
 # ============================================================================
 
 # ============================================================================
-# Memory API Endpoints
+# Memory API Endpoints (Local Personal Memory)
 # ============================================================================
 
+
 class AddToMemoryRequest(BaseModel):
-    """Request model for adding to memory"""
-    user_id: str
-    recording_id: Optional[str] = None
-    operations: Optional[List[Dict[str, Any]]] = None
+    """Request model for adding to memory."""
+    user_id: Optional[str] = None  # Ignored - local memory has no user isolation
+    recording_id: Optional[str] = None  # Load operations from existing recording
+    operations: Optional[List[Dict[str, Any]]] = None  # Direct operations array
     session_id: Optional[str] = None
     generate_embeddings: bool = True
 
 
 class QueryMemoryRequest(BaseModel):
-    """Request model for querying memory
-
-    The system automatically analyzes the query and returns the most relevant
-    operation paths with States, Actions, and IntentSequences.
-    """
-    user_id: str
-    query: str
-    top_k: int = 3
-    min_score: float = 0.5
-    domain: Optional[str] = None
+    """Request model for querying memory."""
+    target: Optional[str] = None
+    query: Optional[str] = None  # Alias for target (backward compatibility)
+    current_state: Optional[str] = None
+    start_state: Optional[str] = None
+    end_state: Optional[str] = None
+    as_type: Optional[str] = None
+    top_k: int = 10
 
 
 @app.post("/api/v1/memory/add")
 async def add_to_memory(
     request: AddToMemoryRequest,
-    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
 ):
     """
-    Add Recording to User's Workflow Memory
+    Add Recording to Personal Memory (Proxy to Cloud Backend)
 
-    This endpoint processes a recording and adds its States, Actions, and IntentSequences
-    to the user's workflow memory for semantic search.
+    Processes operations and adds States, Actions, and IntentSequences
+    to the workflow memory graph via Cloud Backend.
 
     Headers:
-        X-Ami-API-Key: User's API key (required for embedding generation)
+        X-Ami-API-Key: API key for LLM (required for description generation)
+
+    Body:
+        Either recording_id OR operations must be provided:
+        - recording_id: Load operations from existing recording
+        - operations: Direct operations array
 
     Returns:
         {
@@ -1344,183 +1327,215 @@ async def add_to_memory(
         }
     """
     try:
-        logger.info(f"Adding to memory for user: {request.user_id}")
+        logger.info(f"[memory/add] Received request: recording_id={request.recording_id}, "
+                   f"operations={len(request.operations) if request.operations else 0}, "
+                   f"session_id={request.session_id}")
 
-        # Set user API key on cloud client
+        if not cloud_client:
+            logger.error("[memory/add] Cloud client not initialized")
+            return {"success": False, "error": "Cloud client not initialized"}
+
+        # Get operations - either from recording_id or directly
+        operations = request.operations
+        session_id = request.session_id
+
+        if request.recording_id and not operations:
+            # Load operations from local recording
+            recording_data = storage_manager.get_recording(request.user_id, request.recording_id)
+            if not recording_data:
+                logger.warning(f"[memory/add] Recording not found: {request.recording_id}")
+                return {
+                    "success": False,
+                    "error": f"Recording not found: {request.recording_id}",
+                }
+            operations = recording_data.get("operations", [])
+            if not session_id:
+                session_id = recording_data.get("session_id") or request.recording_id
+            logger.info(f"[memory/add] Loaded {len(operations)} operations from recording {request.recording_id}")
+
+        if not operations:
+            logger.warning("[memory/add] No operations provided")
+            return {
+                "success": False,
+                "error": "No operations provided (either recording_id or operations required)",
+            }
+
+        # Set API key for cloud client
         if x_ami_api_key:
             cloud_client.set_user_api_key(x_ami_api_key)
 
-        # Forward to Cloud Backend
+        logger.info(f"[memory/add] Proxying {len(operations)} operations to Cloud Backend...")
+
         result = await cloud_client.add_to_memory(
             user_id=request.user_id,
-            recording_id=request.recording_id,
-            operations=request.operations,
-            session_id=request.session_id,
-            generate_embeddings=request.generate_embeddings
+            operations=operations,
+            session_id=session_id,
         )
 
-        logger.info(f"Memory add result: {result.get('states_added')} added, "
-                   f"{result.get('states_merged')} merged")
+        logger.info(f"[memory/add] Result: states_added={result.get('states_added')}, "
+                   f"states_merged={result.get('states_merged')}, "
+                   f"intent_sequences={result.get('intent_sequences_added')}")
         return result
 
     except Exception as e:
-        logger.error(f"Failed to add to memory: {e}")
+        logger.error(f"[memory/add] Failed: {e}")
+        import traceback
+        logger.error(f"[memory/add] Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/v1/memory/query")
 async def query_memory(
     request: QueryMemoryRequest,
-    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
 ):
     """
-    Query User's Workflow Memory using Natural Language
+    Query Personal Memory using Natural Language (Proxy to Cloud Backend)
 
-    This endpoint performs intelligent semantic search on the user's workflow memory.
-    The system automatically analyzes the query and returns relevant states and actions.
-
-    Query types are automatically inferred:
-    - Task query (default): Complete workflow retrieval
-    - Navigation query: If start_state and end_state provided
-    - Action query: If current_state provided
+    Supports three query types (auto-detected):
+    - Task query: Find complete workflow for a task
+    - Navigation query: Find path between two states (if start_state and end_state provided)
+    - Action query: Find available actions in current state (if current_state provided)
 
     Headers:
-        X-Ami-API-Key: User's API key (required)
+        X-Ami-API-Key: API key for LLM (required for reasoning)
 
     Returns:
         {
             "success": true,
             "query_type": "task|navigation|action",
-            "states": [...],           // For task/navigation queries
-            "actions": [...],          // For task/navigation queries
-            "intent_sequences": [...], // For action queries
-            "cognitive_phrase": {...}, // For task queries (if found)
-            "execution_plan": [...],   // For task queries (if found)
+            "states": [...],
+            "actions": [...],
+            "intent_sequences": [...],
+            "cognitive_phrase": {...},
+            "execution_plan": [...],
             "metadata": {...}
         }
     """
-    if not x_ami_api_key:
-        raise HTTPException(status_code=400, detail="X-Ami-API-Key header is required")
-
     try:
-        logger.info(f"Querying memory for user: {request.user_id}, query: {request.query[:50]}...")
+        if not cloud_client:
+            return {"success": False, "error": "Cloud client not initialized"}
 
-        # Set user API key on cloud client
-        cloud_client.set_user_api_key(x_ami_api_key)
+        # Support both 'target' and 'query' parameter names
+        query_text = request.target or request.query or ""
 
-        # Forward to Cloud Backend
+        # Set API key for cloud client
+        if x_ami_api_key:
+            cloud_client.set_user_api_key(x_ami_api_key)
+
+        logger.info(f"[memory/query] Proxying query to Cloud Backend: {query_text[:50]}...")
+
         result = await cloud_client.query_memory(
-            user_id=request.user_id,
-            query=request.query,
+            user_id="default_user",  # TODO: get from request or auth
+            query=query_text,
             top_k=request.top_k,
         )
 
-        logger.info(f"Memory query result: type={result.get('query_type')}, states={len(result.get('states', []))}, actions={len(result.get('actions', []))}")
+        logger.info(f"[memory/query] Result: type={result.get('query_type')}, "
+                   f"success={result.get('success')}")
         return result
 
     except Exception as e:
-        logger.error(f"Failed to query memory: {e}")
+        logger.error(f"[memory/query] Failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/v1/memory/stats")
 async def get_memory_stats(
-    user_id: str,
-    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
 ):
     """
-    Get User's Workflow Memory Statistics
-
-    Query Parameters:
-        user_id: User identifier
+    Get Memory Statistics (Proxy to Cloud Backend)
 
     Returns:
         {
             "success": true,
-            "user_id": "user123",
             "stats": {
-                "total_states": 10,
-                "total_intent_sequences": 25,
-                "total_page_instances": 15,
-                "total_actions": 8,
-                "domains": ["producthunt.com"],
-                "url_index_size": 12
+                "initialized": true,
+                "node_count": 10,
+                "edge_count": 15,
+                "embedding_available": true
             }
         }
     """
     try:
-        logger.info(f"Getting memory stats for user: {user_id}")
+        if not cloud_client:
+            return {"success": False, "error": "Cloud client not initialized"}
 
-        # Set user API key on cloud client
         if x_ami_api_key:
             cloud_client.set_user_api_key(x_ami_api_key)
 
-        # Forward to Cloud Backend
-        result = await cloud_client.get_memory_stats(user_id=user_id)
+        logger.info("[memory/stats] Proxying stats request to Cloud Backend...")
 
-        logger.info(f"Memory stats: {result.get('stats', {}).get('total_states', 0)} states")
+        result = await cloud_client.get_memory_stats(user_id="default_user")
+        logger.info(f"[memory/stats] Result: {result}")
         return result
 
     except Exception as e:
-        logger.error(f"Failed to get memory stats: {e}")
+        logger.error(f"[memory/stats] Failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/memory/debug")
+async def debug_memory():
+    """
+    Debug endpoint - not available in proxy mode.
+
+    Returns error message indicating this endpoint requires local memory.
+    """
+    return {
+        "success": False,
+        "error": "Debug endpoint not available in proxy mode. Memory is proxied to Cloud Backend.",
+    }
 
 
 @app.delete("/api/v1/memory")
 async def clear_memory(
-    user_id: str,
-    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
 ):
     """
-    Clear User's Workflow Memory
-
-    Query Parameters:
-        user_id: User identifier
+    Clear Memory (Proxy to Cloud Backend)
 
     Returns:
         {
             "success": true,
             "deleted_states": 10,
-            "deleted_actions": 8
+            "deleted_actions": 8,
+            ...
         }
     """
     try:
-        logger.info(f"Clearing memory for user: {user_id}")
+        if not cloud_client:
+            return {"success": False, "error": "Cloud client not initialized"}
 
-        # Set user API key on cloud client
         if x_ami_api_key:
             cloud_client.set_user_api_key(x_ami_api_key)
 
-        # Forward to Cloud Backend
-        result = await cloud_client.clear_memory(user_id=user_id)
+        logger.info("[memory/clear] Proxying clear request to Cloud Backend...")
 
-        logger.info(f"Memory cleared: {result.get('deleted_states')} states")
+        result = await cloud_client.clear_memory(user_id="default_user")
+        logger.info(f"[memory/clear] Result: {result}")
         return result
 
     except Exception as e:
-        logger.error(f"Failed to clear memory: {e}")
+        logger.error(f"[memory/clear] Failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================================
-# CognitivePhrase API Endpoints
+# CognitivePhrase API Endpoints (Proxy to Cloud Backend)
 # ============================================================================
 
 @app.get("/api/v1/memory/phrases")
 async def list_cognitive_phrases(
     limit: int = 50,
-    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
 ):
     """
-    List CognitivePhrases from Memory
-
-    Returns a list of CognitivePhrases with minimal info (id, label, description).
+    List CognitivePhrases from Memory (Proxy to Cloud Backend)
 
     Query Parameters:
         limit: Maximum number of phrases to return (default: 50)
-
-    Headers:
-        X-Ami-API-Key: User's API key (optional)
 
     Returns:
         {
@@ -1531,39 +1546,37 @@ async def list_cognitive_phrases(
                     "label": "short label",
                     "description": "natural language description",
                     "access_count": 5,
-                    "created_at": 1234567890
+                    "last_accessed": 1234567890
                 }
             ],
             "total": 10
         }
     """
     try:
-        logger.info(f"Listing cognitive phrases (limit={limit})")
+        if not cloud_client:
+            return {"success": False, "error": "Cloud client not initialized"}
 
-        # Set user API key on cloud client
         if x_ami_api_key:
             cloud_client.set_user_api_key(x_ami_api_key)
 
-        # Forward to Cloud Backend (no user_id filter for single-user mode)
-        result = await cloud_client.list_cognitive_phrases(limit=limit)
+        logger.info(f"[memory/phrases] Proxying list request to Cloud Backend (limit={limit})...")
 
-        logger.info(f"Found {result.get('total', 0)} cognitive phrases")
+        result = await cloud_client.list_cognitive_phrases(limit=limit)
+        logger.info(f"[memory/phrases] Found {result.get('total', 0)} cognitive phrases")
         return result
 
     except Exception as e:
-        logger.error(f"Failed to list cognitive phrases: {e}")
+        logger.error(f"[memory/phrases] Failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/v1/memory/phrases/{phrase_id}")
 async def get_cognitive_phrase(
     phrase_id: str,
-    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
 ):
     """
-    Get CognitivePhrase Detail
-
-    Returns full phrase details including states and intent sequences for visualization.
+    Get CognitivePhrase Detail with States and IntentSequences (Proxy to Cloud Backend)
 
     Path Parameters:
         phrase_id: CognitivePhrase ID
@@ -1577,30 +1590,35 @@ async def get_cognitive_phrase(
         }
     """
     try:
-        logger.info(f"Getting cognitive phrase: {phrase_id}")
+        if not cloud_client:
+            return {"success": False, "error": "Cloud client not initialized"}
 
-        # Set user API key on cloud client
         if x_ami_api_key:
             cloud_client.set_user_api_key(x_ami_api_key)
 
-        # Forward to Cloud Backend
-        result = await cloud_client.get_cognitive_phrase(phrase_id=phrase_id)
+        logger.info(f"[memory/phrases] Proxying get request to Cloud Backend: {phrase_id}...")
 
-        logger.info(f"Got cognitive phrase: {phrase_id}")
+        result = await cloud_client.get_cognitive_phrase(phrase_id)
+        if not result.get("success"):
+            raise HTTPException(status_code=404, detail=f"Phrase {phrase_id} not found")
+
+        logger.info(f"[memory/phrases] Got cognitive phrase: {phrase_id}")
         return result
 
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Failed to get cognitive phrase: {e}")
+        logger.error(f"[memory/phrases] Failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.delete("/api/v1/memory/phrases/{phrase_id}")
 async def delete_cognitive_phrase(
     phrase_id: str,
-    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
 ):
     """
-    Delete a CognitivePhrase from Memory
+    Delete a CognitivePhrase from Memory (Proxy to Cloud Backend)
 
     Path Parameters:
         phrase_id: CognitivePhrase ID to delete
@@ -1612,20 +1630,25 @@ async def delete_cognitive_phrase(
         }
     """
     try:
-        logger.info(f"Deleting cognitive phrase: {phrase_id}")
+        if not cloud_client:
+            return {"success": False, "error": "Cloud client not initialized"}
 
-        # Set user API key on cloud client
         if x_ami_api_key:
             cloud_client.set_user_api_key(x_ami_api_key)
 
-        # Forward to Cloud Backend
-        result = await cloud_client.delete_cognitive_phrase(phrase_id=phrase_id)
+        logger.info(f"[memory/phrases] Proxying delete request to Cloud Backend: {phrase_id}...")
 
-        logger.info(f"Deleted cognitive phrase: {phrase_id}")
-        return result
+        result = await cloud_client.delete_cognitive_phrase(phrase_id)
+        if result.get("success"):
+            logger.info(f"[memory/phrases] Deleted cognitive phrase: {phrase_id}")
+            return result
+        else:
+            raise HTTPException(status_code=404, detail=f"Phrase {phrase_id} not found")
 
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Failed to delete cognitive phrase: {e}")
+        logger.error(f"[memory/phrases] Failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

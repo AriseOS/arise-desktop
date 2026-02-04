@@ -547,8 +547,8 @@ class HybridBrowserSession:
             return
 
         # V3: Try to reuse daemon session's browser
-        if self.__class__._daemon_session and self.__class__._daemon_session._context:
-            daemon = self.__class__._daemon_session
+        daemon = self.__class__._daemon_session
+        if daemon and daemon._context and daemon._browser and daemon._browser.is_connected():
             logger.info("Reusing daemon session's browser")
 
             # Share browser resources
@@ -559,29 +559,40 @@ class HybridBrowserSession:
 
             # Bug #19 fix: Create initial page in Tab Group using session_id as task_id
             # This ensures all tabs created by this session are grouped together
-            initial_tab_id, self._page = await self.create_tab_in_group(
-                task_id=self._session_id,
-                url=None
-            )
-            self._current_tab_id = initial_tab_id
+            try:
+                initial_tab_id, self._page = await self.create_tab_in_group(
+                    task_id=self._session_id,
+                    url=None
+                )
+                self._current_tab_id = initial_tab_id
 
-            self._page.set_default_navigation_timeout(self._navigation_timeout)
-            self._page.set_default_timeout(self._navigation_timeout)
+                self._page.set_default_navigation_timeout(self._navigation_timeout)
+                self._page.set_default_timeout(self._navigation_timeout)
 
-            self.snapshot = PageSnapshot(self._page)
-            self.executor = ActionExecutor(
-                self._page,
-                self,
-                default_timeout=self._default_timeout,
-                short_timeout=self._short_timeout,
-            )
+                self.snapshot = PageSnapshot(self._page)
+                self.executor = ActionExecutor(
+                    self._page,
+                    self,
+                    default_timeout=self._default_timeout,
+                    short_timeout=self._short_timeout,
+                )
 
-            logger.info(f"Browser session initialized (reusing daemon browser, Tab Group: {self._session_id})")
-            return
+                logger.info(f"Browser session initialized (reusing daemon browser, Tab Group: {self._session_id})")
+                return
+            except Exception as e:
+                # Context/browser became invalid, clear references and fall through to launch new browser
+                logger.warning(f"Failed to reuse daemon browser (context may be closed): {e}")
+                self._playwright = None
+                self._browser = None
+                self._context = None
+                self._browser_launcher = None
+                # Also clear daemon session's invalid state to trigger restart
+                daemon._context = None
+                daemon._browser = None
 
         # Non-daemon mode: Try to reuse primary session's browser
         primary = self.__class__._primary_session
-        if primary and primary is not self and primary._context:
+        if primary and primary is not self and primary._context and primary._browser and primary._browser.is_connected():
             logger.info("Reusing primary session's browser (non-daemon mode)")
 
             # Share browser resources
@@ -591,24 +602,32 @@ class HybridBrowserSession:
             self._browser_launcher = primary._browser_launcher
 
             # Create a new page for this session
-            self._page = await self._context.new_page()
-            initial_tab_id = await TabIdGenerator.generate_tab_id()
-            await self._register_new_page(initial_tab_id, self._page)
-            self._current_tab_id = initial_tab_id
+            try:
+                self._page = await self._context.new_page()
+                initial_tab_id = await TabIdGenerator.generate_tab_id()
+                await self._register_new_page(initial_tab_id, self._page)
+                self._current_tab_id = initial_tab_id
 
-            self._page.set_default_navigation_timeout(self._navigation_timeout)
-            self._page.set_default_timeout(self._navigation_timeout)
+                self._page.set_default_navigation_timeout(self._navigation_timeout)
+                self._page.set_default_timeout(self._navigation_timeout)
 
-            self.snapshot = PageSnapshot(self._page)
-            self.executor = ActionExecutor(
-                self._page,
-                self,
-                default_timeout=self._default_timeout,
-                short_timeout=self._short_timeout,
-            )
+                self.snapshot = PageSnapshot(self._page)
+                self.executor = ActionExecutor(
+                    self._page,
+                    self,
+                    default_timeout=self._default_timeout,
+                    short_timeout=self._short_timeout,
+                )
 
-            logger.info(f"Browser session initialized (reusing primary session's browser)")
-            return
+                logger.info(f"Browser session initialized (reusing primary session's browser)")
+                return
+            except Exception as e:
+                # Context/browser became invalid, clear references and fall through to launch new browser
+                logger.warning(f"Failed to reuse primary browser (context may be closed): {e}")
+                self._playwright = None
+                self._browser = None
+                self._context = None
+                self._browser_launcher = None
 
         # Launch browser via subprocess (no Playwright launch fingerprints)
         # Add retry mechanism for first browser startup (问题 9)
@@ -1612,9 +1631,11 @@ class HybridBrowserSession:
         if not group:
             group = await self.create_tab_group(task_id)
 
-        # Create page
+        # Create page - validate context is still connected
         if not self._context:
             raise RuntimeError("Browser context not available")
+        if not self._browser or not self._browser.is_connected():
+            raise RuntimeError("Browser is disconnected")
 
         page = await self._context.new_page()
 

@@ -211,9 +211,9 @@ class RecordingService:
                 "snapshot_count": len(snapshots),
             }
 
-            # Cleanup and close browser
+            # Cleanup - only close recording tabs, keep browser running
             session_id = self.current_session_id
-            await self._cleanup(close_browser=True)
+            await self._cleanup(close_browser=False)
 
             self._notify_status_change("stopped")
             logger.info(
@@ -250,15 +250,28 @@ class RecordingService:
 
         logger.info(f"Saved {len(snapshots)} snapshots")
 
-    async def _cleanup(self, close_browser: bool = True):
-        """Clean up recording state."""
+    async def _cleanup(self, close_browser: bool = False):
+        """Clean up recording state.
+
+        Args:
+            close_browser: If True, close the entire browser. If False (default),
+                          only close the recording session's tab group.
+        """
         self._is_recording = False
 
-        if close_browser and self._browser_session:
+        if self._browser_session:
             try:
-                await self._browser_session.close()
+                if close_browser:
+                    # Close entire browser session
+                    await self._browser_session.close()
+                else:
+                    # Only close the recording session's tab group, keep browser running
+                    session_id = self._browser_session._session_id
+                    if session_id:
+                        await self._browser_session.close_tab_group(session_id)
+                        logger.info(f"Closed tab group for recording session: {session_id}")
             except Exception as e:
-                logger.warning(f"Error closing browser session: {e}")
+                logger.warning(f"Error during cleanup: {e}")
 
         self._browser_session = None
         self._behavior_recorder = None

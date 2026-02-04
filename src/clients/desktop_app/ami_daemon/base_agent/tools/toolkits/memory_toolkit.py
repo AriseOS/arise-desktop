@@ -7,6 +7,11 @@ Provides three query interfaces matching the three-level query model:
 3. query_actions(state, target?) - Action level: Get available operations on a page
 
 Design principle: Memory is a tool, Agent is the decision maker.
+
+Architecture:
+- MemoryToolkit only uses HTTP to call Memory API
+- Memory API can be local (Daemon) or remote (Cloud Backend)
+- Both backends use common/memory for business logic
 """
 
 import logging
@@ -441,6 +446,10 @@ class MemoryToolkit(BaseToolkit):
     - query_navigation(start, end): Navigation level - Get path between pages
     - query_actions(state, target?): Action level - Get available operations
 
+    Supports two memory backends:
+    - Public Memory: Cloud Backend via HTTP (memory_api_base_url)
+    - Local Memory: SurrealDB via direct call (use_local_memory=True)
+
     Design: Memory is a tool, Agent is the decision maker.
     """
 
@@ -453,6 +462,7 @@ class MemoryToolkit(BaseToolkit):
         user_id: str,
         timeout: Optional[float] = 180.0,
         agent: Optional[Any] = None,  # ListenChatAgent for page operations caching
+        use_local_memory: bool = False,  # Use local SurrealDB instead of HTTP
     ) -> None:
         """Initialize MemoryToolkit.
 
@@ -464,16 +474,18 @@ class MemoryToolkit(BaseToolkit):
             agent: Optional ListenChatAgent for caching page operations.
                 When provided, query_page_operations results will be cached
                 in the agent for injection into subsequent LLM calls.
+            use_local_memory: If True, use local SurrealDB directly instead of HTTP.
         """
         super().__init__(timeout=timeout)
-        self._memory_api_base_url = memory_api_base_url.rstrip("/")
+        self._memory_api_base_url = memory_api_base_url.rstrip("/") if memory_api_base_url else ""
         self._ami_api_key = ami_api_key
         self._user_id = user_id
         self._agent = agent
+        self._use_local_memory = use_local_memory
 
+        mode = "local (SurrealDB)" if use_local_memory else f"public ({memory_api_base_url})"
         logger.info(
-            f"MemoryToolkit initialized (user_id={user_id}, "
-            f"api_base_url={memory_api_base_url})"
+            f"MemoryToolkit initialized (user_id={user_id}, mode={mode})"
         )
 
     def set_agent(self, agent: Any) -> None:
@@ -712,8 +724,54 @@ class MemoryToolkit(BaseToolkit):
     # V2 Three-Level Query Methods
     # =========================================================================
 
-    async def _call_v2_query(self, payload: Dict[str, Any]) -> QueryResult:
-        """Call V2 query API and parse response.
+    async def _call_local_query(self, payload: Dict[str, Any]) -> QueryResult:
+        """Call local Memory Service directly (SurrealDB).
+
+        Args:
+            payload: Request payload for memory query
+
+        Returns:
+            QueryResult parsed from direct call response
+        """
+        try:
+            from src.common.memory import get_local_memory_service
+
+            memory_service = get_local_memory_service()
+            if not memory_service:
+                return QueryResult(
+                    success=False,
+                    query_type=QueryType.TASK,
+                    error="Local Memory Service not initialized",
+                )
+
+            # Call MemoryService.query() directly
+            data = await memory_service.query(
+                query=payload.get("target", ""),
+                current_state=payload.get("current_state"),
+                start_state=payload.get("start_state"),
+                end_state=payload.get("end_state"),
+            )
+
+            result = QueryResult.from_api_response(data)
+            logger.info(
+                f"[Memory] Local query result: "
+                f"type={result.query_type.value}, success={result.success}, "
+                f"states={len(result.states)}, actions={len(result.actions)}, "
+                f"intent_sequences={len(result.intent_sequences)}, "
+                f"outgoing_actions={len(result.outgoing_actions)}"
+            )
+            return result
+
+        except Exception as e:
+            logger.warning(f"[Memory] Local query failed: {e}")
+            return QueryResult(
+                success=False,
+                query_type=QueryType.TASK,
+                error=str(e),
+            )
+
+    async def _call_http_query(self, payload: Dict[str, Any]) -> QueryResult:
+        """Call Memory API via HTTP (Cloud Backend).
 
         Args:
             payload: Request payload for /api/v1/memory/query
@@ -721,13 +779,6 @@ class MemoryToolkit(BaseToolkit):
         Returns:
             QueryResult parsed from API response
         """
-        if not self.is_available():
-            return QueryResult(
-                success=False,
-                query_type=QueryType.TASK,
-                error="Memory toolkit not available",
-            )
-
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
@@ -741,7 +792,7 @@ class MemoryToolkit(BaseToolkit):
 
             result = QueryResult.from_api_response(data)
             logger.info(
-                "[Memory] V2 query result: "
+                f"[Memory] HTTP query result: "
                 f"type={result.query_type.value}, success={result.success}, "
                 f"states={len(result.states)}, actions={len(result.actions)}, "
                 f"intent_sequences={len(result.intent_sequences)}, "
@@ -749,13 +800,52 @@ class MemoryToolkit(BaseToolkit):
             )
             return result
 
+        except httpx.HTTPStatusError as e:
+            logger.warning(f"[Memory] HTTP error: {e.response.status_code} - {e.response.text}")
+            return QueryResult(
+                success=False,
+                query_type=QueryType.TASK,
+                error=f"HTTP {e.response.status_code}: {e.response.text}",
+            )
+        except httpx.RequestError as e:
+            logger.warning(f"[Memory] Request error: {e}")
+            return QueryResult(
+                success=False,
+                query_type=QueryType.TASK,
+                error=f"Request failed: {str(e)}",
+            )
         except Exception as e:
-            logger.warning(f"[Memory] V2 query failed: {e}")
+            logger.warning(f"[Memory] HTTP query failed: {e}")
             return QueryResult(
                 success=False,
                 query_type=QueryType.TASK,
                 error=str(e),
             )
+
+    async def _call_v2_query(self, payload: Dict[str, Any]) -> QueryResult:
+        """Call Memory API - local or HTTP based on configuration.
+
+        Args:
+            payload: Request payload for memory query
+
+        Returns:
+            QueryResult parsed from response
+        """
+        if not self.is_available():
+            return QueryResult(
+                success=False,
+                query_type=QueryType.TASK,
+                error="Memory toolkit not available",
+            )
+
+        # Use local memory if configured
+        if self._use_local_memory:
+            logger.info("[Memory] Using local memory (SurrealDB)")
+            return await self._call_local_query(payload)
+
+        # Otherwise use HTTP to Cloud Backend
+        logger.info(f"[Memory] Using public memory ({self._memory_api_base_url})")
+        return await self._call_http_query(payload)
 
     async def query_task(self, task: str) -> QueryResult:
         """Task-level query: Get complete workflow for a task.
@@ -1173,7 +1263,21 @@ class MemoryToolkit(BaseToolkit):
     # =========================================================================
 
     def is_available(self) -> bool:
-        """Check if memory functionality is available."""
+        """Check if memory functionality is available.
+
+        Returns True if:
+        - Local mode: local memory service is initialized
+        - HTTP mode: httpx is available and API is configured
+        """
+        if self._use_local_memory:
+            # Check if local memory service is available
+            try:
+                from src.common.memory import get_local_memory_service
+                return get_local_memory_service() is not None
+            except ImportError:
+                return False
+
+        # HTTP mode: check httpx and config
         return HTTPX_AVAILABLE and bool(
             self._memory_api_base_url and self._ami_api_key
         )

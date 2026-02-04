@@ -261,8 +261,12 @@ class BaseAgent:
                 import os
                 logger.info("No provider_config provided, loading from config_service")
 
-                provider_type = self.config_service.get('llm.provider', 'anthropic')
-                model_name = self.config_service.get('llm.model', 'claude-3-5-sonnet-20241022')
+                provider_type = self.config_service.get('llm.provider')
+                if not provider_type:
+                    raise ValueError("llm.provider not configured")
+                model_name = self.config_service.get('llm.model')
+                if not model_name:
+                    raise ValueError("llm.model not configured")
 
                 if provider_type == 'anthropic':
                     api_key = os.environ.get('ANTHROPIC_API_KEY')
@@ -272,7 +276,9 @@ class BaseAgent:
                 use_proxy = self.config_service.get('llm.use_proxy', False)
                 base_url = None
                 if use_proxy:
-                    base_url = self.config_service.get('llm.proxy_url', 'http://127.0.0.1:8080')
+                    base_url = self.config_service.get('llm.proxy_url')
+                    if not base_url:
+                        raise ValueError("llm.proxy_url not configured but llm.use_proxy is true")
                     logger.info(f"API Proxy enabled: {base_url}")
 
                 self.provider_config = {

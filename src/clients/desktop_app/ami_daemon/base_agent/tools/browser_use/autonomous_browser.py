@@ -31,7 +31,7 @@ class BrowserConfig(ToolConfig):
     proxy: Optional[str] = Field(default=None, description="代理设置")
 
     # LLM 配置
-    llm_model: str = Field(default="claude-sonnet-4-5-20250929", description="LLM 模型")
+    llm_model: str = Field(description="LLM 模型 (required)")
     llm_api_key: Optional[str] = Field(default=None, description="LLM API Key")
     llm_base_url: Optional[str] = Field(default=None, description="LLM Base URL")
 

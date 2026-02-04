@@ -161,8 +161,8 @@ async def startup_event():
     try:
         from services.storage_service import StorageService
         from src.cloud_backend.intent_builder.services import WorkflowService
-        from src.cloud_backend.memgraph.graphstore import create_graph_store
-        from src.cloud_backend.memgraph.memory.workflow_memory import WorkflowMemory
+        from src.common.memory.graphstore import create_graph_store
+        from src.common.memory.memory.workflow_memory import WorkflowMemory
 
         # 1. CORS already configured
         print(f"✅ CORS: {len(cors_origins)} allowed origins")
@@ -218,7 +218,7 @@ async def startup_event():
         print("✅ Workflow Memory (for NL query)")
 
         # 3.1 Initialize EmbeddingService (for semantic search) - REQUIRED
-        from src.cloud_backend.memgraph.services.embedding_service import EmbeddingService
+        from src.common.memory.services.embedding_service import EmbeddingService
         embedding_config = config_service.get("embedding", {})
         if not embedding_config:
             print("❌ FATAL: embedding config not found in cloud-backend.yaml")
@@ -548,12 +548,12 @@ async def upload_recording(data: dict):
     memory_result = None
     if add_to_memory and workflow_memory:
         try:
-            from src.cloud_backend.memgraph.thinker.workflow_processor import WorkflowProcessor
+            from src.common.memory.thinker.workflow_processor import WorkflowProcessor
 
             # Setup embedding model if requested
             embedding_model = None
             if generate_embeddings and user_api_key:
-                from src.cloud_backend.memgraph.services import EmbeddingService
+                from src.common.memory.services import EmbeddingService
                 if EmbeddingService.is_available():
                     embedding_model = EmbeddingService.get_model()
 
@@ -1330,12 +1330,12 @@ async def add_to_memory(
 
     try:
         # Import WorkflowProcessor
-        from src.cloud_backend.memgraph.thinker.workflow_processor import WorkflowProcessor
+        from src.common.memory.thinker.workflow_processor import WorkflowProcessor
 
         # Setup embedding model if requested
         embedding_model = None
         if generate_embeddings and x_ami_api_key:
-            from src.cloud_backend.memgraph.services import EmbeddingService
+            from src.common.memory.services import EmbeddingService
             if EmbeddingService.is_available():
                 embedding_model = EmbeddingService.get_model()
 
@@ -2283,8 +2283,8 @@ async def _get_reasoner_for_user(x_ami_api_key: str):
     Returns:
         Reasoner instance
     """
-    from src.cloud_backend.memgraph.reasoner.reasoner import Reasoner
-    from src.cloud_backend.memgraph.services.embedding_service import EmbeddingService
+    from src.common.memory.reasoner.reasoner import Reasoner
+    from src.common.memory.services.embedding_service import EmbeddingService
     from src.common.llm.anthropic_provider import AnthropicProvider
 
     # Create LLM provider with user's API key
