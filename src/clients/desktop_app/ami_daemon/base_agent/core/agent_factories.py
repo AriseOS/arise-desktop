@@ -796,6 +796,7 @@ async def create_listen_browser_agent(
     notes_directory: Optional[str] = None,
     browser_data_directory: Optional[str] = None,
     headless: bool = False,
+    export_model_visible_snapshots: bool = False,
     memory_api_base_url: Optional[str] = None,
     ami_api_key: Optional[str] = None,
     user_id: Optional[str] = None,
@@ -912,6 +913,9 @@ async def create_listen_browser_agent(
         tools=tools,  # Pass tools to parent class for LLM awareness
         token_limit=150000,  # Enable auto-summarization when context exceeds 75k tokens (50%)
     )
+
+    if export_model_visible_snapshots:
+        agent.enable_model_visible_snapshot_export(True)
 
     # Set agent reference in toolkits for IntentSequence cache integration
     browser_toolkit.set_agent(agent)

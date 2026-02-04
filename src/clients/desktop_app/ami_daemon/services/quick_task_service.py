@@ -917,7 +917,7 @@ class QuickTaskService:
                     api_url,
                     json=payload,
                     headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=60)
+                    timeout=aiohttp.ClientTimeout(total=120)
                 ) as resp:
                     if resp.status == 200:
                         result = await resp.json()
@@ -951,6 +951,215 @@ class QuickTaskService:
         except Exception as e:
             logger.warning(f"Reasoner API call failed: {e}")
             return None
+
+    @staticmethod
+    def _format_reasoner_intent_sequences(
+        reasoner_result: Optional[Dict[str, Any]],
+    ) -> str:
+        """Format intent_sequences from Reasoner workflow for prompt injection."""
+        if not reasoner_result or not reasoner_result.get("success"):
+            return ""
+
+        workflow = reasoner_result.get("workflow") or {}
+        steps = workflow.get("steps") or []
+        used_states_fallback = False
+
+        # Fallback: use states if they already include intent_sequences
+        if not steps:
+            states = reasoner_result.get("states") or []
+            for state in states:
+                if isinstance(state, dict) and state.get("intent_sequences"):
+                    steps.append({
+                        "description": state.get("description")
+                        or state.get("page_title")
+                        or state.get("page_url"),
+                        "intent_sequences": state.get("intent_sequences", []),
+                    })
+            if steps:
+                used_states_fallback = True
+
+        if not steps:
+            logger.info(
+                "[ReasonerIntentSequences] No workflow steps or states with intent_sequences found"
+            )
+            return ""
+
+        max_steps = 8
+        max_sequences = 3
+        max_intents = 20
+        max_len = 4000
+        debug_max_len = 12000
+
+        def _truncate(value: Any, limit: int) -> str:
+            text = "" if value is None else str(value)
+            text = " ".join(text.replace("\r", " ").splitlines()).strip()
+            if len(text) <= limit:
+                return text
+            if limit <= 12:
+                return text[:limit]
+            return text[: limit - 12] + "...(truncated)"
+
+        def _format_intent(intent: Any) -> str:
+            if not isinstance(intent, dict):
+                return ""
+            intent_type = str(intent.get("type", "")).lower()
+            role = _truncate(intent.get("element_role") or intent.get("role") or "", 40)
+            text = _truncate(intent.get("text") or "", 80)
+            value = _truncate(intent.get("value") or "", 80)
+            selector = _truncate(
+                intent.get("css_selector") or intent.get("xpath") or "", 80
+            )
+            attributes = intent.get("attributes")
+            attrs = attributes if isinstance(attributes, dict) else {}
+
+            line = ""
+            if intent_type in ("click", "clickelement"):
+                if role and text:
+                    line = f"- click {role} \"{text}\""
+                elif text:
+                    line = f"- click \"{text}\""
+                elif role:
+                    line = f"- click {role}"
+            elif intent_type in ("type", "input", "typetext"):
+                target = text or role or "field"
+                if value:
+                    line = f"- type \"{value}\" into {target}"
+                else:
+                    line = f"- type in {target}"
+            elif intent_type in ("scroll", "scrolldown", "scrollup"):
+                direction = attrs.get("scroll_direction") or (
+                    "down" if "down" in intent_type else "up" if "up" in intent_type else ""
+                )
+                distance = attrs.get("scroll_distance")
+                if distance is not None and str(distance) != "":
+                    distance_str = str(distance)
+                    if distance_str.isdigit():
+                        distance_str = f"{distance_str}px"
+                    line = f"- scroll {direction} {distance_str}".strip()
+                else:
+                    line = f"- scroll {direction}".strip()
+            elif intent_type in ("navigate", "goto"):
+                dest = value or text
+                if dest:
+                    line = f"- navigate {dest}"
+            else:
+                if text:
+                    line = f"- {intent_type}: {text}"
+                elif value:
+                    line = f"- {intent_type}: {value}"
+
+            if line and selector:
+                line = f"{line} (selector: {selector})"
+            return line
+
+        total_sequences = 0
+        total_intents = 0
+        sequences_truncated = False
+        intents_truncated = False
+
+        lines = [
+            "## Intent Sequences (Action Hints)",
+            "Recorded in-page operations from similar workflows. Use as guidance and adapt to current page.",
+            "",
+        ]
+
+        for step_index, step in enumerate(steps[:max_steps], 1):
+            if isinstance(step, dict):
+                desc = (
+                    step.get("description")
+                    or step.get("page_title")
+                    or step.get("page_url")
+                    or f"Step {step_index}"
+                )
+                seqs = step.get("intent_sequences") or []
+            else:
+                desc = (
+                    getattr(step, "description", None)
+                    or getattr(step, "page_title", None)
+                    or getattr(step, "page_url", None)
+                    or f"Step {step_index}"
+                )
+                seqs = getattr(step, "intent_sequences", []) or []
+
+            desc = _truncate(desc, 120)
+            lines.append(f"Step {step_index}: {desc}")
+
+            if not seqs:
+                lines.append("  (no recorded operations)")
+                continue
+
+            total_sequences += len(seqs)
+            for seq in seqs[:max_sequences]:
+                if isinstance(seq, dict):
+                    seq_desc = seq.get("description") or "Operation"
+                    intents = seq.get("intents") or []
+                    nav_marker = " -> navigates" if seq.get("causes_navigation") else ""
+                else:
+                    seq_desc = getattr(seq, "description", None) or "Operation"
+                    intents = getattr(seq, "intents", []) or []
+                    nav_marker = " -> navigates" if getattr(seq, "causes_navigation", False) else ""
+
+                seq_desc = _truncate(seq_desc, 120)
+                lines.append(f"  - {seq_desc}{nav_marker}")
+
+                total_intents += len(intents)
+                for intent in intents[:max_intents]:
+                    intent_line = _format_intent(intent)
+                    if intent_line:
+                        lines.append(f"    {intent_line}")
+
+                if len(intents) > max_intents:
+                    intents_truncated = True
+                    lines.append(
+                        f"    ... {len(intents) - max_intents} more intents truncated"
+                    )
+
+            if len(seqs) > max_sequences:
+                sequences_truncated = True
+                lines.append(
+                    f"  ... {len(seqs) - max_sequences} more operations truncated"
+                )
+
+        if len(steps) > max_steps:
+            lines.append(f"... {len(steps) - max_steps} more steps truncated")
+
+        full_output = "\n".join(lines).strip()
+        output = full_output
+        length_truncated = False
+        if len(output) > max_len:
+            length_truncated = True
+            output = output[: max_len - 20].rstrip() + "\n...[truncated]"
+
+        logger.info(
+            "[ReasonerIntentSequences] steps=%d total_sequences=%d total_intents=%d "
+            "states_fallback=%s truncated_steps=%s truncated_sequences=%s "
+            "truncated_intents=%s truncated_length=%s",
+            len(steps),
+            total_sequences,
+            total_intents,
+            used_states_fallback,
+            len(steps) > max_steps,
+            sequences_truncated,
+            intents_truncated,
+            length_truncated,
+        )
+        logger.info(
+            "[ReasonerIntentSequences] content (truncated to %d chars):\n%s",
+            max_len,
+            output,
+        )
+
+        if logger.isEnabledFor(logging.DEBUG):
+            debug_output = full_output
+            if len(debug_output) > debug_max_len:
+                debug_output = debug_output[: debug_max_len - 20].rstrip() + "\n...[truncated]"
+            logger.debug(
+                "[ReasonerIntentSequences] content (debug, up to %d chars):\n%s",
+                debug_max_len,
+                debug_output,
+            )
+
+        return output
 
     async def _query_memory(self, task: str) -> List[Dict[str, Any]]:
         """Query memory for similar workflow paths.
@@ -1439,6 +1648,39 @@ Response:"""
                                 context="initial",
                             ))
                         else:
+                            # Inject Reasoner intent sequences into browser subtasks (if available)
+                            browser_subtasks = [
+                                st for st in subtasks if st.agent_type == "browser"
+                            ]
+                            if browser_subtasks:
+                                reasoner_result = await self._call_reasoner(task_to_decompose)
+                                intent_guide = self._format_reasoner_intent_sequences(reasoner_result)
+                                if intent_guide:
+                                    for st in browser_subtasks:
+                                        before_len = len(st.workflow_guide) if st.workflow_guide else 0
+                                        if st.workflow_guide:
+                                            st.workflow_guide = f"{st.workflow_guide}\n\n{intent_guide}"
+                                        else:
+                                            st.workflow_guide = intent_guide
+                                        after_len = len(st.workflow_guide)
+                                        logger.info(
+                                            f"[Task {task_id}] Appended intent guide to subtask {st.id}: "
+                                            f"before={before_len}, after={after_len}"
+                                        )
+                                    logger.info(
+                                        f"[Task {task_id}] Injected Reasoner intent sequences into "
+                                        f"{len(browser_subtasks)} browser subtasks "
+                                        f"(guide_len={len(intent_guide)})"
+                                    )
+                                else:
+                                    logger.info(
+                                        f"[Task {task_id}] No Reasoner intent sequences available for injection"
+                                    )
+                            else:
+                                logger.info(
+                                    f"[Task {task_id}] No browser subtasks; skipping Reasoner intent sequence injection"
+                                )
+
                             # Update state with subtasks
                             state.subtasks = [
                                 {
@@ -1709,6 +1951,7 @@ Response:"""
                 notes_directory=state.notes_directory,
                 browser_data_directory=state.browser_data_directory,
                 headless=headless,
+                export_model_visible_snapshots=True,
                 memory_api_base_url=self._cloud_client.api_url if self._cloud_client else None,
                 ami_api_key=self._llm_api_key,
                 user_id=self._user_id,

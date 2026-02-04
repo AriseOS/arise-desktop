@@ -26,6 +26,9 @@ from ..events import (
 
 logger = logging.getLogger(__name__)
 
+_MAX_GUIDE_SEQUENCES = 3
+_MAX_GUIDE_INTENTS = 20
+
 
 # =============================================================================
 # Prompts for Task Decomposition
@@ -365,6 +368,104 @@ class AMITaskPlanner:
         )
 
     @staticmethod
+    def _format_intent_for_guide(intent: Any) -> str:
+        intent_type = str(getattr(intent, "type", "") or "").lower()
+        element_role = getattr(intent, "element_role", None) or getattr(intent, "role", None)
+        element_ref = getattr(intent, "element_ref", None) or getattr(intent, "ref", None)
+        text = getattr(intent, "text", None)
+        value = getattr(intent, "value", None)
+        attributes = getattr(intent, "attributes", None)
+        attrs = attributes if isinstance(attributes, dict) else {}
+
+        if intent_type in ("click", "clickelement"):
+            if text:
+                return f"click \"{text}\""
+            if element_role:
+                return f"click {element_role}"
+            if element_ref:
+                return f"click element {element_ref}"
+        elif intent_type in ("type", "input", "typetext"):
+            target = text or element_role or "field"
+            if value:
+                return f"type \"{value}\" in {target}"
+            return f"type in {target}"
+        elif intent_type in ("scroll", "scrolldown", "scrollup"):
+            direction = attrs.get("scroll_direction") or (
+                "down" if "down" in intent_type else "up" if "up" in intent_type else ""
+            )
+            distance = attrs.get("scroll_distance")
+            if distance is not None and str(distance) != "":
+                distance_str = str(distance)
+                if distance_str.isdigit():
+                    distance_str = f"{distance_str}px"
+                return f"scroll {direction} {distance_str}".strip()
+            return f"scroll {direction}".strip()
+        elif intent_type in ("navigate", "goto"):
+            if value or text:
+                return f"navigate to {value or text}"
+
+        if text or value:
+            return f"{intent_type or 'intent'}: {text or value}"
+        return intent_type or ""
+
+    @staticmethod
+    def _append_intent_sequences(
+        lines: List[str],
+        intent_sequences: List[Any],
+        indent: str = "    ",
+    ) -> None:
+        if not intent_sequences:
+            return
+
+        lines.append(f"{indent}Intent sequences (from memory):")
+        for idx, seq in enumerate(intent_sequences[:_MAX_GUIDE_SEQUENCES], 1):
+            desc = getattr(seq, "description", None) or "Operation"
+            seq_id = getattr(seq, "id", "") or ""
+            label = f"{idx}. {desc}"
+            if seq_id:
+                label += f" (id: {seq_id})"
+            lines.append(f"{indent}  {label}")
+
+            causes_nav = getattr(seq, "causes_navigation", False)
+            nav_target = getattr(seq, "navigation_target_state_id", None)
+            if causes_nav and nav_target:
+                lines.append(f"{indent}     navigates_to: {nav_target}")
+
+            intents = getattr(seq, "intents", None)
+            if intents:
+                lines.append(f"{indent}     intents:")
+                for intent in intents[:_MAX_GUIDE_INTENTS]:
+                    intent_line = AMITaskPlanner._format_intent_for_guide(intent)
+                    if intent_line:
+                        lines.append(f"{indent}       - {intent_line}")
+            else:
+                lines.append(f"{indent}     intents: (none)")
+
+        remaining = len(intent_sequences) - _MAX_GUIDE_SEQUENCES
+        if remaining > 0:
+            lines.append(f"{indent}  ... ({remaining} more sequences)")
+
+    @staticmethod
+    def _format_action_trigger(action: Any) -> Optional[str]:
+        trigger = getattr(action, "trigger", None)
+        if not isinstance(trigger, dict):
+            return None
+
+        parts = []
+        text = trigger.get("text")
+        role = trigger.get("role") or trigger.get("element_role")
+        ref = trigger.get("ref") or trigger.get("element_ref")
+        if text:
+            parts.append(f"text=\"{text}\"")
+        if role:
+            parts.append(f"role={role}")
+        if ref:
+            parts.append(f"ref={ref}")
+        if not parts:
+            return None
+        return ", ".join(parts)
+
+    @staticmethod
     def _format_cognitive_phrase(cognitive_phrase: Any) -> str:
         """
         Format a cognitive phrase into a workflow guide.
@@ -405,6 +506,13 @@ class AMITaskPlanner:
                     desc = str(state)[:200]
                 lines.append(f"  Step {i}: {desc}")
 
+                # Add intent sequences if available
+                intent_sequences = getattr(state, "intent_sequences", None)
+                if intent_sequences:
+                    AMITaskPlanner._append_intent_sequences(
+                        lines, intent_sequences, indent="    "
+                    )
+
                 # Add action if available
                 if hasattr(cognitive_phrase, 'actions') and i <= len(cognitive_phrase.actions):
                     action = cognitive_phrase.actions[i - 1]
@@ -412,6 +520,13 @@ class AMITaskPlanner:
                         lines.append(f"    Action: {action.description}")
                     elif hasattr(action, 'action_type'):
                         lines.append(f"    Action: {action.action_type}")
+
+                    trigger_line = AMITaskPlanner._format_action_trigger(action)
+                    if trigger_line:
+                        lines.append(f"      Trigger: {trigger_line}")
+                    trigger_sequence_id = getattr(action, "trigger_sequence_id", None)
+                    if trigger_sequence_id:
+                        lines.append(f"      Trigger sequence: {trigger_sequence_id}")
 
         return "\n".join(lines)
 
@@ -450,6 +565,13 @@ class AMITaskPlanner:
                 desc = str(state)[:200]
             lines.append(f"  {i}. {desc}")
 
+            # Add intent sequences if available
+            intent_sequences = getattr(state, "intent_sequences", None)
+            if intent_sequences:
+                AMITaskPlanner._append_intent_sequences(
+                    lines, intent_sequences, indent="    "
+                )
+
             # Add action if available
             if i <= len(actions):
                 action = actions[i - 1]
@@ -457,6 +579,13 @@ class AMITaskPlanner:
                     lines.append(f"     Then: {action.description}")
                 elif hasattr(action, 'action_type') and hasattr(action, 'target'):
                     lines.append(f"     Then: {action.action_type} on {action.target}")
+
+                trigger_line = AMITaskPlanner._format_action_trigger(action)
+                if trigger_line:
+                    lines.append(f"       Trigger: {trigger_line}")
+                trigger_sequence_id = getattr(action, "trigger_sequence_id", None)
+                if trigger_sequence_id:
+                    lines.append(f"       Trigger sequence: {trigger_sequence_id}")
 
         return "\n".join(lines)
 
