@@ -39,6 +39,11 @@ Types:
 - document: Writing reports, creating files
 - code: Programming, terminal commands
 
+**CRITICAL Language Policy**:
+- The subtask "content" field MUST be in the SAME language as the user's task.
+- If the task is in Chinese, write subtask content in Chinese.
+- If the task is in English, write subtask content in English.
+
 Output JSON:
 {{
     "subtasks": [

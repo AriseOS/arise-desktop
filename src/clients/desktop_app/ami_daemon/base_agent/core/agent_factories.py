@@ -198,7 +198,14 @@ Your approach depends on available search tools:
 
 - When encountering verification challenges (like login, CAPTCHAs or
     robot checks), you MUST request help using the human toolkit.
-</web_search_workflow>"""
+</web_search_workflow>
+
+<language_policy>
+**CRITICAL**: You MUST respond in the same language as the user's original request.
+- If the user writes in Chinese, ALL your outputs must be in Chinese.
+- If the user writes in English, respond in English.
+- This applies to: summaries, notes, reports, and any text you generate.
+</language_policy>"""
 
 
 # Developer Agent System Prompt (Eigent's DEVELOPER_SYS_PROMPT)
@@ -311,7 +318,14 @@ these tips to maximize your effectiveness:
     or need clarification, use the `ask_human_via_console` tool.
 - Document your progress and findings in notes so other agents can build
     upon your work.
-</collaboration_and_assistance>"""
+</collaboration_and_assistance>
+
+<language_policy>
+**CRITICAL**: You MUST respond in the same language as the user's original request.
+- If the user writes in Chinese, ALL your outputs must be in Chinese (code, summaries, comments).
+- If the user writes in English, respond in English.
+- This applies to: code comments, summaries, reports, and any text you generate.
+</language_policy>"""
 
 
 # Document Agent System Prompt (Eigent's DOCUMENT_SYS_PROMPT)
@@ -454,6 +468,14 @@ appropriate sheet naming conventions
   graphs, and save them as image files that can be embedded in documents.
 </document_creation_workflow>
 
+<language_policy>
+**CRITICAL**: You MUST write documents in the same language as the user's original request.
+- If the user writes in Chinese, the document content MUST be in Chinese.
+- If the user writes in English, the document content must be in English.
+- This applies to: document titles, headings, body text, slide content, spreadsheet labels, etc.
+- File names can remain in English for compatibility, but ALL content inside must match user's language.
+</language_policy>
+
 Your goal is to help users efficiently create, modify, and manage their
 documents with professional quality and appropriate formatting across all
 supported formats including advanced spreadsheet functionality."""
@@ -533,6 +555,13 @@ When working with multi-modal content, you should:
 - Ask clarifying questions when user requirements are ambiguous
 </multi_modal_processing_workflow>
 
+<language_policy>
+**CRITICAL**: You MUST respond in the same language as the user's original request.
+- If the user writes in Chinese, ALL your outputs must be in Chinese.
+- If the user writes in English, respond in English.
+- This applies to: descriptions, analysis results, summaries, and any text you generate.
+</language_policy>
+
 Your goal is to help users effectively process, understand, and create
 multi-modal content across audio and visual domains."""
 
@@ -584,7 +613,14 @@ When assisting users, always:
 operations.
 - Provide clear explanations of what actions you're taking.
 - Handle rate limits and API restrictions appropriately.
-- Ask clarifying questions when user requests are ambiguous."""
+- Ask clarifying questions when user requests are ambiguous.
+
+<language_policy>
+**CRITICAL**: You MUST respond in the same language as the user's original request.
+- If the user writes in Chinese, ALL your outputs must be in Chinese.
+- If the user writes in English, respond in English.
+- This applies to: messages, summaries, email drafts, and any text you generate.
+</language_policy>"""
 
 
 # Task Summary Agent System Prompt (Eigent's TASK_SUMMARY_SYS_PROMPT)
@@ -603,6 +639,11 @@ Guidelines:
 - Mention any important files created or actions taken
 - DO NOT repeat the task description - focus on results
 - Keep it professional but conversational
+
+**CRITICAL Language Policy**:
+- You MUST write the summary in the same language as the user's original request.
+- If the user's request is in Chinese, the summary MUST be in Chinese.
+- If the user's request is in English, the summary must be in English.
 """
 
 

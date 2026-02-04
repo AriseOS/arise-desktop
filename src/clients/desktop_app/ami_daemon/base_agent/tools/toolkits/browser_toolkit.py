@@ -873,6 +873,9 @@ class BrowserToolkit(BaseToolkit):
             session = await self._get_session_with_page()
             await session.exec_action({"type": "forward"})
             return await self._build_action_result("Navigated forward")
+        except BrowserPageClosedError as e:
+            # Return friendly message to Agent - page was recovered but needs re-navigation
+            return str(e)
         except Exception as e:
             logger.error(f"browser_forward error: {e}")
             return f"Error navigating forward: {e}"
@@ -907,6 +910,9 @@ class BrowserToolkit(BaseToolkit):
             }
             await session.exec_action(action)
             return await self._build_action_result(f"Scrolled {direction} by {amount}px")
+        except BrowserPageClosedError as e:
+            # Return friendly message to Agent - page was recovered but needs re-navigation
+            return str(e)
         except Exception as e:
             logger.error(f"browser_scroll error: {e}")
             return f"Error scrolling: {e}"
@@ -951,6 +957,9 @@ class BrowserToolkit(BaseToolkit):
                 return await self._build_action_result(f"Selected '{value}' successfully")
             else:
                 return await self._build_action_result(f"Select failed: {result.get('message')}")
+        except BrowserPageClosedError as e:
+            # Return friendly message to Agent - page was recovered but needs re-navigation
+            return str(e)
         except Exception as e:
             logger.error(f"browser_select error: {e}")
             return f"Error selecting option: {e}"
@@ -1029,6 +1038,9 @@ class BrowserToolkit(BaseToolkit):
             else:
                 snapshot = await session.get_snapshot()
                 return header + snapshot
+        except BrowserPageClosedError as e:
+            # Return friendly message to Agent - page was recovered but needs re-navigation
+            return str(e)
         except Exception as e:
             logger.error(f"browser_get_page_snapshot error: {e}")
             return f"Error getting snapshot: {e}"
@@ -1102,6 +1114,9 @@ class BrowserToolkit(BaseToolkit):
                 return await self._build_action_result(f"Pressed keys: {key_combo}")
             else:
                 return await self._build_action_result(f"Press key failed: {result.get('message')}")
+        except BrowserPageClosedError as e:
+            # Return friendly message to Agent - page was recovered but needs re-navigation
+            return str(e)
         except Exception as e:
             logger.error(f"browser_press_key error: {e}")
             return f"Error pressing keys: {e}"
@@ -1154,6 +1169,9 @@ class BrowserToolkit(BaseToolkit):
                 )
             else:
                 return await self._build_action_result(f"Mouse control failed: {result.get('message')}")
+        except BrowserPageClosedError as e:
+            # Return friendly message to Agent - page was recovered but needs re-navigation
+            return str(e)
         except Exception as e:
             logger.error(f"browser_mouse_control error: {e}")
             return f"Error with mouse control: {e}"
@@ -1222,6 +1240,9 @@ class BrowserToolkit(BaseToolkit):
                 parts.append(snapshot)
 
             return "\n\n".join(parts)
+        except BrowserPageClosedError as e:
+            # Return friendly message to Agent - browser was recovered
+            return str(e)
         except Exception as e:
             logger.error(f"browser_switch_tab error: {e}")
             return f"Error switching tab: {e}"
@@ -1281,6 +1302,9 @@ class BrowserToolkit(BaseToolkit):
                 parts.append(snapshot)
 
             return "\n\n".join(parts)
+        except BrowserPageClosedError as e:
+            # Return friendly message to Agent - browser was recovered
+            return str(e)
         except Exception as e:
             logger.error(f"browser_new_tab error: {e}")
             return f"Error opening new tab: {e}"
@@ -1328,6 +1352,9 @@ class BrowserToolkit(BaseToolkit):
                 parts.append("No active tab remaining.")
 
             return "\n\n".join(parts)
+        except BrowserPageClosedError as e:
+            # Return friendly message to Agent - browser was recovered
+            return str(e)
         except Exception as e:
             logger.error(f"browser_close_tab error: {e}")
             return f"Error closing tab: {e}"

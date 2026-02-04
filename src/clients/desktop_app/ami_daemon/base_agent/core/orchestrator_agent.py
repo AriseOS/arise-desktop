@@ -91,6 +91,12 @@ Example workflow:
 - You: shell_exec to find the report file
 - You: attach_file to attach the found file
 - You: "找到了您昨天的报告，请点击下方文件查看"
+
+## Language Policy
+**CRITICAL**: You MUST respond in the same language as the user's input.
+- If the user writes in Chinese, respond in Chinese.
+- If the user writes in English, respond in English.
+- This applies to ALL your responses and outputs.
 """
 
 
