@@ -228,8 +228,10 @@ async def execute_task(
 
     # Get LLM config from app config
     use_proxy = config.get('llm.use_proxy', True)
-    proxy_url = config.get('llm.proxy_url', 'https://api.ariseos.com/api')
-    llm_model = config.get('llm.model', 'claude-sonnet-4-5-20250929')
+    proxy_url = config.get('llm.proxy_url')
+    llm_model = config.get('llm.model')
+    if not llm_model:
+        raise HTTPException(status_code=500, detail="llm.model not configured")
 
     # TODO: Temporarily hardcode user_id for memory queries
     # Will add proper user_id from frontend later

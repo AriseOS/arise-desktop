@@ -1187,7 +1187,7 @@ IMPORTANT: If you discover more items than expected, use `replan_task()` to add 
         self,
         reason: str,
         new_subtasks: List[Dict[str, str]],
-        cancelled_subtask_ids: Optional[List[str]] = None,
+        cancelled_subtask_ids: Optional[Union[List[str], str]] = None,
     ) -> str:
         """
         Adjust the task plan by adding new subtasks or cancelling existing ones.
@@ -1201,11 +1201,32 @@ IMPORTANT: If you discover more items than expected, use `replan_task()` to add 
             reason: Why the replan is needed.
             new_subtasks: List of new subtasks, each with 'id' and 'content'.
             cancelled_subtask_ids: Optional list of subtask IDs to cancel.
+                Can be a list or a JSON string (LLM sometimes passes string).
 
         Returns:
             Updated plan summary.
         """
         logger.info(f"[ListenBrowserAgent] Replan requested: {reason}")
+
+        # Fix: Handle cancelled_subtask_ids being a JSON string instead of list
+        # LLM sometimes passes '["1.1", "1.2"]' as string instead of actual list
+        if cancelled_subtask_ids:
+            if isinstance(cancelled_subtask_ids, str):
+                if cancelled_subtask_ids == 'null' or cancelled_subtask_ids == '':
+                    cancelled_subtask_ids = []
+                else:
+                    try:
+                        cancelled_subtask_ids = json.loads(cancelled_subtask_ids)
+                        logger.info(
+                            f"[ListenBrowserAgent] Parsed cancelled_subtask_ids from string: "
+                            f"{len(cancelled_subtask_ids)} items"
+                        )
+                    except json.JSONDecodeError as e:
+                        logger.warning(
+                            f"[ListenBrowserAgent] Failed to parse cancelled_subtask_ids "
+                            f"'{cancelled_subtask_ids[:50]}...': {e}"
+                        )
+                        cancelled_subtask_ids = []
 
         # Cancel specified subtasks
         if cancelled_subtask_ids:
@@ -1213,6 +1234,7 @@ IMPORTANT: If you discover more items than expected, use `replan_task()` to add 
                 subtask = self._find_subtask(subtask_id)
                 if subtask:
                     subtask.state = SubTaskState.CANCELLED
+                    logger.debug(f"[ListenBrowserAgent] Cancelled subtask: {subtask_id}")
 
         # Add new subtasks
         for new_task_data in new_subtasks:
