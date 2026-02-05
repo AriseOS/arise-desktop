@@ -1670,39 +1670,6 @@ Response:"""
                                 context="initial",
                             ))
                         else:
-                            # Inject Reasoner intent sequences into browser subtasks (if available)
-                            browser_subtasks = [
-                                st for st in subtasks if st.agent_type == "browser"
-                            ]
-                            if browser_subtasks:
-                                reasoner_result = await self._call_reasoner(task_to_decompose)
-                                intent_guide = self._format_reasoner_intent_sequences(reasoner_result)
-                                if intent_guide:
-                                    for st in browser_subtasks:
-                                        before_len = len(st.workflow_guide) if st.workflow_guide else 0
-                                        if st.workflow_guide:
-                                            st.workflow_guide = f"{st.workflow_guide}\n\n{intent_guide}"
-                                        else:
-                                            st.workflow_guide = intent_guide
-                                        after_len = len(st.workflow_guide)
-                                        logger.info(
-                                            f"[Task {task_id}] Appended intent guide to subtask {st.id}: "
-                                            f"before={before_len}, after={after_len}"
-                                        )
-                                    logger.info(
-                                        f"[Task {task_id}] Injected Reasoner intent sequences into "
-                                        f"{len(browser_subtasks)} browser subtasks "
-                                        f"(guide_len={len(intent_guide)})"
-                                    )
-                                else:
-                                    logger.info(
-                                        f"[Task {task_id}] No Reasoner intent sequences available for injection"
-                                    )
-                            else:
-                                logger.info(
-                                    f"[Task {task_id}] No browser subtasks; skipping Reasoner intent sequence injection"
-                                )
-
                             # Update state with subtasks
                             state.subtasks = [
                                 {
@@ -2010,7 +1977,7 @@ Response:"""
                 notes_directory=state.notes_directory,
                 browser_data_directory=state.browser_data_directory,
                 headless=headless,
-                export_model_visible_snapshots=True,
+                export_model_visible_snapshots=False,
                 memory_api_base_url=self._cloud_client.api_url if self._cloud_client else None,
                 ami_api_key=self._llm_api_key,
                 user_id=self._user_id,

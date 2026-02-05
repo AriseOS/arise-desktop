@@ -14,6 +14,7 @@ Task decomposition and orchestration are handled by AMITaskPlanner/AMITaskExecut
 import asyncio
 import logging
 import platform
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, List, Optional, TYPE_CHECKING
@@ -214,6 +215,11 @@ class ListenBrowserAgent(ListenChatAgent):
         self._memory_result: Optional["QueryResult"] = None
         # Note: _workflow_guide_content and _memory_level are inherited from ListenChatAgent
 
+        # Page operations query optimization (from upstream)
+        self._last_url_missing_log_ts: float = 0.0
+        self._page_ops_inflight: dict[str, asyncio.Task] = {}
+        self._page_ops_checked_urls: set[str] = set()
+
         # Register all tools
         self._register_all_tools()
 
@@ -311,6 +317,94 @@ class ListenBrowserAgent(ListenChatAgent):
         logger.info(
             f"[ListenBrowserAgent] User request set: {user_request[:50]}..."
         )
+
+    def set_current_url(self, url: str) -> None:
+        """Override to trigger page-operations query on URL change."""
+        super().set_current_url(url)
+        if not url:
+            return
+        self._start_page_operations_query(url, source="url_change")
+
+    def _is_queryable_url(self, url: str) -> bool:
+        if not url:
+            return False
+        return url.startswith("http://") or url.startswith("https://")
+
+    def _start_page_operations_query(self, url: str, source: str) -> None:
+        """Start a background page-operations query if needed."""
+        if not self._memory_toolkit:
+            return
+        if not self._is_queryable_url(url):
+            return
+        if url in self._page_ops_checked_urls:
+            return
+        if url in self._page_ops_inflight:
+            return
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.debug(
+                f"[ListenBrowserAgent] No running loop; skip page operations query for {url[:80]}..."
+            )
+            return
+
+        task_id = self._task_state.task_id if self._task_state else "unknown"
+        logger.debug(
+            f"[Task {task_id}] [Memory] Page operations query scheduled "
+            f"(source={source}, url={url[:120]}...)"
+        )
+        self._page_ops_inflight[url] = loop.create_task(
+            self._query_page_operations(url, source=source)
+        )
+
+    async def _query_page_operations(self, url: str, source: str) -> None:
+        """Query Memory for page operations and cache results."""
+        task_id = self._task_state.task_id if self._task_state else "unknown"
+        try:
+            ops = await self._memory_toolkit.query_page_operations(url)
+            if ops:
+                # MemoryToolkit will cache via agent reference; keep a local copy too.
+                self.cache_page_operations(url, ops)
+                logger.info(
+                    f"[Task {task_id}] [Memory] Page operations fetched "
+                    f"(source={source}, length={len(ops)})"
+                )
+            else:
+                logger.info(
+                    f"[Task {task_id}] [Memory] Page operations empty (source={source})"
+                )
+            # Mark as checked even if empty to avoid repeated queries
+            self._page_ops_checked_urls.add(url)
+        except Exception as e:
+            logger.warning(
+                f"[Task {task_id}] [Memory] Page operations query failed "
+                f"(source={source}): {e}"
+            )
+        finally:
+            self._page_ops_inflight.pop(url, None)
+
+    async def _ensure_page_operations(self, url: str, source: str) -> str:
+        """Ensure page operations have been queried for this URL."""
+        cached = self.get_cached_page_operations(url)
+        if cached:
+            return cached
+        if url in self._page_ops_checked_urls:
+            return ""
+
+        # Start query if not already running
+        self._start_page_operations_query(url, source=source)
+
+        # Await in-flight query for this URL if present
+        task = self._page_ops_inflight.get(url)
+        if task:
+            try:
+                await task
+            except Exception:
+                # Query errors are logged in _query_page_operations
+                pass
+
+        return self.get_cached_page_operations(url) or ""
 
     # =========================================================================
     # Browser Utilities
