@@ -1916,6 +1916,12 @@ Response:"""
                 current_question = next_message
                 logger.info(f"[Task {task_id}] Received next user message: {next_message[:100]}...")
 
+                # Reset Orchestrator memory to prevent context bleeding between tasks
+                # This avoids sending previous task's detailed execution history to LLM
+                # High-level context is preserved in TaskState.conversation_history
+                orchestrator.reset()
+                logger.info(f"[Task {task_id}] Orchestrator memory reset for new task")
+
             except asyncio.CancelledError:
                 logger.info(f"[Task {task_id}] Task cancelled while waiting")
                 break

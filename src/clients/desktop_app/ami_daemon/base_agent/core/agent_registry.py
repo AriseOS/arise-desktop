@@ -389,7 +389,6 @@ def register_default_agents() -> None:
 
     # Import here to avoid circular imports
     from ..agents import (
-        EigentStyleBrowserAgent,
         TextAgent,
         VariableAgent,
         BrowserAgent,
@@ -405,23 +404,14 @@ def register_default_agents() -> None:
 
     registry = get_registry()
 
-    # Browser agents
+    # Browser agent
     registry.register(
         agent_type=AgentType.BROWSER.value,
-        agent_class=EigentStyleBrowserAgent,
+        agent_class=BrowserAgent,
         description="Web automation and browser interactions",
         capabilities=["web_navigation", "web_search", "data_extraction", "form_filling"],
         tags=["browser", "web", "automation", "research"],
         priority=10,
-    )
-
-    registry.register(
-        agent_type="basic_browser_agent",
-        agent_class=BrowserAgent,
-        description="Basic browser interaction agent",
-        capabilities=["web_navigation", "basic_interaction"],
-        tags=["browser", "basic"],
-        priority=1,
     )
 
     # Text agent

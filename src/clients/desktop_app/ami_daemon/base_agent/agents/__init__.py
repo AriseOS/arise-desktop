@@ -19,9 +19,8 @@ from .scraper_agent import ScraperAgent
 from .storage_agent import StorageAgent
 from .autonomous_browser_agent import AutonomousBrowserAgent
 from .tavily_agent import TavilyAgent
-from .eigent_style_browser_agent import EigentStyleBrowserAgent
 
-# New specialized agents (from Eigent migration)
+# Specialized agents (from Eigent migration)
 from .question_confirm_agent import QuestionConfirmAgent
 from .developer_agent import DeveloperAgent
 from .document_agent import DocumentAgent
@@ -42,9 +41,8 @@ __all__ = [
     'StorageAgent',
     'AutonomousBrowserAgent',
     'TavilyAgent',
-    'EigentStyleBrowserAgent',
 
-    # New specialized agents (Eigent migration)
+    # Specialized agents (Eigent migration)
     'QuestionConfirmAgent',
     'DeveloperAgent',
     'DocumentAgent',
@@ -68,9 +66,8 @@ def get_all_agent_schemas() -> dict:
         'storage_agent': StorageAgent.get_input_schema(),
         'autonomous_browser_agent': AutonomousBrowserAgent.get_input_schema(),
         'tavily_agent': TavilyAgent.get_input_schema(),
-        'eigent_style_browser_agent': EigentStyleBrowserAgent.get_input_schema(),
 
-        # New specialized agents
+        # Specialized agents
         'question_confirm_agent': QuestionConfirmAgent.get_input_schema(),
         'developer_agent': DeveloperAgent.get_input_schema(),
         'document_agent': DocumentAgent.get_input_schema(),

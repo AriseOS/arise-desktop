@@ -1,15 +1,19 @@
 """
-AMI Task Planner - Lightweight task decomposition and Memory integration.
+AMI Task Planner - Fine-grained task decomposition following Eigent/CAMEL pattern.
 
-This module replaces CAMEL Workforce's task decomposition with a simpler system:
-- Coarse-grained decomposition by agent type (browser, document, code)
-- Memory query for each subtask to get workflow guidance
-- Returns AMISubtask objects ready for AMITaskExecutor
+This module provides task decomposition with principles from CAMEL's TASK_DECOMPOSE_PROMPT:
+- Fine-grained decomposition into atomic, self-contained subtasks
+- Each subtask should only need 1-2 tool calls (single astep())
+- Clear deliverables for each subtask
+- Strategic grouping of sequential actions by same worker
+- Aggressive parallelization across different workers
+- Memory query for workflow guidance
 
 No CAMEL Workforce dependencies - just uses ChatAgent for LLM calls.
 """
 
 import logging
+import re
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -34,7 +38,82 @@ _MAX_GUIDE_INTENTS = 20
 # Prompts for Task Decomposition
 # =============================================================================
 
-# Coarse-grained decomposition prompt - splits by agent type
+# Fine-grained decomposition prompt - based on CAMEL's TASK_DECOMPOSE_PROMPT
+# Key principles:
+# 1. Self-Contained Subtasks - each subtask must be independently understandable
+# 2. Clear Deliverables - specify exact output format for each subtask
+# 3. Strategic Grouping - group sequential actions by same worker type
+# 4. Aggressive Parallelization - parallelize across different workers
+# 5. Explicit Dependencies - LLM specifies which tasks depend on which
+FINE_GRAINED_DECOMPOSE_PROMPT = r"""You need to decompose a task into atomic, executable subtasks.
+
+**CRITICAL PRINCIPLES:**
+
+1. **Self-Contained Subtasks**: Each subtask must be FULLY self-sufficient and independently understandable.
+   - DO NOT use relative references like "the previous result" or "the data above"
+   - DO write explicit instructions with all necessary context
+   - Example: Instead of "Analyze the document", write "Analyze the document titled 'Q2 Report' and extract key metrics"
+
+2. **Clear Deliverables**: Each subtask must specify a concrete output.
+   - DO NOT use vague verbs like "research" or "look into" without defining output
+   - DO specify the format: "Return a JSON list of...", "Write to file products.md..."
+   - Example: "Extract all product names and prices, return as JSON list with 'name' and 'price' keys"
+
+3. **Atomic Actions**: Each subtask should require only 1-2 tool calls.
+   - Browser subtasks: one navigation or one data extraction
+   - Document subtasks: one file read or one file write
+   - Code subtasks: one command execution
+
+4. **Strategic Grouping**: Group ONLY sequential actions that:
+   - Must be done by the SAME worker type
+   - Are tightly coupled (e.g., navigate to page + extract data from same page)
+
+5. **Aggressive Parallelization**: Create separate subtasks for:
+   - Different worker types (browser vs document)
+   - Independent operations (processing multiple items in parallel)
+
+6. **Explicit Dependencies**: You MUST specify dependencies for each task.
+   - If a task needs data from another task, add depends_on attribute
+   - If tasks are independent, do NOT add depends_on (they can run in parallel)
+   - Example: Task 3 needs results from Task 1 and 2 → depends_on="1,2"
+
+**LANGUAGE POLICY**: Write subtask content in the SAME language as the user's task.
+
+**AVAILABLE WORKERS:**
+{workers_info}
+
+**OUTPUT FORMAT (XML):**
+<tasks>
+<task id="1" type="browser">Visit producthunt.com and navigate to the weekly leaderboard page</task>
+<task id="2" type="browser" depends_on="1">Extract the top 10 products with names, descriptions, and URLs. Return as JSON list.</task>
+<task id="3" type="browser" depends_on="2">Save the extracted products to a note file named 'products.md'</task>
+<task id="4" type="document" depends_on="3">Read products.md and generate an HTML report with product cards</task>
+</tasks>
+
+Each <task> element:
+- Has "id" attribute: Sequential number (1, 2, 3...)
+- Has "type" attribute: browser, document, code, or multi_modal
+- Has optional "depends_on" attribute: Comma-separated list of task IDs that must complete first
+  - ONLY add depends_on if the task NEEDS data from previous tasks
+  - Independent tasks should NOT have depends_on (allows parallel execution)
+- Contains a self-contained, actionable description with clear deliverable
+
+**IMPORTANT**: Do NOT assume sequential dependencies. Only add depends_on when there is actual data dependency.
+
+Example of INDEPENDENT tasks (can run in parallel):
+<tasks>
+<task id="1" type="browser">Search Amazon for AI glasses and extract top 3 products</task>
+<task id="2" type="browser">Search ProductHunt for AI wearables and extract top products</task>
+<task id="3" type="document" depends_on="1,2">Combine results from Amazon and ProductHunt searches into a comparison report</task>
+</tasks>
+
+**TASK TO DECOMPOSE:**
+{task}
+
+Now decompose this task into atomic subtasks:"""
+
+
+# Legacy coarse-grained prompt (kept for backward compatibility)
 COARSE_DECOMPOSE_PROMPT = """Split the task by work type. Keep related operations of the same type together.
 
 Types:
@@ -58,21 +137,44 @@ Output JSON:
 Task: {task}"""
 
 
+# Default worker descriptions (used if not provided)
+DEFAULT_WORKER_DESCRIPTIONS = {
+    "browser": (
+        "Browser Agent: Can search the web, visit URLs, click elements, "
+        "type text, extract page content, and take notes. Use for web research "
+        "and online operations."
+    ),
+    "document": (
+        "Document Agent: Can read and write files (Markdown, HTML, JSON, YAML, "
+        "Word, PDF, PowerPoint, Excel, CSV). Use for creating reports, documents, "
+        "and data files."
+    ),
+    "code": (
+        "Developer Agent: Can execute terminal commands, write and run code, "
+        "manage files. Use for programming tasks and system operations."
+    ),
+    "multi_modal": (
+        "Multi-Modal Agent: Can process images, audio, and video. "
+        "Use for media analysis and generation tasks."
+    ),
+}
+
+
 class AMITaskPlanner:
     """
-    Task planner that replaces CAMEL Workforce's decomposition logic.
+    Task planner with fine-grained decomposition following Eigent/CAMEL pattern.
 
     Key features:
-    - Coarse-grained decomposition by agent type
-    - Memory query for each subtask
-    - Returns AMISubtask objects with workflow_guide
+    - Fine-grained decomposition into atomic subtasks (1-2 tool calls each)
+    - Self-contained subtask descriptions with clear deliverables
+    - Memory query for workflow guidance
     - SSE events for real-time UI updates
 
-    Unlike CAMEL Workforce:
-    - No coordinator agent complexity
-    - No task tree management
-    - Direct LLM calls for decomposition
-    - ~400 lines vs ~1700 lines
+    Design principles (from CAMEL's TASK_DECOMPOSE_PROMPT):
+    - Self-Contained Subtasks: Each subtask independently understandable
+    - Clear Deliverables: Specific output format for each subtask
+    - Strategic Grouping: Group sequential actions by same worker
+    - Aggressive Parallelization: Parallelize across different workers
     """
 
     def __init__(
@@ -81,6 +183,7 @@ class AMITaskPlanner:
         task_state: Any,  # TaskState for SSE events
         task_agent: "ChatAgent",  # LLM agent for decomposition
         memory_toolkit: Optional["MemoryToolkit"] = None,
+        worker_descriptions: Optional[Dict[str, str]] = None,
     ):
         """
         Initialize the task planner.
@@ -90,11 +193,14 @@ class AMITaskPlanner:
             task_state: TaskState instance for SSE event emission.
             task_agent: ChatAgent instance for LLM calls.
             memory_toolkit: Optional MemoryToolkit for workflow guidance.
+            worker_descriptions: Optional dict of worker type -> description.
+                                 Used to tell LLM what workers are available.
         """
         self.task_id = task_id
         self._task_state = task_state
         self._task_agent = task_agent
         self._memory_toolkit = memory_toolkit
+        self._worker_descriptions = worker_descriptions or DEFAULT_WORKER_DESCRIPTIONS
 
         logger.info(
             f"[AMITaskPlanner] Initialized for task {task_id}, "
@@ -108,12 +214,12 @@ class AMITaskPlanner:
 
     async def decompose_and_query_memory(self, task: str) -> List[AMISubtask]:
         """
-        Decompose task and query Memory for each subtask.
+        Decompose task into fine-grained subtasks and query Memory for each.
 
         This is the main entry point that combines:
-        1. Coarse-grained decomposition by agent type
-        2. Memory query for each subtask
-        3. Returns AMISubtask objects with workflow_guide
+        1. Fine-grained decomposition into atomic subtasks
+        2. Memory query for each subtask to get workflow_guide
+        3. Returns AMISubtask objects ready for single-call execution
 
         Args:
             task: The original task description from user.
@@ -123,8 +229,8 @@ class AMITaskPlanner:
         """
         logger.info(f"[AMITaskPlanner] Decomposing task: {task[:100]}...")
 
-        # Step 1: Coarse decomposition
-        subtasks = await self._coarse_decompose(task)
+        # Step 1: Fine-grained decomposition
+        subtasks = await self._fine_grained_decompose(task)
 
         # Step 2: Query Memory for each subtask
         await self._query_memory_for_subtasks(subtasks)
@@ -151,9 +257,21 @@ class AMITaskPlanner:
 
         return subtasks
 
-    async def _coarse_decompose(self, task: str) -> List[AMISubtask]:
+    def _build_workers_info(self) -> str:
+        """Build worker descriptions string for the decomposition prompt."""
+        lines = []
+        for worker_type, description in self._worker_descriptions.items():
+            lines.append(f"- **{worker_type}**: {description}")
+        return "\n".join(lines)
+
+    async def _fine_grained_decompose(self, task: str) -> List[AMISubtask]:
         """
-        Coarse-grained task decomposition - split task by agent type.
+        Fine-grained task decomposition into atomic subtasks.
+
+        Each subtask should:
+        - Be self-contained and independently understandable
+        - Have a clear deliverable
+        - Require only 1-2 tool calls (single astep() execution)
 
         Args:
             task: The original task description.
@@ -164,38 +282,42 @@ class AMITaskPlanner:
         Raises:
             ValueError: If LLM response cannot be parsed.
         """
-        logger.info(f"[AMITaskPlanner] Coarse decomposing task...")
+        logger.info(f"[AMITaskPlanner] Fine-grained decomposing task...")
 
         # Emit progress event
         await self._emit_event(DecomposeProgressData(
             task_id=self.task_id,
             progress=0.1,
-            message="Analyzing task types...",
+            message="Analyzing task and creating atomic subtasks...",
             is_final=False,
         ))
 
-        # Build the prompt
-        prompt = COARSE_DECOMPOSE_PROMPT.format(task=task)
+        # Build the prompt with worker descriptions
+        workers_info = self._build_workers_info()
+        prompt = FINE_GRAINED_DECOMPOSE_PROMPT.format(
+            task=task,
+            workers_info=workers_info,
+        )
 
-        # Call LLM for coarse decomposition
+        # Call LLM for fine-grained decomposition
         self._task_agent.reset()
         response = self._task_agent.step(prompt)
 
         if not response or not response.msg:
-            raise ValueError("Coarse decomposition returned empty response")
+            raise ValueError("Fine-grained decomposition returned empty response")
 
         response_text = response.msg.content
-        logger.debug(f"[AMITaskPlanner] Coarse decompose raw response: {response_text[:500]}...")
+        logger.debug(f"[AMITaskPlanner] Fine-grained decompose raw response: {response_text[:500]}...")
 
-        # Parse the JSON response
-        subtasks = self._parse_coarse_subtasks(response_text)
+        # Parse the XML response (CAMEL format)
+        subtasks = self._parse_xml_subtasks(response_text)
 
         # Log summary
         type_counts: Dict[str, int] = {}
         for st in subtasks:
             type_counts[st.agent_type] = type_counts.get(st.agent_type, 0) + 1
         logger.info(
-            f"[AMITaskPlanner] Coarse decomposition complete: {len(subtasks)} subtasks "
+            f"[AMITaskPlanner] Fine-grained decomposition complete: {len(subtasks)} subtasks "
             f"(types: {type_counts})"
         )
 
@@ -203,11 +325,170 @@ class AMITaskPlanner:
         await self._emit_event(DecomposeProgressData(
             task_id=self.task_id,
             progress=0.3,
-            message=f"Identified {len(subtasks)} subtasks",
+            message=f"Created {len(subtasks)} atomic subtasks",
             is_final=False,
         ))
 
         return subtasks
+
+    def _parse_xml_subtasks(self, response_text: str) -> List[AMISubtask]:
+        """
+        Parse LLM XML response into AMISubtask objects.
+
+        Expected format:
+        <tasks>
+        <task id="1" type="browser">Visit producthunt.com</task>
+        <task id="2" type="browser" depends_on="1">Extract products</task>
+        <task id="3" type="document" depends_on="2">Create report</task>
+        </tasks>
+
+        Dependencies are now EXPLICIT via depends_on attribute, not inferred from order.
+        This allows independent tasks to run in parallel.
+
+        Args:
+            response_text: Raw LLM response text.
+
+        Returns:
+            List of parsed AMISubtask objects.
+
+        Raises:
+            ValueError: If response cannot be parsed.
+        """
+        subtasks = []
+
+        # Extract <tasks>...</tasks> block
+        tasks_match = re.search(r'<tasks>(.*?)</tasks>', response_text, re.DOTALL | re.IGNORECASE)
+        if not tasks_match:
+            # Fallback: try to parse as JSON (backward compatibility)
+            logger.warning("[AMITaskPlanner] No <tasks> block found, trying JSON fallback")
+            return self._parse_coarse_subtasks(response_text)
+
+        tasks_content = tasks_match.group(1)
+
+        # Extract individual <task> elements with all attributes
+        # Pattern to match <task ...attributes...>content</task>
+        task_pattern = r'<task\s+([^>]*)>(.*?)</task>'
+        matches = re.findall(task_pattern, tasks_content, re.DOTALL | re.IGNORECASE)
+
+        if not matches:
+            # Fallback: try simpler pattern without attributes
+            task_pattern_simple = r'<task>(.*?)</task>'
+            simple_matches = re.findall(task_pattern_simple, tasks_content, re.DOTALL | re.IGNORECASE)
+            if simple_matches:
+                for i, content in enumerate(simple_matches, 1):
+                    # Infer type from content, no dependencies (independent tasks)
+                    agent_type = self._infer_agent_type(content.strip())
+                    subtask = AMISubtask(
+                        id=str(i),
+                        content=content.strip(),
+                        agent_type=agent_type,
+                        depends_on=[],  # No dependencies inferred
+                    )
+                    subtasks.append(subtask)
+            else:
+                logger.warning("[AMITaskPlanner] No <task> elements found, trying JSON fallback")
+                return self._parse_coarse_subtasks(response_text)
+        else:
+            for i, (attrs_str, content) in enumerate(matches, 1):
+                # Parse attributes from the attribute string
+                task_id = str(i)  # Default to sequential number
+                agent_type = "browser"  # Default type
+                depends_on = []
+
+                # Extract id attribute
+                id_match = re.search(r'id=["\']([^"\']+)["\']', attrs_str, re.IGNORECASE)
+                if id_match:
+                    task_id = id_match.group(1).strip()
+
+                # Extract type attribute
+                type_match = re.search(r'type=["\']([^"\']+)["\']', attrs_str, re.IGNORECASE)
+                if type_match:
+                    agent_type = type_match.group(1).lower().strip()
+                    if agent_type not in ("browser", "document", "code", "multi_modal"):
+                        logger.warning(
+                            f"[AMITaskPlanner] Unknown agent type '{agent_type}', inferring from content"
+                        )
+                        agent_type = self._infer_agent_type(content.strip())
+                else:
+                    # Infer type from content if not specified
+                    agent_type = self._infer_agent_type(content.strip())
+
+                # Extract depends_on attribute (comma-separated list of task IDs)
+                depends_match = re.search(r'depends_on=["\']([^"\']+)["\']', attrs_str, re.IGNORECASE)
+                if depends_match:
+                    deps_str = depends_match.group(1).strip()
+                    # Parse comma-separated list
+                    depends_on = [d.strip() for d in deps_str.split(',') if d.strip()]
+
+                logger.debug(
+                    f"[AMITaskPlanner] Parsed task: id={task_id}, type={agent_type}, "
+                    f"depends_on={depends_on}, content={content.strip()[:50]}..."
+                )
+
+                subtask = AMISubtask(
+                    id=task_id,
+                    content=content.strip(),
+                    agent_type=agent_type,
+                    depends_on=depends_on,
+                )
+                subtasks.append(subtask)
+
+        if not subtasks:
+            raise ValueError("Fine-grained decomposition produced no valid subtasks")
+
+        return subtasks
+
+    def _infer_agent_type(self, content: str) -> str:
+        """
+        Infer agent type from subtask content.
+
+        Args:
+            content: Subtask content/description.
+
+        Returns:
+            Inferred agent type (browser, document, code, or multi_modal).
+        """
+        content_lower = content.lower()
+
+        # Browser indicators
+        browser_keywords = [
+            "visit", "navigate", "browse", "search", "click", "type",
+            "extract", "scrape", "webpage", "website", "url", "http",
+            "producthunt", "google", "amazon", "网页", "访问", "搜索",
+            "点击", "浏览", "提取",
+        ]
+        if any(kw in content_lower for kw in browser_keywords):
+            return "browser"
+
+        # Document indicators
+        document_keywords = [
+            "write", "create", "generate", "report", "document", "file",
+            "markdown", "html", "pdf", "word", "excel", "powerpoint",
+            "read file", "save", "export", "写", "生成", "报告", "文档",
+            "创建", "保存",
+        ]
+        if any(kw in content_lower for kw in document_keywords):
+            return "document"
+
+        # Code indicators
+        code_keywords = [
+            "run", "execute", "command", "terminal", "shell", "script",
+            "python", "npm", "pip", "git", "compile", "build", "install",
+            "运行", "执行", "命令", "脚本", "编译",
+        ]
+        if any(kw in content_lower for kw in code_keywords):
+            return "code"
+
+        # Multi-modal indicators
+        mm_keywords = [
+            "image", "video", "audio", "photo", "picture", "transcribe",
+            "analyze image", "generate image", "图片", "视频", "音频",
+        ]
+        if any(kw in content_lower for kw in mm_keywords):
+            return "multi_modal"
+
+        # Default to browser (most common)
+        return "browser"
 
     def _parse_coarse_subtasks(self, response_text: str) -> List[AMISubtask]:
         """
@@ -595,7 +876,7 @@ class AMITaskPlanner:
         return "\n".join(lines)
 
     # =========================================================================
-    # Simple decomposition (without Memory)
+    # Simple decomposition (without Memory) - uses fine-grained by default
     # =========================================================================
 
     async def simple_decompose(self, task: str) -> List[AMISubtask]:
@@ -603,6 +884,7 @@ class AMITaskPlanner:
         Simple decomposition without Memory query.
 
         Use this when Memory is not available or not needed.
+        Uses fine-grained decomposition by default.
 
         Args:
             task: The original task description.
@@ -610,4 +892,62 @@ class AMITaskPlanner:
         Returns:
             List of AMISubtask objects.
         """
-        return await self._coarse_decompose(task)
+        return await self._fine_grained_decompose(task)
+
+    async def coarse_decompose(self, task: str) -> List[AMISubtask]:
+        """
+        Legacy coarse-grained decomposition (for backward compatibility).
+
+        Splits task by agent type only (browser, document, code).
+        Use fine_grained_decompose for better results.
+
+        Args:
+            task: The original task description.
+
+        Returns:
+            List of AMISubtask objects.
+        """
+        logger.info(f"[AMITaskPlanner] Coarse decomposing task (legacy mode)...")
+
+        # Emit progress event
+        await self._emit_event(DecomposeProgressData(
+            task_id=self.task_id,
+            progress=0.1,
+            message="Analyzing task types...",
+            is_final=False,
+        ))
+
+        # Build the prompt
+        prompt = COARSE_DECOMPOSE_PROMPT.format(task=task)
+
+        # Call LLM for coarse decomposition
+        self._task_agent.reset()
+        response = self._task_agent.step(prompt)
+
+        if not response or not response.msg:
+            raise ValueError("Coarse decomposition returned empty response")
+
+        response_text = response.msg.content
+        logger.debug(f"[AMITaskPlanner] Coarse decompose raw response: {response_text[:500]}...")
+
+        # Parse the JSON response
+        subtasks = self._parse_coarse_subtasks(response_text)
+
+        # Log summary
+        type_counts: Dict[str, int] = {}
+        for st in subtasks:
+            type_counts[st.agent_type] = type_counts.get(st.agent_type, 0) + 1
+        logger.info(
+            f"[AMITaskPlanner] Coarse decomposition complete: {len(subtasks)} subtasks "
+            f"(types: {type_counts})"
+        )
+
+        # Emit progress event
+        await self._emit_event(DecomposeProgressData(
+            task_id=self.task_id,
+            progress=0.3,
+            message=f"Identified {len(subtasks)} subtasks",
+            is_final=False,
+        ))
+
+        return subtasks

@@ -25,6 +25,9 @@ from ..tools.toolkits import (
     HumanToolkit,
     BrowserToolkit,
     MemoryToolkit,
+    # Developer toolkits
+    ScreenshotToolkit,
+    WebDeployToolkit,
     # Document toolkits
     FileToolkit,
     PPTXToolkit,
@@ -158,7 +161,12 @@ The current date is {now_str}(Accurate to the hour). For any date-related tasks,
     summary of your findings, presented in a clear, detailed, and
     easy-to-read format. Avoid using markdown tables for presenting data;
     use plain text formatting instead.
-<mandatory_instructions>
+
+- You SHOULD keep the user informed by providing message_title and
+    message_description parameters when calling tools. These optional
+    parameters are available on all tools and will automatically notify
+    the user of your progress.
+</mandatory_instructions>
 
 <capabilities>
 Your capabilities include:
@@ -238,6 +246,10 @@ The current date is {now_str}(Accurate to the hour). For any date-related tasks,
 <mandatory_instructions>
 - You MUST use the `read_note` tool to read the ALL notes from other agents.
 
+- You SHOULD keep the user informed by providing message_title and message_description
+    parameters when calling tools. These optional parameters are available on all tools
+    and will automatically notify the user of your progress.
+
 - When you complete your task, your final response must be a comprehensive
 summary of your work and the outcome, presented in a clear, detailed, and
 easy-to-read format. Avoid using markdown tables for presenting data; use
@@ -254,13 +266,30 @@ Your capabilities are extensive and powerful:
   can run any command-line tool, manage files, and interact with the OS. If
   a tool is missing, you MUST install it with the appropriate package manager
   (e.g., `pip3`, `uv`, or `apt-get`). Your capabilities include:
+    - **IMPORTANT:** Before the task gets started, you can use `shell_exec` to
+      run `ls {working_directory}` to check for important files in the working
+      directory, and then use terminal commands like `cat`, `grep`, or `head`
+      to read and examine these files.
     - **Text & Data Processing**: `awk`, `sed`, `grep`, `jq`.
     - **File System & Execution**: `find`, `xargs`, `tar`, `zip`, `unzip`,
       `chmod`.
     - **Networking & Web**: `curl`, `wget` for web requests; `ssh` for
       remote access.
+- **Screen Observation**: You can take screenshots to analyze GUIs and visual
+  context, enabling you to perform tasks that require sight.
+- **Desktop Automation**: You can control desktop applications
+  programmatically.
+  - **On macOS**, you MUST prioritize using **AppleScript** for its robust
+    control over native applications. Execute simple commands with
+    `osascript -e '...'` or run complex scripts from a `.scpt` file.
+  - **On other systems**, use **pyautogui** for cross-platform GUI
+    automation.
+  - **IMPORTANT**: Always complete the full automation workflow—do not just
+    prepare or suggest actions. Execute them to completion.
 - **Solution Verification**: You can immediately test and verify your
   solutions by executing them in the terminal.
+- **Web Deployment**: You can deploy web applications and content, serve
+  files, and manage deployments.
 - **Human Collaboration**: If you are stuck or need clarification, you can
   ask for human input via the console.
 - **Note Management**: You can write and read notes to coordinate with other
@@ -300,6 +329,20 @@ NEVER do the following:
 The terminal tools are session-based, identified by a unique `id`. Master
 these tips to maximize your effectiveness:
 
+- **GUI Automation Strategy**:
+  - **AppleScript (macOS Priority)**: For robust control of macOS apps, use
+    `osascript`.
+    - Example (open Slack):
+      `osascript -e 'tell application "Slack" to activate'`
+    - Example (run script file): `osascript my_script.scpt`
+  - **pyautogui (Cross-Platform)**: For other OSes or simple automation.
+    - Key functions: `pyautogui.click(x, y)`, `pyautogui.typewrite("text")`,
+      `pyautogui.hotkey('ctrl', 'c')`, `pyautogui.press('enter')`.
+    - Safety: Always use `time.sleep()` between actions to ensure stability
+      and add `pyautogui.FAILSAFE = True` to your scripts.
+    - Workflow: Your scripts MUST complete the entire task, from start to
+      final submission.
+
 - **Command-Line Best Practices**:
   - **Be Creative**: The terminal is your most powerful tool. Use it boldly.
   - **Automate Confirmation**: Use `-y` or `-f` flags to avoid interactive
@@ -311,6 +354,9 @@ these tips to maximize your effectiveness:
   - **Installation**: Use `pip3 install` or `apt-get install` for new
     packages. If you encounter `ModuleNotFoundError` or `ImportError`, install
     the missing package with `pip install <package>`.
+
+- Stop a Process: If a process needs to be terminated, use
+    `shell_kill_process(id="...")`.
 </terminal_tips>
 
 <collaboration_and_assistance>
@@ -322,7 +368,7 @@ these tips to maximize your effectiveness:
 
 <language_policy>
 **CRITICAL**: You MUST respond in the same language as the user's original request.
-- If the user writes in Chinese, ALL your outputs must be in Chinese (code, summaries, comments).
+- If the user writes in Chinese, ALL your outputs must be in Chinese (code comments, summaries, reports).
 - If the user writes in English, respond in English.
 - This applies to: code comments, summaries, reports, and any text you generate.
 </language_policy>"""
@@ -373,6 +419,11 @@ The current date is {now_str}(Accurate to the hour). For any date-related tasks,
     your work and the path to the final document, presented in a clear,
     detailed, and easy-to-read format. Avoid using markdown tables for
     presenting data; use plain text formatting instead.
+
+- You SHOULD keep the user informed by providing message_title and
+    message_description parameters when calling tools. These optional
+    parameters are available on all tools and will automatically notify
+    the user of your progress.
 </mandatory_instructions>
 
 <capabilities>
@@ -516,7 +567,12 @@ The current date is {now_str}(Accurate to the hour). For any date-related tasks,
     summary of your analysis or the generated media, presented in a clear,
     detailed, and easy-to-read format. Avoid using markdown tables for
     presenting data; use plain text formatting instead.
-<mandatory_instructions>
+
+- You SHOULD keep the user informed by providing message_title and
+    message_description parameters when calling tools. These optional
+    parameters are available on all tools and will automatically notify
+    the user of your progress.
+</mandatory_instructions>
 
 <capabilities>
 Your capabilities include:
@@ -650,7 +706,7 @@ Guidelines:
 # ============================================================================
 # Agent Descriptions for Lazy Loading
 # ============================================================================
-# These descriptions are used by AMIWorkforce for task assignment decisions
+# These descriptions are used for task assignment decisions
 # BEFORE actually creating the agents. This enables lazy loading pattern.
 
 AGENT_DESCRIPTIONS = {
@@ -846,12 +902,11 @@ async def create_listen_browser_agent(
     llm_base_url: Optional[str] = None,
 ) -> ListenBrowserAgent:
     """
-    Create a ListenBrowserAgent with full TaskOrchestrator capabilities.
+    Create a ListenBrowserAgent with full browser automation capabilities.
 
     This factory creates a ListenBrowserAgent which includes:
-    - All toolkits from create_browser_agent (Browser, NoteTaking, Search, Terminal, Human, Memory)
-    - Internal TaskOrchestrator for subtask management
-    - Internal task management tools (get_current_plan, complete_subtask, replan_task)
+    - All toolkits (Browser, NoteTaking, Search, Terminal, Human, Memory)
+    - Internal subtask management (get_current_plan, complete_subtask, replan_task)
     - Memory L1 direct subtask conversion from cognitive_phrase
 
     Use this when you need an agent that can:
@@ -983,6 +1038,8 @@ def create_developer_agent(
     - TerminalToolkit for command execution
     - NoteTakingToolkit for documentation
     - HumanToolkit for user interaction
+    - ScreenshotToolkit for visual analysis
+    - WebDeployToolkit for web deployment
 
     Based on Eigent's developer_agent factory.
 
@@ -1015,10 +1072,18 @@ def create_developer_agent(
     human_toolkit = HumanToolkit()
     human_toolkit.set_task_state(task_state)
 
+    screenshot_toolkit = ScreenshotToolkit(working_directory=working_directory)
+    screenshot_toolkit.set_task_state(task_state)
+
+    web_deploy_toolkit = WebDeployToolkit()
+    web_deploy_toolkit.set_task_state(task_state)
+
     tools = [
         *[_extract_callable(t) for t in note_toolkit.get_tools()],
         *[_extract_callable(t) for t in terminal_toolkit.get_tools()],
         *[_extract_callable(t) for t in human_toolkit.get_tools()],
+        *[_extract_callable(t) for t in screenshot_toolkit.get_tools()],
+        *[_extract_callable(t) for t in web_deploy_toolkit.get_tools()],
     ]
 
     # Build system prompt (using Eigent's DEVELOPER_SYS_PROMPT)

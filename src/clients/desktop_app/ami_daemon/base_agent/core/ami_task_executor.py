@@ -204,15 +204,15 @@ class AMITaskExecutor:
 
     async def _execute_subtask(self, subtask: AMISubtask) -> bool:
         """
-        Execute a single subtask.
+        Execute a single subtask using astep().
 
-        For agents with execute() method (e.g., ListenBrowserAgent):
-        - Sets memory context (workflow_guide)
-        - Calls execute() for full multi-turn execution with tools
+        All agents now use the unified astep() execution pattern (Eigent style):
+        - Builds prompt with workflow_guide context
+        - Calls astep() which runs CAMEL's internal tool-calling loop
+        - CAMEL's astep() loops until LLM stops calling tools
 
-        For regular agents:
-        - Builds prompt with workflow_guide
-        - Calls astep() for single LLM call
+        With fine-grained decomposition, each subtask should only need
+        1-2 tool calls, so the astep() loop will be short.
 
         Returns:
             True if successful, False otherwise.
@@ -245,46 +245,38 @@ class AMITaskExecutor:
                     f"(attempt {subtask.retry_count + 1}/{self._max_retries + 1})"
                 )
 
-                # Check if agent has execute() method (e.g., ListenBrowserAgent)
-                if hasattr(agent, 'execute') and callable(getattr(agent, 'execute')):
-                    # Set memory context before execution
-                    if hasattr(agent, 'set_memory_context') and subtask.workflow_guide:
-                        agent.set_memory_context(
-                            memory_result=None,
-                            memory_level=subtask.memory_level,
-                            workflow_guide=subtask.workflow_guide,
-                        )
-                        logger.info(
-                            f"[AMITaskExecutor] Set memory context for {type(agent).__name__}: "
-                            f"level={subtask.memory_level}, workflow_guide_len={len(subtask.workflow_guide)}"
-                        )
-
-                    # Set user's original request for context
-                    if hasattr(agent, 'set_user_request') and self._user_request:
-                        agent.set_user_request(self._user_request)
-                        logger.info(
-                            f"[AMITaskExecutor] Set user_request for {type(agent).__name__}: "
-                            f"{self._user_request[:50]}..."
-                        )
-
-                    # Use agent's execute() method for full multi-turn execution
-                    logger.info(
-                        f"[AMITaskExecutor] Using {type(agent).__name__}.execute() "
-                        f"for subtask {subtask.id}"
+                # Set memory context if agent supports it
+                if hasattr(agent, 'set_memory_context') and subtask.workflow_guide:
+                    agent.set_memory_context(
+                        memory_result=None,
+                        memory_level=subtask.memory_level,
+                        workflow_guide=subtask.workflow_guide,
                     )
-                    result_content = await agent.execute(subtask.content)
-                    subtask.result = result_content if result_content else "Task completed"
+                    logger.info(
+                        f"[AMITaskExecutor] Set memory context for {type(agent).__name__}: "
+                        f"level={subtask.memory_level}, workflow_guide_len={len(subtask.workflow_guide)}"
+                    )
 
+                # Set user's original request for context
+                if hasattr(agent, 'set_user_request') and self._user_request:
+                    agent.set_user_request(self._user_request)
+                    logger.debug(
+                        f"[AMITaskExecutor] Set user_request for {type(agent).__name__}"
+                    )
+
+                # Unified execution: build prompt and call astep()
+                prompt = self._build_prompt(subtask)
+                logger.info(
+                    f"[AMITaskExecutor] Executing {type(agent).__name__}.astep() "
+                    f"for subtask {subtask.id}"
+                )
+                response = await agent.astep(prompt)
+
+                # Extract result
+                if hasattr(response, 'msg') and response.msg:
+                    subtask.result = response.msg.content
                 else:
-                    # Regular agent: build prompt and call astep()
-                    prompt = self._build_prompt(subtask)
-                    response = await agent.astep(prompt)
-
-                    # Extract result
-                    if hasattr(response, 'msg') and response.msg:
-                        subtask.result = response.msg.content
-                    else:
-                        subtask.result = str(response)
+                    subtask.result = str(response)
 
                 subtask.state = SubtaskState.DONE
                 await self._emit_subtask_state(subtask)
