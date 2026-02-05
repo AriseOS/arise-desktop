@@ -354,9 +354,9 @@ class ListenBrowserAgent(ListenChatAgent):
             f"[Task {task_id}] [Memory] Page operations query scheduled "
             f"(source={source}, url={url[:120]}...)"
         )
-        self._page_ops_inflight[url] = loop.create_task(
-            self._query_page_operations(url, source=source)
-        )
+        # Create task and add to inflight dict atomically
+        task = loop.create_task(self._query_page_operations(url, source=source))
+        self._page_ops_inflight[url] = task
 
     async def _query_page_operations(self, url: str, source: str) -> None:
         """Query Memory for page operations and cache results."""

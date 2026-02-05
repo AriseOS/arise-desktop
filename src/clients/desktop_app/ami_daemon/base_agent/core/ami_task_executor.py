@@ -184,6 +184,8 @@ class AMITaskExecutor:
         A subtask can execute if:
         - Its state is PENDING
         - All its dependencies are DONE
+
+        Returns None if no executable subtask found.
         """
         for subtask in self._subtasks:
             if subtask.state != SubtaskState.PENDING:
@@ -193,7 +195,15 @@ class AMITaskExecutor:
             deps_satisfied = True
             for dep_id in subtask.depends_on:
                 dep = self._subtask_map.get(dep_id)
-                if dep is None or dep.state != SubtaskState.DONE:
+                if dep is None:
+                    # Dependency reference is invalid - log and treat as unsatisfied
+                    logger.warning(
+                        f"[AMITaskExecutor] Subtask {subtask.id} depends on "
+                        f"non-existent task '{dep_id}'. Marking as blocked."
+                    )
+                    deps_satisfied = False
+                    break
+                if dep.state != SubtaskState.DONE:
                     deps_satisfied = False
                     break
 
