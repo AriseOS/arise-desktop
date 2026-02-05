@@ -13,6 +13,10 @@ Core Toolkits:
 - MemoryToolkit: Query memory system for task guidance
 - TaskPlanningToolkit: Task decomposition and re-planning (from CAMEL)
 
+Developer Toolkits (for DeveloperAgent):
+- ScreenshotToolkit: Take screenshots for visual analysis
+- WebDeployToolkit: Deploy web applications and content
+
 Document Toolkits (for DocumentAgent):
 - FileToolkit: File reading and writing (txt, md, html, json, csv, docx, pdf)
 - PPTXToolkit: PowerPoint presentation creation
@@ -47,6 +51,10 @@ from .long_term_memory_toolkit import (
     LONG_TERM_MEMORY_PROMPT_SECTION,
     get_long_term_memory_prompt,
 )
+
+# Developer toolkits (for DeveloperAgent)
+from .screenshot_toolkit import ScreenshotToolkit
+from .web_deploy_toolkit import WebDeployToolkit
 
 # Document toolkits (for DocumentAgent)
 from .file_toolkit import FileToolkit
@@ -85,8 +93,12 @@ __all__ = [
     "LONG_TERM_MEMORY_PROMPT_SECTION",
     "get_long_term_memory_prompt",
 
-    # Task planning (uses TaskOrchestrator)
+    # Task planning
     "TaskPlanningToolkit",
+
+    # Developer toolkits (for DeveloperAgent)
+    "ScreenshotToolkit",
+    "WebDeployToolkit",
 
     # Document toolkits (for DocumentAgent)
     "FileToolkit",
