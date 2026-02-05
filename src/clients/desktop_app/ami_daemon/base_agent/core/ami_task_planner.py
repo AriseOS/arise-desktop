@@ -511,13 +511,6 @@ class AMITaskPlanner:
                     desc = str(state)[:200]
                 lines.append(f"  Step {i}: {desc}")
 
-                # Add intent sequences if available
-                intent_sequences = getattr(state, "intent_sequences", None)
-                if intent_sequences:
-                    AMITaskPlanner._append_intent_sequences(
-                        lines, intent_sequences, indent="    "
-                    )
-
                 # Add action if available
                 if hasattr(cognitive_phrase, 'actions') and i <= len(cognitive_phrase.actions):
                     action = cognitive_phrase.actions[i - 1]
@@ -569,13 +562,6 @@ class AMITaskPlanner:
             else:
                 desc = str(state)[:200]
             lines.append(f"  {i}. {desc}")
-
-            # Add intent sequences if available
-            intent_sequences = getattr(state, "intent_sequences", None)
-            if intent_sequences:
-                AMITaskPlanner._append_intent_sequences(
-                    lines, intent_sequences, indent="    "
-                )
 
             # Add action if available
             if i <= len(actions):
