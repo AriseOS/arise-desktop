@@ -239,6 +239,7 @@ class ListenChatAgent(ChatAgent):
         # IntentSequence cache for page operations (L3 Memory)
         self._cached_page_operations: Optional[str] = None
         self._cached_page_operations_url: Optional[str] = None
+        self._cached_page_operations_ids: Optional[List[str]] = None
         self._current_page_url: Optional[str] = None  # Track current browser URL
 
         # Progress callback for external notifications (P2)
@@ -766,7 +767,12 @@ Call `workflow_hint_done` when this navigation step is complete.
                 f"{old_url[:30]}... -> {url[:30]}..."
             )
 
-    def cache_page_operations(self, url: str, operations: str) -> None:
+    def cache_page_operations(
+        self,
+        url: str,
+        operations: str,
+        intent_sequence_ids: Optional[List[str]] = None,
+    ) -> None:
         """Cache page operations query result.
 
         Called when query_page_operations returns results. The cache is used
@@ -775,9 +781,17 @@ Call `workflow_hint_done` when this navigation step is complete.
         Args:
             url: The URL for which operations were queried.
             operations: Formatted string of available operations on this page.
+            intent_sequence_ids: Optional list of IntentSequence IDs associated
+                with these operations.
         """
+        previous_url = self._cached_page_operations_url
         self._cached_page_operations = operations
         self._cached_page_operations_url = url
+        if intent_sequence_ids is not None:
+            self._cached_page_operations_ids = intent_sequence_ids
+        elif previous_url != url:
+            # Avoid leaking IDs across pages when caller doesn't provide IDs.
+            self._cached_page_operations_ids = None
         logger.debug(
             f"[ListenChatAgent] {self.agent_name} cached page operations "
             f"for {url[:50]}... ({len(operations)} chars)"
@@ -794,6 +808,7 @@ Call `workflow_hint_done` when this navigation step is complete.
             )
         self._cached_page_operations = None
         self._cached_page_operations_url = None
+        self._cached_page_operations_ids = None
 
     def get_cached_page_operations(self, current_url: str) -> Optional[str]:
         """Get cached page operations if URL matches.
@@ -853,6 +868,23 @@ Call `workflow_hint_done` when this navigation step is complete.
         # Inject if we have cached operations for this URL
         cached_ops = self.get_cached_page_operations(current_url)
         if cached_ops:
+            task_id = self._task_state.task_id if self._task_state else "unknown"
+            intent_ids = self._cached_page_operations_ids or []
+            if intent_ids:
+                preview = ", ".join(intent_ids[:10])
+                if len(intent_ids) > 10:
+                    preview = f"{preview}...(+{len(intent_ids) - 10})"
+                logger.info(
+                    f"[Task {task_id}] [Memory] Injected page operations "
+                    f"from IntentSequence ids=[{preview}] "
+                    f"(url={current_url[:120]}..., length={len(cached_ops)})"
+                )
+            else:
+                logger.info(
+                    f"[Task {task_id}] [Memory] Injected page operations "
+                    f"(no intent_sequence_ids) "
+                    f"(url={current_url[:120]}..., length={len(cached_ops)})"
+                )
             return self._inject_page_operations_to_messages(message, cached_ops)
         return message
 
@@ -1659,6 +1691,7 @@ No matching workflow found. Proceed with:
         # Preserve IntentSequence cache
         new_agent._cached_page_operations = self._cached_page_operations
         new_agent._cached_page_operations_url = self._cached_page_operations_url
+        new_agent._cached_page_operations_ids = self._cached_page_operations_ids
         new_agent._current_page_url = self._current_page_url
 
         # Preserve callbacks (P2)

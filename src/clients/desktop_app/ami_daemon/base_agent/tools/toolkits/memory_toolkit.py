@@ -1009,7 +1009,14 @@ class MemoryToolkit(BaseToolkit):
             # Cache in agent for subsequent LLM calls
             if self._agent and hasattr(self._agent, 'cache_page_operations'):
                 try:
-                    self._agent.cache_page_operations(url, formatted_result)
+                    intent_sequence_ids = [
+                        seq.id for seq in result.intent_sequences if seq.id
+                    ]
+                    self._agent.cache_page_operations(
+                        url,
+                        formatted_result,
+                        intent_sequence_ids=intent_sequence_ids,
+                    )
                     logger.debug(
                         f"[Memory] Cached page operations in agent for: {url[:50]}..."
                     )
