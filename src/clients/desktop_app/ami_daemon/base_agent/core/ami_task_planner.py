@@ -789,17 +789,12 @@ class AMITaskPlanner:
                 # Try description first
                 if hasattr(state, 'description') and state.description:
                     desc = state.description
-                # Try page_title + page_url
+                # Try page_title
                 elif hasattr(state, 'page_title') and state.page_title:
-                    title = state.page_title
-                    url = getattr(state, 'page_url', None)
-                    if url:
-                        desc = f"{title} ({url})"
-                    else:
-                        desc = title
-                # Try page_url alone
+                    desc = state.page_title
+                # Generate semantic description from URL
                 elif hasattr(state, 'page_url'):
-                    desc = state.page_url
+                    desc = self._generate_url_description(state.page_url)
                 # Fallback to string representation
                 elif hasattr(state, '__str__'):
                     str_repr = str(state)[:200]
@@ -832,6 +827,75 @@ class AMITaskPlanner:
                         lines.append(f"      Trigger sequence: {trigger_sequence_id}")
 
         return "\n".join(lines)
+
+    @staticmethod
+    def _generate_url_description(url: str) -> str:
+        """Generate a semantic description from URL.
+
+        Args:
+            url: The URL to describe.
+
+        Returns:
+            A human-readable description of the page type.
+        """
+        from urllib.parse import urlparse
+
+        try:
+            parsed = urlparse(url)
+            path = parsed.path.lower()
+
+            # Product Hunt specific patterns
+            if 'producthunt.com' in url:
+                if '/leaderboard/daily/' in path:
+                    return "Product Hunt 每日排行榜页面"
+                elif '/leaderboard/weekly/' in path:
+                    return "Product Hunt 周排行榜页面"
+                elif '/leaderboard/monthly/' in path:
+                    return "Product Hunt 月排行榜页面"
+                elif '/leaderboard/' in path:
+                    return "Product Hunt 排行榜页面"
+                elif '/posts/' in path:
+                    return "Product Hunt 产品详情页面"
+                elif '/topics/' in path:
+                    return "Product Hunt 主题页面"
+                elif path == '/' or path == '':
+                    return "Product Hunt 首页"
+                else:
+                    return f"Product Hunt 页面 ({parsed.path})"
+
+            # Common e-commerce patterns
+            elif '/products/' in path or '/product/' in path or '/item/' in path:
+                return "产品详情页面"
+            elif '/search' in path or '/query' in path:
+                return "搜索结果页面"
+            elif '/category' in path or '/categories' in path:
+                return "分类页面"
+            elif '/cart' in path:
+                return "购物车页面"
+            elif '/checkout' in path:
+                return "结账页面"
+
+            # Common patterns
+            elif path == '/' or path == '':
+                return f"{parsed.netloc} 首页"
+            elif '/home' in path:
+                return "首页"
+            elif '/login' in path or '/signin' in path:
+                return "登录页面"
+            elif '/signup' in path or '/register' in path:
+                return "注册页面"
+            elif '/settings' in path or '/profile' in path or '/account' in path:
+                return "设置/个人资料页面"
+
+            # Fallback: show domain + simplified path
+            domain = parsed.netloc.replace('www.', '')
+            if len(path) > 30:
+                path = path[:30] + '...'
+            return f"{domain}{path}"
+
+        except Exception:
+            # If parsing fails, return URL as-is
+            return url
 
     @staticmethod
     def _format_navigation_path(states: List[Any], actions: List[Any]) -> str:

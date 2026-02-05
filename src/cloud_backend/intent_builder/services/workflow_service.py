@@ -161,17 +161,26 @@ class WorkflowService:
 
         logger.info("WorkflowService initialized")
 
-    def _get_api_key(self) -> Optional[str]:
-        """Get API key from config or environment"""
+    def _get_api_key(self) -> str:
+        """Get API key for LLM calls.
+
+        In the cloud_backend, all LLM calls must use the
+        per-request user API key (X-Ami-API-Key). Falling back
+        to config or environment variables is not allowed here,
+        otherwise semantic validation and generation may run
+        under a different key than the current request.
+        """
         if self.api_key:
             return self.api_key
-        if self.config_service:
-            return (
-                self.config_service.get("claude_agent.api_key") or
-                self.config_service.get("agent.llm.api_key") or
-                os.environ.get("ANTHROPIC_API_KEY")
-            )
-        return os.environ.get("ANTHROPIC_API_KEY")
+
+        # Explicitly require api_key to be provided by caller.
+        # This avoids accidentally using system-level keys and
+        # makes misconfiguration fail fast and visibly.
+        raise ValueError(
+            "WorkflowService.api_key is not set. "
+            "Cloud Backend endpoints must pass the user's X-Ami-API-Key "
+            "into WorkflowService(api_key=...)."
+        )
 
     async def generate(
         self,

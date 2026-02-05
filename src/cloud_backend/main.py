@@ -557,7 +557,7 @@ async def upload_recording(data: dict):
                 if EmbeddingService.is_available():
                     embedding_model = EmbeddingService.get_model()
 
-            # Setup LLM providers for description generation (only if embeddings requested)
+            # Setup LLM providers for description generation (requires user API key)
             llm_provider = None
             simple_llm_provider = None
             if generate_embeddings and user_api_key:
@@ -567,7 +567,7 @@ async def upload_recording(data: dict):
                     model_name=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
                     base_url=config_service.get("llm.proxy_url")
                 )
-                # Create simple provider if configured
+                # Create simple provider if configured, otherwise use llm_provider
                 simple_model = config_service.get("llm.anthropic.simple_model")
                 if simple_model:
                     simple_llm_provider = AnthropicProvider(
@@ -575,6 +575,9 @@ async def upload_recording(data: dict):
                         model_name=simple_model,
                         base_url=config_service.get("llm.proxy_url")
                     )
+                else:
+                    # Use llm_provider for descriptions if no simple_model configured
+                    simple_llm_provider = llm_provider
 
             # Create processor and process
             processor = WorkflowProcessor(
@@ -1301,6 +1304,10 @@ async def add_to_memory(
         404: Recording not found (when using recording_id)
         500: Processing failed
     """
+    logger.info(
+        f"[cloud memory/add] X-Ami-API-Key prefix: "
+        f"{x_ami_api_key[:8] + '...' if x_ami_api_key else 'None'}"
+    )
     import time
     start_time = time.time()
 
@@ -1339,7 +1346,7 @@ async def add_to_memory(
             if EmbeddingService.is_available():
                 embedding_model = EmbeddingService.get_model()
 
-        # Setup LLM providers for description generation
+        # Setup LLM providers for description generation (requires user API key)
         llm_provider = None
         simple_llm_provider = None
         if generate_embeddings and x_ami_api_key:
@@ -1349,7 +1356,7 @@ async def add_to_memory(
                 model_name=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
                 base_url=config_service.get("llm.proxy_url")
             )
-            # Create simple provider if configured
+            # Create simple provider if configured, otherwise use llm_provider
             simple_model = config_service.get("llm.anthropic.simple_model")
             if simple_model:
                 simple_llm_provider = AnthropicProvider(
@@ -1357,6 +1364,9 @@ async def add_to_memory(
                     model_name=simple_model,
                     base_url=config_service.get("llm.proxy_url")
                 )
+            else:
+                # Use llm_provider for descriptions if no simple_model configured
+                simple_llm_provider = llm_provider
 
         # Create processor
         processor = WorkflowProcessor(

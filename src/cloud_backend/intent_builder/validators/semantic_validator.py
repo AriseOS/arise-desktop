@@ -167,15 +167,18 @@ class SemanticValidator:
             base_url: API proxy URL
         """
         # Get API key
-        if api_key:
-            self.api_key = api_key
-        elif config_service:
-            self.api_key = (
-                config_service.get("agent.llm.api_key") or
-                os.environ.get("ANTHROPIC_API_KEY")
+        # For cloud_backend, SemanticValidator is expected to
+        # always receive the per-request user API key from
+        # WorkflowService / WorkflowValidator. Falling back to
+        # config or environment variables is not allowed.
+        if not api_key:
+            raise ValueError(
+                "SemanticValidator.api_key not provided. "
+                "It must be passed from WorkflowService using the "
+                "user's X-Ami-API-Key."
             )
-        else:
-            self.api_key = os.environ.get("ANTHROPIC_API_KEY")
+
+        self.api_key = api_key
 
         # Get model
         if model:

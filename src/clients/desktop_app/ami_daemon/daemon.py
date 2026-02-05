@@ -1327,9 +1327,15 @@ async def add_to_memory(
         }
     """
     try:
-        logger.info(f"[memory/add] Received request: recording_id={request.recording_id}, "
-                   f"operations={len(request.operations) if request.operations else 0}, "
-                   f"session_id={request.session_id}")
+        logger.info(
+            f"[memory/add] Received request: recording_id={request.recording_id}, "
+            f"operations={len(request.operations) if request.operations else 0}, "
+            f"session_id={request.session_id}"
+        )
+        logger.info(
+            f"[memory/add] Incoming X-Ami-API-Key prefix: "
+            f"{x_ami_api_key[:8] + '...' if x_ami_api_key else 'None'}"
+        )
 
         if not cloud_client:
             logger.error("[memory/add] Cloud client not initialized")
