@@ -217,8 +217,7 @@ async def startup_event():
         )
         print("✅ Workflow Memory (for NL query)")
 
-        # 3.1 Initialize EmbeddingService (for semantic search) - REQUIRED
-        from src.common.memory.services.embedding_service import EmbeddingService
+        # 3.1 Verify embedding config (for per-request initialization)
         embedding_config = config_service.get("embedding", {})
         if not embedding_config:
             print("❌ FATAL: embedding config not found in cloud-backend.yaml")
@@ -226,16 +225,9 @@ async def startup_event():
             import sys
             sys.exit(1)
 
-        EmbeddingService.configure_from_dict(embedding_config)
-        if not EmbeddingService.is_available():
-            print("❌ FATAL: EmbeddingService not available")
-            print("   Check embedding config in cloud-backend.yaml:")
-            print("   - api_key: must be set directly, OR")
-            print("   - api_key_env: must be a valid environment variable name")
-            import sys
-            sys.exit(1)
-
-        print(f"✅ Embedding Service: {embedding_config.get('provider', 'openai')} / {embedding_config.get('model', 'unknown')}")
+        # EmbeddingService is now created per-request with user's API key
+        # Just verify config exists at startup
+        print(f"✅ Embedding Service config: {embedding_config.get('provider', 'openai')} / {embedding_config.get('model', 'unknown')}")
 
         # 4. Initialize Reasoner (for semantic retrieval)
         # Note: Reasoner requires LLM client which needs user's API key
@@ -550,29 +542,33 @@ async def upload_recording(data: dict):
         try:
             from src.common.memory.thinker.workflow_processor import WorkflowProcessor
 
-            # Setup embedding model if requested
-            embedding_model = None
+            # Setup embedding service if requested
+            embedding_service = None
             if generate_embeddings and user_api_key:
-                from src.common.memory.services import EmbeddingService
-                if EmbeddingService.is_available():
-                    embedding_model = EmbeddingService.get_model()
+                from src.common.llm import get_cached_embedding_service
+                embedding_service = get_cached_embedding_service(
+                    api_key=user_api_key,
+                    base_url=config_service.get("embedding.base_url", "https://api.ariseos.com/openai/v1"),
+                    model=config_service.get("embedding.model", "BAAI/bge-m3"),
+                    dimension=config_service.get("embedding.dimension", 1024),
+                )
 
             # Setup LLM providers for description generation (requires user API key)
             llm_provider = None
             simple_llm_provider = None
             if generate_embeddings and user_api_key:
-                from src.common.llm import AnthropicProvider
-                llm_provider = AnthropicProvider(
+                from src.common.llm import get_cached_anthropic_provider
+                llm_provider = get_cached_anthropic_provider(
                     api_key=user_api_key,
-                    model_name=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
+                    model=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
                     base_url=config_service.get("llm.proxy_url")
                 )
                 # Create simple provider if configured, otherwise use llm_provider
                 simple_model = config_service.get("llm.anthropic.simple_model")
                 if simple_model:
-                    simple_llm_provider = AnthropicProvider(
+                    simple_llm_provider = get_cached_anthropic_provider(
                         api_key=user_api_key,
-                        model_name=simple_model,
+                        model=simple_model,
                         base_url=config_service.get("llm.proxy_url")
                     )
                 else:
@@ -583,7 +579,7 @@ async def upload_recording(data: dict):
             processor = WorkflowProcessor(
                 llm_provider=llm_provider,
                 memory=workflow_memory,
-                embedding_model=embedding_model,
+                embedding_service=embedding_service,
                 simple_llm_provider=simple_llm_provider,
             )
 
@@ -903,10 +899,10 @@ async def analyze_recording(data: dict, x_ami_api_key: Optional[str] = Header(No
 
     try:
         # Create LLM provider with user's API key through API Proxy
-        from src.common.llm.anthropic_provider import AnthropicProvider
-        llm_provider = AnthropicProvider(
+        from src.common.llm.anthropic_provider import get_cached_anthropic_provider
+        llm_provider = get_cached_anthropic_provider(
             api_key=x_ami_api_key,
-            model_name=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
+            model=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
             base_url=config_service.get("llm.proxy_url", "https://api.ariseos.com/api")
         )
 
@@ -1339,29 +1335,33 @@ async def add_to_memory(
         # Import WorkflowProcessor
         from src.common.memory.thinker.workflow_processor import WorkflowProcessor
 
-        # Setup embedding model if requested
-        embedding_model = None
+        # Setup embedding service if requested
+        embedding_service = None
         if generate_embeddings and x_ami_api_key:
-            from src.common.memory.services import EmbeddingService
-            if EmbeddingService.is_available():
-                embedding_model = EmbeddingService.get_model()
+            from src.common.llm import get_cached_embedding_service
+            embedding_service = get_cached_embedding_service(
+                api_key=x_ami_api_key,
+                base_url=config_service.get("embedding.base_url", "https://api.ariseos.com/openai/v1"),
+                model=config_service.get("embedding.model", "BAAI/bge-m3"),
+                dimension=config_service.get("embedding.dimension", 1024),
+            )
 
         # Setup LLM providers for description generation (requires user API key)
         llm_provider = None
         simple_llm_provider = None
         if generate_embeddings and x_ami_api_key:
-            from src.common.llm import AnthropicProvider
-            llm_provider = AnthropicProvider(
+            from src.common.llm import get_cached_anthropic_provider
+            llm_provider = get_cached_anthropic_provider(
                 api_key=x_ami_api_key,
-                model_name=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
+                model=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
                 base_url=config_service.get("llm.proxy_url")
             )
             # Create simple provider if configured, otherwise use llm_provider
             simple_model = config_service.get("llm.anthropic.simple_model")
             if simple_model:
-                simple_llm_provider = AnthropicProvider(
+                simple_llm_provider = get_cached_anthropic_provider(
                     api_key=x_ami_api_key,
-                    model_name=simple_model,
+                    model=simple_model,
                     base_url=config_service.get("llm.proxy_url")
                 )
             else:
@@ -1372,7 +1372,7 @@ async def add_to_memory(
         processor = WorkflowProcessor(
             llm_provider=llm_provider,
             memory=workflow_memory,
-            embedding_model=embedding_model,
+            embedding_service=embedding_service,
             simple_llm_provider=simple_llm_provider,
         )
 
@@ -2294,14 +2294,21 @@ async def _get_reasoner_for_user(x_ami_api_key: str):
         Reasoner instance
     """
     from src.common.memory.reasoner.reasoner import Reasoner
-    from src.common.memory.services.embedding_service import EmbeddingService
-    from src.common.llm.anthropic_provider import AnthropicProvider
+    from src.common.llm import get_cached_embedding_service, get_cached_anthropic_provider
 
-    # Create LLM provider with user's API key
-    llm_provider = AnthropicProvider(
+    # Create LLM provider with user's API key (cached)
+    llm_provider = get_cached_anthropic_provider(
         api_key=x_ami_api_key,
-        model_name=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
+        model=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
         base_url=config_service.get("llm.proxy_url", "https://api.ariseos.com/api")
+    )
+
+    # Create EmbeddingService with user's API key
+    embedding_service = get_cached_embedding_service(
+        api_key=x_ami_api_key,
+        base_url=config_service.get("embedding.base_url", "https://api.ariseos.com/openai/v1"),
+        model=config_service.get("embedding.model", "BAAI/bge-m3"),
+        dimension=config_service.get("embedding.dimension", 1024),
     )
 
     # Get Reasoner configuration
@@ -2313,7 +2320,7 @@ async def _get_reasoner_for_user(x_ami_api_key: str):
     reasoner = Reasoner(
         memory=workflow_memory,
         llm_provider=llm_provider,
-        embedding_service=EmbeddingService,
+        embedding_service=embedding_service,
         max_depth=max_depth,
         similarity_thresholds=similarity_thresholds,
     )
@@ -2603,11 +2610,11 @@ async def generate_workflow_direct(
             if operations:
                 # Fall back to intent extraction (legacy path)
                 from src.cloud_backend.intent_builder.extractors.intent_extractor import IntentExtractor
-                from src.common.llm import AnthropicProvider
+                from src.common.llm import get_cached_anthropic_provider
 
-                llm = AnthropicProvider(
+                llm = get_cached_anthropic_provider(
                     api_key=x_ami_api_key,
-                    model_name=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
+                    model=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
                     base_url=config_service.get("llm.proxy_url")
                 )
                 extractor = IntentExtractor(llm_provider=llm)
@@ -2803,11 +2810,11 @@ async def generate_workflow_stream(
                     await progress_queue.put({'status': 'analyzing', 'progress': 20, 'message': f'Extracting intents from {len(local_operations)} operations...'})
 
                     from src.cloud_backend.intent_builder.extractors.intent_extractor import IntentExtractor
-                    from src.common.llm import AnthropicProvider
+                    from src.common.llm import get_cached_anthropic_provider
 
-                    llm = AnthropicProvider(
+                    llm = get_cached_anthropic_provider(
                         api_key=x_ami_api_key,
-                        model_name=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
+                        model=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
                         base_url=config_service.get("llm.proxy_url")
                     )
                     extractor = IntentExtractor(llm_provider=llm)

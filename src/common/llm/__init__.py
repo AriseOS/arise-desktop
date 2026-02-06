@@ -15,6 +15,11 @@ from .base_provider import (
 from .anthropic_provider import AnthropicProvider
 from .openai_provider import OpenAIProvider
 from .claude_agent_provider import ClaudeAgentProvider, AgentResult
+from .provider_cache import (
+    ProviderCache,
+    get_cached_anthropic_provider,
+    get_cached_embedding_service,
+)
 
 __all__ = [
     "BaseProvider",
@@ -30,4 +35,8 @@ __all__ = [
     # JSON utilities
     "parse_json_with_repair",
     "extract_json_from_markdown",
+    # Caching
+    "ProviderCache",
+    "get_cached_anthropic_provider",
+    "get_cached_embedding_service",
 ]

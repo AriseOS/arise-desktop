@@ -63,13 +63,8 @@ from src.common.memory.services.embedding_model import (
     get_available_providers as get_available_embedding_providers,
 )
 
-# Embedding Service - Singleton service for embedding operations
-from src.common.memory.services.embedding_service import (
-    EmbeddingService,
-    embed_text,
-    embed_texts,
-    get_embedding_service,
-)
+# Embedding Service - Non-singleton service for embedding operations with user API key
+from src.common.memory.services.embedding_service import EmbeddingService
 
 # Core LLM client classes and utilities
 from src.common.memory.services.llm import ConfigValidationError as LLMConfigValidationError
@@ -137,11 +132,8 @@ __all__ = [
     "EmbeddingConfigValidationError",
     "check_all_embedding_configs",
     "get_available_embedding_providers",
-    # Embedding Service - Singleton
+    # Embedding Service - Non-singleton with user API key
     "EmbeddingService",
-    "get_embedding_service",
-    "embed_text",
-    "embed_texts",
     # Rerank Model - Core classes and types
     "RerankModel",
     "RerankProvider",

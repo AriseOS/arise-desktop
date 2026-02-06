@@ -795,15 +795,15 @@ class WorkflowService:
     ) -> List[Dict[str, Any]]:
         """Extract intents from raw operations"""
         if not self._intent_extractor:
-            # Initialize with LLM provider
-            from src.common.llm import AnthropicProvider
+            # Initialize with LLM provider (cached)
+            from src.common.llm import get_cached_anthropic_provider
             api_key = self._get_api_key()
             if not api_key:
                 raise ValueError("API key required for intent extraction")
 
-            provider = AnthropicProvider(
+            provider = get_cached_anthropic_provider(
                 api_key=api_key,
-                model_name=self.model or "claude-sonnet-4-5",
+                model=self.model or "claude-sonnet-4-5",
                 base_url=self.base_url
             )
             self._intent_extractor = IntentExtractor(provider)
@@ -852,15 +852,15 @@ class WorkflowService:
 
         # Initialize intent extractor if needed
         if not self._intent_extractor:
-            from src.common.llm import AnthropicProvider
+            from src.common.llm import get_cached_anthropic_provider
             api_key = self._get_api_key()
             if not api_key:
                 logger.error("No API key available for intent extraction")
                 return 0
 
-            provider = AnthropicProvider(
+            provider = get_cached_anthropic_provider(
                 api_key=api_key,
-                model_name=self.model or "claude-sonnet-4-5",
+                model=self.model or "claude-sonnet-4-5",
                 base_url=self.base_url
             )
             self._intent_extractor = IntentExtractor(llm_provider=provider)

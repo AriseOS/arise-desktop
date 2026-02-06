@@ -145,10 +145,7 @@ class MemoryService:
         # Initialize schema
         self._graph_store.initialize_schema()
 
-        # 2. Configure embedding service
-        self._configure_embedding()
-
-        # 3. Create WorkflowMemory
+        # 2. Create WorkflowMemory
         self._workflow_memory = WorkflowMemory(
             self._graph_store,
             intent_sequence_dedup_threshold=self._config.intent_sequence_dedup_threshold,
@@ -157,85 +154,51 @@ class MemoryService:
         self._initialized = True
         logger.info("Memory Service initialized successfully")
 
-    def _configure_embedding(self) -> None:
-        """Configure the embedding service."""
-        from src.common.memory.services import EmbeddingService
-
-        # Get API key from config or environment
-        api_key = self._config.embedding_api_key
-        if not api_key and self._config.embedding_api_key_env:
-            api_key = os.getenv(self._config.embedding_api_key_env)
-
-        if not api_key:
-            logger.warning(
-                f"Embedding API key not found. "
-                f"Set {self._config.embedding_api_key_env} or provide embedding_api_key. "
-                "Semantic search will be disabled."
-            )
-            return
-
-        EmbeddingService.configure(
-            provider=self._config.embedding_provider,
-            model=self._config.embedding_model,
-            dimension=self._config.embedding_dimension,
-            api_url=self._config.embedding_api_url,
-            api_key=api_key,
-        )
-        logger.info(
-            f"Embedding Service: {self._config.embedding_provider} / "
-            f"{self._config.embedding_model}"
-        )
-
-    def _get_reasoner(self, llm_provider: Any = None) -> "Reasoner":
+    def _get_reasoner(self, llm_provider: Any = None, embedding_service: Any = None) -> "Reasoner":
         """Get or create Reasoner instance.
 
         Args:
             llm_provider: LLM provider for reasoning (optional)
+            embedding_service: EmbeddingService instance with user API key (optional)
 
         Returns:
             Reasoner instance
         """
         from src.common.memory.reasoner import Reasoner
-        from src.common.memory.services import EmbeddingService
 
         # Update LLM provider if provided
         if llm_provider:
             self._llm_provider = llm_provider
 
-        # Create new Reasoner with current LLM provider
+        # Create new Reasoner with current LLM provider and embedding service
         self._reasoner = Reasoner(
             memory=self._workflow_memory,
             llm_provider=self._llm_provider,
-            embedding_service=EmbeddingService if EmbeddingService.is_available() else None,
+            embedding_service=embedding_service,
             max_depth=3,
         )
         return self._reasoner
 
-    def _get_workflow_processor(self, llm_provider: Any = None) -> "WorkflowProcessor":
+    def _get_workflow_processor(self, llm_provider: Any = None, embedding_service: Any = None) -> "WorkflowProcessor":
         """Get or create WorkflowProcessor instance.
 
         Args:
             llm_provider: LLM provider for description generation
+            embedding_service: EmbeddingService instance with user API key (optional)
 
         Returns:
             WorkflowProcessor instance
         """
         from src.common.memory.thinker import WorkflowProcessor
-        from src.common.memory.services import EmbeddingService
 
         # Update LLM provider if provided
         if llm_provider:
             self._llm_provider = llm_provider
 
-        # Get embedding model
-        embedding_model = None
-        if EmbeddingService.is_available():
-            embedding_model = EmbeddingService.get_model()
-
         self._workflow_processor = WorkflowProcessor(
             llm_provider=self._llm_provider,
             memory=self._workflow_memory,
-            embedding_model=embedding_model,
+            embedding_service=embedding_service,
             simple_llm_provider=self._llm_provider,
         )
         return self._workflow_processor
