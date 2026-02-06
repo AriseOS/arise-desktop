@@ -231,13 +231,13 @@ class SemanticValidator:
             )
 
         try:
-            # Import Anthropic provider
-            from src.common.llm import AnthropicProvider
+            # Import Anthropic provider (cached)
+            from src.common.llm import get_cached_anthropic_provider
 
             # Create provider
-            provider = AnthropicProvider(
+            provider = get_cached_anthropic_provider(
                 api_key=self.api_key,
-                model_name=self.model,
+                model=self.model,
                 base_url=self.base_url
             )
 

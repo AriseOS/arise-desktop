@@ -35,7 +35,7 @@ from src.common.memory.ontology.page_instance import PageInstance
 logger = logging.getLogger(__name__)
 
 from src.common.memory.ontology.state import State
-from src.common.memory.services.embedding_model import EmbeddingModel
+from src.common.memory.services.embedding_service import EmbeddingService
 from src.common.llm import AnthropicProvider, parse_json_with_repair
 
 
@@ -155,7 +155,7 @@ class WorkflowProcessor:
         self,
         llm_provider: Optional[AnthropicProvider] = None,
         memory: Optional[WorkflowMemory] = None,
-        embedding_model: Optional[EmbeddingModel] = None,
+        embedding_service: Optional[EmbeddingService] = None,
         simple_llm_provider: Optional[AnthropicProvider] = None,
     ):
         """Initialize WorkflowProcessor.
@@ -164,13 +164,13 @@ class WorkflowProcessor:
             llm_provider: AnthropicProvider for complex LLM tasks.
                          If None, descriptions will use default values.
             memory: WorkflowMemory instance for storage.
-            embedding_model: Embedding model for vector generation.
+            embedding_service: EmbeddingService with user API key for vector generation.
             simple_llm_provider: Light AnthropicProvider for description generation.
                                 If None, uses llm_provider.
         """
         self.llm_provider = llm_provider
         self.memory = memory
-        self.embedding_model = embedding_model
+        self.embedding_service = embedding_service
         # Use simple provider for descriptions, fall back to main provider
         self.simple_llm_provider = simple_llm_provider or llm_provider
 
@@ -386,7 +386,7 @@ class WorkflowProcessor:
         logger.info("")
 
         # Stage 6: Generate embeddings
-        if self.embedding_model:
+        if self.embedding_service:
             logger.info("Stage 6: Generating embeddings...")
             self._generate_embeddings(
                 states=states,
@@ -632,6 +632,8 @@ class WorkflowProcessor:
         - "2026-01-20 13:31:56" (local time)
         - "2026-01-20T13:31:56" (ISO format)
         - "2026-01-20 05:31:56" (UTC time)
+        - "2026-01-30T05:57:30.619Z" (ISO 8601 with Z suffix)
+        - "2026-01-30T05:57:30Z" (ISO 8601 with Z suffix, no milliseconds)
 
         Args:
             ts: Timestamp string.
@@ -642,15 +644,19 @@ class WorkflowProcessor:
         from datetime import datetime
 
         try:
-            # Try common formats
+            # Remove Z suffix (UTC indicator) for easier parsing
+            # Z is equivalent to +00:00 timezone
+            ts_normalized = ts.replace('Z', '') if ts.endswith('Z') else ts
+
+            # Try common formats (including normalized ISO 8601)
             for fmt in [
-                "%Y-%m-%d %H:%M:%S",
-                "%Y-%m-%dT%H:%M:%S",
-                "%Y-%m-%d %H:%M:%S.%f",
-                "%Y-%m-%dT%H:%M:%S.%f",
+                "%Y-%m-%d %H:%M:%S",         # 2026-01-30 05:57:30
+                "%Y-%m-%dT%H:%M:%S",         # 2026-01-30T05:57:30
+                "%Y-%m-%d %H:%M:%S.%f",     # 2026-01-30 05:57:30.619
+                "%Y-%m-%dT%H:%M:%S.%f",     # 2026-01-30T05:57:30.619 (original)
             ]:
                 try:
-                    dt = datetime.strptime(ts, fmt)
+                    dt = datetime.strptime(ts_normalized, fmt)
                     return int(dt.timestamp() * 1000)
                 except ValueError:
                     continue
@@ -1936,7 +1942,7 @@ JSON:"""
             states: States to embed.
             intent_sequences: IntentSequences to embed.
         """
-        if not self.embedding_model:
+        if not self.embedding_service:
             return
 
         # Collect all descriptions (only for items without embedding)
@@ -1963,15 +1969,16 @@ JSON:"""
 
         try:
             logger.info(f"    Generating embeddings for {len(texts)} items...")
-            responses = self.embedding_model.embed_batch(texts)
+            embeddings = self.embedding_service.embed_batch(texts)
 
-            for (item_type, item), response in zip(items, responses):
-                if item_type == "state":
-                    item.embedding_vector = response.to_list()
-                else:
-                    item.embedding_vector = response.to_list()
+            if embeddings is None:
+                logger.warning("EmbeddingService returned None for embed_batch")
+                return
 
-            logger.info(f"    Generated {len(responses)} embeddings")
+            for (item_type, item), embedding in zip(items, embeddings):
+                item.embedding_vector = embedding
+
+            logger.info(f"    Generated {len(embeddings)} embeddings")
         except Exception as e:
             logger.info(f"Warning: Failed to generate embeddings: {e}")
 
@@ -2145,12 +2152,12 @@ JSON:"""
             created_at=current_time,
         )
 
-        # Generate embedding (prefer structured retrieval text for stability)
-        embedding_text = self._get_phrase_embedding_text(phrase)
-        if self.embedding_model and embedding_text:
+        # Generate embedding
+        if self.embedding_service and description:
             try:
-                response = self.embedding_model.embed(embedding_text)
-                phrase.embedding_vector = response.to_list()
+                embedding = self.embedding_service.embed(description)
+                if embedding:
+                    phrase.embedding_vector = embedding
             except Exception as e:
                 logger.info(f"Warning: Failed to generate phrase embedding: {e}")
 

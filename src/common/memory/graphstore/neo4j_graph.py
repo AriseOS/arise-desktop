@@ -167,20 +167,6 @@ class Neo4jGraphStore(GraphStore):
 
     # ==================== Helper Methods ====================
 
-    @staticmethod
-    def _normalize_rel_type(rel_type: Optional[str]) -> Optional[str]:
-        if not rel_type:
-            return rel_type
-        return rel_type.upper()
-
-    def _iter_rel_type_candidates(self, rel_type: Optional[str]) -> List[Optional[str]]:
-        if not rel_type:
-            return [rel_type]
-        normalized = self._normalize_rel_type(rel_type)
-        if normalized == rel_type:
-            return [normalized]
-        return [normalized, rel_type]
-
     def _serialize_properties(self, properties: Dict[str, Any]) -> Dict[str, Any]:
         """Serialize complex properties to JSON strings.
 
@@ -554,7 +540,6 @@ class Neo4jGraphStore(GraphStore):
             start_node_id_key: ID property key for start node
             end_node_id_key: ID property key for end node
         """
-        rel_type = self._normalize_rel_type(rel_type)
         serialized = self._serialize_properties(properties or {})
 
         def _work(tx):
@@ -597,7 +582,6 @@ class Neo4jGraphStore(GraphStore):
         if not relationships:
             return
 
-        rel_type = self._normalize_rel_type(rel_type)
         processed = []
         for rel in relationships:
             processed.append({
@@ -646,12 +630,12 @@ class Neo4jGraphStore(GraphStore):
             True if relationship was deleted
         """
 
-        def _run_delete(rel_type_value: str) -> bool:
+        def _run_delete(rel_type: str) -> bool:
             def _work(tx):
                 result = tx.run(
                     f"""
                     MATCH (a:{start_node_label} {{{start_node_id_key}: $start_id}})
-                          -[r:{rel_type_value}]->
+                          -[r:{rel_type}]->
                           (b:{end_node_label} {{{end_node_id_key}: $end_id}})
                     DELETE r
                     RETURN count(r) AS deleted
@@ -664,12 +648,7 @@ class Neo4jGraphStore(GraphStore):
 
             return self._execute_write(_work)
 
-        for rel_type_value in self._iter_rel_type_candidates(rel_type):
-            deleted = _run_delete(rel_type_value)
-            if deleted:
-                self._pagerank_executed = False
-                return True
-        return False
+        return _run_delete(rel_type)
 
     def delete_relationships(
         self,
@@ -700,13 +679,13 @@ class Neo4jGraphStore(GraphStore):
 
         pairs = list(zip(start_node_id_values, end_node_id_values))
 
-        def _run_delete(rel_type_value: str) -> int:
+        def _run_delete(rel_type: str) -> int:
             def _work(tx):
                 result = tx.run(
                     f"""
                     UNWIND $pairs AS pair
                     MATCH (a:{start_node_label} {{{start_node_id_key}: pair[0]}})
-                          -[r:{rel_type_value}]->
+                          -[r:{rel_type}]->
                           (b:{end_node_label} {{{end_node_id_key}: pair[1]}})
                     DELETE r
                     RETURN count(r) AS deleted
@@ -718,12 +697,7 @@ class Neo4jGraphStore(GraphStore):
 
             return self._execute_write(_work)
 
-        for rel_type_value in self._iter_rel_type_candidates(rel_type):
-            deleted = _run_delete(rel_type_value)
-            if deleted > 0:
-                self._pagerank_executed = False
-                return deleted
-        return 0
+        return _run_delete(rel_type)
 
     def query_relationships(
         self,
@@ -750,57 +724,47 @@ class Neo4jGraphStore(GraphStore):
             List of dicts with 'start', 'end', 'rel' keys
         """
 
-        def _run_query(rel_type_value: Optional[str]) -> List[Dict[str, Any]]:
-            def _work(tx):
-                # Build match pattern
-                start_pattern = f"(a:{start_node_label})" if start_node_label else "(a)"
-                end_pattern = f"(b:{end_node_label})" if end_node_label else "(b)"
-                rel_pattern = f"[r:{rel_type_value}]" if rel_type_value else "[r]"
+        def _work(tx):
+            # Build match pattern
+            start_pattern = f"(a:{start_node_label})" if start_node_label else "(a)"
+            end_pattern = f"(b:{end_node_label})" if end_node_label else "(b)"
+            rel_pattern = f"[r:{rel_type}]" if rel_type else "[r]"
 
-                conditions = []
-                params = {}
+            conditions = []
+            params = {}
 
-                if start_node_id_value is not None:
-                    conditions.append(f"a.{start_node_id_key} = $start_id")
-                    params["start_id"] = start_node_id_value
-                if end_node_id_value is not None:
-                    conditions.append(f"b.{end_node_id_key} = $end_id")
-                    params["end_id"] = end_node_id_value
+            if start_node_id_value is not None:
+                conditions.append(f"a.{start_node_id_key} = $start_id")
+                params["start_id"] = start_node_id_value
+            if end_node_id_value is not None:
+                conditions.append(f"b.{end_node_id_key} = $end_id")
+                params["end_id"] = end_node_id_value
 
-                where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+            where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
 
-                query = f"""
-                    MATCH {start_pattern}-{rel_pattern}->{end_pattern}
-                    {where_clause}
-                    RETURN a, r, b
-                """
-                result = tx.run(query, **params)
+            query = f"""
+                MATCH {start_pattern}-{rel_pattern}->{end_pattern}
+                {where_clause}
+                RETURN a, r, b
+            """
+            result = tx.run(query, **params)
 
-                relationships = []
-                for record in result:
-                    start_props = self._deserialize_properties(dict(record["a"]))
-                    end_props = self._deserialize_properties(dict(record["b"]))
-                    rel_props = self._deserialize_properties(dict(record["r"]))
-                    rel_props["_rel_type"] = record["r"].type
+            relationships = []
+            for record in result:
+                start_props = self._deserialize_properties(dict(record["a"]))
+                end_props = self._deserialize_properties(dict(record["b"]))
+                rel_props = self._deserialize_properties(dict(record["r"]))
+                rel_props["_rel_type"] = record["r"].type
 
-                    relationships.append({
-                        "start": start_props,
-                        "end": end_props,
-                        "rel": rel_props,
-                    })
+                relationships.append({
+                    "start": start_props,
+                    "end": end_props,
+                    "rel": rel_props,
+                })
 
-                return relationships
+            return relationships
 
-            return self._execute_read(_work)
-
-        if not rel_type:
-            return _run_query(rel_type)
-
-        for rel_type_value in self._iter_rel_type_candidates(rel_type):
-            relationships = _run_query(rel_type_value)
-            if relationships:
-                return relationships
-        return []
+        return self._execute_read(_work)
 
     # ==================== Index Operations ====================
 
@@ -1091,11 +1055,11 @@ class Neo4jGraphStore(GraphStore):
             except Exception:
                 pass
 
-            # Project graph
+            # Project graph (use lowercase relationship types)
             G, _ = gds.graph.project(
                 "pagerank_graph",
                 ["State", "Domain"],
-                {"ACTION": {"orientation": "NATURAL"}, "MANAGES": {"orientation": "NATURAL"}},
+                {"action": {"orientation": "NATURAL"}, "manages": {"orientation": "NATURAL"}},
             )
 
             # Execute PageRank
@@ -1140,12 +1104,12 @@ class Neo4jGraphStore(GraphStore):
                 tx.run(
                     """
                     MATCH (n:State)
-                    OPTIONAL MATCH (m:State)-[:ACTION]->(n)
+                    OPTIONAL MATCH (m:State)-[:action]->(n)
                     WITH n, collect(m) AS inbound
                     WITH n,
                          CASE WHEN size(inbound) > 0
                               THEN reduce(s = 0.0, m IN inbound |
-                                   s + m.pagerank / size((m)-[:ACTION]->()))
+                                   s + m.pagerank / size((m)-[:action]->()))
                               ELSE 0.0
                          END AS incomingRank
                     SET n.pagerank = (1 - $damping) / $count + $damping * incomingRank
@@ -1334,38 +1298,36 @@ class Neo4jGraphStore(GraphStore):
         Returns:
             Number of relationships deleted
         """
-        def _run_delete(rel_type_value: str) -> int:
-            def _work(tx):
-                start_pattern = f"(a:{start_label})" if start_label else "(a)"
-                end_pattern = f"(b:{end_label})" if end_label else "(b)"
+        def _work(tx):
+            start_pattern = f"(a:{start_label})" if start_label else "(a)"
+            end_pattern = f"(b:{end_label})" if end_label else "(b)"
 
-                where_parts = []
-                for key in filters.keys():
-                    where_parts.append(f"r.{key} = ${key}")
-                where_clause = "WHERE " + " AND ".join(where_parts) if where_parts else ""
+            where_parts = []
+            for key in filters.keys():
+                where_parts.append(f"r.{key} = ${key}")
+            where_clause = "WHERE " + " AND ".join(where_parts) if where_parts else ""
 
-                result = tx.run(
-                    f"""
-                    MATCH {start_pattern}-[r:{rel_type_value}]->{end_pattern}
-                    {where_clause}
-                    DELETE r
-                    RETURN count(r) AS deleted
-                    """,
-                    **filters,
-                )
-                record = result.single()
-                return record["deleted"] if record else 0
+            result = tx.run(
+                f"""
+                MATCH {start_pattern}-[r:{rel_type}]->{end_pattern}
+                {where_clause}
+                DELETE r
+                RETURN count(r) AS deleted
+                """,
+                **filters,
+            )
+            record = result.single()
+            deleted = record["deleted"] if record else 0
 
-            return self._execute_write(_work)
-
-        for rel_type_value in self._iter_rel_type_candidates(rel_type):
-            deleted = _run_delete(rel_type_value)
             if deleted > 0:
                 self._pagerank_executed = False
-                logger.info(f"Bulk deleted {deleted} {rel_type_value} relationships")
-                return deleted
-        logger.info(f"Bulk deleted 0 {rel_type} relationships")
-        return 0
+                logger.info(f"Bulk deleted {deleted} {rel_type} relationships")
+            else:
+                logger.info(f"Bulk deleted 0 {rel_type} relationships")
+
+            return deleted
+
+        return self._execute_write(_work)
 
     def get_statistics(self) -> Dict[str, Any]:
         """Get graph statistics.
