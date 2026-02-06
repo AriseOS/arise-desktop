@@ -2100,30 +2100,32 @@ JSON:"""
         if not states:
             return None
 
-        # Sort states by timestamp
-        sorted_states = sorted(states, key=lambda s: s.timestamp)
+        # Use states in original workflow order (from segments/navigate events)
+        # The states are already ordered correctly by the navigate event sequence
+        # Do NOT sort by timestamp as it breaks the workflow path when states are reused
+        workflow_states = states
 
         # Build paths (kept for backward compatibility)
-        state_path = [s.id for s in sorted_states]
+        state_path = [s.id for s in workflow_states]
         action_map = {(a.source, a.target): a for a in actions}  # Changed to store full Action
 
         action_path = []
-        for i in range(len(sorted_states) - 1):
-            source_id = sorted_states[i].id
-            target_id = sorted_states[i + 1].id
+        for i in range(len(workflow_states) - 1):
+            source_id = workflow_states[i].id
+            target_id = workflow_states[i + 1].id
             action = action_map.get((source_id, target_id))
             action_path.append(action.type if action else "navigate")
 
         # Build execution_plan (v2)
         execution_plan = self._build_execution_plan(
-            sorted_states=sorted_states,
+            sorted_states=workflow_states,
             actions=actions,
             intent_sequences=intent_sequences,
         )
 
         # Calculate timestamps
-        start_timestamp = sorted_states[0].timestamp
-        end_timestamp = sorted_states[-1].end_timestamp or sorted_states[-1].timestamp
+        start_timestamp = workflow_states[0].timestamp
+        end_timestamp = workflow_states[-1].end_timestamp or workflow_states[-1].timestamp
         duration = end_timestamp - start_timestamp
 
         # Generate label and description (async)
@@ -2179,7 +2181,9 @@ JSON:"""
         - navigation_sequence_id: IntentSequence that triggers navigation (if any)
 
         Args:
-            sorted_states: States sorted by timestamp.
+            sorted_states: States in workflow execution order (from navigate events).
+                          Note: Parameter name kept for backward compatibility,
+                          but these are NOT sorted by timestamp anymore.
             actions: List of Action objects.
             intent_sequences: List of IntentSequence objects.
 
