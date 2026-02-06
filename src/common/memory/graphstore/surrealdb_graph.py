@@ -369,11 +369,26 @@ class SurrealDBGraphStore(GraphStore):
                     logger.warning(f"Table {table} definition warning: {e}")
 
             # Define relationship tables (TYPE RELATION for graph edges)
-            rel_tables = ["manages", "has_sequence", "action"]
-            for table in rel_tables:
+            # Each relation specifies IN/OUT types for referential integrity
+            rel_table_defs = [
+                ("manages", "record<domain>", "record<state>"),
+                ("has_sequence", "record<state>", "record<intentsequence>"),
+                ("action", "record<state>", "record<state>"),
+            ]
+            rel_tables = [t[0] for t in rel_table_defs]
+            for table, in_type, out_type in rel_table_defs:
                 try:
                     await client.query(
                         f"DEFINE TABLE {table} SCHEMALESS TYPE RELATION"
+                    )
+                    # Define in/out fields with REFERENCE ON DELETE CASCADE
+                    # so that deleting a node auto-deletes its connected edges
+                    # (matching Neo4j DETACH DELETE behavior)
+                    await client.query(
+                        f"DEFINE FIELD in ON {table} TYPE {in_type} REFERENCE ON DELETE CASCADE"
+                    )
+                    await client.query(
+                        f"DEFINE FIELD out ON {table} TYPE {out_type} REFERENCE ON DELETE CASCADE"
                     )
                 except Exception as e:
                     logger.warning(f"Relation table {table} definition warning: {e}")
@@ -520,8 +535,24 @@ class SurrealDBGraphStore(GraphStore):
         if not properties_list:
             return
 
-        for props in properties_list:
-            self.upsert_node(label, props, id_key, extra_labels)
+        self._ensure_connected()
+
+        async def _batch_upsert():
+            client = await self._get_client()
+            table = label.lower()
+            # Batch upsert: execute all UPSERTs in a single async session
+            # (avoids per-item _run() overhead with thread/event-loop creation)
+            for props in properties_list:
+                if id_key not in props:
+                    raise ValueError(f"Property '{id_key}' not found in node properties")
+                node_id = props[id_key]
+                record_id = f"{table}:`{node_id}`"
+                await client.query(
+                    f"UPSERT {record_id} CONTENT $props",
+                    {"props": props}
+                )
+
+        self._run(_batch_upsert())
 
     def batch_preprocess_node_properties(
         self,
@@ -578,6 +609,19 @@ class SurrealDBGraphStore(GraphStore):
 
         return self._run(_get())
 
+    @staticmethod
+    def _is_record_id(v) -> bool:
+        """Check if a value is a SurrealDB RecordID object."""
+        return hasattr(v, 'table_name') and hasattr(v, 'id')
+
+    @staticmethod
+    def _record_id_to_str(v) -> str:
+        """Extract the ID part from a RecordID, returning just the key (not table:key)."""
+        if hasattr(v, 'id'):
+            rid = v.id
+            return str(rid) if not isinstance(rid, str) else rid
+        return str(v)
+
     def _clean_node(self, node: Dict[str, Any]) -> Dict[str, Any]:
         """Remove SurrealDB internal fields and convert RecordID to string.
 
@@ -592,23 +636,23 @@ class SurrealDBGraphStore(GraphStore):
 
         cleaned = {}
         for k, v in node.items():
-            # Skip internal SurrealDB fields
+            # Skip internal SurrealDB fields (but keep 'id')
             if k.startswith("_"):
                 continue
 
-            # Convert RecordID objects to string
-            if hasattr(v, 'id'):
-                # RecordID object - extract just the ID part
-                cleaned[k] = str(v.id) if hasattr(v, 'id') else str(v)
-            elif hasattr(v, '__class__') and 'RecordID' in v.__class__.__name__:
-                # Another way to detect RecordID
-                cleaned[k] = str(v)
+            # Convert RecordID objects to just the ID part (not "table:key")
+            if self._is_record_id(v):
+                cleaned[k] = self._record_id_to_str(v)
             else:
                 cleaned[k] = v
 
-        # Special handling for 'id' field - ensure it's a string
-        if 'id' in cleaned and not isinstance(cleaned['id'], str):
-            cleaned['id'] = str(cleaned['id'])
+        # Ensure 'id' field is a plain string (RecordID -> just the key)
+        if 'id' in cleaned:
+            v = cleaned['id']
+            if self._is_record_id(v):
+                cleaned['id'] = self._record_id_to_str(v)
+            elif not isinstance(v, str):
+                cleaned['id'] = str(v)
 
         return cleaned
 
@@ -633,10 +677,10 @@ class SurrealDBGraphStore(GraphStore):
         async def _delete():
             client = await self._get_client()
             table = label.lower()
-            # Use RecordID syntax for direct deletion: table:`id`
             record_id = f"{table}:`{id_value}`"
-            await client.query(f"DELETE FROM {record_id}")
-            return True
+            # DELETE RETURN BEFORE returns the record if it existed, empty array if not
+            result = await client.query(f"DELETE FROM {record_id} RETURN BEFORE")
+            return bool(result and isinstance(result, list) and len(result) > 0)
 
         return self._run(_delete())
 
@@ -664,11 +708,14 @@ class SurrealDBGraphStore(GraphStore):
         async def _delete():
             client = await self._get_client()
             table = label.lower()
-            # Use RecordID syntax for batch deletion
+            count = 0
             for id_val in id_values:
                 record_id = f"{table}:`{id_val}`"
-                await client.query(f"DELETE FROM {record_id}")
-            return len(id_values)
+                # DELETE RETURN BEFORE returns the record if it existed
+                result = await client.query(f"DELETE FROM {record_id} RETURN BEFORE")
+                if result and isinstance(result, list) and len(result) > 0:
+                    count += 1
+            return count
 
         return self._run(_delete())
 
@@ -707,16 +754,12 @@ class SurrealDBGraphStore(GraphStore):
             if limit:
                 query += f" LIMIT {limit}"
 
-            try:
-                result = await client.query(query, params)
-                logger.debug(f"Query '{query}' returned {len(result) if result else 0} results")
-                # New SDK returns list directly, not [{"result": [...]}]
-                if result and isinstance(result, list):
-                    return [self._clean_node(n) for n in result]
-                return []
-            except Exception as e:
-                logger.error(f"Query failed: {query}, error: {e}")
-                return []
+            result = await client.query(query, params)
+            logger.debug(f"Query '{query}' returned {len(result) if result else 0} results")
+            # New SDK returns list directly, not [{"result": [...]}]
+            if result and isinstance(result, list):
+                return [self._clean_node(n) for n in result]
+            return []
 
         return self._run(_query())
 
@@ -761,47 +804,20 @@ class SurrealDBGraphStore(GraphStore):
             rel_table = rel_type.lower()
 
             try:
-                # Use RecordID syntax directly: table:`id`
                 start_record_id = f"{start_table}:`{start_node_id_value}`"
                 end_record_id = f"{end_table}:`{end_node_id_value}`"
-
-                logger.debug(f"[RELATE] Creating {rel_table}: {start_record_id} -> {end_record_id}")
-
-                # Check if nodes exist by selecting from RecordID
-                start_result = await client.query(
-                    f"SELECT id FROM {start_record_id}"
-                )
-                end_result = await client.query(
-                    f"SELECT id FROM {end_record_id}"
-                )
-
-                logger.debug(f"[RELATE] Node check: start_result={start_result}, end_result={end_result}")
-
-                # Check if we got results
-                start_exists = bool(start_result and len(start_result) > 0)
-                end_exists = bool(end_result and len(end_result) > 0)
-
-                if not start_exists or not end_exists:
-                    logger.warning(
-                        f"Cannot create relationship {rel_table}: "
-                        f"start node ({start_record_id}) found={start_exists}, "
-                        f"end node ({end_record_id}) found={end_exists}"
-                    )
-                    return
-
-                # Delete existing relationship if any
-                delete_query = f"DELETE FROM {rel_table} WHERE in = {start_record_id} AND out = {end_record_id}"
-                logger.debug(f"[RELATE] Delete query: {delete_query}")
-                delete_result = await client.query(delete_query)
-                logger.debug(f"[RELATE] Delete result: {delete_result}")
-
-                # Create new relationship using RELATE
-                # Note: RecordIDs must be used directly in the query, not as parameters
                 props = properties or {}
-                relate_query = f"RELATE {start_record_id}->{rel_table}->{end_record_id} CONTENT $props"
-                logger.debug(f"[RELATE] Relate query: {relate_query}, props={props}")
-                result = await client.query(relate_query, {"props": props})
-                logger.info(f"[RELATE] SUCCESS: {start_record_id}->{rel_table}->{end_record_id}, result={result}")
+
+                # Atomic upsert using DELETE + RELATE (two queries, single round-trip)
+                # DELETE is idempotent and safe; RELATE always creates new edge
+                # This avoids the non-atomic window between separate _run() calls
+                delete_query = f"DELETE FROM {rel_table} WHERE in = {start_record_id} AND out = {end_record_id};"
+                relate_query = f"RELATE {start_record_id}->{rel_table}->{end_record_id} CONTENT $props;"
+                # Execute both statements in a single query call (SurrealDB supports multi-statement)
+                combined = delete_query + relate_query
+                logger.debug(f"[RELATE] Query: {combined}")
+                result = await client.query(combined, {"props": props})
+                logger.debug(f"[RELATE] Result: {result}")
 
             except Exception as e:
                 logger.error(
@@ -836,22 +852,30 @@ class SurrealDBGraphStore(GraphStore):
         if not relationships:
             return
 
-        for rel in relationships:
-            start_id = rel.get("start_id") or rel.get("source")
-            end_id = rel.get("end_id") or rel.get("target")
-            props = rel.get("properties", {})
+        self._ensure_connected()
 
-            self.upsert_relationship(
-                start_node_label,
-                start_id,
-                end_node_label,
-                end_id,
-                rel_type,
-                props,
-                upsert_nodes,
-                start_node_id_key,
-                end_node_id_key,
-            )
+        async def _batch_relate():
+            client = await self._get_client()
+            start_table = start_node_label.lower()
+            end_table = end_node_label.lower()
+            rel_table = rel_type.lower()
+
+            for rel in relationships:
+                start_id = rel.get("start_id") or rel.get("source")
+                end_id = rel.get("end_id") or rel.get("target")
+                props = rel.get("properties", {})
+
+                start_record_id = f"{start_table}:`{start_id}`"
+                end_record_id = f"{end_table}:`{end_id}`"
+
+                # DELETE + RELATE in single query call
+                combined = (
+                    f"DELETE FROM {rel_table} WHERE in = {start_record_id} AND out = {end_record_id};"
+                    f"RELATE {start_record_id}->{rel_table}->{end_record_id} CONTENT $props;"
+                )
+                await client.query(combined, {"props": props})
+
+        self._run(_batch_relate())
 
     def delete_relationship(
         self,
@@ -878,26 +902,24 @@ class SurrealDBGraphStore(GraphStore):
             end_node_id_key: ID property key for end node
 
         Returns:
-            True if relationship was deleted
+            True if relationship was deleted, False if not found
         """
         self._ensure_connected()
 
         async def _delete():
             client = await self._get_client()
+            start_table = start_node_label.lower()
+            end_table = end_node_label.lower()
             rel_table = rel_type.lower()
 
-            # Delete by querying the in/out node properties
-            # 'in' points to start node, 'out' points to end node
-            query = f"""
-                DELETE FROM {rel_table}
-                WHERE in.{start_node_id_key} = $start_id
-                AND out.{end_node_id_key} = $end_id
-            """
-            await client.query(query, {
-                "start_id": start_node_id_value,
-                "end_id": end_node_id_value,
-            })
-            return True
+            # Use RecordID comparison (consistent with upsert_relationship)
+            # 'in' = start node, 'out' = end node
+            start_record_id = f"{start_table}:`{start_node_id_value}`"
+            end_record_id = f"{end_table}:`{end_node_id_value}`"
+            # DELETE RETURN BEFORE returns the record if it existed (matches Neo4j count(r) > 0)
+            query = f"DELETE FROM {rel_table} WHERE in = {start_record_id} AND out = {end_record_id} RETURN BEFORE"
+            result = await client.query(query)
+            return bool(result and isinstance(result, list) and len(result) > 0)
 
         return self._run(_delete())
 
@@ -928,20 +950,29 @@ class SurrealDBGraphStore(GraphStore):
         if not start_node_id_values or not end_node_id_values:
             return 0
 
-        count = 0
-        for start_id, end_id in zip(start_node_id_values, end_node_id_values):
-            if self.delete_relationship(
-                start_node_label,
-                start_id,
-                end_node_label,
-                end_id,
-                rel_type,
-                start_node_id_key,
-                end_node_id_key,
-            ):
-                count += 1
+        self._ensure_connected()
 
-        return count
+        async def _batch_delete():
+            client = await self._get_client()
+            start_table = start_node_label.lower()
+            end_table = end_node_label.lower()
+            rel_table = rel_type.lower()
+
+            count = 0
+            for start_id, end_id in zip(start_node_id_values, end_node_id_values):
+                start_record_id = f"{start_table}:`{start_id}`"
+                end_record_id = f"{end_table}:`{end_id}`"
+                # DELETE RETURN BEFORE to get accurate count (matches Neo4j count(r))
+                query = f"DELETE FROM {rel_table} WHERE in = {start_record_id} AND out = {end_record_id} RETURN BEFORE"
+                result = await client.query(query)
+                if result and isinstance(result, list) and len(result) > 0:
+                    count += 1
+            return count
+
+        return self._run(_batch_delete())
+
+    # Known relation tables for querying when rel_type is not specified
+    _RELATION_TABLES = ["manages", "has_sequence", "action"]
 
     def query_relationships(
         self,
@@ -959,11 +990,11 @@ class SurrealDBGraphStore(GraphStore):
         that reference the connected nodes.
 
         Args:
-            start_node_label: Filter by start node label (unused, inferred from rel_type)
+            start_node_label: Filter by start node label
             start_node_id_value: Filter by start node ID
-            end_node_label: Filter by end node label (unused, inferred from rel_type)
+            end_node_label: Filter by end node label
             end_node_id_value: Filter by end node ID
-            rel_type: Filter by relationship type (required)
+            rel_type: Filter by relationship type (if None, queries all relation tables)
             start_node_id_key: ID property key for start node
             end_node_id_key: ID property key for end node
 
@@ -972,52 +1003,54 @@ class SurrealDBGraphStore(GraphStore):
         """
         self._ensure_connected()
 
+        # When rel_type is None, query all known relation tables
+        rel_tables = [rel_type.lower()] if rel_type else self._RELATION_TABLES
+
         async def _query():
             client = await self._get_client()
-            if not rel_type:
-                return []
+            all_relationships = []
 
-            rel_table = rel_type.lower()
-            # Query edge table, selecting in/out as start/end nodes
-            query = f"SELECT *, in AS start_node, out AS end_node FROM {rel_table}"
+            for rel_table in rel_tables:
+                # Use FETCH in, out to get full node data instead of RecordID references
+                query = f"SELECT * FROM {rel_table} FETCH in, out"
 
-            conditions = []
-            params = {}
+                conditions = []
+                params = {}
 
-            if start_node_id_value is not None:
-                conditions.append(f"in.{start_node_id_key} = $start_id")
-                params["start_id"] = start_node_id_value
+                if start_node_id_value is not None:
+                    conditions.append(f"in.{start_node_id_key} = $start_id")
+                    params["start_id"] = start_node_id_value
 
-            if end_node_id_value is not None:
-                conditions.append(f"out.{end_node_id_key} = $end_id")
-                params["end_id"] = end_node_id_value
+                if end_node_id_value is not None:
+                    conditions.append(f"out.{end_node_id_key} = $end_id")
+                    params["end_id"] = end_node_id_value
 
-            if conditions:
-                query += " WHERE " + " AND ".join(conditions)
+                if conditions:
+                    # Insert WHERE before FETCH
+                    query = f"SELECT * FROM {rel_table} WHERE {' AND '.join(conditions)} FETCH in, out"
 
-            result = await client.query(query, params)
-            # New SDK returns list directly, not [{"result": [...]}]
-            if not result or not isinstance(result, list):
-                return []
+                result = await client.query(query, params)
+                if not result or not isinstance(result, list):
+                    continue
 
-            relationships = []
-            for record in result:
-                start_props = record.get("start_node", {})
-                end_props = record.get("end_node", {})
-                # Extract relationship properties (exclude internal fields)
-                rel_props = {
-                    k: v for k, v in record.items()
-                    if k not in ["start_node", "end_node", "in", "out", "id"]
-                }
-                rel_props["_rel_type"] = rel_type
+                current_rel_type = rel_type or rel_table
+                for record in result:
+                    start_props = record.get("in", {})
+                    end_props = record.get("out", {})
+                    # Extract relationship properties (exclude internal fields)
+                    rel_props = {
+                        k: v for k, v in record.items()
+                        if k not in ["in", "out", "id"]
+                    }
+                    rel_props["_rel_type"] = current_rel_type
 
-                relationships.append({
-                    "start": self._clean_node(start_props) if isinstance(start_props, dict) else {},
-                    "end": self._clean_node(end_props) if isinstance(end_props, dict) else {},
-                    "rel": rel_props,
-                })
+                    all_relationships.append({
+                        "start": self._clean_node(start_props) if isinstance(start_props, dict) else {},
+                        "end": self._clean_node(end_props) if isinstance(end_props, dict) else {},
+                        "rel": rel_props,
+                    })
 
-            return relationships
+            return all_relationships
 
         return self._run(_query())
 
@@ -1159,30 +1192,48 @@ class SurrealDBGraphStore(GraphStore):
 
         self._run(_create())
 
-    def delete_index(self, index_name: str, table: Optional[str] = None) -> None:
+    # All known tables for index lookup
+    _ALL_TABLES = [
+        "domain", "state", "cognitivephrase", "intentsequence",
+        "manages", "has_sequence", "action",
+    ]
+
+    def delete_index(self, index_name: str) -> None:
         """Delete an index.
 
         Syntax: REMOVE INDEX name ON table
 
+        SurrealDB requires the table name when removing an index. We infer it
+        from the index name (idx_tablename_field convention) or try all known
+        tables as fallback.
+
         Args:
             index_name: Name of the index to delete
-            table: Table name (extracted from index_name if not provided)
         """
         self._ensure_connected()
 
         async def _delete():
             client = await self._get_client()
-            # Try to extract table from index name if not provided
-            # Index names are typically: idx_tablename_field
-            if table:
-                table_name = table.lower()
-            elif index_name.startswith("idx_"):
-                parts = index_name[4:].split("_")
-                table_name = parts[0] if parts else None
-            else:
-                table_name = None
+            table_name = None
+
+            # Try to extract table from index name: idx_tablename_field
+            if index_name.startswith("idx_"):
+                suffix = index_name[4:]
+                # Match against known tables (longest match first)
+                for t in sorted(self._ALL_TABLES, key=len, reverse=True):
+                    if suffix.startswith(t + "_") or suffix == t:
+                        table_name = t
+                        break
 
             if not table_name:
+                # Fallback: try removing from all known tables
+                for t in self._ALL_TABLES:
+                    try:
+                        await client.query(f"REMOVE INDEX {index_name} ON {t}")
+                        logger.info(f"Deleted index: {index_name} from {t}")
+                        return
+                    except Exception:
+                        continue
                 logger.warning(f"Cannot determine table for index {index_name}")
                 return
 
@@ -1223,13 +1274,15 @@ class SurrealDBGraphStore(GraphStore):
 
         search_fields = search_fields or ["description"]
 
+        # Known entity tables for searching when no label_constraints specified
+        _ENTITY_TABLES = ["domain", "state", "cognitivephrase", "intentsequence"]
+
         async def _search():
             client = await self._get_client()
-            if not label_constraints:
-                return []
+            search_labels = label_constraints or _ENTITY_TABLES
 
             results = []
-            for label in label_constraints:
+            for label in search_labels:
                 table = label.lower()
 
                 # Build search conditions for each field
@@ -1301,19 +1354,16 @@ class SurrealDBGraphStore(GraphStore):
             client = await self._get_client()
             table = label.lower()
 
-            # Use either metric name for exact KNN or number for HNSW ANN
-            if ef_search:
-                knn_param = str(ef_search)  # HNSW approximate search
-            else:
-                knn_param = "COSINE"  # Exact KNN with cosine distance
+            # HNSW index uses <|K,EF|> where EF is numeric (search candidate list size)
+            # Higher EF = more accurate but slower; default 40 is a good balance
+            ef_value = ef_search or 40
 
-            # KNN query with similarity calculation
-            # Note: vector::distance::knn() returns distance, we compute similarity separately
+            # KNN query with cosine similarity calculation
             query = f"""
                 SELECT *,
                     vector::similarity::cosine({property_key}, $vec) AS similarity
                 FROM {table}
-                WHERE {property_key} <|{topk},{knn_param}|> $vec
+                WHERE {property_key} <|{topk},{ef_value}|> $vec
                 ORDER BY similarity DESC
             """
             try:
@@ -1371,9 +1421,10 @@ class SurrealDBGraphStore(GraphStore):
         async def _find():
             client = await self._get_client()
             # SurrealDB shortest path syntax:
-            # record.{..+shortest=target}->edge->node
+            # record.{..+shortest=target}(->edge->node)
+            # Parentheses are required around the recursive traversal path
             query = f"""
-                SELECT @.{{1..{max_depth}+shortest={end_table}:`{end_id}`}}->{edge_type}->{end_table} AS path
+                SELECT @.{{..{max_depth}+shortest={end_table}:`{end_id}`}}(->{edge_type}->{end_table}) AS path
                 FROM {start_table}:`{start_id}`
             """
             try:
@@ -1444,8 +1495,9 @@ class SurrealDBGraphStore(GraphStore):
             # Build recursion modifier
             modifier = "+collect" if collect_unique else ""
 
+            # Parentheses are required around the recursive traversal path
             query = f"""
-                SELECT @.{{1..{max_depth}{modifier}}}{arrow} AS nodes
+                SELECT @.{{1..{max_depth}{modifier}}}({arrow}) AS nodes
                 FROM {start_table}:`{start_id}`
             """
             try:
@@ -1629,7 +1681,7 @@ class SurrealDBGraphStore(GraphStore):
             client = await self._get_client()
             # First find shortest path
             path_query = f"""
-                SELECT @.{{1..{max_depth}+shortest=state:`{end_id}`}}->action->state AS path_nodes
+                SELECT @.{{..{max_depth}+shortest=state:`{end_id}`}}(->action->state) AS path_nodes
                 FROM state:`{start_id}`
             """
             try:
@@ -1731,12 +1783,13 @@ class SurrealDBGraphStore(GraphStore):
         return self._run(_run_script())
 
     def get_all_entity_labels(self) -> List[str]:
-        """Get all unique table names in the database.
+        """Get all unique entity (node) labels in the database.
 
-        Uses INFO FOR DB to get database metadata.
+        Matches Neo4j's CALL db.labels() which returns only node labels,
+        not relationship types. Edge tables are filtered out.
 
         Returns:
-            List of table names
+            List of entity table names (excludes relation tables)
         """
         self._ensure_connected()
 
@@ -1746,7 +1799,8 @@ class SurrealDBGraphStore(GraphStore):
             # New SDK returns result directly (a dict with "tables" key)
             if result and isinstance(result, dict):
                 tables = result.get("tables", {})
-                return list(tables.keys())
+                # Filter out relation tables to match Neo4j db.labels() behavior
+                return [t for t in tables.keys() if t not in self._RELATION_TABLES]
             return []
 
         return self._run(_get())
@@ -1760,9 +1814,10 @@ class SurrealDBGraphStore(GraphStore):
 
         async def _clear():
             client = await self._get_client()
+            # Delete relation tables first to avoid unnecessary CASCADE overhead
             tables = [
+                "manages", "has_sequence", "action",
                 "domain", "state", "cognitivephrase", "intentsequence",
-                "manages", "has_sequence", "action"
             ]
             for table in tables:
                 try:
@@ -1805,12 +1860,12 @@ class SurrealDBGraphStore(GraphStore):
                 except Exception:
                     pass
 
-            # Get table info
+            # Get entity labels (exclude relation tables, matching Neo4j db.labels())
             try:
                 info = await client.query("INFO FOR DB")
-                # Result format: {"tables": {...}, ...}
                 if info and isinstance(info, dict):
-                    label_names = list(info.get("tables", {}).keys())
+                    all_tables = info.get("tables", {}).keys()
+                    label_names = [t for t in all_tables if t not in rel_tables]
                 else:
                     label_names = []
             except Exception:
@@ -1861,21 +1916,13 @@ class SurrealDBGraphStore(GraphStore):
             params = {f"p{i}": v for i, v in enumerate(filters.values())}
             where_clause = " AND ".join(conditions)
 
-            # Get count first
-            count_result = await client.query(
-                f"SELECT count() FROM {table} WHERE {where_clause} GROUP ALL",
+            # Atomic DELETE RETURN BEFORE: returns all deleted records
+            # (matches Neo4j's DETACH DELETE ... RETURN count(n))
+            result = await client.query(
+                f"DELETE FROM {table} WHERE {where_clause} RETURN BEFORE",
                 params
             )
-            count = 0
-            # New SDK returns list directly: [{"count": N}] or []
-            if count_result and isinstance(count_result, list) and len(count_result) > 0:
-                count = count_result[0].get("count", 0)
-
-            # Delete
-            await client.query(
-                f"DELETE FROM {table} WHERE {where_clause}",
-                params
-            )
+            count = len(result) if result and isinstance(result, list) else 0
 
             logger.info(f"Bulk deleted {count} {label} nodes with filters {filters}")
             return count
@@ -1899,17 +1946,10 @@ class SurrealDBGraphStore(GraphStore):
             client = await self._get_client()
             table = label.lower()
 
-            # Get count first
-            count_result = await client.query(
-                f"SELECT count() FROM {table} GROUP ALL"
-            )
-            count = 0
-            # New SDK returns list directly: [{"count": N}] or []
-            if count_result and isinstance(count_result, list) and len(count_result) > 0:
-                count = count_result[0].get("count", 0)
-
-            # Delete all
-            await client.query(f"DELETE FROM {table}")
+            # Atomic DELETE RETURN BEFORE: returns all deleted records
+            # (matches Neo4j's DETACH DELETE ... RETURN count(n))
+            result = await client.query(f"DELETE FROM {table} RETURN BEFORE")
+            count = len(result) if result and isinstance(result, list) else 0
 
             logger.info(f"Deleted ALL {count} {label} nodes")
             return count

@@ -172,9 +172,11 @@ The current date is {now_str}(Accurate to the hour). For any date-related tasks,
 Your capabilities include:
 - Search and get information from the web using the search tools.
 - Use the rich browser related toolset to investigate websites.
+- Use `browser_get_page_snapshot(include_links=True)` to extract all links with their href URLs from the current page.
 - Use the terminal tools to perform local operations.
 - Use the note-taking tools to record your findings.
 - Use the human toolkit to ask for help when you are stuck.
+- Use the memory toolkit to query known page operations when exploring unfamiliar pages.
 </capabilities>
 
 <web_search_workflow>

@@ -1,13 +1,18 @@
 """
-AMI Task Planner - Fine-grained task decomposition following Eigent/CAMEL pattern.
+AMI Task Planner - Memory-First task decomposition.
 
-This module provides task decomposition with principles from CAMEL's TASK_DECOMPOSE_PROMPT:
-- Fine-grained decomposition into atomic, self-contained subtasks
-- Each subtask should only need 1-2 tool calls (single astep())
-- Clear deliverables for each subtask
+Memory-First flow:
+1. Query Memory for the whole task (single query, not per-subtask)
+2. Inject Memory context into LLM decomposition prompt
+3. Decompose into atomic, self-contained subtasks
+4. Assign Memory result as workflow_guide to browser-type subtasks (whole injection)
+
+Decomposition principles (from CAMEL's TASK_DECOMPOSE_PROMPT):
+- Self-contained subtasks with clear deliverables
+- Each subtask needs only 1-2 tool calls (single astep())
 - Strategic grouping of sequential actions by same worker
 - Aggressive parallelization across different workers
-- Memory query for workflow guidance
+- Explicit dependencies between subtasks
 
 No CAMEL Workforce dependencies - just uses ChatAgent for LLM calls.
 """
@@ -109,7 +114,7 @@ Example of INDEPENDENT tasks (can run in parallel):
 
 **TASK TO DECOMPOSE:**
 {task}
-
+{memory_context}
 Now decompose this task into atomic subtasks:"""
 
 
@@ -214,12 +219,13 @@ class AMITaskPlanner:
 
     async def decompose_and_query_memory(self, task: str) -> List[AMISubtask]:
         """
-        Decompose task into fine-grained subtasks and query Memory for each.
+        Memory-First decomposition: query Memory first, then decompose with context.
 
-        This is the main entry point that combines:
-        1. Fine-grained decomposition into atomic subtasks
-        2. Memory query for each subtask to get workflow_guide
-        3. Returns AMISubtask objects ready for single-call execution
+        Flow:
+        1. Query Memory for the whole task (single query)
+        2. Format Memory result as context for LLM decomposition
+        3. Decompose with Memory context (LLM sees known workflow)
+        4. Assign Memory result to browser-type subtasks (whole injection)
 
         Args:
             task: The original task description from user.
@@ -227,13 +233,19 @@ class AMITaskPlanner:
         Returns:
             List of AMISubtask objects ready for execution.
         """
-        logger.info(f"[AMITaskPlanner] Decomposing task: {task[:100]}...")
+        logger.info(f"[AMITaskPlanner] Memory-First decomposing task: {task[:100]}...")
 
-        # Step 1: Fine-grained decomposition
-        subtasks = await self._fine_grained_decompose(task)
+        # Step 1: Query Memory for the whole task
+        task_memory = await self._query_task_memory(task)
 
-        # Step 2: Query Memory for each subtask
-        await self._query_memory_for_subtasks(subtasks)
+        # Step 2: Format Memory result as decompose prompt context
+        memory_context = self._format_memory_for_decompose(task_memory)
+
+        # Step 3: Decompose with Memory context
+        subtasks = await self._fine_grained_decompose(task, memory_context=memory_context)
+
+        # Step 4: Assign Memory result to browser-type subtasks (Plan B: whole injection)
+        self._assign_memory_to_subtasks(subtasks, task_memory)
 
         # Emit final decomposition event
         subtasks_data = [
@@ -264,7 +276,130 @@ class AMITaskPlanner:
             lines.append(f"- **{worker_type}**: {description}")
         return "\n".join(lines)
 
-    async def _fine_grained_decompose(self, task: str) -> List[AMISubtask]:
+    async def _query_task_memory(self, task: str) -> Optional["QueryResult"]:
+        """
+        Query Memory for the whole task (single query).
+
+        Returns QueryResult or None if Memory is not available.
+        Emits MemoryLevelData event with the result level.
+        """
+        if not self._memory_toolkit:
+            logger.info("[AMITaskPlanner] Memory toolkit not configured, skipping")
+            return None
+
+        if not self._memory_toolkit.is_available():
+            logger.info("[AMITaskPlanner] Memory service not available, skipping")
+            return None
+
+        logger.info(f"[AMITaskPlanner] Querying Memory for whole task: {task[:80]}...")
+
+        # Emit progress event
+        await self._emit_event(DecomposeProgressData(
+            task_id=self.task_id,
+            progress=0.1,
+            message="Querying Memory for task workflow...",
+            is_final=False,
+        ))
+
+        try:
+            result = await self._memory_toolkit.query_task(task)
+
+            # Determine level for logging and event
+            if result.cognitive_phrase:
+                level = "L1"
+                states_count = len(result.cognitive_phrase.states) if hasattr(result.cognitive_phrase, 'states') else 0
+                logger.info(
+                    f"[AMITaskPlanner] Memory L1 match: CognitivePhrase with "
+                    f"{states_count} states"
+                )
+            elif result.states:
+                level = "L2"
+                logger.info(
+                    f"[AMITaskPlanner] Memory L2 match: {len(result.states)} states, "
+                    f"{len(result.actions)} actions"
+                )
+            else:
+                level = "L3"
+                logger.info("[AMITaskPlanner] Memory L3: no match")
+
+            # Emit memory level event
+            await self._emit_event(MemoryLevelData(
+                task_id=self.task_id,
+                level=level,
+                reason=f"Task-level Memory query",
+                states_count=len(result.states) if result.states else 0,
+                method="ami_task_planner",
+            ))
+
+            return result
+
+        except Exception as e:
+            logger.warning(f"[AMITaskPlanner] Memory query failed: {e}")
+            return None
+
+    def _format_memory_for_decompose(self, task_memory: Optional["QueryResult"]) -> str:
+        """
+        Format Memory result as context for the decomposition prompt.
+
+        L1/L2: Returns a description of the known workflow steps
+        L3/None: Returns empty string (no context)
+        """
+        if not task_memory or not task_memory.success:
+            return ""
+
+        from ..tools.toolkits import MemoryToolkit
+
+        context_text = MemoryToolkit.format_task_result(task_memory)
+        if not context_text:
+            return ""
+
+        return (
+            "\n\n**MEMORY CONTEXT (known workflow from past executions):**\n"
+            f"{context_text}"
+        )
+
+    def _assign_memory_to_subtasks(
+        self, subtasks: List[AMISubtask], task_memory: Optional["QueryResult"]
+    ) -> None:
+        """
+        Assign the whole Memory result as workflow_guide to browser-type subtasks.
+
+        Plan B (whole injection): The entire Memory path is injected into every
+        browser subtask as workflow_guide. Non-browser subtasks stay L3.
+        The dynamic page operations layer will provide fine-grained per-page
+        guidance during execution.
+        """
+        if not task_memory or not task_memory.success:
+            return
+
+        from ..tools.toolkits import MemoryToolkit
+
+        if task_memory.cognitive_phrase:
+            level = "L1"
+            guide = MemoryToolkit.format_cognitive_phrase(task_memory.cognitive_phrase)
+        elif task_memory.states:
+            level = "L2"
+            guide = MemoryToolkit.format_navigation_path(
+                task_memory.states, task_memory.actions or []
+            )
+        else:
+            return
+
+        assigned_count = 0
+        for subtask in subtasks:
+            if subtask.agent_type == "browser":
+                subtask.memory_level = level
+                subtask.workflow_guide = guide
+                assigned_count += 1
+
+        logger.info(
+            f"[AMITaskPlanner] Assigned {level} workflow_guide to "
+            f"{assigned_count}/{len(subtasks)} browser subtasks"
+        )
+
+    async def _fine_grained_decompose(
+        self, task: str, memory_context: str = ""
+    ) -> List[AMISubtask]:
         """
         Fine-grained task decomposition into atomic subtasks.
 
@@ -275,9 +410,10 @@ class AMITaskPlanner:
 
         Args:
             task: The original task description.
+            memory_context: Optional Memory context string to inject into prompt.
 
         Returns:
-            List of AMISubtask objects (without Memory context yet).
+            List of AMISubtask objects (without workflow_guide yet).
 
         Raises:
             ValueError: If LLM response cannot be parsed.
@@ -287,16 +423,17 @@ class AMITaskPlanner:
         # Emit progress event
         await self._emit_event(DecomposeProgressData(
             task_id=self.task_id,
-            progress=0.1,
+            progress=0.3,
             message="Analyzing task and creating atomic subtasks...",
             is_final=False,
         ))
 
-        # Build the prompt with worker descriptions
+        # Build the prompt with worker descriptions and memory context
         workers_info = self._build_workers_info()
         prompt = FINE_GRAINED_DECOMPOSE_PROMPT.format(
             task=task,
             workers_info=workers_info,
+            memory_context=memory_context,
         )
 
         # Call LLM for fine-grained decomposition
@@ -324,7 +461,7 @@ class AMITaskPlanner:
         # Emit progress event
         await self._emit_event(DecomposeProgressData(
             task_id=self.task_id,
-            progress=0.3,
+            progress=0.8,
             message=f"Created {len(subtasks)} atomic subtasks",
             is_final=False,
         ))
@@ -543,116 +680,6 @@ class AMITaskPlanner:
             raise ValueError("Coarse decomposition produced no valid subtasks")
 
         return subtasks
-
-    async def _query_memory_for_subtasks(self, subtasks: List[AMISubtask]) -> None:
-        """
-        Query Memory for each subtask.
-
-        This method iterates over all subtasks and queries Memory for each one.
-        Results are stored in the AMISubtask objects:
-        - memory_level: L1/L2/L3 based on match quality
-        - workflow_guide: Formatted guidance text for injection
-
-        Args:
-            subtasks: List of AMISubtask objects to query Memory for.
-        """
-        if not self._memory_toolkit:
-            logger.info("[AMITaskPlanner] Memory toolkit not configured, skipping queries")
-            return
-
-        if not self._memory_toolkit.is_available():
-            logger.info("[AMITaskPlanner] Memory service not available, skipping queries")
-            return
-
-        logger.info(f"[AMITaskPlanner] Querying Memory for {len(subtasks)} subtasks...")
-
-        # Emit progress event
-        await self._emit_event(DecomposeProgressData(
-            task_id=self.task_id,
-            progress=0.4,
-            message="Querying Memory for each subtask...",
-            is_final=False,
-        ))
-
-        for i, subtask in enumerate(subtasks):
-            try:
-                logger.info(
-                    f"[AMITaskPlanner] Querying Memory for subtask {subtask.id}: "
-                    f"{subtask.content[:50]}..."
-                )
-
-                result = await self._memory_toolkit.query_task(subtask.content)
-
-                # Determine memory level and format guide
-                if result.cognitive_phrase:
-                    # L1: Complete workflow match
-                    subtask.memory_level = "L1"
-                    subtask.workflow_guide = self._format_cognitive_phrase(result.cognitive_phrase)
-                    states_count = len(result.cognitive_phrase.states) if hasattr(result.cognitive_phrase, 'states') else 0
-                    logger.info(
-                        f"[AMITaskPlanner] Subtask {subtask.id}: L1 match with "
-                        f"{states_count} states"
-                    )
-                    logger.debug(
-                        f"[AMITaskPlanner] Subtask {subtask.id}: "
-                        f"workflow_guide_len={len(subtask.workflow_guide or '')}"
-                    )
-
-                elif result.states:
-                    # L2: Partial path match
-                    subtask.memory_level = "L2"
-                    subtask.workflow_guide = self._format_navigation_path(
-                        result.states, result.actions or []
-                    )
-                    logger.info(
-                        f"[AMITaskPlanner] Subtask {subtask.id}: L2 match with "
-                        f"{len(result.states)} states"
-                    )
-                    logger.debug(
-                        f"[AMITaskPlanner] Subtask {subtask.id}: "
-                        f"workflow_guide_len={len(subtask.workflow_guide or '')}"
-                    )
-
-                else:
-                    # L3: No match
-                    subtask.memory_level = "L3"
-                    logger.info(f"[AMITaskPlanner] Subtask {subtask.id}: L3 (no match)")
-                    logger.debug(
-                        f"[AMITaskPlanner] Subtask {subtask.id}: workflow_guide_len=0"
-                    )
-
-                # Emit memory level event for this subtask
-                await self._emit_event(MemoryLevelData(
-                    task_id=self.task_id,
-                    level=subtask.memory_level,
-                    reason=f"Memory query for subtask {subtask.id}",
-                    states_count=len(result.states) if result.states else 0,
-                    method="ami_task_planner",
-                ))
-
-            except Exception as e:
-                logger.warning(
-                    f"[AMITaskPlanner] Memory query failed for subtask {subtask.id}: {e}"
-                )
-                subtask.memory_level = "L3"
-
-            # Update progress
-            progress = 0.4 + (0.5 * (i + 1) / len(subtasks))
-            await self._emit_event(DecomposeProgressData(
-                task_id=self.task_id,
-                progress=progress,
-                message=f"Memory query {i + 1}/{len(subtasks)} complete",
-                is_final=False,
-            ))
-
-        # Log summary
-        level_counts = {"L1": 0, "L2": 0, "L3": 0}
-        for st in subtasks:
-            level_counts[st.memory_level] = level_counts.get(st.memory_level, 0) + 1
-        logger.info(
-            f"[AMITaskPlanner] Memory queries complete: L1={level_counts['L1']}, "
-            f"L2={level_counts['L2']}, L3={level_counts['L3']}"
-        )
 
     @staticmethod
     def _format_intent_for_guide(intent: Any) -> str:

@@ -13,7 +13,7 @@ Core framework components for BaseAgent.
 | `budget_controller.py` | Budget enforcement during task execution |
 | `agent_registry.py` | Central agent registration and lookup |
 | `task_router.py` | Routes tasks to appropriate specialized agents |
-| `ami_task_planner.py` | **NEW** Fine-grained task decomposition with Memory integration |
+| `ami_task_planner.py` | Memory-First task decomposition (query Memory → decompose with context → assign guide) |
 | `ami_task_executor.py` | **NEW** Lightweight task executor (~250 lines, replaces CAMEL Workforce) |
 | `~~ami_workforce.py~~` | ❌ DELETED - Replaced by AMITaskExecutor |
 | `~~ami_worker.py~~` | ❌ DELETED - No longer needed |
@@ -154,10 +154,11 @@ Orchestrator Agent (entry point)
 ├── Decides: direct reply / tool use / decompose_task
 └── If decompose_task → triggers:
 
-AMITaskPlanner (细粒度分解)
-├── Uses: FINE_GRAINED_DECOMPOSE_PROMPT
-├── Decomposes into atomic subtasks (1-2 tool calls each)
-├── Queries Memory API for workflow guides
+AMITaskPlanner (Memory-First 分解)
+├── Step 1: Query Memory for whole task (single query)
+├── Step 2: Inject Memory context into decompose prompt
+├── Step 3: Fine-grained decompose (1-2 tool calls each)
+├── Step 4: Assign workflow_guide to browser subtasks (whole injection)
 └── Returns: List[AMISubtask]
 
 AMITaskExecutor (顺序执行)

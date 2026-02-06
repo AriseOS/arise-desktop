@@ -18,9 +18,9 @@
     │ (如果触发 decompose_task)
     ▼
 ┌─────────────────────────────────────┐
-│  2. AMITaskPlanner                  │  粗粒度分解 + Memory 查询
-│     - 分解提示词                     │
-│     - Memory 查询                   │
+│  2. AMITaskPlanner                  │  Memory 查询 → 带上下文分解
+│     - Memory-First 查询             │
+│     - 分解提示词 (含 Memory 上下文)   │
 └─────────────────────────────────────┘
     │
     ▼
@@ -116,7 +116,38 @@ def decompose_task(self, task_description: str) -> str:
 
 **文件位置**: `src/clients/desktop_app/ami_daemon/base_agent/core/ami_task_planner.py`
 
-### 2.1 细粒度分解提示词 (FINE_GRAINED_DECOMPOSE_PROMPT)
+### 2.1 Memory-First 流程
+
+任务分解采用 **Memory-First** 策略：先查 Memory，再带上下文分解。
+
+```
+1. query_task(整体任务) → 获取 Memory 结果（L1/L2/L3）
+2. 将 Memory 结果格式化为分解 prompt 的上下文
+3. LLM 根据 Memory 上下文做分解（细粒度 XML）
+4. Memory 结果整体赋给 browser subtask 的 workflow_guide（不拆分）
+```
+
+```python
+async def decompose_and_query_memory(self, task: str) -> List[AMISubtask]:
+    # Step 1: 先查 Memory（整体任务级）
+    task_memory = await self._query_task_memory(task)
+
+    # Step 2: 带 Memory 上下文的 LLM 分解
+    memory_context = self._format_memory_for_decompose(task_memory)
+    subtasks = await self._fine_grained_decompose(task, memory_context=memory_context)
+
+    # Step 3: 将整体 Memory 结果分配给 browser subtask（方案 B：不拆分）
+    self._assign_memory_to_subtasks(subtasks, task_memory)
+
+    return subtasks
+```
+
+**方案 B（整体注入）的理由**：
+- Memory 路径（如 3 个 states）不拆成 3 个 subtask，而是整条路径作为 workflow_guide 注入到 browser subtask
+- BrowserAgent 执行时已有动态 page operations 自动注入（见 2.4），细粒度不需要上层操心
+- 符合分解原则中的 "Strategic Grouping"：同一 worker 的连续操作应合并
+
+### 2.2 细粒度分解提示词 (FINE_GRAINED_DECOMPOSE_PROMPT)
 
 **设计原则**:
 - **原子化子任务**: 每个子任务只包含 1-2 个工具调用
@@ -141,20 +172,20 @@ Output XML format (CAMEL):
 <task type="document">Read products.md and create HTML report</task>
 </tasks>
 
+## MEMORY CONTEXT
+{memory_context}
+
+If Memory context is provided above:
+- Browser tasks should align with the known navigation path
+- The path shows proven page transitions — keep browser steps consistent with it
+- Non-browser tasks (document, code) are not affected by Memory
+If no Memory context: decompose from scratch as usual.
+
 Task: {task}
 """
 ```
 
-**输出示例**:
-```xml
-<tasks>
-<task type="browser">访问亚马逊首页，搜索 "AI 眼镜"</task>
-<task type="browser">从搜索结果页提取前 10 个产品的名称、价格、评分</task>
-<task type="document">将产品数据保存为 products.json 文件</task>
-</tasks>
-```
-
-### 2.2 AMISubtask 数据结构
+### 2.3 AMISubtask 数据结构
 
 ```python
 @dataclass
@@ -174,48 +205,61 @@ class AMISubtask:
     error: Optional[str] = None          # 错误信息
 ```
 
-### 2.3 Memory 查询与 Workflow Guide 注入
+### 2.4 Memory 在 Agent 中的两层使用
 
-对每个子任务，Planner 会查询 Memory API 获取历史工作流指导：
+Agent 使用 Memory 分为两层，分别在不同阶段生效：
 
-**Memory 查询接口**:
-```python
-# 任务级别查询
-memory_result = await memory_toolkit.query_task(subtask.content)
+**第一层：任务分解时 — workflow_guide（整体路径）**
 
-# 返回结构
-{
-    "level": "L1",  # L1: 精确匹配 | L2: 部分匹配 | L3: 无匹配
-    "workflow_guide": "...",  # 工作流指导内容
-    "confidence": 0.95
-}
+Planner 查询 Memory 获取整体路径，格式化后注入 browser subtask 的 workflow_guide。
+
+Memory Level:
+- **L1 (精确匹配)**: CognitivePhrase — 用户录制的完整工作流，包含 execution_plan
+- **L2 (部分匹配)**: 图检索组合的 states + actions 导航路径
+- **L3 (无匹配)**: 无 workflow_guide，agent 自主探索
+
+Workflow Guide 格式示例（L2）:
+```
+**Navigation Path**:
+
+Step 1: 亚马逊首页，展示各类商品分类、促销活动和搜索功能。
+  URL: https://www.amazon.com/
+  -> 点击搜索框，输入关键词
+Step 2: 搜索结果页，展示相关商品列表。
+  URL: https://www.amazon.com/s?k=AI+glasses
+  -> 点击商品进入详情页
 ```
 
-**Workflow Guide 格式示例**:
+**第二层：执行时 — page operations（动态注入，已实现）**
+
+BrowserAgent 每次 URL 变化时，`ListenBrowserAgent` 自动在后台查询 Memory 的 page operations 并缓存。每次 LLM 调用前自动检查缓存并注入。
+
 ```
-## Navigation Path Guide
+ListenBrowserAgent.set_current_url(url)
+  → _start_page_operations_query(url)          # 后台异步
+    → MemoryToolkit.query_page_operations(url)
+      → cache_page_operations(url, ops)
 
-**Pages to visit**:
-  1. 亚马逊首页，展示各类商品分类、促销活动和搜索功能。
-     ➡️ To reach next page: 点击搜索框，输入关键词 "AI 眼镜"
-  2. 搜索结果页，展示相关商品列表。
-     ➡️ To reach next page: 点击商品进入详情页
-
-## Actions on Each Page
-[Page 1 - 亚马逊首页]
-- 操作: 定位搜索框 (ID: "twotabsearchtextbox")
-- 操作: 输入关键词 "AI 眼镜"
-- 操作: 点击搜索按钮
-
-[Page 2 - 搜索结果页]
-- 操作: 提取产品列表 (CSS: ".s-result-item")
-- 操作: 对每个产品提取名称、价格、评分
+ListenChatAgent.step() / astep()               # 每次 LLM 调用前
+  → _check_and_inject_page_operations_cache()  # 自动注入
 ```
 
-**Memory Level 说明**:
-- **L1 (精确匹配)**: 找到完全相同的任务历史，workflow_guide 非常详细
-- **L2 (部分匹配)**: 找到相似任务，workflow_guide 可作为参考
-- **L3 (无匹配)**: 无历史记录，workflow_guide 为 None，agent 需自主探索
+Page Operations 注入示例:
+```
+## Available Page Operations (from Memory)
+## Page Operations (2 recorded)
+
+1. "用户在亚马逊网站上进行商品搜索操作。"
+   - click searchbox "Search Amazon"
+   - click textbox
+
+**Navigation options:**
+- 系统自动导航，从亚马逊首页跳转到AI戒指产品搜索结果页面。
+```
+
+**两层配合**:
+- workflow_guide 给 Agent 全局视野：整条路径去哪里
+- page operations 给 Agent 局部信息：当前页面能做什么
 
 ---
 
@@ -417,6 +461,29 @@ If a workflow_guide is provided:
 4. Adapt to current context - URLs may differ but flow is similar
 </workflow_guide_usage>
 """
+```
+
+**BrowserAgent 的 Memory 使用**:
+
+BrowserAgent 通过两层机制获取 Memory 信息：
+
+1. **workflow_guide**（来自 AMITaskExecutor prompt 注入）：执行前由 Planner 查询，包含整体导航路径
+2. **page operations**（`ListenBrowserAgent` 自动注入）：每次 URL 变化后台查询 Memory，在 LLM 调用前自动注入到 message
+
+Agent 本身不需要主动调用 Memory 工具，两层信息都是自动提供的。
+
+注意：`BROWSER_AGENT_SYSTEM_PROMPT`（`agent_factories.py`）中的 `<capabilities>` 段应包含 memory toolkit：
+
+```
+<capabilities>
+Your capabilities include:
+- Search and get information from the web using the search tools.
+- Use the rich browser related toolset to investigate websites.
+- Use the terminal tools to perform local operations.
+- Use the note-taking tools to record your findings.
+- Use the human toolkit to ask for help when you are stuck.
+- Use the memory toolkit to query known page operations when exploring unfamiliar pages.
+</capabilities>
 ```
 
 ### 4.2 Initial Message (执行开始时)
