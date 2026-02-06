@@ -158,9 +158,9 @@ embedding:
   provider: openai  # Options: openai, local_bge (openai works with OpenAI-compatible APIs)
   model: BAAI/bge-m3  # Model name (supports Chinese/English, 8K tokens)
   dimension: 1024  # Embedding vector dimension
-  # API configuration (for OpenAI-compatible APIs like SiliconFlow)
-  api_url: https://api.siliconflow.cn/v1  # SiliconFlow API base URL
-  api_key: sk-nfveshrtleyiscbeivhxltvvlvbzelohzdwqgkozttaslmdu # Environment variable for API key
+  # API configuration
+  # Note: API key is provided per-request via user's x-ami-api-key header
+  base_url: https://api.ariseos.com/openai/v1  # CRS OpenAI-compatible endpoint
 
 # Reasoner Configuration
 # Memory retrieval and workflow planning
