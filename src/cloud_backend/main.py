@@ -466,7 +466,8 @@ async def upload_recording(data: dict):
                 "https://example.com/page2": {...dom_dict...}
             },
             "add_to_memory": true,  # Optional: auto-add to workflow memory (default: true)
-            "generate_embeddings": true  # Generate embeddings for semantic search (default: true, required for query)
+            "generate_embeddings": true,  # Generate embeddings for semantic search (default: true, required for query)
+            "generate_descriptions": true  # Generate LLM descriptions for state/sequence/action (default: true)
         }
 
     Returns:
@@ -487,7 +488,7 @@ async def upload_recording(data: dict):
 
     Note: Graph building is deterministic and immediate (no LLM).
           AI analysis happens in background (with LLM).
-          Memory addition is synchronous but fast (no LLM unless generate_embeddings=true).
+          Memory addition is synchronous but fast (no LLM unless generate_descriptions=true).
     """
     user_id = data.get("user_id")
     user_api_key = data.get("user_api_key")
@@ -500,6 +501,7 @@ async def upload_recording(data: dict):
     # Memory options
     add_to_memory = data.get("add_to_memory", True)  # Default: auto-add to memory
     generate_embeddings = data.get("generate_embeddings", True)
+    generate_descriptions = data.get("generate_descriptions", True)
 
     if not user_id:
         raise HTTPException(400, "Missing user_id")
@@ -560,7 +562,7 @@ async def upload_recording(data: dict):
             # Setup LLM providers for description generation (requires user API key)
             llm_provider = None
             simple_llm_provider = None
-            if generate_embeddings and user_api_key:
+            if generate_descriptions and user_api_key:
                 from src.common.llm import AnthropicProvider
                 llm_provider = AnthropicProvider(
                     api_key=user_api_key,
@@ -1273,9 +1275,10 @@ async def add_to_memory(
     5. Create IntentSequences from operations within each State
     6. Create Actions for state transitions
     7. Optionally generate embeddings for semantic search
+    8. Optionally generate LLM descriptions for graph entities
 
     Headers:
-        X-Ami-API-Key: User's API key (required for embedding generation)
+        X-Ami-API-Key: User's API key (required for embedding/description generation)
 
     Body:
         {
@@ -1283,7 +1286,8 @@ async def add_to_memory(
             "recording_id": "recording_xxx",        // Optional: Load from existing recording
             "operations": [...],                     // Optional: Direct operations array
             "session_id": "session_xxx",            // Optional: Session identifier
-            "generate_embeddings": true             // Generate embeddings (default: true, required for query)
+            "generate_embeddings": true,            // Generate embeddings (default: true, required for query)
+            "generate_descriptions": true           // Generate LLM descriptions (default: true)
         }
 
     Note: Either recording_id or operations must be provided.
@@ -1316,6 +1320,7 @@ async def add_to_memory(
     operations = data.get("operations")
     session_id = data.get("session_id")
     generate_embeddings = data.get("generate_embeddings", True)
+    generate_descriptions = data.get("generate_descriptions", True)
 
     if not user_id:
         raise HTTPException(400, "Missing user_id")
@@ -1349,7 +1354,7 @@ async def add_to_memory(
         # Setup LLM providers for description generation (requires user API key)
         llm_provider = None
         simple_llm_provider = None
-        if generate_embeddings and x_ami_api_key:
+        if generate_descriptions and x_ami_api_key:
             from src.common.llm import AnthropicProvider
             llm_provider = AnthropicProvider(
                 api_key=x_ami_api_key,

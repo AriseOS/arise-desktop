@@ -21,7 +21,7 @@ import time
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlparse
 
 from src.common.memory.memory.memory import Memory
 from src.common.memory.memory.workflow_memory import WorkflowMemory
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 from src.common.memory.ontology.state import State
 from src.common.memory.services.embedding_model import EmbeddingModel
-from src.common.llm import AnthropicProvider
+from src.common.llm import AnthropicProvider, parse_json_with_repair
 
 
 class URLSegment:
@@ -379,6 +379,7 @@ class WorkflowProcessor:
         new_states = [s for s, is_new in zip(states, state_is_new_flags) if is_new]
         await self._generate_descriptions(
             states=new_states,
+            all_states=states,
             intent_sequences=intent_sequences,
             actions=actions,
         )
@@ -969,18 +970,18 @@ class WorkflowProcessor:
         """
         # Search backwards for trigger operations
         for event in reversed(segment.events):
-            event_type = event.get("type")
-            
-            if event_type == "click":
-                role = event.get("role")
+            event_type = str(event.get("type") or "").strip().lower()
+
+            if event_type in ("click", "clickelement"):
+                role = str(event.get("role") or "").strip().lower()
                 # Link/button clearly cause navigation
                 if role in ("link", "button"):
                     return event
                 # Generic elements may also trigger navigation (JS onclick)
                 if role == "generic":
                     return event
-                    
-            elif event_type == "submit":
+
+            elif event_type in ("submit", "formsubmit"):
                 return event
         
         return None
@@ -1256,18 +1257,48 @@ class WorkflowProcessor:
         states: List[State],
         intent_sequences: List[IntentSequence],
         actions: List[Action],
+        all_states: Optional[List[State]] = None,
     ) -> None:
         """Generate descriptions using LLM (async).
 
         Args:
             states: States that need descriptions.
+            all_states: Full states in this workflow for action context lookup.
             intent_sequences: IntentSequences that need descriptions.
             actions: Actions that need descriptions.
         """
+        ordered_states = all_states or states
+        state_index_map = {s.id: idx for idx, s in enumerate(ordered_states)}
+        state_sequences_map: Dict[str, List[IntentSequence]] = {}
+        for sequence in intent_sequences:
+            state_id = getattr(sequence, "_parent_state_id", None)
+            if not state_id:
+                continue
+            state_sequences_map.setdefault(state_id, []).append(sequence)
+
+        incoming_action_map: Dict[str, Action] = {}
+        outgoing_action_map: Dict[str, Action] = {}
+        for action in actions:
+            if action.target not in incoming_action_map:
+                incoming_action_map[action.target] = action
+            if action.source not in outgoing_action_map:
+                outgoing_action_map[action.source] = action
+
         # Generate State descriptions
         for state in states:
             if not state.description:
-                state.description = await self._generate_state_description(state)
+                state_context = self._build_state_generation_context(
+                    state=state,
+                    ordered_states=ordered_states,
+                    state_index_map=state_index_map,
+                    state_sequences_map=state_sequences_map,
+                    incoming_action_map=incoming_action_map,
+                    outgoing_action_map=outgoing_action_map,
+                )
+                state.description = await self._generate_state_description(
+                    state,
+                    context=state_context,
+                )
                 logger.info(f"    Generated State description: {state.description[:50]}...")
 
         # Generate IntentSequence descriptions
@@ -1277,53 +1308,369 @@ class WorkflowProcessor:
                 logger.info(f"    Generated IntentSequence description: {sequence.description[:50]}...")
 
         # Generate Action descriptions (need state info for context)
-        state_map = {s.id: s for s in states}
+        state_map = {s.id: s for s in (all_states or states)}
+        memory_state_cache: Dict[str, Optional[State]] = {}
         for action in actions:
             if not action.description:
                 source_state = state_map.get(action.source)
                 target_state = state_map.get(action.target)
+                # Reused states may not be in `states` (new_states only); fallback to memory.
+                if self.memory:
+                    if not source_state:
+                        source_state = memory_state_cache.get(action.source)
+                        if source_state is None:
+                            source_state = self.memory.get_state(action.source)
+                            memory_state_cache[action.source] = source_state
+                    if not target_state:
+                        target_state = memory_state_cache.get(action.target)
+                        if target_state is None:
+                            target_state = self.memory.get_state(action.target)
+                            memory_state_cache[action.target] = target_state
                 action.description = await self._generate_action_description(
                     action, source_state, target_state
                 )
                 if action.description:
                     logger.info(f"    Generated Action description: {action.description[:50]}...")
 
-    async def _generate_state_description(self, state: State) -> str:
+    @staticmethod
+    def _normalize_keywords(raw_keywords: Any, max_keywords: int = 8) -> List[str]:
+        """Normalize semantic keywords to a short, unique list."""
+        if not raw_keywords:
+            return []
+
+        if isinstance(raw_keywords, str):
+            candidates = re.split(r"[,\uFF0C;\uFF1B|/\n\t ]+", raw_keywords)
+        elif isinstance(raw_keywords, list):
+            candidates = raw_keywords
+        else:
+            return []
+
+        keywords: List[str] = []
+        seen = set()
+        for item in candidates:
+            word = str(item or "").strip()
+            if not word:
+                continue
+            # Remove obvious dynamic tokens to reduce retrieval noise.
+            word = re.sub(r"\b\d{4,}\b", "", word).strip()
+            if not word:
+                continue
+            lowered = word.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            keywords.append(word[:30])
+            if len(keywords) >= max_keywords:
+                break
+        return keywords
+
+    def _parse_semantic_output(
+        self,
+        raw_response: str,
+        default_label: str,
+        default_intent: str,
+        default_description: str,
+    ) -> Dict[str, Any]:
+        """Parse LLM output into normalized semantic fields with safe fallbacks."""
+        parsed = parse_json_with_repair(raw_response or "")
+        if not isinstance(parsed, dict):
+            parsed = {}
+
+        # Backward compatibility for previous workflow schema.
+        if "label" not in parsed and "name" in parsed:
+            parsed["label"] = parsed.get("name")
+
+        label = str(parsed.get("label") or default_label).strip()[:80]
+        intent = str(parsed.get("intent") or default_intent).strip()[:120]
+        description = str(parsed.get("description") or default_description).strip()[:240]
+        keywords = self._normalize_keywords(parsed.get("keywords"))
+        retrieval_text = str(parsed.get("retrieval_text") or "").strip()
+        if not retrieval_text:
+            retrieval_parts = [label, intent] + keywords
+            retrieval_text = " ".join(part for part in retrieval_parts if part).strip()
+
+        return {
+            "version": "semantic_v1",
+            "label": label,
+            "intent": intent,
+            "keywords": keywords,
+            "description": description,
+            "retrieval_text": retrieval_text[:320],
+        }
+
+    @staticmethod
+    def _truncate_text(value: Any, max_len: int = 80) -> str:
+        """Truncate text for prompt context display."""
+        text = str(value or "").strip()
+        if len(text) <= max_len:
+            return text
+        return f"{text[: max_len - 3]}..."
+
+    @classmethod
+    def _parse_url_context(cls, url: str) -> Dict[str, Any]:
+        """Parse URL into stable path/query context."""
+        try:
+            parsed = urlparse(url or "")
+        except Exception:
+            parsed = urlparse("")
+
+        path = (parsed.path or "/").strip() or "/"
+        raw_segments = [seg for seg in path.split("/") if seg]
+        segments = [cls._truncate_text(seg, 30) for seg in raw_segments[:6]]
+
+        query_keys: List[str] = []
+        try:
+            for key, _ in parse_qsl(parsed.query or "", keep_blank_values=False):
+                key_text = cls._truncate_text(key, 40)
+                if not key_text or key_text in query_keys:
+                    continue
+                query_keys.append(key_text)
+                if len(query_keys) >= 8:
+                    break
+        except Exception:
+            query_keys = []
+
+        return {
+            "path": cls._truncate_text(path, 200),
+            "segments": segments,
+            "query_keys": query_keys,
+        }
+
+    @classmethod
+    def _summarize_intent_for_state_prompt(cls, intent: Any) -> str:
+        """Summarize one intent as a compact clue for state semantics."""
+        if isinstance(intent, dict):
+            intent_type = intent.get("type", "")
+            text = intent.get("text", "")
+            value = intent.get("value", "")
+            role = intent.get("element_role") or intent.get("role") or ""
+        else:
+            intent_type = getattr(intent, "type", "")
+            text = getattr(intent, "text", "")
+            value = getattr(intent, "value", "")
+            role = getattr(intent, "element_role", "") or ""
+
+        intent_type_text = cls._truncate_text(intent_type, 24) or "action"
+        main_text = cls._truncate_text(text or value, 64)
+        role_text = cls._truncate_text(role, 24)
+
+        parts = [intent_type_text]
+        if main_text:
+            parts.append(f"text={main_text}")
+        if role_text:
+            parts.append(f"role={role_text}")
+        return ", ".join(parts)
+
+    @classmethod
+    def _summarize_state_for_prompt(cls, state: Optional[State]) -> str:
+        """Summarize neighboring state for prompt context."""
+        if not state:
+            return "无"
+        url_ctx = cls._parse_url_context(state.page_url)
+        title = cls._truncate_text(state.page_title or "", 60) or "无标题"
+        return f"{title} (path={url_ctx.get('path', '/')})"
+
+    @classmethod
+    def _summarize_navigation_for_prompt(
+        cls,
+        action: Optional[Action],
+        state_lookup: Dict[str, State],
+        direction: str,
+    ) -> str:
+        """Summarize incoming/outgoing navigation clues for prompt context."""
+        if not action:
+            return "无"
+
+        trigger = action.trigger if isinstance(action.trigger, dict) else {}
+        action_type = cls._truncate_text(action.type, 24) or "navigate"
+        trigger_text = cls._truncate_text(trigger.get("text"), 64)
+        trigger_role = cls._truncate_text(trigger.get("role"), 24)
+
+        if direction == "incoming":
+            related_state = state_lookup.get(action.source)
+            state_hint = cls._summarize_state_for_prompt(related_state)
+            direction_hint = f"from={state_hint}"
+        else:
+            related_state = state_lookup.get(action.target)
+            state_hint = cls._summarize_state_for_prompt(related_state)
+            direction_hint = f"to={state_hint}"
+
+        parts = [f"type={action_type}", direction_hint]
+        if trigger_text:
+            parts.append(f"text={trigger_text}")
+        if trigger_role:
+            parts.append(f"role={trigger_role}")
+        return ", ".join(parts)
+
+    def _build_state_generation_context(
+        self,
+        state: State,
+        ordered_states: List[State],
+        state_index_map: Dict[str, int],
+        state_sequences_map: Dict[str, List[IntentSequence]],
+        incoming_action_map: Dict[str, Action],
+        outgoing_action_map: Dict[str, Action],
+    ) -> Dict[str, Any]:
+        """Build rich but compact context used for State semantic generation."""
+        idx = state_index_map.get(state.id)
+        prev_state = ordered_states[idx - 1] if idx is not None and idx > 0 else None
+        next_state = (
+            ordered_states[idx + 1]
+            if idx is not None and idx < len(ordered_states) - 1
+            else None
+        )
+
+        state_lookup = {s.id: s for s in ordered_states}
+        incoming_action = incoming_action_map.get(state.id)
+        outgoing_action = outgoing_action_map.get(state.id)
+
+        intent_clues: List[str] = []
+        for sequence in state_sequences_map.get(state.id, [])[:3]:
+            intents = sequence.intents if isinstance(sequence.intents, list) else []
+            for intent in intents[:4]:
+                clue = self._summarize_intent_for_state_prompt(intent)
+                if clue:
+                    intent_clues.append(f"- {clue}")
+                if len(intent_clues) >= 10:
+                    break
+            if len(intent_clues) >= 10:
+                break
+
+        url_ctx = self._parse_url_context(state.page_url)
+        incoming_nav = self._summarize_navigation_for_prompt(
+            incoming_action, state_lookup, direction="incoming"
+        )
+        outgoing_nav = self._summarize_navigation_for_prompt(
+            outgoing_action, state_lookup, direction="outgoing"
+        )
+        prev_hint = self._summarize_state_for_prompt(prev_state)
+        next_hint = self._summarize_state_for_prompt(next_state)
+
+        logger.debug(
+            "[StateSemanticContext] state=%s path=%s intent_clues=%d incoming=%s outgoing=%s prev=%s next=%s",
+            state.id[:8],
+            url_ctx.get("path", "/"),
+            len(intent_clues),
+            incoming_nav,
+            outgoing_nav,
+            prev_hint,
+            next_hint,
+        )
+
+        return {
+            "url_context": url_ctx,
+            "intent_clues": intent_clues,
+            "incoming_navigation": incoming_nav,
+            "outgoing_navigation": outgoing_nav,
+            "prev_state_hint": prev_hint,
+            "next_state_hint": next_hint,
+        }
+
+    async def _generate_state_description(
+        self,
+        state: State,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> str:
         """Generate description for a State using LLM.
 
         Args:
             state: State to describe.
+            context: Optional context clues for better page-type judgment.
 
         Returns:
             Description string.
         """
+        if state.attributes is None:
+            state.attributes = {}
+
+        context = context or {}
+        url_context = context.get("url_context", {})
+        path_hint = str(url_context.get("path") or "无")
+        path_segments = url_context.get("segments") or []
+        query_keys = url_context.get("query_keys") or []
+        path_segments_text = " / ".join(path_segments) if path_segments else "无"
+        query_keys_text = ", ".join(query_keys) if query_keys else "无"
+        intent_clues = context.get("intent_clues") or []
+        intent_clues_text = "\n".join(intent_clues) if intent_clues else "- 无明显页面内操作"
+        incoming_nav = str(context.get("incoming_navigation") or "无")
+        outgoing_nav = str(context.get("outgoing_navigation") or "无")
+        prev_state_hint = str(context.get("prev_state_hint") or "无")
+        next_state_hint = str(context.get("next_state_hint") or "无")
+
+        default_label = state.page_title or "页面"
+        default_intent = "识别页面类型与用途"
+        default_description = f"页面: {state.page_title or state.page_url}"
+
         # If no LLM provider, return default description
         if not self.simple_llm_provider:
-            return f"页面: {state.page_title or state.page_url}"
+            semantic = self._parse_semantic_output(
+                raw_response="",
+                default_label=default_label,
+                default_intent=default_intent,
+                default_description=default_description,
+            )
+            state.attributes["semantic_v1"] = semantic
+            return semantic["description"]
 
-        prompt = f"""请用简洁的中文描述这个页面的类型和用途。
+        prompt = f"""请基于页面上下文输出结构化语义 JSON，用于稳定检索。
+请综合判断这个页面在任务中的角色和类型（例如列表页、详情页、搜索页、表单页、结果页等），并生成准确语义。
 
 URL: {state.page_url}
 页面标题: {state.page_title or "无"}
+URL 路径线索:
+- path: {path_hint}
+- path_segments: {path_segments_text}
+- query_keys: {query_keys_text}
+
+页面内操作线索:
+{intent_clues_text}
+
+导航线索:
+- 进入当前页: {incoming_nav}
+- 离开当前页: {outgoing_nav}
+
+相邻页面:
+- 上一页: {prev_state_hint}
+- 下一页: {next_state_hint}
 
 要求:
-1. 用一句话描述页面类型（如"商品详情页"、"搜索结果页"等）
-2. 不要包含具体的URL或ID
-3. 只返回描述文本
+1. 必须返回有效 JSON，不要返回解释文字
+2. 字段:
+   - label: 页面类型短标签（例如"商品详情页"）
+   - intent: 用户在该页的核心意图（短语）
+   - keywords: 3-8个关键词数组（避免具体ID/日期）
+   - description: 1句话自然语言描述（中文）
+   - retrieval_text: 用于检索的稳定文本（label + intent + keywords）
+3. 内容尽量稳定、概括，不要包含动态 ID、时间戳等噪声
 
-示例: "淘宝商品详情页，展示商品信息和购买选项"
+示例:
+{{"label":"商品详情页","intent":"浏览商品信息并决策购买","keywords":["商品","详情","价格","购买"],"description":"商品详情页，展示商品信息、价格与购买入口。","retrieval_text":"商品详情页 浏览商品信息并决策购买 商品 详情 价格 购买"}}
 
-描述:"""
+JSON:"""
 
         try:
             response = await self.simple_llm_provider.generate_response(
-                system_prompt="",
+                system_prompt="你是一个JSON生成助手，只返回有效JSON对象。",
                 user_prompt=prompt
             )
-            return response.strip()
+            semantic = self._parse_semantic_output(
+                raw_response=response,
+                default_label=default_label,
+                default_intent=default_intent,
+                default_description=default_description,
+            )
+            state.attributes["semantic_v1"] = semantic
+            return semantic["description"]
         except Exception as e:
             logger.info(f"Warning: Failed to generate state description: {e}")
-            return f"页面: {state.page_title or state.page_url}"
+            semantic = self._parse_semantic_output(
+                raw_response="",
+                default_label=default_label,
+                default_intent=default_intent,
+                default_description=default_description,
+            )
+            state.attributes["semantic_v1"] = semantic
+            return semantic["description"]
 
     async def _generate_intent_sequence_description(self, sequence: IntentSequence) -> str:
         """Generate description for an IntentSequence using LLM.
@@ -1354,34 +1701,64 @@ URL: {state.page_url}
                 intent_summary.append(intent_type)
 
         # If no LLM provider, return default description
+        default_label = "操作序列"
+        default_intent = "完成页面内操作目标"
+        default_description = f"操作序列 ({len(sequence.intents)} 个操作)"
         if not self.simple_llm_provider:
-            return f"操作序列 ({len(sequence.intents)} 个操作)"
+            semantic = self._parse_semantic_output(
+                raw_response="",
+                default_label=default_label,
+                default_intent=default_intent,
+                default_description=default_description,
+            )
+            sequence.semantic = semantic
+            return semantic["description"]
 
         intents_str = "\n".join(f"- {s}" for s in intent_summary[:10])
 
-        prompt = f"""请用简洁的中文描述这组操作的目的。
+        prompt = f"""请基于操作序列输出结构化语义 JSON，用于稳定检索。
 
 操作序列:
 {intents_str}
 
 要求:
-1. 用一句话描述这组操作的核心目的
-2. 不要列举具体操作
-3. 只返回描述文本
+1. 必须返回有效 JSON，不要返回解释文字
+2. 字段:
+   - label: 操作短标签（例如"筛选商品"）
+   - intent: 该序列的核心目标（短语）
+   - keywords: 3-8个关键词数组（避免动态值）
+   - description: 1句话自然语言描述（中文）
+   - retrieval_text: 用于检索的稳定文本（label + intent + keywords）
+3. 不要输出具体 ref 编号或随机ID
 
-示例: "搜索并筛选咖啡商品"
+示例:
+{{"label":"筛选商品","intent":"根据条件缩小候选范围","keywords":["搜索","筛选","条件"],"description":"用户先搜索再筛选，以快速定位目标商品。","retrieval_text":"筛选商品 根据条件缩小候选范围 搜索 筛选 条件"}}
 
-描述:"""
+JSON:"""
 
         try:
             response = await self.simple_llm_provider.generate_response(
-                system_prompt="",
+                system_prompt="你是一个JSON生成助手，只返回有效JSON对象。",
                 user_prompt=prompt
             )
-            return response.strip()
+            semantic = self._parse_semantic_output(
+                raw_response=response,
+                default_label=default_label,
+                default_intent=default_intent,
+                default_description=default_description,
+            )
+            sequence.semantic = semantic
+            return semantic["description"]
         except Exception as e:
             logger.info(f"Warning: Failed to generate sequence description: {e}")
-            return f"操作序列 ({len(sequence.intents)} 个操作)"
+            semantic = self._parse_semantic_output(
+                raw_response="",
+                default_label=default_label,
+                default_intent=default_intent,
+                default_description=default_description,
+            )
+            sequence.semantic = semantic
+            return semantic["description"]
 
     async def _generate_action_description(
         self,
@@ -1402,87 +1779,151 @@ URL: {state.page_url}
         Returns:
             Description string.
         """
+        if action.attributes is None:
+            action.attributes = {}
+
         if not source_state or not target_state:
-            return "页面跳转"
+            semantic = self._parse_semantic_output(
+                raw_response="",
+                default_label="页面跳转",
+                default_intent="从来源页面导航到目标页面",
+                default_description="页面跳转",
+            )
+            action.attributes["semantic_v1"] = semantic
+            return semantic["description"]
 
         source_desc = source_state.description or source_state.page_title or "来源页面"
         target_desc = target_state.description or target_state.page_title or "目标页面"
+        trigger = action.trigger or {}
+        trigger_text = str((trigger.get("text") or "")[:50]).strip()
+        trigger_role = str(trigger.get("role") or "").strip()
 
         # If no LLM provider, use simple template
         if not self.simple_llm_provider:
-            if action.trigger:
-                text = (action.trigger.get("text") or "")[:30]
-                return f"点击 '{text}' 进入 {target_desc}"
-            else:
-                return f"自动跳转到 {target_desc}"
+            fallback_desc = (
+                f"点击 '{trigger_text}' 进入 {target_desc}"
+                if trigger_text
+                else f"自动跳转到 {target_desc}"
+            )
+            semantic = self._parse_semantic_output(
+                raw_response="",
+                default_label="页面跳转",
+                default_intent=f"从{source_desc}进入{target_desc}",
+                default_description=fallback_desc,
+            )
+            action.attributes["semantic_v1"] = semantic
+            return semantic["description"]
 
-        # Use LLM with trigger information for semantic description
-        if action.trigger:
-            trigger = action.trigger
-            ref = trigger.get("ref") or ""
-            text = (trigger.get("text") or "")[:50]
-            role = trigger.get("role") or ""
-            
-            prompt = f"""请用简洁的中文描述这个页面跳转操作。
+        # Use LLM with trigger/context information for structured semantics.
+        ref = trigger.get("ref") or ""
+        prompt = f"""请基于页面跳转信息输出结构化语义 JSON，用于稳定检索。
 
 来源页面: {source_desc}
 来源URL: {source_state.page_url}
-
 目标页面: {target_desc}
 目标URL: {target_state.page_url}
-
-用户操作: {action.type}
-触发元素信息:
-- 元素引用: [{ref}]
-- 元素文本: "{text}"
-- 元素角色: {role}
+用户操作类型: {action.type}
+触发元素:
+- ref: {ref}
+- text: {trigger_text or "无"}
+- role: {trigger_role or "无"}
 
 要求:
-1. 生成一句话语义化描述，包含操作和目标的语义信息
-2. 适合用于检索（如"查看排行榜"能匹配到这个描述）
-3. 可以包含位置信息（如"顶部导航"、"侧边栏"）
-4. 不要包含具体的 ref 编号（如 [e22]）
-5. 只返回描述文本，不要有引号
+1. 必须返回有效 JSON，不要返回解释文字
+2. 字段:
+   - label: 跳转动作短标签（例如"点击导航链接跳转"）
+   - intent: 此次跳转要达成的核心目标
+   - keywords: 3-8个关键词数组（避免动态ID/日期）
+   - description: 1句话自然语言描述（中文）
+   - retrieval_text: 用于检索的稳定文本（label + intent + keywords）
+3. 不要输出具体 ref 编号，不要输出随机ID
 
-示例: "点击顶部导航栏的 Launches 链接查看每日产品排行榜"
+示例:
+{{"label":"导航跳转","intent":"从来源页面进入目标页面","keywords":["点击","导航","跳转"],"description":"用户通过页面元素触发导航，进入目标页面。","retrieval_text":"导航跳转 从来源页面进入目标页面 点击 导航 跳转"}}
 
-描述:"""
-            
-            try:
-                response = await self.simple_llm_provider.generate_response(
-                    system_prompt="",
-                    user_prompt=prompt
-                )
-                return response.strip()
-            except Exception as e:
-                logger.info(f"Warning: Failed to generate action description: {e}")
-                # Fallback to simple template
-                return f"点击 '{text}' 进入 {target_desc}"
-        
-        else:
-            # No trigger - automatic navigation
-            prompt = f"""请用简洁的中文描述这个自动页面跳转。
+JSON:"""
 
-来源页面: {source_desc}
-目标页面: {target_desc}
+        try:
+            response = await self.simple_llm_provider.generate_response(
+                system_prompt="你是一个JSON生成助手，只返回有效JSON对象。",
+                user_prompt=prompt
+            )
+            semantic = self._parse_semantic_output(
+                raw_response=response,
+                default_label="页面跳转",
+                default_intent=f"从{source_desc}进入{target_desc}",
+                default_description=(
+                    f"点击 '{trigger_text}' 进入 {target_desc}" if trigger_text else f"自动跳转到 {target_desc}"
+                ),
+            )
+            action.attributes["semantic_v1"] = semantic
+            return semantic["description"]
+        except Exception as e:
+            logger.info(f"Warning: Failed to generate action description: {e}")
+            semantic = self._parse_semantic_output(
+                raw_response="",
+                default_label="页面跳转",
+                default_intent=f"从{source_desc}进入{target_desc}",
+                default_description=(
+                    f"点击 '{trigger_text}' 进入 {target_desc}" if trigger_text else f"自动跳转到 {target_desc}"
+                ),
+            )
+            action.attributes["semantic_v1"] = semantic
+            return semantic["description"]
 
-这是一个自动跳转（无用户操作触发）。
+    def _merge_state_attributes(self, memory_state: State, local_state: State) -> None:
+        """Merge local state attributes into memory state without dropping existing keys."""
+        if not local_state.attributes:
+            return
+        merged = dict(memory_state.attributes or {})
+        merged.update(local_state.attributes)
+        memory_state.attributes = merged
 
-要求: 一句话描述，说明是自动跳转
+    @staticmethod
+    def _get_state_embedding_text(state: State) -> str:
+        """Get stable embedding text for a State (semantic retrieval_text first)."""
+        attrs = state.attributes if isinstance(state.attributes, dict) else {}
+        semantic = attrs.get("semantic_v1")
+        if isinstance(semantic, dict):
+            retrieval_text = str(semantic.get("retrieval_text") or "").strip()
+            if retrieval_text:
+                return retrieval_text[:320]
+            semantic_desc = str(semantic.get("description") or "").strip()
+            if semantic_desc:
+                return semantic_desc[:240]
 
-示例: "自动跳转到产品详情页"
+        desc = str(state.description or "").strip()
+        return desc[:240]
 
-描述:"""
-            
-            try:
-                response = await self.simple_llm_provider.generate_response(
-                    system_prompt="",
-                    user_prompt=prompt
-                )
-                return response.strip()
-            except Exception as e:
-                logger.info(f"Warning: Failed to generate action description: {e}")
-                return f"自动跳转到 {target_desc}"
+    @staticmethod
+    def _get_sequence_embedding_text(sequence: IntentSequence) -> str:
+        """Get stable embedding text for an IntentSequence (semantic retrieval_text first)."""
+        semantic = sequence.semantic if isinstance(sequence.semantic, dict) else {}
+        retrieval_text = str(semantic.get("retrieval_text") or "").strip()
+        if retrieval_text:
+            return retrieval_text[:320]
+
+        semantic_desc = str(semantic.get("description") or "").strip()
+        if semantic_desc:
+            return semantic_desc[:240]
+
+        desc = str(sequence.description or "").strip()
+        return desc[:240]
+
+    @staticmethod
+    def _get_phrase_embedding_text(phrase: CognitivePhrase) -> str:
+        """Get stable embedding text for a CognitivePhrase (semantic retrieval_text first)."""
+        semantic = phrase.semantic if isinstance(phrase.semantic, dict) else {}
+        retrieval_text = str(semantic.get("retrieval_text") or "").strip()
+        if retrieval_text:
+            return retrieval_text[:360]
+
+        semantic_desc = str(semantic.get("description") or "").strip()
+        if semantic_desc:
+            return semantic_desc[:280]
+
+        desc = str(phrase.description or "").strip()
+        return desc[:280]
 
     def _generate_embeddings(
         self,
@@ -1503,15 +1944,17 @@ URL: {state.page_url}
         items = []
 
         for state in states:
-            # Only generate embedding if state has description but no embedding yet
-            if state.description and not state.embedding_vector:
-                texts.append(state.description)
+            # Prefer structured retrieval_text for embedding stability.
+            text = self._get_state_embedding_text(state)
+            if text and not state.embedding_vector:
+                texts.append(text)
                 items.append(("state", state))
 
         for sequence in intent_sequences:
-            # Only generate embedding if sequence has description but no embedding yet
-            if sequence.description and not sequence.embedding_vector:
-                texts.append(sequence.description)
+            # Prefer structured retrieval_text for embedding stability.
+            text = self._get_sequence_embedding_text(sequence)
+            if text and not sequence.embedding_vector:
+                texts.append(text)
                 items.append(("sequence", sequence))
 
         if not texts:
@@ -1570,6 +2013,7 @@ URL: {state.page_url}
                 # Update description and embedding from our local state object
                 if state.description:
                     memory_state.description = state.description
+                self._merge_state_attributes(memory_state, state)
                 if state.embedding_vector:
                     memory_state.embedding_vector = state.embedding_vector
                 try:
@@ -1679,6 +2123,7 @@ URL: {state.page_url}
         workflow_info = await self._generate_workflow_description(workflow_data)
         label = workflow_info.get("label")
         description = workflow_info.get("description")
+        semantic = workflow_info.get("semantic", {})
 
         current_time = int(time.time() * 1000)
 
@@ -1688,6 +2133,7 @@ URL: {state.page_url}
         phrase = CognitivePhrase(
             label=label,
             description=description,
+            semantic=semantic,
             user_id=None,  # user isolation disabled
             session_id=effective_session_id,
             start_timestamp=start_timestamp,
@@ -1699,10 +2145,11 @@ URL: {state.page_url}
             created_at=current_time,
         )
 
-        # Generate embedding
-        if self.embedding_model and description:
+        # Generate embedding (prefer structured retrieval text for stability)
+        embedding_text = self._get_phrase_embedding_text(phrase)
+        if self.embedding_model and embedding_text:
             try:
-                response = self.embedding_model.embed(description)
+                response = self.embedding_model.embed(embedding_text)
                 phrase.embedding_vector = response.to_list()
             except Exception as e:
                 logger.info(f"Warning: Failed to generate phrase embedding: {e}")
@@ -1799,18 +2246,28 @@ URL: {state.page_url}
 
     async def _generate_workflow_description(
         self, workflow_data: List[Dict[str, Any]]
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Any]:
         """Generate label and description for the workflow using LLM.
 
         Args:
             workflow_data: List of workflow events.
 
         Returns:
-            Dict with 'label' and 'description' keys.
+            Dict with 'label', 'description', and 'semantic' keys.
         """
+        default_label = f"Workflow ({len(workflow_data)} steps)"
+        default_intent = "完成一条完整工作流"
+        default_description = f"用户工作流包含{len(workflow_data)}个操作事件"
+        default_semantic = self._parse_semantic_output(
+            raw_response="",
+            default_label=default_label,
+            default_intent=default_intent,
+            default_description=default_description,
+        )
         default_result = {
-            "label": f"Workflow ({len(workflow_data)} steps)",
-            "description": f"用户工作流包含{len(workflow_data)}个操作事件"
+            "label": default_semantic["label"],
+            "description": default_semantic["description"],
+            "semantic": default_semantic,
         }
 
         # If no LLM provider, return default
@@ -1819,20 +2276,22 @@ URL: {state.page_url}
 
         workflow_summary = json.dumps(workflow_data[:20], ensure_ascii=False, indent=2)
 
-        prompt = f"""请根据以下用户操作事件序列生成一个简短的名称和详细描述。
+        prompt = f"""请根据以下用户操作事件序列，输出结构化语义 JSON，用于稳定检索。
 
 事件序列:
 {workflow_summary}
 
 要求:
-1. name: 一个简短的名称（5-15个字），用于快速识别这个工作流
-2. description: 用一到两句话描述整个工作流的核心目标和关键步骤
-
-请严格按照以下JSON格式返回（不要添加任何其他内容）:
-{{"name": "简短名称", "description": "详细描述"}}
+1. 必须返回有效 JSON，不要返回解释文字
+2. 字段:
+   - label: 工作流短标签（5-15字）
+   - intent: 工作流的核心目标
+   - keywords: 3-8个关键词数组（避免具体ID/日期）
+   - description: 1-2句话描述关键步骤
+   - retrieval_text: 用于检索的稳定文本（label + intent + keywords）
 
 示例:
-{{"name": "搜索并查看咖啡商品", "description": "用户浏览商品列表页，搜索咖啡相关商品，查看产品详情并复制了价格信息"}}
+{{"label":"搜索并查看咖啡商品","intent":"搜索目标商品并查看详情","keywords":["搜索","商品","详情"],"description":"用户先浏览列表页并搜索关键词，再进入详情页查看关键信息。","retrieval_text":"搜索并查看咖啡商品 搜索目标商品并查看详情 搜索 商品 详情"}}
 
 JSON:"""
 
@@ -1841,22 +2300,17 @@ JSON:"""
                 system_prompt="你是一个JSON生成助手，只返回有效的JSON格式。",
                 user_prompt=prompt
             )
-            # Parse JSON response
-            import re
-            # Try to extract JSON from response
-            json_match = re.search(r'\{[^}]+\}', response)
-            if json_match:
-                result = json.loads(json_match.group())
-                return {
-                    "label": result.get("name", default_result["label"]),
-                    "description": result.get("description", default_result["description"])
-                }
-            else:
-                # Fallback: treat entire response as description
-                return {
-                    "label": default_result["label"],
-                    "description": response.strip()
-                }
+            semantic = self._parse_semantic_output(
+                raw_response=response,
+                default_label=default_label,
+                default_intent=default_intent,
+                default_description=default_description,
+            )
+            return {
+                "label": semantic["label"],
+                "description": semantic["description"],
+                "semantic": semantic,
+            }
         except Exception as e:
             logger.info(f"Warning: Failed to generate workflow description: {e}")
             return default_result

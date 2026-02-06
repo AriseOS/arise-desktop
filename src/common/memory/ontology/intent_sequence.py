@@ -64,6 +64,10 @@ class IntentSequence(BaseModel):
         default=None,
         description="Natural language description of the sequence (e.g., 'Login with username and password')"
     )
+    semantic: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Structured semantic fields for stable retrieval (label/intent/keywords/retrieval_text)"
+    )
     embedding_vector: Optional[List[float]] = Field(
         default=None, description="Embedding vector for semantic search"
     )

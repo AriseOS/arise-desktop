@@ -61,13 +61,54 @@ class CognitivePhraseChecker:
         scored = []
 
         for phrase in phrases:
-            text = f"{phrase.label} {phrase.description or ''}".lower()
+            text = self._build_phrase_match_text(phrase)
             score = sum(1 for word in target_lower.split() if word in text)
             if score > 0:
                 scored.append((phrase, score))
 
         scored.sort(key=lambda x: x[1], reverse=True)
         return [p for p, _ in scored[:top_k]]
+
+    @staticmethod
+    def _safe_text(value: Any) -> str:
+        """Normalize any value to a stripped string."""
+        return str(value or "").strip()
+
+    @classmethod
+    def _build_phrase_match_text(cls, phrase: CognitivePhrase) -> str:
+        """Build match text with semantic-first preference."""
+        semantic = phrase.semantic if isinstance(phrase.semantic, dict) else {}
+
+        keywords_text = ""
+        raw_keywords = semantic.get("keywords")
+        if isinstance(raw_keywords, list):
+            keywords_text = " ".join(
+                cls._safe_text(keyword) for keyword in raw_keywords if cls._safe_text(keyword)
+            )
+        elif isinstance(raw_keywords, str):
+            keywords_text = cls._safe_text(raw_keywords)
+
+        parts = [
+            cls._safe_text(phrase.label),
+            cls._safe_text(semantic.get("retrieval_text")),
+            cls._safe_text(semantic.get("intent")),
+            keywords_text,
+            cls._safe_text(semantic.get("description")),
+            cls._safe_text(phrase.description),
+        ]
+
+        unique_parts: List[str] = []
+        seen = set()
+        for part in parts:
+            if not part:
+                continue
+            key = part.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_parts.append(part)
+
+        return " ".join(unique_parts).lower()
 
     async def _llm_check(
         self, target: str, phrases: List[CognitivePhrase]

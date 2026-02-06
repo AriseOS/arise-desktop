@@ -89,6 +89,10 @@ class CognitivePhrase(BaseModel):
     # Natural language description of the workflow
     description: str = Field(
         ..., description='Natural language description of the workflow process')
+    semantic: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Structured semantic fields for stable retrieval (label/intent/keywords/retrieval_text)"
+    )
 
     # User session information
     user_id: Optional[str] = Field(default=None, description='User ID')

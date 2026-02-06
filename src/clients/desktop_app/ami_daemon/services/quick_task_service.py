@@ -888,6 +888,120 @@ class QuickTaskService:
         logger.info(f"Human response delivered for task {task_id}: {response[:50]}...")
         return True
 
+    @staticmethod
+    def _read_field(data: Any, key: str, default: Any = None) -> Any:
+        """Read field from dict/object with a default."""
+        if isinstance(data, dict):
+            return data.get(key, default)
+        return getattr(data, key, default)
+
+    @staticmethod
+    def _safe_text(value: Any) -> str:
+        """Normalize any value to a stripped string."""
+        return str(value or "").strip()
+
+    @classmethod
+    def _get_state_text_and_source(cls, state: Any) -> tuple[str, str]:
+        """Get state text with semantic-first fallback and source label."""
+        attributes = cls._read_field(state, "attributes", {})
+        semantic = attributes.get("semantic_v1") if isinstance(attributes, dict) else {}
+        semantic = semantic if isinstance(semantic, dict) else {}
+
+        retrieval_text = cls._safe_text(semantic.get("retrieval_text"))
+        if retrieval_text:
+            return retrieval_text, "semantic_v1.retrieval_text"
+
+        semantic_desc = cls._safe_text(semantic.get("description"))
+        if semantic_desc:
+            return semantic_desc, "semantic_v1.description"
+
+        description = cls._safe_text(cls._read_field(state, "description", ""))
+        if description:
+            return description, "description"
+
+        page_title = cls._safe_text(cls._read_field(state, "page_title", ""))
+        if page_title:
+            return page_title, "page_title"
+
+        page_url = cls._safe_text(cls._read_field(state, "page_url", ""))
+        if page_url:
+            return page_url, "page_url"
+
+        return "", "empty"
+
+    @classmethod
+    def _get_action_text_and_source(cls, action: Any) -> tuple[str, str]:
+        """Get action text with semantic-first fallback and source label."""
+        attributes = cls._read_field(action, "attributes", {})
+        semantic = attributes.get("semantic_v1") if isinstance(attributes, dict) else {}
+        semantic = semantic if isinstance(semantic, dict) else {}
+
+        retrieval_text = cls._safe_text(semantic.get("retrieval_text"))
+        if retrieval_text:
+            return retrieval_text, "semantic_v1.retrieval_text"
+
+        semantic_desc = cls._safe_text(semantic.get("description"))
+        if semantic_desc:
+            return semantic_desc, "semantic_v1.description"
+
+        description = cls._safe_text(cls._read_field(action, "description", ""))
+        if description:
+            return description, "description"
+
+        action_type = cls._safe_text(cls._read_field(action, "type", ""))
+        if action_type:
+            return action_type, "type"
+
+        return "", "empty"
+
+    @classmethod
+    def _get_sequence_text_and_source(cls, sequence: Any) -> tuple[str, str]:
+        """Get IntentSequence text with semantic-first fallback and source label."""
+        semantic = cls._read_field(sequence, "semantic", {})
+        semantic = semantic if isinstance(semantic, dict) else {}
+
+        retrieval_text = cls._safe_text(semantic.get("retrieval_text"))
+        if retrieval_text:
+            return retrieval_text, "semantic.retrieval_text"
+
+        semantic_desc = cls._safe_text(semantic.get("description"))
+        if semantic_desc:
+            return semantic_desc, "semantic.description"
+
+        description = cls._safe_text(cls._read_field(sequence, "description", ""))
+        if description:
+            return description, "description"
+
+        return "", "empty"
+
+    @classmethod
+    def _get_step_text_and_source(cls, step: Any, step_index: int) -> tuple[str, str]:
+        """Get workflow step text with semantic-first fallback and source label."""
+        semantic = cls._read_field(step, "semantic", {})
+        semantic = semantic if isinstance(semantic, dict) else {}
+
+        retrieval_text = cls._safe_text(semantic.get("retrieval_text"))
+        if retrieval_text:
+            return retrieval_text, "step.semantic.retrieval_text"
+
+        semantic_desc = cls._safe_text(semantic.get("description"))
+        if semantic_desc:
+            return semantic_desc, "step.semantic.description"
+
+        description = cls._safe_text(cls._read_field(step, "description", ""))
+        if description:
+            return description, "step.description"
+
+        page_title = cls._safe_text(cls._read_field(step, "page_title", ""))
+        if page_title:
+            return page_title, "step.page_title"
+
+        page_url = cls._safe_text(cls._read_field(step, "page_url", ""))
+        if page_url:
+            return page_url, "step.page_url"
+
+        return f"Step {step_index}", "fallback.step_index"
+
     async def _call_reasoner(self, task: str) -> Optional[Dict[str, Any]]:
         """Call Reasoner API to get workflow plan.
 
@@ -945,15 +1059,22 @@ class QuickTaskService:
 
                             # === DEBUG: Log raw Reasoner response ===
                             for i, state in enumerate(states):
-                                state_id = state.get("id", "?") if isinstance(state, dict) else getattr(state, "id", "?")
-                                state_desc = (state.get("description", "") if isinstance(state, dict) else getattr(state, "description", "")) or ""
-                                logger.info(f"[Reasoner] State {i}: id={state_id}, desc={state_desc[:60]}")
+                                state_id = self._read_field(state, "id", "?")
+                                state_desc, desc_source = self._get_state_text_and_source(state)
+                                logger.info(
+                                    f"[Reasoner] State {i}: id={state_id}, "
+                                    f"desc_source={desc_source}, desc={state_desc[:60]}"
+                                )
 
                             for i, action in enumerate(actions):
-                                action_desc = (action.get("description", "") if isinstance(action, dict) else getattr(action, "description", "")) or ""
-                                action_source = (action.get("source", "") if isinstance(action, dict) else getattr(action, "source", "")) or ""
-                                action_target = (action.get("target", "") if isinstance(action, dict) else getattr(action, "target", "")) or ""
-                                logger.info(f"[Reasoner] Action {i}: source={action_source}, target={action_target}, desc={action_desc[:60]}")
+                                action_desc, desc_source = self._get_action_text_and_source(action)
+                                action_source = self._read_field(action, "source", "") or ""
+                                action_target = self._read_field(action, "target", "") or ""
+                                logger.info(
+                                    f"[Reasoner] Action {i}: source={action_source}, "
+                                    f"target={action_target}, desc_source={desc_source}, "
+                                    f"desc={action_desc[:60]}"
+                                )
                             # === END DEBUG ===
 
                             return result
@@ -986,10 +1107,10 @@ class QuickTaskService:
             states = reasoner_result.get("states") or []
             for state in states:
                 if isinstance(state, dict) and state.get("intent_sequences"):
+                    state_desc, state_desc_source = QuickTaskService._get_state_text_and_source(state)
                     steps.append({
-                        "description": state.get("description")
-                        or state.get("page_title")
-                        or state.get("page_url"),
+                        "description": state_desc,
+                        "description_source": state_desc_source,
                         "intent_sequences": state.get("intent_sequences", []),
                     })
             if steps:
@@ -1073,6 +1194,8 @@ class QuickTaskService:
         total_intents = 0
         sequences_truncated = False
         intents_truncated = False
+        step_desc_sources: Dict[str, int] = {}
+        seq_desc_sources: Dict[str, int] = {}
 
         lines = [
             "## Intent Sequences (Action Hints)",
@@ -1082,22 +1205,13 @@ class QuickTaskService:
 
         for step_index, step in enumerate(steps[:max_steps], 1):
             if isinstance(step, dict):
-                desc = (
-                    step.get("description")
-                    or step.get("page_title")
-                    or step.get("page_url")
-                    or f"Step {step_index}"
-                )
+                desc, desc_source = QuickTaskService._get_step_text_and_source(step, step_index)
                 seqs = step.get("intent_sequences") or []
             else:
-                desc = (
-                    getattr(step, "description", None)
-                    or getattr(step, "page_title", None)
-                    or getattr(step, "page_url", None)
-                    or f"Step {step_index}"
-                )
+                desc, desc_source = QuickTaskService._get_step_text_and_source(step, step_index)
                 seqs = getattr(step, "intent_sequences", []) or []
 
+            step_desc_sources[desc_source] = step_desc_sources.get(desc_source, 0) + 1
             desc = _truncate(desc, 120)
             lines.append(f"Step {step_index}: {desc}")
 
@@ -1108,14 +1222,19 @@ class QuickTaskService:
             total_sequences += len(seqs)
             for seq in seqs[:max_sequences]:
                 if isinstance(seq, dict):
-                    seq_desc = seq.get("description") or "Operation"
+                    seq_desc, seq_desc_source = QuickTaskService._get_sequence_text_and_source(seq)
                     intents = seq.get("intents") or []
                     nav_marker = " -> navigates" if seq.get("causes_navigation") else ""
                 else:
-                    seq_desc = getattr(seq, "description", None) or "Operation"
+                    seq_desc, seq_desc_source = QuickTaskService._get_sequence_text_and_source(seq)
                     intents = getattr(seq, "intents", []) or []
                     nav_marker = " -> navigates" if getattr(seq, "causes_navigation", False) else ""
 
+                if not seq_desc:
+                    seq_desc = "Operation"
+                    seq_desc_source = "fallback.operation"
+
+                seq_desc_sources[seq_desc_source] = seq_desc_sources.get(seq_desc_source, 0) + 1
                 seq_desc = _truncate(seq_desc, 120)
                 lines.append(f"  - {seq_desc}{nav_marker}")
 
@@ -1159,6 +1278,11 @@ class QuickTaskService:
             sequences_truncated,
             intents_truncated,
             length_truncated,
+        )
+        logger.info(
+            "[ReasonerIntentSequences] desc_sources=%s seq_sources=%s",
+            step_desc_sources,
+            seq_desc_sources,
         )
         logger.info(
             "[ReasonerIntentSequences] content (truncated to %d chars):\n%s",
@@ -1208,9 +1332,13 @@ class QuickTaskService:
                 paths = result["paths"]
                 logger.info(f"Memory query returned {len(paths)} paths")
                 for i, path in enumerate(paths):
+                    path_desc = (
+                        self._safe_text(path.get("retrieval_text"))
+                        or self._safe_text(path.get("description"))
+                    )
                     logger.info(f"  Path {i+1}: score={path.get('score', 0):.3f}, "
                               f"steps={path.get('path_length', 0)}, "
-                              f"desc={path.get('description', '')[:50]}")
+                              f"desc={path_desc[:50]}")
                 return paths
             else:
                 logger.info("Memory query returned no paths")

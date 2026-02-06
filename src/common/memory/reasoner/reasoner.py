@@ -130,6 +130,42 @@ class Reasoner:
                 continue
         return result
 
+    @staticmethod
+    def _safe_text(value: Any) -> str:
+        """Normalize any value to a stripped string."""
+        return str(value or "").strip()
+
+    @classmethod
+    def _get_state_reasoning_text(cls, state: State) -> str:
+        """Get stable state text for reasoning prompts.
+
+        Preference:
+        1. attributes.semantic_v1.retrieval_text
+        2. attributes.semantic_v1.description
+        3. state.description
+        4. page_title
+        5. page_url
+        """
+        attrs = state.attributes if isinstance(state.attributes, dict) else {}
+        semantic = attrs.get("semantic_v1")
+        if isinstance(semantic, dict):
+            retrieval_text = cls._safe_text(semantic.get("retrieval_text"))
+            if retrieval_text:
+                return retrieval_text
+            semantic_desc = cls._safe_text(semantic.get("description"))
+            if semantic_desc:
+                return semantic_desc
+
+        description = cls._safe_text(state.description)
+        if description:
+            return description
+
+        page_title = cls._safe_text(state.page_title)
+        if page_title:
+            return page_title
+
+        return cls._safe_text(state.page_url)
+
     def register_tool(self, tool: TaskTool):
         """Register a custom tool.
 
@@ -891,11 +927,12 @@ class Reasoner:
         # Build input for prompt
         path_state_dicts = []
         for i, state in enumerate(path_states):
+            state_text = self._get_state_reasoning_text(state)
             path_state_dicts.append({
                 "index": i,
                 "page_url": state.page_url or "",
                 "page_title": state.page_title or "",
-                "description": state.description or "",
+                "description": state_text,
             })
 
         input_data = PathDecompositionInput(
