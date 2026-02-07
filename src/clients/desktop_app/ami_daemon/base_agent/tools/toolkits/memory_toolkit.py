@@ -465,7 +465,7 @@ class MemoryToolkit(BaseToolkit):
         ami_api_key: str,
         user_id: str,
         timeout: Optional[float] = 180.0,
-        agent: Optional[Any] = None,  # ListenChatAgent for page operations caching
+        agent: Optional[Any] = None,  # AMIBrowserAgent for page operations caching
         use_local_memory: bool = False,  # Use local SurrealDB instead of HTTP
     ) -> None:
         """Initialize MemoryToolkit.
@@ -475,7 +475,7 @@ class MemoryToolkit(BaseToolkit):
             ami_api_key: User's Ami API key for authentication.
             user_id: User ID for memory isolation.
             timeout: HTTP request timeout in seconds.
-            agent: Optional ListenChatAgent for caching page operations.
+            agent: Optional AMIBrowserAgent for caching page operations.
                 When provided, query_page_operations results will be cached
                 in the agent for injection into subsequent LLM calls.
             use_local_memory: If True, use local SurrealDB directly instead of HTTP.
@@ -495,12 +495,12 @@ class MemoryToolkit(BaseToolkit):
     def set_agent(self, agent: Any) -> None:
         """Set the agent reference for page operations caching.
 
-        This enables IntentSequence cache management in ListenChatAgent.
+        This enables page operations cache management in AMIBrowserAgent.
         When query_page_operations returns results, they will be cached
         in the agent for injection into subsequent LLM calls.
 
         Args:
-            agent: ListenChatAgent instance with cache_page_operations() method.
+            agent: AMIBrowserAgent instance with cache_page_operations() method.
         """
         self._agent = agent
         logger.debug("MemoryToolkit: agent reference set for page operations caching")

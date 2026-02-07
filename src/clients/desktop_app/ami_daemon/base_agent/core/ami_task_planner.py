@@ -14,15 +14,17 @@ Decomposition principles (from CAMEL's TASK_DECOMPOSE_PROMPT):
 - Aggressive parallelization across different workers
 - Explicit dependencies between subtasks
 
-No CAMEL Workforce dependencies - just uses ChatAgent for LLM calls.
+No CAMEL dependencies - uses AnthropicProvider for LLM calls.
 """
 
+import asyncio
 import logging
 import re
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
+from src.common.llm import AnthropicProvider
+
 if TYPE_CHECKING:
-    from camel.agents import ChatAgent
     from ..tools.toolkits import MemoryToolkit, QueryResult
 
 from src.common.llm import parse_json_with_repair
@@ -115,6 +117,9 @@ Example of INDEPENDENT tasks (can run in parallel):
 **TASK TO DECOMPOSE:**
 {task}
 {memory_context}
+
+**REMINDER**: Your decomposition must serve the USER'S task above. If memory context is provided, use it only as a navigation reference — the specific actions (sort order, filters, search queries) must match what the USER asked for, not what was done in a past task.
+
 Now decompose this task into atomic subtasks:"""
 
 
@@ -186,7 +191,7 @@ class AMITaskPlanner:
         self,
         task_id: str,
         task_state: Any,  # TaskState for SSE events
-        task_agent: "ChatAgent",  # LLM agent for decomposition
+        provider: AnthropicProvider,  # LLM provider for decomposition
         memory_toolkit: Optional["MemoryToolkit"] = None,
         worker_descriptions: Optional[Dict[str, str]] = None,
     ):
@@ -196,14 +201,14 @@ class AMITaskPlanner:
         Args:
             task_id: Unique task identifier for events.
             task_state: TaskState instance for SSE event emission.
-            task_agent: ChatAgent instance for LLM calls.
+            provider: AnthropicProvider instance for LLM calls.
             memory_toolkit: Optional MemoryToolkit for workflow guidance.
             worker_descriptions: Optional dict of worker type -> description.
                                  Used to tell LLM what workers are available.
         """
         self.task_id = task_id
         self._task_state = task_state
-        self._task_agent = task_agent
+        self._provider = provider
         self._memory_toolkit = memory_toolkit
         self._worker_descriptions = worker_descriptions or DEFAULT_WORKER_DESCRIPTIONS
 
@@ -371,7 +376,10 @@ class AMITaskPlanner:
         )
 
         return (
-            "\n\n**MEMORY CONTEXT (known workflow from past executions):**\n"
+            "\n\n**REFERENCE: Navigation path from a SIMILAR past task.**\n"
+            "Use this ONLY to understand which website to visit and general page structure.\n"
+            "Do NOT blindly copy specific choices (sort options, filters, search terms) — "
+            "adapt them to match the USER'S actual request above.\n\n"
             f"{context_text}"
         )
 
@@ -453,16 +461,20 @@ class AMITaskPlanner:
             workers_info=workers_info,
             memory_context=memory_context,
         )
+        logger.info(f"[AMITaskPlanner] Decompose prompt:\n{prompt}")
 
         # Call LLM for fine-grained decomposition
-        self._task_agent.reset()
-        response = self._task_agent.step(prompt)
+        response = await self._provider.generate_with_tools(
+            system_prompt="You are a task decomposition expert. Split tasks by work type (browser, document, code).",
+            messages=[{"role": "user", "content": prompt}],
+            tools=[],
+            max_tokens=8192,
+        )
 
-        if not response or not response.msg:
+        response_text = response.get_text()
+        if not response_text:
             raise ValueError("Fine-grained decomposition returned empty response")
-
-        response_text = response.msg.content
-        logger.debug(f"[AMITaskPlanner] Fine-grained decompose raw response: {response_text[:500]}...")
+        logger.info(f"[AMITaskPlanner] Fine-grained decompose raw response:\n{response_text}")
 
         # Parse the XML response (CAMEL format)
         subtasks = self._parse_xml_subtasks(response_text)
@@ -844,7 +856,7 @@ class AMITaskPlanner:
                     desc = state.page_title
                 # Generate semantic description from URL
                 elif hasattr(state, 'page_url'):
-                    desc = self._generate_url_description(state.page_url)
+                    desc = AMITaskPlanner._generate_url_description(state.page_url)
                 # Fallback to string representation
                 elif hasattr(state, '__str__'):
                     str_repr = str(state)[:200]
@@ -1066,13 +1078,16 @@ class AMITaskPlanner:
         prompt = COARSE_DECOMPOSE_PROMPT.format(task=task)
 
         # Call LLM for coarse decomposition
-        self._task_agent.reset()
-        response = self._task_agent.step(prompt)
+        response = await self._provider.generate_with_tools(
+            system_prompt="You are a task decomposition expert. Split tasks by work type (browser, document, code).",
+            messages=[{"role": "user", "content": prompt}],
+            tools=[],
+            max_tokens=8192,
+        )
 
-        if not response or not response.msg:
+        response_text = response.get_text()
+        if not response_text:
             raise ValueError("Coarse decomposition returned empty response")
-
-        response_text = response.msg.content
         logger.debug(f"[AMITaskPlanner] Coarse decompose raw response: {response_text[:500]}...")
 
         # Parse the JSON response

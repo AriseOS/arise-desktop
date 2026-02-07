@@ -106,7 +106,7 @@ TOOL_PREFIX_TO_TOOLKIT = {
     "memory": "Memory Toolkit",
     "task": "Task Planning Toolkit",
     "calendar": "Calendar Toolkit",
-    # Internal task management tools (ListenBrowserAgent)
+    # Internal task management tools (AMIBrowserAgent)
     "get": "Task Planning Toolkit",      # get_current_plan
     "complete": "Task Planning Toolkit", # complete_subtask
     "report": "Task Planning Toolkit",   # report_subtask_failure
@@ -709,8 +709,8 @@ class QuickTaskService:
         if not old_state:
             raise ValueError(f"Task {task_id} not found")
 
-        # Record the user's new task as a conversation entry
-        old_state.add_conversation("user", new_task)
+        # Note: conversation entry is already added by handle_user_message()
+        # before calling continue_task(), so we don't add it again here.
 
         if create_new_workspace:
             # Create new task with fresh workspace but preserve conversation history
@@ -751,6 +751,8 @@ class QuickTaskService:
             old_state.result = None
             old_state.loop_iteration = 0
             old_state.tools_called = []
+            old_state.subtasks = []
+            old_state.summary_task = None
             old_state.updated_at = datetime.now()
 
             # Reset events and queues for new execution
@@ -1513,20 +1515,22 @@ Is this a complex task? (yes/no):"""
 
         try:
             # Use lightweight LLM call for classification
-            from ..base_agent.core.agent_factories import create_model_backend
+            from ..base_agent.core.agent_factories import create_provider
 
-            model = create_model_backend(
+            provider = create_provider(
                 llm_api_key=self._llm_api_key,
                 llm_model=self._llm_model,
                 llm_base_url=self._llm_base_url,
             )
 
-            # Make LLM call with OpenAI message format (dict)
-            response = model.run(
-                messages=[{"role": "user", "content": classify_prompt}]
+            response = await provider.generate_with_tools(
+                system_prompt="You classify tasks as simple or complex.",
+                messages=[{"role": "user", "content": classify_prompt}],
+                tools=[],
+                max_tokens=32,
             )
 
-            content = response.choices[0].message.content.strip().lower()
+            content = response.get_text().strip().lower()
             is_complex = "yes" in content
 
             logger.info(f"[Task {state.task_id}] Classification result: {'complex' if is_complex else 'simple'} (response: {content})")
@@ -1586,20 +1590,22 @@ Guidelines:
 Response:"""
 
         try:
-            from ..base_agent.core.agent_factories import create_model_backend
+            from ..base_agent.core.agent_factories import create_provider
 
-            model = create_model_backend(
+            provider = create_provider(
                 llm_api_key=self._llm_api_key,
                 llm_model=self._llm_model,
                 llm_base_url=self._llm_base_url,
             )
 
-            # Make LLM call with OpenAI message format (dict)
-            response = model.run(
-                messages=[{"role": "user", "content": answer_prompt}]
+            response = await provider.generate_with_tools(
+                system_prompt="You are a helpful assistant.",
+                messages=[{"role": "user", "content": answer_prompt}],
+                tools=[],
+                max_tokens=4096,
             )
 
-            answer = response.choices[0].message.content.strip()
+            answer = response.get_text().strip()
             logger.info(f"[Task {state.task_id}] Simple answer generated: {answer[:100]}...")
             return answer
 
@@ -1677,7 +1683,9 @@ Response:"""
         state.updated_at = state.started_at
 
         # Record user's task as first conversation entry
-        state.add_conversation("user", state.task)
+        # Guard: skip if conversation already has entries (continued task)
+        if not state.conversation_history:
+            state.add_conversation("user", state.task)
 
         # Set current working directory manager
         set_current_manager(state.dir_manager)
@@ -1713,154 +1721,152 @@ Response:"""
         # AMI components (created lazily)
         executor = None
         agents_dict = None
+
+        # Build context-aware user message
         current_question = state.task
-        loop_iteration = 0
+        if state.conversation_history and len(state.conversation_history) > 1:
+            # Inject conversation history so Orchestrator can decide:
+            # - follow-up refinement vs new task
+            context = state.get_recent_context(max_entries=10)
+            current_question = f"{context}\n\n=== Current Request ===\n{state.task}"
+            logger.info(f"[Task {task_id}] Injected {len(state.conversation_history)} conversation entries into Orchestrator context")
 
-        # ===== Main Multi-turn Loop =====
-        while True:
-            loop_iteration += 1
-            logger.info(f"[Task {task_id}] Multi-turn loop iteration #{loop_iteration}")
+        try:
+            # ===== Run Orchestrator Agent =====
+            logger.info(f"[Task {task_id}] Running Orchestrator for: {current_question[:100]}...")
 
-            # ===== Check for cancellation at loop start =====
-            if state._cancel_event.is_set():
-                logger.info(f"[Task {task_id}] Cancellation detected at loop start, exiting")
-                break
+            orchestrator_reply, attached_files = await run_orchestrator(
+                orchestrator=orchestrator,
+                decompose_tool=decompose_tool,
+                attach_tool=attach_tool,
+                user_message=current_question,
+            )
 
-            try:
-                # ===== Run Orchestrator Agent =====
-                logger.info(f"[Task {task_id}] Running Orchestrator for: {current_question[:100]}...")
+            logger.info(f"[Task {task_id}] Orchestrator response: {orchestrator_reply[:200]}... | Attached: {len(attached_files)} files")
 
-                orchestrator_reply, attached_files = await run_orchestrator(
-                    orchestrator=orchestrator,
-                    decompose_tool=decompose_tool,
-                    attach_tool=attach_tool,
-                    user_message=current_question,
-                )
+            # Check if decompose_task was called
+            if decompose_tool.triggered:
+                # ===== AMI Executor Path =====
+                task_to_decompose = decompose_tool.task_description or current_question
+                logger.info(f"[Task {task_id}] decompose_task triggered, starting AMI Executor")
 
-                logger.info(f"[Task {task_id}] Orchestrator response: {orchestrator_reply[:200]}... | Attached: {len(attached_files)} files")
+                # Emit confirmed event
+                await state.put_event(ConfirmedData(
+                    task_id=task_id,
+                    question=task_to_decompose,
+                ))
 
-                # Check if decompose_task was called
-                if decompose_tool.triggered:
-                    # ===== AMI Executor Path =====
-                    task_to_decompose = decompose_tool.task_description or current_question
-                    logger.info(f"[Task {task_id}] decompose_task triggered, starting AMI Executor")
+                # Report: Starting task decomposition
+                await state.put_event(AgentReportData(
+                    task_id=task_id,
+                    message="这是一个复杂任务，正在拆解为子任务...",
+                    report_type="thinking",
+                ))
 
-                    # Emit confirmed event
-                    await state.put_event(ConfirmedData(
+                try:
+                    # Create agents and executor if not yet created
+                    if agents_dict is None:
+                        agents_dict, planner_provider = await self._create_agents_for_ami_executor(
+                            task_id, state, headless
+                        )
+                        logger.info(f"[Task {task_id}] Created agents for AMI Executor")
+
+                    # Create Memory Toolkit
+                    memory_toolkit = await self._create_memory_toolkit(task_id, state)
+
+                    # Create Task Planner
+                    from ..base_agent.core import AMITaskPlanner, AMITaskExecutor
+                    planner = AMITaskPlanner(
                         task_id=task_id,
-                        question=task_to_decompose,
-                    ))
+                        task_state=state,
+                        provider=planner_provider,
+                        memory_toolkit=memory_toolkit,
+                    )
 
-                    # Report: Starting task decomposition
-                    await state.put_event(AgentReportData(
-                        task_id=task_id,
-                        message="这是一个复杂任务，正在拆解为子任务...",
-                        report_type="thinking",
-                    ))
+                    # Phase 1 & 2: Decompose and query Memory
+                    logger.info(f"[Task {task_id}] AMI: Decomposing and querying Memory...")
+                    subtasks = await planner.decompose_and_query_memory(task_to_decompose)
 
-                    try:
-                        # Create agents and executor if not yet created
-                        if agents_dict is None:
-                            agents_dict, task_agent = await self._create_agents_for_ami_executor(
-                                task_id, state, headless
-                            )
-                            logger.info(f"[Task {task_id}] Created agents for AMI Executor")
+                    if not subtasks:
+                        logger.warning(f"[Task {task_id}] Decomposition returned no subtasks")
+                        await state.put_event(NoticeData(
+                            task_id=task_id,
+                            level="warning",
+                            title="Decomposition Failed",
+                            message="Could not decompose task into subtasks.",
+                        ))
+                        state.add_conversation("assistant", orchestrator_reply)
+                        await state.put_event(WaitConfirmData(
+                            task_id=task_id,
+                            content=orchestrator_reply,
+                            question=current_question,
+                            context="initial",
+                        ))
+                    else:
+                        # Update state with subtasks
+                        state.subtasks = [
+                            {
+                                "id": st.id,
+                                "content": st.content,
+                                "state": st.state.value,
+                                "status": st.state.value,
+                                "agent_type": st.agent_type,
+                                "memory_level": st.memory_level,
+                            }
+                            for st in subtasks
+                        ]
+                        state.summary_task = task_to_decompose
 
-                        # Create Memory Toolkit
-                        memory_toolkit = await self._create_memory_toolkit(task_id, state)
+                        # Emit TaskDecomposedData event (for frontend display only, no confirmation needed)
+                        await state.put_event(TaskDecomposedData(
+                            task_id=task_id,
+                            subtasks=state.subtasks,
+                            summary_task=task_to_decompose,
+                            total_subtasks=len(subtasks),
+                        ))
 
-                        # Create Task Planner
-                        from ..base_agent.core import AMITaskPlanner, AMITaskExecutor
-                        planner = AMITaskPlanner(
+                        # Execute subtasks directly (no confirmation wait)
+                        logger.info(f"[Task {task_id}] Starting AMI Executor with {len(subtasks)} subtasks...")
+                        start_time = datetime.now()
+
+                        # Report: Starting execution
+                        await state.put_event(AgentReportData(
+                            task_id=task_id,
+                            message=f"开始执行 {len(subtasks)} 个子任务...",
+                            report_type="info",
+                        ))
+
+                        await state.put_event(WorkforceStartedData(
+                            task_id=task_id,
+                            total_tasks=len(subtasks),
+                            workers_count=len(agents_dict),
+                            description=f"Starting execution with {len(subtasks)} subtasks",
+                        ))
+
+                        # Create executor with user's original request
+                        executor = AMITaskExecutor(
                             task_id=task_id,
                             task_state=state,
-                            task_agent=task_agent,
-                            memory_toolkit=memory_toolkit,
+                            agents=agents_dict,
+                            user_request=current_question,  # Pass original request for context
                         )
+                        executor.set_subtasks(subtasks)
 
-                        # Phase 1 & 2: Decompose and query Memory
-                        logger.info(f"[Task {task_id}] AMI: Decomposing and querying Memory...")
-                        subtasks = await planner.decompose_and_query_memory(task_to_decompose)
+                        # Save executor reference for cancellation support
+                        state._executor = executor
 
-                        if not subtasks:
-                            logger.warning(f"[Task {task_id}] Decomposition returned no subtasks")
-                            await state.put_event(NoticeData(
-                                task_id=task_id,
-                                level="warning",
-                                title="Decomposition Failed",
-                                message="Could not decompose task into subtasks.",
-                            ))
-                            state.add_conversation("assistant", orchestrator_reply)
-                            await state.put_event(WaitConfirmData(
-                                task_id=task_id,
-                                content=orchestrator_reply,
-                                question=current_question,
-                                context="initial",
-                            ))
+                        # Execute
+                        result = await executor.execute()
+
+                        # Clear executor reference after execution
+                        state._executor = None
+
+                        # Check if execution was stopped by cancellation
+                        if result.get("stopped"):
+                            logger.info(f"[Task {task_id}] Executor was stopped by cancellation")
+                            # Fall through to cleanup
+
                         else:
-                            # Update state with subtasks
-                            state.subtasks = [
-                                {
-                                    "id": st.id,
-                                    "content": st.content,
-                                    "state": st.state.value,
-                                    "status": st.state.value,
-                                    "agent_type": st.agent_type,
-                                    "memory_level": st.memory_level,
-                                }
-                                for st in subtasks
-                            ]
-                            state.summary_task = task_to_decompose
-
-                            # Emit TaskDecomposedData event (for frontend display only, no confirmation needed)
-                            await state.put_event(TaskDecomposedData(
-                                task_id=task_id,
-                                subtasks=state.subtasks,
-                                summary_task=task_to_decompose,
-                                total_subtasks=len(subtasks),
-                            ))
-
-                            # Execute subtasks directly (no confirmation wait)
-                            logger.info(f"[Task {task_id}] Starting AMI Executor with {len(subtasks)} subtasks...")
-                            start_time = datetime.now()
-
-                            # Report: Starting execution
-                            await state.put_event(AgentReportData(
-                                task_id=task_id,
-                                message=f"开始执行 {len(subtasks)} 个子任务...",
-                                report_type="info",
-                            ))
-
-                            await state.put_event(WorkforceStartedData(
-                                task_id=task_id,
-                                total_tasks=len(subtasks),
-                                workers_count=len(agents_dict),
-                                description=f"Starting execution with {len(subtasks)} subtasks",
-                            ))
-
-                            # Create executor with user's original request
-                            executor = AMITaskExecutor(
-                                task_id=task_id,
-                                task_state=state,
-                                agents=agents_dict,
-                                user_request=current_question,  # Pass original request for context
-                            )
-                            executor.set_subtasks(subtasks)
-
-                            # Save executor reference for cancellation support
-                            state._executor = executor
-
-                            # Execute
-                            result = await executor.execute()
-
-                            # Clear executor reference after execution
-                            state._executor = None
-
-                            # Check if execution was stopped by cancellation
-                            if result.get("stopped"):
-                                logger.info(f"[Task {task_id}] Executor was stopped by cancellation")
-                                break
-
                             duration = (datetime.now() - start_time).total_seconds()
 
                             await state.put_event(WorkforceCompletedData(
@@ -1911,136 +1917,107 @@ Response:"""
                                 },
                             }
 
-                            context = "mid_execution" if loop_iteration > 1 else "initial"
                             await state.put_event(WaitConfirmData(
                                 task_id=task_id,
                                 content=final_output,
                                 question=task_to_decompose,
-                                context=context,
+                                context="initial",
                                 attachments=attachments if attachments else None,
                             ))
 
-                            logger.info(f"[Task {task_id}] AMI Executor completed, ready for multi-turn")
+                            logger.info(f"[Task {task_id}] AMI Executor completed")
 
-                    except Exception as e:
-                        logger.exception(f"[Task {task_id}] AMI Executor failed: {e}")
-                        state.error = str(e)
+                except Exception as e:
+                    logger.exception(f"[Task {task_id}] AMI Executor failed: {e}")
+                    state.error = str(e)
 
-                        await state.put_event(WorkforceStoppedData(
-                            task_id=task_id,
-                            reason=str(e),
-                        ))
-                        await state.put_event(TaskFailedData(
-                            task_id=task_id,
-                            error=str(e),
-                        ))
-                        context = "mid_execution" if loop_iteration > 1 else "initial"
-                        await state.put_event(WaitConfirmData(
-                            task_id=task_id,
-                            content=f"Task execution failed: {e}\n\nYou can try again or ask me something else.",
-                            question=task_to_decompose,
-                            context=context,
-                        ))
-                        state.status = TaskStatus.WAITING
-                        state.updated_at = datetime.now()
-
-                else:
-                    # ===== Direct Response Path (No Execution) =====
-                    logger.info(f"[Task {task_id}] Orchestrator handled directly (no decompose_task)")
-
-                    state.add_conversation("assistant", orchestrator_reply)
-
-                    # Convert attached file paths to FileAttachment objects
-                    attachments = []
-                    if attached_files:
-                        from pathlib import Path
-                        for file_path_str in attached_files:
-                            try:
-                                attachment = await self._create_file_attachment(Path(file_path_str))
-                                if attachment:
-                                    attachments.append(attachment)
-                                    logger.info(f"[Task {task_id}] Created attachment for: {file_path_str}")
-                            except Exception as e:
-                                logger.warning(f"[Task {task_id}] Failed to create attachment for {file_path_str}: {e}")
-
-                    context = "initial" if loop_iteration == 1 else "mid_execution"
+                    await state.put_event(WorkforceStoppedData(
+                        task_id=task_id,
+                        reason=str(e),
+                    ))
+                    await state.put_event(TaskFailedData(
+                        task_id=task_id,
+                        error=str(e),
+                    ))
                     await state.put_event(WaitConfirmData(
                         task_id=task_id,
-                        content=orchestrator_reply,
-                        question=current_question,
-                        context=context,
-                        attachments=attachments if attachments else None,
+                        content=f"Task execution failed: {e}\n\nYou can try again or ask me something else.",
+                        question=task_to_decompose,
+                        context="initial",
                     ))
 
-                # Set status to WAITING for multi-turn
-                state.status = TaskStatus.WAITING
-                state.updated_at = datetime.now()
+            else:
+                # ===== Direct Response Path (No Execution) =====
+                logger.info(f"[Task {task_id}] Orchestrator handled directly (no decompose_task)")
 
-            except asyncio.CancelledError:
-                logger.info(f"[Task {task_id}] Task cancelled during execution")
-                break
-            except Exception as e:
-                logger.exception(f"[Task {task_id}] Orchestrator execution failed: {e}")
-                state.error = str(e)
+                state.add_conversation("assistant", orchestrator_reply)
 
-                await state.put_event(NoticeData(
-                    task_id=task_id,
-                    level="error",
-                    title="Execution Error",
-                    message=str(e),
-                ))
-                context = "mid_execution" if loop_iteration > 1 else "initial"
+                # Convert attached file paths to FileAttachment objects
+                attachments = []
+                if attached_files:
+                    from pathlib import Path
+                    for file_path_str in attached_files:
+                        try:
+                            attachment = await self._create_file_attachment(Path(file_path_str))
+                            if attachment:
+                                attachments.append(attachment)
+                                logger.info(f"[Task {task_id}] Created attachment for: {file_path_str}")
+                        except Exception as e:
+                            logger.warning(f"[Task {task_id}] Failed to create attachment for {file_path_str}: {e}")
+
                 await state.put_event(WaitConfirmData(
                     task_id=task_id,
-                    content=f"An error occurred: {e}\n\nYou can try again or ask me something else.",
+                    content=orchestrator_reply,
                     question=current_question,
-                    context=context,
+                    context="initial",
+                    attachments=attachments if attachments else None,
                 ))
-                state.status = TaskStatus.WAITING
 
-            # ===== Wait for Next User Message =====
-            logger.info(f"[Task {task_id}] Waiting for next user message...")
+        except asyncio.CancelledError:
+            logger.info(f"[Task {task_id}] Task cancelled during execution")
+        except Exception as e:
+            logger.exception(f"[Task {task_id}] Orchestrator execution failed: {e}")
+            state.error = str(e)
 
-            try:
-                next_message = await self._wait_for_user_message(task_id, state)
-                if next_message is None:
-                    logger.info(f"[Task {task_id}] No more user messages, ending session")
-                    break
-
-                state.add_conversation("user", next_message)
-                current_question = next_message
-                logger.info(f"[Task {task_id}] Received next user message: {next_message[:100]}...")
-
-                # Reset Orchestrator memory to prevent context bleeding between tasks
-                # This avoids sending previous task's detailed execution history to LLM
-                # High-level context is preserved in TaskState.conversation_history
-                orchestrator.reset()
-                logger.info(f"[Task {task_id}] Orchestrator memory reset for new task")
-
-            except asyncio.CancelledError:
-                logger.info(f"[Task {task_id}] Task cancelled while waiting")
-                break
-            except Exception as e:
-                logger.error(f"[Task {task_id}] Error waiting for user message: {e}")
-                break
+            await state.put_event(NoticeData(
+                task_id=task_id,
+                level="error",
+                title="Execution Error",
+                message=str(e),
+            ))
+            await state.put_event(WaitConfirmData(
+                task_id=task_id,
+                content=f"An error occurred: {e}\n\nYou can try again or ask me something else.",
+                question=current_question,
+                context="initial",
+            ))
 
         # ===== Session End Cleanup =====
-        logger.info(f"[Task {task_id}] AMI session ended after {loop_iteration} iterations")
+        logger.info(f"[Task {task_id}] AMI session ended")
 
         # Clear executor reference
         state._executor = None
 
         # Only update status if not already cancelled
         if state.status != TaskStatus.CANCELLED:
-            state.status = TaskStatus.COMPLETED
-            state.completed_at = datetime.now()
-
-            await state.put_event(EndData(
-                task_id=task_id,
-                status="completed",
-                message="Session ended",
-                result=state.result,
-            ))
+            if state.error:
+                state.status = TaskStatus.FAILED
+                state.completed_at = datetime.now()
+                await state.put_event(EndData(
+                    task_id=task_id,
+                    status="failed",
+                    message=state.error,
+                    result=state.result,
+                ))
+            else:
+                state.status = TaskStatus.COMPLETED
+                state.completed_at = datetime.now()
+                await state.put_event(EndData(
+                    task_id=task_id,
+                    status="completed",
+                    message="Session ended",
+                    result=state.result,
+                ))
         else:
             # Already cancelled, just log
             logger.info(f"[Task {task_id}] Task was cancelled, skipping completion event")
@@ -2075,7 +2052,7 @@ Response:"""
         Create agents for AMI Executor.
 
         Returns a dictionary of agents keyed by agent_type for AMITaskExecutor,
-        plus the task_agent for AMITaskPlanner.
+        plus the planner_provider for AMITaskPlanner.
 
         Args:
             task_id: Task identifier
@@ -2083,16 +2060,15 @@ Response:"""
             headless: Whether to run browser in headless mode
 
         Returns:
-            Tuple of (agents_dict, task_agent)
+            Tuple of (agents_dict, planner_provider)
         """
         from ..base_agent.core.agent_factories import (
             create_listen_browser_agent,
             create_developer_agent,
             create_document_agent,
             create_multi_modal_agent,
-            create_model_backend,
+            create_provider,
         )
-        from camel.agents import ChatAgent
 
         logger.info(f"[Task {task_id}] Creating agents for AMI Executor...")
 
@@ -2170,19 +2146,14 @@ Response:"""
 
         logger.info(f"[Task {task_id}] Agents created: {len(agents_dict)}/4 available")
 
-        # Create task_agent for AMITaskPlanner
-        model_backend = create_model_backend(
+        # Create provider for AMITaskPlanner
+        planner_provider = create_provider(
             llm_api_key=self._llm_api_key,
             llm_model=self._llm_model,
             llm_base_url=self._llm_base_url,
         )
 
-        task_agent = ChatAgent(
-            system_message="You are a task decomposition expert. Split tasks by work type (browser, document, code).",
-            model=model_backend,
-        )
-
-        return agents_dict, task_agent
+        return agents_dict, planner_provider
 
     async def _create_memory_toolkit(
         self,
@@ -2254,7 +2225,7 @@ Response:"""
         if len(subtasks) > 1:
             try:
                 from ..base_agent.core.agent_factories import (
-                    create_task_summary_agent,
+                    create_task_summary_provider,
                     summarize_subtasks_results,
                 )
 
@@ -2269,13 +2240,13 @@ Response:"""
                     for st in subtasks
                 ]
 
-                summary_agent = create_task_summary_agent(
+                summary_provider = create_task_summary_provider(
                     llm_api_key=self._llm_api_key,
                     llm_model=self._llm_model,
                     llm_base_url=self._llm_base_url,
                 )
                 summary_output = await summarize_subtasks_results(
-                    agent=summary_agent,
+                    provider=summary_provider,
                     main_task=state.task,
                     subtasks=subtasks_with_results,
                 )

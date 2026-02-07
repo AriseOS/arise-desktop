@@ -1285,9 +1285,9 @@ export const useAgentStore = create((set, get) => ({
           });
 
           if (event.status === 'completed') {
-            // Eigent multi-turn pattern: DON'T set status to 'completed'
-            // Instead, set to 'waiting' to allow follow-up messages
-            setStatus('waiting');
+            // Task execution finished — set 'completed' and disconnect SSE
+            // Follow-up messages will go through continue_task() flow
+            setStatus('completed');
             updateTask({
               executionPhase: 'completed',
               result: event.result,
@@ -1300,9 +1300,14 @@ export const useAgentStore = create((set, get) => ({
               decompositionProgress: 0,
               decompositionMessage: '',
             });
+            // Disconnect SSE — backend task has ended
+            if (sseClients[taskId]) {
+              sseClients[taskId].disconnect();
+              delete sseClients[taskId];
+            }
           } else if (event.status === 'failed') {
-            // On failure, also stay in 'waiting' for multi-turn retry
-            setStatus('waiting');
+            // Task failed — set 'completed' so input stays enabled for follow-up
+            setStatus('completed');
             updateTask({
               executionPhase: 'failed',
               error: event.message || 'Task failed',
@@ -1311,6 +1316,11 @@ export const useAgentStore = create((set, get) => ({
               // Clear decomposition state
               taskInfo: [],
             });
+            // Disconnect SSE — backend task has ended
+            if (sseClients[taskId]) {
+              sseClients[taskId].disconnect();
+              delete sseClients[taskId];
+            }
           } else if (event.status === 'cancelled') {
             // User explicitly cancelled - end the session
             setStatus('cancelled');
@@ -1330,17 +1340,13 @@ export const useAgentStore = create((set, get) => ({
             }
           }
 
-          // Eigent multi-turn pattern: DON'T disconnect SSE for completed/failed
-          // Keep connection alive for follow-up messages
-          // The SSE will only be disconnected when user explicitly cancels or navigates away
-
           // Clear auto-confirm timer if exists
           if (autoConfirmTimers[taskId]) {
             clearTimeout(autoConfirmTimers[taskId]);
             delete autoConfirmTimers[taskId];
           }
 
-          console.log('[AgentStore] end event: Task completed, staying in multi-turn mode (SSE kept alive)');
+          console.log('[AgentStore] end event: Task ended, SSE disconnected');
         }
         break;
 
@@ -1901,9 +1907,9 @@ export const useAgentStore = create((set, get) => ({
     const backendTaskId = task.backendTaskId;
     if (!backendTaskId) return { success: false, error: 'No backend task ID' };
 
-    // Eigent multi-turn: Reconnect SSE if disconnected
-    // This allows conversation to resume after session timeout/disconnect
-    if (!sseClients[taskId]) {
+    // Reconnect SSE if disconnected — but NOT for completed tasks
+    // Completed tasks will get a new SSE connection after continue_task returns
+    if (!sseClients[taskId] && task.status !== 'completed') {
       console.log('[AgentStore] SSE disconnected, reconnecting for multi-turn...');
       get().connectSSE(taskId, backendTaskId);
     }
@@ -1911,10 +1917,10 @@ export const useAgentStore = create((set, get) => ({
     // Add user message to conversation immediately
     get().addMessage(taskId, 'user', message);
 
-    // Eigent pattern: If task is 'waiting', update status to 'running' before sending
+    // Update status to 'running' before sending message
     // This prevents UI from staying in input mode while waiting for response
-    // If task is already 'running', message will be queued by backend
-    if (task.status === 'waiting') {
+    // For 'completed' tasks, continue_task will handle the status via SSE
+    if (task.status === 'waiting' || task.status === 'completed') {
       get().setTaskStatus(taskId, 'running');
       get().updateTask(taskId, {
         hasWaitConfirm: false,  // Reset the flag until next wait_confirm

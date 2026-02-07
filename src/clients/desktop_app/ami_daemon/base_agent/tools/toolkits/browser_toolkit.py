@@ -106,7 +106,7 @@ class BrowserToolkit(BaseToolkit):
         timeout: Optional[float] = 30.0,
         return_snapshot: bool = True,
         enabled_tools: Optional[List[str]] = None,
-        agent: Optional[Any] = None,  # ListenChatAgent for URL change notifications
+        agent: Optional[Any] = None,  # AMIBrowserAgent for URL change notifications
     ) -> None:
         """Initialize the BrowserToolkit.
 
@@ -118,9 +118,9 @@ class BrowserToolkit(BaseToolkit):
             return_snapshot: Whether to return page snapshot after each action.
             enabled_tools: List of tool names to enable. If None, uses DEFAULT_ENABLED_TOOLS.
                 Only tools in this list will be returned by get_tools().
-            agent: Optional ListenChatAgent for URL change notifications.
+            agent: Optional AMIBrowserAgent for URL change notifications.
                 When provided, BrowserToolkit will call agent.set_current_url()
-                after each browser action to enable IntentSequence cache management.
+                after each browser action to enable page operations cache management.
         """
         super().__init__(timeout=timeout)
         self._return_snapshot = return_snapshot
@@ -149,11 +149,11 @@ class BrowserToolkit(BaseToolkit):
     def set_agent(self, agent: Any) -> None:
         """Set the agent reference for URL change notifications.
 
-        This enables IntentSequence cache management in ListenChatAgent.
+        This enables page operations cache management in AMIBrowserAgent.
         Should be called when the toolkit is registered with an agent.
 
         Args:
-            agent: ListenChatAgent instance with set_current_url() method.
+            agent: AMIBrowserAgent instance with set_current_url() method.
         """
         self._agent = agent
         logger.debug(f"BrowserToolkit: agent reference set for URL notifications")
@@ -936,16 +936,16 @@ class BrowserToolkit(BaseToolkit):
     )
     async def browser_select(
         self,
+        ref: str,
         value: str,
-        ref: Optional[str] = None,
-        selector: Optional[str] = None,
     ) -> str:
-        """Select an option from a dropdown.
+        """Select an option from a dropdown, combobox, or <select> element.
+
+        Use this tool (not browser_click) when the snapshot shows a "combobox" or "select" element.
 
         Args:
-            value: The value to select.
-            ref: Element reference from snapshot.
-            selector: CSS selector for the select element.
+            ref: The ref ID of the combobox/select element from the page snapshot.
+            value: The visible text of the option to select.
 
         Returns:
             Result message with current page info (URL, title) and updated page snapshot.
@@ -953,16 +953,9 @@ class BrowserToolkit(BaseToolkit):
         if not self._ensure_session():
             return "Error: Browser session not initialized"
 
-        if not (ref or selector):
-            return "Error: Must provide ref or selector"
-
         try:
             session = await self._get_session_with_page()
-            action = {"type": "select", "value": value}
-            if ref:
-                action["ref"] = ref
-            if selector:
-                action["selector"] = selector
+            action = {"type": "select", "ref": ref, "value": value}
 
             result = await session.exec_action(action)
 
@@ -993,12 +986,12 @@ class BrowserToolkit(BaseToolkit):
         - Page URL and title
         - Interactive elements with [ref=eN] markers
         - Page structure
-        - All links with their href URLs (if include_links=True)
+
+        Set include_links=True to also extract all links with their actual href URLs.
+        This is useful when you need to collect URLs for saving in notes or visiting later.
 
         Args:
-            include_links: If True, appends a list of all links on the page
-                with their actual href URLs. Useful for extracting navigation
-                targets to save in notes for later use.
+            include_links: If True, appends a list of all links with their href URLs.
 
         Returns:
             The current page snapshot with URL info and optionally a links list.

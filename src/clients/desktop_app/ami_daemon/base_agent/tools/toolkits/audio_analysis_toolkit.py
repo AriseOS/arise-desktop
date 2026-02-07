@@ -1,20 +1,17 @@
 """
 AudioAnalysisToolkit - Audio analysis and transcription for multi-modal agent.
 
-Based on Eigent's AudioAnalysisToolkit implementation which wraps CAMEL's toolkit.
-Uses audio models for transcription and question answering.
-
-References:
-- Eigent: third-party/eigent/backend/app/utils/toolkit/audio_analysis_toolkit.py
-- CAMEL: camel.toolkits.AudioAnalysisToolkit
+Uses OpenAI Whisper SDK directly for transcription (no CAMEL dependency).
+Uses AnthropicProvider for audio reasoning/QA.
 """
 
 import logging
 from pathlib import Path
 from typing import List, Optional
 
-from camel.models import BaseAudioModel, BaseModelBackend
-from camel.toolkits import AudioAnalysisToolkit as CAMELAudioAnalysisToolkit
+from openai import OpenAI
+
+from src.common.llm import AnthropicProvider
 
 from .base_toolkit import BaseToolkit, FunctionTool
 from ...events import listen_toolkit
@@ -26,12 +23,8 @@ logger = logging.getLogger(__name__)
 class AudioAnalysisToolkit(BaseToolkit):
     """A toolkit for audio processing and analysis.
 
-    Wraps CAMEL's AudioAnalysisToolkit to provide:
-    - Audio transcription (speech-to-text)
-    - Question answering about audio content
-    - Processing of audio from local files and URLs
-
-    Based on Eigent's implementation which wraps CAMEL's AudioAnalysisToolkit.
+    Uses OpenAI Whisper API directly for speech-to-text,
+    and AnthropicProvider for reasoning about audio content.
     """
 
     agent_name: str = "multi_modal_agent"
@@ -39,20 +32,24 @@ class AudioAnalysisToolkit(BaseToolkit):
     def __init__(
         self,
         cache_dir: Optional[str] = None,
-        transcribe_model: Optional[BaseAudioModel] = None,
-        audio_reasoning_model: Optional[BaseModelBackend] = None,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        reasoning_provider: Optional[AnthropicProvider] = None,
         timeout: Optional[float] = 180.0,
+        # Backward compatible kwargs (ignored)
+        transcribe_model=None,
+        audio_reasoning_model=None,
     ) -> None:
         """Initialize the AudioAnalysisToolkit.
 
         Args:
             cache_dir: Directory for caching downloaded audio files.
-                If not provided, uses task workspace from WorkingDirectoryManager.
-            transcribe_model: Model for audio transcription.
-                If not provided, CAMEL will use OpenAIAudioModels.
-            audio_reasoning_model: Model for audio reasoning/QA.
-                If not provided, CAMEL will use default ChatAgent model.
+            api_key: OpenAI API key for Whisper.
+            base_url: Custom API base URL.
+            reasoning_provider: AnthropicProvider for audio reasoning/QA.
             timeout: Operation timeout in seconds.
+            transcribe_model: Ignored (backward compatibility).
+            audio_reasoning_model: Ignored (backward compatibility).
         """
         super().__init__(timeout=timeout)
 
@@ -63,23 +60,43 @@ class AudioAnalysisToolkit(BaseToolkit):
             try:
                 self._cache_dir = str(Path(get_working_directory()) / "audio_cache")
             except RuntimeError as e:
-                # WorkingDirectoryManager not initialized, use temp directory
                 import tempfile
                 self._cache_dir = str(Path(tempfile.gettempdir()) / "ami_audio_cache")
                 logger.warning(f"WorkingDirectoryManager not available: {e}. Using temp dir: {self._cache_dir}")
 
-        # Ensure cache directory exists
         Path(self._cache_dir).mkdir(parents=True, exist_ok=True)
 
-        # Initialize CAMEL's toolkit with the provided models
-        self._camel_toolkit = CAMELAudioAnalysisToolkit(
-            cache_dir=self._cache_dir,
-            transcribe_model=transcribe_model,
-            audio_reasoning_model=audio_reasoning_model,
+        # OpenAI client for Whisper
+        self._openai_client = OpenAI(
+            api_key=api_key,
+            base_url=base_url,
             timeout=timeout,
         )
 
+        # AnthropicProvider for reasoning
+        self._reasoning_provider = reasoning_provider
+
         logger.info(f"AudioAnalysisToolkit initialized (cache_dir={self._cache_dir})")
+
+    def _transcribe(self, audio_path: str) -> str:
+        """Transcribe audio file using Whisper API.
+
+        Args:
+            audio_path: Path to audio file.
+
+        Returns:
+            Transcribed text.
+        """
+        path = Path(audio_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Audio file not found: {audio_path}")
+
+        with open(audio_path, "rb") as audio_file:
+            transcription = self._openai_client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file,
+            )
+        return transcription.text
 
     @listen_toolkit(
         inputs=lambda self, audio_path: f"Transcribing audio: {audio_path}",
@@ -89,14 +106,14 @@ class AudioAnalysisToolkit(BaseToolkit):
         """Transcribe audio to text.
 
         Args:
-            audio_path: Path to the audio file or URL.
+            audio_path: Path to the audio file.
                 Supports MP3, WAV, OGG, and other common formats.
 
         Returns:
             Transcribed text from the audio.
         """
         logger.info(f"Transcribing audio: {audio_path}")
-        return self._camel_toolkit.audio2text(audio_path=audio_path)
+        return self._transcribe(audio_path)
 
     @listen_toolkit(
         inputs=lambda self, audio_path, question: f"Asking about audio: {question[:50]}...",
@@ -105,21 +122,40 @@ class AudioAnalysisToolkit(BaseToolkit):
     def ask_about_audio(self, audio_path: str, question: str) -> str:
         """Ask a question about audio content.
 
-        Uses either direct audio question answering (if supported by model)
-        or transcription-based approach as fallback.
+        Transcribes the audio first, then uses LLM to answer the question.
 
         Args:
-            audio_path: Path to the audio file or URL.
+            audio_path: Path to the audio file.
             question: Question to ask about the audio content.
 
         Returns:
             Answer to the question based on audio content.
         """
         logger.info(f"Asking about audio: {question}")
-        return self._camel_toolkit.ask_question_about_audio(
-            audio_path=audio_path,
-            question=question,
+
+        # Transcribe first
+        transcript = self._transcribe(audio_path)
+
+        if not self._reasoning_provider:
+            return f"Transcript:\n{transcript}\n\n(No reasoning provider to answer question)"
+
+        # Use LLM to answer question about transcript
+        import asyncio
+        prompt = (
+            f"<speech_transcription_result>{transcript}</speech_transcription_result>\n\n"
+            f"Please answer: <question>{question}</question>"
         )
+
+        async def _reason():
+            response = await self._reasoning_provider.generate_with_tools(
+                system_prompt="You are an expert audio analyst. Answer questions about the transcribed audio content.",
+                messages=[{"role": "user", "content": prompt}],
+                tools=[],
+                max_tokens=4096,
+            )
+            return response.get_text()
+
+        return asyncio.run(_reason())
 
     @listen_toolkit(
         inputs=lambda self, audio_path: f"Summarizing audio: {audio_path}",
@@ -129,13 +165,13 @@ class AudioAnalysisToolkit(BaseToolkit):
         """Generate a summary of audio content.
 
         Args:
-            audio_path: Path to the audio file or URL.
+            audio_path: Path to the audio file.
 
         Returns:
             Summary of the audio content.
         """
         logger.info(f"Summarizing audio: {audio_path}")
-        return self._camel_toolkit.ask_question_about_audio(
+        return self.ask_about_audio(
             audio_path=audio_path,
             question=(
                 "Please provide a comprehensive summary of this audio. "
@@ -152,13 +188,13 @@ class AudioAnalysisToolkit(BaseToolkit):
         """Identify and describe speakers in the audio.
 
         Args:
-            audio_path: Path to the audio file or URL.
+            audio_path: Path to the audio file.
 
         Returns:
             Information about speakers in the audio.
         """
         logger.info(f"Identifying speakers in audio: {audio_path}")
-        return self._camel_toolkit.ask_question_about_audio(
+        return self.ask_about_audio(
             audio_path=audio_path,
             question=(
                 "How many speakers are in this audio? "
@@ -174,11 +210,7 @@ class AudioAnalysisToolkit(BaseToolkit):
         return self._cache_dir
 
     def get_tools(self) -> List[FunctionTool]:
-        """Return a list of FunctionTool objects for this toolkit.
-
-        Returns:
-            List of FunctionTool objects.
-        """
+        """Return a list of FunctionTool objects for this toolkit."""
         return [
             FunctionTool(self.transcribe_audio),
             FunctionTool(self.ask_about_audio),

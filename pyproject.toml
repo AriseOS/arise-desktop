@@ -25,13 +25,10 @@ dependencies = [
     "fastapi>=0.104.1",
     "uvicorn[standard]>=0.24.0",
     "python-multipart>=0.0.6",
-    "aiofiles>=23.2.1",
-    "websockets>=12.0",
 
     # Data validation and serialization
     "pydantic>=2.5.0",
     "pyyaml>=6.0.1",
-    "jsonschema>=4.20.0",
     "json-repair>=0.30.0",
 
     # Database
@@ -45,10 +42,6 @@ dependencies = [
     "python-jose[cryptography]>=3.3.0",
     "passlib[bcrypt]>=1.7.4",
 
-    # Logging
-    "python-dotenv>=1.0.0",
-    "loguru>=0.7.2",
-
     # System utilities
     "psutil>=5.9.0",
     "pathspec>=0.11.0",
@@ -58,7 +51,6 @@ dependencies = [
     "numpy>=1.24.0",
     # Neo4j backend
     "neo4j>=5.0.0",
-    "graphdatascience>=1.6",
     # SurrealDB backend
     "surrealdb>=1.0.0",
     "nest-asyncio>=1.6.0",
@@ -69,9 +61,6 @@ dependencies = [
 
     # Browser automation (using eigent_browser)
     "playwright>=1.40.0",
-
-    # Multi-agent framework
-    "camel-ai>=0.2.0",
 
 ]
 

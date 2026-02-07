@@ -298,6 +298,23 @@ def parse_task_logs(log_files, task_id: str, full: bool = False, verbose: bool =
                 ))
             continue
 
+        # ─── Decompose Prompt & Response ─────────────────────────────
+        if "[AMITaskPlanner] Decompose prompt:" in msg:
+            prompt_text = msg.split("Decompose prompt:\n", 1)[-1] if "\n" in msg else msg.split("Decompose prompt:")[-1]
+            if full:
+                trace.events.append(Event(ts, "decompose_prompt", f"Decompose prompt:\n{prompt_text}"))
+            else:
+                trace.events.append(Event(ts, "decompose_prompt", f"Decompose prompt ({len(prompt_text)} chars)", extra=truncate(prompt_text, tl)))
+            continue
+
+        if "[AMITaskPlanner] Fine-grained decompose raw response:" in msg:
+            resp_text = msg.split("Fine-grained decompose raw response:\n", 1)[-1] if "\n" in msg else msg.split("Fine-grained decompose raw response:")[-1]
+            if full:
+                trace.events.append(Event(ts, "decompose_response", f"LLM decompose response:\n{resp_text}"))
+            else:
+                trace.events.append(Event(ts, "decompose_response", f"LLM decompose response ({len(resp_text)} chars)", extra=truncate(resp_text, tl)))
+            continue
+
         # ─── Task Decomposition Result ────────────────────────────────
         if "[AMITaskPlanner] Subtask" in msg and re.search(r"Subtask \d+ \(", msg):
             m = re.search(r"Subtask (\d+) \((\w+)\): (.+)", msg)
@@ -491,14 +508,10 @@ def parse_task_logs(log_files, task_id: str, full: bool = False, verbose: bool =
             continue
 
         # ─── Agent tracking ───────────────────────────────────────────
-        if "ListenChatAgent" in msg and "executing async tool:" in msg:
-            m = re.search(r"\] (\w+) executing async tool: (\w+)", msg)
+        if "[AMIAgent]" in msg and "executing tool:" in msg:
+            m = re.search(r"\] (\w+) executing tool: (\w+)", msg)
             if m:
                 current_agent = m.group(1).replace("_agent", "")
-            continue
-
-        if "ListenBrowserAgent" in msg and "Starting" in msg:
-            current_agent = "browser"
             continue
 
         # ─── Token usage ──────────────────────────────────────────────
@@ -608,6 +621,8 @@ def format_trace(trace: Trace) -> str:
             "decompose_start": "DEC",
             "memory_query":   "MEM",
             "memory_result":  "MEM",
+            "decompose_prompt":  "DEC",
+            "decompose_response":"DEC",
             "decompose_done": "DEC",
             "subtask_start":  ">>>",
             "subtask_done":   " OK",

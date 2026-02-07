@@ -24,18 +24,9 @@ import platform
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
-from camel.toolkits import FunctionTool
-from camel.messages import BaseMessage
-
-from .listen_chat_agent import ListenChatAgent
-from .agent_factories import create_model_backend, _get_now_str
-from ..tools.toolkits import (
-    NoteTakingToolkit,
-    SearchToolkit,
-    HumanToolkit,
-    MemoryToolkit,
-    TerminalToolkit,
-)
+from .ami_agent import AMIAgent
+from .ami_tool import AMITool
+from .agent_factories import create_provider, _get_now_str
 from ..workspace import WorkingDirectoryManager
 
 if TYPE_CHECKING:
@@ -237,15 +228,9 @@ async def create_orchestrator_agent(
     llm_model: Optional[str] = None,
     llm_base_url: Optional[str] = None,
     decompose_callback: Optional[Callable[[str], Any]] = None,
-) -> tuple[ListenChatAgent, DecomposeTaskTool, AttachFileTool]:
+) -> tuple[AMIAgent, DecomposeTaskTool, AttachFileTool]:
     """
     Create the Orchestrator Agent with all basic toolkits and decompose_task.
-
-    The Orchestrator is the top-level agent that receives all user messages.
-    It decides whether to:
-    - Reply directly (simple queries)
-    - Use tools (single operations)
-    - Call decompose_task for Workforce execution (complex tasks)
 
     Args:
         task_state: TaskState for SSE event emission
@@ -263,7 +248,7 @@ async def create_orchestrator_agent(
         decompose_callback: Callback function for decompose_task tool
 
     Returns:
-        Tuple of (ListenChatAgent, DecomposeTaskTool, AttachFileTool)
+        Tuple of (AMIAgent, DecomposeTaskTool, AttachFileTool)
     """
     logger.info(f"[OrchestratorAgent] Creating for task {task_id}")
     logger.info(f"[OrchestratorAgent] Working directory: {working_directory}")
@@ -272,9 +257,17 @@ async def create_orchestrator_agent(
     notes_dir = notes_directory or working_directory
 
     # Determine user workspace root (for Orchestrator to explore all user files)
-    # Point directly to tasks directory for easier navigation
     user_workspace = str(WorkingDirectoryManager.USERS_DIR / (user_id or "default") / "projects" / "default" / "tasks")
     logger.info(f"[OrchestratorAgent] User workspace: {user_workspace}")
+
+    # Lazy import to avoid circular dependency (toolkits -> base_toolkit -> ami_tool -> core/__init__ -> orchestrator_agent)
+    from ..tools.toolkits import (
+        NoteTakingToolkit,
+        SearchToolkit,
+        HumanToolkit,
+        MemoryToolkit,
+        TerminalToolkit,
+    )
 
     # Initialize toolkits
     note_toolkit = NoteTakingToolkit(notes_directory=notes_dir)
@@ -287,7 +280,6 @@ async def create_orchestrator_agent(
     human_toolkit.set_task_state(task_state)
 
     # Terminal toolkit for Orchestrator - uses user workspace root (not task workspace)
-    # This allows Orchestrator to explore all user's past tasks and files
     terminal_toolkit = TerminalToolkit(working_directory=user_workspace)
     terminal_toolkit.set_task_state(task_state)
     logger.info("[OrchestratorAgent] TerminalToolkit added (user workspace root)")
@@ -310,19 +302,20 @@ async def create_orchestrator_agent(
         tools.extend(memory_toolkit.get_tools())
         logger.info("[OrchestratorAgent] MemoryToolkit added")
 
-    # Create and add decompose_task tool
+    # Create and add decompose_task tool (wrap bound method in AMITool)
     decompose_tool = DecomposeTaskTool(
         callback=decompose_callback or (lambda x: x)
     )
-    # Set toolkit name for SSE event display
-    decompose_tool.decompose_task.__func__._toolkit_name = "orchestrator"
-    tools.append(decompose_tool.decompose_task)
+    decompose_ami_tool = AMITool(decompose_tool.decompose_task)
+    decompose_ami_tool._toolkit_name = "Orchestrator"
+    tools.append(decompose_ami_tool)
     logger.info("[OrchestratorAgent] DecomposeTaskTool added")
 
     # Create and add attach_file tool
     attach_tool = AttachFileTool()
-    attach_tool.attach_file.__func__._toolkit_name = "orchestrator"
-    tools.append(attach_tool.attach_file)
+    attach_ami_tool = AMITool(attach_tool.attach_file)
+    attach_ami_tool._toolkit_name = "Orchestrator"
+    tools.append(attach_ami_tool)
     logger.info("[OrchestratorAgent] AttachFileTool added")
 
     # Build system prompt
@@ -333,23 +326,20 @@ async def create_orchestrator_agent(
         now_str=_get_now_str(),
     )
 
-    # Create model configuration
-    model_config = None
-    if llm_api_key and llm_model:
-        model_config = create_model_backend(
-            llm_api_key=llm_api_key,
-            llm_model=llm_model,
-            llm_base_url=llm_base_url,
-        )
+    # Create provider
+    provider = create_provider(
+        llm_api_key=llm_api_key,
+        llm_model=llm_model,
+        llm_base_url=llm_base_url,
+    )
 
     # Create the agent
-    agent = ListenChatAgent(
+    agent = AMIAgent(
         task_state=task_state,
         agent_name=agent_name,
-        system_message=system_message,
-        model=model_config,
+        provider=provider,
+        system_prompt=system_message,
         tools=tools,
-        agent_id=f"{agent_name}_{task_id}",
     )
 
     # Set NoteTakingToolkit reference
@@ -364,7 +354,7 @@ async def create_orchestrator_agent(
 
 
 async def run_orchestrator(
-    orchestrator: ListenChatAgent,
+    orchestrator: AMIAgent,
     decompose_tool: DecomposeTaskTool,
     attach_tool: AttachFileTool,
     user_message: str,
@@ -373,11 +363,11 @@ async def run_orchestrator(
     """
     Run the Orchestrator Agent until it completes or calls decompose_task.
 
-    CAMEL's astep() handles multi-turn tool execution internally.
+    AMIAgent.astep() handles multi-turn tool execution internally.
     We just need to call it once and check if decompose_task was triggered.
 
     Args:
-        orchestrator: The Orchestrator ListenChatAgent instance
+        orchestrator: The Orchestrator AMIAgent instance
         decompose_tool: The DecomposeTaskTool to monitor for triggers
         attach_tool: The AttachFileTool to collect attached files
         user_message: The user's input message
@@ -392,16 +382,15 @@ async def run_orchestrator(
     decompose_tool.reset()
     attach_tool.reset()
 
-    # Single call to astep - CAMEL handles multi-turn tool execution internally
+    # Single call to astep — handles multi-turn tool execution internally
     response = await orchestrator.astep(user_message)
-    final_content = response.msg.content if response.msg else ""
+    final_content = response.text
 
     # Log response
-    tool_calls = response.info.get("tool_calls") or []
-    logger.info(f"[OrchestratorAgent] Completed: content={final_content[:100] if final_content else '(empty)'}, tool_calls={len(tool_calls)}, decompose_triggered={decompose_tool.triggered}")
-
-    # Note: Don't emit WaitConfirmData here - quick_task_service handles that
-    # to avoid duplicate events
+    logger.info(
+        f"[OrchestratorAgent] Completed: content={final_content[:100] if final_content else '(empty)'}, "
+        f"tool_calls={len(response.tool_calls)}, decompose_triggered={decompose_tool.triggered}"
+    )
 
     attached_files = attach_tool.attached_files
     logger.info(f"[OrchestratorAgent] Final response: {final_content[:200]}... | Attached files: {len(attached_files)}")

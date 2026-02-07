@@ -1,11 +1,8 @@
 """
 Base Toolkit - Foundation for all tool integrations.
 
-Ported from CAMEL-AI/Eigent project for Tool-calling architecture.
-Supports both OpenAI and Anthropic tool use formats.
-
 Features:
-- Uses CAMEL's FunctionTool for full compatibility with CAMEL agents
+- Uses AMITool for Anthropic-native tool schema generation
 - Task state integration for event emission via decorators
 """
 
@@ -13,8 +10,9 @@ import logging
 from abc import ABC
 from typing import Any, List, Optional
 
-# Re-export CAMEL's FunctionTool for all toolkits to use
-from camel.toolkits import FunctionTool
+# AMITool replaces CAMEL's FunctionTool
+# Aliased as FunctionTool for backward compatibility with all toolkits
+from ...core.ami_tool import AMITool as FunctionTool
 
 logger = logging.getLogger(__name__)
 

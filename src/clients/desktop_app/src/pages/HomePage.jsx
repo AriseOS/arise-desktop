@@ -149,6 +149,7 @@ function HomePage({ session, onNavigate, showStatus, version }) {
     const shouldContinue = activeTask && (
       taskStatus === 'running' ||
       taskStatus === 'waiting' ||
+      taskStatus === 'completed' ||
       activeTask.hasWaitConfirm
     );
 

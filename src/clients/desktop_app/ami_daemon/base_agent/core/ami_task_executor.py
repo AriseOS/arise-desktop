@@ -7,7 +7,7 @@ This module replaces CAMEL Workforce with a simpler, more controllable system:
 - SSE event emission for real-time UI updates
 - Pause/resume support for multi-turn conversations
 
-No CAMEL Workforce dependencies - just uses ChatAgent for execution.
+No CAMEL dependencies - uses AMIAgent for execution.
 """
 
 import asyncio
@@ -17,7 +17,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from camel.agents import ChatAgent
+    from .ami_agent import AMIAgent
 
 from ..events import (
     SubtaskStateData,
@@ -84,7 +84,7 @@ class AMITaskExecutor:
         self,
         task_id: str,
         task_state: Any,  # TaskState for SSE events
-        agents: Dict[str, "ChatAgent"],  # {"browser": agent, "document": agent, ...}
+        agents: Dict[str, "AMIAgent"],  # {"browser": agent, "document": agent, ...}
         max_retries: int = 2,
         user_request: str = "",  # User's original request for context
     ):
@@ -223,13 +223,9 @@ class AMITaskExecutor:
         """
         Execute a single subtask using astep().
 
-        All agents now use the unified astep() execution pattern (Eigent style):
-        - Builds prompt with workflow_guide context
-        - Calls astep() which runs CAMEL's internal tool-calling loop
-        - CAMEL's astep() loops until LLM stops calling tools
-
-        With fine-grained decomposition, each subtask should only need
-        1-2 tool calls, so the astep() loop will be short.
+        Each subtask starts with a fresh conversation history (agent.reset()).
+        Cross-subtask context is passed explicitly via _build_prompt()
+        (dependency results injected into prompt, not via conversation history).
 
         Returns:
             True if successful, False otherwise.
@@ -244,6 +240,14 @@ class AMITaskExecutor:
             subtask.error = f"No agent available for type: {subtask.agent_type}"
             await self._emit_subtask_state(subtask)
             return False
+
+        # Reset agent conversation history — each subtask starts fresh.
+        # Cross-subtask context is passed via prompt (dependency results + browser state).
+        agent.reset()
+
+        # Capture browser page state BEFORE reset clears agent's knowledge of it.
+        # This gives the new subtask awareness of where the browser currently is.
+        browser_context = await self._get_browser_context(agent)
 
         # Mark as running and emit event
         subtask.state = SubtaskState.RUNNING
@@ -275,7 +279,7 @@ class AMITaskExecutor:
                     )
 
                 # Unified execution: build prompt and call astep()
-                prompt = self._build_prompt(subtask)
+                prompt = self._build_prompt(subtask, browser_context=browser_context)
                 logger.info(
                     f"[AMITaskExecutor] Executing {type(agent).__name__}.astep() "
                     f"for subtask {subtask.id}"
@@ -283,10 +287,7 @@ class AMITaskExecutor:
                 response = await agent.astep(prompt)
 
                 # Extract result
-                if hasattr(response, 'msg') and response.msg:
-                    subtask.result = response.msg.content
-                else:
-                    subtask.result = str(response)
+                subtask.result = response.text
 
                 subtask.state = SubtaskState.DONE
                 await self._emit_subtask_state(subtask)
@@ -314,7 +315,29 @@ class AMITaskExecutor:
 
         return False
 
-    def _build_prompt(self, subtask: AMISubtask) -> str:
+    async def _get_browser_context(self, agent: "AMIAgent") -> Optional[str]:
+        """Get current browser page URL and title if agent has browser tools.
+
+        Returns a lightweight context string (URL + title only, no full snapshot)
+        so the agent knows where the browser is without wasting tokens.
+        """
+        snapshot_tool = agent.get_tool("browser_get_page_snapshot")
+        if snapshot_tool is None:
+            return None
+
+        try:
+            # Call the underlying toolkit method to get just page context.
+            # The tool's func is a bound method on BrowserToolkit.
+            toolkit = snapshot_tool.func.__self__
+            context = await toolkit._get_page_context()
+            if context:
+                logger.info(f"[AMITaskExecutor] Browser context captured: {context[:120]}")
+            return context or None
+        except Exception as e:
+            logger.debug(f"[AMITaskExecutor] Failed to get browser context: {e}")
+            return None
+
+    def _build_prompt(self, subtask: AMISubtask, browser_context: Optional[str] = None) -> str:
         """
         Build the execution prompt for a subtask.
 
@@ -322,6 +345,10 @@ class AMITaskExecutor:
         not just as metadata. This ensures the LLM follows the steps.
         """
         parts = []
+
+        # Browser state — tell agent where the browser currently is
+        if browser_context:
+            parts.append(f"## Current Browser State\n{browser_context}\n\nThe browser is already open on this page. You do NOT need to navigate here again — start working directly.")
 
         # Task content - this is the ONLY thing the agent should focus on
         parts.append(f"## Your Task\n{subtask.content}")

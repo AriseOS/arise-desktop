@@ -164,6 +164,8 @@ function AgentPage({ session, onNavigate, showStatus, version }) {
       task.status === 'running' ||
       // Task is waiting for user input (after wait_confirm)
       task.status === 'waiting' ||
+      // Task completed - continue via continue_task flow
+      task.status === 'completed' ||
       // Task has wait_confirm flag set (simple answer received)
       task.hasWaitConfirm ||
       // Task is paused

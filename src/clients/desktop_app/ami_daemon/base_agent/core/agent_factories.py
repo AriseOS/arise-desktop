@@ -1,7 +1,7 @@
 """
-Agent Factories - Create configured ListenChatAgent instances for Workforce.
+Agent Factories - Create configured AMIAgent instances for task execution.
 
-These factory functions create ListenChatAgent instances with the appropriate
+These factory functions create AMIAgent instances with the appropriate
 toolkits for different agent types (browser, developer, document, etc.).
 
 Modeled after Eigent's agent factory pattern in app/utils/agent.py.
@@ -10,40 +10,13 @@ Modeled after Eigent's agent factory pattern in app/utils/agent.py.
 import datetime
 import logging
 import platform
-import uuid
 from typing import Any, Dict, List, Optional
 
-from camel.agents import ChatAgent
+from src.common.llm import AnthropicProvider
 
-from .listen_chat_agent import ListenChatAgent
-from .listen_browser_agent import ListenBrowserAgent
-from .ami_model_backend import AMIModelBackend
-from ..tools.toolkits import (
-    NoteTakingToolkit,
-    SearchToolkit,
-    TerminalToolkit,
-    HumanToolkit,
-    BrowserToolkit,
-    MemoryToolkit,
-    # Developer toolkits
-    ScreenshotToolkit,
-    WebDeployToolkit,
-    # Document toolkits
-    FileToolkit,
-    PPTXToolkit,
-    ExcelToolkit,
-    MarkItDownToolkit,
-    GoogleDriveMCPToolkit,
-    # Multi-modal toolkits
-    VideoDownloaderToolkit,
-    ImageAnalysisToolkit,
-    AudioAnalysisToolkit,
-    ImageGenerationToolkit,
-    # MCP toolkits
-    GmailMCPToolkit,
-    NotionMCPToolkit,
-    GoogleCalendarToolkit,
-)
+from .ami_agent import AMIAgent
+from .ami_browser_agent import AMIBrowserAgent
+from .ami_tool import AMITool
 
 logger = logging.getLogger(__name__)
 
@@ -52,45 +25,29 @@ logger = logging.getLogger(__name__)
 # Helper Functions
 # ============================================================================
 
-def create_model_backend(
+def create_provider(
     llm_api_key: str,
     llm_model: str,
     llm_base_url: Optional[str] = None,
-):
+) -> AnthropicProvider:
     """
-    Create AMI model backend for CAMEL agents.
-
-    Uses AMIModelBackend which wraps AMI's LLM providers to:
-    - Route through CRS proxy (api.ariseos.com/api)
-    - Use Anthropic SDK with proper API format
-    - Integrate with budget tracking
+    Create AnthropicProvider for agent LLM calls.
 
     Args:
         llm_api_key: API key for LLM calls
-        llm_model: Model name (e.g., 'claude-sonnet-4-20250514', 'glm-4.7')
+        llm_model: Model name (e.g., 'claude-sonnet-4-20250514')
         llm_base_url: Base URL for API (CRS proxy URL)
 
     Returns:
-        AMIModelBackend instance configured with API key and model.
+        AnthropicProvider instance configured with API key and model.
     """
-    logger.info(f"[AgentFactory] Creating AMI model backend: model={llm_model}, url={llm_base_url}")
+    logger.info(f"[AgentFactory] Creating provider: model={llm_model}, url={llm_base_url}")
 
-    return AMIModelBackend(
-        model_type=llm_model,
+    return AnthropicProvider(
         api_key=llm_api_key,
-        url=llm_base_url,
+        model_name=llm_model,
+        base_url=llm_base_url,
     )
-
-
-def _extract_callable(tool):
-    """Pass through FunctionTool objects to preserve set_function_name().
-
-    Previously this extracted the underlying callable, which caused
-    set_function_name() to be lost when CAMEL recreated the FunctionTool.
-    Now we just return the tool as-is to preserve the custom name.
-    """
-    # Just return the tool as-is - CAMEL's convert_to_function_tool handles it
-    return tool
 
 
 def _get_now_str() -> str:
@@ -172,7 +129,6 @@ The current date is {now_str}(Accurate to the hour). For any date-related tasks,
 Your capabilities include:
 - Search and get information from the web using the search tools.
 - Use the rich browser related toolset to investigate websites.
-- Use `browser_get_page_snapshot(include_links=True)` to extract all links with their href URLs from the current page.
 - Use the terminal tools to perform local operations.
 - Use the note-taking tools to record your findings.
 - Use the human toolkit to ask for help when you are stuck.
@@ -756,23 +712,9 @@ async def create_browser_agent(
     llm_api_key: Optional[str] = None,
     llm_model: Optional[str] = None,
     llm_base_url: Optional[str] = None,
-) -> ListenChatAgent:
+) -> AMIAgent:
     """
-    Create a configured ListenChatAgent for browser-based research tasks.
-
-    This factory function creates a ListenChatAgent with:
-    - BrowserToolkit for web interaction (browser session created on-demand)
-    - TerminalToolkit for command execution
-    - NoteTakingToolkit for documentation
-    - SearchToolkit for web search
-    - HumanToolkit for user interaction
-    - MemoryToolkit (optional) for knowledge retrieval
-
-    Based on Eigent's browser_agent factory.
-
-    Note: BrowserToolkit uses session_id mode, where the browser session is
-    created on-demand when the first browser tool is called. This is clone-safe:
-    multiple agent clones with the same task_id share the same browser session.
+    Create a configured AMIAgent for browser-based research tasks.
 
     Args:
         task_state: TaskState for SSE event emission
@@ -789,15 +731,19 @@ async def create_browser_agent(
         llm_base_url: LLM base URL
 
     Returns:
-        Configured ListenChatAgent instance
+        Configured AMIAgent instance
     """
+    from ..tools.toolkits import (
+        NoteTakingToolkit, SearchToolkit, TerminalToolkit,
+        HumanToolkit, BrowserToolkit, MemoryToolkit,
+    )
+
     logger.info(f"[AgentFactory] Creating browser agent for task {task_id}")
     logger.info(f"[AgentFactory] Working directory: {working_directory}")
     logger.info(f"[AgentFactory] Browser data directory: {browser_data_directory}")
     logger.info(f"[AgentFactory] Headless mode: {headless}")
 
     agent_name = "browser_agent"
-    # Use working_directory for notes so files can be accessed by shell in same directory
     notes_dir = working_directory
 
     # Initialize toolkits
@@ -813,11 +759,8 @@ async def create_browser_agent(
     human_toolkit = HumanToolkit()
     human_toolkit.set_task_state(task_state)
 
-    # Create BrowserToolkit with session_id mode
-    # Session is created on-demand using HybridBrowserSession's singleton mechanism.
-    # This is clone-safe - multiple agent clones share the same browser via session_id.
     browser_toolkit = BrowserToolkit(
-        session_id=task_id,  # Use task_id for session isolation
+        session_id=task_id,
         headless=headless,
         user_data_dir=browser_data_directory,
     )
@@ -825,11 +768,11 @@ async def create_browser_agent(
     logger.info(f"[AgentFactory] BrowserToolkit created with session_id={task_id}")
 
     tools = [
-        *[_extract_callable(t) for t in note_toolkit.get_tools()],
-        *[_extract_callable(t) for t in search_toolkit.get_tools()],
-        *[_extract_callable(t) for t in terminal_toolkit.get_tools()],
-        *[_extract_callable(t) for t in human_toolkit.get_tools()],
-        *[_extract_callable(t) for t in browser_toolkit.get_tools()],
+        *note_toolkit.get_tools(),
+        *search_toolkit.get_tools(),
+        *terminal_toolkit.get_tools(),
+        *human_toolkit.get_tools(),
+        *browser_toolkit.get_tools(),
     ]
 
     # Add memory toolkit if configured
@@ -840,10 +783,10 @@ async def create_browser_agent(
             user_id=user_id,
         )
         memory_toolkit.set_task_state(task_state)
-        tools.extend([_extract_callable(t) for t in memory_toolkit.get_tools()])
+        tools.extend(memory_toolkit.get_tools())
         logger.info("[AgentFactory] MemoryToolkit added")
 
-    # Build system prompt (using Eigent's BROWSER_SYS_PROMPT)
+    # Build system prompt
     system_message = BROWSER_AGENT_SYSTEM_PROMPT.format(
         platform_system=platform.system(),
         platform_machine=platform.machine(),
@@ -851,37 +794,28 @@ async def create_browser_agent(
         now_str=_get_now_str(),
     )
 
-    # Create model configuration
-    model_config = None
-    if llm_api_key and llm_model:
-        model_config = create_model_backend(
-            llm_api_key=llm_api_key,
-            llm_model=llm_model,
-            llm_base_url=llm_base_url,
-        )
+    # Create provider
+    provider = create_provider(
+        llm_api_key=llm_api_key,
+        llm_model=llm_model,
+        llm_base_url=llm_base_url,
+    )
 
     # Create the agent
-    # Set token_limit to enable CAMEL's automatic context summarization
-    agent = ListenChatAgent(
+    agent = AMIAgent(
         task_state=task_state,
         agent_name=agent_name,
-        system_message=system_message,
-        model=model_config,
+        provider=provider,
+        system_prompt=system_message,
         tools=tools,
-        agent_id=f"{agent_name}_{task_id}_{uuid.uuid4().hex[:8]}",
-        token_limit=200000,  # Enable auto-summarization when context exceeds 100k tokens (50%)
     )
 
     # Set NoteTakingToolkit reference for workflow guide persistence
     agent.set_note_toolkit(note_toolkit)
 
-    # Set agent reference in toolkits for IntentSequence cache integration
-    # This enables:
-    # - BrowserToolkit: URL change notifications for cache invalidation
-    # - MemoryToolkit: Caching query_page_operations results
+    # Set agent reference in toolkits for URL change notifications and cache
     browser_toolkit.set_agent(agent)
     if memory_api_base_url and ami_api_key and user_id:
-        # Note: memory_toolkit was created above, need to set agent reference
         memory_toolkit.set_agent(agent)
 
     logger.info(f"[AgentFactory] Browser agent created with {len(tools)} tools")
@@ -902,19 +836,13 @@ async def create_listen_browser_agent(
     llm_api_key: Optional[str] = None,
     llm_model: Optional[str] = None,
     llm_base_url: Optional[str] = None,
-) -> ListenBrowserAgent:
+) -> AMIBrowserAgent:
     """
-    Create a ListenBrowserAgent with full browser automation capabilities.
+    Create an AMIBrowserAgent with full browser automation capabilities.
 
-    This factory creates a ListenBrowserAgent which includes:
+    This factory creates an AMIBrowserAgent which includes:
     - All toolkits (Browser, NoteTaking, Search, Terminal, Human, Memory)
-    - Internal subtask management (get_current_plan, complete_subtask, replan_task)
-    - Memory L1 direct subtask conversion from cognitive_phrase
-
-    Use this when you need an agent that can:
-    - Handle a complete browser task with internal decomposition
-    - Track progress through internal subtask management
-    - Dynamically replan when discovering new items
+    - Memory page operations (auto-queried on URL change)
 
     Args:
         task_state: TaskState for SSE event emission
@@ -923,6 +851,7 @@ async def create_listen_browser_agent(
         notes_directory: Directory for notes (defaults to working_directory)
         browser_data_directory: Directory for browser user data
         headless: Whether to run browser in headless mode
+        export_model_visible_snapshots: Whether to export model-visible snapshots
         memory_api_base_url: API URL for memory service
         ami_api_key: AMI API key
         user_id: User identifier
@@ -931,13 +860,16 @@ async def create_listen_browser_agent(
         llm_base_url: LLM base URL
 
     Returns:
-        Configured ListenBrowserAgent instance
+        Configured AMIBrowserAgent instance
     """
-    logger.info(f"[AgentFactory] Creating ListenBrowserAgent for task {task_id}")
+    logger.info(f"[AgentFactory] Creating AMIBrowserAgent for task {task_id}")
+
+    from ..tools.toolkits import (
+        NoteTakingToolkit, SearchToolkit, TerminalToolkit,
+        HumanToolkit, BrowserToolkit, MemoryToolkit,
+    )
 
     agent_name = "listen_browser_agent"
-    # Use working_directory for notes as well, so files created by create_note
-    # can be accessed by shell_exec_async in the same directory
     notes_dir = working_directory
 
     # Initialize toolkits
@@ -953,7 +885,6 @@ async def create_listen_browser_agent(
     human_toolkit = HumanToolkit()
     human_toolkit.set_task_state(task_state)
 
-    # Create BrowserToolkit with session_id mode
     browser_toolkit = BrowserToolkit(
         session_id=task_id,
         headless=headless,
@@ -971,56 +902,55 @@ async def create_listen_browser_agent(
         )
         memory_toolkit.set_task_state(task_state)
 
-    # Create model configuration
-    model_config = None
-    if llm_api_key and llm_model:
-        model_config = create_model_backend(
-            llm_api_key=llm_api_key,
-            llm_model=llm_model,
-            llm_base_url=llm_base_url,
-        )
-
-    # Build tools list for LLM - same as create_browser_agent
+    # Build tools list
     tools = [
-        *[_extract_callable(t) for t in note_toolkit.get_tools()],
-        *[_extract_callable(t) for t in search_toolkit.get_tools()],
-        *[_extract_callable(t) for t in terminal_toolkit.get_tools()],
-        *[_extract_callable(t) for t in human_toolkit.get_tools()],
-        *[_extract_callable(t) for t in browser_toolkit.get_tools()],
+        *note_toolkit.get_tools(),
+        *search_toolkit.get_tools(),
+        *terminal_toolkit.get_tools(),
+        *human_toolkit.get_tools(),
+        *browser_toolkit.get_tools(),
     ]
 
-    # Add memory toolkit tools if available
     if memory_toolkit:
-        tools.extend([_extract_callable(t) for t in memory_toolkit.get_tools()])
+        tools.extend(memory_toolkit.get_tools())
 
-    # Create the agent with tools passed to parent class
-    # Set token_limit to enable CAMEL's automatic context summarization
-    # GLM-4 has ~200k context, so we set 150k as limit to leave room for response
-    agent = ListenBrowserAgent(
+    # Build system prompt (same as browser agent)
+    system_message = BROWSER_AGENT_SYSTEM_PROMPT.format(
+        platform_system=platform.system(),
+        platform_machine=platform.machine(),
+        working_directory=working_directory,
+        now_str=_get_now_str(),
+    )
+
+    # Create provider
+    provider = create_provider(
+        llm_api_key=llm_api_key,
+        llm_model=llm_model,
+        llm_base_url=llm_base_url,
+    )
+
+    # Create the agent
+    agent = AMIBrowserAgent(
         task_state=task_state,
         agent_name=agent_name,
-        browser_session=None,  # Will be created on-demand by BrowserToolkit
-        browser_toolkit=browser_toolkit,
-        note_toolkit=note_toolkit,
-        search_toolkit=search_toolkit,
-        terminal_toolkit=terminal_toolkit,
-        human_toolkit=human_toolkit,
+        provider=provider,
+        system_prompt=system_message,
+        tools=tools,
         memory_toolkit=memory_toolkit,
-        working_directory=working_directory,
-        model=model_config,
-        tools=tools,  # Pass tools to parent class for LLM awareness
-        token_limit=200000,  # Enable auto-summarization when context exceeds 100k tokens (50%)
     )
+
+    # Set NoteTakingToolkit reference
+    agent.set_note_toolkit(note_toolkit)
 
     if export_model_visible_snapshots:
         agent.enable_model_visible_snapshot_export(True)
 
-    # Set agent reference in toolkits for IntentSequence cache integration
+    # Set agent reference in toolkits
     browser_toolkit.set_agent(agent)
     if memory_toolkit:
         memory_toolkit.set_agent(agent)
 
-    logger.info(f"[AgentFactory] ListenBrowserAgent created")
+    logger.info(f"[AgentFactory] AMIBrowserAgent created")
     return agent
 
 
@@ -1032,18 +962,9 @@ def create_developer_agent(
     llm_api_key: Optional[str] = None,
     llm_model: Optional[str] = None,
     llm_base_url: Optional[str] = None,
-) -> ListenChatAgent:
+) -> AMIAgent:
     """
-    Create a configured ListenChatAgent for development tasks.
-
-    This factory function creates a ListenChatAgent with:
-    - TerminalToolkit for command execution
-    - NoteTakingToolkit for documentation
-    - HumanToolkit for user interaction
-    - ScreenshotToolkit for visual analysis
-    - WebDeployToolkit for web deployment
-
-    Based on Eigent's developer_agent factory.
+    Create a configured AMIAgent for development tasks.
 
     Args:
         task_state: TaskState for SSE event emission
@@ -1055,13 +976,16 @@ def create_developer_agent(
         llm_base_url: LLM base URL
 
     Returns:
-        Configured ListenChatAgent instance
+        Configured AMIAgent instance
     """
     logger.info(f"[AgentFactory] Creating developer agent for task {task_id}")
     logger.info(f"[AgentFactory] Working directory: {working_directory}")
 
+    from ..tools.toolkits import (
+        NoteTakingToolkit, TerminalToolkit, HumanToolkit,
+    )
+
     agent_name = "developer_agent"
-    # Use working_directory for notes so files can be accessed by shell in same directory
     notes_dir = working_directory
 
     # Initialize toolkits
@@ -1074,21 +998,13 @@ def create_developer_agent(
     human_toolkit = HumanToolkit()
     human_toolkit.set_task_state(task_state)
 
-    screenshot_toolkit = ScreenshotToolkit(working_directory=working_directory)
-    screenshot_toolkit.set_task_state(task_state)
-
-    web_deploy_toolkit = WebDeployToolkit()
-    web_deploy_toolkit.set_task_state(task_state)
-
     tools = [
-        *[_extract_callable(t) for t in note_toolkit.get_tools()],
-        *[_extract_callable(t) for t in terminal_toolkit.get_tools()],
-        *[_extract_callable(t) for t in human_toolkit.get_tools()],
-        *[_extract_callable(t) for t in screenshot_toolkit.get_tools()],
-        *[_extract_callable(t) for t in web_deploy_toolkit.get_tools()],
+        *note_toolkit.get_tools(),
+        *terminal_toolkit.get_tools(),
+        *human_toolkit.get_tools(),
     ]
 
-    # Build system prompt (using Eigent's DEVELOPER_SYS_PROMPT)
+    # Build system prompt
     system_message = DEVELOPER_AGENT_SYSTEM_PROMPT.format(
         platform_system=platform.system(),
         platform_machine=platform.machine(),
@@ -1096,25 +1012,20 @@ def create_developer_agent(
         now_str=_get_now_str(),
     )
 
-    # Create model configuration
-    model_config = None
-    if llm_api_key and llm_model:
-        model_config = create_model_backend(
-            llm_api_key=llm_api_key,
-            llm_model=llm_model,
-            llm_base_url=llm_base_url,
-        )
+    # Create provider
+    provider = create_provider(
+        llm_api_key=llm_api_key,
+        llm_model=llm_model,
+        llm_base_url=llm_base_url,
+    )
 
     # Create the agent
-    # Set token_limit to enable CAMEL's automatic context summarization
-    agent = ListenChatAgent(
+    agent = AMIAgent(
         task_state=task_state,
         agent_name=agent_name,
-        system_message=system_message,
-        model=model_config,
+        provider=provider,
+        system_prompt=system_message,
         tools=tools,
-        agent_id=f"{agent_name}_{task_id}_{uuid.uuid4().hex[:8]}",
-        token_limit=200000,  # Enable auto-summarization when context exceeds 100k tokens (50%)
     )
 
     # Set NoteTakingToolkit reference for workflow guide persistence
@@ -1132,21 +1043,9 @@ async def create_document_agent(
     llm_api_key: Optional[str] = None,
     llm_model: Optional[str] = None,
     llm_base_url: Optional[str] = None,
-) -> ListenChatAgent:
+) -> AMIAgent:
     """
-    Create a configured ListenChatAgent for document creation tasks.
-
-    This factory function creates a ListenChatAgent with:
-    - FileToolkit for file reading and writing
-    - PPTXToolkit for PowerPoint presentations
-    - ExcelToolkit for spreadsheet operations
-    - MarkItDownToolkit for document reading
-    - GoogleDriveMCPToolkit for Google Drive integration (if configured)
-    - TerminalToolkit for command execution
-    - NoteTakingToolkit for documentation
-    - HumanToolkit for user interaction
-
-    Based on Eigent's document_agent factory.
+    Create a configured AMIAgent for document creation tasks.
 
     Note: This is an async function because GoogleDriveMCPToolkit requires
     async initialization.
@@ -1161,13 +1060,18 @@ async def create_document_agent(
         llm_base_url: LLM base URL
 
     Returns:
-        Configured ListenChatAgent instance
+        Configured AMIAgent instance
     """
     logger.info(f"[AgentFactory] Creating document agent for task {task_id}")
     logger.info(f"[AgentFactory] Working directory: {working_directory}")
 
+    from ..tools.toolkits import (
+        NoteTakingToolkit, TerminalToolkit, HumanToolkit,
+        FileToolkit, PPTXToolkit, ExcelToolkit, MarkItDownToolkit,
+        GoogleDriveMCPToolkit,
+    )
+
     agent_name = "document_agent"
-    # Use working_directory for notes so files can be accessed by shell in same directory
     notes_dir = working_directory
 
     # Initialize toolkits
@@ -1193,13 +1097,13 @@ async def create_document_agent(
     human_toolkit.set_task_state(task_state)
 
     tools = [
-        *[_extract_callable(t) for t in file_toolkit.get_tools()],
-        *[_extract_callable(t) for t in pptx_toolkit.get_tools()],
-        *[_extract_callable(t) for t in excel_toolkit.get_tools()],
-        *[_extract_callable(t) for t in markitdown_toolkit.get_tools()],
-        *[_extract_callable(t) for t in note_toolkit.get_tools()],
-        *[_extract_callable(t) for t in terminal_toolkit.get_tools()],
-        *[_extract_callable(t) for t in human_toolkit.get_tools()],
+        *file_toolkit.get_tools(),
+        *pptx_toolkit.get_tools(),
+        *excel_toolkit.get_tools(),
+        *markitdown_toolkit.get_tools(),
+        *note_toolkit.get_tools(),
+        *terminal_toolkit.get_tools(),
+        *human_toolkit.get_tools(),
     ]
 
     # Try to add Google Drive MCP toolkit if configured
@@ -1209,12 +1113,12 @@ async def create_document_agent(
             gdrive_toolkit = GoogleDriveMCPToolkit()
             if await gdrive_toolkit.initialize():
                 gdrive_toolkit.set_task_state(task_state)
-                tools.extend([_extract_callable(t) for t in gdrive_toolkit.get_function_tools()])
+                tools.extend(gdrive_toolkit.get_function_tools())
                 logger.info("[AgentFactory] GoogleDriveMCPToolkit added")
     except Exception as e:
         logger.warning(f"[AgentFactory] Could not initialize GoogleDriveMCPToolkit: {e}")
 
-    # Build system prompt (using Eigent's DOCUMENT_SYS_PROMPT)
+    # Build system prompt
     system_message = DOCUMENT_AGENT_SYSTEM_PROMPT.format(
         platform_system=platform.system(),
         platform_machine=platform.machine(),
@@ -1222,25 +1126,20 @@ async def create_document_agent(
         now_str=_get_now_str(),
     )
 
-    # Create model configuration
-    model_config = None
-    if llm_api_key and llm_model:
-        model_config = create_model_backend(
-            llm_api_key=llm_api_key,
-            llm_model=llm_model,
-            llm_base_url=llm_base_url,
-        )
+    # Create provider
+    provider = create_provider(
+        llm_api_key=llm_api_key,
+        llm_model=llm_model,
+        llm_base_url=llm_base_url,
+    )
 
     # Create the agent
-    # Set token_limit to enable CAMEL's automatic context summarization
-    agent = ListenChatAgent(
+    agent = AMIAgent(
         task_state=task_state,
         agent_name=agent_name,
-        system_message=system_message,
-        model=model_config,
+        provider=provider,
+        system_prompt=system_message,
         tools=tools,
-        agent_id=f"{agent_name}_{task_id}_{uuid.uuid4().hex[:8]}",
-        token_limit=200000,  # Enable auto-summarization when context exceeds 100k tokens (50%)
     )
 
     # Set NoteTakingToolkit reference for workflow guide persistence
@@ -1258,20 +1157,9 @@ def create_multi_modal_agent(
     llm_api_key: Optional[str] = None,
     llm_model: Optional[str] = None,
     llm_base_url: Optional[str] = None,
-) -> ListenChatAgent:
+) -> AMIAgent:
     """
-    Create a configured ListenChatAgent for multi-modal processing tasks.
-
-    This factory function creates a ListenChatAgent with:
-    - VideoDownloaderToolkit for video download
-    - ImageAnalysisToolkit for image analysis
-    - AudioAnalysisToolkit for audio transcription and QA (OpenAI platform only)
-    - ImageGenerationToolkit for DALL-E image generation (OpenAI platform only)
-    - TerminalToolkit for command execution
-    - NoteTakingToolkit for documentation
-    - HumanToolkit for user interaction
-
-    Based on Eigent's multi_modal_agent factory.
+    Create a configured AMIAgent for multi-modal processing tasks.
 
     Note: AudioAnalysisToolkit and ImageGenerationToolkit are only added when
     using OpenAI platform, as they require OpenAI-specific APIs (Whisper, DALL-E).
@@ -1286,19 +1174,24 @@ def create_multi_modal_agent(
         llm_base_url: LLM base URL
 
     Returns:
-        Configured ListenChatAgent instance
+        Configured AMIAgent instance
     """
     logger.info(f"[AgentFactory] Creating multi-modal agent for task {task_id}")
     logger.info(f"[AgentFactory] Working directory: {working_directory}")
 
+    from ..tools.toolkits import (
+        NoteTakingToolkit, TerminalToolkit, HumanToolkit,
+        VideoDownloaderToolkit, ImageAnalysisToolkit,
+        AudioAnalysisToolkit, ImageGenerationToolkit,
+    )
+
     agent_name = "multi_modal_agent"
-    # Use working_directory for notes so files can be accessed by shell in same directory
     notes_dir = working_directory
 
-    # Create model configuration for vision/audio toolkits
-    vision_model = None
+    # Create vision provider for ImageAnalysisToolkit
+    vision_provider = None
     if llm_api_key and llm_model:
-        vision_model = create_model_backend(
+        vision_provider = create_provider(
             llm_api_key=llm_api_key,
             llm_model=llm_model,
             llm_base_url=llm_base_url,
@@ -1308,7 +1201,7 @@ def create_multi_modal_agent(
     video_toolkit = VideoDownloaderToolkit(working_directory=working_directory)
     video_toolkit.set_task_state(task_state)
 
-    image_toolkit = ImageAnalysisToolkit(model=vision_model)
+    image_toolkit = ImageAnalysisToolkit(provider=vision_provider)
     image_toolkit.set_task_state(task_state)
 
     note_toolkit = NoteTakingToolkit(notes_directory=notes_dir)
@@ -1321,19 +1214,18 @@ def create_multi_modal_agent(
     human_toolkit.set_task_state(task_state)
 
     tools = [
-        *[_extract_callable(t) for t in video_toolkit.get_tools()],
-        *[_extract_callable(t) for t in image_toolkit.get_tools()],
-        *[_extract_callable(t) for t in note_toolkit.get_tools()],
-        *[_extract_callable(t) for t in terminal_toolkit.get_tools()],
-        *[_extract_callable(t) for t in human_toolkit.get_tools()],
+        *video_toolkit.get_tools(),
+        *image_toolkit.get_tools(),
+        *note_toolkit.get_tools(),
+        *terminal_toolkit.get_tools(),
+        *human_toolkit.get_tools(),
     ]
 
-    # Determine if we're using OpenAI platform (Eigent pattern)
+    # Determine if we're using OpenAI platform
     # AudioAnalysisToolkit and ImageGenerationToolkit require OpenAI APIs
     is_openai_platform = False
     if llm_model:
         model_lower = llm_model.lower()
-        # Check for OpenAI model patterns
         is_openai_platform = any(pattern in model_lower for pattern in [
             'gpt-', 'gpt4', 'o1-', 'o3-', 'chatgpt', 'openai'
         ])
@@ -1343,21 +1235,14 @@ def create_multi_modal_agent(
     if is_openai_platform and llm_api_key:
         # Add AudioAnalysisToolkit (requires OpenAI Whisper API)
         try:
-            from camel.models import OpenAIAudioModels
-
-            # Create OpenAI audio model with user's API key and base URL
-            audio_model = OpenAIAudioModels(
-                api_key=llm_api_key,
-                url=llm_base_url,
-            )
-
             audio_toolkit = AudioAnalysisToolkit(
                 cache_dir=working_directory,
-                transcribe_model=audio_model,
-                audio_reasoning_model=vision_model,
+                api_key=llm_api_key,
+                base_url=llm_base_url,
+                reasoning_provider=vision_provider,
             )
             audio_toolkit.set_task_state(task_state)
-            tools.extend([_extract_callable(t) for t in audio_toolkit.get_tools()])
+            tools.extend(audio_toolkit.get_tools())
             logger.info("[AgentFactory] AudioAnalysisToolkit added (OpenAI platform)")
         except Exception as e:
             logger.warning(f"[AgentFactory] Could not initialize AudioAnalysisToolkit: {e}")
@@ -1370,14 +1255,14 @@ def create_multi_modal_agent(
                 base_url=llm_base_url,
             )
             image_gen_toolkit.set_task_state(task_state)
-            tools.extend([_extract_callable(t) for t in image_gen_toolkit.get_tools()])
+            tools.extend(image_gen_toolkit.get_tools())
             logger.info("[AgentFactory] ImageGenerationToolkit added (OpenAI platform)")
         except Exception as e:
             logger.warning(f"[AgentFactory] Could not initialize ImageGenerationToolkit: {e}")
     else:
         logger.info(f"[AgentFactory] Skipping OpenAI-specific toolkits: not on OpenAI platform or no API key")
 
-    # Build system prompt (using Eigent's MULTI_MODAL_SYS_PROMPT)
+    # Build system prompt
     system_message = MULTI_MODAL_AGENT_SYSTEM_PROMPT.format(
         platform_system=platform.system(),
         platform_machine=platform.machine(),
@@ -1385,25 +1270,20 @@ def create_multi_modal_agent(
         now_str=_get_now_str(),
     )
 
-    # Create model configuration
-    model_config = None
-    if llm_api_key and llm_model:
-        model_config = create_model_backend(
-            llm_api_key=llm_api_key,
-            llm_model=llm_model,
-            llm_base_url=llm_base_url,
-        )
+    # Create provider for the agent
+    provider = create_provider(
+        llm_api_key=llm_api_key,
+        llm_model=llm_model,
+        llm_base_url=llm_base_url,
+    )
 
     # Create the agent
-    # Set token_limit to enable CAMEL's automatic context summarization
-    agent = ListenChatAgent(
+    agent = AMIAgent(
         task_state=task_state,
         agent_name=agent_name,
-        system_message=system_message,
-        model=model_config,
+        provider=provider,
+        system_prompt=system_message,
         tools=tools,
-        agent_id=f"{agent_name}_{task_id}_{uuid.uuid4().hex[:8]}",
-        token_limit=200000,  # Enable auto-summarization when context exceeds 100k tokens (50%)
     )
 
     # Set NoteTakingToolkit reference for workflow guide persistence
@@ -1420,19 +1300,9 @@ async def create_social_medium_agent(
     llm_api_key: Optional[str] = None,
     llm_model: Optional[str] = None,
     llm_base_url: Optional[str] = None,
-) -> ListenChatAgent:
+) -> AMIAgent:
     """
-    Create a configured ListenChatAgent for social media and communication tasks.
-
-    This factory function creates a ListenChatAgent with:
-    - GmailMCPToolkit for email operations (if configured)
-    - GoogleCalendarToolkit for calendar management (if configured)
-    - NotionMCPToolkit for Notion integration (if configured)
-    - TerminalToolkit for command execution
-    - NoteTakingToolkit for documentation
-    - HumanToolkit for user interaction
-
-    Based on Eigent's social_medium_agent factory.
+    Create a configured AMIAgent for social media and communication tasks.
 
     Note: This is an async function because some MCP toolkits require
     async initialization.
@@ -1446,8 +1316,13 @@ async def create_social_medium_agent(
         llm_base_url: LLM base URL
 
     Returns:
-        Configured ListenChatAgent instance
+        Configured AMIAgent instance
     """
+    from ..tools.toolkits import (
+        NoteTakingToolkit, TerminalToolkit, HumanToolkit,
+        GmailMCPToolkit, NotionMCPToolkit, GoogleCalendarToolkit,
+    )
+
     logger.info(f"[AgentFactory] Creating social medium agent for task {task_id}")
     logger.info(f"[AgentFactory] Working directory: {working_directory}")
 
@@ -1464,9 +1339,9 @@ async def create_social_medium_agent(
     human_toolkit.set_task_state(task_state)
 
     tools = [
-        *[_extract_callable(t) for t in note_toolkit.get_tools()],
-        *[_extract_callable(t) for t in terminal_toolkit.get_tools()],
-        *[_extract_callable(t) for t in human_toolkit.get_tools()],
+        *note_toolkit.get_tools(),
+        *terminal_toolkit.get_tools(),
+        *human_toolkit.get_tools(),
     ]
 
     # Try to add Gmail MCP toolkit if configured
@@ -1474,7 +1349,7 @@ async def create_social_medium_agent(
         gmail_toolkit = GmailMCPToolkit()
         if await gmail_toolkit.initialize():
             gmail_toolkit.set_task_state(task_state)
-            tools.extend([_extract_callable(t) for t in gmail_toolkit.get_function_tools()])
+            tools.extend(gmail_toolkit.get_function_tools())
             logger.info("[AgentFactory] GmailMCPToolkit added")
     except Exception as e:
         logger.warning(f"[AgentFactory] Could not initialize GmailMCPToolkit: {e}")
@@ -1482,12 +1357,11 @@ async def create_social_medium_agent(
     # Try to add Google Calendar toolkit if configured
     try:
         import os
-        # GoogleCalendarToolkit requires GCAL_CREDENTIALS_PATH, not GOOGLE_CLIENT_ID/SECRET
         if os.environ.get("GCAL_CREDENTIALS_PATH"):
             calendar_toolkit = GoogleCalendarToolkit()
             await calendar_toolkit.initialize()
             calendar_toolkit.set_task_state(task_state)
-            tools.extend([_extract_callable(t) for t in calendar_toolkit.get_tools()])
+            tools.extend(calendar_toolkit.get_tools())
             logger.info("[AgentFactory] GoogleCalendarToolkit added")
     except Exception as e:
         logger.warning(f"[AgentFactory] Could not initialize GoogleCalendarToolkit: {e}")
@@ -1497,36 +1371,31 @@ async def create_social_medium_agent(
         notion_toolkit = NotionMCPToolkit()
         if await notion_toolkit.initialize():
             notion_toolkit.set_task_state(task_state)
-            tools.extend([_extract_callable(t) for t in notion_toolkit.get_function_tools()])
+            tools.extend(notion_toolkit.get_function_tools())
             logger.info("[AgentFactory] NotionMCPToolkit added")
     except Exception as e:
         logger.warning(f"[AgentFactory] Could not initialize NotionMCPToolkit: {e}")
 
-    # Build system prompt (using Eigent's SOCIAL_MEDIA_SYS_PROMPT)
+    # Build system prompt
     system_message = SOCIAL_MEDIUM_AGENT_SYSTEM_PROMPT.format(
         working_directory=working_directory,
         now_str=_get_now_str(),
     )
 
-    # Create model configuration
-    model_config = None
-    if llm_api_key and llm_model:
-        model_config = create_model_backend(
-            llm_api_key=llm_api_key,
-            llm_model=llm_model,
-            llm_base_url=llm_base_url,
-        )
+    # Create provider
+    provider = create_provider(
+        llm_api_key=llm_api_key,
+        llm_model=llm_model,
+        llm_base_url=llm_base_url,
+    )
 
     # Create the agent
-    # Set token_limit to enable CAMEL's automatic context summarization
-    agent = ListenChatAgent(
+    agent = AMIAgent(
         task_state=task_state,
         agent_name=agent_name,
-        system_message=system_message,
-        model=model_config,
+        provider=provider,
+        system_prompt=system_message,
         tools=tools,
-        agent_id=f"{agent_name}_{task_id}_{uuid.uuid4().hex[:8]}",
-        token_limit=200000,  # Enable auto-summarization when context exceeds 100k tokens (50%)
     )
 
     # Set NoteTakingToolkit reference for workflow guide persistence
@@ -1537,21 +1406,16 @@ async def create_social_medium_agent(
 
 
 # ============================================================================
-# Task Summary Agent
+# Task Summary
 # ============================================================================
 
-def create_task_summary_agent(
+def create_task_summary_provider(
     llm_api_key: str,
     llm_model: str,
     llm_base_url: Optional[str] = None,
-) -> ChatAgent:
+) -> AnthropicProvider:
     """
-    Create a ChatAgent for summarizing task results.
-
-    This agent is used to aggregate and summarize the results from multiple
-    subtasks into a coherent, user-friendly output.
-
-    Based on Eigent's task_summary_agent.
+    Create an AnthropicProvider for summarizing task results.
 
     Args:
         llm_api_key: LLM API key
@@ -1559,37 +1423,26 @@ def create_task_summary_agent(
         llm_base_url: LLM base URL
 
     Returns:
-        Configured ChatAgent instance for summarization
+        AnthropicProvider for summarization
     """
-    logger.info(f"[AgentFactory] Creating task summary agent with model={llm_model}")
-
-    model_config = create_model_backend(
+    logger.info(f"[AgentFactory] Creating task summary provider with model={llm_model}")
+    return create_provider(
         llm_api_key=llm_api_key,
         llm_model=llm_model,
         llm_base_url=llm_base_url,
     )
 
-    agent = ChatAgent(
-        system_message=TASK_SUMMARY_AGENT_SYSTEM_PROMPT,
-        model=model_config,
-    )
-
-    logger.info("[AgentFactory] Task summary agent created")
-    return agent
-
 
 async def summarize_subtasks_results(
-    agent: ChatAgent,
+    provider: AnthropicProvider,
     main_task: str,
     subtasks: List[Dict[str, Any]],
 ) -> str:
     """
     Summarize the aggregated results from all subtasks into a concise summary.
 
-    Based on Eigent's summary_subtasks_result function.
-
     Args:
-        agent: The summary agent to use
+        provider: AnthropicProvider to use for summarization
         main_task: The main task description
         subtasks: List of subtask dicts with 'id', 'content', 'result' fields
 
@@ -1624,8 +1477,13 @@ Instructions:
 Summary:
 """
 
-    response = await agent.astep(prompt)
-    summary = response.msgs[0].content if response.msgs else response.msg.content
+    response = await provider.generate_with_tools(
+        system_prompt=TASK_SUMMARY_AGENT_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": prompt}],
+        tools=[],
+        max_tokens=4096,
+    )
+    summary = response.get_text()
 
     logger.info(f"[AgentFactory] Generated summary for {len(subtasks)} subtasks")
     return summary

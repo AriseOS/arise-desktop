@@ -52,23 +52,23 @@ from .task_router import (
     route_task,
 )
 
-# Listen agents
-from .listen_chat_agent import ListenChatAgent
-from .listen_browser_agent import ListenBrowserAgent
-from .ami_model_backend import AMIModelBackend
+# AMI Agents (replaces CAMEL ChatAgent/ListenChatAgent)
+from .ami_tool import AMITool
+from .ami_agent import AMIAgent, AMIAgentResponse
+from .ami_browser_agent import AMIBrowserAgent
 
 # AMI Task Executor (replaces CAMEL Workforce)
 from .ami_task_executor import AMITaskExecutor, AMISubtask, SubtaskState
 from .ami_task_planner import AMITaskPlanner
 from .agent_factories import (
-    create_model_backend,
+    create_provider,
     create_browser_agent,
     create_listen_browser_agent,
     create_developer_agent,
     create_document_agent,
     create_multi_modal_agent,
     create_social_medium_agent,
-    create_task_summary_agent,
+    create_task_summary_provider,
     summarize_subtasks_results,
 )
 
@@ -130,24 +130,25 @@ __all__ = [
     "get_router",
     "route_task",
 
-    # Listen agents
-    "ListenChatAgent",
-    "ListenBrowserAgent",
-    "AMIModelBackend",
+    # AMI Agents
+    "AMITool",
+    "AMIAgent",
+    "AMIAgentResponse",
+    "AMIBrowserAgent",
 
-    # AMI Task Executor (replaces CAMEL Workforce)
+    # AMI Task Executor
     "AMITaskExecutor",
     "AMISubtask",
     "SubtaskState",
     "AMITaskPlanner",
-    "create_model_backend",
+    "create_provider",
     "create_browser_agent",
     "create_listen_browser_agent",
     "create_developer_agent",
     "create_document_agent",
     "create_multi_modal_agent",
     "create_social_medium_agent",
-    "create_task_summary_agent",
+    "create_task_summary_provider",
     "summarize_subtasks_results",
 
     # Orchestrator Agent
