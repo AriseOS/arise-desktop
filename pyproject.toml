@@ -31,40 +31,49 @@ dependencies = [
     "pyyaml>=6.0.1",
     "json-repair>=0.30.0",
 
-    # Database
-    "sqlalchemy>=2.0.23",
-    "aiosqlite>=0.19.0",
-
     # HTTP client
     "httpx>=0.25.2",
-
-    # Authentication
-    "python-jose[cryptography]>=3.3.0",
-    "passlib[bcrypt]>=1.7.4",
-
-    # System utilities
-    "psutil>=5.9.0",
-    "pathspec>=0.11.0",
-
-    # Graph and data processing
-    "networkx>=3.0",
-    "numpy>=1.24.0",
-    # Neo4j backend
-    "neo4j>=5.0.0",
-    # SurrealDB backend
-    "surrealdb>=1.0.0",
-    "nest-asyncio>=1.6.0",
 
     # LLM providers
     "anthropic>=0.25.0",
     "openai>=1.3.0",
 
-    # Browser automation (using eigent_browser)
-    "playwright>=1.40.0",
-
+    # Utilities
+    "pathspec>=0.11.0",
 ]
 
 [project.optional-dependencies]
+# Desktop app (ami_daemon): pip install .[desktop]
+desktop = [
+    "playwright>=1.40.0",
+    "psutil>=5.9.0",
+    "aiosqlite>=0.19.0",
+    "aiohttp>=3.9.0",
+]
+
+# Cloud backend: pip install .[cloud]
+cloud = [
+    "sqlalchemy>=2.0.23",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+]
+
+# Memory services (common/memory): pip install .[memory]
+memory = [
+    "networkx>=3.0",
+    "numpy>=1.24.0",
+    "neo4j>=5.0.0",
+    "surrealdb>=1.0.0",
+    "nest-asyncio>=1.6.0",
+]
+
+# All components: pip install .[all]
+all = [
+    "ami[desktop]",
+    "ami[cloud]",
+    "ami[memory]",
+]
+
 dev = [
     "pytest>=7.4.3",
     "pytest-asyncio>=0.21.1",
