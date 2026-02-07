@@ -108,16 +108,12 @@ class RecordingService:
             # Get user data directory for browser state persistence
             user_data_dir = self._get_browser_data_dir(user_id)
 
-            # Create browser session
-            self._browser_session = HybridBrowserSession(
-                headless=headless,
-                stealth=True,
-                user_data_dir=user_data_dir,
+            # Get browser session via unified classmethod factory
+            self._browser_session = await HybridBrowserSession.get_session(
                 session_id=f"recording_{self.current_session_id}",
+                headless=headless,
+                user_data_dir=user_data_dir,
             )
-
-            # Ensure browser is started
-            await self._browser_session.ensure_browser()
             logger.info("Browser session initialized")
 
             # Create behavior recorder

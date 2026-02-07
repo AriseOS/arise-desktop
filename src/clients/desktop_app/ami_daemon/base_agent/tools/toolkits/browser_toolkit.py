@@ -42,10 +42,8 @@ class BrowserToolkit(BaseToolkit):
 
     Session Management:
         Uses session_id for on-demand browser session creation.
-        Session is created when the first browser tool is called, using
-        HybridBrowserSession's singleton mechanism. Multiple toolkit instances
-        with the same session_id share the same browser instance, making this
-        clone-safe for CAMEL's agent pooling.
+        Session is resolved once and cached; subsequent tool calls reuse the
+        cached reference with a fast `is_connected()` health check.
 
     Tool Filtering:
         Use `enabled_tools` parameter to control which tools are exposed to the LLM.
@@ -114,8 +112,6 @@ class BrowserToolkit(BaseToolkit):
 
         Args:
             session_id: Session identifier for browser session management.
-                Same session_id across multiple toolkit instances/clones will share
-                the same browser session via HybridBrowserSession's singleton mechanism.
             headless: Whether to run browser in headless mode.
             user_data_dir: Browser user data directory.
             timeout: Default timeout for browser operations.
@@ -129,10 +125,11 @@ class BrowserToolkit(BaseToolkit):
         super().__init__(timeout=timeout)
         self._return_snapshot = return_snapshot
 
-        # Session configuration (session retrieved on-demand via singleton)
+        # Session configuration (resolved on first use, then cached)
         self._session_id = session_id
         self._headless = headless
         self._user_data_dir = user_data_dir
+        self._session: Optional["HybridBrowserSession"] = None
 
         # Agent reference for URL change notifications (IntentSequence cache)
         self._agent = agent
@@ -161,7 +158,7 @@ class BrowserToolkit(BaseToolkit):
         self._agent = agent
         logger.debug(f"BrowserToolkit: agent reference set for URL notifications")
 
-    async def _notify_url_change(self) -> None:
+    async def _notify_url_change(self, session: Optional["HybridBrowserSession"] = None) -> None:
         """Notify the agent of current URL for IntentSequence cache management.
 
         Called after each browser action to enable:
@@ -172,7 +169,8 @@ class BrowserToolkit(BaseToolkit):
             return
 
         try:
-            session = await self._get_session_with_page()
+            if session is None:
+                session = await self._get_session_with_page()
             page = await session.get_page()
             current_url = page.url
             self._agent.set_current_url(current_url)
@@ -181,35 +179,30 @@ class BrowserToolkit(BaseToolkit):
             logger.debug(f"BrowserToolkit: URL notification failed: {e}")
 
     async def _get_session(self) -> "HybridBrowserSession":
-        """Get browser session using HybridBrowserSession's singleton mechanism.
+        """Get browser session, cached after first resolution.
 
-        Each call creates a new HybridBrowserSession instance, but ensure_browser()
-        returns the singleton for this session_id. This approach is clone-safe because
-        we don't cache session references - each toolkit instance independently
-        retrieves the shared session via the singleton registry.
+        Returns the cached session if it's still connected. Otherwise resolves
+        via HybridBrowserSession.get_session() classmethod and caches the result.
 
         Note: This returns the session even if _page is closed. Methods that need
         a valid page should call _ensure_valid_page() separately.
 
         Returns:
-            HybridBrowserSession instance (the actual singleton, not a copy).
+            HybridBrowserSession instance.
         """
-        from ..eigent_browser.browser_session import HybridBrowserSession
+        s = self._session
+        if s is not None and s._browser is not None and s._browser.is_connected():
+            return s
 
-        # Create session instance - HybridBrowserSession's ensure_browser() handles
-        # singleton lookup/creation internally via _get_or_create_instance()
-        session = HybridBrowserSession(
+        # Cache miss or stale — resolve via classmethod factory
+        from ..eigent_browser.browser_session import HybridBrowserSession
+        s = await HybridBrowserSession.get_session(
             session_id=self._session_id,
             headless=self._headless,
             user_data_dir=self._user_data_dir,
-            stealth=True,
         )
-        await session.ensure_browser()
-
-        # Return the actual singleton instance, not a copy
-        # This ensures that any updates to _page are reflected globally
-        singleton = await HybridBrowserSession._get_or_create_instance(session)
-        return singleton
+        self._session = s
+        return s
 
     async def _ensure_valid_page(self, session: "HybridBrowserSession") -> Tuple[bool, Optional[str]]:
         """Ensure session has a valid (non-closed) page.
@@ -343,6 +336,9 @@ class BrowserToolkit(BaseToolkit):
         """
         from ..eigent_browser.browser_session import HybridBrowserSession
 
+        # Invalidate cached session reference
+        self._session = None
+
         logger.info("Restarting browser...")
 
         # Clear old state
@@ -394,17 +390,19 @@ class BrowserToolkit(BaseToolkit):
         """Check if session can be created (always True since session_id is required)."""
         return True
 
-    async def _get_snapshot(self, force_refresh: bool = False) -> str:
+    async def _get_snapshot(self, force_refresh: bool = False, session: Optional["HybridBrowserSession"] = None) -> str:
         """Get current page snapshot if enabled.
 
         Args:
             force_refresh: If True, forces re-injection of aria-ref attributes.
                           Use after switching tabs or when refs may be stale.
+            session: Pre-resolved session to avoid redundant lookups.
         """
         if not self._return_snapshot:
             return ""
         try:
-            session = await self._get_session_with_page()
+            if session is None:
+                session = await self._get_session_with_page()
         except Exception:
             return ""
         try:
@@ -414,17 +412,21 @@ class BrowserToolkit(BaseToolkit):
             logger.error(f"Failed to get snapshot: {e}")
             return f"[Snapshot unavailable: {e}]"
 
-    async def _get_page_context(self) -> str:
+    async def _get_page_context(self, session: Optional["HybridBrowserSession"] = None) -> str:
         """Get current page context (URL and title).
 
         This provides essential context about the current page state,
         following Eigent's pattern of including page info in every action result.
 
+        Args:
+            session: Pre-resolved session to avoid redundant lookups.
+
         Returns:
             Formatted string with current page URL and title.
         """
         try:
-            session = await self._get_session_with_page()
+            if session is None:
+                session = await self._get_session_with_page()
         except Exception:
             return ""
         try:
@@ -453,7 +455,7 @@ class BrowserToolkit(BaseToolkit):
             logger.debug(f"Failed to get page title: {e}")
             return ""
 
-    async def _wait_for_page_stability(self, timeout_ms: Optional[int] = None) -> None:
+    async def _wait_for_page_stability(self, timeout_ms: Optional[int] = None, session: Optional["HybridBrowserSession"] = None) -> None:
         """Wait for page to become stable after an action.
 
         This is important after click/type actions that may trigger:
@@ -468,9 +470,11 @@ class BrowserToolkit(BaseToolkit):
 
         Args:
             timeout_ms: Timeout in milliseconds. If None, uses session's network_idle_timeout.
+            session: Pre-resolved session to avoid redundant lookups.
         """
         try:
-            session = await self._get_session_with_page()
+            if session is None:
+                session = await self._get_session_with_page()
         except Exception:
             return
 
@@ -497,12 +501,13 @@ class BrowserToolkit(BaseToolkit):
         except Exception as e:
             logger.debug(f"Page stability wait interrupted: {e}")
 
-    async def _get_tab_info_summary(self) -> str:
+    async def _get_tab_info_summary(self, session: Optional["HybridBrowserSession"] = None) -> str:
         """Get a summary of tab information for action results.
 
         Returns tab count and current tab info so LLM knows about tab changes.
         """
-        session = await self._get_session()
+        if session is None:
+            session = await self._get_session()
         if not session:
             return ""
 
@@ -530,7 +535,7 @@ class BrowserToolkit(BaseToolkit):
             logger.debug(f"Failed to get tab info: {e}")
             return ""
 
-    async def _send_screenshot_event(self) -> None:
+    async def _send_screenshot_event(self, session: Optional["HybridBrowserSession"] = None) -> None:
         """Capture and send screenshot to frontend via SSE.
 
         Following Eigent's pattern of sending browser screenshots for
@@ -540,7 +545,8 @@ class BrowserToolkit(BaseToolkit):
             return
 
         try:
-            session = await self._get_session_with_page()
+            if session is None:
+                session = await self._get_session_with_page()
         except Exception:
             return
 
@@ -578,6 +584,7 @@ class BrowserToolkit(BaseToolkit):
         include_tab_info: bool = True,
         wait_for_stability: bool = False,
         force_refresh: bool = False,
+        session: Optional["HybridBrowserSession"] = None,
     ) -> str:
         """Build a standardized action result with page context and snapshot.
 
@@ -597,44 +604,48 @@ class BrowserToolkit(BaseToolkit):
             wait_for_stability: Whether to wait for page stability first.
             force_refresh: Whether to force re-injection of aria-ref attributes.
                           Use when switching tabs or after tab creation.
+            session: Pre-resolved session to avoid redundant lookups.
 
         Returns:
             Formatted result string with all components.
         """
+        # Resolve session once for all helpers
+        if session is None:
+            session = await self._get_session()
+
         # Wait for page stability if requested (important after click/type)
         if wait_for_stability:
-            await self._wait_for_page_stability()
+            await self._wait_for_page_stability(session=session)
 
         parts = [result_message]
 
         # Add tab info (important for LLM to know about tab changes)
         if include_tab_info:
-            tab_info = await self._get_tab_info_summary()
+            tab_info = await self._get_tab_info_summary(session=session)
             if tab_info:
                 parts.append(tab_info)
 
         # Add page context (URL and title)
         if include_page_context:
-            page_context = await self._get_page_context()
+            page_context = await self._get_page_context(session=session)
             if page_context:
                 parts.append(page_context)
 
         # Add snapshot
         if include_snapshot:
-            snapshot = await self._get_snapshot(force_refresh=force_refresh)
+            snapshot = await self._get_snapshot(force_refresh=force_refresh, session=session)
             if snapshot:
                 parts.append(snapshot)
 
         # Send screenshot event to frontend for BrowserTab display
-        # This is async but we don't wait for it to complete
         try:
-            await self._send_screenshot_event()
+            await self._send_screenshot_event(session=session)
         except Exception as e:
             logger.debug(f"Screenshot event send failed (non-critical): {e}")
 
         # Notify agent of URL change for IntentSequence cache management
         try:
-            await self._notify_url_change()
+            await self._notify_url_change(session=session)
         except Exception as e:
             logger.debug(f"URL change notification failed (non-critical): {e}")
 
@@ -662,7 +673,7 @@ class BrowserToolkit(BaseToolkit):
         try:
             session = await self._get_session_with_page()
             await session.visit(url)
-            return await self._build_action_result(f"Navigated to {url}")
+            return await self._build_action_result(f"Navigated to {url}", session=session)
         except BrowserPageClosedError as e:
             # Return friendly message to Agent - page was recovered but needs re-navigation
             return str(e)
@@ -726,11 +737,13 @@ class BrowserToolkit(BaseToolkit):
                     wait_for_stability=True,
                     include_tab_info=True,
                     force_refresh=new_tab_created,
+                    session=session,
                 )
             else:
                 return await self._build_action_result(
                     f"Click failed: {result.get('message')}",
                     wait_for_stability=False,
+                    session=session,
                 )
         except BrowserPageClosedError as e:
             # Return friendly message to Agent - page was recovered but needs re-navigation
@@ -780,9 +793,9 @@ class BrowserToolkit(BaseToolkit):
             result = await session.exec_action(action)
 
             if result.get("success"):
-                return await self._build_action_result("Typed text successfully")
+                return await self._build_action_result("Typed text successfully", session=session)
             else:
-                return await self._build_action_result(f"Type failed: {result.get('message')}")
+                return await self._build_action_result(f"Type failed: {result.get('message')}", session=session)
         except BrowserPageClosedError as e:
             # Return friendly message to Agent - page was recovered but needs re-navigation
             return str(e)
@@ -822,9 +835,9 @@ class BrowserToolkit(BaseToolkit):
             result = await session.exec_action(action)
 
             if result.get("success"):
-                return await self._build_action_result("Pressed Enter successfully")
+                return await self._build_action_result("Pressed Enter successfully", session=session)
             else:
-                return await self._build_action_result(f"Enter failed: {result.get('message')}")
+                return await self._build_action_result(f"Enter failed: {result.get('message')}", session=session)
         except BrowserPageClosedError as e:
             # Return friendly message to Agent - page was recovered but needs re-navigation
             return str(e)
@@ -848,7 +861,7 @@ class BrowserToolkit(BaseToolkit):
         try:
             session = await self._get_session_with_page()
             await session.exec_action({"type": "back"})
-            return await self._build_action_result("Navigated back")
+            return await self._build_action_result("Navigated back", session=session)
         except BrowserPageClosedError as e:
             # Return friendly message to Agent - page was recovered but needs re-navigation
             return str(e)
@@ -872,7 +885,7 @@ class BrowserToolkit(BaseToolkit):
         try:
             session = await self._get_session_with_page()
             await session.exec_action({"type": "forward"})
-            return await self._build_action_result("Navigated forward")
+            return await self._build_action_result("Navigated forward", session=session)
         except BrowserPageClosedError as e:
             # Return friendly message to Agent - page was recovered but needs re-navigation
             return str(e)
@@ -909,7 +922,7 @@ class BrowserToolkit(BaseToolkit):
                 "amount": amount,
             }
             await session.exec_action(action)
-            return await self._build_action_result(f"Scrolled {direction} by {amount}px")
+            return await self._build_action_result(f"Scrolled {direction} by {amount}px", session=session)
         except BrowserPageClosedError as e:
             # Return friendly message to Agent - page was recovered but needs re-navigation
             return str(e)
@@ -954,9 +967,9 @@ class BrowserToolkit(BaseToolkit):
             result = await session.exec_action(action)
 
             if result.get("success"):
-                return await self._build_action_result(f"Selected '{value}' successfully")
+                return await self._build_action_result(f"Selected '{value}' successfully", session=session)
             else:
-                return await self._build_action_result(f"Select failed: {result.get('message')}")
+                return await self._build_action_result(f"Select failed: {result.get('message')}", session=session)
         except BrowserPageClosedError as e:
             # Return friendly message to Agent - page was recovered but needs re-navigation
             return str(e)
@@ -1045,10 +1058,11 @@ class BrowserToolkit(BaseToolkit):
             logger.error(f"browser_get_page_snapshot error: {e}")
             return f"Error getting snapshot: {e}"
 
-    async def _format_tab_info(self) -> str:
+    async def _format_tab_info(self, session: Optional["HybridBrowserSession"] = None) -> str:
         """Format tab information for display."""
         try:
-            session = await self._get_session()
+            if session is None:
+                session = await self._get_session()
             if not session:
                 return "No session available."
 
@@ -1111,9 +1125,9 @@ class BrowserToolkit(BaseToolkit):
 
             if result.get("success"):
                 key_combo = "+".join(keys)
-                return await self._build_action_result(f"Pressed keys: {key_combo}")
+                return await self._build_action_result(f"Pressed keys: {key_combo}", session=session)
             else:
-                return await self._build_action_result(f"Press key failed: {result.get('message')}")
+                return await self._build_action_result(f"Press key failed: {result.get('message')}", session=session)
         except BrowserPageClosedError as e:
             # Return friendly message to Agent - page was recovered but needs re-navigation
             return str(e)
@@ -1165,10 +1179,11 @@ class BrowserToolkit(BaseToolkit):
 
             if result.get("success"):
                 return await self._build_action_result(
-                    f"Mouse {click_type} at coordinates ({x}, {y})"
+                    f"Mouse {click_type} at coordinates ({x}, {y})",
+                    session=session,
                 )
             else:
-                return await self._build_action_result(f"Mouse control failed: {result.get('message')}")
+                return await self._build_action_result(f"Mouse control failed: {result.get('message')}", session=session)
         except BrowserPageClosedError as e:
             # Return friendly message to Agent - page was recovered but needs re-navigation
             return str(e)
@@ -1226,11 +1241,11 @@ class BrowserToolkit(BaseToolkit):
             if not success:
                 return f"Error: Failed to switch to tab '{tab_id}'. Use browser_get_tab_info to see available tabs."
 
-            page_context = await self._get_page_context()
-            tab_info = await self._format_tab_info()
+            page_context = await self._get_page_context(session=session)
+            tab_info = await self._format_tab_info(session=session)
             # Force refresh to re-inject aria-ref attributes on the new tab
             # This is critical because each tab has its own window object
-            snapshot = await self._get_snapshot(force_refresh=True)
+            snapshot = await self._get_snapshot(force_refresh=True, session=session)
 
             parts = [f"Switched to tab '{tab_id}'"]
             if page_context:
@@ -1284,10 +1299,10 @@ class BrowserToolkit(BaseToolkit):
             # Switch to the new tab
             await session.switch_to_tab(tab_id)
 
-            page_context = await self._get_page_context()
-            tab_info = await self._format_tab_info()
+            page_context = await self._get_page_context(session=session)
+            tab_info = await self._format_tab_info(session=session)
             # Force refresh because new tab has its own window object
-            snapshot = await self._get_snapshot(force_refresh=True)
+            snapshot = await self._get_snapshot(force_refresh=True, session=session)
 
             if url:
                 result_msg = f"Opened new tab '{tab_id}' and navigated to {url}"
@@ -1337,10 +1352,10 @@ class BrowserToolkit(BaseToolkit):
             if not success:
                 return f"Error: Failed to close tab '{tab_id}'. Use browser_get_tab_info to see available tabs."
 
-            page_context = await self._get_page_context()
-            tab_info = await self._format_tab_info()
+            page_context = await self._get_page_context(session=session)
+            tab_info = await self._format_tab_info(session=session)
             # Force refresh because we might have switched to a different tab
-            snapshot = await self._get_snapshot(force_refresh=True)
+            snapshot = await self._get_snapshot(force_refresh=True, session=session)
 
             parts = [f"Closed tab '{tab_id}'"]
             if page_context:

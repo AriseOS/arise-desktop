@@ -112,6 +112,9 @@ class HybridBrowserSession:
     _instances: ClassVar[Dict[Tuple[Any, str], "HybridBrowserSession"]] = {}
     _instances_lock: ClassVar[asyncio.Lock] = asyncio.Lock()
 
+    # Class-level stealth config cache (avoids re-computing + extension check per instance)
+    _stealth_config_cache: ClassVar[Optional[Dict[str, Any]]] = None
+
     # === Class-level: Daemon lifecycle management ===
     _daemon_session: ClassVar[Optional["HybridBrowserSession"]] = None
     _health_check_task: ClassVar[Optional[asyncio.Task]] = None
@@ -186,13 +189,50 @@ class HybridBrowserSession:
 
         async with cls._instances_lock:
             if session_key in cls._instances:
-                existing_instance = cls._instances[session_key]
-                logger.debug(f"Reusing existing browser session for session_id: {session_id}")
-                return existing_instance
+                return cls._instances[session_key]
 
             cls._instances[session_key] = instance
             logger.debug(f"Created new browser session for session_id: {session_id}")
             return instance
+
+    @classmethod
+    async def get_session(
+        cls,
+        session_id: str,
+        *,
+        headless: bool = False,
+        user_data_dir: Optional[str] = None,
+        stealth: bool = True,
+    ) -> "HybridBrowserSession":
+        """Get or create a browser session by session_id.
+
+        Recommended entry point. Returns existing singleton if available,
+        otherwise creates and initializes a new session.
+
+        Always returns the singleton instance from the registry, not a
+        throwaway copy, so that page/tab mutations are visible globally.
+        """
+        loop_id = str(id(asyncio.get_running_loop()))
+        session_key = (loop_id, session_id)
+
+        async with cls._instances_lock:
+            if session_key in cls._instances:
+                return cls._instances[session_key]
+
+        # Not found — create, init, register via ensure_browser
+        instance = cls(
+            session_id=session_id,
+            headless=headless,
+            user_data_dir=user_data_dir,
+            stealth=stealth,
+        )
+        await instance.ensure_browser()
+
+        # ensure_browser → _get_or_create_instance may have registered a
+        # different object as the singleton (concurrent creation race).
+        # Always return the canonical singleton from the registry.
+        async with cls._instances_lock:
+            return cls._instances.get(session_key, instance)
 
     def __init__(
         self,
@@ -252,11 +292,13 @@ class HybridBrowserSession:
 
         self._ensure_lock: asyncio.Lock = asyncio.Lock()
 
-        # Load stealth config on initialization
+        # Load stealth config on initialization (class-level cache)
         self._stealth_script: Optional[str] = None
         self._stealth_config: Optional[Dict[str, Any]] = None
         if self._stealth:
-            self._stealth_config = ConfigLoader.get_browser_config().get_stealth_config()
+            if self.__class__._stealth_config_cache is None:
+                self.__class__._stealth_config_cache = ConfigLoader.get_browser_config().get_stealth_config()
+            self._stealth_config = self.__class__._stealth_config_cache
 
     def _find_chrome_executable(self) -> Optional[str]:
         """Find system Chrome executable path.

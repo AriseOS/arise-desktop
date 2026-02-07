@@ -144,7 +144,8 @@ class SessionManager:
             elapsed = now - last_activity
             expired = elapsed > timeout
 
-            logger.debug(f"Session timeout check: last_activity={last_activity}, now={now}, elapsed={elapsed}, timeout={timeout}, expired={expired}")
+            if expired:
+                logger.debug(f"Session expired: last_activity={last_activity}, elapsed={elapsed}")
 
             return expired
         except (ValueError, TypeError) as e:

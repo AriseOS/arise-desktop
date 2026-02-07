@@ -290,7 +290,6 @@ function App() {
 
   // Browser state
   const [browserOpening, setBrowserOpening] = useState(false);
-  const [browser2Opening, setBrowser2Opening] = useState(false);
 
   // Open browser handler (subprocess mode - default)
   const handleOpenBrowser = async () => {
@@ -315,28 +314,6 @@ function App() {
     }
   };
 
-  // Open browser 2 handler (HybridBrowserSession with Playwright launch)
-  const handleOpenBrowser2 = async () => {
-    if (browser2Opening) return;
-
-    setBrowser2Opening(true);
-    showStatus("Opening Browser 2 (Playwright)...", "info");
-
-    try {
-      const result = await api.startBrowser2(false);
-
-      if (result.status === "already_running") {
-        showStatus("Browser 2 already running", "success");
-      } else {
-        showStatus("Browser 2 opened (Playwright)", "success");
-      }
-    } catch (error) {
-      console.error("Open browser 2 error:", error);
-      showStatus(`Failed to open browser 2: ${error.message}`, "error");
-    } finally {
-      setBrowser2Opening(false);
-    }
-  };
 
   // Check if user has workflows
   const [hasWorkflows, setHasWorkflows] = useState(false);
@@ -405,15 +382,6 @@ function App() {
             <span>{browserOpening ? t('app.opening') : t('app.openBrowser')}</span>
           </button>
 
-          <button
-            className="btn btn-secondary"
-            onClick={handleOpenBrowser2}
-            disabled={browser2Opening}
-            style={{ padding: '12px 24px', fontSize: '16px', minWidth: '180px', justifyContent: 'center' }}
-          >
-            <Icon name="browser" size={20} />
-            <span>{browser2Opening ? t('app.opening') : 'Open Browser 2'}</span>
-          </button>
         </div>
 
         <div style={{ textAlign: 'center', marginTop: '24px' }}>
@@ -500,15 +468,6 @@ function App() {
             >
               <Icon name="browser" size={18} />
               <span>{browserOpening ? t('app.opening') : t('app.openBrowser')}</span>
-            </button>
-            <button
-              className="btn btn-secondary"
-              onClick={handleOpenBrowser2}
-              disabled={browser2Opening}
-              style={{ minWidth: '140px', justifyContent: 'center' }}
-            >
-              <Icon name="browser" size={18} />
-              <span>{browser2Opening ? t('app.opening') : 'Open Browser 2'}</span>
             </button>
           </div>
         </div>

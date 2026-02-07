@@ -500,19 +500,6 @@ export const api = {
   },
 
   /**
-   * Start browser 2 (HybridBrowserSession with Playwright launch)
-   *
-   * @param {boolean} headless - Whether to run in headless mode
-   * @returns {Promise<object>} Browser status
-   */
-  async startBrowser2(headless = false) {
-    return await this.callAppBackend('/api/v1/browser/start2', {
-      method: 'POST',
-      body: JSON.stringify({ headless })
-    });
-  },
-
-  /**
    * Stop browser
    *
    * @returns {Promise<object>} Browser status

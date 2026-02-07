@@ -640,101 +640,6 @@ async def start_browser(headless: bool = False):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Global reference for browser2 session
-_browser2_session = None
-
-
-@app.post("/api/v1/browser/start2")
-async def start_browser2(headless: bool = False):
-    """Start browser using HybridBrowserSession (eigent_browser)
-
-    This uses subprocess + CDP launch mode.
-
-    Args:
-        headless: Whether to run in headless mode (default: False)
-
-    Returns:
-        Browser status
-    """
-    global _browser2_session
-
-    try:
-        from src.clients.desktop_app.ami_daemon.base_agent.tools.eigent_browser import (
-            HybridBrowserSession
-        )
-
-        # Check if already running
-        if _browser2_session is not None:
-            logger.info("Browser2 already running")
-            return {
-                "status": "already_running",
-                "session_id": "browser2_test",
-                "message": "Browser2 already running"
-            }
-
-        logger.info(f"API: Starting browser2 (HybridBrowserSession, headless={headless})")
-
-        # Get user data dir from config
-        user_data_dir = None
-        config = get_config()
-        if config:
-            user_data_dir = str(config.get_path("data.browser_data")) + "_browser2"
-
-        # Create HybridBrowserSession instance
-        session = HybridBrowserSession(
-            session_id="browser2_test",
-            headless=headless,
-            stealth=True,
-            user_data_dir=user_data_dir
-        )
-
-        # Ensure browser is started
-        await session.ensure_browser()
-
-        # Store reference for cleanup
-        _browser2_session = session
-
-        return {
-            "status": "started",
-            "session_id": "browser2_test",
-            "message": "Browser started via HybridBrowserSession (subprocess + CDP)"
-        }
-
-    except Exception as e:
-        logger.error(f"Failed to start browser2: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/v1/browser/stop2")
-async def stop_browser2():
-    """Stop browser2 (HybridBrowserSession)
-
-    Returns:
-        Browser status
-    """
-    global _browser2_session
-
-    try:
-        if _browser2_session is None:
-            return {
-                "status": "not_running",
-                "message": "Browser2 is not running"
-            }
-
-        logger.info("API: Stopping browser2")
-        await _browser2_session.close()
-        _browser2_session = None
-
-        return {
-            "status": "stopped",
-            "message": "Browser2 stopped"
-        }
-
-    except Exception as e:
-        logger.error(f"Failed to stop browser2: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.post("/api/v1/browser/stop")
 async def stop_browser():
     """Stop browser gracefully
@@ -1815,7 +1720,7 @@ async def cleanup_resources():
     when uvicorn receives SIGTERM/SIGINT from the parent process (Tauri).
     """
     global browser_manager
-    global cdp_recorder, recording_service, cloud_client, _browser2_session
+    global cdp_recorder, recording_service, cloud_client
 
     logger.info("🧹 Cleaning up resources...")
 
@@ -1847,21 +1752,7 @@ async def cleanup_resources():
                 logger.error(f"⚠️  Failed to stop recording: {e}")
                 cleanup_errors.append(f"Recording: {e}")
 
-        # 2. Stop browser2 session (HybridBrowserSession)
-        if _browser2_session:
-            logger.info("Stopping browser2 session...")
-            try:
-                await asyncio.wait_for(_browser2_session.close(), timeout=5.0)
-                _browser2_session = None
-                logger.info("✓ Browser2 session stopped")
-            except asyncio.TimeoutError:
-                logger.warning("⚠️  Browser2 session close timeout")
-                cleanup_errors.append("Browser2: timeout")
-            except Exception as e:
-                logger.error(f"⚠️  Browser2 session close error: {e}")
-                cleanup_errors.append(f"Browser2: {e}")
-
-        # 3. Stop HybridBrowserSession daemon session (V3)
+        # 2. Stop HybridBrowserSession daemon session (V3)
         from src.clients.desktop_app.ami_daemon.base_agent.tools.eigent_browser.browser_session import HybridBrowserSession
         if HybridBrowserSession.get_daemon_session():
             logger.info("Stopping HybridBrowserSession daemon session...")

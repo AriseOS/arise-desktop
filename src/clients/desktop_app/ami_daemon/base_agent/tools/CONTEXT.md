@@ -17,28 +17,29 @@ tools/
 
 Browser sessions are managed through two mechanisms:
 
-### 1. Agent-level: BrowserToolkit with session_id mode (for Workforce)
+### 1. Agent-level: BrowserToolkit with cached session
 
-BrowserToolkit supports session_id mode for clone-safe browser access:
+BrowserToolkit resolves a session once and caches the reference:
 
 ```python
 from .toolkits import BrowserToolkit
 
-# Create toolkit with session_id (clone-safe)
 toolkit = BrowserToolkit(
     session_id="task_123",  # Use task_id for session isolation
     headless=False,
     user_data_dir="/path/to/browser/data",
 )
 
-# Session is created on-demand when first browser tool is called
-# Multiple agent clones with same session_id share the same browser
+# Session is created on-demand when first browser tool is called.
+# Subsequent calls reuse the cached reference with an is_connected() check.
+# Same session_id = same browser instance (via HybridBrowserSession singleton).
 ```
 
 **Key features:**
-- Clone-safe: session_id is a string, safe to copy during agent cloning
+- Cached: session resolved once, hot path = 1 attr read + `is_connected()` check
 - On-demand: Browser is only started when first tool is called
 - Shared: Same session_id = same browser instance (via HybridBrowserSession singleton)
+- `HybridBrowserSession.get_session()` classmethod is the recommended entry point
 
 ### 2. Daemon-level: BrowserManager (for UI/window management)
 

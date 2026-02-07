@@ -103,7 +103,7 @@ class ExtensionManager:
                 continue
 
         if extension_paths:
-            logger.info(f"Extensions loaded ({len(extension_paths)}): {loaded_names}")
+            logger.debug(f"Extensions loaded ({len(extension_paths)}): {loaded_names}")
         else:
             logger.warning("No extensions could be loaded")
 

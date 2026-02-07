@@ -163,13 +163,11 @@ class ScraperAgent(BaseStepAgent):
         # Try to get session_id from context for session sharing
         session_id = getattr(context, 'browser_session_id', None) or "scraper_default"
 
-        self._browser_session = HybridBrowserSession(
-            headless=headless,
-            stealth=True,
-            user_data_dir=_get_browser_data_dir(),
+        self._browser_session = await HybridBrowserSession.get_session(
             session_id=session_id,
+            headless=headless,
+            user_data_dir=_get_browser_data_dir(),
         )
-        await self._browser_session.ensure_browser()
         return self._browser_session
 
     async def _capture_snapshot_to_notes(self, include_links: bool = True) -> str:
