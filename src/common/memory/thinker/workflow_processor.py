@@ -177,7 +177,6 @@ class WorkflowProcessor:
     async def process_workflow(
         self,
         workflow_data: Union[List[Dict[str, Any]], str],
-        user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         store_to_memory: bool = True,
     ) -> WorkflowProcessingResult:
@@ -185,7 +184,6 @@ class WorkflowProcessor:
 
         Args:
             workflow_data: Workflow events (list of dicts or JSON string).
-            user_id: User ID for attribution.
             session_id: Session ID for grouping.
             store_to_memory: Whether to store results to memory.
 
@@ -275,7 +273,6 @@ class WorkflowProcessor:
             # Find or create State
             state, is_new = self._find_or_create_state(
                 segment=segment,
-                user_id=None,  # user isolation disabled
                 session_id=session_id,
                 domain_key=domain_key,
                 path_sig=candidate_path_sig,
@@ -315,7 +312,6 @@ class WorkflowProcessor:
             instance = self._create_page_instance(
                 segment=segment,
                 state_id=state.id,
-                user_id=None,  # user isolation disabled
                 session_id=session_id,
             )
             page_instances.append(instance)
@@ -341,7 +337,6 @@ class WorkflowProcessor:
             sequence = self._create_intent_sequence(
                 segment=segment,
                 state_id=state.id,
-                user_id=None,  # user isolation disabled
                 session_id=session_id,
                 causes_navigation=causes_navigation,
                 navigation_target_state_id=navigation_target_state_id,
@@ -359,7 +354,6 @@ class WorkflowProcessor:
             segments=valid_segments,  # Use valid_segments (same order as states)
             states=states,
             intent_sequences=intent_sequences,
-            user_id=None,  # user isolation disabled
             session_id=session_id,
         )
         logger.info(f"  Created {len(actions)} actions\n")
@@ -368,7 +362,6 @@ class WorkflowProcessor:
         logger.info("Stage 4: Extracting Domains and Manage edges...")
         domains, manages = self._extract_domains_and_manages(
             states=states,
-            user_id=None,  # user isolation disabled
             domain_root_id_map=domain_root_id_map,
         )
         logger.info(f"  Created {len(domains)} domains and {len(manages)} manage edges\n")
@@ -413,7 +406,6 @@ class WorkflowProcessor:
                 actions=actions,
                 intent_sequences=intent_sequences,
                 workflow_data=events,
-                user_id=None,  # user isolation disabled
                 session_id=session_id,
             )
             if cognitive_phrase:
@@ -430,7 +422,6 @@ class WorkflowProcessor:
 
         # Collect metadata
         metadata = {
-            "user_id": user_id,
             "session_id": session_id,
             "event_count": len(events),
             "segment_count": len(segments),
@@ -755,7 +746,6 @@ class WorkflowProcessor:
     def _find_or_create_state(
         self,
         segment: URLSegment,
-        user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         domain_key: Optional[str] = None,
         path_sig: Optional[str] = None,
@@ -767,7 +757,6 @@ class WorkflowProcessor:
 
         Args:
             segment: URLSegment to process.
-            user_id: User ID.
             session_id: Session ID.
             domain_key: Normalized domain key (optional).
             path_sig: Stable path signature (optional).
@@ -784,7 +773,6 @@ class WorkflowProcessor:
                 page_title=segment.page_title,
                 timestamp=segment.timestamp,
                 domain=domain,
-                user_id=None,  # user isolation disabled
                 session_id=session_id,
                 path_sig=path_sig,
             )
@@ -796,7 +784,6 @@ class WorkflowProcessor:
             timestamp=segment.timestamp,
             domain=domain,
             path_sig=path_sig,
-            user_id=None,  # user isolation disabled
             session_id=session_id,
             instances=[],
         )
@@ -806,7 +793,6 @@ class WorkflowProcessor:
         self,
         segment: URLSegment,
         state_id: str,
-        user_id: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> PageInstance:
         """Create PageInstance from segment.
@@ -814,7 +800,6 @@ class WorkflowProcessor:
         Args:
             segment: URLSegment to process.
             state_id: ID of the parent State.
-            user_id: User ID.
             session_id: Session ID.
 
         Returns:
@@ -824,7 +809,6 @@ class WorkflowProcessor:
             url=segment.url,
             page_title=segment.page_title,
             timestamp=segment.timestamp,
-            user_id=None,  # user isolation disabled
             session_id=session_id,
         )
 
@@ -838,7 +822,6 @@ class WorkflowProcessor:
         self,
         segment: URLSegment,
         state_id: str,
-        user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         causes_navigation: bool = False,
         navigation_target_state_id: Optional[str] = None,
@@ -852,7 +835,6 @@ class WorkflowProcessor:
         Args:
             segment: URLSegment to process.
             state_id: ID of the parent State.
-            user_id: User ID.
             session_id: Session ID.
             causes_navigation: Whether this sequence causes page navigation (v2).
             navigation_target_state_id: Target State ID if causes_navigation (v2).
@@ -883,7 +865,6 @@ class WorkflowProcessor:
         sequence = IntentSequence(
             timestamp=segment.timestamp,
             intents=intents,
-            user_id=None,  # user isolation disabled
             session_id=session_id,
             # v2 navigation markers
             causes_navigation=causes_navigation,
@@ -1099,7 +1080,6 @@ class WorkflowProcessor:
         segments: List[URLSegment],
         states: List[State],
         intent_sequences: Optional[List[IntentSequence]] = None,
-        user_id: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> List[Action]:
         """Create Actions between consecutive States.
@@ -1108,7 +1088,6 @@ class WorkflowProcessor:
             segments: List of URL segments.
             states: List of States (same order as segments).
             intent_sequences: List of IntentSequences for trigger lookup (v2).
-            user_id: User ID.
             session_id: Session ID.
 
         Returns:
@@ -1156,7 +1135,6 @@ class WorkflowProcessor:
                         "role": trigger_event.get("role"),
                     },
                     trigger_sequence_id=trigger_sequence_id,
-                    user_id=None,  # user isolation disabled
                     session_id=session_id,
                 )
             else:
@@ -1168,7 +1146,6 @@ class WorkflowProcessor:
                     timestamp=target_segment.timestamp,
                     trigger=None,
                     trigger_sequence_id=trigger_sequence_id,
-                    user_id=None,  # user isolation disabled
                     session_id=session_id,
                 )
             
@@ -1195,14 +1172,12 @@ class WorkflowProcessor:
     def _extract_domains_and_manages(
         self,
         states: List[State],
-        user_id: Optional[str] = None,
         domain_root_id_map: Optional[Dict[str, str]] = None,
     ) -> tuple[List[Domain], List[Manage]]:
         """Extract Domains and create Manage edges.
 
         Args:
             states: List of State objects.
-            user_id: User ID.
             domain_root_id_map: Optional domain -> root_state_id mapping.
 
         Returns:
@@ -1233,7 +1208,6 @@ class WorkflowProcessor:
                         domain_name=domain_name,
                         domain_url=domain_key,
                         domain_type="website",
-                        user_id=None,  # user isolation disabled
                     )
 
                 root_id = domain_root_id_map.get(domain_key)
@@ -1249,7 +1223,6 @@ class WorkflowProcessor:
             manage = Manage(
                 domain_id=domain.id,
                 state_id=state.id,
-                user_id=None,  # user isolation disabled
                 first_visit=state.timestamp,
                 last_visit=state.timestamp,
                 visit_count=1,
@@ -2079,7 +2052,6 @@ JSON:"""
         actions: List[Action],
         intent_sequences: List[IntentSequence],
         workflow_data: List[Dict[str, Any]],
-        user_id: Optional[str],
         session_id: Optional[str],
     ) -> Optional[CognitivePhrase]:
         """Create a cognitive phrase from the workflow (async).
@@ -2091,7 +2063,6 @@ JSON:"""
             actions: List of Action objects.
             intent_sequences: List of IntentSequence objects.
             workflow_data: Original workflow events.
-            user_id: User ID.
             session_id: Session ID.
 
         Returns:
@@ -2143,7 +2114,6 @@ JSON:"""
             label=label,
             description=description,
             semantic=semantic,
-            user_id=None,  # user isolation disabled
             session_id=effective_session_id,
             start_timestamp=start_timestamp,
             end_timestamp=end_timestamp,

@@ -39,7 +39,6 @@ class Intent(BaseModel):
         text: Element text content (optional).
         value: Input or selected value (optional).
         coordinates: Coordinates dict with x, y (optional).
-        user_id: User ID (optional).
         session_id: Session ID (optional).
         attributes: Additional metadata.
         confidence_score: Confidence score for LLM extraction (optional).
@@ -81,8 +80,7 @@ class Intent(BaseModel):
     value: Optional[str] = Field(
         default=None, description='Input or selected value')
 
-    # User session information
-    user_id: Optional[str] = Field(default=None, description='User ID')
+    # Session information
     session_id: Optional[str] = Field(default=None, description='Session ID')
 
     # Extended attributes

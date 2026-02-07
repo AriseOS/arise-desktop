@@ -67,14 +67,12 @@ class DomainManager(ABC):
     @abstractmethod
     def list_domains(
         self,
-        user_id: Optional[str] = None,
         domain_type: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> List[Domain]:
         """List domains with optional filters.
 
         Args:
-            user_id: Filter by user ID.
             domain_type: Filter by domain type ('website' or 'app').
             limit: Maximum number of results.
 
@@ -151,14 +149,12 @@ class ManageManager(ABC):
         self,
         domain_id: Optional[str] = None,
         state_id: Optional[str] = None,
-        user_id: Optional[str] = None,
     ) -> List[Manage]:
         """List manage edges with optional filters.
 
         Args:
             domain_id: Filter by domain ID.
             state_id: Filter by state ID.
-            user_id: Filter by user ID.
 
         Returns:
             List of Manage objects matching the filters.
@@ -229,7 +225,6 @@ class StateManager(ABC):
     @abstractmethod
     def list_states(
         self,
-        user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         start_time: Optional[int] = None,
         end_time: Optional[int] = None,
@@ -238,7 +233,6 @@ class StateManager(ABC):
         """List states with optional filters.
 
         Args:
-            user_id: Filter by user ID.
             session_id: Filter by session ID.
             start_time: Filter by start timestamp.
             end_time: Filter by end timestamp.
@@ -332,6 +326,17 @@ class ActionManager(ABC):
         """
 
     @abstractmethod
+    def get_action_by_id(self, action_id: str) -> Optional[Action]:
+        """Get an action by its unique ID.
+
+        Args:
+            action_id: Unique action identifier.
+
+        Returns:
+            Action object if found, None otherwise.
+        """
+
+    @abstractmethod
     def get_action(self, source_id: str, target_id: str) -> Optional[Action]:
         """Get an action by source and target IDs.
 
@@ -372,7 +377,6 @@ class ActionManager(ABC):
         source_id: Optional[str] = None,
         target_id: Optional[str] = None,
         action_type: Optional[str] = None,
-        user_id: Optional[str] = None,
     ) -> List[Action]:
         """List actions with optional filters.
 
@@ -380,7 +384,6 @@ class ActionManager(ABC):
             source_id: Filter by source state ID.
             target_id: Filter by target state ID.
             action_type: Filter by action type.
-            user_id: Filter by user ID.
 
         Returns:
             List of Action objects matching the filters.
@@ -603,7 +606,6 @@ class CognitivePhraseManager(ABC):
     @abstractmethod
     def list_phrases(
         self,
-        user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         goal_id: Optional[str] = None,
         start_time: Optional[int] = None,
@@ -613,7 +615,6 @@ class CognitivePhraseManager(ABC):
         """List cognitive phrases with optional filters.
 
         Args:
-            user_id: Filter by user ID.
             session_id: Filter by session ID.
             goal_id: Filter by goal ID.
             start_time: Filter by start timestamp.
@@ -718,6 +719,10 @@ class Memory(ABC):
     def create_action(self, action: Action) -> bool:
         """Create a new action."""
         return self.action_manager.create_action(action)
+
+    def get_action_by_id(self, action_id: str) -> Optional[Action]:
+        """Get an action by its unique ID."""
+        return self.action_manager.get_action_by_id(action_id)
 
     def get_action(self, source_id: str, target_id: str) -> Optional[Action]:
         """Get an action."""

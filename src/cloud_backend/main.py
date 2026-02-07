@@ -45,8 +45,6 @@ config_service = CloudConfigService()
 # Global service instances
 storage_service = None
 workflow_service = None  # New WorkflowService (replaces old WorkflowGenerationService)
-workflow_memory = None  # WorkflowMemory for NL query
-reasoner = None  # Reasoner for semantic retrieval
 
 # Background task management
 cleanup_task = None
@@ -151,7 +149,7 @@ app.add_middleware(RequestContextMiddleware)
 @app.on_event("startup")
 async def startup_event():
     """Startup initialization"""
-    global storage_service, workflow_service, workflow_memory, reasoner
+    global storage_service, workflow_service
 
     print("\n" + "="*80)
     print("☁️  Ami Cloud Backend Starting...")
@@ -161,8 +159,7 @@ async def startup_event():
     try:
         from services.storage_service import StorageService
         from src.cloud_backend.intent_builder.services import WorkflowService
-        from src.common.memory.graphstore import create_graph_store
-        from src.common.memory.memory.workflow_memory import WorkflowMemory
+        from src.common.memory.memory_service import MemoryServiceConfig, init_memory_services
 
         # 1. CORS already configured
         print(f"✅ CORS: {len(cors_origins)} allowed origins")
@@ -172,50 +169,23 @@ async def startup_event():
         storage_service = StorageService(base_path=str(storage_base_path))
         print(f"✅ Storage: {storage_service.base_path}")
 
-        # 3. Initialize WorkflowMemory (for NL query)
-        # Check for graph_store backend configuration
+        # 3. Initialize Memory Services (multi-tenant: private + public)
+        import os
         graph_config = config_service.get("graph_store", {})
-        graph_backend = graph_config.get("backend", "networkx")
-
-        if graph_backend == "neo4j":
-            import os
-            graph_store = create_graph_store(
-                "neo4j",
-                uri=graph_config.get("uri") or os.getenv("NEO4J_URI", "neo4j://localhost:7687"),
-                user=graph_config.get("user") or os.getenv("NEO4J_USER", "neo4j"),
-                password=graph_config.get("password") or os.getenv("NEO4J_PASSWORD", ""),
-                database=graph_config.get("database") or os.getenv("NEO4J_DATABASE", "neo4j"),
-            )
-            graph_store.initialize_schema()
-            print(f"✅ Graph Store: Neo4j ({graph_config.get('uri', 'from env')})")
-
-        elif graph_backend == "surrealdb":
-            import os
-            graph_store = create_graph_store(
-                "surrealdb",
-                url=graph_config.get("url") or os.getenv("SURREALDB_URL", "ws://localhost:8000/rpc"),
-                namespace=graph_config.get("namespace") or os.getenv("SURREALDB_NAMESPACE", "ami"),
-                database=graph_config.get("database") or os.getenv("SURREALDB_DATABASE", "memory"),
-                username=graph_config.get("username") or os.getenv("SURREALDB_USER", "root"),
-                password=graph_config.get("password") or os.getenv("SURREALDB_PASSWORD", ""),
-                vector_dimensions=graph_config.get("vector_dimensions", 1024),
-            )
-            graph_store.initialize_schema()
-            print(f"✅ Graph Store: SurrealDB ({graph_config.get('url', 'from env')})")
-
-        else:
-            graph_store = create_graph_store("networkx")
-            print("✅ Graph Store: NetworkX (in-memory)")
-
-        # Get memory configuration
         memory_config = config_service.get("memory", {})
-        intent_sequence_dedup_threshold = memory_config.get("intent_sequence_dedup_threshold")
 
-        workflow_memory = WorkflowMemory(
-            graph_store,
-            intent_sequence_dedup_threshold=intent_sequence_dedup_threshold,
+        base_config = MemoryServiceConfig(
+            graph_backend=graph_config.get("backend", "surrealdb"),
+            graph_url=graph_config.get("url") or os.getenv("SURREALDB_URL", "ws://localhost:8000/rpc"),
+            graph_namespace=graph_config.get("namespace") or os.getenv("SURREALDB_NAMESPACE", "ami"),
+            graph_database="public",  # base config uses public as default
+            graph_username=graph_config.get("username") or os.getenv("SURREALDB_USER", "root"),
+            graph_password=graph_config.get("password") or os.getenv("SURREALDB_PASSWORD", ""),
+            vector_dimensions=graph_config.get("vector_dimensions", 1024),
+            intent_sequence_dedup_threshold=memory_config.get("intent_sequence_dedup_threshold"),
         )
-        print("✅ Workflow Memory (for NL query)")
+        init_memory_services(base_config)
+        print(f"✅ Memory Services: multi-tenant ({base_config.graph_backend})")
 
         # 3.1 Verify embedding config (for per-request initialization)
         embedding_config = config_service.get("embedding", {})
@@ -508,8 +478,7 @@ async def upload_recording(data: dict):
     logger.info(f"Building graph for recording {recording_id}")
     try:
         from src.cloud_backend.graph_builder import GraphBuilder
-        # Ensure graph nodes/edges are attributed to the current user/session
-        builder = GraphBuilder(user_id=user_id, session_id=recording_id)
+        builder = GraphBuilder(session_id=recording_id)
         graph = builder.build(operations)
         graph_dict = graph.to_dict()
         logger.info(f"Graph built: {len(graph.states)} states, {len(graph.actions)} actions")
@@ -540,7 +509,7 @@ async def upload_recording(data: dict):
 
     # Add to workflow memory if requested
     memory_result = None
-    if add_to_memory and workflow_memory:
+    if add_to_memory:
         try:
             from src.common.memory.thinker.workflow_processor import WorkflowProcessor
 
@@ -558,7 +527,7 @@ async def upload_recording(data: dict):
             # Setup LLM providers for description generation (requires user API key)
             llm_provider = None
             simple_llm_provider = None
-            if generate_embeddings and user_api_key:
+            if generate_descriptions and user_api_key:
                 from src.common.llm import get_cached_anthropic_provider
                 llm_provider = get_cached_anthropic_provider(
                     api_key=user_api_key,
@@ -578,16 +547,18 @@ async def upload_recording(data: dict):
                     simple_llm_provider = llm_provider
 
             # Create processor and process
+            from src.common.memory.memory_service import get_private_memory
+            user_memory = get_private_memory(user_id)
+
             processor = WorkflowProcessor(
                 llm_provider=llm_provider,
-                memory=workflow_memory,
+                memory=user_memory.workflow_memory,
                 embedding_service=embedding_service,
                 simple_llm_provider=simple_llm_provider,
             )
 
             result = await processor.process_workflow(
                 workflow_data={"operations": operations},
-                user_id=user_id,
                 session_id=recording_id,
                 store_to_memory=True,
             )
@@ -1373,10 +1344,13 @@ async def add_to_memory(
                 # Use llm_provider for descriptions if no simple_model configured
                 simple_llm_provider = llm_provider
 
-        # Create processor
+        # Create processor with user's private memory
+        from src.common.memory.memory_service import get_private_memory
+        user_memory = get_private_memory(user_id)
+
         processor = WorkflowProcessor(
             llm_provider=llm_provider,
-            memory=workflow_memory,
+            memory=user_memory.workflow_memory,
             embedding_service=embedding_service,
             simple_llm_provider=simple_llm_provider,
         )
@@ -1384,7 +1358,6 @@ async def add_to_memory(
         # Process workflow (async)
         result = await processor.process_workflow(
             workflow_data={"operations": operations},
-            user_id=user_id,
             session_id=session_id,
             store_to_memory=True,
         )
@@ -1457,9 +1430,6 @@ async def query_cognitive_phrase(
     """
     logger.info(f"🔍 CognitivePhrase query request: data={data}")
 
-    if workflow_memory is None:
-        raise HTTPException(503, "Memory service not initialized")
-
     if not x_ami_api_key:
         raise HTTPException(400, "Missing X-Ami-API-Key header")
 
@@ -1472,21 +1442,42 @@ async def query_cognitive_phrase(
         raise HTTPException(400, "Missing query")
 
     try:
-        # Ensure user's memory is loaded
-        await _ensure_user_memory_loaded(user_id)
+        from src.common.memory.memory_service import get_private_memory, get_public_memory
 
-        # Get Reasoner instance with user's API key
-        user_reasoner = await _get_reasoner_for_user(x_ami_api_key)
-
-        # Use CognitivePhraseChecker to find matching phrases
+        # Search private memory first
+        user_reasoner = await _get_reasoner_for_user(x_ami_api_key, user_id)
         can_satisfy, matching_phrases, reasoning = await user_reasoner.phrase_checker.check(query)
+        source = "private"
+        wm = get_private_memory(user_id).workflow_memory
+
+        # If private didn't match, try public memory
+        if not can_satisfy or not matching_phrases:
+            try:
+                public_reasoner = await _get_reasoner_for_user(
+                    x_ami_api_key, user_id=None, use_public=True
+                )
+                pub_ok, pub_phrases, pub_reasoning = await public_reasoner.phrase_checker.check(query)
+                if pub_ok and pub_phrases:
+                    can_satisfy = pub_ok
+                    matching_phrases = pub_phrases
+                    reasoning = pub_reasoning
+                    source = "public"
+                    wm = get_public_memory().workflow_memory
+                    # Atomically increment use_count on public phrase
+                    try:
+                        wm.phrase_manager.increment_use_count(pub_phrases[0].id)
+                    except Exception as uc_err:
+                        logger.warning(f"Failed to increment use_count: {uc_err}")
+            except Exception as pub_err:
+                logger.warning(f"Public phrase query failed: {pub_err}")
 
         if not can_satisfy or not matching_phrases:
-            logger.info(f"🔍 No CognitivePhrase found for: {query[:50]}...")
+            logger.info(f"No CognitivePhrase found for: {query[:50]}...")
             return {
                 "success": True,
                 "phrase": None,
                 "reasoning": reasoning,
+                "source": "none",
             }
 
         # Get the first (best) matching phrase
@@ -1495,7 +1486,7 @@ async def query_cognitive_phrase(
         # Expand state_path and action_path to full objects
         states = []
         for state_id in phrase.state_path:
-            state = workflow_memory.state_manager.get_state(state_id)
+            state = wm.state_manager.get_state(state_id)
             if state:
                 states.append(state.to_dict() if hasattr(state, 'to_dict') else state)
 
@@ -1504,7 +1495,7 @@ async def query_cognitive_phrase(
         for i in range(len(phrase.state_path) - 1):
             source_id = phrase.state_path[i]
             target_id = phrase.state_path[i + 1]
-            action = workflow_memory.action_manager.get_action(source_id, target_id)
+            action = wm.action_manager.get_action(source_id, target_id)
             if action:
                 actions.append(action.to_dict() if hasattr(action, 'to_dict') else action)
 
@@ -1512,12 +1503,13 @@ async def query_cognitive_phrase(
         phrase_dict["states"] = states
         phrase_dict["actions"] = actions
 
-        logger.info(f"✅ Found CognitivePhrase for '{query[:30]}...': {phrase.id} with {len(states)} states")
+        logger.info(f"Found CognitivePhrase for '{query[:30]}...': {phrase.id} (source={source}) with {len(states)} states")
 
         return {
             "success": True,
             "phrase": phrase_dict,
             "reasoning": reasoning,
+            "source": source,
         }
 
     except HTTPException:
@@ -1581,9 +1573,6 @@ async def query_memory(
     """
     logger.info(f"🔍 Memory unified query request: data={data}")
 
-    if workflow_memory is None:
-        raise HTTPException(503, "Memory service not initialized")
-
     if not x_ami_api_key:
         raise HTTPException(400, "Missing X-Ami-API-Key header")
 
@@ -1595,11 +1584,14 @@ async def query_memory(
     user_id = data.get("user_id")
     top_k = data.get("top_k", 10)
 
-    try:
-        # Get Reasoner instance with user's API key
-        user_reasoner = await _get_reasoner_for_user(x_ami_api_key)
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
 
-        # Call unified query
+    try:
+        # Get Reasoner instance with user's private memory
+        user_reasoner = await _get_reasoner_for_user(x_ami_api_key, user_id)
+
+        # Call unified query on private memory
         result = await user_reasoner.query(
             target=target,
             current_state=current_state,
@@ -1608,11 +1600,37 @@ async def query_memory(
             as_type=as_type,
             top_k=top_k,
         )
+        source = "private"
+
+        # For task queries: if private didn't find a match, try public memory
+        if result.query_type == "task" and not result.success:
+            try:
+                public_reasoner = await _get_reasoner_for_user(
+                    x_ami_api_key, user_id=None, use_public=True
+                )
+                public_result = await public_reasoner.query(
+                    target=target, as_type="task",
+                )
+                if public_result.success:
+                    result = public_result
+                    source = "public"
+                    # Atomically increment use_count on the public CognitivePhrase
+                    if result.cognitive_phrase:
+                        from src.common.memory.memory_service import get_public_memory
+                        try:
+                            pub_wm = get_public_memory().workflow_memory
+                            pub_wm.phrase_manager.increment_use_count(result.cognitive_phrase.id)
+                        except Exception as uc_err:
+                            logger.warning(f"Failed to increment use_count: {uc_err}")
+            except Exception as pub_err:
+                logger.warning(f"Public memory query failed, using private result: {pub_err}")
+
         # Log IntentSequence usage for debugging quick-task behavior
         intent_seq_used = result.query_type == "action"
         intent_seq_count = len(result.intent_sequences) if result.intent_sequences else 0
         logger.info(
             f"[MemoryQuery] type={result.query_type}, success={result.success}, "
+            f"source={source}, "
             f"uses_intent_sequences={intent_seq_used}, intent_sequences={intent_seq_count}"
         )
 
@@ -1620,6 +1638,7 @@ async def query_memory(
         response = {
             "success": result.success,
             "query_type": result.query_type,
+            "source": source,
             "metadata": result.metadata,
         }
 
@@ -1743,9 +1762,6 @@ async def get_state_by_url(
         404: No State found for URL
         503: Memory service not initialized
     """
-    if workflow_memory is None:
-        raise HTTPException(503, "Memory service not initialized")
-
     if not x_ami_api_key:
         raise HTTPException(400, "Missing X-Ami-API-Key header")
 
@@ -1758,16 +1774,17 @@ async def get_state_by_url(
         raise HTTPException(400, "Missing url")
 
     try:
-        await _ensure_user_memory_loaded(user_id)
+        from src.common.memory.memory_service import get_private_memory
+        wm = get_private_memory(user_id).workflow_memory
 
-        state = workflow_memory.find_state_by_url(url)
+        state = wm.find_state_by_url(url)
         if not state:
             raise HTTPException(404, f"No State found for URL: {url}")
 
         # Get linked IntentSequences
         sequences = []
-        if workflow_memory.intent_sequence_manager:
-            sequences = workflow_memory.intent_sequence_manager.list_by_state(state.id)
+        if wm.intent_sequence_manager:
+            sequences = wm.intent_sequence_manager.list_by_state(state.id)
 
         return {
             "success": True,
@@ -1823,48 +1840,71 @@ async def get_memory_stats(
         raise HTTPException(400, "Missing user_id")
 
     try:
-        await _ensure_user_memory_loaded(user_id)
+        from src.common.memory.memory_service import get_private_memory
+        wm = get_private_memory(user_id).workflow_memory
+        graph_store = wm.state_manager.graph_store
 
-        # Get all states for user
-        all_states = workflow_memory.state_manager.list_states(user_id=user_id)
+        # Use aggregate count queries when available (avoids loading all entities)
+        if hasattr(graph_store, 'run_script'):
+            def _count(table: str) -> int:
+                try:
+                    result = graph_store.run_script(
+                        f"SELECT count() FROM {table} GROUP ALL"
+                    )
+                    if result and isinstance(result, list) and len(result) > 0:
+                        row = result[0]
+                        return row.get("count", 0) if isinstance(row, dict) else 0
+                    return 0
+                except Exception:
+                    return 0
 
-        # Calculate statistics
-        total_intent_sequences = 0
-        total_page_instances = 0
-        domains = set()
+            total_states = _count("state")
+            total_actions = _count("action")
+            total_intent_sequences = _count("intentsequence")
+            total_page_instances = _count("pageinstance")
 
-        for state in all_states:
-            total_page_instances += len(state.instances)
-            if state.domain:
-                domains.add(state.domain)
-
-        # Count IntentSequences via graph query (single query, not N+1)
-        if workflow_memory.intent_sequence_manager:
+            # Get distinct domains
             try:
-                all_seq_nodes = workflow_memory.intent_sequence_manager.graph_store.query_nodes(
-                    label="IntentSequence"
+                domain_result = graph_store.run_script(
+                    "SELECT domain FROM state WHERE domain IS NOT NULL GROUP BY domain"
                 )
-                total_intent_sequences = len(all_seq_nodes)
+                domains = sorted({
+                    r["domain"] for r in domain_result
+                    if isinstance(r, dict) and r.get("domain")
+                }) if domain_result else []
             except Exception:
-                total_intent_sequences = 0
-
-        # Get actions count
-        total_actions = len(workflow_memory.action_manager.list_actions(user_id=user_id))
+                domains = []
+        else:
+            # Fallback: load entities (for NetworkX or other backends)
+            all_states = wm.state_manager.list_states()
+            total_states = len(all_states)
+            total_page_instances = sum(len(s.instances) for s in all_states)
+            domains = sorted({s.domain for s in all_states if s.domain})
+            total_actions = len(wm.action_manager.list_actions())
+            total_intent_sequences = 0
+            if wm.intent_sequence_manager:
+                try:
+                    seqs = wm.intent_sequence_manager.graph_store.query_nodes(
+                        label="IntentSequence"
+                    )
+                    total_intent_sequences = len(seqs)
+                except Exception:
+                    pass
 
         # Get URL index stats
-        url_index_stats = workflow_memory.url_index.get_stats()
+        url_index_stats = wm.url_index.get_stats()
 
-        logger.info(f"✅ Memory stats for user {user_id}: {len(all_states)} states")
+        logger.info(f"Memory stats for user {user_id}: {total_states} states")
 
         return {
             "success": True,
             "user_id": user_id,
             "stats": {
-                "total_states": len(all_states),
+                "total_states": total_states,
                 "total_intent_sequences": total_intent_sequences,
                 "total_page_instances": total_page_instances,
                 "total_actions": total_actions,
-                "domains": sorted(list(domains)),
+                "domains": domains,
                 "url_index_size": url_index_stats.get("total_urls", 0),
             }
         }
@@ -1882,19 +1922,17 @@ async def clear_memory(
     x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
 ):
     """
-    Clear Workflow Memory
+    Clear User's Private Workflow Memory
 
     This endpoint deletes all States, Actions, Domains, Manage edges,
-    IntentSequences, and CognitivePhrases from workflow memory.
-    This operation is irreversible.
-
-    Note: user_id is currently ignored (user isolation disabled).
+    IntentSequences, and CognitivePhrases from the user's private memory.
+    This operation is irreversible. Only clears the user's private database.
 
     Headers:
         X-Ami-API-Key: User's API key (optional)
 
     Query Parameters:
-        user_id: User identifier (optional, currently ignored)
+        user_id: User identifier (required)
 
     Returns:
         {
@@ -1907,30 +1945,34 @@ async def clear_memory(
         }
 
     Errors:
+        400: Missing user_id
         500: Failed to clear memory
     """
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+
     try:
+        from src.common.memory.memory_service import get_private_memory
+        wm = get_private_memory(user_id).workflow_memory
+
         # Check if GraphStore supports bulk deletion
-        graph_store = workflow_memory.graph_store
+        graph_store = wm.graph_store
         has_delete_all = hasattr(graph_store, 'delete_all_nodes_by_label')
 
         if has_delete_all:
-            # Use efficient bulk deletion - delete ALL nodes
-            # Delete all nodes with DETACH DELETE (removes relationships automatically)
+            # Use efficient bulk deletion - delete ALL nodes and edges
+            actions_count = graph_store.delete_all_nodes_by_label("Action")
             states_count = graph_store.delete_all_nodes_by_label("State")
             domains_count = graph_store.delete_all_nodes_by_label("Domain")
             phrases_count = graph_store.delete_all_nodes_by_label("CognitivePhrase")
             sequences_count = graph_store.delete_all_nodes_by_label("IntentSequence")
 
-            # Actions are edges, deleted via DETACH DELETE on States
-            actions_count = 0
-
         else:
             # Fallback: one-by-one deletion (for NetworkX or other backends)
-            all_states = workflow_memory.state_manager.list_states()
-            all_actions = workflow_memory.action_manager.list_actions()
-            all_domains = workflow_memory.domain_manager.list_domains()
-            all_phrases = workflow_memory.phrase_manager.list_phrases()
+            all_states = wm.state_manager.list_states()
+            all_actions = wm.action_manager.list_actions()
+            all_domains = wm.domain_manager.list_domains()
+            all_phrases = wm.phrase_manager.list_phrases()
 
             states_count = len(all_states)
             actions_count = len(all_actions)
@@ -1939,16 +1981,16 @@ async def clear_memory(
             sequences_count = 0
 
             for action in all_actions:
-                workflow_memory.delete_action(action.source, action.target)
+                wm.delete_action(action.source, action.target)
             for state in all_states:
-                workflow_memory.delete_state(state.id)
+                wm.delete_state(state.id)
             for domain in all_domains:
-                workflow_memory.domain_manager.delete_domain(domain.id)
+                wm.domain_manager.delete_domain(domain.id)
             for phrase in all_phrases:
-                workflow_memory.phrase_manager.delete_phrase(phrase.id)
+                wm.phrase_manager.delete_phrase(phrase.id)
 
         # Clear URL index
-        workflow_memory.url_index.clear()
+        wm.url_index.clear()
 
         logger.info(f"✅ Memory cleared: "
                    f"{states_count} states, {actions_count} actions, "
@@ -1988,7 +2030,7 @@ async def list_cognitive_phrases(
 
     Headers:
         X-Ami-API-Key: User's API key (optional)
-        X-User-Id: User ID for filtering (optional)
+        X-User-Id: User ID for private memory routing (required)
 
     Query Parameters:
         limit: Maximum number of phrases to return (default: 50)
@@ -2012,15 +2054,14 @@ async def list_cognitive_phrases(
         503: Memory service not initialized
         500: Failed to list phrases
     """
-    if workflow_memory is None:
-        raise HTTPException(503, "Memory service not initialized")
+    if not x_user_id:
+        raise HTTPException(400, "Missing X-User-Id header")
 
     try:
-        # List all phrases
-        # Note: user_id filtering is disabled for now (single-user mode)
-        # If x_user_id is provided, it's ignored to show all phrases
-        phrases = workflow_memory.phrase_manager.list_phrases(
-            user_id=None,  # Don't filter by user_id for now
+        from src.common.memory.memory_service import get_private_memory
+        wm = get_private_memory(x_user_id).workflow_memory
+
+        phrases = wm.phrase_manager.list_phrases(
             limit=limit
         )
 
@@ -2052,7 +2093,8 @@ async def list_cognitive_phrases(
 @app.get("/api/v1/memory/phrases/{phrase_id}")
 async def get_cognitive_phrase(
     phrase_id: str,
-    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id")
 ):
     """
     Get CognitivePhrase detail with States and IntentSequences.
@@ -2062,6 +2104,7 @@ async def get_cognitive_phrase(
 
     Headers:
         X-Ami-API-Key: User's API key (optional)
+        X-User-Id: User ID for private memory routing (required)
 
     Path Parameters:
         phrase_id: CognitivePhrase ID
@@ -2086,23 +2129,27 @@ async def get_cognitive_phrase(
         }
 
     Errors:
+        400: Missing X-User-Id header
         404: Phrase not found
         503: Memory service not initialized
         500: Failed to get phrase
     """
-    if workflow_memory is None:
-        raise HTTPException(503, "Memory service not initialized")
+    if not x_user_id:
+        raise HTTPException(400, "Missing X-User-Id header")
 
     try:
+        from src.common.memory.memory_service import get_private_memory
+        wm = get_private_memory(x_user_id).workflow_memory
+
         # Get the phrase
-        phrase = workflow_memory.phrase_manager.get_phrase(phrase_id)
+        phrase = wm.phrase_manager.get_phrase(phrase_id)
         if not phrase:
             raise HTTPException(404, f"CognitivePhrase not found: {phrase_id}")
 
         # Get states from state_path
         states = []
         for state_id in phrase.state_path:
-            state = workflow_memory.state_manager.get_state(state_id)
+            state = wm.state_manager.get_state(state_id)
             if state:
                 states.append(state.to_dict())
 
@@ -2112,12 +2159,12 @@ async def get_cognitive_phrase(
             for step in phrase.execution_plan:
                 # Get in-page sequences
                 for seq_id in step.in_page_sequence_ids:
-                    seq = workflow_memory.intent_sequence_manager.get_sequence(seq_id)
+                    seq = wm.intent_sequence_manager.get_sequence(seq_id)
                     if seq:
                         intent_sequences.append(seq.to_dict())
                 # Get navigation sequence if exists
                 if step.navigation_sequence_id:
-                    seq = workflow_memory.intent_sequence_manager.get_sequence(step.navigation_sequence_id)
+                    seq = wm.intent_sequence_manager.get_sequence(step.navigation_sequence_id)
                     if seq:
                         intent_sequences.append(seq.to_dict())
 
@@ -2140,7 +2187,8 @@ async def get_cognitive_phrase(
 @app.delete("/api/v1/memory/phrases/{phrase_id}")
 async def delete_cognitive_phrase(
     phrase_id: str,
-    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id")
 ):
     """
     Delete a CognitivePhrase from memory.
@@ -2150,6 +2198,7 @@ async def delete_cognitive_phrase(
 
     Headers:
         X-Ami-API-Key: User's API key (optional)
+        X-User-Id: User ID for private memory routing (required)
 
     Path Parameters:
         phrase_id: CognitivePhrase ID to delete
@@ -2161,21 +2210,25 @@ async def delete_cognitive_phrase(
         }
 
     Errors:
+        400: Missing X-User-Id header
         404: Phrase not found
         503: Memory service not initialized
         500: Failed to delete phrase
     """
-    if workflow_memory is None:
-        raise HTTPException(503, "Memory service not initialized")
+    if not x_user_id:
+        raise HTTPException(400, "Missing X-User-Id header")
 
     try:
+        from src.common.memory.memory_service import get_private_memory
+        wm = get_private_memory(x_user_id).workflow_memory
+
         # Check if phrase exists
-        phrase = workflow_memory.phrase_manager.get_phrase(phrase_id)
+        phrase = wm.phrase_manager.get_phrase(phrase_id)
         if not phrase:
             raise HTTPException(404, f"CognitivePhrase not found: {phrase_id}")
 
         # Delete the phrase
-        success = workflow_memory.phrase_manager.delete_phrase(phrase_id)
+        success = wm.phrase_manager.delete_phrase(phrase_id)
         if not success:
             raise HTTPException(500, "Failed to delete phrase")
 
@@ -2195,111 +2248,83 @@ async def delete_cognitive_phrase(
         raise HTTPException(500, f"Failed to delete cognitive phrase: {str(e)}")
 
 
-# ===== Helper Functions for NL Query =====
+@app.post("/api/v1/memory/share")
+async def share_cognitive_phrase(
+    data: dict,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+):
+    """Share a CognitivePhrase from private memory to public memory.
 
-async def _ensure_user_memory_loaded(user_id: str, session_id: Optional[str] = None):
-    """
-    Ensure user's recordings are loaded into WorkflowMemory.
+    Deep-copies the phrase and all referenced entities (States, Actions,
+    IntentSequences, Domains) from the user's private database to the
+    shared public database.
 
-    This function loads States/Actions from the user's recordings into the global
-    workflow_memory for natural language querying.
-
-    Args:
-        user_id: User ID
-        session_id: Optional session ID to filter recordings
-    """
-    global workflow_memory
-
-    if not workflow_memory:
-        raise HTTPException(500, "WorkflowMemory not initialized")
-
-    # Disable auto-loading recording graphs into memory (explicitly requested).
-    # Memory should be populated via add_to_memory / WorkflowProcessor instead.
-    if not config_service.get("memory.load_recording_graphs", False):
-        logger.info("Auto-loading recording graphs is disabled; skipping load from recordings")
-        return
-
-    logger.info(f"Loading memory for user {user_id}")
-
-    # Get user's recordings from storage
-    recordings = storage_service.list_recordings(user_id)
-
-    # Filter by session if specified
-    if session_id:
-        recordings = [r for r in recordings if r.get("session_id") == session_id]
-
-    if not recordings:
-        logger.warning(f"No recordings found for user {user_id}")
-        return
-
-    # Load each recording's graph into memory
-    loaded_count = 0
-    for recording_meta in recordings:
-        recording_id = recording_meta.get("recording_id")
-
-        # Get full recording data with graph
-        try:
-            recording = storage_service.get_recording(user_id, recording_id)
-        except Exception as e:
-            logger.warning(f"Failed to read recording {recording_id}: {e}")
-            continue
-        if not recording:
-            continue
-
-        graph_dict = recording.get("graph")
-        if not graph_dict:
-            continue
-
-        # Convert graph dict to StateActionGraph
-        try:
-            from src.cloud_backend.graph_builder.models import StateActionGraph
-            graph = StateActionGraph.from_dict(graph_dict)
-
-            # Backfill missing user/session attribution for legacy recordings.
-            # This prevents stats/query filters by user_id from returning 0
-            # after a restart when old graphs lack user_id/session_id.
-            for state in graph.states.values():
-                if not getattr(state, "user_id", None):
-                    state.user_id = user_id
-                if not getattr(state, "session_id", None):
-                    state.session_id = recording_id
-
-            for action in graph.actions:
-                if not getattr(action, "user_id", None):
-                    action.user_id = user_id
-                if not getattr(action, "session_id", None):
-                    action.session_id = recording_id
-
-            # Store states with intents to memory
-            for state in graph.states.values():
-                workflow_memory.create_state(state)
-
-            # Store actions to memory
-            for action in graph.actions:
-                workflow_memory.create_action(action)
-
-            loaded_count += 1
-            logger.debug(f"Loaded recording {recording_id}: {len(graph.states)} states, {len(graph.actions)} actions")
-
-        except Exception as e:
-            logger.warning(f"Failed to load recording {recording_id}: {e}")
-            continue
-
-    logger.info(f"✅ Loaded {loaded_count} recordings into memory for user {user_id}")
-
-
-async def _get_reasoner_for_user(x_ami_api_key: str):
-    """
-    Get or create a Reasoner instance with user's API key.
-
-    Args:
-        x_ami_api_key: User's API key
+    Body:
+        {
+            "user_id": "user123",
+            "phrase_id": "uuid-of-phrase"
+        }
 
     Returns:
-        Reasoner instance
+        {
+            "success": true,
+            "public_phrase_id": "new-uuid-in-public"
+        }
+    """
+    user_id = data.get("user_id")
+    phrase_id = data.get("phrase_id")
+
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+    if not phrase_id:
+        raise HTTPException(400, "Missing phrase_id")
+
+    try:
+        from src.common.memory.memory_service import share_phrase as do_share
+        public_phrase_id = await do_share(user_id, phrase_id)
+
+        return {
+            "success": True,
+            "public_phrase_id": public_phrase_id,
+        }
+
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        logger.error(f"Failed to share phrase: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Failed to share phrase: {str(e)}")
+
+
+# ===== Helper Functions for NL Query =====
+
+async def _get_reasoner_for_user(
+    x_ami_api_key: str,
+    user_id: Optional[str] = None,
+    use_public: bool = False,
+):
+    """Get or create a Reasoner instance with user's API key and memory.
+
+    Args:
+        x_ami_api_key: User's API key.
+        user_id: User ID for private memory lookup. Required when use_public=False.
+        use_public: If True, use public memory instead of private.
+
+    Returns:
+        Reasoner instance connected to the specified memory.
     """
     from src.common.memory.reasoner.reasoner import Reasoner
     from src.common.llm import get_cached_embedding_service, get_cached_anthropic_provider
+    from src.common.memory.memory_service import get_private_memory, get_public_memory
+
+    # Get memory instance
+    if use_public:
+        user_memory = get_public_memory()
+    else:
+        if not user_id:
+            raise ValueError("user_id is required for private memory access")
+        user_memory = get_private_memory(user_id)
 
     # Create LLM provider with user's API key (cached)
     llm_provider = get_cached_anthropic_provider(
@@ -2321,9 +2346,9 @@ async def _get_reasoner_for_user(x_ami_api_key: str):
     max_depth = reasoner_config.get("max_depth", 3)
     similarity_thresholds = reasoner_config.get("similarity_thresholds", {})
 
-    # Create Reasoner with memory, LLM provider, and embedding service
+    # Create Reasoner with user's private memory
     reasoner = Reasoner(
-        memory=workflow_memory,
+        memory=user_memory.workflow_memory,
         llm_provider=llm_provider,
         embedding_service=embedding_service,
         max_depth=max_depth,
@@ -2380,14 +2405,11 @@ async def query_workflow_from_memory(
         raise HTTPException(400, "Missing query")
 
     try:
-        # Ensure user's memory is loaded
-        await _ensure_user_memory_loaded(user_id, session_id)
-
-        # Get Reasoner instance with user's API key
-        user_reasoner = await _get_reasoner_for_user(x_ami_api_key)
+        # Get Reasoner instance with user's private memory
+        user_reasoner = await _get_reasoner_for_user(x_ami_api_key, user_id)
 
         # Query memory using Reasoner
-        result = await user_reasoner.plan(query, user_id=user_id, session_id=session_id)
+        result = await user_reasoner.plan(query)
 
         if not result or not result.success:
             return {
@@ -2465,15 +2487,12 @@ async def reasoner_plan(
         raise HTTPException(400, "Missing user_id")
 
     try:
-        # Ensure user's memory is loaded
-        await _ensure_user_memory_loaded(user_id, session_id)
-
-        # Get Reasoner instance with user's API key
-        user_reasoner = await _get_reasoner_for_user(x_ami_api_key)
+        # Get Reasoner instance with user's private memory
+        user_reasoner = await _get_reasoner_for_user(x_ami_api_key, user_id)
 
         # Call Reasoner to get workflow plan
         logger.info(f"🧠 Reasoner planning for target: {target[:50]}...")
-        result = await user_reasoner.plan(target, user_id=user_id, session_id=session_id)
+        result = await user_reasoner.plan(target)
 
         if not result or not result.success:
             logger.info(f"🧠 Reasoner returned no workflow for target: {target[:50]}")

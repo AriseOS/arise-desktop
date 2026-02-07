@@ -42,7 +42,6 @@ class State(BaseModel):
         end_timestamp: When user left this state (milliseconds, optional).
         duration: How long user stayed in this state (milliseconds, optional).
         instances: List of PageInstance objects (concrete URLs belonging to this state).
-        user_id: User ID (optional).
         session_id: Session ID (optional).
         domain: Domain this state belongs to (e.g., "taobao.com").
         path_sig: Stable path signature for cross-session deduplication.
@@ -73,8 +72,7 @@ class State(BaseModel):
         description="List of PageInstance objects (concrete URLs)"
     )
 
-    # User session information
-    user_id: Optional[str] = Field(default=None, description="User ID")
+    # Session information
     session_id: Optional[str] = Field(default=None, description="Session ID")
 
     # NEW: Domain this state belongs to

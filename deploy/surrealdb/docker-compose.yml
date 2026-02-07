@@ -1,0 +1,31 @@
+# SurrealDB for Ami Memory System
+#
+# Usage:
+#   cd deploy/surrealdb
+#   docker-compose up -d
+#
+# Access:
+#   - HTTP API: http://localhost:8000
+#   - WebSocket: ws://localhost:8000/rpc
+
+version: '3.8'
+
+services:
+  surrealdb:
+    image: surrealdb/surrealdb:v2
+    container_name: ami-surrealdb
+    ports:
+      - "8000:8000"
+    command: start --user ${SURREALDB_USER:-root} --pass ${SURREALDB_PASSWORD:-root} rocksdb:/data/database.db
+    volumes:
+      - surrealdb_data:/data
+    restart: unless-stopped
+    networks:
+      - ami
+
+volumes:
+  surrealdb_data:
+
+networks:
+  ami:
+    driver: bridge

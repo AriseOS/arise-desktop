@@ -89,7 +89,6 @@ class StateIntentExtractor:
         self,
         workflow_data: List[Dict[str, Any]],
         domain_mapping: Optional[Dict[str, Domain]] = None,
-        user_id: Optional[str] = None,
         session_id: Optional[str] = None
     ) -> StateIntentExtractionResult:
         """Extract states and intents from workflow data using LLM.
@@ -97,7 +96,6 @@ class StateIntentExtractor:
         Args:
             workflow_data: List of workflow event dictionaries
             domain_mapping: Optional URL to Domain mapping
-            user_id: User ID
             session_id: Session ID
 
         Returns:
@@ -154,7 +152,6 @@ class StateIntentExtractor:
                     end_timestamp=state_data.end_timestamp,
                     duration=state_data.duration,
                     description=state_data.description,
-                    user_id=user_id,
                     session_id=session_id,
                     attributes=state_data.attributes
                 )
@@ -207,7 +204,6 @@ class StateIntentExtractor:
                     element_role=getattr(intent_data, 'element_role', None),
                     text=intent_data.text,
                     value=intent_data.value,
-                    user_id=user_id,
                     session_id=session_id,
                     attributes=attrs
                 )

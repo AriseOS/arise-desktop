@@ -123,14 +123,12 @@ class GraphDomainManager(DomainManager):
 
     def list_domains(
         self,
-        user_id: Optional[str] = None,
         domain_type: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> List[Domain]:
         """List domains with optional filters.
 
         Args:
-            user_id: Filter by user ID.
             domain_type: Filter by domain type ('website' or 'app').
             limit: Maximum number of results.
 
@@ -139,8 +137,6 @@ class GraphDomainManager(DomainManager):
         """
         try:
             filters = {}
-            if user_id:
-                filters["user_id"] = user_id
             if domain_type:
                 filters["domain_type"] = domain_type
 
@@ -292,14 +288,12 @@ class GraphManageManager(ManageManager):
         self,
         domain_id: Optional[str] = None,
         state_id: Optional[str] = None,
-        user_id: Optional[str] = None,
     ) -> List[Manage]:
         """List manage edges with optional filters.
 
         Args:
             domain_id: Filter by domain ID.
             state_id: Filter by state ID.
-            user_id: Filter by user ID.
 
         Returns:
             List of Manage objects matching the filters.
@@ -320,10 +314,6 @@ class GraphManageManager(ManageManager):
 
                 # Build Manage object
                 manage = Manage.from_dict(rel_props)
-
-                # Apply user_id filter if specified
-                if user_id and manage.user_id != user_id:
-                    continue
 
                 manages.append(manage)
 
@@ -444,7 +434,6 @@ class GraphStateManager(StateManager):
 
     def list_states(
         self,
-        user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         start_time: Optional[int] = None,
         end_time: Optional[int] = None,
@@ -453,7 +442,6 @@ class GraphStateManager(StateManager):
         """List states with optional filters.
 
         Args:
-            user_id: Filter by user ID.
             session_id: Filter by session ID.
             start_time: Filter by start timestamp.
             end_time: Filter by end timestamp.
@@ -465,8 +453,6 @@ class GraphStateManager(StateManager):
         try:
             # Build filters for query_nodes
             filters = {}
-            if user_id:
-                filters["user_id"] = user_id
             if session_id:
                 filters["session_id"] = session_id
 
@@ -612,7 +598,8 @@ class GraphStateManager(StateManager):
                 rels = self.graph_store.query_relationships(
                     start_node_label=self.node_label,
                     start_node_id_value=state_id,
-                    end_node_label=self.node_label
+                    end_node_label=self.node_label,
+                    rel_type="action",
                 )
                 for rel_data in rels:
                     rel_props = rel_data['rel']
@@ -633,7 +620,8 @@ class GraphStateManager(StateManager):
                 rels = self.graph_store.query_relationships(
                     start_node_label=self.node_label,
                     end_node_label=self.node_label,
-                    end_node_id_value=state_id
+                    end_node_id_value=state_id,
+                    rel_type="action",
                 )
                 for rel_data in rels:
                     rel_props = rel_data['rel']
@@ -777,6 +765,34 @@ class GraphActionManager(ActionManager):
             logger.error(f" creating action: {e}")
             return False
 
+    def get_action_by_id(self, action_id: str) -> Optional[Action]:
+        """Get an action by its unique ID.
+
+        Args:
+            action_id: Unique action identifier.
+
+        Returns:
+            Action object if found, None otherwise.
+        """
+        try:
+            # Query all "action" edges and filter by id property
+            rels = self.graph_store.query_relationships(
+                rel_type="action"
+            )
+            for rel in rels:
+                rel_data = rel['rel']
+                if rel_data.get('id') == action_id:
+                    action_dict = dict(rel_data)
+                    if 'source' not in action_dict:
+                        action_dict['source'] = rel['start'].get('id')
+                    if 'target' not in action_dict:
+                        action_dict['target'] = rel['end'].get('id')
+                    return Action(**action_dict)
+            return None
+        except Exception as e:
+            logger.error(f" getting action by id: {e}")
+            return None
+
     def get_action(self, source_id: str, target_id: str) -> Optional[Action]:
         """Get an action by source and target IDs.
 
@@ -877,7 +893,6 @@ class GraphActionManager(ActionManager):
         source_id: Optional[str] = None,
         target_id: Optional[str] = None,
         action_type: Optional[str] = None,
-        user_id: Optional[str] = None,
     ) -> List[Action]:
         """List actions with optional filters.
 
@@ -885,7 +900,6 @@ class GraphActionManager(ActionManager):
             source_id: Filter by source state ID.
             target_id: Filter by target state ID.
             action_type: Filter by action type.
-            user_id: Filter by user ID.
 
         Returns:
             List of Action objects matching the filters.
@@ -918,8 +932,6 @@ class GraphActionManager(ActionManager):
 
                 # Apply additional filters
                 if action_type and action.type != action_type:
-                    continue
-                if user_id and action.user_id != user_id:
                     continue
 
                 actions.append(action)
@@ -1167,7 +1179,6 @@ class InMemoryCognitivePhraseManager(CognitivePhraseManager):
 
     def list_phrases(
         self,
-        user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         goal_id: Optional[str] = None,
         start_time: Optional[int] = None,
@@ -1177,7 +1188,6 @@ class InMemoryCognitivePhraseManager(CognitivePhraseManager):
         """List cognitive phrases with optional filters, ordered by access frequency.
 
         Args:
-            user_id: Filter by user ID.
             session_id: Filter by session ID.
             goal_id: Deprecated, ignored for compatibility.
             start_time: Filter by start timestamp.
@@ -1191,8 +1201,6 @@ class InMemoryCognitivePhraseManager(CognitivePhraseManager):
 
         for phrase in self.phrases.values():
             # Apply filters
-            if user_id and phrase.user_id != user_id:
-                continue
             if session_id and phrase.session_id != session_id:
                 continue
             if start_time and phrase.start_timestamp < start_time:
@@ -1343,6 +1351,36 @@ class GraphCognitivePhraseManager(CognitivePhraseManager):
             logger.error(f" updating phrase: {e}")
             return False
 
+    def increment_use_count(self, phrase_id: str) -> bool:
+        """Atomically increment use_count on a CognitivePhrase.
+
+        Uses run_script for SurrealDB atomic UPDATE SET use_count += 1.
+        Falls back to read-modify-write for other backends.
+
+        Args:
+            phrase_id: Unique phrase identifier.
+
+        Returns:
+            True if incremented successfully, False otherwise.
+        """
+        try:
+            if hasattr(self.graph_store, 'run_script'):
+                # Atomic increment via SurrealQL
+                safe_id = phrase_id.replace("'", "\\'")
+                self.graph_store.run_script(
+                    f"UPDATE {self.node_label} SET use_count += 1 WHERE id = '{safe_id}'"
+                )
+            else:
+                # Fallback: read-modify-write (non-atomic)
+                phrase = self.get_phrase(phrase_id)
+                if phrase:
+                    phrase.use_count = (phrase.use_count or 0) + 1
+                    self.update_phrase(phrase)
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to increment use_count for phrase {phrase_id}: {e}")
+            return False
+
     def delete_phrase(self, phrase_id: str) -> bool:
         """Delete a cognitive phrase from GraphStore.
 
@@ -1362,7 +1400,6 @@ class GraphCognitivePhraseManager(CognitivePhraseManager):
 
     def list_phrases(
         self,
-        user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         goal_id: Optional[str] = None,
         start_time: Optional[int] = None,
@@ -1372,7 +1409,6 @@ class GraphCognitivePhraseManager(CognitivePhraseManager):
         """List cognitive phrases with optional filters.
 
         Args:
-            user_id: Filter by user ID.
             session_id: Filter by session ID.
             goal_id: Deprecated, ignored for compatibility.
             start_time: Filter by start timestamp.
@@ -1385,8 +1421,6 @@ class GraphCognitivePhraseManager(CognitivePhraseManager):
         try:
             # Build filters
             filters = {}
-            if user_id:
-                filters["user_id"] = user_id
             if session_id:
                 filters["session_id"] = session_id
 
@@ -2067,7 +2101,6 @@ class WorkflowMemory(Memory):
             duration=(
                 (states[-1].timestamp - states[0].timestamp) if len(states) > 1 else 0
             ),
-            user_id=states[0].user_id if states else None,
             session_id=session_id,
             states=states,
             state_ids=[s.id for s in states],
@@ -2212,7 +2245,6 @@ class WorkflowMemory(Memory):
         timestamp: int = 0,
         description: Optional[str] = None,
         domain: Optional[str] = None,
-        user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         path_sig: Optional[str] = None,
     ) -> tuple[State, bool]:
@@ -2230,7 +2262,6 @@ class WorkflowMemory(Memory):
             timestamp: Timestamp (used when creating new State).
             description: Description (used when creating new State).
             domain: Domain this State belongs to.
-            user_id: User ID.
             session_id: Session ID.
             path_sig: Stable path signature (optional).
 
@@ -2256,7 +2287,6 @@ class WorkflowMemory(Memory):
             description=description,
             domain=domain,
             path_sig=path_sig,
-            user_id=user_id,
             session_id=session_id,
             instances=[],
         )
@@ -2487,11 +2517,8 @@ class WorkflowMemory(Memory):
             "intent_sequences": sequences,
         }
 
-    def get_memory_stats(self, user_id: Optional[str] = None) -> Dict[str, Any]:
+    def get_memory_stats(self) -> Dict[str, Any]:
         """Get memory statistics.
-
-        Args:
-            user_id: Optional user ID to filter by (currently ignored).
 
         Returns:
             Dictionary with:
@@ -2504,7 +2531,7 @@ class WorkflowMemory(Memory):
                 - url_index_size: Number of URLs in index
         """
         # Get all states
-        all_states = self.state_manager.list_states(user_id=user_id)
+        all_states = self.state_manager.list_states()
 
         # Calculate statistics
         total_page_instances = 0
@@ -2525,7 +2552,7 @@ class WorkflowMemory(Memory):
                 total_intent_sequences = 0
 
         # Get actions count
-        total_actions = len(self.action_manager.list_actions(user_id=user_id))
+        total_actions = len(self.action_manager.list_actions())
 
         # Get phrases count
         total_phrases = len(self.phrase_manager.list_phrases())

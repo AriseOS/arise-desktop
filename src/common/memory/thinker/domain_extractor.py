@@ -80,14 +80,12 @@ class DomainExtractor:
 
     def extract_domains(
         self,
-        workflow_data: List[Dict[str, Any]],
-        user_id: Optional[str] = None
+        workflow_data: List[Dict[str, Any]]
     ) -> DomainExtractionResult:
         """Extract domains from workflow data using LLM.
 
         Args:
             workflow_data: List of workflow event dictionaries
-            user_id: User ID (optional)
 
         Returns:
             DomainExtractionResult containing extracted domains
@@ -149,7 +147,6 @@ class DomainExtractor:
                     domain_name=domain_data.domain_name,
                     domain_type=domain_data.domain_type,
                     created_at=current_time,
-                    user_id=user_id,
                     attributes=domain_data.attributes
                 )
                 domains.append(domain)

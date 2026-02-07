@@ -71,7 +71,6 @@ class Domain(BaseModel):
         domain_type: Type of domain - "website" or "app" (default: "website").
         created_at: When this domain was first discovered (milliseconds, optional).
         updated_at: When this domain was last updated (milliseconds, optional).
-        user_id: User ID (optional).
         attributes: Additional metadata.
     """
 
@@ -104,9 +103,6 @@ class Domain(BaseModel):
         default=None,
         description="When this domain was last updated (milliseconds)"
     )
-
-    # User information
-    user_id: Optional[str] = Field(default=None, description="User ID")
 
     # Additional metadata
     attributes: Dict[str, Any] = Field(
@@ -180,7 +176,6 @@ class Manage(BaseModel):
         visit_count: Number of times this state was visited (default: 0).
         visit_timestamps: List of all visit timestamps (optional).
         total_duration: Total time spent on this state (milliseconds, optional).
-        user_id: User ID (optional).
         attributes: Additional metadata.
     """
 
@@ -209,9 +204,6 @@ class Manage(BaseModel):
         default=None,
         description="Total time spent on this state (milliseconds)"
     )
-
-    # User information
-    user_id: Optional[str] = Field(default=None, description="User ID")
 
     # Additional metadata
     attributes: Dict[str, Any] = Field(

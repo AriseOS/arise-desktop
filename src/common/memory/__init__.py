@@ -154,15 +154,18 @@ from src.common.memory.thinker import (
 from src.common.memory.memory_service import (
     MemoryService,
     MemoryServiceConfig,
-    # Local memory (SurrealDB embedded)
+    # Multi-tenant (new API)
+    init_memory_services,
+    get_private_memory,
+    get_public_memory,
+    share_phrase,
+    # Local memory (Desktop App)
     get_local_memory_service,
     set_local_memory_service,
     init_local_memory_service,
-    # Public memory (Cloud Backend)
+    # Public memory (backward compat)
     get_public_memory_service,
-    set_public_memory_service,
-    init_public_memory_service,
-    # Default (backward compatible, returns public)
+    # Default (backward compatible)
     get_memory_service,
     set_memory_service,
     init_memory_service,
@@ -250,14 +253,17 @@ __all__ = [
     # Memory Service - High-level interface
     "MemoryService",
     "MemoryServiceConfig",
-    # Local memory
+    # Multi-tenant (new API)
+    "init_memory_services",
+    "get_private_memory",
+    "get_public_memory",
+    "share_phrase",
+    # Local memory (Desktop App)
     "get_local_memory_service",
     "set_local_memory_service",
     "init_local_memory_service",
-    # Public memory
+    # Public memory (backward compat)
     "get_public_memory_service",
-    "set_public_memory_service",
-    "init_public_memory_service",
     # Default (backward compatible)
     "get_memory_service",
     "set_memory_service",

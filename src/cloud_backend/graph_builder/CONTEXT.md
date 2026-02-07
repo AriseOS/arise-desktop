@@ -109,9 +109,8 @@ Build State/Action Graph using memgraph ontology:
 ```python
 from src.cloud_backend.graph_builder import GraphBuilder
 
-# Initialize with user/session IDs (optional)
+# Initialize with session ID (optional)
 builder = GraphBuilder(
-    user_id="user_123",
     session_id="session_456"
 )
 
@@ -159,7 +158,7 @@ for action in graph.actions:
 
 # Query
 states = memory.list_states(session_id="session_456")
-actions = memory.list_actions(user_id="user_123")
+actions = memory.list_actions()
 ```
 
 ## Configuration

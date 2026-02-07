@@ -36,7 +36,6 @@ class PageInstance(BaseModel):
         timestamp: When this page was visited (milliseconds).
         dom_snapshot_id: Reference to a DOM snapshot for replay (optional).
         session_id: Session ID when this page was visited (optional).
-        user_id: User ID who visited this page (optional).
     """
 
     # Unique identifier
@@ -57,9 +56,8 @@ class PageInstance(BaseModel):
         default=None, description="Reference to a DOM snapshot for replay"
     )
 
-    # User session information
+    # Session information
     session_id: Optional[str] = Field(default=None, description="Session ID")
-    user_id: Optional[str] = Field(default=None, description="User ID")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary.

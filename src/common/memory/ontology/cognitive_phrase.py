@@ -64,7 +64,6 @@ class CognitivePhrase(BaseModel):
     Attributes:
         id: Unique cognitive phrase identifier (auto-generated using UUID).
         description: Natural language description of the workflow process.
-        user_id: User ID.
         session_id: Session ID.
         start_timestamp: Start timestamp in milliseconds.
         end_timestamp: End timestamp in milliseconds.
@@ -94,8 +93,7 @@ class CognitivePhrase(BaseModel):
         description="Structured semantic fields for stable retrieval (label/intent/keywords/retrieval_text)"
     )
 
-    # User session information
-    user_id: Optional[str] = Field(default=None, description='User ID')
+    # Session information
     session_id: str = Field(..., description='Session ID')
 
     # Time information
@@ -131,6 +129,23 @@ class CognitivePhrase(BaseModel):
         default=None, description='Last access timestamp in milliseconds')
     created_at: Optional[int] = Field(
         default=None, description='Creation timestamp in milliseconds')
+
+    # Contributor tracking (only populated in Public Memory)
+    contributor_id: Optional[str] = Field(
+        default=None,
+        description='User ID of the contributor (who shared this workflow)')
+    contributed_at: Optional[int] = Field(
+        default=None,
+        description='When this workflow was shared to public (milliseconds)')
+    source_phrase_id: Optional[str] = Field(
+        default=None,
+        description='Original phrase ID in contributor private memory')
+
+    # Usage tracking (only populated in Public Memory)
+    use_count: int = Field(
+        default=0, description='Number of times this workflow was used by others')
+    upvote_count: int = Field(
+        default=0, description='Number of positive ratings from users')
 
     @model_validator(mode='before')
     @classmethod

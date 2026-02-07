@@ -7,14 +7,14 @@ Provides access to both local and public memory services via common/memory.
 
 Usage:
     from src.common.memory import (
-        # Local memory
+        # Multi-tenant (new API)
+        init_memory_services,
+        get_private_memory,
+        get_public_memory,
+        share_phrase,
+        # Local memory (Desktop App)
         get_local_memory_service,
-        set_local_memory_service,
         init_local_memory_service,
-        # Public memory
-        get_public_memory_service,
-        set_public_memory_service,
-        init_public_memory_service,
     )
 """
 
@@ -22,14 +22,17 @@ Usage:
 from src.common.memory import (
     MemoryService,
     MemoryServiceConfig,
-    # Local memory (SurrealDB embedded)
+    # Multi-tenant (new API)
+    init_memory_services,
+    get_private_memory,
+    get_public_memory,
+    share_phrase,
+    # Local memory (Desktop App)
     get_local_memory_service,
     set_local_memory_service,
     init_local_memory_service,
-    # Public memory (Cloud Backend)
+    # Public memory (backward compat)
     get_public_memory_service,
-    set_public_memory_service,
-    init_public_memory_service,
     # Default (backward compatible)
     get_memory_service,
     set_memory_service,
@@ -39,14 +42,17 @@ from src.common.memory import (
 __all__ = [
     "MemoryService",
     "MemoryServiceConfig",
+    # Multi-tenant (new API)
+    "init_memory_services",
+    "get_private_memory",
+    "get_public_memory",
+    "share_phrase",
     # Local
     "get_local_memory_service",
     "set_local_memory_service",
     "init_local_memory_service",
-    # Public
+    # Public (backward compat)
     "get_public_memory_service",
-    "set_public_memory_service",
-    "init_public_memory_service",
     # Default
     "get_memory_service",
     "set_memory_service",

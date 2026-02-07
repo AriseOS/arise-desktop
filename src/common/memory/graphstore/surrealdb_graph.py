@@ -19,6 +19,7 @@ API Reference: docs/surrealdb-api-reference.md
 
 import asyncio
 import logging
+import threading
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from src.common.memory.graphstore.graph_store import GraphStore
@@ -102,36 +103,38 @@ class SurrealDBGraphStore(GraphStore):
         self._vector_dimensions = self._config.vector_dimensions
         self._client = None
         self._connected = False
-        self._loop = None
-        # Track which loop the client was created in
-        self._client_loop_id = None
 
-    def _get_or_create_loop(self):
-        """Get the existing event loop or create a new one.
+        # Dedicated background event loop for persistent connection
+        self._bg_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._bg_thread: Optional[threading.Thread] = None
 
-        Returns:
-            Event loop for async operations
+    def _ensure_bg_loop(self):
+        """Ensure the background event loop thread is running.
+
+        Creates a dedicated daemon thread with its own event loop.
+        The client connection lives in this loop and is reused across all calls.
         """
-        try:
-            loop = asyncio.get_running_loop()
-            # If we're in a running loop, apply nest_asyncio
-            import nest_asyncio
-            nest_asyncio.apply()
-            return loop
-        except RuntimeError:
-            # No running loop, create a new one
-            if self._loop is None or self._loop.is_closed():
-                self._loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(self._loop)
-            return self._loop
+        if self._bg_loop is not None and self._bg_loop.is_running():
+            return
+
+        ready = threading.Event()
+
+        def _run_loop():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            self._bg_loop = loop
+            ready.set()
+            loop.run_forever()
+
+        self._bg_thread = threading.Thread(target=_run_loop, daemon=True)
+        self._bg_thread.start()
+        ready.wait()
 
     def _run(self, coro):
-        """Run async coroutine in sync context.
+        """Run async coroutine using the persistent background event loop.
 
-        Handles both cases:
-        1. No running event loop: creates and runs a new loop
-        2. Running event loop: runs coroutine in a separate thread with new loop
-           (avoids nest_asyncio which doesn't work with uvloop)
+        All coroutines are dispatched to the dedicated background loop thread,
+        which keeps the SurrealDB WebSocket client alive across calls.
 
         Args:
             coro: Coroutine to execute
@@ -139,129 +142,41 @@ class SurrealDBGraphStore(GraphStore):
         Returns:
             Result from coroutine
         """
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop and loop.is_running():
-            # Running inside an existing event loop (e.g., FastAPI with uvloop)
-            # Run in a separate thread with a new event loop to avoid nest_asyncio issues
-            import concurrent.futures
-
-            # Capture self for use in thread
-            graph_store = self
-
-            def run_in_new_loop():
-                new_loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(new_loop)
-                result = None
-                exception = None
-                try:
-                    result = new_loop.run_until_complete(coro)
-                except Exception as e:
-                    exception = e
-                finally:
-                    # Always close the client before cleaning up the loop
-                    # This ensures WebSocket tasks are properly cancelled
-                    try:
-                        new_loop.run_until_complete(graph_store._close_client())
-                    except Exception:
-                        pass  # Ignore errors during cleanup
-                    # Properly cleanup pending tasks before closing the loop
-                    graph_store._cleanup_loop(new_loop)
-
-                if exception:
-                    raise exception
-                return result
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(run_in_new_loop)
-                return future.result()
-        else:
-            # No running loop, use asyncio.run()
-            return asyncio.run(coro)
-
-    def _cleanup_loop(self, loop):
-        """Clean up pending tasks and close the event loop properly.
-
-        This prevents "Task was destroyed but it is pending!" warnings
-        by cancelling and awaiting all pending tasks before closing.
-
-        Args:
-            loop: Event loop to clean up
-        """
-        try:
-            # Cancel all pending tasks
-            pending = asyncio.all_tasks(loop)
-            for task in pending:
-                task.cancel()
-
-            # Wait for tasks to be cancelled (with timeout)
-            if pending:
-                loop.run_until_complete(
-                    asyncio.wait(pending, timeout=1.0)
-                )
-
-            # Shutdown async generators
-            loop.run_until_complete(loop.shutdown_asyncgens())
-
-            # Shutdown default executor if available (Python 3.9+)
-            if hasattr(loop, 'shutdown_default_executor'):
-                loop.run_until_complete(loop.shutdown_default_executor())
-
-        except Exception as e:
-            logger.debug(f"Loop cleanup warning: {e}")
-        finally:
-            loop.close()
+        self._ensure_bg_loop()
+        future = asyncio.run_coroutine_threadsafe(coro, self._bg_loop)
+        return future.result()
 
     async def _get_client(self):
-        """Get a connected client for the current event loop.
+        """Get the persistent connected client.
 
-        This method ensures we have a valid client for the current loop.
-        If the client was created in a different loop, reconnect.
-
-        Note: Each event loop gets its own client because WebSocket connections
-        and their background tasks are tied to specific event loops.
+        Creates and connects the client on first call. Subsequent calls
+        reuse the same client since all calls run on the same background loop.
 
         Returns:
             Connected AsyncSurreal client
         """
+        if self._client is not None and self._connected:
+            return self._client
+
         from surrealdb import AsyncSurreal
 
-        current_loop = asyncio.get_running_loop()
-        current_loop_id = id(current_loop)
+        connection_string = self._config.get_connection_string()
+        self._client = AsyncSurreal(connection_string)
+        await self._client.connect()
 
-        # Check if we need to reconnect (different loop or not connected)
-        if self._client is None or self._client_loop_id != current_loop_id:
-            # Don't try to close old client - it's in a different (possibly closed) loop
-            # Just create a new one for this loop
-            self._client = None
+        if not self._config.is_embedded():
+            await self._client.signin({"username": self._username, "password": self._password})
 
-            # Create new client for this loop
-            connection_string = self._config.get_connection_string()
-            self._client = AsyncSurreal(connection_string)
-            await self._client.connect()
-
-            # Signin for server mode
-            if not self._config.is_embedded():
-                await self._client.signin({"username": self._username, "password": self._password})
-
-            # Use namespace and database
-            await self._client.use(self._namespace, self._database)
-
-            self._client_loop_id = current_loop_id
-            self._connected = True
-            logger.debug(f"SurrealDB client connected for loop {current_loop_id}")
+        await self._client.use(self._namespace, self._database)
+        self._connected = True
+        logger.info(
+            f"SurrealDB client connected: {connection_string}/{self._namespace}/{self._database}"
+        )
 
         return self._client
 
     async def _close_client(self):
-        """Close the current client connection properly.
-
-        This should be called before closing the event loop to ensure
-        WebSocket tasks are properly cancelled.
-        """
+        """Close the current client connection."""
         if self._client is not None:
             try:
                 await self._client.close()
@@ -272,58 +187,32 @@ class SurrealDBGraphStore(GraphStore):
                 self._connected = False
 
     def _ensure_connected(self):
-        """Ensure connection is established (legacy, for initial setup)."""
+        """Ensure connection is established."""
         if not self._connected:
             self._run(self._connect())
 
     async def _connect(self):
-        """Connect to SurrealDB.
+        """Connect to SurrealDB and ensure namespace/database exist.
 
-        Supports two connection modes:
-        - file: SurrealKV file storage (embedded, no server needed)
-        - server: WebSocket connection to remote server
+        Uses _get_client() for the actual connection, then defines
+        namespace and database if they don't exist.
 
         Raises:
             ImportError: If surrealdb package is not installed
             RuntimeError: If connection or namespace/database setup fails
         """
         try:
-            from surrealdb import AsyncSurreal
-        except ImportError:
-            raise ImportError(
-                "surrealdb package is required. Install with: pip install surrealdb"
-            )
-
-        connection_string = self._config.get_connection_string()
-
-        try:
-            self._client = AsyncSurreal(connection_string)
-            await self._client.connect()
-            logger.info(f"SurrealDB client connected to: {connection_string}")
-
-            # Only signin for server mode (embedded modes don't need authentication)
-            if not self._config.is_embedded():
-                await self._client.signin({"username": self._username, "password": self._password})
-                logger.info(f"Signed in as user: {self._username}")
+            client = await self._get_client()
 
             # Create namespace and database if they don't exist
-            logger.debug(f"Defining namespace: {self._namespace}")
-            ns_result = await self._client.query(f"DEFINE NAMESPACE IF NOT EXISTS {self._namespace};")
-            logger.debug(f"DEFINE NAMESPACE result: {ns_result}")
-
-            logger.debug(f"Using namespace: {self._namespace}")
-            await self._client.query(f"USE NS {self._namespace};")
-
-            logger.debug(f"Defining database: {self._database}")
-            db_result = await self._client.query(f"DEFINE DATABASE IF NOT EXISTS {self._database};")
-            logger.debug(f"DEFINE DATABASE result: {db_result}")
-
-            await self._client.use(self._namespace, self._database)
-            self._connected = True
+            await client.query(f"DEFINE NAMESPACE IF NOT EXISTS {self._namespace};")
+            await client.query(f"USE NS {self._namespace};")
+            await client.query(f"DEFINE DATABASE IF NOT EXISTS {self._database};")
+            await client.use(self._namespace, self._database)
 
             logger.info(
                 f"Connected to SurrealDB ({self._config.mode} mode): "
-                f"{connection_string}/{self._namespace}/{self._database}"
+                f"{self._config.get_connection_string()}/{self._namespace}/{self._database}"
             )
 
         except Exception as e:
@@ -333,11 +222,22 @@ class SurrealDBGraphStore(GraphStore):
 
     def close(self) -> None:
         """Close the connection and release resources."""
-        if self._client and self._connected:
-            try:
-                self._run(self._client.close())
-            except Exception as e:
-                logger.warning(f"Error closing connection: {e}")
+        if self._bg_loop and self._bg_loop.is_running():
+            if self._client and self._connected:
+                try:
+                    future = asyncio.run_coroutine_threadsafe(
+                        self._close_client(), self._bg_loop
+                    )
+                    future.result(timeout=5.0)
+                except Exception as e:
+                    logger.warning(f"Error closing connection: {e}")
+
+            self._bg_loop.call_soon_threadsafe(self._bg_loop.stop)
+            if self._bg_thread:
+                self._bg_thread.join(timeout=5.0)
+
+            self._bg_loop = None
+            self._bg_thread = None
             self._connected = False
             self._client = None
             logger.info("SurrealDB connection closed")
@@ -413,16 +313,12 @@ class SurrealDBGraphStore(GraphStore):
                 except Exception as e:
                     logger.warning(f"Index idx_{table}_id warning: {e}")
 
-            # Create property indexes for common queries (matching Neo4j indexes)
-            # Neo4j: CREATE INDEX state_user_id FOR (s:State) ON (s.user_id)
+            # Create property indexes for common queries
             single_field_indexes = [
-                ("state", "user_id"),
                 ("state", "session_id"),
                 ("state", "domain"),           # For domain-based queries
                 ("state", "page_url"),         # For URL lookups
-                ("domain", "user_id"),
                 ("domain", "domain_url"),      # For domain lookups by URL
-                ("cognitivephrase", "user_id"),
                 ("cognitivephrase", "session_id"),
                 ("intentsequence", "state_id"),
                 ("intentsequence", "content_hash"),  # For deduplication
@@ -1018,12 +914,15 @@ class SurrealDBGraphStore(GraphStore):
                 params = {}
 
                 if start_node_id_value is not None:
-                    conditions.append(f"in.{start_node_id_key} = $start_id")
-                    params["start_id"] = start_node_id_value
+                    # Use RecordID comparison: in = table:`id`
+                    # (in.id returns full RecordID like "table:⟨uuid⟩", not plain string)
+                    start_table = start_node_label.lower() if start_node_label else "state"
+                    conditions.append(f"in = {start_table}:`{start_node_id_value}`")
 
                 if end_node_id_value is not None:
-                    conditions.append(f"out.{end_node_id_key} = $end_id")
-                    params["end_id"] = end_node_id_value
+                    # Use RecordID comparison: out = table:`id`
+                    end_table = end_node_label.lower() if end_node_label else "state"
+                    conditions.append(f"out = {end_table}:`{end_node_id_value}`")
 
                 if conditions:
                     # Insert WHERE before FETCH
@@ -1376,7 +1275,8 @@ class SurrealDBGraphStore(GraphStore):
                 return [
                     (
                         {k: v for k, v in self._clean_node(r).items() if k != "similarity"},
-                        float(r.get("similarity", 0.0))
+                        # Normalize to [0,1] range matching Neo4j convention: (1 + cosine) / 2
+                        (1.0 + float(r.get("similarity", 0.0))) / 2.0
                     )
                     for r in result
                 ]
@@ -1893,7 +1793,7 @@ class SurrealDBGraphStore(GraphStore):
 
         Args:
             label: Node label
-            filters: Filter criteria (e.g., {"user_id": "xxx"})
+            filters: Filter criteria (e.g., {"session_id": "xxx"})
 
         Returns:
             Number of nodes deleted

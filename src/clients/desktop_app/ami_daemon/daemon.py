@@ -1170,7 +1170,7 @@ async def upload_recording_to_cloud(
 
 class AddToMemoryRequest(BaseModel):
     """Request model for adding to memory."""
-    user_id: Optional[str] = None  # Ignored - local memory has no user isolation
+    user_id: Optional[str] = None  # User ID for private memory database isolation
     recording_id: Optional[str] = None  # Load operations from existing recording
     operations: Optional[List[Dict[str, Any]]] = None  # Direct operations array
     session_id: Optional[str] = None
@@ -1286,6 +1286,7 @@ async def add_to_memory(
 async def query_memory(
     request: QueryMemoryRequest,
     x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
 ):
     """
     Query Personal Memory using Natural Language (Proxy to Cloud Backend)
@@ -1297,18 +1298,7 @@ async def query_memory(
 
     Headers:
         X-Ami-API-Key: API key for LLM (required for reasoning)
-
-    Returns:
-        {
-            "success": true,
-            "query_type": "task|navigation|action",
-            "states": [...],
-            "actions": [...],
-            "intent_sequences": [...],
-            "cognitive_phrase": {...},
-            "execution_plan": [...],
-            "metadata": {...}
-        }
+        X-User-Id: User ID for private memory routing (required)
     """
     try:
         if not cloud_client:
@@ -1324,7 +1314,7 @@ async def query_memory(
         logger.info(f"[memory/query] Proxying query to Cloud Backend: {query_text[:50]}...")
 
         result = await cloud_client.query_memory(
-            user_id="default_user",  # TODO: get from request or auth
+            user_id=x_user_id,
             query=query_text,
             top_k=request.top_k,
         )
@@ -1341,20 +1331,13 @@ async def query_memory(
 @app.get("/api/v1/memory/stats")
 async def get_memory_stats(
     x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
 ):
     """
     Get Memory Statistics (Proxy to Cloud Backend)
 
-    Returns:
-        {
-            "success": true,
-            "stats": {
-                "initialized": true,
-                "node_count": 10,
-                "edge_count": 15,
-                "embedding_available": true
-            }
-        }
+    Headers:
+        X-User-Id: User ID for private memory routing (required)
     """
     try:
         if not cloud_client:
@@ -1365,7 +1348,7 @@ async def get_memory_stats(
 
         logger.info("[memory/stats] Proxying stats request to Cloud Backend...")
 
-        result = await cloud_client.get_memory_stats(user_id="default_user")
+        result = await cloud_client.get_memory_stats(user_id=x_user_id)
         logger.info(f"[memory/stats] Result: {result}")
         return result
 
@@ -1390,17 +1373,13 @@ async def debug_memory():
 @app.delete("/api/v1/memory")
 async def clear_memory(
     x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
 ):
     """
     Clear Memory (Proxy to Cloud Backend)
 
-    Returns:
-        {
-            "success": true,
-            "deleted_states": 10,
-            "deleted_actions": 8,
-            ...
-        }
+    Headers:
+        X-User-Id: User ID for private memory routing (required)
     """
     try:
         if not cloud_client:
@@ -1411,7 +1390,7 @@ async def clear_memory(
 
         logger.info("[memory/clear] Proxying clear request to Cloud Backend...")
 
-        result = await cloud_client.clear_memory(user_id="default_user")
+        result = await cloud_client.clear_memory(user_id=x_user_id)
         logger.info(f"[memory/clear] Result: {result}")
         return result
 
@@ -1428,6 +1407,7 @@ async def clear_memory(
 async def list_cognitive_phrases(
     limit: int = 50,
     x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
 ):
     """
     List CognitivePhrases from Memory (Proxy to Cloud Backend)
@@ -1435,20 +1415,8 @@ async def list_cognitive_phrases(
     Query Parameters:
         limit: Maximum number of phrases to return (default: 50)
 
-    Returns:
-        {
-            "success": true,
-            "phrases": [
-                {
-                    "id": "uuid",
-                    "label": "short label",
-                    "description": "natural language description",
-                    "access_count": 5,
-                    "last_accessed": 1234567890
-                }
-            ],
-            "total": 10
-        }
+    Headers:
+        X-User-Id: User ID for private memory routing (required)
     """
     try:
         if not cloud_client:
@@ -1459,7 +1427,7 @@ async def list_cognitive_phrases(
 
         logger.info(f"[memory/phrases] Proxying list request to Cloud Backend (limit={limit})...")
 
-        result = await cloud_client.list_cognitive_phrases(limit=limit)
+        result = await cloud_client.list_cognitive_phrases(limit=limit, user_id=x_user_id)
         logger.info(f"[memory/phrases] Found {result.get('total', 0)} cognitive phrases")
         return result
 
@@ -1472,6 +1440,7 @@ async def list_cognitive_phrases(
 async def get_cognitive_phrase(
     phrase_id: str,
     x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
 ):
     """
     Get CognitivePhrase Detail with States and IntentSequences (Proxy to Cloud Backend)
@@ -1479,13 +1448,8 @@ async def get_cognitive_phrase(
     Path Parameters:
         phrase_id: CognitivePhrase ID
 
-    Returns:
-        {
-            "success": true,
-            "phrase": {...},
-            "states": [...],
-            "intent_sequences": [...]
-        }
+    Headers:
+        X-User-Id: User ID for private memory routing (required)
     """
     try:
         if not cloud_client:
@@ -1496,7 +1460,7 @@ async def get_cognitive_phrase(
 
         logger.info(f"[memory/phrases] Proxying get request to Cloud Backend: {phrase_id}...")
 
-        result = await cloud_client.get_cognitive_phrase(phrase_id)
+        result = await cloud_client.get_cognitive_phrase(phrase_id, user_id=x_user_id)
         if not result.get("success"):
             raise HTTPException(status_code=404, detail=f"Phrase {phrase_id} not found")
 
@@ -1514,6 +1478,7 @@ async def get_cognitive_phrase(
 async def delete_cognitive_phrase(
     phrase_id: str,
     x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
 ):
     """
     Delete a CognitivePhrase from Memory (Proxy to Cloud Backend)
@@ -1521,11 +1486,8 @@ async def delete_cognitive_phrase(
     Path Parameters:
         phrase_id: CognitivePhrase ID to delete
 
-    Returns:
-        {
-            "success": true,
-            "message": "CognitivePhrase deleted"
-        }
+    Headers:
+        X-User-Id: User ID for private memory routing (required)
     """
     try:
         if not cloud_client:
@@ -1536,7 +1498,7 @@ async def delete_cognitive_phrase(
 
         logger.info(f"[memory/phrases] Proxying delete request to Cloud Backend: {phrase_id}...")
 
-        result = await cloud_client.delete_cognitive_phrase(phrase_id)
+        result = await cloud_client.delete_cognitive_phrase(phrase_id, user_id=x_user_id)
         if result.get("success"):
             logger.info(f"[memory/phrases] Deleted cognitive phrase: {phrase_id}")
             return result

@@ -10,9 +10,16 @@ Both backends call this service layer, which handles:
 - Query, add, clear operations
 """
 
+import asyncio
+import hashlib
 import logging
 import os
+import re
+import time
+import uuid
+from collections import OrderedDict
 from dataclasses import dataclass, field
+from threading import RLock
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -306,7 +313,6 @@ class MemoryService:
         self,
         operations: List[Dict[str, Any]],
         session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
         generate_embeddings: bool = True,
         llm_provider: Any = None,
     ) -> Dict[str, Any]:
@@ -315,7 +321,6 @@ class MemoryService:
         Args:
             operations: List of operation events from recording
             session_id: Optional session identifier
-            user_id: Optional user identifier
             generate_embeddings: Whether to generate embeddings
             llm_provider: LLM provider for description generation
 
@@ -338,7 +343,6 @@ class MemoryService:
 
             result = await processor.process_workflow(
                 workflow_data=operations,
-                user_id=user_id,
                 session_id=session_id,
                 store_to_memory=True,
             )
@@ -486,20 +490,364 @@ class MemoryService:
         logger.info("Memory Service closed")
 
 
-# ==================== Global Instances ====================
-# Two separate instances: local (SurrealDB) and public (Cloud Backend)
+# ==================== Multi-Tenant Global Instances ====================
+# Per-user private memory (LRU-cached) + shared public memory
 
-_local_memory_service: Optional[MemoryService] = None
+MAX_CACHED_PRIVATE_STORES = 100
+
+_private_stores: OrderedDict[str, MemoryService] = OrderedDict()
+_private_stores_lock = RLock()
 _public_memory_service: Optional[MemoryService] = None
+_base_config: Optional[MemoryServiceConfig] = None
 
 
-# ---------- Local Memory Service (SurrealDB embedded) ----------
+def _sanitize_user_id(user_id: str) -> str:
+    """Sanitize user_id for use as SurrealDB database name.
 
-def get_local_memory_service() -> Optional[MemoryService]:
-    """Get the local MemoryService instance (SurrealDB embedded).
+    Uses a short hash suffix to prevent collisions from character replacement.
+    For example, 'user.1' and 'user-1' produce different database names.
+
+    Args:
+        user_id: Raw user ID string.
 
     Returns:
-        MemoryService instance if initialized, None otherwise
+        Sanitized string safe for SurrealDB database name, collision-free.
+    """
+    # If user_id is already alphanumeric (common case), skip hashing
+    if re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_]*", user_id):
+        return user_id
+
+    # Replace non-alphanumeric with underscore for readability
+    sanitized = re.sub(r"[^a-zA-Z0-9]", "_", user_id)
+    # Append short hash to prevent collisions (user.1 vs user-1 vs user_1)
+    hash_suffix = hashlib.sha256(user_id.encode()).hexdigest()[:8]
+    sanitized = f"{sanitized}_{hash_suffix}"
+    if sanitized[0].isdigit():
+        sanitized = f"u{sanitized}"
+    return sanitized
+
+
+def init_memory_services(base_config: MemoryServiceConfig) -> None:
+    """Initialize the memory service infrastructure.
+
+    Sets up:
+    - Base config template for creating per-user private instances
+    - Public memory service (database: "public")
+
+    Args:
+        base_config: Base configuration with shared SurrealDB connection settings.
+    """
+    global _base_config, _public_memory_service
+    _base_config = base_config
+
+    public_config = MemoryServiceConfig(
+        graph_backend=base_config.graph_backend,
+        graph_url=base_config.graph_url,
+        graph_namespace=base_config.graph_namespace,
+        graph_database="public",
+        graph_username=base_config.graph_username,
+        graph_password=base_config.graph_password,
+        vector_dimensions=base_config.vector_dimensions,
+        embedding_provider=base_config.embedding_provider,
+        embedding_model=base_config.embedding_model,
+        embedding_api_url=base_config.embedding_api_url,
+        embedding_api_key=base_config.embedding_api_key,
+        embedding_api_key_env=base_config.embedding_api_key_env,
+        embedding_dimension=base_config.embedding_dimension,
+        intent_sequence_dedup_threshold=base_config.intent_sequence_dedup_threshold,
+    )
+    _public_memory_service = MemoryService(public_config)
+    _public_memory_service.initialize()
+    logger.info("Public Memory Service initialized (database: public)")
+
+
+def get_private_memory(user_id: str) -> MemoryService:
+    """Get or create a private MemoryService for the given user.
+
+    Creates a new SurrealDB database `private_{sanitized_user_id}` on first access.
+    Uses LRU cache with eviction for connection management.
+
+    Args:
+        user_id: User identifier.
+
+    Returns:
+        MemoryService instance for this user's private database.
+
+    Raises:
+        RuntimeError: If init_memory_services() has not been called.
+    """
+    if _base_config is None:
+        raise RuntimeError("Memory services not initialized. Call init_memory_services() first.")
+
+    # Fast path: check cache under lock
+    with _private_stores_lock:
+        if user_id in _private_stores:
+            _private_stores.move_to_end(user_id)
+            return _private_stores[user_id]
+
+    # Slow path: create service OUTSIDE lock (network I/O in initialize)
+    sanitized = _sanitize_user_id(user_id)
+    db_name = f"private_{sanitized}"
+
+    config = MemoryServiceConfig(
+        graph_backend=_base_config.graph_backend,
+        graph_url=_base_config.graph_url,
+        graph_namespace=_base_config.graph_namespace,
+        graph_database=db_name,
+        graph_username=_base_config.graph_username,
+        graph_password=_base_config.graph_password,
+        vector_dimensions=_base_config.vector_dimensions,
+        embedding_provider=_base_config.embedding_provider,
+        embedding_model=_base_config.embedding_model,
+        embedding_api_url=_base_config.embedding_api_url,
+        embedding_api_key=_base_config.embedding_api_key,
+        embedding_api_key_env=_base_config.embedding_api_key_env,
+        embedding_dimension=_base_config.embedding_dimension,
+        intent_sequence_dedup_threshold=_base_config.intent_sequence_dedup_threshold,
+    )
+    service = MemoryService(config)
+    service.initialize()
+
+    # Re-acquire lock to insert into cache
+    with _private_stores_lock:
+        # Double-check: another thread may have created it while we were initializing
+        if user_id in _private_stores:
+            service.close()
+            _private_stores.move_to_end(user_id)
+            return _private_stores[user_id]
+
+        # Evict oldest if at capacity
+        if len(_private_stores) >= MAX_CACHED_PRIVATE_STORES:
+            _, old_service = _private_stores.popitem(last=False)
+            old_service.close()
+
+        _private_stores[user_id] = service
+        logger.info(f"Private Memory Service initialized for user '{user_id}' (database: {db_name})")
+        return service
+
+
+def get_public_memory() -> MemoryService:
+    """Get the shared public MemoryService.
+
+    Returns:
+        Public MemoryService instance.
+
+    Raises:
+        RuntimeError: If init_memory_services() has not been called.
+    """
+    if _public_memory_service is None:
+        raise RuntimeError("Memory services not initialized. Call init_memory_services() first.")
+    return _public_memory_service
+
+
+async def share_phrase(user_id: str, phrase_id: str) -> str:
+    """Copy a CognitivePhrase and its dependencies to public memory.
+
+    Deep-copies the phrase and all referenced States, Actions,
+    IntentSequences, and Domains from user's private database
+    to the public database with new IDs.
+
+    Args:
+        user_id: User ID (owner of the phrase).
+        phrase_id: Phrase ID in user's private memory.
+
+    Returns:
+        New phrase ID in public database.
+
+    Raises:
+        ValueError: If phrase not found.
+    """
+    private = get_private_memory(user_id)
+    public = get_public_memory()
+
+    private_wm = private.workflow_memory
+    public_wm = public.workflow_memory
+
+    # 1. Load phrase
+    phrase = private_wm.phrase_manager.get_phrase(phrase_id)
+    if not phrase:
+        raise ValueError(f"Phrase {phrase_id} not found in private memory for user '{user_id}'")
+
+    # 1b. Idempotency check: if already shared, return existing public phrase ID
+    existing_nodes = public_wm.phrase_manager.graph_store.query_nodes(
+        label=public_wm.phrase_manager.node_label,
+        filters={"source_phrase_id": phrase_id, "contributor_id": user_id},
+        limit=1,
+    )
+    if existing_nodes:
+        from src.common.memory.ontology.cognitive_phrase import CognitivePhrase as CP
+        existing = CP.from_dict(existing_nodes[0])
+        logger.info(f"Phrase '{phrase.label}' already shared by user '{user_id}' (ID: {existing.id})")
+        return existing.id
+
+    # 2. Collect all referenced entity IDs from execution_plan
+    state_ids = set()
+    action_ids = set()
+    sequence_ids = set()
+    for step in phrase.execution_plan:
+        state_ids.add(step.state_id)
+        if step.navigation_action_id:
+            action_ids.add(step.navigation_action_id)
+        sequence_ids.update(step.in_page_sequence_ids)
+        if step.navigation_sequence_id:
+            sequence_ids.add(step.navigation_sequence_id)
+
+    # Also collect from state_path (backward compat)
+    for sid in phrase.state_path:
+        state_ids.add(sid)
+
+    # 3. Load all entities from private memory
+    states = {}
+    for sid in state_ids:
+        s = private_wm.state_manager.get_state(sid)
+        if s:
+            states[sid] = s
+
+    actions = {}
+    for aid in action_ids:
+        a = private_wm.action_manager.get_action_by_id(aid)
+        if a:
+            actions[aid] = a
+
+    sequences = {}
+    for seqid in sequence_ids:
+        if private_wm.intent_sequence_manager:
+            seq = private_wm.intent_sequence_manager.get_sequence(seqid)
+            if seq:
+                sequences[seqid] = seq
+
+    # Collect domains from states
+    domain_ids = set()
+    for s in states.values():
+        if s.domain:
+            domain_ids.add(s.domain)
+
+    domains = {}
+    for did in domain_ids:
+        d = private_wm.domain_manager.get_domain(did)
+        if d:
+            domains[did] = d
+
+    # 4. Build id_map incrementally as entities are created/deduped
+    id_map = {}
+
+    # 5. Deep-copy entities to public with deduplication
+
+    # Copy domains (keep original domain IDs since they are normalized URLs)
+    for did, domain in domains.items():
+        new_domain = domain.model_copy(deep=True)
+        public_wm.domain_manager.create_domain(new_domain)
+
+    # Copy states with dedup via find_or_create_state()
+    for old_id, state in states.items():
+        existing_or_new, _is_new = public_wm.find_or_create_state(
+            url=state.page_url,
+            page_title=state.page_title,
+            timestamp=state.timestamp,
+            description=state.description,
+            domain=state.domain,
+            path_sig=state.path_sig,
+        )
+        id_map[old_id] = existing_or_new.id
+
+    # Copy Manage relations (Domain → State) with remapped state IDs
+    for old_state_id in states:
+        manages = private_wm.manage_manager.list_manages(state_id=old_state_id)
+        for manage in manages:
+            new_manage = manage.model_copy(deep=True)
+            new_manage.state_id = id_map.get(old_state_id, old_state_id)
+            # domain_id stays the same (domains keep original IDs)
+            public_wm.manage_manager.create_manage(new_manage)
+
+    # Copy intent sequences with dedup via find_duplicate()
+    if private_wm.intent_sequence_manager and public_wm.intent_sequence_manager:
+        # Pre-build reverse mapping: sequence_id → state_id (O(n) instead of O(n*m))
+        seq_to_state = {}
+        for step in phrase.execution_plan:
+            for sid in step.in_page_sequence_ids:
+                seq_to_state[sid] = step.state_id
+            if step.navigation_sequence_id:
+                seq_to_state[step.navigation_sequence_id] = step.state_id
+
+        for old_id, seq in sequences.items():
+            old_state_id = seq_to_state.get(old_id)
+            if not old_state_id:
+                # Sequence not referenced in execution_plan — copy without dedup
+                new_seq = seq.model_copy(deep=True)
+                new_seq.id = str(uuid.uuid4())
+                public_wm.intent_sequence_manager.create_sequence(new_seq)
+                id_map[old_id] = new_seq.id
+                continue
+
+            new_state_id = id_map.get(old_state_id, old_state_id)
+            dup_id = public_wm.intent_sequence_manager.find_duplicate(seq, new_state_id)
+            if dup_id:
+                id_map[old_id] = dup_id
+            else:
+                new_seq = seq.model_copy(deep=True)
+                new_seq.id = str(uuid.uuid4())
+                public_wm.intent_sequence_manager.create_sequence(new_seq)
+                public_wm.intent_sequence_manager.link_to_state(new_state_id, new_seq.id)
+                id_map[old_id] = new_seq.id
+
+    # Copy actions with remapped source/target (upsert handles dedup)
+    for old_id, action in actions.items():
+        new_action = action.model_copy(deep=True)
+        new_action.id = str(uuid.uuid4())
+        new_action.source = id_map.get(action.source, action.source)
+        new_action.target = id_map.get(action.target, action.target)
+        if new_action.trigger_sequence_id:
+            new_action.trigger_sequence_id = id_map.get(
+                new_action.trigger_sequence_id, new_action.trigger_sequence_id
+            )
+        public_wm.action_manager.create_action(new_action)
+        id_map[old_id] = new_action.id
+
+    # 6. Copy phrase with contributor fields
+    new_phrase = phrase.model_copy(deep=True)
+    new_phrase.id = str(uuid.uuid4())
+    new_phrase.contributor_id = user_id
+    new_phrase.contributed_at = int(time.time() * 1000)
+    new_phrase.source_phrase_id = phrase_id
+    new_phrase.use_count = 0
+    new_phrase.upvote_count = 0
+
+    # Remap internal references
+    new_phrase.state_path = [id_map.get(sid, sid) for sid in new_phrase.state_path]
+
+    from src.common.memory.ontology.cognitive_phrase import ExecutionStep
+    new_plan = []
+    for step in new_phrase.execution_plan:
+        new_step = ExecutionStep(
+            index=step.index,
+            state_id=id_map.get(step.state_id, step.state_id),
+            in_page_sequence_ids=[id_map.get(sid, sid) for sid in step.in_page_sequence_ids],
+            navigation_action_id=id_map.get(step.navigation_action_id, step.navigation_action_id) if step.navigation_action_id else None,
+            navigation_sequence_id=id_map.get(step.navigation_sequence_id, step.navigation_sequence_id) if step.navigation_sequence_id else None,
+        )
+        new_plan.append(new_step)
+    new_phrase.execution_plan = new_plan
+
+    public_wm.phrase_manager.create_phrase(new_phrase)
+
+    logger.info(f"Shared phrase '{phrase.label}' from user '{user_id}' to public (new ID: {new_phrase.id})")
+    return new_phrase.id
+
+
+# ---------- Backward Compatibility Aliases ----------
+
+# Desktop app uses get_local_memory_service() for the local SurrealDB
+# Cloud backend uses get_memory_service() for the shared instance
+# Both now delegate to the multi-tenant system.
+
+_local_memory_service: Optional[MemoryService] = None
+
+
+def get_local_memory_service() -> Optional[MemoryService]:
+    """Get the local MemoryService instance (Desktop App).
+
+    Returns:
+        MemoryService instance if initialized, None otherwise.
     """
     return _local_memory_service
 
@@ -508,7 +856,7 @@ def set_local_memory_service(service: MemoryService) -> None:
     """Set the local MemoryService instance.
 
     Args:
-        service: MemoryService instance to set as local
+        service: MemoryService instance to set as local.
     """
     global _local_memory_service
     _local_memory_service = service
@@ -518,10 +866,10 @@ def init_local_memory_service(config: MemoryServiceConfig) -> MemoryService:
     """Initialize and set the local MemoryService instance.
 
     Args:
-        config: Service configuration (should use SurrealDB)
+        config: Service configuration (should use SurrealDB).
 
     Returns:
-        Initialized MemoryService instance
+        Initialized MemoryService instance.
     """
     global _local_memory_service
     _local_memory_service = MemoryService(config)
@@ -530,78 +878,47 @@ def init_local_memory_service(config: MemoryServiceConfig) -> MemoryService:
     return _local_memory_service
 
 
-# ---------- Public Memory Service (Cloud Backend) ----------
-
 def get_public_memory_service() -> Optional[MemoryService]:
-    """Get the public MemoryService instance (Cloud Backend).
+    """Get the public MemoryService instance.
 
     Returns:
-        MemoryService instance if initialized, None otherwise
+        Public MemoryService instance, or None if not initialized.
     """
     return _public_memory_service
 
-
-def set_public_memory_service(service: MemoryService) -> None:
-    """Set the public MemoryService instance.
-
-    Args:
-        service: MemoryService instance to set as public
-    """
-    global _public_memory_service
-    _public_memory_service = service
-
-
-def init_public_memory_service(config: MemoryServiceConfig) -> MemoryService:
-    """Initialize and set the public MemoryService instance.
-
-    Args:
-        config: Service configuration (should use Neo4j or remote SurrealDB)
-
-    Returns:
-        Initialized MemoryService instance
-    """
-    global _public_memory_service
-    _public_memory_service = MemoryService(config)
-    _public_memory_service.initialize()
-    logger.info(f"Public Memory Service initialized: {config.graph_backend}")
-    return _public_memory_service
-
-
-# ---------- Backward Compatibility ----------
-# get_memory_service() returns public by default (current behavior)
 
 def get_memory_service() -> Optional[MemoryService]:
-    """Get the default MemoryService instance.
+    """Get the default MemoryService instance (backward compatibility).
 
-    Returns public memory service by default. For explicit access,
-    use get_local_memory_service() or get_public_memory_service().
+    Returns public memory service by default.
 
     Returns:
-        MemoryService instance if initialized, None otherwise
+        MemoryService instance if initialized, None otherwise.
     """
     return _public_memory_service or _local_memory_service
 
 
 def set_memory_service(service: MemoryService) -> None:
-    """Set the default MemoryService instance.
-
-    Sets as public memory service for backward compatibility.
+    """Set the default MemoryService instance (backward compatibility).
 
     Args:
-        service: MemoryService instance to set
+        service: MemoryService instance to set.
     """
-    set_public_memory_service(service)
+    global _public_memory_service
+    _public_memory_service = service
 
 
 def init_memory_service(config: MemoryServiceConfig) -> MemoryService:
-    """Initialize and set the default MemoryService instance.
-
-    Initializes as public memory service for backward compatibility.
+    """Initialize and set the default MemoryService (backward compatibility).
 
     Args:
-        config: Service configuration
+        config: Service configuration.
 
     Returns:
-        Initialized MemoryService instance
+        Initialized MemoryService instance.
     """
-    return init_public_memory_service(config)
+    global _public_memory_service
+    _public_memory_service = MemoryService(config)
+    _public_memory_service.initialize()
+    logger.info(f"Memory Service initialized: {config.graph_backend}")
+    return _public_memory_service

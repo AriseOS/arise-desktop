@@ -127,10 +127,7 @@ class Neo4jGraphStore(GraphStore):
         ]
 
         indexes = [
-            "CREATE INDEX state_user_id IF NOT EXISTS FOR (s:State) ON (s.user_id)",
             "CREATE INDEX state_session_id IF NOT EXISTS FOR (s:State) ON (s.session_id)",
-            "CREATE INDEX domain_user_id IF NOT EXISTS FOR (d:Domain) ON (d.user_id)",
-            "CREATE INDEX phrase_user_id IF NOT EXISTS FOR (p:CognitivePhrase) ON (p.user_id)",
             "CREATE INDEX intent_sequence_state_id IF NOT EXISTS FOR (seq:IntentSequence) ON (seq.state_id)",
         ]
 
@@ -1217,7 +1214,7 @@ class Neo4jGraphStore(GraphStore):
 
         Args:
             label: Node label
-            filters: Filter criteria (e.g., {"user_id": "xxx"})
+            filters: Filter criteria (e.g., {"session_id": "xxx"})
 
         Returns:
             Number of nodes deleted

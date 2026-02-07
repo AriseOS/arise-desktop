@@ -36,7 +36,6 @@ class Action(BaseModel):
         type: Transition type (e.g., "click", "submit", "auto_navigate").
         timestamp: When the transition occurred (milliseconds, optional).
         trigger: Structured trigger information (ref, text, role from recording).
-        user_id: User ID (optional).
         session_id: Session ID (optional).
         attributes: Additional metadata about the transition.
         weight: Edge weight for graph algorithms (default: 1.0).
@@ -76,8 +75,7 @@ class Action(BaseModel):
         description='ID of the IntentSequence that caused this navigation (optional context)'
     )
 
-    # User session information
-    user_id: Optional[str] = Field(default=None, description='User ID')
+    # Session information
     session_id: Optional[str] = Field(default=None, description='Session ID')
 
     # Transition attributes

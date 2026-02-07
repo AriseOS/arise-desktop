@@ -83,7 +83,6 @@ class ActionExtractor:
         self,
         states: List[State],
         workflow_data: Optional[List[Dict[str, Any]]] = None,
-        user_id: Optional[str] = None,
         session_id: Optional[str] = None
     ) -> ActionExtractionResult:
         """Extract actions from state sequence using LLM.
@@ -91,7 +90,6 @@ class ActionExtractor:
         Args:
             states: List of State objects (ordered by timestamp)
             workflow_data: Optional workflow events for additional context
-            user_id: User ID
             session_id: Session ID
 
         Returns:
@@ -181,7 +179,6 @@ class ActionExtractor:
                     description=action_data.description,  # Now required
                     timestamp=action_data.timestamp,
                     trigger_sequence_id=getattr(action_data, 'trigger_intent_id', None),
-                    user_id=user_id,
                     session_id=session_id,
                     attributes=attrs
                 )

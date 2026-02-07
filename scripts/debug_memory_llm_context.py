@@ -62,9 +62,80 @@ async def debug_task_query(task: str) -> None:
     print(f"success: {result.success}")
     print(f"query_type: {result.query_type}")
     print(f"states: {len(result.states)} actions: {len(result.actions)}")
+
+    # 打印原始 state 数据（检查是否包含 LLM 推理）
+    print(f"\n--- Raw State Data (from API) ---")
+    for i, state in enumerate(result.states, 1):
+        desc = state.description
+        print(f"\nState {i}:")
+        print(f"  ID: {state.id[:16]}...")
+        print(f"  Description length: {len(desc)}")
+        if len(desc) > 300:
+            print(f"  Description (first 300 chars): {desc[:300]}")
+            print(f"  ...")
+            print(f"  Description (last 200 chars): {desc[-200:]}")
+        else:
+            print(f"  Description: {desc}")
+
     if result.cognitive_phrase:
         print(f"cognitive_phrase.id: {result.cognitive_phrase.id}")
         print(f"cognitive_phrase.description: {result.cognitive_phrase.description}")
+
+        # 打印所有属性
+        print(f"\n--- cognitive_phrase attributes ---")
+        phrase_dict = result.cognitive_phrase.model_dump() if hasattr(result.cognitive_phrase, 'model_dump') else result.cognitive_phrase.__dict__
+        for key in phrase_dict.keys():
+            if key == 'execution_plan':
+                print(f"{key}: ({len(phrase_dict[key])} steps)")
+            elif key == 'state_path':
+                print(f"{key}: ({len(phrase_dict[key])} states)")
+            else:
+                val = str(phrase_dict[key])[:100] if phrase_dict[key] else 'None'
+                print(f"{key}: {val}")
+
+        # 打印 execution_plan
+        print(f"\n--- execution_plan ({len(result.cognitive_phrase.execution_plan)} steps) ---")
+        for step in result.cognitive_phrase.execution_plan:
+            if hasattr(step, 'index'):
+                state_id = step.state_id[:8] if step.state_id else 'None'
+                nav_seq_id = step.navigation_sequence_id[:8] if step.navigation_sequence_id else 'None'
+                nav_action_id = step.navigation_action_id[:8] if step.navigation_action_id else 'None'
+                in_page_count = len(step.in_page_sequence_ids) if step.in_page_sequence_ids else 0
+                print(f"  Step {step.index}: state_id={state_id}, nav_seq_id={nav_seq_id}, nav_action_id={nav_action_id}, in_page_seqs={in_page_count}")
+
+        # 打印 result.states 的顺序
+        print(f"\n--- result.states order ({len(result.states)} states) ---")
+        for i, state in enumerate(result.states, 1):
+            print(f"  {i}. {state.id[:8]}... : {state.page_url[:80]}")
+
+        # 打印 workflow_guide 的详细信息
+        if result.cognitive_phrase.execution_plan:
+            print(f"\n--- Execution Plan ({len(result.cognitive_phrase.execution_plan)} steps) ---")
+            for i, step in enumerate(result.cognitive_phrase.execution_plan, 1):
+                if hasattr(step, 'index'):
+                    state_id = step.state_id[:8] if step.state_id else 'None'
+                    nav_seq_id = step.navigation_sequence_id[:8] if step.navigation_sequence_id else 'None'
+                    nav_action_id = step.navigation_action_id[:8] if step.navigation_action_id else 'None'
+                    in_page_count = len(step.in_page_sequence_ids) if step.in_page_sequence_ids else 0
+                    print(f"  Step {i}: state_id={state_id}, nav_seq_id={nav_seq_id}, nav_action_id={nav_action_id}, in_page_seqs={in_page_count}")
+
+            # 打印每个 step 对应的 state URL
+            print(f"\n--- State URLs in Execution Plan (with timestamps) ---")
+            for i, step in enumerate(result.cognitive_phrase.execution_plan, 1):
+                if hasattr(step, 'state_id') and step.state_id:
+                    # 找到对应的 state
+                    for state in result.states:
+                        if state.id == step.state_id:
+                            from datetime import datetime
+                            # Handle timestamp if available (may not be in toolkit State)
+                            timestamp = getattr(state, 'timestamp', None)
+                            if timestamp:
+                                ts_str = datetime.fromtimestamp(timestamp / 1000).strftime('%Y-%m-%d %H:%M:%S')
+                            else:
+                                ts_str = 'None'
+                            print(f"  Step {i}: {state.page_url[:100]}")
+                            print(f"         timestamp={ts_str}, id={state.id[:8]}")
+                            break
     print()
 
     print("--- LLM context (format_task_result) ---")
@@ -111,7 +182,7 @@ async def main() -> None:
         sys.exit(1)
 
     # Example task and URL – edit to match your recordings/memory
-    example_task = "在亚马逊上搜索 AI 智能戒指并总结价格信息"
+    example_task = "收集 Product HUnt 周榜产品信息"
     example_url = "https://www.amazon.com/"
 
     await debug_task_query(example_task)

@@ -62,7 +62,6 @@ class GraphBuilder:
         input_debounce_ms: int = 500,
         hover_merge_window_ms: int = 200,
         trigger_resolution_window_ms: int = 15000,
-        user_id: str = None,
         session_id: str = None
     ):
         """Initialize Graph Builder.
@@ -74,7 +73,6 @@ class GraphBuilder:
             hover_merge_window_ms: Hover merge window
             trigger_resolution_window_ms: Max time gap to associate a navigation
                 Action with the most recent in-state Intent (e.g., prior click)
-            user_id: User ID for attribution (optional)
             session_id: Session ID for grouping (optional)
         """
         self.normalizer = EventNormalizer()
@@ -89,7 +87,6 @@ class GraphBuilder:
         )
         self.episode_segmenter = EpisodeSegmenter()
         self.trigger_resolution_window_ms = trigger_resolution_window_ms
-        self.user_id = user_id
         self.session_id = session_id
 
     def build(self, operations: List[Dict[str, Any]]) -> StateActionGraph:
@@ -237,7 +234,6 @@ class GraphBuilder:
                 session_id=self.session_id,
                 timestamp=timestamp,
                 intents=[],
-                user_id=self.user_id,
             )
             sequence_id_counter += 1
             active_sequence_state_id = state_id
@@ -419,7 +415,6 @@ class GraphBuilder:
             end_timestamp=None,  # Will be updated later if needed
             duration=None,
             instances=[],
-            user_id=self.user_id,
             session_id=self.session_id,
             domain=domain,
             attributes={
@@ -519,7 +514,6 @@ class GraphBuilder:
             element_role=target_attrs.get("role"),
             text=target_attrs.get("text"),
             value=event.data.get("value"),
-            user_id=self.user_id,
             session_id=self.session_id,
             description=description,
             attributes=attributes
@@ -557,7 +551,6 @@ class GraphBuilder:
             type=action_type,
             timestamp=event.timestamp,
             trigger_sequence_id=trigger_sequence_id,
-            user_id=self.user_id,
             session_id=self.session_id,
             attributes={
                 "action_id": action_id,
@@ -635,7 +628,6 @@ class GraphBuilder:
                 page_title=None,
                 timestamp=event.timestamp,
                 session_id=self.session_id,
-                user_id=self.user_id,
             )
             state.instances.append(instance)
             instance_id_counter += 1

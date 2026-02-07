@@ -40,7 +40,6 @@ class IntentSequence(BaseModel):
         description: Natural language description of the sequence.
         embedding_vector: Embedding vector for semantic search.
         intents: Ordered list of Intent objects in this sequence.
-        user_id: User ID who performed this sequence (optional).
     """
 
     # Unique identifier
@@ -77,9 +76,6 @@ class IntentSequence(BaseModel):
         default_factory=list,
         description="Ordered list of Intent objects in this sequence"
     )
-
-    # User information
-    user_id: Optional[str] = Field(default=None, description="User ID")
 
     # ✨ Navigation markers (v2)
     causes_navigation: bool = Field(

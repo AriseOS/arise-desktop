@@ -59,15 +59,13 @@ class ManageGenerator:
     def generate_manages(
         self,
         domains: List[Domain],
-        states: List[State],
-        user_id: Optional[str] = None
+        states: List[State]
     ) -> ManageGenerationResult:
         """Generate Manage edges connecting domains to states.
 
         Args:
             domains: List of Domain objects
             states: List of State objects
-            user_id: User ID
 
         Returns:
             ManageGenerationResult containing generated manages
@@ -109,7 +107,6 @@ class ManageGenerator:
                     visit_count=1,
                     visit_timestamps=[state.timestamp],
                     total_duration=state.duration or 0,
-                    user_id=user_id,
                     attributes={
                         "domain_url": domain.domain_url,
                         "state_url": state.page_url

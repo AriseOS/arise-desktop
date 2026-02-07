@@ -784,6 +784,10 @@ class MemoryToolkit(BaseToolkit):
             QueryResult parsed from API response
         """
         try:
+            # Ensure user_id is always in the payload for user-scoped queries
+            if "user_id" not in payload and self._user_id:
+                payload["user_id"] = self._user_id
+
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     f"{self._memory_api_base_url}/api/v1/memory/query",

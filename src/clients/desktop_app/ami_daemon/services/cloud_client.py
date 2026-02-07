@@ -1549,12 +1549,14 @@ class CloudClient:
 
     async def get_cognitive_phrase(
         self,
-        phrase_id: str
+        phrase_id: str,
+        user_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """Get a single cognitive phrase with full details
 
         Args:
             phrase_id: CognitivePhrase ID
+            user_id: User ID for private memory routing
 
         Returns:
             dict with:
@@ -1566,6 +1568,8 @@ class CloudClient:
         headers = {}
         if self.user_api_key:
             headers["X-Ami-API-Key"] = self.user_api_key
+        if user_id:
+            headers["X-User-Id"] = user_id
 
         logger.info(f"[CloudClient] Getting cognitive phrase: {phrase_id}")
 
@@ -1578,12 +1582,14 @@ class CloudClient:
 
     async def delete_cognitive_phrase(
         self,
-        phrase_id: str
+        phrase_id: str,
+        user_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """Delete a cognitive phrase from memory
 
         Args:
             phrase_id: CognitivePhrase ID to delete
+            user_id: User ID for private memory routing
 
         Returns:
             dict with:
@@ -1593,6 +1599,8 @@ class CloudClient:
         headers = {}
         if self.user_api_key:
             headers["X-Ami-API-Key"] = self.user_api_key
+        if user_id:
+            headers["X-User-Id"] = user_id
 
         logger.info(f"[CloudClient] Deleting cognitive phrase: {phrase_id}")
 

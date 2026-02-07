@@ -136,21 +136,22 @@ cors:
 #     surrealdb/surrealdb:latest start --user root --pass your_password
 #
 graph_store:
-  backend: neo4j  # Options: networkx, neo4j, surrealdb
+  backend: surrealdb  # Options: networkx, neo4j, surrealdb
+  # backend: neo4j # Options: networkx, neo4j, surrealdb
 
   # Neo4j Configuration (used when backend: neo4j)
-  uri: neo4j://localhost:7687    # Or use NEO4J_URI env var
-  user: neo4j                     # Or use NEO4J_USER env var
-  password: Ami@2024              # Or use NEO4J_PASSWORD env var
-  database: neo4j                 # Or use NEO4J_DATABASE env var
+  # url: neo4j://localhost:7687    # Or use NEO4J_URI env var
+  # username: neo4j                     # Or use NEO4J_USER env var
+  # password: Ami@2024              # Or use NEO4J_PASSWORD env var
+  # database: neo4j                 # Or use NEO4J_DATABASE env var
 
   # SurrealDB Configuration (used when backend: surrealdb)
-  # url: ws://localhost:8000/rpc  # Or use SURREALDB_URL env var
-  # namespace: ami                # Or use SURREALDB_NAMESPACE env var
-  # database: memory              # Or use SURREALDB_DATABASE env var
-  # username: root                # Or use SURREALDB_USER env var
-  # password: your_password       # Or use SURREALDB_PASSWORD env var
-  # vector_dimensions: 1024
+  url: ws://localhost:8000/rpc  # Or use SURREALDB_URL env var
+  namespace: ami                # Or use SURREALDB_NAMESPACE env var
+  database: memory              # Or use SURREALDB_DATABASE env var
+  username: root                # Or use SURREALDB_USER env var
+  password: root                # Or use SURREALDB_PASSWORD env var
+  vector_dimensions: 1024
 
 # Embedding Model Configuration
 # For semantic search in Memory system

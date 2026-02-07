@@ -271,7 +271,7 @@ class Reasoner:
         )
 
     async def plan(
-        self, target: str, user_id: Optional[str] = None, session_id: Optional[str] = None
+        self, target: str,
     ) -> WorkflowResult:
         """Plan and retrieve workflow for target.
 
@@ -279,8 +279,6 @@ class Reasoner:
 
         Args:
             target: Target description (natural language).
-            user_id: Optional user ID for filtering (not yet implemented).
-            session_id: Optional session ID for filtering (not yet implemented).
 
         Returns:
             WorkflowResult with workflow JSON if successful.
