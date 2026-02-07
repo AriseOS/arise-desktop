@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """Parse Ami task logs to show AI execution trace.
 
-Shows: User request → LLM thinking → Tool calls → Results → Final output
+Shows: User request → Decomposition → Memory → Subtask execution → Tool calls → Summary
 
 Usage:
     python scripts/parse_task_log.py              # Latest task
     python scripts/parse_task_log.py --list       # List recent tasks
     python scripts/parse_task_log.py --task-id X  # Specific task
     python scripts/parse_task_log.py --full       # Show full content (not truncated)
-    python scripts/parse_task_log.py --stats      # Show detailed statistics
-    python scripts/parse_task_log.py -o trace.md  # Output to file
+    python scripts/parse_task_log.py -v           # Verbose: include all LLM responses
 """
 
 import json
@@ -24,142 +23,33 @@ LOG_DIR = Path.home() / ".ami" / "logs"
 AMI_DIR = Path.home() / ".ami"
 
 # Truncation limits
-MAX_CONTENT_LEN = 500
-MAX_TOOL_INPUT_LEN = 200
-MAX_TOOL_RESULT_LEN = 300
+TRUNC_SHORT = 120
+TRUNC_MEDIUM = 300
+TRUNC_LONG = 800
 
 
-@dataclass
-class LLMCall:
-    """A single LLM request-response pair."""
-    timestamp: str
-    agent: str  # orchestrator, browser, document, etc.
-
-    # Request
-    system_prompt_preview: str = ""
-    user_message: str = ""
-    tool_results_in: list = field(default_factory=list)  # Tool results sent to LLM
-
-    # Response
-    thinking: str = ""  # LLM's text response (reasoning)
-    tool_calls: list = field(default_factory=list)  # Tools LLM decided to call
-
-    # Metadata
-    tokens_in: int = 0
-    tokens_out: int = 0
+def truncate(text: str, max_len: int) -> str:
+    if not text:
+        return ""
+    text = text.strip().replace("\n", " ")
+    if len(text) <= max_len:
+        return text
+    return text[:max_len] + "..."
 
 
-@dataclass
-class ToolExecution:
-    """A tool execution with input and result."""
-    timestamp: str
-    tool_name: str
-    tool_input: dict
-    result: str = ""
-    success: bool = True
-    duration_ms: int = 0
-
-
-@dataclass
-class Step:
-    """A step in the execution trace."""
-    step_num: int
-    timestamp: str
-    step_type: str  # "user_request", "orchestrator", "agent_task", "tool", "summary"
-    agent: str = ""
-
-    # Content varies by type
-    content: str = ""
-    thinking: str = ""
-    decision: str = ""
-
-    # For tool steps
-    tool_name: str = ""
-    tool_input: str = ""
-    tool_result: str = ""
-    tool_success: bool = True
-
-    # For agent_task steps
-    subtask_id: str = ""
-    subtask_content: str = ""
-
-
-@dataclass
-class Subtask:
-    """A subtask in the task decomposition."""
-    id: str
-    type: str  # browser, code, document
-    content: str
-    depends_on: list = field(default_factory=list)
-    memory_level: str = ""  # L1, L2, L3
-    memory_states: int = 0
-    status: str = "pending"  # pending, running, done, failed
-
-
-@dataclass
-class PhaseStats:
-    """Statistics for a phase of execution."""
-    name: str
-    start_time: str = ""
-    end_time: str = ""
-    duration_secs: float = 0
-    llm_calls: int = 0
-    tool_calls: int = 0
-
-
-@dataclass
-class ExecutionTrace:
-    """Complete execution trace for a task."""
-    task_id: str
-    user_request: str = ""
-    start_time: str = ""
-    end_time: str = ""
-
-    steps: list = field(default_factory=list)
-
-    # Task decomposition
-    subtasks: list = field(default_factory=list)  # List of Subtask
-    coarse_decomposition_time: str = ""
-    memory_query_time: str = ""
-
-    # Memory stats
-    memory_l1: int = 0
-    memory_l2: int = 0
-    memory_l3: int = 0
-
-    # Phase stats
-    phases: list = field(default_factory=list)  # List of PhaseStats
-
-    # LLM call timestamps (for frequency analysis)
-    llm_call_times: list = field(default_factory=list)
-
-    # Stats
-    llm_calls: int = 0
-    tokens_in: int = 0
-    tokens_out: int = 0
-    tool_calls: int = 0
-    errors: int = 0
-    warnings: int = 0
-
-    # Output files
-    output_files: list = field(default_factory=list)
-
-
-def find_log_files() -> list[Path]:
-    """Find all app.log files sorted by age (oldest first)."""
+def find_log_files() -> list:
     files = []
-    base = LOG_DIR / "app.log"
     for i in range(10, 0, -1):
         p = LOG_DIR / f"app.log.{i}"
         if p.exists():
             files.append(p)
+    base = LOG_DIR / "app.log"
     if base.exists():
         files.append(base)
     return files
 
 
-def find_task_id_from_logs(log_files: list[Path]) -> Optional[str]:
-    """Find the latest task ID from log files."""
+def find_task_id_from_logs(log_files) -> Optional[str]:
     for log_file in reversed(log_files):
         last_task_id = None
         with open(log_file, "r") as f:
@@ -172,68 +62,30 @@ def find_task_id_from_logs(log_files: list[Path]) -> Optional[str]:
     return None
 
 
-def get_task_output_files(task_id: str) -> list[dict]:
-    """Get output files from task workspace."""
-    output_files = []
-
-    # Find task workspace (search in common user directories)
-    for users_dir in AMI_DIR.glob("users/*/projects/*/tasks"):
-        task_dir = users_dir / task_id / "workspace"
-        if task_dir.exists():
-            for f in task_dir.iterdir():
-                if f.is_file() and not f.name.startswith('.'):
-                    output_files.append({
-                        "name": f.name,
-                        "size": f.stat().st_size,
-                        "mtime": datetime.fromtimestamp(f.stat().st_mtime).strftime("%H:%M:%S"),
-                    })
-            break
-
-    # Sort by modification time
-    output_files.sort(key=lambda x: x["mtime"])
-    return output_files
-
-
-def format_file_size(size: int) -> str:
-    """Format file size in human readable format."""
-    if size < 1024:
-        return f"{size}B"
-    elif size < 1024 * 1024:
-        return f"{size / 1024:.1f}KB"
-    else:
-        return f"{size / (1024 * 1024):.1f}MB"
-
-
 @dataclass
 class TaskInfo:
-    """Brief info about a task."""
     task_id: str
     timestamp: str
     user_request: str = ""
     duration_secs: int = 0
-    status: str = "unknown"  # running, completed, failed
+    status: str = "unknown"
 
 
-def list_recent_tasks(log_files: list[Path], limit: int = 10) -> list[TaskInfo]:
-    """List recent tasks from log files."""
-    tasks = {}  # task_id -> TaskInfo
-
+def list_recent_tasks(log_files, limit=10):
+    tasks = {}
     for log_file in log_files:
         with open(log_file, "r") as f:
             for line in f:
                 raw = line.strip()
                 if not raw:
                     continue
-
                 try:
                     entry = json.loads(raw)
                 except json.JSONDecodeError:
                     continue
-
                 msg = entry.get("message", "")
                 ts = entry.get("timestamp", "")
 
-                # Task start
                 m = re.search(r"Task submitted.*?(\w{8})", msg)
                 if m:
                     task_id = m.group(1)
@@ -244,750 +96,544 @@ def list_recent_tasks(log_files: list[Path], limit: int = 10) -> list[TaskInfo]:
                     )
                     continue
 
-                # User request
                 m = re.search(r"Running Orchestrator for: (.+)", msg)
                 if m:
-                    # Find the most recent task
                     for task_id in reversed(list(tasks.keys())):
                         if not tasks[task_id].user_request:
                             tasks[task_id].user_request = m.group(1)[:80]
                             break
                     continue
 
-                # Task completion markers
-                if "SSE stream cancelled" in msg:
-                    # Extract task_id from message
+                if "SSE stream cancelled" in msg or "Multi-turn session ended" in msg:
                     m2 = re.search(r"task (\w{8})", msg)
-                    if m2:
-                        tid = m2.group(1)
-                        if tid in tasks and tasks[tid].status == "running":
-                            tasks[tid].status = "completed"
-                            try:
-                                start = datetime.fromisoformat(tasks[tid].timestamp.replace("T", " "))
-                                end = datetime.fromisoformat(ts[:19].replace("T", " "))
-                                tasks[tid].duration_secs = int((end - start).total_seconds())
-                            except:
-                                pass
-                    continue
+                    tid = m2.group(1) if m2 else None
+                    if tid and tid in tasks:
+                        tasks[tid].status = "completed"
+                    elif not tid:
+                        for task_id in reversed(list(tasks.keys())):
+                            if tasks[task_id].status == "running":
+                                tasks[task_id].status = "completed"
+                                break
 
-                if "Workforce completed" in msg or "Multi-turn session ended" in msg:
-                    for task_id in reversed(list(tasks.keys())):
-                        if tasks[task_id].status == "running":
-                            tasks[task_id].status = "completed"
-                            # Calculate duration
-                            try:
-                                start = datetime.fromisoformat(tasks[task_id].timestamp.replace("T", " "))
-                                end = datetime.fromisoformat(ts[:19].replace("T", " "))
-                                tasks[task_id].duration_secs = int((end - start).total_seconds())
-                            except:
-                                pass
-                            break
-                    continue
-
-                # Error markers
-                if entry.get("level") == "ERROR" and any(tid in msg for tid in tasks):
-                    for task_id in tasks:
-                        if task_id in msg and tasks[task_id].status == "running":
-                            tasks[task_id].status = "failed"
-                            break
-
-    # Return most recent tasks
     task_list = list(tasks.values())
-    return task_list[-limit:][::-1]  # Most recent first
+    return task_list[-limit:][::-1]
 
 
-def format_task_list(tasks: list[TaskInfo]) -> str:
-    """Format task list for display."""
-    lines = []
-    lines.append("=" * 80)
-    lines.append("RECENT TASKS")
-    lines.append("=" * 80)
-    lines.append("")
-    lines.append(f"{'ID':<10} {'TIME':<20} {'STATUS':<10} {'DUR':<8} REQUEST")
+def format_task_list(tasks):
+    lines = ["", "RECENT TASKS", "=" * 80, ""]
+    lines.append(f"{'ID':<10} {'TIME':<20} {'STATUS':<12} REQUEST")
     lines.append("-" * 80)
-
     for task in tasks:
         time_str = task.timestamp[5:16].replace("T", " ") if task.timestamp else ""
-        dur_str = f"{task.duration_secs // 60}m{task.duration_secs % 60}s" if task.duration_secs else "-"
-        status_icon = {
-            "completed": "✅",
-            "running": "🔄",
-            "failed": "❌",
-        }.get(task.status, "❓")
-        request = truncate(task.user_request, 35) if task.user_request else "(no request captured)"
-        lines.append(f"{task.task_id:<10} {time_str:<20} {status_icon:<2} {task.status:<7} {dur_str:<8} {request}")
-
+        status_icon = {"completed": "[done]", "running": "[run]", "failed": "[fail]"}.get(task.status, "[?]")
+        request = truncate(task.user_request, 45) if task.user_request else "(no request)"
+        lines.append(f"{task.task_id:<10} {time_str:<20} {status_icon:<12} {request}")
     lines.append("")
-    lines.append("Use: python scripts/parse_task_log.py --task-id <ID>")
+    lines.append("Usage: python scripts/parse_task_log.py --task-id <ID>")
     lines.append("=" * 80)
-
     return "\n".join(lines)
 
 
-def truncate(text: str, max_len: int) -> str:
-    """Truncate text with ellipsis."""
-    if not text:
-        return ""
-    text = text.strip()
-    if len(text) <= max_len:
-        return text
-    return text[:max_len] + "..."
+# ─── Trace data structures ────────────────────────────────────────────────────
+
+@dataclass
+class Event:
+    """A single event in the execution trace."""
+    timestamp: str  # HH:MM:SS
+    event_type: str
+    content: str
+    agent: str = ""
+    subtask_id: str = ""
+    extra: str = ""  # additional detail line
 
 
-def parse_task_logs(log_files: list[Path], task_id: str, full_content: bool = False) -> ExecutionTrace:
-    """Parse logs and extract execution trace."""
-    trace = ExecutionTrace(task_id=task_id)
+@dataclass
+class SubtaskInfo:
+    id: str
+    agent_type: str
+    content: str
+    depends_on: list = field(default_factory=list)
+    memory_level: str = ""
+    status: str = "pending"
 
-    # Collect all relevant log entries
+
+@dataclass
+class Trace:
+    task_id: str
+    user_request: str = ""
+    start_time: str = ""
+    end_time: str = ""
+
+    # Decomposition
+    subtasks: list = field(default_factory=list)  # List[SubtaskInfo]
+    memory_level: str = ""
+    memory_detail: str = ""
+
+    # Timeline events
+    events: list = field(default_factory=list)  # List[Event]
+
+    # Stats
+    llm_calls: int = 0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    errors: int = 0
+
+
+def get_task_output_files(task_id: str) -> list:
+    output_files = []
+    for users_dir in AMI_DIR.glob("users/*/projects/*/tasks"):
+        task_dir = users_dir / task_id / "workspace"
+        if task_dir.exists():
+            for f in task_dir.iterdir():
+                if f.is_file() and not f.name.startswith('.'):
+                    size = f.stat().st_size
+                    if size < 1024:
+                        sz = f"{size}B"
+                    elif size < 1024 * 1024:
+                        sz = f"{size / 1024:.1f}KB"
+                    else:
+                        sz = f"{size / (1024 * 1024):.1f}MB"
+                    output_files.append({"name": f.name, "size": sz})
+            break
+    return output_files
+
+
+def parse_task_logs(log_files, task_id: str, full: bool = False, verbose: bool = False) -> Trace:
+    trace = Trace(task_id=task_id)
+    tl = TRUNC_LONG if full else TRUNC_MEDIUM
+    ts_short = TRUNC_MEDIUM if full else TRUNC_SHORT
+
+    # Collect all entries for this task
     entries = []
     started = False
-
     for log_file in log_files:
         with open(log_file, "r") as f:
             for line in f:
                 raw = line.strip()
                 if not raw:
                     continue
-
-                # Task boundaries
                 if f"Task submitted" in raw and task_id in raw:
                     started = True
                 elif started and "Task submitted" in raw and task_id not in raw:
                     break
-
                 if not started:
                     continue
-
-                # Skip debug logs (but keep some important ones)
-                if '"level": "DEBUG"' in raw and task_id not in raw:
-                    continue
-
                 try:
-                    entry = json.loads(raw)
-                    entries.append(entry)
+                    entries.append(json.loads(raw))
                 except json.JSONDecodeError:
                     continue
 
-    # Content length limits
-    content_len = 10000 if full_content else MAX_CONTENT_LEN
-    input_len = 10000 if full_content else MAX_TOOL_INPUT_LEN
-    result_len = 10000 if full_content else MAX_TOOL_RESULT_LEN
-
-    # Process entries to build trace
-    step_num = 0
-    current_agent = "orchestrator"
-    current_phase = None
-    pending_tool_calls = []  # Track tool calls waiting for results
+    current_subtask_id = ""
+    current_agent = "orchestrator"  # Starts with orchestrator
 
     for entry in entries:
-        ts = entry.get("timestamp", "")[:19]  # Trim to seconds
+        ts_raw = entry.get("timestamp", "")
+        ts = ts_raw[11:19] if len(ts_raw) >= 19 else ts_raw  # HH:MM:SS
         msg = entry.get("message", "")
         level = entry.get("level", "")
+        module = entry.get("module", "")
 
-        # Track timestamps
         if not trace.start_time and ts:
             trace.start_time = ts
         if ts:
             trace.end_time = ts
 
-        # === Task Decomposition (AMITaskPlanner) ===
-        if "[AMITaskPlanner] Decomposing task:" in msg:
-            trace.coarse_decomposition_time = ts
-            if not current_phase:
-                current_phase = PhaseStats(name="decomposition", start_time=ts)
+        # ─── User Request ─────────────────────────────────────────────
+        m = re.search(r"Running Orchestrator for: (.+)", msg)
+        if m:
+            trace.user_request = m.group(1)
+            trace.events.append(Event(ts, "user_request", truncate(m.group(1), tl)))
+            continue
 
-        # Parse coarse decomposition result
-        elif "[AMITaskPlanner] Coarse decomposition complete:" in msg:
+        # ─── Orchestrator Decision ────────────────────────────────────
+        if "Orchestrator response:" in msg:
+            m = re.search(r"Orchestrator response: (.+?)(\.\.\.|$)", msg)
+            if m:
+                trace.events.append(Event(ts, "orchestrator", truncate(m.group(1), ts_short), agent="orchestrator"))
+            continue
+
+        if "decompose_task triggered" in msg:
+            trace.events.append(Event(ts, "decompose_start", "Orchestrator decided: decompose_task", agent="orchestrator"))
+            continue
+
+        # ─── Memory Query ─────────────────────────────────────────────
+        if "[AMITaskPlanner] Querying Memory for whole task:" in msg:
+            m = re.search(r"Querying Memory for whole task: (.+)", msg)
+            query_text = truncate(m.group(1), ts_short) if m else ""
+            trace.events.append(Event(ts, "memory_query", f"Memory query: {query_text}"))
+            continue
+
+        if "[AMITaskPlanner] Memory L1 match:" in msg:
+            trace.memory_level = "L1"
+            trace.memory_detail = msg.split("Memory L1 match: ")[-1]
+            trace.events.append(Event(ts, "memory_result", f"Memory L1 (exact): {trace.memory_detail}"))
+            continue
+
+        if "[AMITaskPlanner] Memory L2 match:" in msg:
+            trace.memory_level = "L2"
+            trace.memory_detail = msg.split("Memory L2 match: ")[-1]
+            trace.events.append(Event(ts, "memory_result", f"Memory L2 (composed): {trace.memory_detail}"))
+            continue
+
+        if "[AMITaskPlanner] Memory L3:" in msg:
+            trace.memory_level = "L3"
+            trace.events.append(Event(ts, "memory_result", "Memory L3: no match"))
+            continue
+
+        # Memory context content
+        if "[AMITaskPlanner] Memory context for decompose:" in msg:
+            m = re.search(r"Memory context for decompose: (.+)", msg)
+            if m:
+                trace.events.append(Event(ts, "memory_result", f"Memory context: {truncate(m.group(1), tl)}"))
+            continue
+
+        # Workflow guide assigned
+        if "[AMITaskPlanner] Assigned" in msg and "workflow_guide" in msg:
+            m = re.search(r"Assigned (\S+) workflow_guide \((\d+) chars\) to (\d+)/(\d+) browser subtasks: (.+)", msg)
+            if m:
+                trace.events.append(Event(
+                    ts, "memory_result",
+                    f"Workflow guide ({m.group(1)}, {m.group(2)} chars) -> {m.group(3)}/{m.group(4)} browser subtasks",
+                    extra=truncate(m.group(5), ts_short),
+                ))
+            continue
+
+        # ─── Task Decomposition Result ────────────────────────────────
+        if "[AMITaskPlanner] Subtask" in msg and re.search(r"Subtask \d+ \(", msg):
+            m = re.search(r"Subtask (\d+) \((\w+)\): (.+)", msg)
+            if m:
+                st = SubtaskInfo(
+                    id=m.group(1),
+                    agent_type=m.group(2),
+                    content=m.group(3).split(" depends_on=")[0].split(" guide=")[0].strip(),
+                )
+                deps_m = re.search(r"depends_on=\[([^\]]*)\]", msg)
+                if deps_m and deps_m.group(1):
+                    st.depends_on = [d.strip().strip("'\"") for d in deps_m.group(1).split(",")]
+                guide_m = re.search(r"guide=(L\d)", msg)
+                if guide_m:
+                    st.memory_level = guide_m.group(1)
+                if not any(s.id == st.id for s in trace.subtasks):
+                    trace.subtasks.append(st)
+            continue
+
+        # Also parse from AMITaskExecutor subtask listing
+        if "[AMITaskExecutor] Subtask" in msg and re.search(r"Subtask \d+ \(", msg):
+            m = re.search(r"Subtask (\d+) \((\w+)\): (.+)", msg)
+            if m:
+                st = SubtaskInfo(
+                    id=m.group(1),
+                    agent_type=m.group(2),
+                    content=m.group(3).split(" depends_on=")[0].split(" guide=")[0].strip(),
+                )
+                deps_m = re.search(r"depends_on=\[([^\]]*)\]", msg)
+                if deps_m and deps_m.group(1):
+                    st.depends_on = [d.strip().strip("'\"") for d in deps_m.group(1).split(",")]
+                guide_m = re.search(r"guide=(L\d)", msg)
+                if guide_m:
+                    st.memory_level = guide_m.group(1)
+                if not any(s.id == st.id for s in trace.subtasks):
+                    trace.subtasks.append(st)
+            continue
+
+        if "Fine-grained decomposition complete:" in msg:
             m = re.search(r"(\d+) subtasks \(types: ({.+})\)", msg)
             if m:
-                step_num += 1
-                trace.steps.append(Step(
-                    step_num=step_num,
-                    timestamp=ts,
-                    step_type="decomposition",
-                    content=f"Task decomposed into {m.group(1)} subtasks: {m.group(2)}",
-                ))
+                trace.events.append(Event(ts, "decompose_done", f"Decomposed into {m.group(1)} subtasks: {m.group(2)}"))
+            continue
 
-        # Parse coarse decomposition raw JSON response
-        elif "[AMITaskPlanner] Coarse decompose raw response:" in msg:
-            # Extract subtasks from JSON
-            try:
-                json_match = re.search(r'```json\s*(\{.+)', msg, re.DOTALL)
-                if json_match:
-                    json_str = json_match.group(1)
-                    # Find the complete JSON (may be truncated in log)
-                    if '"subtasks"' in json_str:
-                        # Try to parse partial JSON
-                        pass  # Will be handled by LLM Response parsing
-            except:
-                pass
-
-        # Parse subtask from LLM Response
-        elif "[LLM Response]" in msg and '"subtasks"' in msg:
-            # Extract subtasks array from response
-            try:
-                subtasks_match = re.search(r'"subtasks":\s*\[(.+?)\]', msg, re.DOTALL)
-                if subtasks_match:
-                    # Parse individual subtasks
-                    subtask_pattern = r'\{"id":\s*"(\d+)",\s*"type":\s*"(\w+)",\s*"content":\s*"([^"]+)"'
-                    for m in re.finditer(subtask_pattern, msg):
-                        subtask = Subtask(
-                            id=m.group(1),
-                            type=m.group(2),
-                            content=m.group(3)[:100],
-                        )
-                        # Avoid duplicates
-                        if not any(s.id == subtask.id for s in trace.subtasks):
-                            trace.subtasks.append(subtask)
-            except:
-                pass
-
-        # Memory query for subtask
-        elif "[AMITaskPlanner] Querying Memory for subtask" in msg:
-            m = re.search(r"subtask (\d+):", msg)
+        # ─── Subtask Execution Start ──────────────────────────────────
+        if "[AMITaskExecutor] Executing subtask" in msg:
+            m = re.search(r"Executing subtask (\S+)\s*\(attempt (\d+)", msg)
             if m:
-                subtask_id = m.group(1)
-
-        # Memory query result
-        elif "[AMITaskPlanner] Subtask" in msg and "match with" in msg:
-            m = re.search(r"Subtask (\d+): (L\d) match with (\d+) states", msg)
-            if m:
-                subtask_id, level, states = m.group(1), m.group(2), int(m.group(3))
-                # Update subtask
-                for subtask in trace.subtasks:
-                    if subtask.id == subtask_id:
-                        subtask.memory_level = level
-                        subtask.memory_states = states
+                current_subtask_id = m.group(1)
+                current_agent = "browser"  # Subtask execution = agent mode
+                attempt = m.group(2)
+                # Find subtask content and agent type
+                st_content = ""
+                for st in trace.subtasks:
+                    if st.id == current_subtask_id:
+                        st_content = st.content
+                        st.status = "running"
+                        current_agent = st.agent_type
                         break
-                # Update stats
-                if level == "L1":
-                    trace.memory_l1 += 1
-                elif level == "L2":
-                    trace.memory_l2 += 1
-                elif level == "L3":
-                    trace.memory_l3 += 1
-
-        # Memory query complete
-        elif "[AMITaskPlanner] Memory queries complete:" in msg:
-            m = re.search(r"L1=(\d+), L2=(\d+), L3=(\d+)", msg)
-            if m:
-                trace.memory_l1 = int(m.group(1))
-                trace.memory_l2 = int(m.group(2))
-                trace.memory_l3 = int(m.group(3))
-                trace.memory_query_time = ts
-                step_num += 1
-                trace.steps.append(Step(
-                    step_num=step_num,
-                    timestamp=ts,
-                    step_type="memory_complete",
-                    content=f"Memory queries complete: L1={m.group(1)}, L2={m.group(2)}, L3={m.group(3)}",
+                trace.events.append(Event(
+                    ts, "subtask_start",
+                    f"Subtask {current_subtask_id} (attempt {attempt}): {truncate(st_content, ts_short)}",
+                    subtask_id=current_subtask_id,
                 ))
-                if current_phase and current_phase.name == "decomposition":
-                    current_phase.end_time = ts
-                    trace.phases.append(current_phase)
-                    current_phase = None
+            continue
 
-        # Task plan confirmed
-        elif "plan confirmed with" in msg:
-            m = re.search(r"plan confirmed with (\d+) subtasks", msg)
+        # ─── Subtask Completion ───────────────────────────────────────
+        if "[AMITaskExecutor] Subtask" in msg and "completed" in msg:
+            m = re.search(r"Subtask (\S+) completed(?:: (.+))?", msg)
             if m:
-                step_num += 1
-                trace.steps.append(Step(
-                    step_num=step_num,
-                    timestamp=ts,
-                    step_type="plan_confirmed",
-                    content=f"Plan confirmed with {m.group(1)} subtasks",
+                sid = m.group(1)
+                result = truncate(m.group(2) or "", ts_short)
+                for st in trace.subtasks:
+                    if st.id == sid:
+                        st.status = "done"
+                        break
+                trace.events.append(Event(
+                    ts, "subtask_done",
+                    f"Subtask {sid} DONE",
+                    subtask_id=sid,
+                    extra=result if result else "",
                 ))
+            continue
 
-        # === Track LLM calls for frequency analysis ===
-        elif "[LLM Request]" in msg or "[LLM Response]" in msg:
-            trace.llm_call_times.append(ts)
-
-        # === Replan task (dynamic adjustment) ===
-        elif "replan_task" in msg and "new_subtasks" in msg:
-            m = re.search(r'reason["\']:\s*["\']([^"\']+)', msg)
-            reason = m.group(1) if m else "Dynamic replanning"
-            step_num += 1
-            trace.steps.append(Step(
-                step_num=step_num,
-                timestamp=ts,
-                step_type="replan",
-                content=f"Replan: {truncate(reason, content_len)}",
-            ))
-
-        # === User Request ===
-        elif "Running Orchestrator for:" in msg:
-            m = re.search(r"Running Orchestrator for: (.+)", msg)
+        if "[AMITaskExecutor] Subtask" in msg and "failed" in msg:
+            m = re.search(r"Subtask (\S+) failed", msg)
             if m:
-                trace.user_request = m.group(1)
-                step_num += 1
-                trace.steps.append(Step(
-                    step_num=step_num,
-                    timestamp=ts,
-                    step_type="user_request",
-                    content=truncate(trace.user_request, content_len),
-                ))
+                sid = m.group(1)
+                for st in trace.subtasks:
+                    if st.id == sid:
+                        st.status = "failed"
+                        break
+                trace.events.append(Event(ts, "subtask_failed", f"Subtask {sid} FAILED", subtask_id=sid))
+            continue
 
-        # === decompose_task triggered ===
-        elif "decompose_task triggered" in msg:
-            step_num += 1
-            trace.steps.append(Step(
-                step_num=step_num,
-                timestamp=ts,
-                step_type="decompose",
-                agent="orchestrator",
-                content="Task decomposed, starting agent execution",
-            ))
-
-        # === Orchestrator Response ===
-        elif "Orchestrator response:" in msg:
-            m = re.search(r"Orchestrator response: (.+)", msg)
+        # ─── Execution finished ───────────────────────────────────────
+        if "[AMITaskExecutor] Execution finished:" in msg:
+            m = re.search(r"Execution finished: (.+)", msg)
             if m:
-                step_num += 1
-                trace.steps.append(Step(
-                    step_num=step_num,
-                    timestamp=ts,
-                    step_type="orchestrator_response",
-                    agent="orchestrator",
-                    content=truncate(m.group(1), content_len),
-                ))
+                trace.events.append(Event(ts, "execution_done", f"Execution result: {m.group(1)}"))
+            continue
 
-        # === Agent Task Start ===
-        elif "[ListenBrowserAgent] Starting task:" in msg:
-            m = re.search(r"Starting task: (.+)", msg)
+        # ─── LLM Thinking (text response) ─────────────────────────────
+        if "[LLM Response] Block" in msg and "text:" in msg:
+            m = re.search(r"Block \d+ text: (.+)", msg)
             if m:
-                current_agent = "browser"
-                step_num += 1
-                trace.steps.append(Step(
-                    step_num=step_num,
-                    timestamp=ts,
-                    step_type="agent_task",
-                    agent="browser",
-                    subtask_content=truncate(m.group(1), content_len),
-                ))
+                text = m.group(1)
+                if len(text) > 15 and not text.startswith("```json"):
+                    trace.events.append(Event(
+                        ts, "llm_thinks",
+                        truncate(text, tl),
+                        agent=current_agent,
+                        subtask_id=current_subtask_id,
+                    ))
+            continue
 
-        # === LLM Thinking/Reasoning ===
-        elif "[LLM Reasoning]" in msg:
-            m = re.search(r"\[LLM Reasoning\] (.+)", msg)
-            if m:
-                step_num += 1
-                trace.steps.append(Step(
-                    step_num=step_num,
-                    timestamp=ts,
-                    step_type="thinking",
-                    agent=current_agent,
-                    thinking=truncate(m.group(1), content_len),
-                ))
-
-        # === LLM Response with Tool Call ===
-        elif "[LLM Response] Block" in msg and "tool_use:" in msg:
+        # ─── LLM Tool Call Decision ───────────────────────────────────
+        if "[LLM Response] Block" in msg and "tool_use:" in msg:
             m = re.search(r"tool_use: (\w+)\((.+)\)", msg)
             if m:
                 tool_name = m.group(1)
                 tool_input = m.group(2)
-                step_num += 1
-                trace.steps.append(Step(
-                    step_num=step_num,
-                    timestamp=ts,
-                    step_type="llm_tool_decision",
+                # Simplify common tool inputs
+                input_display = truncate(tool_input, ts_short)
+                trace.events.append(Event(
+                    ts, "llm_calls_tool",
+                    f"{tool_name}",
                     agent=current_agent,
-                    tool_name=tool_name,
-                    tool_input=truncate(tool_input, input_len),
+                    subtask_id=current_subtask_id,
+                    extra=input_display,
                 ))
-                pending_tool_calls.append(tool_name)
-                trace.tool_calls += 1
+            continue
 
-        # === LLM Response with Text ===
-        elif "[LLM Response] Block" in msg and "text:" in msg:
-            m = re.search(r"text: (.+)", msg)
+        # ─── Context Summarization (CAMEL) ────────────────────────────
+        if "Triggering summarization" in msg:
+            m = re.search(r"Token count \((\d+)\) exceed threshold \((\d+)\)", msg)
             if m:
-                text = m.group(1)
-                # Only add if substantial content
-                if len(text) > 20 and not text.startswith("```json"):
-                    step_num += 1
-                    trace.steps.append(Step(
-                        step_num=step_num,
-                        timestamp=ts,
-                        step_type="llm_response",
-                        agent=current_agent,
-                        content=truncate(text, content_len),
-                    ))
-
-        # === Tool Call (from agent) ===
-        elif "[Tool Call]" in msg:
-            m = re.search(r"\[Tool Call\] (\w+): (.+)", msg)
-            if m:
-                tool_name = m.group(1)
-                try:
-                    tool_input = json.loads(m.group(2))
-                    tool_input_str = json.dumps(tool_input, ensure_ascii=False)
-                except:
-                    tool_input_str = m.group(2)
-                step_num += 1
-                trace.steps.append(Step(
-                    step_num=step_num,
-                    timestamp=ts,
-                    step_type="tool_call",
-                    agent=current_agent,
-                    tool_name=tool_name,
-                    tool_input=truncate(tool_input_str, input_len),
+                trace.events.append(Event(
+                    ts, "summarization",
+                    f"CONTEXT OVERFLOW: {m.group(1)} tokens > threshold {m.group(2)}, triggering summarization",
+                    subtask_id=current_subtask_id,
                 ))
-                trace.tool_calls += 1
+            continue
 
-        # === Tool Results (in LLM request) ===
-        elif "[LLM Request]" in msg and "tool_result" in msg:
-            # Extract tool results being sent to LLM
-            m = re.search(r"'content': ['\"](.+?)['\"]", msg)
+        if "Tool 'browser" in msg and "truncated" in msg:
+            m = re.search(r"Tool '(\w+)' result truncated: (\d+) -> ~(\d+) tokens", msg)
             if m:
-                result_preview = m.group(1)
-                # Find matching tool call
-                if trace.steps and trace.steps[-1].step_type in ("tool_call", "llm_tool_decision"):
-                    trace.steps[-1].tool_result = truncate(result_preview, result_len)
-
-        # === Browser Events ===
-        elif "Browser session initialized" in msg:
-            step_num += 1
-            trace.steps.append(Step(
-                step_num=step_num,
-                timestamp=ts,
-                step_type="browser_event",
-                agent="browser",
-                content="Browser session initialized",
-            ))
-
-        elif "Navigated to" in msg:
-            m = re.search(r"Navigated to (https?://[^\s]+)", msg)
-            if m:
-                step_num += 1
-                trace.steps.append(Step(
-                    step_num=step_num,
-                    timestamp=ts,
-                    step_type="browser_event",
-                    agent="browser",
-                    content=f"Navigated to: {truncate(m.group(1), 100)}",
+                trace.events.append(Event(
+                    ts, "truncation",
+                    f"Tool {m.group(1)} result truncated: {m.group(2)} -> ~{m.group(3)} tokens",
+                    subtask_id=current_subtask_id,
                 ))
+            continue
 
-        # === Search Results ===
-        elif "DuckDuckGo" in msg and "returned" in msg:
-            m = re.search(r"DuckDuckGo.*search for '(.+?)' returned (\d+) results", msg)
-            if m:
-                step_num += 1
-                trace.steps.append(Step(
-                    step_num=step_num,
-                    timestamp=ts,
-                    step_type="search",
-                    agent=current_agent,
-                    content=f"Search: '{m.group(1)}' → {m.group(2)} results",
-                ))
-
-        # === Notes ===
-        elif "Note created:" in msg:
-            m = re.search(r"Note created: (\w+)", msg)
-            if m:
-                step_num += 1
-                trace.steps.append(Step(
-                    step_num=step_num,
-                    timestamp=ts,
-                    step_type="note",
-                    agent=current_agent,
-                    content=f"Created note: {m.group(1)}",
-                ))
-
-        # === Memory ===
-        elif "[Memory] Task query:" in msg:
-            m = re.search(r"\[Memory\] Task query: (.+)", msg)
-            if m:
-                step_num += 1
-                trace.steps.append(Step(
-                    step_num=step_num,
-                    timestamp=ts,
-                    step_type="memory_query",
-                    content=truncate(m.group(1), content_len),
-                ))
-
-        elif "[Memory] Found" in msg:
+        # ─── Page-level Memory (runtime L2) ───────────────────────────
+        if "[Memory] Found" in msg and "listen_browser" in module:
             m = re.search(r"\[Memory\] Found (.+)", msg)
-            if m:
-                step_num += 1
-                trace.steps.append(Step(
-                    step_num=step_num,
-                    timestamp=ts,
-                    step_type="memory_result",
-                    content=m.group(1),
+            if m and verbose:
+                trace.events.append(Event(
+                    ts, "page_memory",
+                    f"Page memory: {m.group(1)}",
+                    agent="browser",
+                    subtask_id=current_subtask_id,
                 ))
+            continue
 
-        # === Token Usage ===
-        elif "Token usage:" in msg:
+        # ─── Browser Navigation ───────────────────────────────────────
+        if "URL changed:" in msg:
+            m = re.search(r"URL changed: .+ -> (.+)", msg)
+            if m:
+                trace.events.append(Event(
+                    ts, "browser_nav",
+                    f"Page: {truncate(m.group(1), 80)}",
+                    agent="browser",
+                    subtask_id=current_subtask_id,
+                ))
+            continue
+
+        # ─── Notes ────────────────────────────────────────────────────
+        if "Note created:" in msg:
+            m = re.search(r"Note created: (\S+)", msg)
+            if m:
+                trace.events.append(Event(ts, "note", f"Note created: {m.group(1)}", subtask_id=current_subtask_id))
+            continue
+
+        # ─── Search ───────────────────────────────────────────────────
+        if "search for" in msg and "returned" in msg:
+            m = re.search(r"search for '(.+?)' returned (\d+) results", msg)
+            if m:
+                trace.events.append(Event(ts, "search", f"Search: '{m.group(1)}' -> {m.group(2)} results"))
+            continue
+
+        # ─── Agent tracking ───────────────────────────────────────────
+        if "ListenChatAgent" in msg and "executing async tool:" in msg:
+            m = re.search(r"\] (\w+) executing async tool: (\w+)", msg)
+            if m:
+                current_agent = m.group(1).replace("_agent", "")
+            continue
+
+        if "ListenBrowserAgent" in msg and "Starting" in msg:
+            current_agent = "browser"
+            continue
+
+        # ─── Token usage ──────────────────────────────────────────────
+        if "Token usage:" in msg:
             m = re.search(r"in=(\d+), out=(\d+)", msg)
             if m:
                 trace.tokens_in += int(m.group(1))
                 trace.tokens_out += int(m.group(2))
                 trace.llm_calls += 1
+            continue
 
-        # === Errors and Warnings ===
-        elif level == "ERROR":
-            step_num += 1
-            trace.steps.append(Step(
-                step_num=step_num,
-                timestamp=ts,
-                step_type="error",
-                content=truncate(msg, content_len),
-            ))
+        # ─── Task cancelled ───────────────────────────────────────────
+        if "Task cancelled" in msg:
+            trace.events.append(Event(ts, "cancelled", "TASK CANCELLED"))
+            continue
+
+        # ─── Errors ───────────────────────────────────────────────────
+        if level == "ERROR":
+            trace.events.append(Event(ts, "error", truncate(msg, tl)))
             trace.errors += 1
+            continue
 
-        elif level == "WARNING":
-            # Only include important warnings
-            if any(kw in msg for kw in ["Invalid", "Failed", "Error", "timeout"]):
-                step_num += 1
-                trace.steps.append(Step(
-                    step_num=step_num,
-                    timestamp=ts,
-                    step_type="warning",
-                    content=truncate(msg, content_len),
-                ))
-                trace.warnings += 1
-
-        # === Subtask Completion (from LLM calling complete_subtask tool) ===
-        elif "[LLM Response]" in msg and "complete_subtask" in msg:
-            # Extract from: [LLM Response] Block X tool_use: complete_subtask({"subtask_id": "1.1", ...})
-            m = re.search(r'complete_subtask\(\{["\']subtask_id["\']: ["\']([^"\']+)["\']', msg)
-            if m:
-                subtask_id = m.group(1)
-                # Deduplicate
-                if not any(s.step_type == "subtask_done" and s.subtask_id == subtask_id
-                          for s in trace.steps[-10:]):
-                    step_num += 1
-                    trace.steps.append(Step(
-                        step_num=step_num,
-                        timestamp=ts,
-                        step_type="subtask_done",
-                        subtask_id=subtask_id,
-                        content="Subtask completed",
-                    ))
-
-        # === Subtask Completion (from tool_result in LLM request) ===
-        # Match tool_result with "Subtask 'X' completed" - this is the actual completion event
-        elif "tool_result" in msg and "Subtask" in msg and "completed" in msg:
-            # Extract from tool_result content: "Subtask '1.1' completed"
-            m = re.search(r"Subtask '?([\d.]+)'? completed", msg)
-            if m:
-                subtask_id = m.group(1)
-                # Deduplicate: only add if not already added for this subtask
-                if not any(s.step_type == "subtask_done" and s.subtask_id == subtask_id
-                          for s in trace.steps[-5:]):  # Check last 5 steps
-                    step_num += 1
-                    trace.steps.append(Step(
-                        step_num=step_num,
-                        timestamp=ts,
-                        step_type="subtask_done",
-                        subtask_id=subtask_id,
-                        content="Subtask completed",
-                    ))
-
-        # === Agent Completion ===
-        elif "completed, tokens=" in msg:
-            m = re.search(r"(\w+) completed", msg)
-            if m:
-                step_num += 1
-                trace.steps.append(Step(
-                    step_num=step_num,
-                    timestamp=ts,
-                    step_type="agent_done",
-                    agent=m.group(1).replace("_agent", ""),
-                    content="Agent completed",
-                ))
+        # ─── Important warnings ───────────────────────────────────────
+        if level == "WARNING" and any(kw in msg for kw in ["Failed", "Error", "timeout", "closed"]):
+            trace.events.append(Event(ts, "warning", truncate(msg, ts_short)))
+            continue
 
     return trace
 
 
-def format_trace(trace: ExecutionTrace, show_stats: bool = False) -> str:
-    """Format trace as readable output."""
+def format_trace(trace: Trace) -> str:
     lines = []
+    W = 90
 
-    # Header
-    lines.append("=" * 80)
-    lines.append(f"TASK EXECUTION TRACE: {trace.task_id}")
-    lines.append("-" * 80)
+    # ─── Header ───────────────────────────────────────────────────────
+    lines.append("=" * W)
+    lines.append(f"  TASK TRACE: {trace.task_id}")
+    lines.append("=" * W)
 
-    # Stats
+    # Duration
     duration = ""
-    duration_secs = 0
     if trace.start_time and trace.end_time:
         try:
-            t0 = datetime.fromisoformat(trace.start_time.replace("T", " "))
-            t1 = datetime.fromisoformat(trace.end_time.replace("T", " "))
-            duration_secs = (t1 - t0).total_seconds()
-            duration = f"{int(duration_secs // 60)}m{int(duration_secs % 60)}s"
-        except:
+            fmt = "%H:%M:%S"
+            t0 = datetime.strptime(trace.start_time, fmt)
+            t1 = datetime.strptime(trace.end_time, fmt)
+            secs = (t1 - t0).total_seconds()
+            if secs < 0:
+                secs += 86400
+            duration = f"{int(secs // 60)}m{int(secs % 60)}s"
+        except Exception:
             pass
 
-    lines.append(f"Duration: {duration}  |  LLM calls: {trace.llm_calls}  |  "
-                 f"Tokens: {trace.tokens_in:,} in / {trace.tokens_out:,} out")
-    lines.append(f"Tool calls: {trace.tool_calls}  |  Errors: {trace.errors}  |  Warnings: {trace.warnings}")
-
-    # Memory stats
-    if trace.memory_l1 or trace.memory_l2 or trace.memory_l3:
-        lines.append(f"Memory: L1={trace.memory_l1} (exact), L2={trace.memory_l2} (partial), L3={trace.memory_l3} (none)")
-
-    lines.append("=" * 80)
+    lines.append(f"  Duration: {duration}  |  LLM calls: {trace.llm_calls}  |  "
+                 f"Tokens: {trace.tokens_in:,} in / {trace.tokens_out:,} out  |  "
+                 f"Errors: {trace.errors}")
+    if trace.memory_level:
+        lines.append(f"  Memory: {trace.memory_level} - {trace.memory_detail}")
     lines.append("")
 
-    # User request
+    # ─── User Request ─────────────────────────────────────────────────
     if trace.user_request:
-        lines.append("📋 USER REQUEST:")
-        lines.append(f"   {trace.user_request}")
+        lines.append(f"  REQUEST: {trace.user_request}")
         lines.append("")
 
-    # Task decomposition
+    # ─── Subtask Plan ─────────────────────────────────────────────────
     if trace.subtasks:
-        lines.append("📊 TASK DECOMPOSITION:")
-        lines.append("-" * 40)
-        for subtask in trace.subtasks:
-            memory_info = ""
-            if subtask.memory_level:
-                memory_info = f" [{subtask.memory_level}, {subtask.memory_states} states]"
-            status_icon = {
-                "pending": "⏳",
-                "running": "🔄",
-                "done": "✅",
-                "failed": "❌",
-            }.get(subtask.status, "❓")
-            lines.append(f"  {status_icon} [{subtask.id}] ({subtask.type}) {subtask.content}{memory_info}")
+        lines.append("-" * W)
+        lines.append("  SUBTASK PLAN")
+        lines.append("-" * W)
+        for st in trace.subtasks:
+            status = {"pending": "[ ]", "running": "[>]", "done": "[v]", "failed": "[x]"}.get(st.status, "[?]")
+            deps = f" (after: {','.join(st.depends_on)})" if st.depends_on else ""
+            mem = f" [{st.memory_level}]" if st.memory_level else ""
+            lines.append(f"  {status} {st.id}. [{st.agent_type}] {st.content}{deps}{mem}")
         lines.append("")
 
-    # LLM call frequency analysis
-    if show_stats and trace.llm_call_times:
-        lines.append("📈 LLM CALL FREQUENCY:")
-        lines.append("-" * 40)
-
-        # Calculate intervals
-        intervals = []
-        for i in range(1, len(trace.llm_call_times)):
-            try:
-                t0 = datetime.fromisoformat(trace.llm_call_times[i-1].replace("T", " "))
-                t1 = datetime.fromisoformat(trace.llm_call_times[i].replace("T", " "))
-                intervals.append((t1 - t0).total_seconds())
-            except:
-                pass
-
-        if intervals:
-            avg_interval = sum(intervals) / len(intervals)
-            min_interval = min(intervals)
-            max_interval = max(intervals)
-            lines.append(f"  Total LLM calls: {len(trace.llm_call_times)}")
-            lines.append(f"  Average interval: {avg_interval:.1f}s")
-            lines.append(f"  Min/Max interval: {min_interval:.1f}s / {max_interval:.1f}s")
-
-            # Calls per minute
-            if duration_secs > 0:
-                calls_per_min = len(trace.llm_call_times) / (duration_secs / 60)
-                lines.append(f"  Calls per minute: {calls_per_min:.1f}")
-        lines.append("")
-
-    # Output files
+    # ─── Output Files ─────────────────────────────────────────────────
     output_files = get_task_output_files(trace.task_id)
     if output_files:
-        lines.append("📁 OUTPUT FILES:")
-        lines.append("-" * 40)
-        total_size = 0
+        lines.append("-" * W)
+        lines.append("  OUTPUT FILES")
+        lines.append("-" * W)
         for f in output_files:
-            total_size += f["size"]
-            lines.append(f"  [{f['mtime']}] {f['name']:<40} {format_file_size(f['size']):>10}")
-        lines.append(f"  {'─' * 50}")
-        lines.append(f"  Total: {len(output_files)} files, {format_file_size(total_size)}")
+            lines.append(f"  - {f['name']} ({f['size']})")
         lines.append("")
 
-    # Steps
-    current_agent = ""
-    for step in trace.steps:
-        ts = step.timestamp[11:19] if len(step.timestamp) >= 19 else step.timestamp
+    # ─── Timeline ─────────────────────────────────────────────────────
+    lines.append("=" * W)
+    lines.append("  EXECUTION TIMELINE")
+    lines.append("=" * W)
 
-        # Agent header
-        if step.agent and step.agent != current_agent:
-            current_agent = step.agent
+    current_subtask = ""
+    for ev in trace.events:
+        # Subtask boundary markers
+        if ev.event_type == "subtask_start" and ev.subtask_id != current_subtask:
+            current_subtask = ev.subtask_id
             lines.append("")
-            lines.append(f"{'─' * 40}")
-            agent_label = {
-                "orchestrator": "🎯 ORCHESTRATOR",
-                "browser": "🌐 BROWSER AGENT",
-                "document": "📄 DOCUMENT AGENT",
-                "code": "💻 CODE AGENT",
-            }.get(current_agent, f"🤖 {current_agent.upper()}")
-            lines.append(f"{agent_label}")
-            lines.append(f"{'─' * 40}")
+            lines.append(f"  {'─' * (W - 4)}")
+            lines.append(f"  >>> SUBTASK {ev.subtask_id}")
+            lines.append(f"  {'─' * (W - 4)}")
 
-        # Format by step type
-        if step.step_type == "user_request":
-            continue  # Already shown above
+        # Format by type
+        icon = {
+            "user_request":   "REQ",
+            "orchestrator":   "ORC",
+            "decompose_start": "DEC",
+            "memory_query":   "MEM",
+            "memory_result":  "MEM",
+            "decompose_done": "DEC",
+            "subtask_start":  ">>>",
+            "subtask_done":   " OK",
+            "subtask_failed": "ERR",
+            "execution_done": "END",
+            "llm_thinks":     "  .",
+            "llm_calls_tool": " ->",
+            "summarization":  "!!!",
+            "truncation":     " ~~",
+            "browser_nav":    "NAV",
+            "page_memory":    "MEM",
+            "note":           "NOT",
+            "search":         "SRC",
+            "cancelled":      "XXX",
+            "error":          "ERR",
+            "warning":        "WRN",
+        }.get(ev.event_type, "   ")
 
-        elif step.step_type == "decomposition":
-            lines.append(f"[{ts}] 📊 {step.content}")
+        line = f"  [{ev.timestamp}] {icon}  {ev.content}"
+        lines.append(line)
 
-        elif step.step_type == "memory_complete":
-            lines.append(f"[{ts}] 🧠 {step.content}")
-
-        elif step.step_type == "plan_confirmed":
-            lines.append(f"[{ts}] ✅ {step.content}")
-
-        elif step.step_type == "replan":
-            lines.append(f"[{ts}] 🔄 {step.content}")
-
-        elif step.step_type == "decompose":
-            lines.append(f"[{ts}] 🔀 {step.content}")
-
-        elif step.step_type == "orchestrator_response":
-            lines.append(f"[{ts}] 💬 Response: {step.content}")
-
-        elif step.step_type == "agent_task":
-            lines.append(f"[{ts}] 📌 Task: {step.subtask_content}")
-
-        elif step.step_type == "thinking":
-            lines.append(f"[{ts}] 💭 Thinking: {step.thinking}")
-
-        elif step.step_type == "llm_tool_decision":
-            lines.append(f"[{ts}] 🔧 Decides to call: {step.tool_name}")
-            if step.tool_input:
-                lines.append(f"         Input: {step.tool_input}")
-
-        elif step.step_type == "llm_response":
-            lines.append(f"[{ts}] 💬 Says: {step.content}")
-
-        elif step.step_type == "tool_call":
-            lines.append(f"[{ts}] ▶️  {step.tool_name}")
-            if step.tool_input:
-                lines.append(f"         Input: {step.tool_input}")
-            if step.tool_result:
-                lines.append(f"         Result: {step.tool_result}")
-
-        elif step.step_type == "browser_event":
-            lines.append(f"[{ts}] 🌐 {step.content}")
-
-        elif step.step_type == "search":
-            lines.append(f"[{ts}] 🔍 {step.content}")
-
-        elif step.step_type == "note":
-            lines.append(f"[{ts}] 📝 {step.content}")
-
-        elif step.step_type == "memory_query":
-            lines.append(f"[{ts}] 🧠 Memory query: {step.content}")
-
-        elif step.step_type == "memory_result":
-            lines.append(f"[{ts}] 🧠 Memory found: {step.content}")
-
-        elif step.step_type == "subtask_done":
-            lines.append(f"[{ts}] ✅ Subtask {step.subtask_id} completed")
-
-        elif step.step_type == "agent_done":
-            lines.append(f"[{ts}] ✅ {step.agent} agent completed")
-
-        elif step.step_type == "error":
-            lines.append(f"[{ts}] ❌ ERROR: {step.content}")
-
-        elif step.step_type == "warning":
-            lines.append(f"[{ts}] ⚠️  WARNING: {step.content}")
+        if ev.extra:
+            lines.append(f"               {'':>4}  {ev.extra}")
 
     lines.append("")
-    lines.append("=" * 80)
+    lines.append("=" * W)
 
     return "\n".join(lines)
 
@@ -997,9 +643,9 @@ def main():
     parser = argparse.ArgumentParser(description="Parse Ami task execution trace")
     parser.add_argument("--task-id", type=str, help="Task ID (default: latest)")
     parser.add_argument("--list", "-l", action="store_true", help="List recent tasks")
-    parser.add_argument("-o", "--output", type=Path, help="Output file")
-    parser.add_argument("--full", action="store_true", help="Show full content (no truncation)")
-    parser.add_argument("--stats", "-s", action="store_true", help="Show detailed statistics (LLM frequency, etc.)")
+    parser.add_argument("-o", "--output", type=Path, help="Output to file")
+    parser.add_argument("--full", action="store_true", help="No truncation")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Include page-level memory events")
     args = parser.parse_args()
 
     log_files = find_log_files()
@@ -1007,7 +653,6 @@ def main():
         print("No log files found in ~/.ami/logs/", file=sys.stderr)
         sys.exit(1)
 
-    # List mode
     if args.list:
         tasks = list_recent_tasks(log_files)
         if not tasks:
@@ -1020,12 +665,12 @@ def main():
     if not task_id:
         task_id = find_task_id_from_logs(log_files)
         if not task_id:
-            print("No task found in logs. Use --list to see available tasks.", file=sys.stderr)
+            print("No task found. Use --list to see tasks.", file=sys.stderr)
             sys.exit(1)
-        print(f"Auto-detected task: {task_id}", file=sys.stderr)
+        print(f"Task: {task_id}", file=sys.stderr)
 
-    trace = parse_task_logs(log_files, task_id, full_content=args.full)
-    output = format_trace(trace, show_stats=args.stats)
+    trace = parse_task_logs(log_files, task_id, full=args.full, verbose=args.verbose)
+    output = format_trace(trace)
 
     if args.output:
         args.output.write_text(output)

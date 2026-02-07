@@ -516,16 +516,14 @@ class AMIModelBackend(BaseModelBackend):
 
         # GLM models (智谱)
         if "glm-4" in model_name or "glm4" in model_name:
-            # GLM-4 series has ~128k context, GLM-4-Long has ~1M
+            # GLM-4 series has ~200k context, GLM-4-Long has ~1M
             if "long" in model_name:
                 return 900_000  # Leave room for response
-            return 120_000  # GLM-4 standard
+            return 200_000  # GLM-4.7: 200k context
 
         # Claude models
         if "claude" in model_name:
-            if "opus" in model_name or "sonnet" in model_name:
-                return 180_000  # Claude 3/4 has 200k context
-            return 180_000
+            return 200_000  # Claude 3/4: 200k context
 
         # DeepSeek models
         if "deepseek" in model_name:

@@ -869,7 +869,7 @@ async def create_browser_agent(
         model=model_config,
         tools=tools,
         agent_id=f"{agent_name}_{task_id}_{uuid.uuid4().hex[:8]}",
-        token_limit=150000,  # Enable auto-summarization when context exceeds 75k tokens (50%)
+        token_limit=200000,  # Enable auto-summarization when context exceeds 100k tokens (50%)
     )
 
     # Set NoteTakingToolkit reference for workflow guide persistence
@@ -1009,7 +1009,7 @@ async def create_listen_browser_agent(
         working_directory=working_directory,
         model=model_config,
         tools=tools,  # Pass tools to parent class for LLM awareness
-        token_limit=150000,  # Enable auto-summarization when context exceeds 75k tokens (50%)
+        token_limit=200000,  # Enable auto-summarization when context exceeds 100k tokens (50%)
     )
 
     if export_model_visible_snapshots:
@@ -1114,7 +1114,7 @@ def create_developer_agent(
         model=model_config,
         tools=tools,
         agent_id=f"{agent_name}_{task_id}_{uuid.uuid4().hex[:8]}",
-        token_limit=150000,  # Enable auto-summarization when context exceeds 75k tokens (50%)
+        token_limit=200000,  # Enable auto-summarization when context exceeds 100k tokens (50%)
     )
 
     # Set NoteTakingToolkit reference for workflow guide persistence
@@ -1240,7 +1240,7 @@ async def create_document_agent(
         model=model_config,
         tools=tools,
         agent_id=f"{agent_name}_{task_id}_{uuid.uuid4().hex[:8]}",
-        token_limit=150000,  # Enable auto-summarization when context exceeds 75k tokens (50%)
+        token_limit=200000,  # Enable auto-summarization when context exceeds 100k tokens (50%)
     )
 
     # Set NoteTakingToolkit reference for workflow guide persistence
@@ -1403,7 +1403,7 @@ def create_multi_modal_agent(
         model=model_config,
         tools=tools,
         agent_id=f"{agent_name}_{task_id}_{uuid.uuid4().hex[:8]}",
-        token_limit=150000,  # Enable auto-summarization when context exceeds 75k tokens (50%)
+        token_limit=200000,  # Enable auto-summarization when context exceeds 100k tokens (50%)
     )
 
     # Set NoteTakingToolkit reference for workflow guide persistence
@@ -1526,7 +1526,7 @@ async def create_social_medium_agent(
         model=model_config,
         tools=tools,
         agent_id=f"{agent_name}_{task_id}_{uuid.uuid4().hex[:8]}",
-        token_limit=150000,  # Enable auto-summarization when context exceeds 75k tokens (50%)
+        token_limit=200000,  # Enable auto-summarization when context exceeds 100k tokens (50%)
     )
 
     # Set NoteTakingToolkit reference for workflow guide persistence

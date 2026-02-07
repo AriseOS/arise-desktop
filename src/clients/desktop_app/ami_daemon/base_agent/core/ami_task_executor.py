@@ -126,6 +126,13 @@ class AMITaskExecutor:
         self._subtasks = subtasks
         self._subtask_map = {s.id: s for s in subtasks}
         logger.info(f"[AMITaskExecutor] Set {len(subtasks)} subtasks")
+        for st in subtasks:
+            deps = f" depends_on={st.depends_on}" if st.depends_on else ""
+            guide = f" guide={st.memory_level}" if st.memory_level else ""
+            logger.info(
+                f"[AMITaskExecutor] Subtask {st.id} ({st.agent_type}): "
+                f"{st.content[:120]}{deps}{guide}"
+            )
 
     async def execute(self) -> Dict[str, Any]:
         """
@@ -267,13 +274,6 @@ class AMITaskExecutor:
                         f"level={subtask.memory_level}, workflow_guide_len={len(subtask.workflow_guide)}"
                     )
 
-                # Set user's original request for context
-                if hasattr(agent, 'set_user_request') and self._user_request:
-                    agent.set_user_request(self._user_request)
-                    logger.debug(
-                        f"[AMITaskExecutor] Set user_request for {type(agent).__name__}"
-                    )
-
                 # Unified execution: build prompt and call astep()
                 prompt = self._build_prompt(subtask)
                 logger.info(
@@ -291,7 +291,11 @@ class AMITaskExecutor:
                 subtask.state = SubtaskState.DONE
                 await self._emit_subtask_state(subtask)
 
-                logger.info(f"[AMITaskExecutor] Subtask {subtask.id} completed")
+                result_preview = str(subtask.result)[:200] if subtask.result else "(empty)"
+                logger.info(
+                    f"[AMITaskExecutor] Subtask {subtask.id} completed: "
+                    f"{result_preview}"
+                )
                 return True
 
             except Exception as e:
@@ -319,26 +323,24 @@ class AMITaskExecutor:
         """
         parts = []
 
-        # User's original request - for context
-        if self._user_request:
-            parts.append(f"## User's Original Request\n{self._user_request}")
-
-        # Task content
+        # Task content - this is the ONLY thing the agent should focus on
         parts.append(f"## Your Task\n{subtask.content}")
 
-        # Workflow guide - as explicit instruction
+        # Workflow guide - as reference context
         if subtask.workflow_guide:
             parts.append(f"""
-## Workflow Guide (FOLLOW THESE STEPS)
+## Reference: Historical Workflow
 
-The following is a proven workflow for this type of task. You MUST follow these steps in order:
+The following is a workflow from a SIMILAR past task. Use it as background reference, NOT as a step-by-step instruction.
 
 {subtask.workflow_guide}
 
 **Important**:
-- Follow the above steps exactly as described
-- Complete each step before moving to the next
-- These steps are based on successful past executions
+- Your current task is ONLY what's described in "Your Task" above
+- This workflow covers the ENTIRE original task, but you are only responsible for YOUR subtask
+- Use this workflow to understand context (e.g. which site to visit, what elements look like)
+- Do NOT execute steps that go beyond your assigned task
+- When your specific task is complete, STOP immediately
 """)
         else:
             parts.append("""

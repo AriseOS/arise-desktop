@@ -344,14 +344,31 @@ class AMITaskPlanner:
         L1/L2: Returns a description of the known workflow steps
         L3/None: Returns empty string (no context)
         """
-        if not task_memory or not task_memory.success:
+        if not task_memory:
+            logger.info("[AMITaskPlanner] No memory result, skipping context")
+            return ""
+        if not task_memory.success:
+            logger.info(
+                f"[AMITaskPlanner] Memory result not successful "
+                f"(success={task_memory.success}), skipping context"
+            )
             return ""
 
         from ..tools.toolkits import MemoryToolkit
 
         context_text = MemoryToolkit.format_task_result(task_memory)
         if not context_text:
+            logger.warning(
+                f"[AMITaskPlanner] format_task_result returned empty "
+                f"(has_phrase={bool(task_memory.cognitive_phrase)}, "
+                f"states={len(task_memory.states) if task_memory.states else 0})"
+            )
             return ""
+
+        logger.info(
+            f"[AMITaskPlanner] Memory context for decompose "
+            f"({len(context_text)} chars): {context_text[:300]}..."
+        )
 
         return (
             "\n\n**MEMORY CONTEXT (known workflow from past executions):**\n"
@@ -393,8 +410,9 @@ class AMITaskPlanner:
                 assigned_count += 1
 
         logger.info(
-            f"[AMITaskPlanner] Assigned {level} workflow_guide to "
-            f"{assigned_count}/{len(subtasks)} browser subtasks"
+            f"[AMITaskPlanner] Assigned {level} workflow_guide "
+            f"({len(guide)} chars) to {assigned_count}/{len(subtasks)} "
+            f"browser subtasks: {guide[:200]}..."
         )
 
     async def _fine_grained_decompose(
@@ -449,10 +467,15 @@ class AMITaskPlanner:
         # Parse the XML response (CAMEL format)
         subtasks = self._parse_xml_subtasks(response_text)
 
-        # Log summary
+        # Log each subtask for traceability
         type_counts: Dict[str, int] = {}
         for st in subtasks:
             type_counts[st.agent_type] = type_counts.get(st.agent_type, 0) + 1
+            deps = f" depends_on={st.depends_on}" if st.depends_on else ""
+            logger.info(
+                f"[AMITaskPlanner] Subtask {st.id} ({st.agent_type}): "
+                f"{st.content[:120]}{deps}"
+            )
         logger.info(
             f"[AMITaskPlanner] Fine-grained decomposition complete: {len(subtasks)} subtasks "
             f"(types: {type_counts})"

@@ -1373,61 +1373,140 @@ class HybridBrowserSession:
 
     @classmethod
     async def _find_existing_browser(cls) -> Optional[str]:
-        """Find existing browser instance
+        """Find existing browser instance.
+
+        Strategy:
+        1. Check lock file first (fast path)
+        2. If no lock file, scan processes via pgrep (fallback for unclean shutdown)
 
         Returns:
             CDP URL if found, None otherwise
         """
+        # Strategy 1: Lock file
         lock_file = cls._get_lock_file_path()
 
-        if not lock_file.exists():
+        if lock_file.exists():
+            try:
+                lock_data = json.loads(lock_file.read_text())
+                pid = lock_data.get("pid")
+                cdp_url = lock_data.get("cdp_url")
+
+                if not pid or not cdp_url:
+                    logger.debug("Invalid lock file data")
+                    lock_file.unlink()
+                else:
+                    # Check if process is alive
+                    process_alive = False
+                    try:
+                        import psutil
+                        process_alive = psutil.pid_exists(pid)
+                    except ImportError:
+                        import os
+                        try:
+                            os.kill(pid, 0)
+                            process_alive = True
+                        except (OSError, ProcessLookupError):
+                            pass
+
+                    if not process_alive:
+                        logger.debug(f"Process {pid} not found")
+                        lock_file.unlink()
+                    elif await cls._check_cdp_alive_url(cdp_url):
+                        # Store for later use
+                        cls._browser_pid = pid
+                        cls._cdp_url = cdp_url
+                        return cdp_url
+                    else:
+                        logger.debug("CDP not responding, lock file stale")
+                        lock_file.unlink()
+
+            except Exception as e:
+                logger.warning(f"Error reading lock file: {e}")
+                try:
+                    lock_file.unlink()
+                except Exception:
+                    pass
+
+        # Strategy 2: Process scanning (non-destructive)
+        # Handles case where daemon exited without cleaning up lock file
+        # but Chrome is still running with CDP enabled
+        browser_config = cls._daemon_config.get("browser", {}) if cls._daemon_config else {}
+        user_data_dir = browser_config.get("user_data_dir")
+        if not user_data_dir:
             return None
 
+        return await cls._find_chrome_by_process(user_data_dir)
+
+    @classmethod
+    async def _find_chrome_by_process(cls, user_data_dir: str) -> Optional[str]:
+        """Find existing Chrome instance by scanning processes (non-destructive).
+
+        Only matches Chrome processes using the exact user_data_dir (e.g. ~/.ami/browser_data).
+        User's personal Chrome (~/Library/Application Support/Google/Chrome) is never affected.
+
+        This method NEVER kills processes — it only detects and returns CDP URL for reuse.
+
+        Returns:
+            CDP URL if a reusable Chrome instance is found, None otherwise.
+        """
+        import subprocess
+        import platform
+
         try:
-            lock_data = json.loads(lock_file.read_text())
-            pid = lock_data.get("pid")
-            cdp_url = lock_data.get("cdp_url")
-
-            if not pid or not cdp_url:
-                logger.debug("Invalid lock file data")
-                lock_file.unlink()
+            if platform.system() not in ("Darwin", "Linux"):
                 return None
 
-            # Check if process is alive
-            try:
-                import psutil
-                if not psutil.pid_exists(pid):
-                    logger.debug(f"Process {pid} not found")
-                    lock_file.unlink()
-                    return None
-            except ImportError:
-                import os
-                import signal
+            result = subprocess.run(
+                ["pgrep", "-f", f"--user-data-dir={user_data_dir}"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+
+            if not result.stdout.strip():
+                logger.debug("No Chrome process found for this profile via pgrep")
+                return None
+
+            pids = result.stdout.strip().split("\n")
+            logger.info(f"Process scan: found {len(pids)} process(es) using {user_data_dir}")
+
+            for pid in pids:
                 try:
-                    os.kill(pid, 0)
-                except (OSError, ProcessLookupError):
-                    logger.debug(f"Process {pid} not found")
-                    lock_file.unlink()
-                    return None
+                    pid_int = int(pid.strip())
+                    cmd_result = subprocess.run(
+                        ["ps", "-p", str(pid_int), "-o", "args="],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    cmdline = cmd_result.stdout.strip()
 
-            # Check if CDP is responding
-            if not await cls._check_cdp_alive_url(cdp_url):
-                logger.debug("CDP not responding")
-                lock_file.unlink()
-                return None
+                    port_match = re.search(r"--remote-debugging-port=(\d+)", cmdline)
+                    if port_match:
+                        existing_port = int(port_match.group(1))
+                        cdp_url = f"http://127.0.0.1:{existing_port}"
 
-            # Store for later use
-            cls._browser_pid = pid
-            cls._cdp_url = cdp_url
+                        if await cls._check_cdp_alive_url(cdp_url):
+                            logger.info(
+                                f"Found existing Chrome via process scan at {cdp_url} (PID {pid_int})"
+                            )
+                            cls._browser_pid = pid_int
+                            cls._cdp_url = cdp_url
+                            return cdp_url
+                        else:
+                            logger.debug(f"Chrome PID {pid_int} has CDP port {existing_port} but not responding")
 
-            return cdp_url
+                except (ValueError, subprocess.TimeoutExpired):
+                    continue
 
+            logger.debug("No reusable Chrome instance found via process scan")
+            return None
+
+        except FileNotFoundError:
+            logger.debug("pgrep not available")
+            return None
         except Exception as e:
-            logger.warning(f"Error reading lock file: {e}")
-            try:
-                lock_file.unlink()
-            except Exception:
-                pass
+            logger.warning(f"Error scanning Chrome processes: {e}")
             return None
 
     @classmethod

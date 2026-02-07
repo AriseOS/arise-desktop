@@ -1132,7 +1132,7 @@ No complete path found in memory. Use your judgment to complete the task step by
         # Check if workflow guide is already injected to avoid duplication
         # This can happen when _build_loop_message() already added _build_decision_guide()
         msg_content = message.content if isinstance(message, BaseMessage) else message
-        if "## Workflow Guide" in msg_content or "## Memory Guidance" in msg_content:
+        if "## Workflow Guide" in msg_content or "## Memory Guidance" in msg_content or "## Reference: Historical Workflow" in msg_content:
             logger.debug("[ListenChatAgent] Skipping workflow guide injection - already present")
             return message
 

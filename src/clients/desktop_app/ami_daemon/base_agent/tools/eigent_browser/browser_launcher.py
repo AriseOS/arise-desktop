@@ -15,7 +15,7 @@ import shutil
 import socket
 import tempfile
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 import aiohttp
 
@@ -148,14 +148,17 @@ class BrowserLauncher:
     async def _check_and_cleanup_existing_chrome(self) -> Optional[str]:
         """Check for existing Chrome processes using the same user data dir.
 
-        If an existing Chrome instance is found with a CDP port, return that CDP URL
-        so we can reuse it. Otherwise, clean up and return None to launch a new instance.
+        If an existing Chrome instance is found with a responding CDP port,
+        return that CDP URL for reuse. Otherwise, clean up stale lock files
+        (but NEVER kill processes — they may belong to user or another daemon).
+
+        Only matches Chrome processes using the exact user_data_dir (e.g. ~/.ami/browser_data).
+        User's personal Chrome is never affected.
 
         Returns:
             CDP URL if existing instance can be reused, None otherwise.
         """
         import subprocess
-        import signal
         import re
 
         if not self.user_data_dir:
@@ -204,52 +207,21 @@ class BrowserLauncher:
                         try:
                             # Use trust_env=False to bypass system proxy for localhost
                             async with aiohttp.ClientSession(trust_env=False) as session:
-                                async with session.get(f"{cdp_url}/json/version", timeout=2) as resp:
+                                async with session.get(f"{cdp_url}/json/version", timeout=aiohttp.ClientTimeout(total=3)) as resp:
                                     if resp.status == 200:
                                         data = await resp.json()
                                         logger.info(f"Found existing Chrome instance at {cdp_url} (PID {pid_int}): {data.get('Browser', 'unknown')}")
-                                        # Save the PID for later use
                                         self._reused_pid = pid_int
                                         return cdp_url
                         except Exception as e:
                             logger.debug(f"Existing Chrome CDP not responding: {e}")
 
-                except (ValueError, subprocess.TimeoutExpired) as e:
+                except (ValueError, subprocess.TimeoutExpired):
                     continue
 
-            # No reusable instance found - kill existing processes
-            logger.info("No reusable Chrome instance found, cleaning up existing processes...")
-
-            for pid in pids:
-                try:
-                    pid_int = int(pid.strip())
-                    logger.info(f"Killing Chrome process {pid_int}")
-                    os.kill(pid_int, signal.SIGTERM)
-                except (ValueError, OSError) as e:
-                    logger.warning(f"Failed to kill process {pid}: {e}")
-
-            # Wait for processes to terminate
-            await asyncio.sleep(1.0)
-
-            # Force kill if still running
-            result = subprocess.run(
-                ["pgrep", "-f", f"--user-data-dir={self.user_data_dir}"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.stdout.strip():
-                pids = result.stdout.strip().split('\n')
-                for pid in pids:
-                    try:
-                        pid_int = int(pid.strip())
-                        logger.warning(f"Force killing Chrome process {pid_int}")
-                        os.kill(pid_int, signal.SIGKILL)
-                    except (ValueError, OSError):
-                        pass
-                await asyncio.sleep(0.5)
-
-            # Clean up SingletonLock if it exists
+            # Chrome processes exist but none have a responding CDP.
+            # Only clean up stale SingletonLock — do NOT kill processes.
+            logger.info("Chrome processes found but no responding CDP, cleaning up stale locks only")
             singleton_lock = Path(self.user_data_dir) / "SingletonLock"
             if singleton_lock.exists():
                 try:
