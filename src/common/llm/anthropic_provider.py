@@ -244,25 +244,13 @@ class AnthropicProvider(BaseProvider):
         }
 
         # Add custom base_url if provided (for API proxy)
-        # IMPORTANT: If we explicitly set base_url, we need to ensure
-        # the environment variable doesn't override it
+        # SDK only reads ANTHROPIC_BASE_URL env var when base_url param is None,
+        # so explicit param always takes priority - no env var workaround needed.
         if self.base_url:
             client_kwargs["base_url"] = self.base_url
             logger.info(f"Using custom base URL: {self.base_url}")
-            # Temporarily save and remove env var to prevent override
-            saved_base_url = os.environ.get("ANTHROPIC_BASE_URL")
-            if saved_base_url:
-                logger.info(f"Temporarily overriding ANTHROPIC_BASE_URL env var (was: {saved_base_url})")
-                del os.environ["ANTHROPIC_BASE_URL"]
 
-            self._client = Anthropic(**client_kwargs)
-
-            # Restore env var
-            if saved_base_url:
-                os.environ["ANTHROPIC_BASE_URL"] = saved_base_url
-        else:
-            # Use environment variable if no explicit base_url
-            self._client = Anthropic(**client_kwargs)
+        self._client = Anthropic(**client_kwargs)
 
         logger.info(f"Initialized Anthropic client with model {self.model_name}")
     
