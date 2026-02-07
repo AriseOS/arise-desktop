@@ -95,8 +95,6 @@ def create_graph_store(
         if config is None:
             # Build config from kwargs
             config = SurrealDBConfig(
-                mode=kwargs.get("mode", "server"),
-                path=kwargs.get("path", str(SurrealDBConfig().path)),
                 url=kwargs.get("url", "ws://localhost:8000/rpc"),
                 namespace=kwargs.get("namespace", "ami"),
                 database=kwargs.get("database", "memory"),
