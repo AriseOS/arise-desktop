@@ -2154,10 +2154,11 @@ JSON:"""
             created_at=current_time,
         )
 
-        # Generate embedding
-        if self.embedding_service and description:
+        # Generate embedding (prefer structured semantic retrieval text)
+        embedding_text = self._get_phrase_embedding_text(phrase)
+        if self.embedding_service and embedding_text:
             try:
-                embedding = self.embedding_service.embed(description)
+                embedding = self.embedding_service.embed(embedding_text)
                 if embedding:
                     phrase.embedding_vector = embedding
             except Exception as e:
