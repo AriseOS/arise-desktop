@@ -7,7 +7,6 @@ Tool integrations for agents.
 ```
 tools/
 ├── base_tool.py              # BaseTool abstract class
-├── browser_use/              # Browser automation (DEPRECATED - use eigent_browser)
 ├── eigent_browser/           # Eigent browser automation (primary browser system)
 ├── toolkits/                 # LLM tool-calling toolkits (Eigent migration)
 └── android_use/              # Android automation (TODO)
@@ -230,10 +229,3 @@ result = await recorder.stop_recording()
 - DOM snapshot capture on navigation
 - Operation deduplication (navigation events)
 
-## Browser Tools (browser_use/) - DEPRECATED
-
-**Note: This module is deprecated. Use eigent_browser instead.**
-
-Previously built on the browser-use library. All browser automation has been migrated to use eigent_browser directly via BrowserToolkit's session_id mode.
-
-**Remaining files:** Only `user_behavior/monitor.py` is still used by `cdp_recorder.py` for behavior recording. Other files are legacy and should not be used in new code.

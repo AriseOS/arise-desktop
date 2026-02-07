@@ -32,16 +32,6 @@ a = Analysis(
         # Config files
         ('config/app-backend.yaml', 'config'),
 
-        # JavaScript files for browser behavior tracking
-        (str(project_root / 'src/clients/desktop_app/ami_daemon/base_agent/tools/browser_use/user_behavior/behavior_tracker.js'),
-         'src/clients/desktop_app/ami_daemon/base_agent/tools/browser_use/user_behavior'),
-
-        # Automation hooks JS
-        (str(project_root / 'src/clients/desktop_app/ami_daemon/base_agent/tools/browser_use/automation_hooks.js'),
-         'src/clients/desktop_app/ami_daemon/base_agent/tools/browser_use'),
-
-        # Bundled browser extensions (avoid downloading from Google in China)
-        (str(project_root / 'deploy/bundled_extensions'), 'bundled_extensions'),
     ] + playwright_browsers,
     hiddenimports=[
         # Uvicorn and FastAPI
@@ -68,7 +58,6 @@ a = Analysis(
         # Ami daemon services
         'src.clients.desktop_app.ami_daemon.services.storage_manager',
         'src.clients.desktop_app.ami_daemon.services.browser_manager',
-        'src.clients.desktop_app.ami_daemon.services.cdp_recorder',
         'src.clients.desktop_app.ami_daemon.services.cloud_client',
         'src.clients.desktop_app.ami_daemon.services.browser_window_manager',
 

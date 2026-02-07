@@ -63,10 +63,8 @@ from src.clients.desktop_app.ami_daemon.core.config_service import get_config
 from src.clients.desktop_app.ami_daemon.core.logging_config import setup_logging
 from src.clients.desktop_app.ami_daemon.services.storage_manager import StorageManager
 from src.clients.desktop_app.ami_daemon.services.browser_manager import BrowserManager
-from src.clients.desktop_app.ami_daemon.services.cdp_recorder import CDPRecorder
 from src.clients.desktop_app.ami_daemon.services.recording_service import RecordingService
 from src.clients.desktop_app.ami_daemon.services.cloud_client import CloudClient
-from src.clients.desktop_app.ami_daemon.base_agent.tools.browser_use.extension_installer import ensure_extensions_installed
 from src.clients.desktop_app.ami_daemon.routers.quick_task import router as quick_task_router
 from src.clients.desktop_app.ami_daemon.routers.integrations import router as integrations_router
 from src.clients.desktop_app.ami_daemon.routers.settings import router as settings_router
@@ -101,7 +99,6 @@ logger.info("App Backend daemon starting")
 # Global service instances
 storage_manager = StorageManager(config.get("storage.base_path"))
 browser_manager: Optional[BrowserManager] = None
-cdp_recorder: Optional[CDPRecorder] = None
 recording_service: Optional[RecordingService] = None
 cloud_client: Optional[CloudClient] = None
 # Memory API is proxied to Cloud Backend via cloud_client (local memory disabled)
@@ -209,7 +206,7 @@ async def lifespan(app: FastAPI):
     - On shutdown: Cleanup all resources (triggered by SIGTERM/SIGINT)
     """
     global browser_manager
-    global cdp_recorder, recording_service, cloud_client, version_check_result
+    global recording_service, cloud_client, version_check_result
 
     # ========== STARTUP ==========
     logger.info("=" * 60)
@@ -240,12 +237,6 @@ async def lifespan(app: FastAPI):
         else:
             logger.info(f"✓ Version {APP_VERSION} is compatible")
 
-        # Install bundled browser extensions to browser-use cache (avoids Google download in China)
-        if ensure_extensions_installed():
-            logger.info("✓ Browser extensions installed")
-        else:
-            logger.warning("⚠️ Browser extensions not available (may need to download from Google)")
-
         # Initialize HybridBrowserSession with daemon lifecycle (V3)
         from src.clients.desktop_app.ami_daemon.base_agent.tools.eigent_browser.browser_session import HybridBrowserSession
 
@@ -264,11 +255,7 @@ async def lifespan(app: FastAPI):
         browser_manager = BrowserManager(config_service=config)
         logger.info("✓ Legacy browser manager initialized")
 
-        # Initialize CDP recorder (legacy, kept for compatibility)
-        cdp_recorder = CDPRecorder(storage_manager, browser_manager)
-        logger.info("✓ CDP recorder initialized (legacy)")
-
-        # Initialize new Recording service (using HybridBrowserSession)
+        # Initialize Recording service (using HybridBrowserSession)
         recording_service = RecordingService(storage_manager)
         logger.info("✓ Recording service initialized (HybridBrowserSession)")
 
@@ -1720,31 +1707,20 @@ async def cleanup_resources():
     when uvicorn receives SIGTERM/SIGINT from the parent process (Tauri).
     """
     global browser_manager
-    global cdp_recorder, recording_service, cloud_client
+    global recording_service, cloud_client
 
     logger.info("🧹 Cleaning up resources...")
 
     cleanup_errors = []
 
     try:
-        # 1. Stop active recording if any (try new service first, then legacy)
+        # 1. Stop active recording if any
         if recording_service and recording_service.is_recording():
-            logger.info("Stopping active recording (RecordingService)...")
+            logger.info("Stopping active recording...")
             try:
                 await asyncio.wait_for(recording_service.stop_recording(), timeout=3.0)
                 await recording_service.close_browser()
-                logger.info("✓ Recording stopped (RecordingService)")
-            except asyncio.TimeoutError:
-                logger.warning("⚠️  Recording stop timeout")
-                cleanup_errors.append("Recording stop timeout")
-            except Exception as e:
-                logger.error(f"⚠️  Failed to stop recording: {e}")
-                cleanup_errors.append(f"Recording: {e}")
-        elif cdp_recorder and cdp_recorder._is_recording:
-            logger.info("Stopping active recording (legacy CDPRecorder)...")
-            try:
-                await asyncio.wait_for(cdp_recorder.stop_recording(), timeout=3.0)
-                logger.info("✓ Recording stopped (legacy)")
+                logger.info("✓ Recording stopped")
             except asyncio.TimeoutError:
                 logger.warning("⚠️  Recording stop timeout")
                 cleanup_errors.append("Recording stop timeout")
