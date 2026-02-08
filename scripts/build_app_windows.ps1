@@ -81,7 +81,7 @@ if (-not $SkipDaemon) {
         Write-Host "Installing daemon build dependencies..." -ForegroundColor Yellow
         & $venvPython -m pip install --upgrade pip | Out-Null
         & $venvPython -m pip install pyinstaller | Out-Null
-        & $venvPython -m pip install -r requirements.txt | Out-Null
+        & $venvPython -m pip install -e "$ProjectRoot[desktop,memory]" | Out-Null
 
         Write-Host "Cleaning previous daemon build artifacts..." -ForegroundColor Yellow
         if (Test-Path 'build') { Remove-Item 'build' -Recurse -Force }

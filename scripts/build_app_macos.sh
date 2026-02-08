@@ -116,6 +116,14 @@ done
 echo -e "${GREEN}=== Ami macOS Build Script ===${NC}"
 echo ""
 
+# Fail-fast: --notarize requires CODESIGN_IDENTITY
+if [ "$SKIP_NOTARIZE" = false ] && [ -z "$CODESIGN_IDENTITY" ]; then
+    echo -e "${RED}ERROR: --notarize requires CODESIGN_IDENTITY to be set${NC}"
+    echo "Usage: export CODESIGN_IDENTITY=\"Developer ID Application: Your Name (TEAMID)\""
+    echo "       $0 --notarize"
+    exit 1
+fi
+
 # Check if running on macOS
 if [ "$(uname -s)" != "Darwin" ]; then
     echo -e "${RED}ERROR: This script only runs on macOS${NC}"
@@ -182,7 +190,7 @@ if [ "$SKIP_DAEMON" = false ]; then
         source "${BUILD_VENV}/bin/activate"
         pip install --upgrade pip > /dev/null 2>&1
         pip install pyinstaller > /dev/null 2>&1
-        pip install -r requirements.txt > /dev/null 2>&1
+        pip install -e "${PROJECT_ROOT}[desktop,memory]" > /dev/null 2>&1
         deactivate
 
         echo -e "${GREEN}✓ Build environment created${NC}"

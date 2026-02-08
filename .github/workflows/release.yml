@@ -38,7 +38,7 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
-          cache-dependency-path: src/clients/desktop_app/ami_daemon/requirements.txt
+          cache-dependency-path: pyproject.toml
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -81,7 +81,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: src/clients/desktop_app/ami_daemon/venv-build
-          key: ${{ runner.os }}-venv-${{ hashFiles('src/clients/desktop_app/ami_daemon/requirements.txt') }}
+          key: ${{ runner.os }}-venv-${{ hashFiles('pyproject.toml') }}
           restore-keys: |
             ${{ runner.os }}-venv-
 
@@ -94,7 +94,7 @@ jobs:
           source venv-build/bin/activate
           pip install --upgrade pip
           pip install pyinstaller
-          pip install -r requirements.txt
+          pip install -e "${{ github.workspace }}[desktop,memory]"
           deactivate
 
       - name: Install npm dependencies
@@ -201,7 +201,7 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
-          cache-dependency-path: src/clients/desktop_app/ami_daemon/requirements.txt
+          cache-dependency-path: pyproject.toml
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -242,7 +242,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: src/clients/desktop_app/ami_daemon/venv-build
-          key: ${{ runner.os }}-venv-${{ hashFiles('src/clients/desktop_app/ami_daemon/requirements.txt') }}
+          key: ${{ runner.os }}-venv-${{ hashFiles('pyproject.toml') }}
           restore-keys: |
             ${{ runner.os }}-venv-
 
@@ -256,7 +256,7 @@ jobs:
           .\venv-build\Scripts\Activate.ps1
           pip install --upgrade pip
           pip install pyinstaller
-          pip install -r requirements.txt
+          pip install -e "${{ github.workspace }}[desktop,memory]"
           deactivate
 
       - name: Install npm dependencies
