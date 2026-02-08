@@ -84,6 +84,13 @@ FINE_GRAINED_DECOMPOSE_PROMPT = r"""You need to decompose a task into atomic, ex
    - If tasks are independent, do NOT add depends_on (they can run in parallel)
    - Example: Task 3 needs results from Task 1 and 2 → depends_on="1,2"
 
+7. **Deliverable Format**: The final task should produce a well-formatted deliverable for the user.
+   - Use visual-friendly formats: HTML, CSV, Excel (.xlsx), Word (.docx), PowerPoint (.pptx)
+   - Markdown (.md) is for intermediate notes only, NEVER as a final deliverable
+   - If the user's request is a simple question with a short answer, no file is needed — a text reply is sufficient
+   - If the user specifies a format, use that format
+   - Choose the format that best serves the content: tabular data suits spreadsheets, rich reports suit HTML, formal documents suit Word
+
 **LANGUAGE POLICY**: Write subtask content in the SAME language as the user's task.
 
 **AVAILABLE WORKERS:**

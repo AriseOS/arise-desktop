@@ -638,26 +638,37 @@ operations.
 
 
 # Task Summary Agent System Prompt (Eigent's TASK_SUMMARY_SYS_PROMPT)
-TASK_SUMMARY_AGENT_SYSTEM_PROMPT = """You are a helpful task assistant that can help users summarize the content of their tasks.
+TASK_SUMMARY_AGENT_SYSTEM_PROMPT = """You are a task completion assistant. After a task finishes, you review the results and decide what to present to the user.
 
-Your role is to:
-1. Analyze the results from multiple subtasks
-2. Synthesize findings into a clear, concise summary
-3. Highlight key accomplishments and important data
-4. Present information in a user-friendly format
+You have TWO responsibilities:
 
-Guidelines:
+1. **Text Summary**: Write a concise summary of what was accomplished.
+2. **File Selection**: From the list of workspace files, select ONLY the key deliverable files to send to the user.
+
+Guidelines for text summary:
 - Be concise but comprehensive
 - Use bullet points or sections for clarity
 - Highlight key findings or outputs
-- Mention any important files created or actions taken
-- DO NOT repeat the task description - focus on results
+- DO NOT repeat the task description — focus on results
 - Keep it professional but conversational
+
+Guidelines for file selection:
+- Select only the FINAL deliverable files that the user actually needs
+- DO NOT select intermediate files: research notes, raw data dumps, temporary files
+- Prefer well-formatted files (HTML, CSV, Excel, Word) over plain text/markdown
+- If the task result is a simple text answer, select NO files
+- When in doubt, fewer files is better than too many
 
 **CRITICAL Language Policy**:
 - You MUST write the summary in the same language as the user's original request.
 - If the user's request is in Chinese, the summary MUST be in Chinese.
 - If the user's request is in English, the summary must be in English.
+
+**Output format** (respond in valid JSON):
+{"summary": "Your text summary here...", "selected_files": ["report.html", "data.xlsx"]}
+
+If no files should be delivered:
+{"summary": "Your text summary here...", "selected_files": []}
 """
 
 
@@ -1437,18 +1448,22 @@ async def summarize_subtasks_results(
     provider: AnthropicProvider,
     main_task: str,
     subtasks: List[Dict[str, Any]],
-) -> str:
+    workspace_files: Optional[List[str]] = None,
+) -> Dict[str, Any]:
     """
-    Summarize the aggregated results from all subtasks into a concise summary.
+    Summarize subtask results and select deliverable files.
 
     Args:
         provider: AnthropicProvider to use for summarization
         main_task: The main task description
         subtasks: List of subtask dicts with 'id', 'content', 'result' fields
+        workspace_files: List of filenames available in workspace (candidates for delivery)
 
     Returns:
-        A concise summary of all subtask results
+        Dict with 'summary' (str) and 'selected_files' (List[str])
     """
+    import json
+
     # Build subtasks info
     subtasks_info = ""
     for i, subtask in enumerate(subtasks, 1):
@@ -1457,24 +1472,25 @@ async def summarize_subtasks_results(
         subtasks_info += f"Result: {subtask.get('result', 'No result')}\n"
         subtasks_info += "---\n"
 
-    prompt = f"""Summarize the results of the following subtasks.
+    # Build file list section
+    files_section = ""
+    if workspace_files:
+        file_list = "\n".join(f"- {f}" for f in workspace_files)
+        files_section = f"""
+Available files in workspace:
+{file_list}
 
-Main Task: {main_task}
+Select which files should be delivered to the user as final deliverables.
+"""
+
+    prompt = f"""Main Task: {main_task}
 
 Subtasks (with descriptions and results):
 ---
 {subtasks_info}
 ---
-
-Instructions:
-1. Provide a concise summary of what was accomplished
-2. Highlight key findings or outputs from each subtask
-3. Mention any important files created or actions taken
-4. Use bullet points or sections for clarity
-5. DO NOT repeat the task name in your summary - go straight to the results
-6. Keep it professional but conversational
-
-Summary:
+{files_section}
+Respond in JSON format: {{"summary": "...", "selected_files": ["file1.html", ...]}}
 """
 
     response = await provider.generate_with_tools(
@@ -1483,8 +1499,33 @@ Summary:
         tools=[],
         max_tokens=4096,
     )
-    summary = response.get_text()
+    raw_text = response.get_text()
 
-    logger.info(f"[AgentFactory] Generated summary for {len(subtasks)} subtasks")
-    return summary
+    # Parse JSON response
+    try:
+        # Extract JSON from response (LLM may wrap it in markdown code blocks)
+        json_text = raw_text.strip()
+        if json_text.startswith("```"):
+            # Strip markdown code fences
+            lines = json_text.split("\n")
+            lines = [l for l in lines if not l.strip().startswith("```")]
+            json_text = "\n".join(lines).strip()
+
+        result = json.loads(json_text)
+        summary = result.get("summary", raw_text)
+        selected_files = result.get("selected_files", [])
+        if not isinstance(selected_files, list):
+            selected_files = []
+
+        logger.info(
+            f"[AgentFactory] Summary generated, selected {len(selected_files)} deliverable files"
+        )
+        return {"summary": summary, "selected_files": selected_files}
+
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        # Fallback: treat entire response as summary, select all files
+        logger.warning(
+            f"[AgentFactory] Failed to parse summary JSON ({e}), using raw text as summary"
+        )
+        return {"summary": raw_text, "selected_files": workspace_files or []}
 

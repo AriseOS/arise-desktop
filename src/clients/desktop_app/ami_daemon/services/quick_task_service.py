@@ -1894,13 +1894,23 @@ Response:"""
                                     report_type="warning",
                                 ))
 
-                            # Aggregate results
-                            final_output = await self._aggregate_ami_results(
-                                task_id, state, subtasks, result, duration
+                            # Step 1: Scan workspace for candidate files
+                            candidate_files = await self._collect_candidate_files(task_id, state)
+
+                            # Step 2: Summary Agent decides text + which files to deliver
+                            summary_result = await self._aggregate_ami_results(
+                                task_id, state, subtasks, result, duration,
+                                candidate_filenames=[f.file_name for f in candidate_files],
                             )
 
-                            # DS-11: Collect file attachments for summary
-                            attachments = await self._collect_file_attachments(task_id, state)
+                            final_output = summary_result["summary"]
+
+                            # Step 3: Filter attachments to only LLM-selected files
+                            selected_names = set(summary_result.get("selected_files", []))
+                            if selected_names:
+                                attachments = [f for f in candidate_files if f.file_name in selected_names]
+                            else:
+                                attachments = []
 
                             # Record in conversation history
                             state.add_conversation("task_result", {
@@ -2209,9 +2219,10 @@ Response:"""
         subtasks,
         result: dict,
         duration: float,
-    ) -> str:
+        candidate_filenames: Optional[List[str]] = None,
+    ) -> dict:
         """
-        Aggregate results from AMI subtasks into a summary.
+        Aggregate results from AMI subtasks into a summary and select deliverable files.
 
         Args:
             task_id: Task identifier
@@ -2219,13 +2230,12 @@ Response:"""
             subtasks: List of AMISubtask objects
             result: Execution result dict
             duration: Execution duration in seconds
+            candidate_filenames: List of filenames in workspace (candidates for delivery)
 
         Returns:
-            Summary string
+            Dict with 'summary' (str) and 'selected_files' (List[str])
         """
-        summary_output = None
-
-        if len(subtasks) > 1:
+        if len(subtasks) >= 1:
             try:
                 from ..base_agent.core.agent_factories import (
                     create_task_summary_provider,
@@ -2248,44 +2258,35 @@ Response:"""
                     llm_model=self._llm_model,
                     llm_base_url=self._llm_base_url,
                 )
-                summary_output = await summarize_subtasks_results(
+                summary_result = await summarize_subtasks_results(
                     provider=summary_provider,
                     main_task=state.task,
                     subtasks=subtasks_with_results,
+                    workspace_files=candidate_filenames,
                 )
                 logger.info(f"[Task {task_id}] Summary generated successfully")
+                return summary_result
             except Exception as e:
                 logger.error(f"[Task {task_id}] Failed to generate summary: {e}")
 
-        elif len(subtasks) == 1:
-            single_result = subtasks[0].result
-            if single_result:
-                summary_output = str(single_result)
-                logger.info(f"[Task {task_id}] Using single subtask result directly")
+        fallback_summary = f"Completed {result['completed']}/{result['total']} subtasks"
+        return {"summary": fallback_summary, "selected_files": candidate_filenames or []}
 
-        if summary_output:
-            return summary_output
-        else:
-            return f"Completed {result['completed']}/{result['total']} subtasks"
-
-    async def _collect_file_attachments(
+    async def _collect_candidate_files(
         self,
         task_id: str,
         state: "TaskState",
     ) -> List[FileAttachment]:
         """
-        Collect files from task workspace and generate attachments.
-
-        DS-11: Simply scans the workspace output directory for all files.
-        Each task has an isolated workspace, so all files in output/ are
-        from this task execution.
+        Scan workspace for candidate files. These are NOT directly sent to
+        the user — the Summary Agent will select which ones to deliver.
 
         Args:
             task_id: Task identifier
             state: TaskState with working_directory
 
         Returns:
-            List of FileAttachment objects with previews
+            List of FileAttachment objects (candidates for LLM selection)
         """
         import os
         from pathlib import Path
@@ -2293,8 +2294,6 @@ Response:"""
         attachments = []
         workspace = Path(state.working_directory)
 
-        # Scan entire workspace directory for output files
-        # Exclude internal directories and files
         excluded_dirs = {"notes", ".git", "__pycache__", ".venv", "node_modules"}
         excluded_extensions = {".pyc", ".pyo", ".log"}
         excluded_prefixes = (".", "note_")
@@ -2304,15 +2303,12 @@ Response:"""
                 if not item.is_file():
                     continue
 
-                # Skip excluded directories
                 if any(part in excluded_dirs for part in item.parts):
                     continue
 
-                # Skip hidden files and internal notes
                 if item.name.startswith(excluded_prefixes):
                     continue
 
-                # Skip certain file types
                 if item.suffix.lower() in excluded_extensions:
                     continue
 
@@ -2323,7 +2319,7 @@ Response:"""
                 except Exception as e:
                     logger.warning(f"[Task {task_id}] Failed to create attachment for {item}: {e}")
 
-        logger.info(f"[Task {task_id}] Collected {len(attachments)} file attachments")
+        logger.info(f"[Task {task_id}] Collected {len(attachments)} candidate files")
         return attachments
 
     def _walk_directory(self, directory: "Path") -> List["Path"]:
