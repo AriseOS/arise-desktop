@@ -76,7 +76,7 @@ class CognitivePhraseChecker:
 
     @classmethod
     def _build_phrase_match_text(cls, phrase: CognitivePhrase) -> str:
-        """Build match text with semantic-first preference."""
+        """Build phrase match text (description-first, semantic as compatibility fallback)."""
         semantic = phrase.semantic if isinstance(phrase.semantic, dict) else {}
 
         keywords_text = ""
@@ -90,11 +90,12 @@ class CognitivePhraseChecker:
 
         parts = [
             cls._safe_text(phrase.label),
+            cls._safe_text(phrase.description),
+            # Backward compatibility for historical records:
+            cls._safe_text(semantic.get("description")),
             cls._safe_text(semantic.get("retrieval_text")),
             cls._safe_text(semantic.get("intent")),
             keywords_text,
-            cls._safe_text(semantic.get("description")),
-            cls._safe_text(phrase.description),
         ]
 
         unique_parts: List[str] = []

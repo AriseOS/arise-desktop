@@ -933,7 +933,16 @@ class QuickTaskService:
 
     @classmethod
     def _get_action_text_and_source(cls, action: Any) -> tuple[str, str]:
-        """Get action text with semantic-first fallback and source label."""
+        """Get action text with description-first fallback and source label."""
+        description = cls._safe_text(cls._read_field(action, "description", ""))
+        if description:
+            return description, "description"
+
+        action_type = cls._safe_text(cls._read_field(action, "type", ""))
+        if action_type:
+            return action_type, "type"
+
+        # Backward compatibility for old records that still contain semantic_v1.
         attributes = cls._read_field(action, "attributes", {})
         semantic = attributes.get("semantic_v1") if isinstance(attributes, dict) else {}
         semantic = semantic if isinstance(semantic, dict) else {}
@@ -946,19 +955,16 @@ class QuickTaskService:
         if semantic_desc:
             return semantic_desc, "semantic_v1.description"
 
-        description = cls._safe_text(cls._read_field(action, "description", ""))
-        if description:
-            return description, "description"
-
-        action_type = cls._safe_text(cls._read_field(action, "type", ""))
-        if action_type:
-            return action_type, "type"
-
         return "", "empty"
 
     @classmethod
     def _get_sequence_text_and_source(cls, sequence: Any) -> tuple[str, str]:
-        """Get IntentSequence text with semantic-first fallback and source label."""
+        """Get IntentSequence text with description-first fallback and source label."""
+        description = cls._safe_text(cls._read_field(sequence, "description", ""))
+        if description:
+            return description, "description"
+
+        # Backward compatibility for old records that still contain semantic.
         semantic = cls._read_field(sequence, "semantic", {})
         semantic = semantic if isinstance(semantic, dict) else {}
 
@@ -970,26 +976,11 @@ class QuickTaskService:
         if semantic_desc:
             return semantic_desc, "semantic.description"
 
-        description = cls._safe_text(cls._read_field(sequence, "description", ""))
-        if description:
-            return description, "description"
-
         return "", "empty"
 
     @classmethod
     def _get_step_text_and_source(cls, step: Any, step_index: int) -> tuple[str, str]:
-        """Get workflow step text with semantic-first fallback and source label."""
-        semantic = cls._read_field(step, "semantic", {})
-        semantic = semantic if isinstance(semantic, dict) else {}
-
-        retrieval_text = cls._safe_text(semantic.get("retrieval_text"))
-        if retrieval_text:
-            return retrieval_text, "step.semantic.retrieval_text"
-
-        semantic_desc = cls._safe_text(semantic.get("description"))
-        if semantic_desc:
-            return semantic_desc, "step.semantic.description"
-
+        """Get workflow step text with description-first fallback and source label."""
         description = cls._safe_text(cls._read_field(step, "description", ""))
         if description:
             return description, "step.description"
@@ -1001,6 +992,18 @@ class QuickTaskService:
         page_url = cls._safe_text(cls._read_field(step, "page_url", ""))
         if page_url:
             return page_url, "step.page_url"
+
+        # Backward compatibility for old step payloads with semantic.
+        semantic = cls._read_field(step, "semantic", {})
+        semantic = semantic if isinstance(semantic, dict) else {}
+
+        retrieval_text = cls._safe_text(semantic.get("retrieval_text"))
+        if retrieval_text:
+            return retrieval_text, "step.semantic.retrieval_text"
+
+        semantic_desc = cls._safe_text(semantic.get("description"))
+        if semantic_desc:
+            return semantic_desc, "step.semantic.description"
 
         return f"Step {step_index}", "fallback.step_index"
 

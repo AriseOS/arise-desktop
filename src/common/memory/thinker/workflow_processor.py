@@ -151,6 +151,26 @@ class WorkflowProcessor:
     - Create Actions between consecutive States
     """
 
+    # Important modifiers should be preserved if the model outputs them.
+    _STATE_PROTECTED_MODIFIER_HINTS = (
+        "每日",
+        "每天",
+        "每周",
+        "每月",
+        "实时",
+        "最新",
+        "今日",
+        "当日",
+        "本周",
+        "本月",
+        "daily",
+        "weekly",
+        "monthly",
+        "realtime",
+        "latest",
+        "today",
+    )
+
     def __init__(
         self,
         llm_provider: Optional[AnthropicProvider] = None,
@@ -1343,6 +1363,222 @@ class WorkflowProcessor:
                 break
         return keywords
 
+    @classmethod
+    def _is_protected_state_modifier(cls, keyword: str) -> bool:
+        """Check whether keyword is a high-value qualifier (e.g. 每日/每周/最新)."""
+        text = str(keyword or "").strip().lower()
+        if len(text) < 2:
+            return False
+        return any(hint in text for hint in cls._STATE_PROTECTED_MODIFIER_HINTS)
+
+    @classmethod
+    def _extract_state_modifier_from_description(cls, description: str) -> str:
+        """Extract one important qualifier from description text."""
+        text = str(description or "").strip()
+        if not text:
+            return ""
+
+        lowered = text.lower()
+        for hint in cls._STATE_PROTECTED_MODIFIER_HINTS:
+            token = str(hint or "").strip()
+            if not token:
+                continue
+            token_lower = token.lower()
+            if token_lower.isascii() and token_lower.isalpha():
+                if re.search(rf"\b{re.escape(token_lower)}\b", lowered):
+                    return token
+            elif token_lower in lowered:
+                return token
+        return ""
+
+    def _refine_state_keywords(
+        self,
+        state: State,
+        context: Dict[str, Any],
+        label: str,
+        raw_keywords: Any,
+        max_keywords: int = 4,
+    ) -> List[str]:
+        """Keep keywords tightly grounded in page evidence (title/url/path/query)."""
+        normalized = self._normalize_keywords(raw_keywords, max_keywords=12)
+        if not normalized:
+            return []
+
+        url_context = context.get("url_context") if isinstance(context, dict) else {}
+        if not isinstance(url_context, dict):
+            url_context = {}
+
+        label_lower = str(label or "").strip().lower()
+        title_lower = str(state.page_title or "").strip().lower()
+        path_lower = str(url_context.get("path") or "").strip().lower()
+        url_lower = str(state.page_url or "").strip().lower()
+        segment_lowers = [
+            str(seg or "").strip().lower()
+            for seg in (url_context.get("segments") or [])
+            if str(seg or "").strip()
+        ]
+        query_key_lowers = [
+            str(key or "").strip().lower()
+            for key in (url_context.get("query_keys") or [])
+            if str(key or "").strip()
+        ]
+
+        scored_terms: List[tuple[int, int, str]] = []
+        seen = set()
+
+        for index, keyword in enumerate(normalized):
+            kw = str(keyword or "").strip()[:30]
+            if not kw:
+                continue
+            lowered = kw.lower()
+            if lowered in seen:
+                continue
+
+            # Drop numeric/date fragments such as "2", "5", "2月", "5日".
+            if re.fullmatch(r"\d+(?:\.\d+)?", kw):
+                continue
+            if re.fullmatch(r"\d+[\u5e74\u6708\u65e5\u53f7]?", kw):
+                continue
+            if len(kw) <= 1 and not kw.isalpha():
+                continue
+
+            seen.add(lowered)
+            score = 0
+            if lowered and lowered in label_lower:
+                score += 4
+            if lowered and lowered in title_lower:
+                score += 4
+            if lowered and lowered in path_lower:
+                score += 2
+            if lowered and lowered in url_lower:
+                score += 1
+            if lowered and any(lowered in seg for seg in segment_lowers):
+                score += 3
+            if lowered and any(lowered in key for key in query_key_lowers):
+                score += 2
+
+            if score > 0:
+                scored_terms.append((score, index, kw))
+
+        if not scored_terms:
+            fallback_terms: List[str] = []
+            for keyword in normalized:
+                kw = str(keyword or "").strip()[:30]
+                if not kw:
+                    continue
+                lowered = kw.lower()
+                if re.fullmatch(r"\d+(?:\.\d+)?", kw):
+                    continue
+                if re.fullmatch(r"\d+[\u5e74\u6708\u65e5\u53f7]?", kw):
+                    continue
+                if len(kw) <= 1 and not kw.isalpha():
+                    continue
+                if lowered in label_lower or lowered in title_lower:
+                    fallback_terms.append(kw)
+
+            if not fallback_terms:
+                for keyword in normalized:
+                    kw = str(keyword or "").strip()[:30]
+                    if not kw:
+                        continue
+                    if re.fullmatch(r"\d+(?:\.\d+)?", kw):
+                        continue
+                    if re.fullmatch(r"\d+[\u5e74\u6708\u65e5\u53f7]?", kw):
+                        continue
+                    if len(kw) <= 1 and not kw.isalpha():
+                        continue
+                    fallback_terms.append(kw)
+
+            dedup_fallback: List[str] = []
+            seen_fallback = set()
+            for item in fallback_terms:
+                lowered = item.lower()
+                if lowered in seen_fallback:
+                    continue
+                seen_fallback.add(lowered)
+                dedup_fallback.append(item)
+                if len(dedup_fallback) >= max_keywords:
+                    break
+            return dedup_fallback
+
+        scored_terms.sort(key=lambda item: (-item[0], item[1]))
+        selected: List[str] = []
+        selected_seen = set()
+        for _, _, kw in scored_terms:
+            lowered = kw.lower()
+            if lowered in selected_seen:
+                continue
+            selected_seen.add(lowered)
+            selected.append(kw)
+            if len(selected) >= max_keywords:
+                break
+        return selected
+
+    @staticmethod
+    def _build_state_retrieval_text(
+        label: str,
+        keywords: List[str],
+        description: str,
+    ) -> str:
+        """Build State retrieval text using page label + page-grounded keywords."""
+        parts = [str(label or "").strip()] + [str(item or "").strip() for item in keywords]
+        retrieval_text = " ".join(part for part in parts if part).strip()
+        if len(retrieval_text) < 6 and description:
+            retrieval_text = " ".join(
+                part for part in [retrieval_text, str(description or "").strip()] if part
+            ).strip()
+        return retrieval_text[:320]
+
+    def _finalize_state_semantic(
+        self,
+        state: State,
+        context: Dict[str, Any],
+        semantic: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Apply State-specific semantic normalization for stable retrieval."""
+        semantic = dict(semantic or {})
+        label = str(semantic.get("label") or state.page_title or "页面").strip()[:80]
+        intent = str(semantic.get("intent") or "识别页面类型与用途").strip()[:120]
+        description = str(
+            semantic.get("description") or f"页面: {state.page_title or state.page_url}"
+        ).strip()[:240]
+        keywords = self._refine_state_keywords(
+            state=state,
+            context=context or {},
+            label=label,
+            raw_keywords=semantic.get("keywords"),
+            max_keywords=4,
+        )
+        modifier = self._extract_state_modifier_from_description(description)
+        if modifier:
+            modifier_lower = modifier.lower()
+            keyword_set = {str(item or "").lower() for item in keywords}
+            if modifier_lower not in keyword_set:
+                if len(keywords) >= 4:
+                    keywords = keywords[:3] + [modifier]
+                else:
+                    keywords.append(modifier)
+
+        # Keep one domain_url keyword aligned with Domain.domain_url normalization.
+        domain_source = str(state.domain or "").strip() or self._extract_domain_from_url(state.page_url)
+        domain_keyword = normalize_domain_url(domain_source, "website") if domain_source else ""
+        if domain_keyword:
+            keyword_set = {str(item or "").lower() for item in keywords}
+            if domain_keyword.lower() not in keyword_set:
+                keywords.append(domain_keyword)
+
+        semantic["version"] = "semantic_v1"
+        semantic["label"] = label
+        semantic["intent"] = intent
+        semantic["description"] = description
+        semantic["keywords"] = keywords
+        semantic["retrieval_text"] = self._build_state_retrieval_text(
+            label=label,
+            keywords=keywords,
+            description=description,
+        )
+        return semantic
+
     def _parse_semantic_output(
         self,
         raw_response: str,
@@ -1384,6 +1620,31 @@ class WorkflowProcessor:
         if len(text) <= max_len:
             return text
         return f"{text[: max_len - 3]}..."
+
+    @staticmethod
+    def _normalize_generated_description(
+        raw_text: Any,
+        default_text: str,
+        max_len: int = 240,
+    ) -> str:
+        """Normalize plain-text description generated by LLM."""
+        text = str(raw_text or "").strip()
+        if not text:
+            return str(default_text or "").strip()[:max_len]
+
+        # Remove markdown/code wrappers and common field prefixes.
+        text = re.sub(r"^```(?:json|text|markdown)?\s*", "", text, flags=re.IGNORECASE).strip()
+        text = re.sub(r"\s*```$", "", text).strip()
+        text = re.sub(r"^(description|描述)\s*[:：]\s*", "", text, flags=re.IGNORECASE).strip()
+
+        lines = [line.strip(" -\t") for line in text.splitlines() if line.strip()]
+        if lines:
+            text = lines[0]
+
+        text = text.strip("\"'` ").strip()
+        if not text:
+            text = str(default_text or "").strip()
+        return text[:max_len]
 
     @classmethod
     def _parse_url_context(cls, url: str) -> Dict[str, Any]:
@@ -1588,11 +1849,16 @@ class WorkflowProcessor:
                 default_intent=default_intent,
                 default_description=default_description,
             )
+            semantic = self._finalize_state_semantic(
+                state=state,
+                context=context,
+                semantic=semantic,
+            )
             state.attributes["semantic_v1"] = semantic
             return semantic["description"]
 
-        prompt = f"""请基于页面上下文输出结构化语义 JSON，用于稳定检索。
-请综合判断这个页面在任务中的角色和类型（例如列表页、详情页、搜索页、表单页、结果页等），并生成准确语义。
+        prompt = f"""请基于页面上下文整理一份结构化语义 JSON，用于后续检索参考。
+你可以综合判断这个页面在任务中的角色和类型（例如列表页、详情页、搜索页、表单页、结果页等），并给出较稳定的页面语义。
 
 URL: {state.page_url}
 页面标题: {state.page_title or "无"}
@@ -1612,24 +1878,26 @@ URL 路径线索:
 - 上一页: {prev_state_hint}
 - 下一页: {next_state_hint}
 
-要求:
-1. 必须返回有效 JSON，不要返回解释文字
-2. 字段:
-   - label: 页面类型短标签（例如"商品详情页"）
-   - intent: 用户在该页的核心意图（短语）
-   - keywords: 3-8个关键词数组（避免具体ID/日期）
-   - description: 1句话自然语言描述（中文）
-   - retrieval_text: 用于检索的稳定文本（label + intent + keywords）
-3. 内容尽量稳定、概括，不要包含动态 ID、时间戳等噪声
+建议结构:
+- label: 页面类型短标签（例如"商品详情页"）
+- intent: 用户在该页的核心意图（短语）
+- keywords: 3-4个关键词，仅保留与页面本身强相关的关键词
+- description: 1句话自然语言描述（中文）
+- retrieval_text: 用于检索的稳定文本，建议使用 label + keywords（不必包含 intent）
+
+补充建议:
+- keywords 优先来自页面本身线索（标题、URL、页面对象），可以尽量减少泛化能力词。
+- 不要把日期拆成数字关键词（例如“2”“5”）。
+- 内容保持概括和稳定，尽量减少动态 ID、时间戳等噪声。
 
 示例:
-{{"label":"商品详情页","intent":"浏览商品信息并决策购买","keywords":["商品","详情","价格","购买"],"description":"商品详情页，展示商品信息、价格与购买入口。","retrieval_text":"商品详情页 浏览商品信息并决策购买 商品 详情 价格 购买"}}
+{{"label":"产品排行榜页","intent":"查看每日热门产品","keywords":["排行榜","热门产品","产品榜单"],"description":"每日产品排行榜页面，展示热门产品列表。","retrieval_text":"产品排行榜页 排行榜 热门产品 产品榜单"}}
 
 JSON:"""
 
         try:
             response = await self.simple_llm_provider.generate_response(
-                system_prompt="你是一个JSON生成助手，只返回有效JSON对象。",
+                system_prompt="你是一个擅长结构化信息整理的助手，优先输出一个 JSON 对象。",
                 user_prompt=prompt
             )
             semantic = self._parse_semantic_output(
@@ -1637,6 +1905,11 @@ JSON:"""
                 default_label=default_label,
                 default_intent=default_intent,
                 default_description=default_description,
+            )
+            semantic = self._finalize_state_semantic(
+                state=state,
+                context=context,
+                semantic=semantic,
             )
             state.attributes["semantic_v1"] = semantic
             return semantic["description"]
@@ -1647,6 +1920,11 @@ JSON:"""
                 default_label=default_label,
                 default_intent=default_intent,
                 default_description=default_description,
+            )
+            semantic = self._finalize_state_semantic(
+                state=state,
+                context=context,
+                semantic=semantic,
             )
             state.attributes["semantic_v1"] = semantic
             return semantic["description"]
@@ -1679,65 +1957,40 @@ JSON:"""
             else:
                 intent_summary.append(intent_type)
 
-        # If no LLM provider, return default description
-        default_label = "操作序列"
-        default_intent = "完成页面内操作目标"
-        default_description = f"操作序列 ({len(sequence.intents)} 个操作)"
+        # Keep non-State entities description-first (no semantic_v1 retrieval fields).
+        sequence.semantic = {}
+
+        default_description = f"操作序列（{len(sequence.intents)} 个操作）"
         if not self.simple_llm_provider:
-            semantic = self._parse_semantic_output(
-                raw_response="",
-                default_label=default_label,
-                default_intent=default_intent,
-                default_description=default_description,
-            )
-            sequence.semantic = semantic
-            return semantic["description"]
+            return default_description
 
         intents_str = "\n".join(f"- {s}" for s in intent_summary[:10])
 
-        prompt = f"""请基于操作序列输出结构化语义 JSON，用于稳定检索。
+        prompt = f"""请根据以下操作序列，生成一句简洁稳定的中文描述（用于检索）。
 
 操作序列:
 {intents_str}
 
-要求:
-1. 必须返回有效 JSON，不要返回解释文字
-2. 字段:
-   - label: 操作短标签（例如"筛选商品"）
-   - intent: 该序列的核心目标（短语）
-   - keywords: 3-8个关键词数组（避免动态值）
-   - description: 1句话自然语言描述（中文）
-   - retrieval_text: 用于检索的稳定文本（label + intent + keywords）
-3. 不要输出具体 ref 编号或随机ID
+补充建议:
+- 聚焦用户在页面内完成的动作与目标
+- 尽量避免动态值（ref 编号、随机 ID、时间戳）
+- 只返回描述文本，不需要 JSON 或解释
 
 示例:
-{{"label":"筛选商品","intent":"根据条件缩小候选范围","keywords":["搜索","筛选","条件"],"description":"用户先搜索再筛选，以快速定位目标商品。","retrieval_text":"筛选商品 根据条件缩小候选范围 搜索 筛选 条件"}}
-
-JSON:"""
+用户先搜索再筛选，以快速定位目标商品。"""
 
         try:
             response = await self.simple_llm_provider.generate_response(
-                system_prompt="你是一个JSON生成助手，只返回有效JSON对象。",
+                system_prompt="你是一个擅长概括用户操作的助手。",
                 user_prompt=prompt
             )
-            semantic = self._parse_semantic_output(
-                raw_response=response,
-                default_label=default_label,
-                default_intent=default_intent,
-                default_description=default_description,
+            return self._normalize_generated_description(
+                raw_text=response,
+                default_text=default_description,
             )
-            sequence.semantic = semantic
-            return semantic["description"]
         except Exception as e:
             logger.info(f"Warning: Failed to generate sequence description: {e}")
-            semantic = self._parse_semantic_output(
-                raw_response="",
-                default_label=default_label,
-                default_intent=default_intent,
-                default_description=default_description,
-            )
-            sequence.semantic = semantic
-            return semantic["description"]
+            return default_description
 
     async def _generate_action_description(
         self,
@@ -1748,7 +2001,7 @@ JSON:"""
         """Generate description for an Action using LLM.
         
         Uses action.trigger information (from recording) to generate
-        accurate, semantic descriptions for better retrieval.
+        accurate natural-language descriptions for better retrieval.
 
         Args:
             action: Action to describe.
@@ -1760,16 +2013,11 @@ JSON:"""
         """
         if action.attributes is None:
             action.attributes = {}
+        # Keep non-State entities description-first (no semantic_v1 retrieval fields).
+        action.attributes.pop("semantic_v1", None)
 
         if not source_state or not target_state:
-            semantic = self._parse_semantic_output(
-                raw_response="",
-                default_label="页面跳转",
-                default_intent="从来源页面导航到目标页面",
-                default_description="页面跳转",
-            )
-            action.attributes["semantic_v1"] = semantic
-            return semantic["description"]
+            return "页面跳转"
 
         source_desc = source_state.description or source_state.page_title or "来源页面"
         target_desc = target_state.description or target_state.page_title or "目标页面"
@@ -1784,18 +2032,16 @@ JSON:"""
                 if trigger_text
                 else f"自动跳转到 {target_desc}"
             )
-            semantic = self._parse_semantic_output(
-                raw_response="",
-                default_label="页面跳转",
-                default_intent=f"从{source_desc}进入{target_desc}",
-                default_description=fallback_desc,
-            )
-            action.attributes["semantic_v1"] = semantic
-            return semantic["description"]
+            return fallback_desc
 
-        # Use LLM with trigger/context information for structured semantics.
+        # Use LLM with trigger/context information to generate natural description.
         ref = trigger.get("ref") or ""
-        prompt = f"""请基于页面跳转信息输出结构化语义 JSON，用于稳定检索。
+        fallback_desc = (
+            f"点击 '{trigger_text}' 进入 {target_desc}"
+            if trigger_text
+            else f"自动跳转到 {target_desc}"
+        )
+        prompt = f"""请根据以下页面跳转信息，生成一句简洁稳定的中文描述（用于检索）。
 
 来源页面: {source_desc}
 来源URL: {source_state.page_url}
@@ -1807,48 +2053,26 @@ JSON:"""
 - text: {trigger_text or "无"}
 - role: {trigger_role or "无"}
 
-要求:
-1. 必须返回有效 JSON，不要返回解释文字
-2. 字段:
-   - label: 跳转动作短标签（例如"点击导航链接跳转"）
-   - intent: 此次跳转要达成的核心目标
-   - keywords: 3-8个关键词数组（避免动态ID/日期）
-   - description: 1句话自然语言描述（中文）
-   - retrieval_text: 用于检索的稳定文本（label + intent + keywords）
-3. 不要输出具体 ref 编号，不要输出随机ID
+补充建议:
+- 描述里可包含“从哪里到哪里、通过什么触发”
+- 尽量避免动态值（ref 编号、随机 ID、时间戳）
+- 只返回描述文本，不需要 JSON 或解释
 
 示例:
-{{"label":"导航跳转","intent":"从来源页面进入目标页面","keywords":["点击","导航","跳转"],"description":"用户通过页面元素触发导航，进入目标页面。","retrieval_text":"导航跳转 从来源页面进入目标页面 点击 导航 跳转"}}
-
-JSON:"""
+用户通过页面元素触发导航，从来源页面进入目标页面。"""
 
         try:
             response = await self.simple_llm_provider.generate_response(
-                system_prompt="你是一个JSON生成助手，只返回有效JSON对象。",
+                system_prompt="你是一个擅长概括页面跳转行为的助手。",
                 user_prompt=prompt
             )
-            semantic = self._parse_semantic_output(
-                raw_response=response,
-                default_label="页面跳转",
-                default_intent=f"从{source_desc}进入{target_desc}",
-                default_description=(
-                    f"点击 '{trigger_text}' 进入 {target_desc}" if trigger_text else f"自动跳转到 {target_desc}"
-                ),
+            return self._normalize_generated_description(
+                raw_text=response,
+                default_text=fallback_desc,
             )
-            action.attributes["semantic_v1"] = semantic
-            return semantic["description"]
         except Exception as e:
             logger.info(f"Warning: Failed to generate action description: {e}")
-            semantic = self._parse_semantic_output(
-                raw_response="",
-                default_label="页面跳转",
-                default_intent=f"从{source_desc}进入{target_desc}",
-                default_description=(
-                    f"点击 '{trigger_text}' 进入 {target_desc}" if trigger_text else f"自动跳转到 {target_desc}"
-                ),
-            )
-            action.attributes["semantic_v1"] = semantic
-            return semantic["description"]
+            return fallback_desc
 
     def _merge_state_attributes(self, memory_state: State, local_state: State) -> None:
         """Merge local state attributes into memory state without dropping existing keys."""
@@ -1876,33 +2100,18 @@ JSON:"""
 
     @staticmethod
     def _get_sequence_embedding_text(sequence: IntentSequence) -> str:
-        """Get stable embedding text for an IntentSequence (semantic retrieval_text first)."""
-        semantic = sequence.semantic if isinstance(sequence.semantic, dict) else {}
-        retrieval_text = str(semantic.get("retrieval_text") or "").strip()
-        if retrieval_text:
-            return retrieval_text[:320]
-
-        semantic_desc = str(semantic.get("description") or "").strip()
-        if semantic_desc:
-            return semantic_desc[:240]
-
+        """Get embedding text for IntentSequence (description-first)."""
         desc = str(sequence.description or "").strip()
         return desc[:240]
 
     @staticmethod
     def _get_phrase_embedding_text(phrase: CognitivePhrase) -> str:
-        """Get stable embedding text for a CognitivePhrase (semantic retrieval_text first)."""
-        semantic = phrase.semantic if isinstance(phrase.semantic, dict) else {}
-        retrieval_text = str(semantic.get("retrieval_text") or "").strip()
-        if retrieval_text:
-            return retrieval_text[:360]
-
-        semantic_desc = str(semantic.get("description") or "").strip()
-        if semantic_desc:
-            return semantic_desc[:280]
-
+        """Get embedding text for CognitivePhrase (description-first)."""
         desc = str(phrase.description or "").strip()
-        return desc[:280]
+        if desc:
+            return desc[:280]
+        label = str(phrase.label or "").strip()
+        return label[:120]
 
     def _generate_embeddings(
         self,
@@ -1930,7 +2139,7 @@ JSON:"""
                 items.append(("state", state))
 
         for sequence in intent_sequences:
-            # Prefer structured retrieval_text for embedding stability.
+            # Use sequence natural description for embedding.
             text = self._get_sequence_embedding_text(sequence)
             if text and not sequence.embedding_vector:
                 texts.append(text)
@@ -2104,6 +2313,8 @@ JSON:"""
         label = workflow_info.get("label")
         description = workflow_info.get("description")
         semantic = workflow_info.get("semantic", {})
+        if not isinstance(semantic, dict):
+            semantic = {}
 
         current_time = int(time.time() * 1000)
 
@@ -2124,7 +2335,7 @@ JSON:"""
             created_at=current_time,
         )
 
-        # Generate embedding (prefer structured semantic retrieval text)
+        # Generate embedding (description-first for cognitive phrase)
         embedding_text = self._get_phrase_embedding_text(phrase)
         if self.embedding_service and embedding_text:
             try:
@@ -2235,21 +2446,14 @@ JSON:"""
             workflow_data: List of workflow events.
 
         Returns:
-            Dict with 'label', 'description', and 'semantic' keys.
+            Dict with 'label', 'description', and optional 'semantic' (kept empty).
         """
-        default_label = f"Workflow ({len(workflow_data)} steps)"
-        default_intent = "完成一条完整工作流"
-        default_description = f"用户工作流包含{len(workflow_data)}个操作事件"
-        default_semantic = self._parse_semantic_output(
-            raw_response="",
-            default_label=default_label,
-            default_intent=default_intent,
-            default_description=default_description,
-        )
+        default_label = f"工作流（{len(workflow_data)}步）"
+        default_description = f"用户工作流包含{len(workflow_data)}个操作事件。"
         default_result = {
-            "label": default_semantic["label"],
-            "description": default_semantic["description"],
-            "semantic": default_semantic,
+            "label": default_label,
+            "description": default_description,
+            "semantic": {},
         }
 
         # If no LLM provider, return default
@@ -2258,40 +2462,38 @@ JSON:"""
 
         workflow_summary = json.dumps(workflow_data[:20], ensure_ascii=False, indent=2)
 
-        prompt = f"""请根据以下用户操作事件序列，输出结构化语义 JSON，用于稳定检索。
+        prompt = f"""请根据以下用户操作事件序列，输出一个简洁的工作流标题和描述。
 
 事件序列:
 {workflow_summary}
 
-要求:
-1. 必须返回有效 JSON，不要返回解释文字
-2. 字段:
-   - label: 工作流短标签（5-15字）
-   - intent: 工作流的核心目标
-   - keywords: 3-8个关键词数组（避免具体ID/日期）
-   - description: 1-2句话描述关键步骤
-   - retrieval_text: 用于检索的稳定文本（label + intent + keywords）
+建议结构（JSON）:
+- label: 工作流短标签（5-15字）
+- description: 1-2句话描述关键步骤
 
 示例:
-{{"label":"搜索并查看咖啡商品","intent":"搜索目标商品并查看详情","keywords":["搜索","商品","详情"],"description":"用户先浏览列表页并搜索关键词，再进入详情页查看关键信息。","retrieval_text":"搜索并查看咖啡商品 搜索目标商品并查看详情 搜索 商品 详情"}}
+{{"label":"搜索并查看咖啡商品","description":"用户先浏览列表页并搜索关键词，再进入详情页查看关键信息。"}}
 
 JSON:"""
 
         try:
             response = await self.simple_llm_provider.generate_response(
-                system_prompt="你是一个JSON生成助手，只返回有效的JSON格式。",
+                system_prompt="你是一个擅长总结工作流的助手，优先输出 JSON 对象。",
                 user_prompt=prompt
             )
-            semantic = self._parse_semantic_output(
-                raw_response=response,
-                default_label=default_label,
-                default_intent=default_intent,
-                default_description=default_description,
+            parsed = parse_json_with_repair(response or "")
+            if not isinstance(parsed, dict):
+                parsed = {}
+            label = str(parsed.get("label") or default_label).strip()[:80]
+            description = self._normalize_generated_description(
+                raw_text=parsed.get("description") or parsed.get("summary") or "",
+                default_text=default_description,
+                max_len=320,
             )
             return {
-                "label": semantic["label"],
-                "description": semantic["description"],
-                "semantic": semantic,
+                "label": label,
+                "description": description,
+                "semantic": {},
             }
         except Exception as e:
             logger.info(f"Warning: Failed to generate workflow description: {e}")
