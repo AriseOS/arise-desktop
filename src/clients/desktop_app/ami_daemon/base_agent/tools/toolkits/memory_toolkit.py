@@ -1046,14 +1046,15 @@ class MemoryToolkit(BaseToolkit):
     def format_task_result(result: QueryResult) -> str:
         """Format task query result for LLM context.
 
-        Handles both CognitivePhrase (exact match) and composed path results.
+        Both L1 (CognitivePhrase) and L2 (composed path) use the same concise
+        navigation-path format. The detailed intent_sequences / trigger info
+        from CognitivePhrase is only needed at runtime (workflow_guide), not
+        during task decomposition.
         """
         if not result.success:
             return ""
 
-        if result.cognitive_phrase:
-            return MemoryToolkit.format_cognitive_phrase(result.cognitive_phrase)
-        elif result.states:
+        if result.states:
             return MemoryToolkit.format_navigation_path(result.states, result.actions)
         return ""
 
