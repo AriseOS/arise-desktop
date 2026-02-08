@@ -401,8 +401,9 @@ class QueryResult:
                 ]
             if not phrase_data.get("actions") and actions:
                 phrase_data["actions"] = [
-                    {"id": a.id, "source_id": a.source_id, "target_id": a.target_id,
-                     "action_type": a.action_type, "description": a.description}
+                    {"id": a.id, "source": a.source_id, "target": a.target_id,
+                     "type": a.action_type, "description": a.description,
+                     "trigger": a.trigger, "trigger_sequence_id": a.trigger_sequence_id}
                     for a in actions
                 ]
             cognitive_phrase = CognitivePhrase.from_dict(phrase_data)
@@ -1129,8 +1130,13 @@ class MemoryToolkit(BaseToolkit):
         if phrase.execution_plan:
             state_map = {s.id: s for s in phrase.states}
             action_map = {a.id: a for a in phrase.actions}
+            # Fallback: lookup by state pair (source_id, target_id) since
+            # action IDs in execution_plan may be stale after edge upserts
+            action_by_pair = {
+                (a.source_id, a.target_id): a for a in phrase.actions
+            }
 
-            for step in phrase.execution_plan:
+            for step_idx, step in enumerate(phrase.execution_plan):
                 state = state_map.get(step.state_id)
                 if not state:
                     continue
@@ -1146,6 +1152,14 @@ class MemoryToolkit(BaseToolkit):
                 # Navigation to next
                 if step.navigation_action_id:
                     action = action_map.get(step.navigation_action_id)
+                    # Fallback: match by state pair if ID lookup fails
+                    if not action:
+                        next_step_idx = step_idx + 1
+                        if next_step_idx < len(phrase.execution_plan):
+                            next_state_id = phrase.execution_plan[next_step_idx].state_id
+                            action = action_by_pair.get(
+                                (step.state_id, next_state_id)
+                            )
                     if action:
                         nav_desc = action.description or "next"
                         if action.trigger and action.trigger.get("text"):

@@ -63,6 +63,21 @@ def _infer_toolkit_name(tool_name: str) -> str:
     return f"{prefix.title()} Toolkit"
 
 
+def _is_collection_type(annotation) -> bool:
+    """Check if a type annotation is a list or dict type (including generics)."""
+    import typing
+    origin = getattr(annotation, "__origin__", None)
+    if origin in (list, dict):
+        return True
+    if annotation in (list, dict):
+        return True
+    # Handle Union types (e.g., Optional[List[str]])
+    if origin is typing.Union:
+        args = getattr(annotation, "__args__", ())
+        return any(_is_collection_type(a) for a in args if a is not type(None))
+    return False
+
+
 # Character-based token estimate
 def _estimate_tokens(text: str) -> int:
     """Estimate token count from text (rough: ~4 chars per token)."""
@@ -575,6 +590,18 @@ class AMIAgent:
     # Tool Execution
     # =========================================================================
 
+    @staticmethod
+    def _sanitize_tool_name(name: str) -> str:
+        """Sanitize tool name from LLM response.
+
+        Some API proxies leak raw text formatting into tool names
+        (e.g., '<tool_call>write_excel' instead of 'write_excel').
+        Strip known prefixes to handle this gracefully.
+        """
+        # Strip XML-like tags that proxies may inject (e.g., <tool_call>)
+        cleaned = re.sub(r"<[^>]+>", "", name).strip()
+        return cleaned or name
+
     async def _execute_tool(
         self,
         tool_name: str,
@@ -585,12 +612,16 @@ class AMIAgent:
         """Execute a single tool and return result string.
 
         Handles:
+        - Tool name sanitization (proxy compatibility)
         - Sync/async dispatch
         - SSE toolkit activate/deactivate events
         - @listen_toolkit decorator bypass
         - Result truncation
         - Error handling
         """
+        # Sanitize tool name (API proxies may inject tags like <tool_call>)
+        tool_name = self._sanitize_tool_name(tool_name)
+
         tool = self._tools.get(tool_name)
         if tool is None:
             error_msg = f"Unknown tool: {tool_name}"
@@ -632,6 +663,23 @@ class AMIAgent:
                         f"[AMIAgent] Dropped unexpected params for {tool_name}: {dropped}"
                     )
                 tool_input = filtered_input
+
+            # Auto-deserialize JSON strings for list/dict parameters.
+            # Some API proxies serialize array/object params as JSON strings
+            # (e.g., data='[["a","b"]]' instead of data=[["a","b"]]).
+            for param_name, param in sig.parameters.items():
+                if param_name in tool_input and isinstance(tool_input[param_name], str):
+                    annotation = param.annotation
+                    if annotation != inspect.Parameter.empty and _is_collection_type(annotation):
+                        try:
+                            parsed = json.loads(tool_input[param_name])
+                            if isinstance(parsed, (list, dict)):
+                                tool_input[param_name] = parsed
+                                logger.debug(
+                                    f"[AMIAgent] Auto-deserialized JSON string param '{param_name}' for {tool_name}"
+                                )
+                        except (json.JSONDecodeError, TypeError):
+                            pass  # Not valid JSON, leave as string
 
             # Execute tool
             if tool.is_async:
