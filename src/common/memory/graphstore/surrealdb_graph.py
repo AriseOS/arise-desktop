@@ -40,7 +40,8 @@ class SurrealDBGraphStore(GraphStore):
 
     Thread-safety:
         Uses asyncio for all operations, wrapped in sync interface.
-        Connection is reused across calls via _ensure_connected().
+        Connection is reused across calls via _get_client() with lazy init.
+        Automatic reconnection on connection failure (e.g., SurrealDB restart).
     """
 
     def __init__(
@@ -130,27 +131,101 @@ class SurrealDBGraphStore(GraphStore):
         self._bg_thread.start()
         ready.wait()
 
-    def _run(self, coro):
-        """Run async coroutine using the persistent background event loop.
+    @staticmethod
+    def _is_connection_error(exc: Exception) -> bool:
+        """Check if an exception indicates a broken SurrealDB connection.
+
+        Detects WebSocket disconnections, network errors, and stale connections
+        so that _run() can trigger automatic reconnection.
+        """
+        # Check exception chain: __cause__ (explicit `from e`) and __context__ (implicit)
+        current = exc
+        seen = set()
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            # websockets library exceptions
+            type_name = type(current).__name__
+            if type_name in (
+                "ConnectionClosed",
+                "ConnectionClosedError",
+                "ConnectionClosedOK",
+                "WebSocketException",
+                "InvalidHandshake",
+            ):
+                return True
+
+            # Python built-in connection errors
+            if isinstance(current, (ConnectionError, OSError)):
+                return True
+
+            # SurrealDB SDK may wrap errors in generic Exception with message
+            if isinstance(current, Exception):
+                msg = str(current).lower()
+                if any(
+                    keyword in msg
+                    for keyword in [
+                        "connection",
+                        "websocket",
+                        "broken pipe",
+                        "not established",
+                        "closed",
+                    ]
+                ):
+                    return True
+
+            current = current.__cause__ or current.__context__
+
+        return False
+
+    def _run(self, coro_factory):
+        """Run async coroutine with automatic reconnection on connection failure.
 
         All coroutines are dispatched to the dedicated background loop thread,
         which keeps the SurrealDB WebSocket client alive across calls.
 
+        If the operation fails due to a connection error (e.g., SurrealDB restarted),
+        the stale connection is discarded and a fresh connection is established,
+        then the operation is retried once. If the retry also fails, the exception
+        propagates normally (fail-fast).
+
         Args:
-            coro: Coroutine to execute
+            coro_factory: Callable that returns a coroutine to execute.
+                          Must be a factory (not a bare coroutine) so that
+                          retries can create a fresh coroutine.
 
         Returns:
             Result from coroutine
         """
         self._ensure_bg_loop()
-        future = asyncio.run_coroutine_threadsafe(coro, self._bg_loop)
-        return future.result()
+
+        try:
+            future = asyncio.run_coroutine_threadsafe(coro_factory(), self._bg_loop)
+            return future.result()
+        except Exception as e:
+            if not self._is_connection_error(e):
+                raise
+
+            logger.warning(f"SurrealDB connection lost, reconnecting: {e}")
+
+            # Discard stale connection and retry, all within the bg_loop
+            # to avoid race conditions with concurrent callers
+            async def _reconnect_and_retry():
+                await self._close_client()
+                return await coro_factory()
+
+            future = asyncio.run_coroutine_threadsafe(
+                _reconnect_and_retry(), self._bg_loop
+            )
+            return future.result()
 
     async def _get_client(self):
         """Get the persistent connected client.
 
         Creates and connects the client on first call. Subsequent calls
         reuse the same client since all calls run on the same background loop.
+
+        On first connection, also ensures the namespace and database exist
+        (DEFINE ... IF NOT EXISTS) so callers don't need to handle this.
 
         Returns:
             Connected AsyncSurreal client
@@ -167,7 +242,12 @@ class SurrealDBGraphStore(GraphStore):
         if not self._config.is_embedded():
             await self._client.signin({"username": self._username, "password": self._password})
 
+        # Ensure namespace and database exist before USE
+        await self._client.query(f"DEFINE NAMESPACE IF NOT EXISTS {self._namespace};")
+        await self._client.query(f"USE NS {self._namespace};")
+        await self._client.query(f"DEFINE DATABASE IF NOT EXISTS {self._database};")
         await self._client.use(self._namespace, self._database)
+
         self._connected = True
         logger.info(
             f"SurrealDB client connected: {connection_string}/{self._namespace}/{self._database}"
@@ -185,40 +265,6 @@ class SurrealDBGraphStore(GraphStore):
             finally:
                 self._client = None
                 self._connected = False
-
-    def _ensure_connected(self):
-        """Ensure connection is established."""
-        if not self._connected:
-            self._run(self._connect())
-
-    async def _connect(self):
-        """Connect to SurrealDB and ensure namespace/database exist.
-
-        Uses _get_client() for the actual connection, then defines
-        namespace and database if they don't exist.
-
-        Raises:
-            ImportError: If surrealdb package is not installed
-            RuntimeError: If connection or namespace/database setup fails
-        """
-        try:
-            client = await self._get_client()
-
-            # Create namespace and database if they don't exist
-            await client.query(f"DEFINE NAMESPACE IF NOT EXISTS {self._namespace};")
-            await client.query(f"USE NS {self._namespace};")
-            await client.query(f"DEFINE DATABASE IF NOT EXISTS {self._database};")
-            await client.use(self._namespace, self._database)
-
-            logger.info(
-                f"Connected to SurrealDB ({self._config.mode} mode): "
-                f"{self._config.get_connection_string()}/{self._namespace}/{self._database}"
-            )
-
-        except Exception as e:
-            logger.error(f"Failed to connect to SurrealDB: {e}")
-            self._connected = False
-            raise RuntimeError(f"Failed to connect to SurrealDB: {e}") from e
 
     def close(self) -> None:
         """Close the connection and release resources."""
@@ -256,8 +302,6 @@ class SurrealDBGraphStore(GraphStore):
         Args:
             schema: Optional schema definition (unused, for interface compatibility)
         """
-        self._ensure_connected()
-
         async def _init():
             client = await self._get_client()
             # Define entity tables
@@ -266,6 +310,8 @@ class SurrealDBGraphStore(GraphStore):
                 try:
                     await client.query(f"DEFINE TABLE {table} SCHEMALESS")
                 except Exception as e:
+                    if self._is_connection_error(e):
+                        raise
                     logger.warning(f"Table {table} definition warning: {e}")
 
             # Define relationship tables (TYPE RELATION for graph edges)
@@ -291,6 +337,8 @@ class SurrealDBGraphStore(GraphStore):
                         f"DEFINE FIELD out ON {table} TYPE {out_type} REFERENCE ON DELETE CASCADE"
                     )
                 except Exception as e:
+                    if self._is_connection_error(e):
+                        raise
                     logger.warning(f"Relation table {table} definition warning: {e}")
 
             # Create unique indexes on (in, out) for relationship tables
@@ -301,6 +349,8 @@ class SurrealDBGraphStore(GraphStore):
                         f"DEFINE INDEX idx_{table}_unique ON {table} FIELDS in, out UNIQUE"
                     )
                 except Exception as e:
+                    if self._is_connection_error(e):
+                        raise
                     logger.warning(f"Unique index idx_{table}_unique warning: {e}")
 
             # Create unique indexes on id (matching Neo4j constraints)
@@ -311,6 +361,8 @@ class SurrealDBGraphStore(GraphStore):
                         f"DEFINE INDEX idx_{table}_id ON {table} FIELDS id UNIQUE"
                     )
                 except Exception as e:
+                    if self._is_connection_error(e):
+                        raise
                     logger.warning(f"Index idx_{table}_id warning: {e}")
 
             # Create property indexes for common queries
@@ -329,6 +381,8 @@ class SurrealDBGraphStore(GraphStore):
                         f"DEFINE INDEX idx_{table}_{field} ON {table} FIELDS {field}"
                     )
                 except Exception as e:
+                    if self._is_connection_error(e):
+                        raise
                     logger.warning(f"Index idx_{table}_{field} warning: {e}")
 
             # Create composite indexes for deduplication (Xuanlin's path_sig logic)
@@ -347,6 +401,8 @@ class SurrealDBGraphStore(GraphStore):
                     )
                     logger.info(f"Created composite index idx_{table}_{index_name}")
                 except Exception as e:
+                    if self._is_connection_error(e):
+                        raise
                     logger.warning(f"Composite index idx_{table}_{index_name} warning: {e}")
 
             # Create vector indexes using HNSW (MTREE is deprecated)
@@ -360,11 +416,13 @@ class SurrealDBGraphStore(GraphStore):
                     )
                     logger.info(f"Created HNSW vector index for {table}")
                 except Exception as e:
+                    if self._is_connection_error(e):
+                        raise
                     logger.warning(f"Vector index for {table} warning: {e}")
 
             logger.info("SurrealDB schema initialized")
 
-        self._run(_init())
+        self._run(_init)
 
     # ==================== Node Operations ====================
 
@@ -389,8 +447,6 @@ class SurrealDBGraphStore(GraphStore):
             ValueError: If id_key not in properties
             RuntimeError: If database operation fails
         """
-        self._ensure_connected()
-
         if id_key not in properties:
             raise ValueError(f"Property '{id_key}' not found in node properties")
 
@@ -411,7 +467,7 @@ class SurrealDBGraphStore(GraphStore):
                 logger.error(f"Failed to upsert node {record_id}: {e}")
                 raise RuntimeError(f"Failed to upsert node {record_id}: {e}") from e
 
-        self._run(_upsert())
+        self._run(_upsert)
 
     def upsert_nodes(
         self,
@@ -431,8 +487,6 @@ class SurrealDBGraphStore(GraphStore):
         if not properties_list:
             return
 
-        self._ensure_connected()
-
         async def _batch_upsert():
             client = await self._get_client()
             table = label.lower()
@@ -448,7 +502,7 @@ class SurrealDBGraphStore(GraphStore):
                     {"props": props}
                 )
 
-        self._run(_batch_upsert())
+        self._run(_batch_upsert)
 
     def batch_preprocess_node_properties(
         self,
@@ -485,8 +539,6 @@ class SurrealDBGraphStore(GraphStore):
         Returns:
             Node properties dict if found, None otherwise
         """
-        self._ensure_connected()
-
         async def _get():
             client = await self._get_client()
             table = label.lower()
@@ -500,10 +552,12 @@ class SurrealDBGraphStore(GraphStore):
                     return self._clean_node(node)
                 return None
             except Exception as e:
+                if self._is_connection_error(e):
+                    raise
                 logger.warning(f"Get node {record_id} failed: {e}")
                 return None
 
-        return self._run(_get())
+        return self._run(_get)
 
     @staticmethod
     def _is_record_id(v) -> bool:
@@ -568,8 +622,6 @@ class SurrealDBGraphStore(GraphStore):
         Returns:
             True if node was deleted
         """
-        self._ensure_connected()
-
         async def _delete():
             client = await self._get_client()
             table = label.lower()
@@ -578,7 +630,7 @@ class SurrealDBGraphStore(GraphStore):
             result = await client.query(f"DELETE FROM {record_id} RETURN BEFORE")
             return bool(result and isinstance(result, list) and len(result) > 0)
 
-        return self._run(_delete())
+        return self._run(_delete)
 
     def delete_nodes(
         self,
@@ -599,8 +651,6 @@ class SurrealDBGraphStore(GraphStore):
         if not id_values:
             return 0
 
-        self._ensure_connected()
-
         async def _delete():
             client = await self._get_client()
             table = label.lower()
@@ -613,7 +663,7 @@ class SurrealDBGraphStore(GraphStore):
                     count += 1
             return count
 
-        return self._run(_delete())
+        return self._run(_delete)
 
     def query_nodes(
         self,
@@ -631,8 +681,6 @@ class SurrealDBGraphStore(GraphStore):
         Returns:
             List of node property dictionaries
         """
-        self._ensure_connected()
-
         async def _query():
             client = await self._get_client()
             table = label.lower()
@@ -657,7 +705,7 @@ class SurrealDBGraphStore(GraphStore):
                 return [self._clean_node(n) for n in result]
             return []
 
-        return self._run(_query())
+        return self._run(_query)
 
     # ==================== Relationship Operations ====================
 
@@ -691,8 +739,6 @@ class SurrealDBGraphStore(GraphStore):
         Raises:
             RuntimeError: If database operation fails
         """
-        self._ensure_connected()
-
         async def _relate():
             client = await self._get_client()
             start_table = start_node_label.lower()
@@ -722,7 +768,7 @@ class SurrealDBGraphStore(GraphStore):
                 )
                 raise RuntimeError(f"Failed to upsert relationship: {e}") from e
 
-        self._run(_relate())
+        self._run(_relate)
 
     def upsert_relationships(
         self,
@@ -748,8 +794,6 @@ class SurrealDBGraphStore(GraphStore):
         if not relationships:
             return
 
-        self._ensure_connected()
-
         async def _batch_relate():
             client = await self._get_client()
             start_table = start_node_label.lower()
@@ -771,7 +815,7 @@ class SurrealDBGraphStore(GraphStore):
                 )
                 await client.query(combined, {"props": props})
 
-        self._run(_batch_relate())
+        self._run(_batch_relate)
 
     def delete_relationship(
         self,
@@ -800,8 +844,6 @@ class SurrealDBGraphStore(GraphStore):
         Returns:
             True if relationship was deleted, False if not found
         """
-        self._ensure_connected()
-
         async def _delete():
             client = await self._get_client()
             start_table = start_node_label.lower()
@@ -817,7 +859,7 @@ class SurrealDBGraphStore(GraphStore):
             result = await client.query(query)
             return bool(result and isinstance(result, list) and len(result) > 0)
 
-        return self._run(_delete())
+        return self._run(_delete)
 
     def delete_relationships(
         self,
@@ -846,8 +888,6 @@ class SurrealDBGraphStore(GraphStore):
         if not start_node_id_values or not end_node_id_values:
             return 0
 
-        self._ensure_connected()
-
         async def _batch_delete():
             client = await self._get_client()
             start_table = start_node_label.lower()
@@ -865,7 +905,7 @@ class SurrealDBGraphStore(GraphStore):
                     count += 1
             return count
 
-        return self._run(_batch_delete())
+        return self._run(_batch_delete)
 
     # Known relation tables for querying when rel_type is not specified
     _RELATION_TABLES = ["manages", "has_sequence", "action"]
@@ -897,8 +937,6 @@ class SurrealDBGraphStore(GraphStore):
         Returns:
             List of dicts with 'start', 'end', 'rel' keys
         """
-        self._ensure_connected()
-
         # When rel_type is None, query all known relation tables
         rel_tables = [rel_type.lower()] if rel_type else self._RELATION_TABLES
 
@@ -951,7 +989,7 @@ class SurrealDBGraphStore(GraphStore):
 
             return all_relationships
 
-        return self._run(_query())
+        return self._run(_query)
 
     # ==================== Index Operations ====================
 
@@ -970,8 +1008,6 @@ class SurrealDBGraphStore(GraphStore):
             property_key: Property to index
             index_name: Optional index name
         """
-        self._ensure_connected()
-
         async def _create():
             client = await self._get_client()
             table = label.lower()
@@ -981,7 +1017,7 @@ class SurrealDBGraphStore(GraphStore):
             )
             logger.info(f"Created index: {name}")
 
-        self._run(_create())
+        self._run(_create)
 
     def create_text_index(
         self,
@@ -1001,8 +1037,6 @@ class SurrealDBGraphStore(GraphStore):
             property_keys: List of properties to index
             index_name: Optional index name
         """
-        self._ensure_connected()
-
         async def _create():
             client = await self._get_client()
             if isinstance(labels, str):
@@ -1015,8 +1049,10 @@ class SurrealDBGraphStore(GraphStore):
                 await client.query(
                     "DEFINE ANALYZER simple_analyzer TOKENIZERS class FILTERS ascii, lowercase"
                 )
-            except Exception:
-                pass  # Analyzer may already exist
+            except Exception as e:
+                if self._is_connection_error(e):
+                    raise
+                # Analyzer may already exist
 
             for label in labels_list:
                 table = label.lower()
@@ -1029,9 +1065,11 @@ class SurrealDBGraphStore(GraphStore):
                         )
                         logger.info(f"Created fulltext index: {name}")
                     except Exception as e:
+                        if self._is_connection_error(e):
+                            raise
                         logger.warning(f"Fulltext index {name} warning: {e}")
 
-        self._run(_create())
+        self._run(_create)
 
     def create_vector_index(
         self,
@@ -1058,8 +1096,6 @@ class SurrealDBGraphStore(GraphStore):
             hnsw_m: HNSW M parameter (max connections per node, default: 12)
             hnsw_ef_construction: HNSW EFC parameter (construction exploration, default: 150)
         """
-        self._ensure_connected()
-
         async def _create():
             client = await self._get_client()
             table = label.lower()
@@ -1087,9 +1123,11 @@ class SurrealDBGraphStore(GraphStore):
                 )
                 logger.info(f"Created HNSW vector index: {name} (dim={vector_dimensions}, dist={dist})")
             except Exception as e:
+                if self._is_connection_error(e):
+                    raise
                 logger.warning(f"Vector index {name} warning: {e}")
 
-        self._run(_create())
+        self._run(_create)
 
     # All known tables for index lookup
     _ALL_TABLES = [
@@ -1109,8 +1147,6 @@ class SurrealDBGraphStore(GraphStore):
         Args:
             index_name: Name of the index to delete
         """
-        self._ensure_connected()
-
         async def _delete():
             client = await self._get_client()
             table_name = None
@@ -1131,7 +1167,9 @@ class SurrealDBGraphStore(GraphStore):
                         await client.query(f"REMOVE INDEX {index_name} ON {t}")
                         logger.info(f"Deleted index: {index_name} from {t}")
                         return
-                    except Exception:
+                    except Exception as e:
+                        if self._is_connection_error(e):
+                            raise
                         continue
                 logger.warning(f"Cannot determine table for index {index_name}")
                 return
@@ -1140,9 +1178,11 @@ class SurrealDBGraphStore(GraphStore):
                 await client.query(f"REMOVE INDEX {index_name} ON {table_name}")
                 logger.info(f"Deleted index: {index_name}")
             except Exception as e:
+                if self._is_connection_error(e):
+                    raise
                 logger.warning(f"Delete index {index_name} warning: {e}")
 
-        self._run(_delete())
+        self._run(_delete)
 
     # ==================== Search Operations ====================
 
@@ -1169,8 +1209,6 @@ class SurrealDBGraphStore(GraphStore):
         Returns:
             List of matching node dictionaries with _score field
         """
-        self._ensure_connected()
-
         search_fields = search_fields or ["description"]
 
         # Known entity tables for searching when no label_constraints specified
@@ -1211,13 +1249,15 @@ class SurrealDBGraphStore(GraphStore):
                             for r in result
                         ])
                 except Exception as e:
+                    if self._is_connection_error(e):
+                        raise
                     logger.warning(f"Text search on {table} warning: {e}")
 
             # Sort by score and limit
             results.sort(key=lambda x: x.get("_score", 0), reverse=True)
             return results[:topk]
 
-        return self._run(_search())
+        return self._run(_search)
 
     def vector_search(
         self,
@@ -1244,8 +1284,6 @@ class SurrealDBGraphStore(GraphStore):
         Returns:
             List of (node_properties, similarity_score) tuples
         """
-        self._ensure_connected()
-
         if isinstance(query_text_or_vector, str):
             raise ValueError("query_text_or_vector must be a list of floats")
 
@@ -1281,10 +1319,12 @@ class SurrealDBGraphStore(GraphStore):
                     for r in result
                 ]
             except Exception as e:
+                if self._is_connection_error(e):
+                    raise
                 logger.warning(f"Vector search warning: {e}")
                 return []
 
-        return self._run(_search())
+        return self._run(_search)
 
     # ==================== Graph Traversal (Native SurrealDB) ====================
 
@@ -1316,8 +1356,6 @@ class SurrealDBGraphStore(GraphStore):
             path = graph.find_shortest_path("home_page", "team_page")
             # Returns: [{"id": "home_page", ...}, {"id": "product_page", ...}, {"id": "team_page", ...}]
         """
-        self._ensure_connected()
-
         async def _find():
             client = await self._get_client()
             # SurrealDB shortest path syntax:
@@ -1344,10 +1382,12 @@ class SurrealDBGraphStore(GraphStore):
                         return [self._clean_node(n) if isinstance(n, dict) else n for n in path]
                 return None
             except Exception as e:
+                if self._is_connection_error(e):
+                    raise
                 logger.warning(f"Shortest path query failed: {e}")
                 return None
 
-        return self._run(_find())
+        return self._run(_find)
 
     def traverse_graph(
         self,
@@ -1380,8 +1420,6 @@ class SurrealDBGraphStore(GraphStore):
             # Get all states that can reach team_page
             sources = graph.traverse_graph("team_page", direction="in")
         """
-        self._ensure_connected()
-
         async def _traverse():
             client = await self._get_client()
             # Build direction syntax
@@ -1407,10 +1445,12 @@ class SurrealDBGraphStore(GraphStore):
                     return [self._clean_node(n) if isinstance(n, dict) else n for n in nodes]
                 return []
             except Exception as e:
+                if self._is_connection_error(e):
+                    raise
                 logger.warning(f"Graph traversal failed: {e}")
                 return []
 
-        return self._run(_traverse())
+        return self._run(_traverse)
 
     def get_outgoing_edges(
         self,
@@ -1432,8 +1472,6 @@ class SurrealDBGraphStore(GraphStore):
         Returns:
             List of dicts with edge properties and target node info
         """
-        self._ensure_connected()
-
         async def _get():
             client = await self._get_client()
             # Query both edge properties and target nodes
@@ -1460,10 +1498,12 @@ class SurrealDBGraphStore(GraphStore):
                     return combined
                 return []
             except Exception as e:
+                if self._is_connection_error(e):
+                    raise
                 logger.warning(f"Get outgoing edges failed: {e}")
                 return []
 
-        return self._run(_get())
+        return self._run(_get)
 
     def get_incoming_edges(
         self,
@@ -1485,8 +1525,6 @@ class SurrealDBGraphStore(GraphStore):
         Returns:
             List of dicts with edge properties and source node info
         """
-        self._ensure_connected()
-
         async def _get():
             client = await self._get_client()
             query = f"""
@@ -1511,10 +1549,12 @@ class SurrealDBGraphStore(GraphStore):
                     return combined
                 return []
             except Exception as e:
+                if self._is_connection_error(e):
+                    raise
                 logger.warning(f"Get incoming edges failed: {e}")
                 return []
 
-        return self._run(_get())
+        return self._run(_get)
 
     def get_state_with_sequences(
         self,
@@ -1530,8 +1570,6 @@ class SurrealDBGraphStore(GraphStore):
         Returns:
             State dict with 'sequences' field containing related IntentSequences
         """
-        self._ensure_connected()
-
         async def _get():
             client = await self._get_client()
             query = f"""
@@ -1552,10 +1590,12 @@ class SurrealDBGraphStore(GraphStore):
                     return state
                 return None
             except Exception as e:
+                if self._is_connection_error(e):
+                    raise
                 logger.warning(f"Get state with sequences failed: {e}")
                 return None
 
-        return self._run(_get())
+        return self._run(_get)
 
     def get_workflow_path(
         self,
@@ -1575,8 +1615,6 @@ class SurrealDBGraphStore(GraphStore):
         Returns:
             Dict with 'path' (list of states) and 'edges' (list of actions)
         """
-        self._ensure_connected()
-
         async def _get():
             client = await self._get_client()
             # First find shortest path
@@ -1621,10 +1659,12 @@ class SurrealDBGraphStore(GraphStore):
                     "actions": actions,
                 }
             except Exception as e:
+                if self._is_connection_error(e):
+                    raise
                 logger.warning(f"Get workflow path failed: {e}")
                 return None
 
-        return self._run(_get())
+        return self._run(_get)
 
     # ==================== Graph Algorithms ====================
 
@@ -1674,13 +1714,11 @@ class SurrealDBGraphStore(GraphStore):
         Returns:
             Query results
         """
-        self._ensure_connected()
-
         async def _run_script():
             client = await self._get_client()
             return await client.query(script)
 
-        return self._run(_run_script())
+        return self._run(_run_script)
 
     def get_all_entity_labels(self) -> List[str]:
         """Get all unique entity (node) labels in the database.
@@ -1691,8 +1729,6 @@ class SurrealDBGraphStore(GraphStore):
         Returns:
             List of entity table names (excludes relation tables)
         """
-        self._ensure_connected()
-
         async def _get():
             client = await self._get_client()
             result = await client.query("INFO FOR DB")
@@ -1703,15 +1739,13 @@ class SurrealDBGraphStore(GraphStore):
                 return [t for t in tables.keys() if t not in self._RELATION_TABLES]
             return []
 
-        return self._run(_get())
+        return self._run(_get)
 
     def clear(self) -> None:
         """Clear all data from the graph.
 
         WARNING: This deletes all nodes and relationships!
         """
-        self._ensure_connected()
-
         async def _clear():
             client = await self._get_client()
             # Delete relation tables first to avoid unnecessary CASCADE overhead
@@ -1723,10 +1757,12 @@ class SurrealDBGraphStore(GraphStore):
                 try:
                     await client.query(f"DELETE FROM {table}")
                 except Exception as e:
+                    if self._is_connection_error(e):
+                        raise
                     logger.warning(f"Clear {table} warning: {e}")
             logger.warning("Graph cleared")
 
-        self._run(_clear())
+        self._run(_clear)
 
     def get_statistics(self) -> Dict[str, Any]:
         """Get graph statistics.
@@ -1734,8 +1770,6 @@ class SurrealDBGraphStore(GraphStore):
         Returns:
             Dictionary with num_nodes, num_edges, num_labels, labels, etc.
         """
-        self._ensure_connected()
-
         async def _stats():
             client = await self._get_client()
             node_tables = ["domain", "state", "cognitivephrase", "intentsequence"]
@@ -1748,8 +1782,9 @@ class SurrealDBGraphStore(GraphStore):
                     # Result format: [{"count": N}] or []
                     if result and isinstance(result, list) and len(result) > 0:
                         node_count += result[0].get("count", 0)
-                except Exception:
-                    pass
+                except Exception as e:
+                    if self._is_connection_error(e):
+                        raise
 
             edge_count = 0
             for table in rel_tables:
@@ -1757,8 +1792,9 @@ class SurrealDBGraphStore(GraphStore):
                     result = await client.query(f"SELECT count() FROM {table} GROUP ALL")
                     if result and isinstance(result, list) and len(result) > 0:
                         edge_count += result[0].get("count", 0)
-                except Exception:
-                    pass
+                except Exception as e:
+                    if self._is_connection_error(e):
+                        raise
 
             # Get entity labels (exclude relation tables, matching Neo4j db.labels())
             try:
@@ -1768,7 +1804,9 @@ class SurrealDBGraphStore(GraphStore):
                     label_names = [t for t in all_tables if t not in rel_tables]
                 else:
                     label_names = []
-            except Exception:
+            except Exception as e:
+                if self._is_connection_error(e):
+                    raise
                 label_names = []
 
             return {
@@ -1780,7 +1818,7 @@ class SurrealDBGraphStore(GraphStore):
                 "backend": "surrealdb",
             }
 
-        return self._run(_stats())
+        return self._run(_stats)
 
     # ==================== Bulk Operations ====================
 
@@ -1804,8 +1842,6 @@ class SurrealDBGraphStore(GraphStore):
         if not filters:
             raise ValueError("Filters required for bulk deletion (safety)")
 
-        self._ensure_connected()
-
         async def _delete():
             client = await self._get_client()
             table = label.lower()
@@ -1827,7 +1863,7 @@ class SurrealDBGraphStore(GraphStore):
             logger.info(f"Bulk deleted {count} {label} nodes with filters {filters}")
             return count
 
-        return self._run(_delete())
+        return self._run(_delete)
 
     def delete_all_nodes_by_label(self, label: str) -> int:
         """Delete ALL nodes with the given label.
@@ -1840,8 +1876,6 @@ class SurrealDBGraphStore(GraphStore):
         Returns:
             Number of nodes deleted
         """
-        self._ensure_connected()
-
         async def _delete():
             client = await self._get_client()
             table = label.lower()
@@ -1854,4 +1888,4 @@ class SurrealDBGraphStore(GraphStore):
             logger.info(f"Deleted ALL {count} {label} nodes")
             return count
 
-        return self._run(_delete())
+        return self._run(_delete)
