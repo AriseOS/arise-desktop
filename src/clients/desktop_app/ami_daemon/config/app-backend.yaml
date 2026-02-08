@@ -29,7 +29,8 @@ camel:
 browser:
   headless: false
   timeout: 30
-  user_data_dir: ${storage.base_path}/browser_data
+  # user_data_dir is NOT configured here - it comes from DirectoryManager
+  # per user: ~/.ami/users/{user_id}/browser_data/
 
 # LLM Provider Configuration
 # All LLM calls go through Claude Relay Service (CRS)
