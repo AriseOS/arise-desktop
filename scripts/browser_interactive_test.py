@@ -292,7 +292,8 @@ class InteractiveBrowserTester:
             elif command == "console":
                 print("\n>>> Getting console logs")
                 try:
-                    logs = await self.session.get_console_logs()
+                    session = await self.toolkit._get_session()
+                    logs = await session.get_console_logs()
                     recent_logs = list(logs)[-20:]  # Last 20 entries
                     if recent_logs:
                         result = "\n".join([f"[{log['type']}] {log['text']}" for log in recent_logs])
@@ -308,7 +309,8 @@ class InteractiveBrowserTester:
                 else:
                     print(f"\n>>> Executing JS: {args[:50]}...")
                     try:
-                        page = await self.session.get_page()
+                        session = await self.toolkit._get_session()
+                        page = await session.get_page()
                         result = await page.evaluate(args)
                         self.print_result("JS execution result", str(result))
                     except Exception as e:
@@ -327,7 +329,8 @@ class InteractiveBrowserTester:
             elif command == "info":
                 print("\n>>> Getting page info")
                 try:
-                    page = await self.session.get_page()
+                    session = await self.toolkit._get_session()
+                    page = await session.get_page()
                     url = page.url
                     title = await page.title()
                     viewport = page.viewport_size

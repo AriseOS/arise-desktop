@@ -649,9 +649,12 @@
                 }
             }
 
-            // FIX: Remove redundant text children that match the element's name
+            // Remove redundant text children that duplicate the element's accessible name.
+            // Only remove when text is essentially the same as parent name (exact match
+            // or covers most of it), NOT when it's merely a substring of a long
+            // concatenated name — that would incorrectly strip product data from
+            // large list containers whose name is all descendant text joined.
             if (ariaNode && ariaNode.children.length > 0) {
-                // Remove text children that are the same as the parent's name or are contained in it
                 ariaNode.children = ariaNode.children.filter(child => {
                     if (typeof child === 'string') {
                         const childText = child.trim();
@@ -662,9 +665,12 @@
                             return false;
                         }
 
-                        // Also remove if the child text is completely contained in parent name
-                        // and represents a significant portion (to avoid removing important partial text)
-                        if (childText.length > 3 && parentName.includes(childText)) {
+                        // Remove if child text covers a significant portion of parent name
+                        // (at least 50%), indicating true redundancy rather than being
+                        // a small fragment inside a large concatenated container name.
+                        if (childText.length > 3
+                            && parentName.includes(childText)
+                            && childText.length >= parentName.length * 0.5) {
                             return false;
                         }
 
@@ -714,6 +720,12 @@
                         node.inheritedCursor = true;
                     }
 
+                    // Inherit href from merged child (e.g., <div> wrapping <a> with same name)
+                    const childHref = (child.element && child.element.href) || child.inheritedHref;
+                    if (childHref && !(node.element && node.element.href)) {
+                        node.inheritedHref = childHref;
+                    }
+
                     // Also inherit other properties if needed
                     if (child.disabled && !node.disabled) node.disabled = child.disabled;
                     if (child.selected && !node.selected) node.selected = child.selected;
@@ -735,6 +747,12 @@
                     node.inheritedCursor = true;
                 }
 
+                // Inherit href from merged child
+                const childHref = (child.element && child.element.href) || child.inheritedHref;
+                if (childHref && !(node.element && node.element.href)) {
+                    node.inheritedHref = childHref;
+                }
+
                 // Also inherit other properties
                 if (child.disabled && !node.disabled) node.disabled = child.disabled;
                 if (child.selected && !node.selected) node.selected = child.selected;
@@ -748,10 +766,15 @@
         // We lift its child up to replace it, simplifying the hierarchy.
         const isRedundantWrapper = node.role === 'generic' && node.children.length === 1 && typeof node.children[0] !== 'string';
         if (isRedundantWrapper) {
+            const child = node.children[0];
+
+            // Inherit href from the discarded generic wrapper to the promoted child
+            const nodeHref = (node.element && node.element.href) || node.inheritedHref;
+            if (nodeHref && !(child.element && child.element.href) && !child.inheritedHref) {
+                child.inheritedHref = nodeHref;
+            }
             return node.children;
         }
-
-
 
         return [node];
     }
@@ -760,7 +783,7 @@
      * Phase 3: Render the normalized tree into the final string format.
      * Complete preservation of snapshot.js renderTree logic with Playwright enhancements
      */
-    function renderTree(node, indent = '') {
+    function renderTree(node, indent = '', refToHref = {}) {
         const lines = [];
         let meaningfulProps = '';
         if (node.disabled) meaningfulProps += ' [disabled]';
@@ -772,7 +795,10 @@
         // Add level attribute following Playwright's format
         if (node.level !== undefined) meaningfulProps += ` [level=${node.level}]`;
 
+        // Resolve href: direct DOM property > inheritedHref from tree normalization > refToHref from DOM scan
+        const nodeHref = (node.element && node.element.href) || node.inheritedHref || (node.ref && refToHref[node.ref]) || null;
         const ref = node.ref ? ` [ref=${node.ref}]` : '';
+        const hrefSuffix = nodeHref ? ` -> ${nodeHref}` : '';
 
         // Add cursor=pointer detection following Playwright's implementation
         // Check both direct cursor and inherited cursor from merged children
@@ -797,13 +823,13 @@
                         lines.push(`${indent}- text "${childText}"`);
                     }
                 } else {
-                    lines.push(...renderTree(child, indent));
+                    lines.push(...renderTree(child, indent, refToHref));
                 }
             }
             return lines;
         }
 
-        lines.push(`${indent}- ${node.role}${name ? ` "${name}"` : ''}${meaningfulProps}${ref}${cursor}`);
+        lines.push(`${indent}- ${node.role}${name ? ` "${name}"` : ''}${meaningfulProps}${ref}${cursor}${hrefSuffix}`);
 
         for (const child of node.children) {
             if (typeof child === 'string') {
@@ -812,7 +838,7 @@
                     lines.push(`${indent}  - text "${childText}"`);
                 }
             } else {
-                lines.push(...renderTree(child, indent + '  '));
+                lines.push(...renderTree(child, indent + '  ', refToHref));
             }
         }
         return lines;
@@ -932,8 +958,8 @@
                 // Visual information (from page_script.js)
                 coordinates: coordinates,
 
-                // Additional metadata
-                href: node.element.href || null,
+                // Additional metadata (inheritedHref preserves href from merged child nodes)
+                href: node.element.href || node.inheritedHref || null,
                 value: node.element.value || null,
                 placeholder: node.element.placeholder || null,
                 scrollable: node.element.scrollHeight > node.element.clientHeight,
@@ -978,11 +1004,43 @@
 
         // Build tree once and reuse for both snapshot text and element collection
         textCache.clear();
+
         let tree = buildAriaTree(document.body);
+
         [tree] = normalizeTree(tree);
 
+        // Build refToHref map: scan DOM for <a href> elements whose href
+        // was lost during tree normalization. Maps the nearest ancestor's
+        // aria-ref to the anchor's href, so renderTree can display it inline.
+        // Collect all refs that survived normalization (still in the rendered tree)
+        const survivingRefs = new Set();
+        (function collectRefs(n) {
+            if (typeof n === 'string') return;
+            if (n.ref) survivingRefs.add(n.ref);
+            if (n.children) n.children.forEach(collectRefs);
+        })(tree);
+
+        const refToHref = {};
+        document.querySelectorAll('a[href]').forEach(anchor => {
+            const href = anchor.href;
+            if (!href) return;
+            // If this <a> has aria-ref AND it survived normalization, skip (already rendered)
+            const ownRef = anchor.getAttribute('aria-ref');
+            if (ownRef && survivingRefs.has(ownRef)) return;
+            // Walk up DOM to find nearest ancestor with aria-ref that survived
+            let el = anchor.parentElement;
+            while (el) {
+                const ref = el.getAttribute('aria-ref');
+                if (ref && survivingRefs.has(ref) && !refToHref[ref]) {
+                    refToHref[ref] = href;
+                    break;
+                }
+                el = el.parentElement;
+            }
+        });
+
         // Generate snapshot text from the tree
-        const lines = renderTree(tree).slice(1); // Skip the root node line
+        const lines = renderTree(tree, '', refToHref).slice(1); // Skip the root node line
 
         // Handle iframes
         const frames = document.querySelectorAll('iframe');
@@ -1001,6 +1059,13 @@
         // Collect element information from the same tree (no second buildAriaTree call)
         const elementsMap = {};
         collectElementsFromTree(tree, elementsMap, viewport_limit);
+
+        // Backfill href from DOM using the same refToHref map built earlier.
+        for (const [ref, href] of Object.entries(refToHref)) {
+            if (elementsMap[ref] && !elementsMap[ref].href) {
+                elementsMap[ref].href = href;
+            }
+        }
 
         // Verify uniqueness of aria-ref attributes (debugging aid)
         const ariaRefCounts = {};

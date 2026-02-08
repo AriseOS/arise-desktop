@@ -407,6 +407,10 @@ class BrowserToolkit(BaseToolkit):
             return ""
         try:
             snapshot = await session.get_snapshot(force_refresh=force_refresh)
+            # Strip inline href suffixes from default snapshots to save tokens.
+            # Only browser_get_page_snapshot(include_links=True) preserves them.
+            import re
+            snapshot = re.sub(r' -> https?://\S+', '', snapshot)
             return snapshot
         except Exception as e:
             logger.error(f"Failed to get snapshot: {e}")
@@ -987,14 +991,15 @@ class BrowserToolkit(BaseToolkit):
         - Interactive elements with [ref=eN] markers
         - Page structure
 
-        Set include_links=True to also extract all links with their actual href URLs.
-        This is useful when you need to collect URLs for saving in notes or visiting later.
+        Set include_links=True to also show each element's href URL inline
+        (e.g., `- link "Home" [ref=e1] -> https://example.com`).
+        This is useful when you need to collect URLs for saving in notes.
 
         Args:
-            include_links: If True, appends a list of all links with their href URLs.
+            include_links: If True, shows href URLs inline next to elements.
 
         Returns:
-            The current page snapshot with URL info and optionally a links list.
+            The current page snapshot with URL info and optionally inline links.
         """
         if not self._ensure_session():
             return "Error: Browser session not initialized"
@@ -1007,43 +1012,16 @@ class BrowserToolkit(BaseToolkit):
             title = await page.title()
             header = f"**Current Page:**\n- URL: {url}\n- Title: {title}\n\n"
 
-            if include_links:
-                # Get full result with elements map to extract links
-                full_result = await session.get_snapshot_with_elements()
-                snapshot = full_result.get("snapshotText", "")
-                elements = full_result.get("elements", {})
+            snapshot = await session.get_snapshot()
 
-                # Extract links from elements map
-                links = []
-                for ref, elem_info in elements.items():
-                    href = elem_info.get("href")
-                    if href:
-                        name = elem_info.get("name", "")
-                        role = elem_info.get("role", "")
-                        links.append({
-                            "ref": ref,
-                            "name": name,
-                            "href": href,
-                            "role": role,
-                        })
+            if not include_links:
+                # Strip inline href suffixes (e.g., " -> https://...") to save tokens
+                import re
+                snapshot = re.sub(r' -> https?://\S+', '', snapshot)
+                tip = "\n\n> **Tip**: To extract all links with their URLs, call `browser_get_page_snapshot(include_links=True)`."
+                return header + snapshot + tip
 
-                # Build links section
-                links_section = ""
-                if links:
-                    links_section = "\n\n**Page Links:**\n"
-                    for link in links:
-                        links_section += f"- [{link['ref']}] \"{link['name']}\" -> {link['href']}\n"
-
-                # Format snapshot text
-                if isinstance(snapshot, str) and snapshot.startswith("- Page Snapshot"):
-                    formatted_snapshot = snapshot
-                else:
-                    formatted_snapshot = f"- Page Snapshot\n```yaml\n{snapshot}\n```"
-
-                return header + formatted_snapshot + links_section
-            else:
-                snapshot = await session.get_snapshot()
-                return header + snapshot
+            return header + snapshot
         except BrowserPageClosedError as e:
             # Return friendly message to Agent - page was recovered but needs re-navigation
             return str(e)
