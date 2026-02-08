@@ -240,7 +240,7 @@ async def lifespan(app: FastAPI):
         # Initialize HybridBrowserSession with daemon lifecycle (V3)
         from src.clients.desktop_app.ami_daemon.base_agent.tools.eigent_browser.browser_session import HybridBrowserSession
 
-        auto_start = config.get("browser.auto_start", True)
+        auto_start = config.get("browser.auto_start", False)
         if auto_start:
             try:
                 await HybridBrowserSession.start_daemon_session(config=config)
