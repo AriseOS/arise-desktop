@@ -976,17 +976,13 @@ class WorkflowProcessor:
             Trigger event dict if found, None otherwise.
         """
         # Search backwards for trigger operations
+        # The last click/submit is the most likely navigation trigger,
+        # regardless of element role (link, button, option, generic, etc.)
         for event in reversed(segment.events):
             event_type = str(event.get("type") or "").strip().lower()
 
             if event_type in ("click", "clickelement"):
-                role = str(event.get("role") or "").strip().lower()
-                # Link/button clearly cause navigation
-                if role in ("link", "button"):
-                    return event
-                # Generic elements may also trigger navigation (JS onclick)
-                if role == "generic":
-                    return event
+                return event
 
             elif event_type in ("submit", "formsubmit"):
                 return event
