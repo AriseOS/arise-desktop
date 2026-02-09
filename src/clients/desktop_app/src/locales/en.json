@@ -490,7 +490,7 @@
         }
     },
     "analysis": {
-        "title": "AI Analysis Complete",
+        "title": "Recording Complete",
         "unnamedTask": "Unnamed Task",
         "validation": "Please fill in both task description and user query",
         "savingMetadata": "Saving metadata...",
@@ -681,5 +681,26 @@
             "genFailed": "Generation failed: {{error}}",
             "cancelled": "Generation cancelled"
         }
+    },
+    "recording": {
+        "ops": {
+            "click": "Click",
+            "input": "Input",
+            "navigate": "Navigate",
+            "scroll": "Scroll",
+            "select": "Select",
+            "submit": "Submit",
+            "hover": "Hover",
+            "keydown": "Key Press",
+            "change": "Change",
+            "copy": "Copy",
+            "paste": "Paste",
+            "dataload": "Data Load",
+            "op": "Action"
+        },
+        "opsCount": "{{count}} operations",
+        "capturedOps": "Captured Operations",
+        "waitingOps": "No operations captured",
+        "reRecord": "Re-Record"
     }
 }

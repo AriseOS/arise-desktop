@@ -250,7 +250,6 @@ function HomePage({ session, onNavigate, showStatus, version }) {
       setIsRecordingSandboxOpen(false);
 
       const sessionId = currentSessionId;
-      const operationsCount = stopResult.operations_count || recordingSteps.length;
 
       if (!sessionId) {
         showStatus('Recording stopped', 'success');
@@ -273,11 +272,8 @@ function HomePage({ session, onNavigate, showStatus, version }) {
         // 3. Navigate to analysis page with results
         onNavigate('recording-analysis', {
           sessionId: sessionId,
-          operationsCount: operationsCount,
-          name: `Recording ${new Date().toLocaleDateString()}`,
-          detectedPatterns: analysisResult.detected_patterns || {},
-          taskDescription: analysisResult.task_description || '',
-          userQuery: analysisResult.user_query || ''
+          name: analysisResult.name || `Recording ${new Date().toLocaleDateString()}`,
+          taskDescription: analysisResult.task_description || ''
         });
 
       } catch (analysisError) {
@@ -286,7 +282,6 @@ function HomePage({ session, onNavigate, showStatus, version }) {
         showStatus('Recording saved. Analysis failed, please try manually.', 'warning');
         onNavigate('recording-analysis', {
           sessionId: sessionId,
-          operationsCount: operationsCount,
           name: `Recording ${new Date().toLocaleDateString()}`
         });
       }

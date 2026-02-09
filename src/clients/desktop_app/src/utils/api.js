@@ -540,26 +540,6 @@ export const api = {
   },
 
   /**
-   * Upload recording to Cloud Backend
-   *
-   * @param {string} sessionId - Recording session ID
-   * @param {string} taskDescription - What the user did
-   * @param {string} userQuery - What the user wants to do
-   * @param {string} userId - User ID
-   * @returns {Promise<object>} Upload result
-   */
-  async uploadRecording(sessionId, taskDescription, userQuery = null, userId) {
-    return await this.callAppBackend(`/api/v1/recordings/${sessionId}/upload`, {
-      method: 'POST',
-      body: JSON.stringify({
-        task_description: taskDescription,
-        user_query: userQuery,
-        user_id: userId
-      })
-    });
-  },
-
-  /**
    * Generate Workflow directly from Recording or task description (NEW v2 API)
    *
    * This bypasses MetaFlow and uses the new WorkflowBuilder architecture.

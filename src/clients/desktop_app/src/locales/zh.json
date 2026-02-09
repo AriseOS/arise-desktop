@@ -490,7 +490,7 @@
         }
     },
     "analysis": {
-        "title": "AI 分析完成",
+        "title": "录制完成",
         "unnamedTask": "未命名任务",
         "validation": "请填写任务描述和用户查询",
         "savingMetadata": "正在保存元数据...",
@@ -681,5 +681,26 @@
             "genFailed": "生成失败：{{error}}",
             "cancelled": "生成已取消"
         }
+    },
+    "recording": {
+        "ops": {
+            "click": "点击",
+            "input": "输入",
+            "navigate": "导航",
+            "scroll": "滚动",
+            "select": "选择",
+            "submit": "提交",
+            "hover": "悬停",
+            "keydown": "按键",
+            "change": "变更",
+            "copy": "复制",
+            "paste": "粘贴",
+            "dataload": "数据加载",
+            "op": "操作"
+        },
+        "opsCount": "{{count}} 个操作",
+        "capturedOps": "已捕获的操作",
+        "waitingOps": "暂无捕获的操作",
+        "reRecord": "重新录制"
     }
 }
