@@ -9,16 +9,29 @@ import os
 import asyncio
 import logging
 import json
+import random
 from typing import Optional, List, Dict, Any, Callable
 
 from anthropic import Anthropic, APIStatusError, APIConnectionError
 
 # Retry configuration
-MAX_RETRIES = 3
-RETRY_DELAY_SECONDS = 2.0
+MAX_RETRIES = 6
+RETRY_BASE_DELAY = 2.0  # Base delay in seconds
+RETRY_MAX_DELAY = 60.0  # Cap at 60 seconds
 # Status codes that should trigger a retry (server errors and rate limits)
 # Note: 400 included because some API proxies return 400 with internal server errors
 RETRYABLE_STATUS_CODES = {400, 429, 500, 502, 503, 504}
+
+
+def _retry_delay(attempt: int, base: float = RETRY_BASE_DELAY, max_delay: float = RETRY_MAX_DELAY) -> float:
+    """Calculate retry delay with exponential backoff + jitter.
+
+    Delay: min(base * 2^attempt + jitter, max_delay)
+    Example sequence: ~2s, ~4s, ~8s, ~16s, ~32s, ~60s
+    """
+    delay = min(base * (2 ** attempt), max_delay)
+    jitter = random.uniform(0, delay * 0.25)  # 0-25% jitter
+    return delay + jitter
 
 from .base_provider import (
     BaseProvider,
@@ -85,6 +98,7 @@ class AnthropicProvider(BaseProvider):
         # Budget tracking (Eigent Migration)
         self._budget_controller = budget_controller
         self._on_usage = on_usage
+        self._on_retry: Optional[Callable] = None  # Retry notification callback
         self._total_usage = {
             "input_tokens": 0,
             "output_tokens": 0,
@@ -109,6 +123,13 @@ class AnthropicProvider(BaseProvider):
             callback: Async or sync function to call with usage data
         """
         self._on_usage = callback
+
+    def set_on_retry_callback(self, callback: Callable) -> None:
+        """Set callback for retry notifications.
+
+        Called with (attempt, max_retries, delay, error_message) before each retry sleep.
+        """
+        self._on_retry = callback
 
     def get_total_usage(self) -> Dict[str, Any]:
         """Get cumulative token usage for this provider instance."""
@@ -173,6 +194,18 @@ class AnthropicProvider(BaseProvider):
                    f"cache_create={usage_data['cache_creation_tokens']}, cache_read={usage_data['cache_read_tokens']}")
 
         return usage_data
+
+    async def _notify_retry(self, attempt: int, delay: float, error_msg: str) -> None:
+        """Notify retry callback before sleeping."""
+        if not self._on_retry:
+            return
+        try:
+            if asyncio.iscoroutinefunction(self._on_retry):
+                await self._on_retry(attempt, MAX_RETRIES, delay, error_msg)
+            else:
+                self._on_retry(attempt, MAX_RETRIES, delay, error_msg)
+        except Exception as e:
+            logger.warning(f"Failed to emit retry notification: {e}")
 
     def _emit_usage_event(self, usage_data: Dict[str, Any]) -> None:
         """Emit token usage event via callback."""
@@ -337,13 +370,12 @@ class AnthropicProvider(BaseProvider):
             except APIStatusError as e:
                 logger.error(f"Anthropic API Status Error: {e.status_code}")
                 logger.error(f"Response body: {e.body}")
-                # Check if this is a retryable status code
                 if e.status_code in RETRYABLE_STATUS_CODES:
                     last_exception = e
                     if attempt < MAX_RETRIES - 1:
-                        # Use exponential backoff for rate limits
-                        delay = RETRY_DELAY_SECONDS * (2 ** attempt) if e.status_code == 429 else RETRY_DELAY_SECONDS
-                        logger.info(f"Retryable status {e.status_code}, retrying in {delay} seconds... (attempt {attempt + 1}/{MAX_RETRIES})")
+                        delay = _retry_delay(attempt)
+                        logger.info(f"Retryable status {e.status_code}, retrying in {delay:.1f}s... (attempt {attempt + 1}/{MAX_RETRIES})")
+                        await self._notify_retry(attempt + 1, delay, f"API error {e.status_code}")
                         await asyncio.sleep(delay)
                         continue
                 raise
@@ -351,33 +383,14 @@ class AnthropicProvider(BaseProvider):
                 last_exception = e
                 logger.error(f"Anthropic API Connection Error (attempt {attempt + 1}/{MAX_RETRIES}): {e}")
                 if attempt < MAX_RETRIES - 1:
-                    logger.info(f"Retrying in {RETRY_DELAY_SECONDS} seconds...")
-                    await asyncio.sleep(RETRY_DELAY_SECONDS)
+                    delay = _retry_delay(attempt)
+                    logger.info(f"Connection error, retrying in {delay:.1f}s...")
+                    await self._notify_retry(attempt + 1, delay, f"Connection error: {e}")
+                    await asyncio.sleep(delay)
                 continue
             except Exception as e:
                 logger.error(f"Error calling Anthropic API: {e}")
                 logger.error(f"Error type: {type(e).__name__}")
-
-                # Try to get the underlying httpx response
-                if hasattr(e, '__cause__'):
-                    logger.error(f"Underlying cause: {e.__cause__}")
-
-                # For JSONDecodeError, the httpx response should be in the exception chain
-                # Try to extract it
-                import sys
-                exc_info = sys.exc_info()
-                logger.error(f"Exception chain: {exc_info}")
-
-                # Try to access the httpx response from Anthropic SDK internals
-                try:
-                    # The response might be stored in the exception or somewhere in the SDK
-                    import traceback
-                    tb_lines = traceback.format_exception(*exc_info)
-                    for line in tb_lines:
-                        logger.error(f"  {line.strip()}")
-                except:
-                    pass
-
                 raise
 
         # All retries exhausted
@@ -484,13 +497,12 @@ class AnthropicProvider(BaseProvider):
             except APIStatusError as e:
                 logger.error(f"Anthropic API Status Error: {e.status_code}")
                 logger.error(f"Response body: {e.body}")
-                # Check if this is a retryable status code
                 if e.status_code in RETRYABLE_STATUS_CODES:
                     last_exception = e
                     if attempt < MAX_RETRIES - 1:
-                        # Use exponential backoff for rate limits
-                        delay = RETRY_DELAY_SECONDS * (2 ** attempt) if e.status_code == 429 else RETRY_DELAY_SECONDS
-                        logger.info(f"Retryable status {e.status_code}, retrying in {delay} seconds... (attempt {attempt + 1}/{MAX_RETRIES})")
+                        delay = _retry_delay(attempt)
+                        logger.info(f"Retryable status {e.status_code}, retrying in {delay:.1f}s... (attempt {attempt + 1}/{MAX_RETRIES})")
+                        await self._notify_retry(attempt + 1, delay, f"API error {e.status_code}")
                         await asyncio.sleep(delay)
                         continue
                 raise
@@ -498,8 +510,10 @@ class AnthropicProvider(BaseProvider):
                 last_exception = e
                 logger.error(f"Anthropic API Connection Error (attempt {attempt + 1}/{MAX_RETRIES}): {e}")
                 if attempt < MAX_RETRIES - 1:
-                    logger.info(f"Retrying in {RETRY_DELAY_SECONDS} seconds...")
-                    await asyncio.sleep(RETRY_DELAY_SECONDS)
+                    delay = _retry_delay(attempt)
+                    logger.info(f"Connection error, retrying in {delay:.1f}s...")
+                    await self._notify_retry(attempt + 1, delay, f"Connection error: {e}")
+                    await asyncio.sleep(delay)
                 continue
             except Exception as e:
                 logger.error(f"Error calling Anthropic API with tools: {e}")

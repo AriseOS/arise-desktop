@@ -250,6 +250,9 @@ class AMITaskExecutor:
         # This gives the new subtask awareness of where the browser currently is.
         browser_context = await self._get_browser_context(agent)
 
+        # Wire up retry notification: emit SSE when provider retries API calls
+        self._setup_retry_notification(agent, subtask)
+
         # Mark as running and emit event
         subtask.state = SubtaskState.RUNNING
         await self._emit_subtask_running(subtask)
@@ -424,6 +427,47 @@ No historical workflow guide available. Please explore and complete the task usi
         return f"(file save failed, result truncated): {result[:2000]}..."
 
     # =========================================================================
+    # Provider Retry Notification
+    # =========================================================================
+
+    def _setup_retry_notification(self, agent: "AMIAgent", subtask: AMISubtask) -> None:
+        """Wire up provider retry callback to emit SSE events."""
+        provider = getattr(agent, '_provider', None)
+        if provider is None or not hasattr(provider, 'set_on_retry_callback'):
+            return
+
+        progress = self._get_subtask_progress(subtask)
+
+        async def on_retry(attempt: int, max_retries: int, delay: float, error_msg: str) -> None:
+            if not self._task_state:
+                return
+            await self._task_state.put_event(AgentReportData(
+                task_id=self.task_id,
+                message=f"{progress} API error, retrying ({attempt}/{max_retries}) in {delay:.0f}s...",
+                report_type="warning",
+            ))
+
+        provider.set_on_retry_callback(on_retry)
+
+    @staticmethod
+    def _classify_error(error_msg: str) -> str:
+        """Classify error into user-friendly category."""
+        if not error_msg:
+            return ""
+        lower = error_msg.lower()
+        if any(kw in lower for kw in ("connection", "timeout", "timed out", "network", "unreachable", "dns")):
+            return "Network connection error, please check your network"
+        if any(kw in lower for kw in ("429", "rate limit", "too many requests")):
+            return "API rate limited, please try again later"
+        if any(kw in lower for kw in ("500", "502", "503", "504", "internal server error")):
+            return "API server unstable, please try again later"
+        if any(kw in lower for kw in ("400", "bad request")):
+            return "API request error"
+        if any(kw in lower for kw in ("401", "unauthorized", "authentication")):
+            return "API key invalid or expired"
+        return "Unexpected error"
+
+    # =========================================================================
     # SSE Event Emission
     # =========================================================================
 
@@ -495,9 +539,12 @@ No historical workflow guide available. Please explore and complete the task usi
                 report_type="success",
             ))
         elif subtask.state == SubtaskState.FAILED:
+            # Classify error for user-friendly message
+            error_hint = self._classify_error(subtask.error) if subtask.error else ""
+            error_suffix = f" ({error_hint})" if error_hint else ""
             await self._task_state.put_event(AgentReportData(
                 task_id=self.task_id,
-                message=f"✗ {progress} 失败: {safe_preview}",
+                message=f"✗ {progress} 失败: {safe_preview}{error_suffix}",
                 report_type="error",
             ))
 
