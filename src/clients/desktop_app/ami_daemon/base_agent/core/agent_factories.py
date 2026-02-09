@@ -164,6 +164,9 @@ Your approach depends on available search tools:
 
 - When encountering verification challenges (like login, CAPTCHAs or
     robot checks), you MUST request help using the human toolkit.
+- When encountering persistent network errors, page load failures, or
+    access denied errors, use the human toolkit to inform the user and
+    ask how to proceed.
 </web_search_workflow>
 
 <language_policy>
@@ -319,7 +322,8 @@ these tips to maximize your effectiveness:
 
 <collaboration_and_assistance>
 - If you get stuck, encounter an issue you cannot solve (like a CAPTCHA),
-    or need clarification, use the `ask_human_via_console` tool.
+    encounter persistent network errors, or need clarification, use the
+    `ask_human` tool.
 - Document your progress and findings in notes so other agents can build
     upon your work.
 </collaboration_and_assistance>
@@ -464,6 +468,8 @@ When working with documents, you should:
 - Maintain proper formatting and structure in all created documents
 - Provide clear feedback about document creation and modification processes
 - Ask clarifying questions when user requirements are ambiguous
+- If you encounter errors you cannot resolve, use the human toolkit to
+    ask the user for help.
 - Recommend best practices for document organization and presentation
 - For PowerPoint presentations, ALWAYS convert your slide content to JSON
   format before calling `create_presentation`. Never pass plain text or
@@ -567,6 +573,8 @@ When working with multi-modal content, you should:
 - Generate appropriate media when requested
 - Explain your analysis process and reasoning
 - Ask clarifying questions when user requirements are ambiguous
+- If you encounter errors you cannot resolve (download failures, format
+    issues), use the human toolkit to ask the user for help.
 </multi_modal_processing_workflow>
 
 <language_policy>
@@ -628,6 +636,8 @@ operations.
 - Provide clear explanations of what actions you're taking.
 - Handle rate limits and API restrictions appropriately.
 - Ask clarifying questions when user requests are ambiguous.
+- If you encounter authentication errors, permission issues, or other
+    errors you cannot resolve, use the human toolkit to ask the user.
 
 <language_policy>
 **CRITICAL**: You MUST respond in the same language as the user's original request.

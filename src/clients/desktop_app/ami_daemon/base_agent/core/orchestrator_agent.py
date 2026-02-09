@@ -67,7 +67,7 @@ Structure: `{{task_id}}/workspace/` - each task folder contains output files (re
 - shell_exec: Execute terminal commands to explore user's files
 - search_google: Quick web search for simple questions (weather, facts, etc.) - reply directly with search results, do NOT use decompose_task
 - write_note, read_note: Take notes (shared with other agents)
-- ask_human_via_console: Ask user for clarification
+- ask_human: Ask user for clarification
 - attach_file: Attach a file to your response (user can click to open/preview it)
 - decompose_task: Delegate work to your team (ONLY for tasks that require interacting with websites, writing code, or creating documents)
 
