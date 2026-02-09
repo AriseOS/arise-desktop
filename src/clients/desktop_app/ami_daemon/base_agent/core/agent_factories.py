@@ -371,8 +371,13 @@ The current date is {now_str}(Accurate to the hour). For any date-related tasks,
     `write_to_file`, `create_presentation`). Your primary output should be
     a file, not just content within your response.
 
-- If there's no specified format for the document/report/paper, you should use
-    the `write_to_file` tool to create a HTML file.
+- When using `write_to_file`, the `content` format MUST match the target file type:
+    - `.html` / `.htm`: content must be HTML markup.
+    - `.docx`: content must be plain text or Markdown (headings, bullets, paragraphs).
+    - `.md`: content must be Markdown.
+    - `.pdf`: content must be plain text or Markdown.
+    - `.csv` / `.json` / `.yaml`: use the appropriate data format.
+    If there's no specified format for the document, default to `.html`.
 
 - If the document has many data, you MUST use the terminal tool to
     generate charts and graphs and add them to the document.
