@@ -1299,6 +1299,9 @@ class MemoryToolkit(BaseToolkit):
         total_count = len(intent_sequences) + len(outgoing_actions)
         lines = [f"## Page Operations ({total_count} recorded)\n"]
 
+        # Collect user interests (select_text) separately
+        user_interests: List[str] = []
+
         # In-page operations
         for i, seq in enumerate(intent_sequences, 1):
             nav_marker = " → navigates" if seq.causes_navigation else ""
@@ -1306,6 +1309,13 @@ class MemoryToolkit(BaseToolkit):
 
             # Show intents with actionable info
             for intent in seq.intents:
+                if intent.type.lower() == "selecttext" and intent.text:
+                    # SelectText = user interest signal, not an executable action
+                    snippet = intent.text[:100]
+                    if len(intent.text) > 100:
+                        snippet += "..."
+                    user_interests.append(snippet)
+                    continue
                 intent_line = MemoryToolkit._format_intent_compact(intent)
                 if intent_line:
                     lines.append(f"   {intent_line}")
@@ -1321,6 +1331,13 @@ class MemoryToolkit(BaseToolkit):
                 if action.trigger and action.trigger.get("text"):
                     trigger_text = f" (click \"{action.trigger['text']}\")"
                 lines.append(f"- {desc}{trigger_text}")
+
+        # User interests from text selections
+        if user_interests:
+            lines.append("")
+            lines.append("**User interests on this page:**")
+            for interest in user_interests:
+                lines.append(f"- \"{interest}\"")
 
         return "\n".join(lines)
 
@@ -1384,6 +1401,11 @@ class MemoryToolkit(BaseToolkit):
             return "- Scroll"
         elif intent_type in ["navigate", "goto"]:
             return f"- Navigate: {intent.value or intent.text or ''}"
+        elif intent_type == "selecttext":
+            snippet = (intent.text or "")[:100]
+            if len(intent.text or "") > 100:
+                snippet += "..."
+            return f"- [User interest]: \"{snippet}\""
         else:
             if intent.text or intent.value:
                 return f"- {intent_type}: {intent.text or intent.value}"
