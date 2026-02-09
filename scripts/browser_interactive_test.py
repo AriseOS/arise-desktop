@@ -210,14 +210,6 @@ class InteractiveBrowserTester:
                     result = await self.toolkit.browser_click(ref=args)
                     self.print_result("LLM sees after click", result)
 
-            elif command == "click_text":
-                if not args:
-                    print("Usage: click_text <text>")
-                else:
-                    print(f"\n>>> Clicking text='{args}'")
-                    result = await self.toolkit.browser_click(element_text=args)
-                    self.print_result("LLM sees after click", result)
-
             elif command == "select":
                 select_parts = args.split(maxsplit=1)
                 if len(select_parts) < 2:
@@ -235,13 +227,12 @@ class InteractiveBrowserTester:
                 else:
                     ref, text = type_parts
                     print(f"\n>>> Typing '{text}' into ref={ref}")
-                    result = await self.toolkit.browser_type(input_text=text, ref=ref)
+                    result = await self.toolkit.browser_type(ref=ref, text=text)
                     self.print_result("LLM sees after type", result)
 
             elif command == "enter":
-                ref = args if args else None
-                print(f"\n>>> Pressing Enter" + (f" on ref={ref}" if ref else ""))
-                result = await self.toolkit.browser_enter(ref=ref)
+                print(f"\n>>> Pressing Enter")
+                result = await self.toolkit.browser_enter()
                 self.print_result("LLM sees after enter", result)
 
             elif command == "scroll":

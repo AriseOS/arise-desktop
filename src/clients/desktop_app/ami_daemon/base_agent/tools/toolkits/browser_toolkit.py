@@ -662,8 +662,9 @@ class BrowserToolkit(BaseToolkit):
     async def browser_visit_page(self, url: str) -> str:
         """Navigate to a URL and return the page snapshot.
 
-        Use this to open a new webpage. The snapshot shows interactive elements
-        with [ref=eN] markers that can be used with other browser tools.
+        The returned snapshot lists interactive elements with ref IDs
+        (e.g., [ref=e1]). Use these ref IDs with browser_click, browser_type,
+        and browser_select to interact with elements.
 
         Args:
             url: The URL to navigate to.
@@ -686,24 +687,18 @@ class BrowserToolkit(BaseToolkit):
             return f"Error visiting page: {e}"
 
     @listen_toolkit(
-        inputs=lambda self, ref=None, element_text=None, selector=None: f"Clicking: {ref or element_text or selector}",
+        inputs=lambda self, ref: f"Clicking: {ref}",
         return_msg=lambda r: "Clicked" if "successfully" in r.lower() or "Clicked" in r else r[:100]
     )
     async def browser_click(
         self,
-        ref: Optional[str] = None,
-        element_text: Optional[str] = None,
-        selector: Optional[str] = None,
+        ref: str,
     ) -> str:
-        """Click an element on the page.
-
-        Provide one of: ref (from snapshot), element_text content, or CSS selector.
-        If the click opens a new tab, the browser automatically switches to it.
+        """Performs a click on an element on the page.
 
         Args:
-            ref: Element reference from snapshot (e.g., "e1", "e2").
-            element_text: Visible text content of the element to click (e.g., "Submit", "Login").
-            selector: CSS selector for the element.
+            ref: The ref ID of the element to click. This ID is obtained
+                from a page snapshot (e.g., "e1", "e2").
 
         Returns:
             Result message with current page info (URL, title), tab info, and updated page snapshot.
@@ -711,18 +706,9 @@ class BrowserToolkit(BaseToolkit):
         if not self._ensure_session():
             return "Error: Browser session not initialized"
 
-        if not (ref or element_text or selector):
-            return "Error: Must provide ref, element_text, or selector"
-
         try:
             session = await self._get_session_with_page()
-            action = {"type": "click"}
-            if ref:
-                action["ref"] = ref
-            if element_text:
-                action["text"] = element_text
-            if selector:
-                action["selector"] = selector
+            action = {"type": "click", "ref": ref}
 
             result = await session.exec_action(action)
 
@@ -757,23 +743,19 @@ class BrowserToolkit(BaseToolkit):
             return f"Error clicking element: {e}"
 
     @listen_toolkit(
-        inputs=lambda self, input_text, ref=None, selector=None, **kw: f"Typing into {ref or selector}: {input_text[:30]}{'...' if len(input_text) > 30 else ''}",
+        inputs=lambda self, ref, text, **kw: f"Typing into {ref}: {text[:30]}{'...' if len(text) > 30 else ''}",
         return_msg=lambda r: "Typed" if "successfully" in r.lower() else r[:100]
     )
     async def browser_type(
         self,
-        input_text: str,
-        ref: Optional[str] = None,
-        selector: Optional[str] = None,
-        clear_first: bool = True,
+        ref: str,
+        text: str,
     ) -> str:
-        """Type text into an input element.
+        """Types text into an input element on the page.
 
         Args:
-            input_text: The text content to type into the input field.
-            ref: Element reference from snapshot (e.g., "e1").
-            selector: CSS selector for the input element.
-            clear_first: Whether to clear existing text before typing.
+            ref: The ref ID of the input element, from a snapshot (e.g., "e1").
+            text: The text to type into the element.
 
         Returns:
             Result message with current page info (URL, title) and updated page snapshot.
@@ -781,18 +763,9 @@ class BrowserToolkit(BaseToolkit):
         if not self._ensure_session():
             return "Error: Browser session not initialized"
 
-        if not (ref or selector):
-            return "Error: Must provide ref or selector"
-
         try:
             session = await self._get_session_with_page()
-            action = {"type": "type", "text": input_text}
-            if ref:
-                action["ref"] = ref
-            if selector:
-                action["selector"] = selector
-            if clear_first:
-                action["clear"] = True
+            action = {"type": "type", "text": text, "ref": ref, "clear": True}
 
             result = await session.exec_action(action)
 
@@ -808,19 +781,14 @@ class BrowserToolkit(BaseToolkit):
             return f"Error typing text: {e}"
 
     @listen_toolkit(
-        inputs=lambda self, ref=None, selector=None: f"Pressing Enter{' on ' + (ref or selector) if ref or selector else ''}",
+        inputs=lambda self: "Pressing Enter",
         return_msg=lambda r: "Enter pressed" if "successfully" in r.lower() else r[:100]
     )
-    async def browser_enter(
-        self,
-        ref: Optional[str] = None,
-        selector: Optional[str] = None,
-    ) -> str:
-        """Press Enter key, optionally on a specific element.
+    async def browser_enter(self) -> str:
+        """Simulates pressing the Enter key on the currently focused element.
 
-        Args:
-            ref: Element reference from snapshot.
-            selector: CSS selector for the element.
+        This is useful for submitting forms or search queries after using the
+        browser_type tool.
 
         Returns:
             Result message with current page info (URL, title) and updated page snapshot.
@@ -831,10 +799,6 @@ class BrowserToolkit(BaseToolkit):
         try:
             session = await self._get_session_with_page()
             action = {"type": "enter"}
-            if ref:
-                action["ref"] = ref
-            if selector:
-                action["selector"] = selector
 
             result = await session.exec_action(action)
 
@@ -982,18 +946,16 @@ class BrowserToolkit(BaseToolkit):
         self,
         include_links: bool = False,
     ) -> str:
-        """Get the current page snapshot without performing any action.
+        """Gets a textual snapshot of the page's interactive elements.
 
-        Always includes the current page URL and title at the top.
-
-        Use this to see the current state of the page, including:
-        - Page URL and title
-        - Interactive elements with [ref=eN] markers
-        - Page structure
+        The snapshot lists elements like buttons, links, and inputs, each with
+        a unique ref ID. This ID is used by other tools (e.g., browser_click,
+        browser_type) to interact with a specific element. For example:
+            '- link "Sign In" [ref=e1]'
+            '- textbox "Username" [ref=e2]'
 
         Set include_links=True to also show each element's href URL inline
         (e.g., `- link "Home" [ref=e1] -> https://example.com`).
-        This is useful when you need to collect URLs for saving in notes.
 
         Args:
             include_links: If True, shows href URLs inline next to elements.
