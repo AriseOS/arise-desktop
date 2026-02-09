@@ -1759,13 +1759,6 @@ Response:"""
                     question=task_to_decompose,
                 ))
 
-                # Report: Starting task decomposition
-                await state.put_event(AgentReportData(
-                    task_id=task_id,
-                    message="这是一个复杂任务，正在拆解为子任务...",
-                    report_type="thinking",
-                ))
-
                 try:
                     # Create agents and executor if not yet created
                     if agents_dict is None:
@@ -1828,16 +1821,29 @@ Response:"""
                             total_subtasks=len(subtasks),
                         ))
 
+                        # Emit human-readable subtask list for chat display
+                        # Use HTML inside <details> (Markdown not parsed in raw HTML blocks)
+                        # Escape subtask content to prevent XSS
+                        import html as html_mod
+                        type_labels = {"browser": "浏览器", "document": "文档", "code": "代码", "multi_modal": "多模态"}
+                        li_items = []
+                        for st in subtasks:
+                            label = type_labels.get(st.agent_type, st.agent_type)
+                            preview = st.content[:60] + ("..." if len(st.content) > 60 else "")
+                            li_items.append(f"<li>[{html_mod.escape(label)}] {html_mod.escape(preview)}</li>")
+                        await state.put_event(AgentReportData(
+                            task_id=task_id,
+                            message=(
+                                f"**任务已拆解为 {len(subtasks)} 个子任务**\n\n"
+                                f"<details><summary>查看子任务列表</summary>"
+                                f"<ol>{''.join(li_items)}</ol></details>"
+                            ),
+                            report_type="info",
+                        ))
+
                         # Execute subtasks directly (no confirmation wait)
                         logger.info(f"[Task {task_id}] Starting AMI Executor with {len(subtasks)} subtasks...")
                         start_time = datetime.now()
-
-                        # Report: Starting execution
-                        await state.put_event(AgentReportData(
-                            task_id=task_id,
-                            message=f"开始执行 {len(subtasks)} 个子任务...",
-                            report_type="info",
-                        ))
 
                         await state.put_event(WorkforceStartedData(
                             task_id=task_id,

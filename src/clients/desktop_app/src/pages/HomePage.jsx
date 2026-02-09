@@ -2,7 +2,18 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import Icon from '../components/Icons';
+
+// Allow <details>/<summary> and list tags through sanitizer, block dangerous tags
+const sanitizeSchema = {
+  ...defaultSchema,
+  tagNames: [
+    ...(defaultSchema.tagNames || []),
+    'details', 'summary',
+  ],
+};
 import { api } from '../utils/api';
 import { useAgentStore } from '../store';
 import FileAttachmentCard from '../components/ChatBox/MessageItem/FileAttachmentCard';
@@ -98,6 +109,7 @@ function HomePage({ session, onNavigate, showStatus, version }) {
             timestamp: msg.timestamp,
             attachments: msg.attachments || [],
             isContext: msg.is_context,
+            reportType: msg.metadata?.reportType,
           }));
 
           setSessionMessages(messages);
@@ -362,7 +374,7 @@ function HomePage({ session, onNavigate, showStatus, version }) {
           {isUser ? (
             message.content
           ) : (
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]}>{message.content}</ReactMarkdown>
           )}
         </div>
         {/* DS-11: Render file attachments */}

@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 from src.common.llm import parse_json_with_repair
 from .ami_task_executor import AMISubtask, SubtaskState
 from ..events import (
+    AgentReportData,
     DecomposeProgressData,
     MemoryLevelData,
     NoticeData,
@@ -343,11 +344,75 @@ class AMITaskPlanner:
                 method="ami_task_planner",
             ))
 
+            # Emit human-readable memory summary for chat display
+            memory_report = self._build_memory_report(level, result)
+            await self._emit_event(AgentReportData(
+                task_id=self.task_id,
+                message=memory_report,
+                report_type="info",
+            ))
+
             return result
 
         except Exception as e:
             logger.warning(f"[AMITaskPlanner] Memory query failed: {e}")
             return None
+
+    def _build_memory_report(self, level: str, result: "QueryResult") -> str:
+        """Build a human-readable memory summary for chat display.
+
+        Uses HTML (not Markdown) inside <details> blocks because
+        rehype-raw treats <details> as raw HTML where Markdown is not parsed.
+        All dynamic text is html.escape()-d to prevent XSS.
+        """
+        import html as html_mod
+
+        if level == "L1":
+            # Full workflow match - show expandable step list
+            steps_html = ""
+            if hasattr(result, 'cognitive_phrase') and result.cognitive_phrase:
+                phrase = result.cognitive_phrase
+                if hasattr(phrase, 'states') and phrase.states:
+                    li_items = []
+                    for state in phrase.states:
+                        desc = (
+                            getattr(state, 'description', None)
+                            or getattr(state, 'page_title', None)
+                            or getattr(state, 'page_url', '')
+                        )
+                        if desc:
+                            li_items.append(f"<li>{html_mod.escape(str(desc))}</li>")
+                    if li_items:
+                        steps_html = (
+                            f"\n\n<details><summary>查看工作流步骤 ({len(li_items)} 步)</summary>"
+                            f"<ol>{''.join(li_items)}</ol></details>"
+                        )
+            if not steps_html:
+                return "**找到完整工作流记忆 (L1)**（无详细步骤）"
+            return f"**找到完整工作流记忆 (L1)**{steps_html}"
+
+        elif level == "L2":
+            # Partial navigation match - show expandable path
+            path_html = ""
+            if result.states:
+                li_items = []
+                for state in result.states:
+                    desc = (
+                        getattr(state, 'description', None)
+                        or getattr(state, 'page_title', None)
+                        or getattr(state, 'page_url', '')
+                    )
+                    if desc:
+                        li_items.append(f"<li>{html_mod.escape(str(desc))}</li>")
+                if li_items:
+                    path_html = (
+                        f"\n\n<details><summary>查看导航路径 ({len(li_items)} 页)</summary>"
+                        f"<ol>{''.join(li_items)}</ol></details>"
+                    )
+            return f"**找到部分导航记忆 (L2)**{path_html}"
+
+        else:
+            return "**未找到历史工作流记忆 (L3)**"
 
     def _format_memory_for_decompose(self, task_memory: Optional["QueryResult"]) -> str:
         """

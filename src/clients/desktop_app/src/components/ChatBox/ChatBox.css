@@ -264,6 +264,45 @@
   color: var(--text-secondary, #666);
 }
 
+/* Expandable details/summary in markdown */
+.markdown-content details {
+  margin: 8px 0 4px;
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.markdown-content details summary {
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text-secondary, #666);
+  cursor: pointer;
+  user-select: none;
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.markdown-content details summary:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.markdown-content details[open] summary {
+  border-bottom: 1px solid var(--border-color, #e0e0e0);
+}
+
+.markdown-content details > :not(summary) {
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.markdown-content details ol {
+  margin: 0;
+  padding: 8px 10px 8px 30px;
+}
+
+.markdown-content details ol li {
+  margin: 2px 0;
+}
+
 /* Attachments */
 .message-attachments {
   display: flex;

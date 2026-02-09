@@ -11,8 +11,19 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import Icon from '../../Icons';
 import FileAttachmentCard from './FileAttachmentCard';
+
+// Allow <details>/<summary> and list tags through sanitizer, block dangerous tags
+const sanitizeSchema = {
+  ...defaultSchema,
+  tagNames: [
+    ...(defaultSchema.tagNames || []),
+    'details', 'summary',
+  ],
+};
 
 function AgentMessage({ message }) {
   const { content, timestamp, step, attaches, attachments } = message;
@@ -60,7 +71,7 @@ function AgentMessage({ message }) {
       <div className="message-content">
         {content && (
           <div className="message-text markdown-content">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]}>{content}</ReactMarkdown>
           </div>
         )}
 

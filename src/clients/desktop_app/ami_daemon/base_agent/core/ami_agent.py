@@ -28,6 +28,7 @@ from src.common.llm.base_provider import (
 from .ami_tool import AMITool
 from ..events import (
     ActivateAgentData,
+    AgentReportData,
     DeactivateAgentData,
     ActivateToolkitData,
     DeactivateToolkitData,
@@ -546,15 +547,6 @@ class AMIAgent:
                 self._messages.append({"role": "user", "content": tool_results})
 
                 iteration += 1
-
-                # Emit tool call thinking
-                tool_names = [tc["name"] for tc in all_tool_calls[-len(tool_results):]]
-                await self._emit_event(AgentThinkingData(
-                    task_id=task_id,
-                    agent_name=self.agent_name,
-                    thinking=f"Calling tools: {', '.join(tool_names)}",
-                    step=self._step_count,
-                ))
 
             if iteration >= self._max_iterations:
                 logger.warning(

@@ -11,6 +11,7 @@ No CAMEL dependencies - uses AMIAgent for execution.
 """
 
 import asyncio
+import html as html_mod
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
@@ -426,6 +427,15 @@ No historical workflow guide available. Please explore and complete the task usi
     # SSE Event Emission
     # =========================================================================
 
+    def _get_subtask_progress(self, subtask: AMISubtask) -> str:
+        """Get [index/total] progress string for a subtask."""
+        total = len(self._subtasks)
+        try:
+            index = next(i for i, s in enumerate(self._subtasks, 1) if s.id == subtask.id)
+        except StopIteration:
+            index = 0
+        return f"[{index}/{total}]"
+
     async def _emit_subtask_running(self, subtask: AMISubtask) -> None:
         """Emit events when subtask starts running."""
         if not self._task_state:
@@ -435,14 +445,14 @@ No historical workflow guide available. Please explore and complete the task usi
         agent = self._agents.get(subtask.agent_type)
         agent_name = getattr(agent, 'agent_name', subtask.agent_type)
 
-        # Report: Subtask starting
-        # Truncate content for display
+        # Report: Subtask starting with progress counter
+        progress = self._get_subtask_progress(subtask)
         content_preview = subtask.content[:80]
         if len(subtask.content) > 80:
             content_preview += "..."
         await self._task_state.put_event(AgentReportData(
             task_id=self.task_id,
-            message=f"正在执行: {content_preview}",
+            message=f"{progress} 正在执行: {html_mod.escape(content_preview)}",
             report_type="info",
         ))
 
@@ -471,21 +481,23 @@ No historical workflow guide available. Please explore and complete the task usi
         if not self._task_state:
             return
 
-        # Report: Subtask state change
+        # Report: Subtask state change with progress counter
+        progress = self._get_subtask_progress(subtask)
         content_preview = subtask.content[:50]
         if len(subtask.content) > 50:
             content_preview += "..."
+        safe_preview = html_mod.escape(content_preview)
 
         if subtask.state == SubtaskState.DONE:
             await self._task_state.put_event(AgentReportData(
                 task_id=self.task_id,
-                message=f"✓ 完成: {content_preview}",
+                message=f"✓ {progress} 完成: {safe_preview}",
                 report_type="success",
             ))
         elif subtask.state == SubtaskState.FAILED:
             await self._task_state.put_event(AgentReportData(
                 task_id=self.task_id,
-                message=f"✗ 失败: {content_preview}",
+                message=f"✗ {progress} 失败: {safe_preview}",
                 report_type="error",
             ))
 

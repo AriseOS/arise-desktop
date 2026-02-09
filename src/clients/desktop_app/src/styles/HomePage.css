@@ -316,6 +316,45 @@
   font-style: italic;
 }
 
+/* Expandable details/summary in messages */
+.home-page-v2 .message-bubble details {
+  margin: 8px 0 4px;
+  border: 1px solid var(--border-subtle, #e0e0e0);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.home-page-v2 .message-bubble details summary {
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text-secondary, #666);
+  cursor: pointer;
+  user-select: none;
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.home-page-v2 .message-bubble details summary:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.home-page-v2 .message-bubble details[open] summary {
+  border-bottom: 1px solid var(--border-subtle, #e0e0e0);
+}
+
+.home-page-v2 .message-bubble details > :not(summary) {
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.home-page-v2 .message-bubble details ol {
+  margin: 0;
+  padding: 8px 10px 8px 30px;
+}
+
+.home-page-v2 .message-bubble details ol li {
+  margin: 2px 0;
+}
+
 .home-page-v2 .message.user .message-bubble {
   background-color: var(--primary-main);
   color: white;
