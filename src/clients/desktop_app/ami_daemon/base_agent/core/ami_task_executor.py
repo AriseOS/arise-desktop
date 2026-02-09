@@ -380,16 +380,47 @@ No historical workflow guide available. Please explore and complete the task usi
         for dep_id in subtask.depends_on:
             dep = self._subtask_map.get(dep_id)
             if dep and dep.result:
-                # Truncate long results
-                result_preview = dep.result[:2000]
                 if len(dep.result) > 2000:
-                    result_preview += "... (truncated)"
-                dep_results.append(f"### Result from task '{dep_id}':\n{result_preview}")
+                    # Large result: write to workspace file, inject file reference
+                    file_ref = self._save_result_to_file(dep_id, dep.result)
+                    dep_results.append(
+                        f"### Result from task '{dep_id}':\n"
+                        f"Result saved to file: {file_ref}\n"
+                        f"Use `read_note` tool with note_name=\"{dep_id}_result\" to read the full data."
+                    )
+                else:
+                    dep_results.append(f"### Result from task '{dep_id}':\n{dep.result}")
 
         if dep_results:
             parts.append("## Results from Previous Tasks\n" + "\n\n".join(dep_results))
 
         return "\n\n".join(parts)
+
+    def _save_result_to_file(self, subtask_id: str, result: str) -> str:
+        """Save large subtask result to a note file in workspace.
+
+        Returns:
+            The note name (without .md extension) for read_note access.
+        """
+        from ..workspace import get_current_manager
+
+        note_name = f"{subtask_id}_result"
+        manager = get_current_manager()
+        if manager:
+            file_path = manager.notes_dir / f"{note_name}.md"
+            file_path.write_text(result, encoding="utf-8")
+            logger.info(
+                f"[AMITaskExecutor] Saved large result for {subtask_id} "
+                f"to {file_path} ({len(result)} chars)"
+            )
+            return str(file_path)
+
+        # Fallback: no workspace manager, just truncate
+        logger.warning(
+            f"[AMITaskExecutor] No WorkingDirectoryManager, "
+            f"cannot save result file for {subtask_id}"
+        )
+        return f"(file save failed, result truncated): {result[:2000]}..."
 
     # =========================================================================
     # SSE Event Emission

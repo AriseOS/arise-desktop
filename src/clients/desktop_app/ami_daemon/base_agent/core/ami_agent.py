@@ -510,6 +510,13 @@ class AMIAgent:
                         thinking=response_text[:500],
                         step=self._step_count,
                     ))
+                    # Also emit as agent_report so it shows in chat UI
+                    if response.has_tool_use():
+                        await self._emit_event(AgentReportData(
+                            task_id=task_id,
+                            message=response_text[:300],
+                            report_type="thinking",
+                        ))
 
                 # Check if LLM wants to use tools
                 if not response.has_tool_use():
@@ -779,7 +786,9 @@ class AMIAgent:
                 f"\n## Available Page Operations (from Memory)\n"
                 f"The following operations have been recorded for this page type:\n\n"
                 f"{cached_ops}\n\n"
-                f"Use these operations as guidance for interacting with this page."
+                f"Use these operations as guidance for interacting with this page.\n"
+                f"If 'User interests' are listed, prioritize collecting or focusing on "
+                f"similar content when performing data extraction tasks."
             )
 
         return "\n".join(parts) if len(parts) > 1 else message
