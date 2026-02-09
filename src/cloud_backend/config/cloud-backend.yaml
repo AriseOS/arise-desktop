@@ -166,11 +166,17 @@ embedding:
 # Reasoner Configuration
 # Memory retrieval and workflow planning
 reasoner:
-  max_depth: 3  # Maximum BFS traversal depth for path finding
+  max_depth: 3  # Legacy max depth (kept for compatibility)
   # Similarity thresholds for embedding search
   similarity_thresholds:
     state_resolution: 0.5  # Minimum score to accept a state match when resolving state by URL/description
     path_finding: 0.3  # Minimum score for candidate states in navigation path finding
+  # L2 path planning (LLM-as-Reasoner)
+  path_planning:
+    candidate_top_k: 20  # Number of states recalled by embedding before planning
+    min_score: 0.15  # Minimum embedding similarity score for candidate recall
+    max_states: 20  # Maximum number of states sent to planner prompt
+    max_actions: 50  # Maximum number of actions sent to planner prompt
 
 # Memory Configuration
 # IntentSequence and workflow storage settings

@@ -38,8 +38,8 @@ from src.clients.desktop_app.ami_daemon.base_agent.tools.toolkits.memory_toolkit
 # =============================================================================
 
 API_BASE_URL = "http://localhost:9000"  # Cloud Backend base URL
-API_KEY = ""  # User's Ami/CRS API key (X-Ami-API-Key)
-USER_ID = "shenyouren"  # User id / username
+API_KEY = "ami_19f03b13b96dbfa078ef14a60fcb2e60003378e3a4af7c0bdad7aae0dd1c9803"  # User's Ami/CRS API key (X-Ami-API-Key)
+USER_ID = "Primary"  # User id / username
 
 
 async def debug_task_query(task: str) -> None:

@@ -28,6 +28,10 @@ from src.common.memory.reasoner.prompts.path_based_decomposition_prompt import (
     PathBasedDecompositionPrompt,
     PathDecompositionInput,
 )
+from src.common.memory.reasoner.prompts.path_planning_prompt import (
+    PATH_PLANNING_SYSTEM_PROMPT,
+    build_path_planning_user_prompt,
+)
 from src.common.memory.reasoner.prompts.task_decomposition_prompt import (
     TaskDecompositionInput,
     TaskDecompositionPrompt,
@@ -54,6 +58,10 @@ class Reasoner:
     # Default similarity thresholds
     DEFAULT_STATE_RESOLUTION_THRESHOLD = 0.5
     DEFAULT_PATH_FINDING_THRESHOLD = 0.3
+    DEFAULT_PATH_PLANNING_TOP_K = 20
+    DEFAULT_PATH_PLANNING_MIN_SCORE = 0.15
+    DEFAULT_PATH_PLANNING_MAX_STATES = 20
+    DEFAULT_PATH_PLANNING_MAX_ACTIONS = 50
 
     def __init__(
         self,
@@ -62,6 +70,7 @@ class Reasoner:
         embedding_service=None,
         max_depth: int = 3,
         similarity_thresholds: Optional[Dict[str, float]] = None,
+        path_planning_config: Optional[Dict[str, Any]] = None,
     ):
         """Initialize Reasoner.
 
@@ -73,6 +82,11 @@ class Reasoner:
             similarity_thresholds: Optional dict with threshold values:
                 - state_resolution: Minimum score for state resolution (default 0.5)
                 - path_finding: Minimum score for path finding (default 0.3)
+            path_planning_config: Optional dict for L2 planning:
+                - candidate_top_k: Candidate states recalled by embedding (default 20)
+                - min_score: Minimum embedding score for candidates (default 0.15)
+                - max_states: Maximum states sent to LLM (default 20)
+                - max_actions: Maximum actions sent to LLM (default 50)
         """
         self.memory = memory
         self.llm_provider = llm_provider
@@ -86,6 +100,19 @@ class Reasoner:
         )
         self.path_finding_threshold = thresholds.get(
             "path_finding", self.DEFAULT_PATH_FINDING_THRESHOLD
+        )
+        planning_config = path_planning_config or {}
+        self.path_planning_top_k = max(
+            1, int(planning_config.get("candidate_top_k", self.DEFAULT_PATH_PLANNING_TOP_K))
+        )
+        self.path_planning_min_score = float(
+            planning_config.get("min_score", self.DEFAULT_PATH_PLANNING_MIN_SCORE)
+        )
+        self.path_planning_max_states = max(
+            1, int(planning_config.get("max_states", self.DEFAULT_PATH_PLANNING_MAX_STATES))
+        )
+        self.path_planning_max_actions = max(
+            1, int(planning_config.get("max_actions", self.DEFAULT_PATH_PLANNING_MAX_ACTIONS))
         )
 
         # Initialize components
@@ -626,7 +653,7 @@ class Reasoner:
         """Execute task-level query using 3-layer architecture (v2).
 
         L1: CognitivePhrase match (fast, exact)
-        L2: Path retrieval (embedding + BFS)
+        L2: LLM-guided path planning (embedding recall + subgraph planning)
         L3a/L3b: Task decomposition with or without path context
 
         Args:
@@ -705,216 +732,298 @@ class Reasoner:
             )
 
     async def _find_navigation_path(
-        self, target: str, top_k: int = 10, min_score: Optional[float] = None
+        self, target: str, top_k: Optional[int] = None, min_score: Optional[float] = None
     ) -> Optional[Dict[str, Any]]:
-        """L2: Find navigation path using embedding search + BFS reverse traversal.
+        """L2 compatibility wrapper for legacy callsites.
 
-        Args:
-            target: Task target description.
-            top_k: Number of top results.
-            min_score: Minimum embedding similarity score. If None, uses configured threshold.
-
-        Returns:
-            Dict with target_query, key_queries, and paths (sorted by score),
-            or None if no paths found.
+        The implementation is now delegated to `_plan_path_with_llm()`.
         """
+        effective_top_k = top_k if top_k and top_k > 0 else self.path_planning_top_k
+        effective_min_score = (
+            float(min_score) if min_score is not None else self.path_planning_min_score
+        )
+        return await self._plan_path_with_llm(
+            target=target,
+            top_k=effective_top_k,
+            min_score=effective_min_score,
+        )
+
+    async def _plan_path_with_llm(
+        self, target: str, top_k: int, min_score: float
+    ) -> Optional[Dict[str, Any]]:
+        """L2: plan navigation path with LLM over a recalled subgraph."""
         if not self.llm_provider or not self.embedding_service:
             return None
 
-        # Use configured threshold if not explicitly provided
-        if min_score is None:
-            min_score = self.path_finding_threshold
-
         try:
-            # Step 1: LLM query decomposition
-            decomposed = await self._decompose_query_for_path(target)
-            target_query = decomposed.get("target_query", target)
-            key_queries = decomposed.get("key_queries", [])
-
-            # Step 2: Embedding search for target states
-            target_states: List[tuple] = []
-            target_state_ids: set = set()
-            tq_embedding = self.embedding_service.encode(target_query)
-            if tq_embedding:
-                results = self.memory.state_manager.search_states_by_embedding(
-                    query_vector=tq_embedding, top_k=top_k
-                )
-                for state, score in results:
-                    if score >= min_score:
-                        target_states.append((state, score))
-                        target_state_ids.add(state.id)
-
-            logger.info(f"[L2] Target states for '{target_query}': {len(target_states)}")
-
-            if not target_states:
+            query_vector = self.embedding_service.encode(target)
+            if not query_vector:
+                logger.info("[L2] Empty embedding for target, skip planning")
                 return None
 
-            # Step 3: Embedding search for key states
-            key_states_by_type: Dict[str, List[tuple]] = {}
-            key_type_state_ids: Dict[str, set] = {}
-            for kq in key_queries:
-                kq_embedding = self.embedding_service.encode(kq)
-                if not kq_embedding:
-                    continue
-                results = self.memory.state_manager.search_states_by_embedding(
-                    query_vector=kq_embedding, top_k=3
+            raw_candidates = self.memory.state_manager.search_states_by_embedding(
+                query_vector=query_vector,
+                top_k=max(1, top_k),
+            )
+            scored_candidates = [
+                (state, score)
+                for state, score in raw_candidates
+                if score >= min_score
+            ]
+            if not scored_candidates:
+                logger.info(
+                    f"[L2] No candidate states above threshold: min_score={min_score:.3f}"
                 )
-                matched = [(s, sc) for s, sc in results if sc >= min_score]
-                if matched:
-                    key_states_by_type[kq] = matched
-                    key_type_state_ids[kq] = {s.id for s, _ in matched}
-
-            # Step 4: BFS reverse traversal from target states
-            max_depth = self.max_depth
-            seen_path_signatures: set = set()
-            paths: List[Dict[str, Any]] = []
-
-            key_type_count = len(key_queries)
-
-            for target_state, target_score in target_states[:top_k]:
-                all_paths = self._bfs_reverse_paths(target_state, max_depth)
-
-                for path in all_paths[:5]:
-                    sig = tuple(s.id for s, _ in path)
-                    if sig in seen_path_signatures:
-                        continue
-                    seen_path_signatures.add(sig)
-
-                    path_states = [s for s, _ in path]
-                    path_actions = [a for _, a in path if a is not None]
-                    path_state_ids = {s.id for s in path_states}
-
-                    # Score: target match + key type coverage
-                    end_state = path[-1][0]
-                    has_target = 1 if end_state.id in target_state_ids else 0
-
-                    types_hit = 0
-                    if key_type_count > 0:
-                        for kq, sids in key_type_state_ids.items():
-                            if path_state_ids & sids:
-                                types_hit += 1
-                    key_coverage = types_hit / key_type_count if key_type_count > 0 else 0.0
-                    path_score = has_target * 1.0 * target_score + key_coverage * 0.3
-
-                    paths.append({
-                        "score": round(path_score, 4),
-                        "states": path_states,
-                        "actions": path_actions,
-                        "target_score": round(target_score, 4),
-                        "key_types_hit": types_hit,
-                        "key_types_total": key_type_count,
-                    })
-
-            # Sort by score descending
-            paths.sort(key=lambda x: -x["score"])
-            paths = paths[:top_k * 2]
-
-            for i, p in enumerate(paths[:3]):
-                logger.info(f"[L2] Path {i}: score={p['score']}, states={len(p['states'])}, actions={len(p['actions'])}, state_ids={[s.id[:8] for s in p['states']]}")
-            logger.info(f"[L2] Found {len(paths)} paths")
-
-            if not paths:
                 return None
 
-            return {
-                "target_query": target_query,
-                "key_queries": key_queries,
-                "paths": paths,
+            candidate_states, subgraph_actions, _ = self._build_path_planning_subgraph(
+                scored_candidates=scored_candidates,
+                max_states=self.path_planning_max_states,
+                max_actions=self.path_planning_max_actions,
+            )
+            if not candidate_states:
+                return None
+
+            state_map = {state.id: state for state in candidate_states}
+            alias_by_id = {
+                state.id: f"s{idx + 1}" for idx, state in enumerate(candidate_states)
             }
+            id_by_alias = {alias: state_id for state_id, alias in alias_by_id.items()}
 
+            action_by_pair: Dict[tuple[str, str], Action] = {}
+            for action in subgraph_actions:
+                if action.source and action.target:
+                    action_by_pair[(action.source, action.target)] = action
+
+            states_text = self._format_path_planning_states_text(
+                states=candidate_states,
+                alias_by_id=alias_by_id,
+            )
+            actions_text = self._format_path_planning_actions_text(
+                actions=subgraph_actions,
+                alias_by_id=alias_by_id,
+            )
+
+            user_prompt = build_path_planning_user_prompt(
+                task=target,
+                states_text=states_text,
+                actions_text=actions_text,
+            )
+            planner_result = await self.llm_provider.generate_json_response(
+                system_prompt=PATH_PLANNING_SYSTEM_PROMPT,
+                user_prompt=user_prompt,
+            )
+
+            planned_state_ids = self._resolve_planned_path_ids(
+                planner_result=planner_result,
+                id_by_alias=id_by_alias,
+                state_map=state_map,
+            )
+            if not planned_state_ids:
+                return None
+
+            planned_actions = self._validate_planned_path(
+                state_ids=planned_state_ids,
+                action_by_pair=action_by_pair,
+            )
+            if planned_actions is None:
+                return None
+
+            planned_states = [state_map[state_id] for state_id in planned_state_ids]
+            reasoning = self._safe_text(planner_result.get("reasoning"))
+
+            path = {
+                "score": 1.0,
+                "states": planned_states,
+                "actions": planned_actions,
+                "reasoning": reasoning,
+                "planner": "llm_subgraph_planning",
+                "candidate_state_count": len(candidate_states),
+                "candidate_action_count": len(subgraph_actions),
+            }
+            logger.info(
+                "[L2] Planned path: states=%s actions=%s ids=%s",
+                len(planned_states),
+                len(planned_actions),
+                [sid[:8] for sid in planned_state_ids],
+            )
+            return {
+                "target_query": target,
+                "key_queries": [],
+                "paths": [path],
+                "planner_result": planner_result,
+            }
         except Exception as exc:
-            logger.error(f"[L2] Path retrieval failed: {exc}")
+            logger.error(f"[L2] Path planning failed: {exc}")
             import traceback
             traceback.print_exc()
             return None
 
-    async def _decompose_query_for_path(self, query: str) -> Dict[str, Any]:
-        """Use LLM to decompose query into target_query + key_queries for embedding search."""
-        system_prompt = """我有一个页面库，需要用 embedding 检索页面。用户描述了一个任务。
+    def _build_path_planning_subgraph(
+        self,
+        scored_candidates: List[tuple[State, float]],
+        max_states: int,
+        max_actions: int,
+    ) -> tuple[List[State], List[Action], Dict[str, float]]:
+        """Build a bounded state/action subgraph for LLM planning."""
+        candidate_states: List[State] = []
+        score_by_state_id: Dict[str, float] = {}
 
-你的任务：为用户的目标页面和途经页面，分别生成检索语句。
-
-返回 JSON：
-{
-    "target_query": "目标页面的检索语句",
-    "key_queries": ["途经页面的检索语句"]
-}
-
-要求：
-- target_query：描述用户最终要到达的页面，保留完整上下文（如网站名、产品名）
-- key_queries：用户明确提到的途经页面，没提到就是空数组
-- 检索语句要像页面的内容描述，不要用动作词（查看、点击等）
-- 保持简洁，便于 embedding 匹配
-
-示例：
-用户: "通过 Product Hunt 周榜查看团队成员国籍"
-输出: {"target_query": "Product Hunt 产品团队成员", "key_queries": ["Product Hunt 周榜"]}"""
-
-        try:
-            result = await self.llm_provider.generate_json_response(
-                system_prompt=system_prompt,
-                user_prompt=f"用户任务: {query}",
-            )
-            if "target_query" not in result:
-                result["target_query"] = query
-            if "key_queries" not in result:
-                result["key_queries"] = []
-            logger.info(f"[L2] Query decomposed: {result}")
-            return result
-        except Exception as e:
-            logger.warning(f"[L2] Query decomposition failed: {e}")
-            return {"target_query": query, "key_queries": []}
-
-    def _bfs_reverse_paths(
-        self, target_state: State, max_depth: int, max_paths: int = 10
-    ) -> List[List[tuple]]:
-        """BFS reverse traversal from target state to find paths.
-
-        Returns list of paths, each path is [(state, action_to_next), ...]
-        ending at target. The last element has action=None.
-        """
-        queue = [(target_state, [(target_state, None)], {target_state.id})]
-        complete_paths: List[List[tuple]] = []
-
-        while queue and len(complete_paths) < max_paths:
-            current_state, path_so_far, visited = queue.pop(0)
-
-            if len(path_so_far) > max_depth:
-                complete_paths.append(path_so_far)
+        # Seed states from embedding recall (already sorted by score desc).
+        for state, score in scored_candidates:
+            if state.id in score_by_state_id:
+                if score > score_by_state_id[state.id]:
+                    score_by_state_id[state.id] = float(score)
                 continue
+            candidate_states.append(state)
+            score_by_state_id[state.id] = float(score)
+            if len(candidate_states) >= max_states:
+                break
 
-            incoming_actions = self.memory.state_manager.get_connected_actions(
-                current_state.id, direction="incoming"
+        # Expand one-hop outgoing neighbors as bridge states.
+        for state in list(candidate_states):
+            if len(candidate_states) >= max_states:
+                break
+            outgoing_actions = self.memory.state_manager.get_connected_actions(
+                state.id,
+                direction="outgoing",
             )
-            logger.info(f"[BFS] State {current_state.id[:8]}: {len(incoming_actions)} incoming actions")
-            for a in incoming_actions[:3]:
-                logger.info(f"[BFS]   action: source={a.source[:8] if a.source else 'None'}, target={a.target[:8] if a.target else 'None'}, type={getattr(a, 'action_type', '?')}")
+            for action in outgoing_actions:
+                target_id = action.target
+                if not target_id or target_id in score_by_state_id:
+                    continue
+                bridge_state = self.memory.get_state(target_id)
+                if not bridge_state:
+                    continue
+                candidate_states.append(bridge_state)
+                parent_score = score_by_state_id.get(state.id, 0.0)
+                score_by_state_id[target_id] = max(parent_score * 0.95, 0.0)
+                if len(candidate_states) >= max_states:
+                    break
 
-            if not incoming_actions:
-                complete_paths.append(path_so_far)
+        state_ids = {state.id for state in candidate_states}
+        action_by_pair: Dict[tuple[str, str], Action] = {}
+        for state in candidate_states:
+            outgoing_actions = self.memory.state_manager.get_connected_actions(
+                state.id,
+                direction="outgoing",
+            )
+            for action in outgoing_actions:
+                if action.source in state_ids and action.target in state_ids:
+                    pair = (action.source, action.target)
+                    if pair not in action_by_pair:
+                        action_by_pair[pair] = action
+                if len(action_by_pair) >= max_actions:
+                    break
+            if len(action_by_pair) >= max_actions:
+                break
+
+        return candidate_states, list(action_by_pair.values()), score_by_state_id
+
+    def _format_path_planning_states_text(
+        self,
+        states: List[State],
+        alias_by_id: Dict[str, str],
+    ) -> str:
+        lines: List[str] = []
+        for idx, state in enumerate(states, 1):
+            state_alias = alias_by_id.get(state.id, state.id)
+            description = self._safe_text(self._get_state_reasoning_text(state))
+            if not description:
+                description = self._safe_text(state.page_title) or self._safe_text(state.id)
+            lines.append(f"{idx}. [{state_alias}] {description}")
+            if state.page_url:
+                lines.append(f"   URL: {state.page_url}")
+        return "\n".join(lines)
+
+    def _format_path_planning_actions_text(
+        self,
+        actions: List[Action],
+        alias_by_id: Dict[str, str],
+    ) -> str:
+        if not actions:
+            return "(无已知导航关系)"
+
+        lines: List[str] = []
+        for action in actions:
+            source_alias = alias_by_id.get(action.source, action.source)
+            target_alias = alias_by_id.get(action.target, action.target)
+            action_desc = self._safe_text(action.description) or "点击页面元素导航"
+
+            trigger = action.trigger if isinstance(action.trigger, dict) else {}
+            trigger_parts: List[str] = []
+            trigger_text = self._safe_text(trigger.get("text"))
+            if trigger_text:
+                trigger_parts.append(f'text="{trigger_text}"')
+            trigger_role = self._safe_text(trigger.get("role") or trigger.get("element_role"))
+            if trigger_role:
+                trigger_parts.append(f"role={trigger_role}")
+            if trigger_parts:
+                action_desc = f"{action_desc} ({', '.join(trigger_parts)})"
+
+            lines.append(f"- {source_alias} -> {target_alias}: {action_desc}")
+        return "\n".join(lines)
+
+    def _resolve_planned_path_ids(
+        self,
+        planner_result: Dict[str, Any],
+        id_by_alias: Dict[str, str],
+        state_map: Dict[str, State],
+    ) -> List[str]:
+        can_plan = planner_result.get("can_plan")
+        if isinstance(can_plan, str):
+            can_plan = can_plan.strip().lower() == "true"
+        if can_plan is not True:
+            logger.info("[L2] Planner cannot plan path")
+            return []
+
+        raw_path = planner_result.get("path")
+        if not isinstance(raw_path, list) or not raw_path:
+            logger.info("[L2] Planner returned empty path")
+            return []
+
+        resolved_state_ids: List[str] = []
+        for raw_id in raw_path:
+            state_ref = self._safe_text(raw_id)
+            if not state_ref:
                 continue
+            state_id = id_by_alias.get(state_ref, state_ref)
+            if state_id not in state_map:
+                logger.warning(f"[L2] Planner returned unknown state: {state_ref}")
+                return []
+            if not resolved_state_ids or resolved_state_ids[-1] != state_id:
+                resolved_state_ids.append(state_id)
 
-            has_valid_predecessor = False
+        return resolved_state_ids
 
-            for action in incoming_actions:
-                source_state = self.memory.get_state(action.source)
-                if not source_state:
-                    continue
-                if source_state.id in visited:
-                    continue
+    def _validate_planned_path(
+        self,
+        state_ids: List[str],
+        action_by_pair: Dict[tuple[str, str], Action],
+    ) -> Optional[List[Action]]:
+        if len(state_ids) <= 1:
+            return []
 
-                has_valid_predecessor = True
-                new_path = [(source_state, action)] + path_so_far
-                new_visited = visited | {source_state.id}
-                queue.append((source_state, new_path, new_visited))
+        planned_actions: List[Action] = []
+        for idx in range(len(state_ids) - 1):
+            source_id = state_ids[idx]
+            target_id = state_ids[idx + 1]
+            action = action_by_pair.get((source_id, target_id))
+            if not action:
+                action = self.memory.get_action(source_id, target_id)
+                if action:
+                    action_by_pair[(source_id, target_id)] = action
 
-            if not has_valid_predecessor:
-                complete_paths.append(path_so_far)
+            if not action:
+                logger.warning(
+                    "[L2] Planner produced disconnected path edge: %s -> %s",
+                    source_id[:8],
+                    target_id[:8],
+                )
+                return None
+            planned_actions.append(action)
 
-        if not complete_paths:
-            complete_paths = [[(target_state, None)]]
-
-        return complete_paths
+        return planned_actions
 
     async def _decompose_with_path(
         self, target: str, path: Dict[str, Any]
@@ -1241,4 +1350,5 @@ class Reasoner:
 
 
 __all__ = ["Reasoner"]
+
 

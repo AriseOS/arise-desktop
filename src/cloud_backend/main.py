@@ -2345,6 +2345,7 @@ async def _get_reasoner_for_user(
     reasoner_config = config_service.get("reasoner", {})
     max_depth = reasoner_config.get("max_depth", 3)
     similarity_thresholds = reasoner_config.get("similarity_thresholds", {})
+    path_planning_config = reasoner_config.get("path_planning", {})
 
     # Create Reasoner with user's private memory
     reasoner = Reasoner(
@@ -2353,6 +2354,7 @@ async def _get_reasoner_for_user(
         embedding_service=embedding_service,
         max_depth=max_depth,
         similarity_thresholds=similarity_thresholds,
+        path_planning_config=path_planning_config,
     )
 
     return reasoner
