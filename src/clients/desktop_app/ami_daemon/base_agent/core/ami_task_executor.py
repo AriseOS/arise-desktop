@@ -34,20 +34,7 @@ logger = logging.getLogger(__name__)
 REPLAN_INSTRUCTION = """
 ## Task Splitting
 
-You have tools to manage your workload:
-- `replan_get_subtask_list()` — View all tasks and their status
-- `replan_report_progress(items_completed, items_total, details)` — Report progress
-- `replan_add_tasks(tasks)` — Add follow-up tasks for remaining work
-- `replan_complete_and_handoff(summary, remaining_tasks)` — Complete current task and delegate remaining work
-
-**CRITICAL RULE**: If your task involves processing MANY items (more than 5):
-1. Process the first batch (5-10 items)
-2. Call `replan_report_progress` to report what you have done
-3. Call `replan_complete_and_handoff` with your partial results AND tasks for remaining batches
-4. DO NOT try to process all items in one subtask
-5. DO NOT summarize or skip remaining items to finish faster
-
-Example: Task says "Extract 19 products" → Extract 5, then call `replan_complete_and_handoff` with your partial result and follow-up tasks for items 6-10, 11-15, 16-19.
+When your task involves processing many items (>5), use replan tools to split work into batches instead of processing everything at once.
 """.strip()
 
 
