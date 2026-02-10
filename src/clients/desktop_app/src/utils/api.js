@@ -1030,6 +1030,19 @@ export const api = {
     });
   },
 
+  /**
+   * Share a cognitive phrase from private memory to public memory
+   *
+   * @param {string} phraseId - CognitivePhrase ID to share
+   * @returns {Promise<object>} Result with { success, public_phrase_id }
+   */
+  async shareCognitivePhrase(phraseId) {
+    return await this.callAppBackend('/api/v1/memory/share', {
+      method: 'POST',
+      body: JSON.stringify({ phrase_id: phraseId })
+    });
+  },
+
   // ============================================================================
   // Session APIs (Simple conversation persistence)
   // ============================================================================

@@ -1451,6 +1451,45 @@ async def delete_cognitive_phrase(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/v1/memory/share")
+async def share_cognitive_phrase(
+    data: dict,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+):
+    """
+    Share a CognitivePhrase to public memory (Proxy to Cloud Backend)
+
+    Body:
+        { "phrase_id": "uuid-of-phrase" }
+
+    Headers:
+        X-User-Id: User ID for private memory routing (required)
+    """
+    try:
+        if not cloud_client:
+            return {"success": False, "error": "Cloud client not initialized"}
+
+        phrase_id = data.get("phrase_id")
+        if not phrase_id:
+            raise HTTPException(status_code=400, detail="Missing phrase_id")
+
+        if x_ami_api_key:
+            cloud_client.set_user_api_key(x_ami_api_key)
+
+        logger.info(f"[memory/share] Proxying share request to Cloud Backend: {phrase_id}...")
+
+        result = await cloud_client.share_cognitive_phrase(phrase_id, user_id=x_user_id)
+        logger.info(f"[memory/share] Shared cognitive phrase: {phrase_id} -> {result.get('public_phrase_id')}")
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[memory/share] Failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============================================================================
 # Intent Builder API Endpoints
 # ============================================================================

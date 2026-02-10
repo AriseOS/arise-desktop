@@ -2251,7 +2251,8 @@ async def delete_cognitive_phrase(
 @app.post("/api/v1/memory/share")
 async def share_cognitive_phrase(
     data: dict,
-    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
 ):
     """Share a CognitivePhrase from private memory to public memory.
 
@@ -2259,9 +2260,12 @@ async def share_cognitive_phrase(
     IntentSequences, Domains) from the user's private database to the
     shared public database.
 
+    Headers:
+        X-Ami-API-Key: User's API key (optional)
+        X-User-Id: User ID for private memory routing (required)
+
     Body:
         {
-            "user_id": "user123",
             "phrase_id": "uuid-of-phrase"
         }
 
@@ -2271,11 +2275,11 @@ async def share_cognitive_phrase(
             "public_phrase_id": "new-uuid-in-public"
         }
     """
-    user_id = data.get("user_id")
+    user_id = x_user_id
     phrase_id = data.get("phrase_id")
 
     if not user_id:
-        raise HTTPException(400, "Missing user_id")
+        raise HTTPException(400, "Missing X-User-Id header")
     if not phrase_id:
         raise HTTPException(400, "Missing phrase_id")
 

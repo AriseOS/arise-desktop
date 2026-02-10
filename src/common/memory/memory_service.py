@@ -740,7 +740,7 @@ async def share_phrase(user_id: str, phrase_id: str) -> str:
 
     # Copy states with dedup via find_or_create_state()
     for old_id, state in states.items():
-        existing_or_new, _is_new = public_wm.find_or_create_state(
+        existing_or_new, is_new = public_wm.find_or_create_state(
             url=state.page_url,
             page_title=state.page_title,
             timestamp=state.timestamp,
@@ -749,6 +749,18 @@ async def share_phrase(user_id: str, phrase_id: str) -> str:
             path_sig=state.path_sig,
         )
         id_map[old_id] = existing_or_new.id
+
+        # Copy embedding_vector and attributes to new states
+        if is_new:
+            needs_update = False
+            if state.embedding_vector:
+                existing_or_new.embedding_vector = state.embedding_vector
+                needs_update = True
+            if state.attributes:
+                existing_or_new.attributes = state.attributes
+                needs_update = True
+            if needs_update:
+                public_wm.state_manager.update_state(existing_or_new)
 
     # Copy Manage relations (Domain → State) with remapped state IDs
     for old_state_id in states:
@@ -792,10 +804,18 @@ async def share_phrase(user_id: str, phrase_id: str) -> str:
 
     # Copy actions with remapped source/target (upsert handles dedup)
     for old_id, action in actions.items():
+        new_source = id_map.get(action.source, action.source)
+        new_target = id_map.get(action.target, action.target)
+        # Skip actions where source and target deduped to the same public State
+        if new_source == new_target:
+            logger.warning(
+                f"Skipping action {old_id}: source and target deduped to same state {new_source}"
+            )
+            continue
         new_action = action.model_copy(deep=True)
         new_action.id = str(uuid.uuid4())
-        new_action.source = id_map.get(action.source, action.source)
-        new_action.target = id_map.get(action.target, action.target)
+        new_action.source = new_source
+        new_action.target = new_target
         if new_action.trigger_sequence_id:
             new_action.trigger_sequence_id = id_map.get(
                 new_action.trigger_sequence_id, new_action.trigger_sequence_id

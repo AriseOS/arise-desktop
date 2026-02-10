@@ -11,6 +11,8 @@ function CognitivePhrasesPage({ session, onNavigate, showStatus }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [shareConfirm, setShareConfirm] = useState(null);
+  const [sharingId, setSharingId] = useState(null);
 
   // Fetch phrases from API
   useEffect(() => {
@@ -83,6 +85,32 @@ function CognitivePhrasesPage({ session, onNavigate, showStatus }) {
 
   const handleDeleteCancel = () => {
     setDeleteConfirm(null);
+  };
+
+  const handleShareClick = (e, phrase) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setShareConfirm({
+      id: phrase.id,
+      name: phrase.label || truncateText(phrase.description, 50)
+    });
+  };
+
+  const handleShareConfirm = async () => {
+    if (!shareConfirm) return;
+
+    const { id } = shareConfirm;
+    setShareConfirm(null);
+    setSharingId(id);
+    try {
+      await api.shareCognitivePhrase(id);
+      showStatus('Memory shared to public library', 'success');
+    } catch (error) {
+      console.error('Error sharing phrase:', error);
+      showStatus(`Failed to share: ${error.message}`, 'error');
+    } finally {
+      setSharingId(null);
+    }
   };
 
   const truncateText = (text, maxLength) => {
@@ -229,6 +257,14 @@ function CognitivePhrasesPage({ session, onNavigate, showStatus }) {
                   View
                 </button>
                 <button
+                  className="btn btn-secondary"
+                  onClick={(e) => handleShareClick(e, phrase)}
+                  disabled={sharingId === phrase.id}
+                >
+                  <Icon name={sharingId === phrase.id ? "loader" : "upload"} />
+                  {sharingId === phrase.id ? 'Sharing...' : 'Share'}
+                </button>
+                <button
                   className="btn-icon-danger"
                   onClick={(e) => {
                     e.preventDefault();
@@ -244,6 +280,30 @@ function CognitivePhrasesPage({ session, onNavigate, showStatus }) {
           ))
         )}
       </div>
+
+      {/* Share Confirmation Modal */}
+      {shareConfirm && (
+        <div className="modal-overlay" onClick={() => setShareConfirm(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Share to Public</h3>
+            </div>
+            <div className="modal-body">
+              <p>Share <strong>{shareConfirm.name}</strong> to the public library?</p>
+              <p className="share-info-text">When others use your shared memory, you'll earn tokens as a reward.</p>
+              <p className="warning-text">This action is currently irrevocable.</p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn-cancel" onClick={() => setShareConfirm(null)}>
+                Cancel
+              </button>
+              <button className="btn btn-primary" onClick={handleShareConfirm}>
+                <Icon name="upload" /> Share
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       {deleteConfirm && (

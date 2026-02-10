@@ -1562,6 +1562,41 @@ class CloudClient:
         logger.info(f"[CloudClient] Cognitive phrase deleted: {phrase_id}")
         return result
 
+    async def share_cognitive_phrase(
+        self, phrase_id: str, user_id: Optional[str] = None
+    ) -> dict:
+        """Share a CognitivePhrase from private memory to public memory.
+
+        Args:
+            phrase_id: CognitivePhrase ID to share
+            user_id: User ID for private memory routing
+
+        Returns:
+            dict with:
+                - success: bool
+                - public_phrase_id: str
+        """
+        headers = {}
+        if self.user_api_key:
+            headers["X-Ami-API-Key"] = self.user_api_key
+        if user_id:
+            headers["X-User-Id"] = user_id
+
+        logger.info(f"[CloudClient] Sharing cognitive phrase: {phrase_id}")
+
+        response = await self.client.post(
+            "/api/v1/memory/share",
+            json={"phrase_id": phrase_id},
+            headers=headers,
+        )
+        response.raise_for_status()
+        result = response.json()
+
+        logger.info(
+            f"[CloudClient] Cognitive phrase shared: {phrase_id} -> {result.get('public_phrase_id')}"
+        )
+        return result
+
     async def close(self):
         """Close HTTP client"""
         await self.client.aclose()
