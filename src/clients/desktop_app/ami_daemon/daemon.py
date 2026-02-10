@@ -393,7 +393,7 @@ class ReplayRecordingResponse(BaseModel):
 class ReplayPreviewResponse(BaseModel):
     """Response model for recording preview before replay"""
     session_id: str
-    created_at: str
+    created_at: Optional[str] = None
     operations_count: int
     operation_summary: Dict[str, int]
     task_metadata: Dict[str, Any]

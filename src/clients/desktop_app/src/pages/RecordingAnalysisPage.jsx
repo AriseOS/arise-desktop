@@ -262,7 +262,7 @@ function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
           <button
             className="btn-primary-alt"
             onClick={handleReplay}
-            disabled={isSaving}
+            disabled={isAdding}
           >
             <span className="btn-icon"><Icon icon="play" /></span>
             <span>Replay Recording</span>
