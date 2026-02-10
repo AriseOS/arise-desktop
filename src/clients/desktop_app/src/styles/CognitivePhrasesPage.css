@@ -407,6 +407,12 @@
   font-weight: 600;
 }
 
+.cognitive-phrases-page .share-info-text {
+  color: var(--text-tertiary) !important;
+  font-size: 13px !important;
+  font-style: italic;
+}
+
 .cognitive-phrases-page .warning-text {
   color: var(--status-error-text) !important;
   font-size: 14px !important;

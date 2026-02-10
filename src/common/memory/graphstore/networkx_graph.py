@@ -55,7 +55,7 @@ class NetworkXGraph(GraphStore):
         """
         pass
 
-    def initialize_schema(self, schema: Any) -> None:
+    def initialize_schema(self, schema: Any = None) -> None:
         """Initialize the graph schema.
 
         For NetworkX in-memory implementation, this is a no-op as schema

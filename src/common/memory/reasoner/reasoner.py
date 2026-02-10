@@ -12,10 +12,11 @@ The Reasoner is responsible for orchestrating the entire retrieval process:
 5. Convert results to workflow JSON
 """
 
+import asyncio
 import logging
 import json
 import uuid
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +78,7 @@ class Reasoner:
         """Initialize Reasoner.
 
         Args:
-            memory: Memory instance.
+            memory: Memory instance (private).
             llm_provider: LLM provider (AnthropicProvider) for various LLM operations.
             embedding_service: Embedding service for vector search.
             max_depth: Maximum neighbor exploration depth.
@@ -91,6 +92,7 @@ class Reasoner:
                 - max_actions: Maximum actions sent to LLM (default 50)
         """
         self.memory = memory
+        self.public_memory = public_memory
         self.llm_provider = llm_provider
         self.embedding_service = embedding_service
         self.max_depth = max_depth
@@ -665,39 +667,12 @@ class Reasoner:
             QueryResult with task workflow.
         """
         # === L1: CognitivePhrase match ===
-        can_satisfy, phrases, reasoning = await self.phrase_checker.check(target)
+        l1_result = await self._l1_phrase_match(target)
+        if l1_result:
+            return l1_result
 
-        if can_satisfy and phrases:
-            best_phrase = phrases[0]
-
-            states = []
-            for state_id in best_phrase.state_path:
-                state = self.memory.get_state(state_id)
-                if state:
-                    states.append(state)
-
-            actions = []
-            for i in range(len(best_phrase.state_path) - 1):
-                source_id = best_phrase.state_path[i]
-                target_id = best_phrase.state_path[i + 1]
-                action = self.memory.get_action(source_id, target_id)
-                if action:
-                    actions.append(action)
-
-            return QueryResult.task_success(
-                states=states,
-                actions=actions,
-                execution_plan=best_phrase.execution_plan,
-                cognitive_phrase=best_phrase,
-                metadata={
-                    "method": "cognitive_phrase_match",
-                    "reasoning": reasoning,
-                    "num_phrases": len(phrases),
-                },
-            )
-
-        # === L2: Path retrieval ===
-        path_result = await self._find_navigation_path(target)
+        # === L2: Path retrieval (private + public in parallel) ===
+        path_result, path_source = await self._l2_path_retrieval(target)
 
         # === L3: Task decomposition ===
         global_states: List[State] = []
@@ -735,6 +710,97 @@ class Reasoner:
                 subtasks=subtasks,
                 metadata={**metadata, "error": "No navigation info found"},
             )
+
+    async def _l1_phrase_match(self, target: str) -> Optional[QueryResult]:
+        """L1: CognitivePhrase match across private + public memory.
+
+        When public_memory is available, merges phrases from both sources
+        and lets LLM pick the best match in a single call.
+
+        Returns:
+            QueryResult if a phrase match was found, None otherwise.
+        """
+        if self.public_memory:
+            private_phrases = self.memory.phrase_manager.list_phrases()
+            public_phrases = self.public_memory.phrase_manager.list_phrases()
+            can_satisfy, phrases, reasoning, source = (
+                await self.phrase_checker.check_merged(
+                    target, private_phrases, public_phrases
+                )
+            )
+        else:
+            can_satisfy, phrases, reasoning = await self.phrase_checker.check(target)
+            source = "private"
+
+        if not can_satisfy or not phrases:
+            return None
+
+        best_phrase = phrases[0]
+
+        # Resolve states/actions from the correct memory source
+        mem = self.public_memory if source == "public" and self.public_memory else self.memory
+
+        states = []
+        for state_id in best_phrase.state_path:
+            state = mem.get_state(state_id)
+            if state:
+                states.append(state)
+
+        actions = []
+        for i in range(len(best_phrase.state_path) - 1):
+            source_id = best_phrase.state_path[i]
+            target_id = best_phrase.state_path[i + 1]
+            action = mem.get_action(source_id, target_id)
+            if action:
+                actions.append(action)
+
+        return QueryResult.task_success(
+            states=states,
+            actions=actions,
+            execution_plan=best_phrase.execution_plan,
+            cognitive_phrase=best_phrase,
+            metadata={
+                "method": "cognitive_phrase_match",
+                "reasoning": reasoning,
+                "num_phrases": len(phrases),
+                "source": source,
+            },
+        )
+
+    async def _l2_path_retrieval(
+        self, target: str,
+    ) -> Tuple[Optional[Dict[str, Any]], str]:
+        """L2: Path retrieval across private + public memory.
+
+        When public_memory is available, runs embedding search + BFS on both
+        in parallel, then uses LLM to select the best path.
+
+        Returns:
+            (path_result, source) where source is "private" or "public".
+        """
+        if not self.public_memory:
+            result = await self._find_navigation_path(target, memory=self.memory)
+            return result, "private"
+
+        if not self.llm_provider or not self.embedding_service:
+            return None, "private"
+
+        # Share query decomposition across both memories (single LLM call)
+        decomposed = await self._decompose_query_for_path(target)
+
+        min_score = self.path_finding_threshold
+
+        # Run embedding search + BFS on both memories in parallel
+        private_result, public_result = await asyncio.gather(
+            asyncio.to_thread(
+                self._embedding_search_and_bfs, decomposed, self.memory, 10, min_score
+            ),
+            asyncio.to_thread(
+                self._embedding_search_and_bfs, decomposed, self.public_memory, 10, min_score
+            ),
+        )
+
+        return await self._select_best_path(target, private_result, public_result)
 
     async def _find_navigation_path(
         self, target: str, top_k: Optional[int] = None, min_score: Optional[float] = None
@@ -1450,9 +1516,9 @@ class Reasoner:
     ) -> QueryResult:
         """Execute navigation-level query (v2).
 
-        Finds the shortest path between two states. Both start_state and end_state
-        can be either exact state IDs or semantic descriptions (will use embedding
-        search to resolve).
+        Finds the shortest path between two states across private + public memory.
+        Both start_state and end_state can be either exact state IDs or semantic
+        descriptions (will use embedding search to resolve).
 
         Args:
             target: Optional target description (unused, kept for interface consistency).
@@ -1462,41 +1528,75 @@ class Reasoner:
         Returns:
             QueryResult with navigation path.
         """
-        # Resolve state IDs (supports both exact ID and semantic description)
-        start_id = await self._resolve_state_id(start_state)
-        end_id = await self._resolve_state_id(end_state)
-
-        if not start_id:
-            return QueryResult.navigation_failure(
-                error=f"Could not find start state: {start_state}",
-            )
-
-        if not end_id:
-            return QueryResult.navigation_failure(
-                error=f"Could not find end state: {end_state}",
-            )
-
-        # Find shortest path
-        path_result = self.memory.action_manager.find_shortest_path(
-            source_id=start_id,
-            target_id=end_id,
-            state_manager=self.memory.state_manager,
+        # Try private memory
+        priv_path = await self._find_shortest_path_in_memory(
+            start_state, end_state, self.memory
         )
 
-        if path_result is None:
+        # Try public memory
+        pub_path = None
+        if self.public_memory:
+            pub_path = await self._find_shortest_path_in_memory(
+                start_state, end_state, self.public_memory
+            )
+
+        if not priv_path and not pub_path:
             return QueryResult.navigation_failure(
                 error=f"No path found from {start_state} to {end_state}",
             )
 
-        states, actions = path_result
+        # If only one has result, use it
+        if priv_path and not pub_path:
+            states, actions = priv_path
+            source = "private"
+        elif pub_path and not priv_path:
+            states, actions = pub_path
+            source = "public"
+        else:
+            # Both have results — use LLM to select via _select_best_path
+            priv_states, priv_actions = priv_path
+            pub_states, pub_actions = pub_path
+
+            priv_dict = {"paths": [{"score": 1.0, "states": priv_states, "actions": priv_actions}]}
+            pub_dict = {"paths": [{"score": 1.0, "states": pub_states, "actions": pub_actions}]}
+
+            nav_target = target or f"{start_state} -> {end_state}"
+            _, source = await self._select_best_path(nav_target, priv_dict, pub_dict)
+
+            if source == "public":
+                states, actions = pub_states, pub_actions
+            else:
+                states, actions = priv_states, priv_actions
+
         return QueryResult.navigation_success(
             states=states,
             actions=actions,
-            metadata={
-                "start_state_id": start_id,
-                "end_state_id": end_id,
-            },
+            metadata={"source": source},
         )
+
+    async def _find_shortest_path_in_memory(
+        self,
+        start_state: str,
+        end_state: str,
+        memory: Memory,
+    ) -> Optional[Tuple[List[State], List[Action]]]:
+        """Resolve states and find shortest path within a single memory.
+
+        Returns:
+            (states, actions) tuple or None if not found.
+        """
+        start_id = await self._resolve_state_id(start_state, memory=memory)
+        end_id = await self._resolve_state_id(end_state, memory=memory)
+
+        if not start_id or not end_id:
+            return None
+
+        path_result = memory.action_manager.find_shortest_path(
+            source_id=start_id,
+            target_id=end_id,
+            state_manager=memory.state_manager,
+        )
+        return path_result
 
     async def _query_action(
         self,
@@ -1504,9 +1604,10 @@ class Reasoner:
         current_state: str,
         top_k: int = 10,
     ) -> QueryResult:
-        """Execute action-level query.
+        """Execute action-level query across private + public memory.
 
-        Finds available IntentSequences in the current state.
+        Finds available IntentSequences in the current state from both memories,
+        merges and deduplicates results.
 
         Args:
             target: Action description to search for (empty for exploration).
@@ -1516,89 +1617,120 @@ class Reasoner:
         Returns:
             QueryResult with matching IntentSequences.
         """
-        # Resolve current_state to state_id
-        state_id = await self._resolve_state_id(current_state)
-        if not state_id:
-            return QueryResult.action_failure(
-                error=f"State not found: {current_state}",
-            )
-
-        # If target is empty, return exploration result (all possible actions)
+        # If target is empty, return exploration result
         if not target.strip():
-            return await self._get_page_capabilities(state_id)
+            return await self._get_page_capabilities(current_state)
 
-        # Search IntentSequences by embedding
-        if not self.memory.intent_sequence_manager:
-            return QueryResult.action_failure(
-                error="IntentSequenceManager not available",
-            )
+        # Gather sequences from both memories
+        all_sequences: List[IntentSequence] = []
+        query_vector = self.embedding_service.encode(target) if self.embedding_service else None
 
-        if self.embedding_service:
-            query_vector = self.embedding_service.encode(target)
-            results = self.memory.intent_sequence_manager.search_by_embedding(
-                query_vector=query_vector,
-                state_id=state_id,
-                top_k=top_k,
-            )
+        for mem in self._active_memories():
+            state_id = await self._resolve_state_id(current_state, memory=mem)
+            if not state_id or not mem.intent_sequence_manager:
+                continue
 
-            if results:
-                sequences = [seq for seq, _ in results]
-                return QueryResult.action_success(
-                    intent_sequences=sequences,
-                    metadata={
-                        "method": "embedding_search",
-                        "state_id": state_id,
-                        "num_results": len(sequences),
-                    },
+            if query_vector is not None:
+                results = mem.intent_sequence_manager.search_by_embedding(
+                    query_vector=query_vector,
+                    state_id=state_id,
+                    top_k=top_k,
                 )
+                if results:
+                    all_sequences.extend(seq for seq, _ in results)
+                    continue
 
-        # List all sequences for the state
-        sequences = self.memory.intent_sequence_manager.list_by_state(state_id)
+            # Fallback: list all sequences for the state
+            sequences = mem.intent_sequence_manager.list_by_state(state_id)
+            all_sequences.extend(sequences)
 
-        if sequences:
-            return QueryResult.action_success(
-                intent_sequences=sequences,
-                metadata={
-                    "method": "list_by_state",
-                    "state_id": state_id,
-                },
+        if not all_sequences:
+            return QueryResult.action_failure(
+                error=f"No actions found for state: {current_state}",
             )
 
-        return QueryResult.action_failure(
-            error=f"No actions found in state: {state_id}",
+        # Deduplicate by description (keep first occurrence = private priority)
+        deduped = self._deduplicate_sequences(all_sequences)
+        return QueryResult.action_success(
+            intent_sequences=deduped,
+            metadata={
+                "method": "merged_search",
+                "num_results": len(deduped),
+                "source": "merged" if self.public_memory else "private",
+            },
         )
 
-    async def _get_page_capabilities(self, state_id: str) -> QueryResult:
+    async def _get_page_capabilities(self, current_state: str) -> QueryResult:
         """Get all available actions/navigations for a state (exploration query).
 
+        Merges results from both private and public memory.
+
         Args:
-            state_id: State ID to explore.
+            current_state: State ID, URL, or semantic description.
 
         Returns:
             QueryResult with all available actions.
         """
-        sequences: List[IntentSequence] = []
-        if self.memory.intent_sequence_manager:
-            sequences = self.memory.intent_sequence_manager.list_by_state(state_id)
+        all_sequences: List[IntentSequence] = []
+        all_outgoing: List[Action] = []
 
-        outgoing_actions = self.memory.action_manager.list_outgoing_actions(state_id)
+        for mem in self._active_memories():
+            state_id = await self._resolve_state_id(current_state, memory=mem)
+            if not state_id:
+                continue
+
+            if mem.intent_sequence_manager:
+                sequences = mem.intent_sequence_manager.list_by_state(state_id)
+                all_sequences.extend(sequences)
+
+            outgoing = mem.action_manager.list_outgoing_actions(state_id)
+            all_outgoing.extend(outgoing)
+
+        deduped_sequences = self._deduplicate_sequences(all_sequences)
 
         return QueryResult(
             query_type="action",
             success=True,
-            intent_sequences=sequences,
-            actions=outgoing_actions,
+            intent_sequences=deduped_sequences,
+            actions=all_outgoing,
             metadata={
                 "method": "exploration",
-                "state_id": state_id,
-                "num_sequences": len(sequences),
-                "num_outgoing_actions": len(outgoing_actions),
+                "num_sequences": len(deduped_sequences),
+                "num_outgoing_actions": len(all_outgoing),
+                "source": "merged" if self.public_memory else "private",
             },
         )
+
+    def _active_memories(self) -> List[Memory]:
+        """Return list of active memory instances (private + public if available)."""
+        memories = [self.memory]
+        if self.public_memory:
+            memories.append(self.public_memory)
+        return memories
+
+    @staticmethod
+    def _deduplicate_sequences(
+        sequences: List[IntentSequence],
+    ) -> List[IntentSequence]:
+        """Deduplicate IntentSequences by description text.
+
+        Keeps first occurrence (private comes first, so private is preferred).
+        """
+        seen_descriptions: set = set()
+        deduped: List[IntentSequence] = []
+        for seq in sequences:
+            desc = (seq.description or "").strip().lower()
+            if desc and desc in seen_descriptions:
+                continue
+            if desc:
+                seen_descriptions.add(desc)
+            deduped.append(seq)
+        return deduped
 
     async def _resolve_state_id(
         self,
         state_ref: str,
+        memory: Optional[Memory] = None,
     ) -> Optional[str]:
         """Resolve a state reference (ID, URL, or description) to an actual state ID.
 
@@ -1609,14 +1741,16 @@ class Reasoner:
 
         Args:
             state_ref: State ID, URL, or semantic description.
+            memory: Memory instance to search. Defaults to self.memory.
 
         Returns:
             State ID if found and above similarity threshold, None otherwise.
         """
+        memory = memory or self.memory
         logger.info(f"[_resolve_state_id] Resolving state_ref: '{state_ref[:100]}...'")
 
         # 1. Direct ID lookup
-        state = self.memory.get_state(state_ref)
+        state = memory.get_state(state_ref)
         if state:
             logger.info(f"[_resolve_state_id] Direct lookup found: {state.id}")
             return state.id
@@ -1624,7 +1758,7 @@ class Reasoner:
         # 2. URL lookup
         if state_ref.startswith("http://") or state_ref.startswith("https://"):
             logger.info(f"[_resolve_state_id] Trying URL lookup...")
-            state = self.memory.find_state_by_url(state_ref)
+            state = memory.find_state_by_url(state_ref)
             if state:
                 logger.info(f"[_resolve_state_id] URL lookup found: {state.id}")
                 return state.id
@@ -1642,7 +1776,7 @@ class Reasoner:
                 logger.error("[_resolve_state_id] encode() returned None")
                 return None
 
-            results = self.memory.state_manager.search_states_by_embedding(
+            results = memory.state_manager.search_states_by_embedding(
                 query_vector, top_k=1
             )
 

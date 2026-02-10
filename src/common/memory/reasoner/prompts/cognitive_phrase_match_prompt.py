@@ -33,6 +33,10 @@ class CognitivePhraseMatchOutput(BaseModel):
     )
     reasoning: str = Field(..., description="Explanation of the match result")
     confidence: float = Field(..., description="Confidence score (0-1)")
+    source: str = Field(
+        default="private",
+        description="Source of matched phrase: 'private' or 'public'",
+    )
 
 
 class CognitivePhraseMatchPrompt(BasePrompt[CognitivePhraseMatchInput, CognitivePhraseMatchOutput]):
@@ -55,17 +59,38 @@ Key principle: The phrase must produce the EXACT result the user wants, not just
 - Only match when replaying the phrase gives the user exactly what they asked for"""
 
     def build_prompt(self, input_data: CognitivePhraseMatchInput) -> str:
-        """Build the prompt."""
+        """Build the prompt.
+
+        Each phrase dict may contain a '_source' key ('private'/'public')
+        which is displayed as a tag and expected back in the output.
+        """
         # Format cognitive phrases
         phrases_text = []
+        has_source_tags = False
         for i, phrase in enumerate(input_data.cognitive_phrases, 1):
+            source_tag = ""
+            if "_source" in phrase:
+                source_tag = f"[SOURCE: {phrase['_source']}] "
+                has_source_tags = True
             phrases_text.append(
-                f"{i}. ID: {phrase.get('id', 'unknown')}\n"
+                f"{i}. {source_tag}ID: {phrase.get('id', 'unknown')}\n"
                 f"   Label: {phrase.get('label', 'N/A')}\n"
                 f"   Description: {phrase.get('description', 'N/A')}\n"
                 f"   States: {len(phrase.get('states', []))} states\n"
                 f"   Actions: {len(phrase.get('actions', []))} actions"
             )
+
+        source_instruction = ""
+        source_field = ""
+        if has_source_tags:
+            source_instruction = (
+                "5. Each phrase is tagged with [SOURCE: private] or [SOURCE: public].\n"
+                "   - private = user's own recorded workflow, more likely to match their specific habits\n"
+                "   - public = community-shared workflow, may cover tasks the user hasn't done before\n"
+                "   - When multiple phrases match equally well, prefer private over public\n"
+                '   - Report the source of the matched phrase in the "source" field\n'
+            )
+            source_field = '    "source": "private" | "public",\n'
 
         prompt = f"""## Task
 Determine if replaying any cognitive phrase can directly achieve the user's goal.
@@ -81,7 +106,7 @@ Determine if replaying any cognitive phrase can directly achieve the user's goal
 2. Only match if replaying produces the EXACT result the user wants
 3. Similar workflow structure is NOT enough - the actual content/data must match
 4. If the user's search term, product, or target differs from the phrase, it's NOT a match
-
+{source_instruction}
 ## Critical Examples
 - User: "Search for AI glasses on Amazon" + Phrase: "Search for AI ring on Amazon" → NOT a match (different products)
 - User: "View iPhone 15 details" + Phrase: "View iPhone 15 details" → MATCH (same product)
@@ -92,7 +117,7 @@ Return a JSON object:
 {{
     "can_satisfy": boolean,
     "matched_phrase_ids": [list of phrase IDs that match],
-    "combination_strategy": "direct" | "sequential" | "none",
+{source_field}    "combination_strategy": "direct" | "sequential" | "none",
     "reasoning": "detailed explanation",
     "confidence": float between 0 and 1
 }}

@@ -1,6 +1,6 @@
 # App Version
 app:
-  version: "0.0.4"
+  version: "0.1.0"
 
 # Daemon HTTP Server Configuration
 daemon:
@@ -67,8 +67,8 @@ memory:
   database: personal
 
 cloud:
-  api_url: http://127.0.0.1:9000  # Local Cloud Backend for development
-  # api_url: https://cloud.ariseos.com  # Production Cloud Backend
+  # api_url: http://127.0.0.1:9000  # Local Cloud Backend for development
+  api_url: https://i.ariseos.com  # Production Cloud Backend
   timeout: 120
   # Proxy: Only reads from environment variables (HTTPS_PROXY, HTTP_PROXY, ALL_PROXY)
   # System proxy settings (e.g., Clash modifying macOS preferences) are ignored

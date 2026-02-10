@@ -112,7 +112,7 @@ class HybridBrowserSession:
     _instances: ClassVar[Dict[Tuple[Any, str], "HybridBrowserSession"]] = {}
     _instances_lock: ClassVar[asyncio.Lock] = asyncio.Lock()
 
-    # Class-level stealth config cache (avoids re-computing + extension check per instance)
+    # Class-level stealth config cache (avoids re-computing per instance)
     _stealth_config_cache: ClassVar[Optional[Dict[str, Any]]] = None
 
     # === Class-level: Daemon lifecycle management ===
@@ -684,7 +684,6 @@ class HybridBrowserSession:
                     headless=self._headless,
                     user_data_dir=self._user_data_dir,
                     enable_stealth=self._stealth,
-                    enable_extensions=self._stealth and not self._headless,
                 )
 
                 cdp_url = await self._browser_launcher.launch()

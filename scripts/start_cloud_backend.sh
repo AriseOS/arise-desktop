@@ -70,6 +70,9 @@ if [ "$WITH_LOGGING" = true ]; then
 
     cd "$PROJECT_ROOT/deploy/logging"
 
+    # Export AMI_LOG_DIR for docker-compose
+    export AMI_LOG_DIR="$LOG_DIR"
+
     # Start logging stack (use new docker compose v2 syntax)
     docker compose up -d
 

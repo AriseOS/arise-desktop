@@ -20,7 +20,6 @@ from typing import List, Optional
 import aiohttp
 
 from .config_loader import BrowserConfig
-from .extension_manager import get_extension_manager
 
 logger = logging.getLogger(__name__)
 
@@ -33,12 +32,10 @@ class BrowserLauncher:
         headless: bool = False,
         user_data_dir: Optional[str] = None,
         enable_stealth: bool = True,
-        enable_extensions: bool = True,
     ):
         self.headless = headless
         self.user_data_dir = user_data_dir
         self.enable_stealth = enable_stealth
-        self.enable_extensions = enable_extensions
 
         self._process: Optional[asyncio.subprocess.Process] = None
         self._cdp_port: Optional[int] = None
@@ -306,19 +303,6 @@ class BrowserLauncher:
         if self.enable_stealth:
             stealth_args = BrowserConfig.get_launch_args()
             args.extend(stealth_args)
-
-        # Extension args
-        if self.enable_extensions and not self.headless:
-            # Extensions don't work in headless mode
-            try:
-                ext_manager = get_extension_manager()
-                extension_paths = ext_manager.ensure_extensions_downloaded()
-                if extension_paths:
-                    ext_args = ext_manager.get_extension_args(extension_paths)
-                    args.extend(ext_args)
-                    logger.info(f"Extensions loaded: {len(extension_paths)}")
-            except Exception as e:
-                logger.warning(f"Failed to load extensions: {e}")
 
         return args
 

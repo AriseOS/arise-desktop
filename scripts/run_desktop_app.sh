@@ -63,6 +63,10 @@ if [ "$AMI_DEBUG_MODE" = true ]; then
     echo "   Debug Mode: ENABLED"
 fi
 
+# Disable proxy for local connections (fix 502 error on ports 8765-8774)                                                                  
+export no_proxy="localhost,127.0.0.1,::1"                                                                                                 
+export NO_PROXY="localhost,127.0.0.1,::1"  
+
 if [ "$USE_LOCAL_CLOUD" = true ]; then
     echo "   APP_BACKEND_CLOUD_API_URL=http://localhost:9000"
     echo ""

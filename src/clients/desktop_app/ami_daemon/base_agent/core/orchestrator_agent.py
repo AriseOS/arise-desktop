@@ -136,14 +136,11 @@ class DecomposeTaskTool:
 
         Args:
             task_description: The user's request in their own words.
-                - Summarize what the user asked for, nothing more
+                - Copy the user's original wording as closely as possible
+                - Do NOT rephrase, translate, or substitute any keywords
                 - Do NOT add requirements the user didn't mention
                 - Do NOT specify output formats unless user asked
                 - Do NOT add "suggested steps" or implementation details
-                - Keep the original intent and scope
-
-                Good: "看看 Amazon 上卖的最好的 10 个 AI 眼镜"
-                Bad:  "访问亚马逊，收集 AI 眼镜详细信息包括价格、评分、品牌..."
 
         Returns:
             Confirmation that the task has been queued for execution.

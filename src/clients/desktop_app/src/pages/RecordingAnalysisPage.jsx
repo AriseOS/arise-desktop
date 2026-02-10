@@ -102,6 +102,59 @@ function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
   };
 
   const duration = getDuration();
+  // Navigate to replay page
+  const handleReplay = () => {
+    if (!sessionId) {
+      showStatus("No recording to replay", "error");
+      return;
+    }
+
+    onNavigate('replay', {
+      sessionId: sessionId,
+      userId: userId,
+      recordingName: recordingName
+    });
+  };
+
+  const renderPatternBadges = () => {
+    const badges = [];
+
+    if (detectedPatterns.loop_detected) {
+      badges.push(
+        <div key="loop" className="pattern-badge loop">
+          <span className="badge-icon"><Icon icon="refreshCw" size={14} /></span>
+          <span className="badge-text">{t('analysis.loopPattern')}</span>
+          {detectedPatterns.loop_count && (
+            <span className="badge-detail">{t('analysis.loopCount', { count: detectedPatterns.loop_count })}</span>
+          )}
+        </div>
+      );
+    }
+
+    if (detectedPatterns.extracted_fields && detectedPatterns.extracted_fields.length > 0) {
+      badges.push(
+        <div key="extraction" className="pattern-badge extraction">
+          <span className="badge-icon"><Icon icon="database" size={14} /></span>
+          <span className="badge-text">{t('analysis.dataExtraction')}</span>
+          <span className="badge-detail">
+            {t('analysis.fields', { fields: detectedPatterns.extracted_fields.join(', ') })}
+          </span>
+        </div>
+      );
+    }
+
+    if (detectedPatterns.navigation_depth) {
+      badges.push(
+        <div key="navigation" className="pattern-badge navigation">
+          <span className="badge-icon"><Icon icon="globe" size={14} /></span>
+          <span className="badge-text">{t('analysis.navigation')}</span>
+          <span className="badge-detail">{t('analysis.depth', { depth: detectedPatterns.navigation_depth })}</span>
+        </div>
+      );
+    }
+
+    return badges;
+  };
 
   return (
     <div className="recording-analysis-page">
@@ -200,6 +253,20 @@ function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
 
         {/* Action Buttons */}
         <div className="action-buttons">
+          <button
+            className="btn-secondary"
+            onClick={() => onNavigate("main")}
+          >
+            {t('analysis.cancel')}
+          </button>
+          <button
+            className="btn-primary-alt"
+            onClick={handleReplay}
+            disabled={isAdding}
+          >
+            <span className="btn-icon"><Icon icon="play" /></span>
+            <span>Replay Recording</span>
+          </button>
           <button
             className="btn-primary"
             onClick={handleAddToMemory}

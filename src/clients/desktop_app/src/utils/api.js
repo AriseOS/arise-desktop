@@ -1030,6 +1030,39 @@ export const api = {
     });
   },
 
+  /**
+   * List cognitive phrases from public memory
+   *
+   * @param {number} limit - Maximum number of phrases to return (default: 50)
+   * @returns {Promise<object>} Response with phrases array
+   */
+  async listPublicPhrases(limit = 50) {
+    return await this.callAppBackend(`/api/v1/memory/public/phrases?limit=${limit}`);
+  },
+
+  /**
+   * Get a single public cognitive phrase with full details
+   *
+   * @param {string} phraseId - CognitivePhrase ID
+   * @returns {Promise<object>} Response with phrase, states, and intent_sequences
+   */
+  async getPublicPhrase(phraseId) {
+    return await this.callAppBackend(`/api/v1/memory/public/phrases/${phraseId}`);
+  },
+
+  /**
+   * Share a cognitive phrase from private memory to public memory
+   *
+   * @param {string} phraseId - CognitivePhrase ID to share
+   * @returns {Promise<object>} Result with { success, public_phrase_id }
+   */
+  async shareCognitivePhrase(phraseId) {
+    return await this.callAppBackend('/api/v1/memory/share', {
+      method: 'POST',
+      body: JSON.stringify({ phrase_id: phraseId })
+    });
+  },
+
   // ============================================================================
   // Session APIs (Simple conversation persistence)
   // ============================================================================

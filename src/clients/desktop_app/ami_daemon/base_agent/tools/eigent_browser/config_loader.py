@@ -19,7 +19,6 @@ CHROME_DISABLED_COMPONENTS = [
     'CertificateTransparencyComponentUpdater',
     'DestroyProfileOnBrowserClose',
     'DialMediaRouteProvider',
-    'ExtensionManifestV2Disabled',
     'GlobalMediaControls',
     'HttpsUpgrades',
     'ImprovedCookieControls',
@@ -220,8 +219,7 @@ class BrowserConfig:
             '--disable-back-forward-cache',  # Avoid surprises during navigation
             '--disable-breakpad',
             '--disable-client-side-phishing-detection',
-            # Note: removed '--disable-component-extensions-with-background-pages'
-            # as it may interfere with our Manifest V3 extensions that use service workers
+            '--disable-component-extensions-with-background-pages',
             '--disable-component-update',
             '--disable-hang-monitor',
             '--disable-ipc-flooding-protection',
@@ -250,10 +248,6 @@ class BrowserConfig:
             # GPU/rendering - important for fingerprint
             '--test-type=gpu',
 
-            # Extension support
-            '--allow-legacy-extension-manifests',
-            '--extensions-on-chrome-urls',
-            '--disable-extensions-http-throttling',
             '--disable-default-apps',
 
             # Miscellaneous
@@ -312,12 +306,10 @@ class BrowserConfig:
         args = [
             # Critical! This is what shows the automation banner
             '--enable-automation',
-            # Allow browser extensions (we load our own)
-            '--disable-extensions',
             # Keep scrollbars visible for more realistic fingerprint
             '--hide-scrollbars',
             # We set our own --disable-features, ignore Playwright's version
-            '--disable-features=AcceptCHFrame,AutoExpandDetailsElement,AvoidUnnecessaryBeforeUnloadCheckSync,CertificateTransparencyComponentUpdater,DeferRendererTasksAfterInput,DestroyProfileOnBrowserClose,DialMediaRouteProvider,ExtensionManifestV2Disabled,GlobalMediaControls,HttpsUpgrades,ImprovedCookieControls,LazyFrameLoading,LensOverlay,MediaRouter,PaintHolding,ThirdPartyStoragePartitioning,Translate',
+            '--disable-features=AcceptCHFrame,AutoExpandDetailsElement,AvoidUnnecessaryBeforeUnloadCheckSync,CertificateTransparencyComponentUpdater,DeferRendererTasksAfterInput,DestroyProfileOnBrowserClose,DialMediaRouteProvider,GlobalMediaControls,HttpsUpgrades,ImprovedCookieControls,LazyFrameLoading,LensOverlay,MediaRouter,PaintHolding,ThirdPartyStoragePartitioning,Translate',
         ]
 
         # On macOS, --no-sandbox is not supported and causes warnings
@@ -411,32 +403,15 @@ class BrowserConfig:
         return None
 
     @staticmethod
-    def get_stealth_config(enable_extensions: bool = True) -> Dict[str, Any]:
-        """Get stealth configuration.
-
-        Args:
-            enable_extensions: Whether to enable extension loading for anti-detection.
-        """
-        config = {
+    def get_stealth_config() -> Dict[str, Any]:
+        """Get stealth configuration."""
+        return {
             'launch_args': BrowserConfig.get_launch_args(),
             'ignore_default_args': BrowserConfig.get_ignore_default_args(),
             'context_options': BrowserConfig.get_context_options(),
             'http_headers': BrowserConfig.get_http_headers(),
             'stealth_script': BrowserConfig.get_stealth_script(),
-            'enable_extensions': enable_extensions,
         }
-
-        # Add extension args if enabled
-        if enable_extensions:
-            from .extension_manager import get_extension_manager
-            ext_manager = get_extension_manager()
-            extension_paths = ext_manager.ensure_extensions_downloaded()
-            if extension_paths:
-                extension_args = ext_manager.get_extension_args(extension_paths)
-                config['launch_args'].extend(extension_args)
-                config['extension_paths'] = extension_paths
-
-        return config
 
     @staticmethod
     def get_all_config() -> Dict[str, Any]:
