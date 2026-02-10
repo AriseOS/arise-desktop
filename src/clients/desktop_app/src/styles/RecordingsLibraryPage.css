@@ -266,6 +266,18 @@
   flex: 0 0 auto !important;
 }
 
+/* Replay button - success/green style */
+.recording-actions .btn-success {
+  background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+  color: white;
+  border: none;
+}
+
+.recording-actions .btn-success:hover {
+  background: linear-gradient(135deg, #3b9ce8 0%, #00d4e6 100%);
+  transform: translateY(-1px);
+}
+
 /* Old .btn-action styles removed, using global .btn classes */
 
 /* ===================================

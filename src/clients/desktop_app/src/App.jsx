@@ -15,6 +15,7 @@ import SetupPage from "./pages/SetupPage";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import SettingsPage from "./pages/SettingsPage";
+import RecordingReplayPage from "./pages/RecordingReplayPage";
 import QuickStartPage from "./pages/QuickStartPage";
 import RecordingAnalysisPage from "./pages/RecordingAnalysisPage";
 import GenerationPage from "./pages/GenerationPage";
@@ -659,6 +660,16 @@ function App() {
 
       case "main":
         return renderMainPage();
+
+      case "replay":
+        return (
+          <RecordingReplayPage
+            session={session}
+            onNavigate={navigate}
+            showStatus={showStatus}
+            navigationData={pageParams}
+          />
+        );
 
       case "quick-start":
         return (

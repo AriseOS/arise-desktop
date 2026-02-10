@@ -75,6 +75,14 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
     onNavigate('recording-detail', { sessionId });
   };
 
+  const handleReplay = (sessionId, recordingName) => {
+    onNavigate('replay', {
+      sessionId: sessionId,
+      userId: userId,
+      recordingName: recordingName || sessionId
+    });
+  };
+
   const handleViewWorkflow = async (workflowId, sessionId) => {
     try {
       // Verify workflow still exists before navigating
@@ -311,6 +319,13 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
                 >
                   <Icon name="eye" />
                   {t('recordingsLibrary.viewDetails')}
+                </button>
+                <button
+                  className="btn btn-success"
+                  onClick={() => handleReplay(recording.session_id, recording.task_metadata?.name)}
+                >
+                  <Icon name="play" />
+                  Replay
                 </button>
                 {workflowIds[recording.session_id] ? (
                   <button

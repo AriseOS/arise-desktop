@@ -413,6 +413,33 @@
   flex-wrap: wrap;
 }
 
+.btn-replay-recording {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 40px;
+  background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+  color: white;
+  border: none;
+  border-radius: var(--radius-xl);
+  font-size: 18px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s;
+  box-shadow: var(--shadow-md);
+}
+
+.btn-replay-recording:hover {
+  background: linear-gradient(135deg, #3b9ce8 0%, #00d4e6 100%);
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-lg);
+}
+
+.btn-replay-recording svg {
+  width: 20px;
+  height: 20px;
+}
+
 .btn-generate-workflow {
   display: inline-flex;
   align-items: center;
