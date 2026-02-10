@@ -1048,8 +1048,31 @@ export const api = {
     return await this.callAppBackend(`/api/v1/memory/phrases/public?limit=${limit}&sort=${sort}`);
   },
 
+  /**
+   * Check if a private phrase has been published to public memory
+   *
+   * @param {string} phraseId - Private phrase ID
+   * @returns {Promise<object>} { published: bool, public_phrase_id?: string }
+   */
+  async getPublishStatus(phraseId) {
+    return await this.callAppBackend(`/api/v1/memory/publish-status?phrase_id=${phraseId}`);
+  },
+
   async publishCognitivePhrase(phraseId) {
     return await this.callAppBackend('/api/v1/memory/publish', {
+      method: 'POST',
+      body: JSON.stringify({ phrase_id: phraseId }),
+    });
+  },
+
+  /**
+   * Remove a phrase from public memory
+   *
+   * @param {string} phraseId - Private phrase ID
+   * @returns {Promise<object>} Result with success status
+   */
+  async unpublishCognitivePhrase(phraseId) {
+    return await this.callAppBackend('/api/v1/memory/unpublish', {
       method: 'POST',
       body: JSON.stringify({ phrase_id: phraseId }),
     });

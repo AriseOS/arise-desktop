@@ -1691,6 +1691,62 @@ async def delete_cognitive_phrase(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/v1/memory/publish-status")
+async def get_publish_status(
+    phrase_id: str,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+):
+    """Check if a private phrase has been published (Proxy to Cloud Backend)"""
+    try:
+        if not cloud_client:
+            return {"published": False}
+        if not x_user_id:
+            return {"published": False}
+
+        if x_ami_api_key:
+            cloud_client.set_user_api_key(x_ami_api_key)
+
+        result = await cloud_client.get_publish_status(user_id=x_user_id, phrase_id=phrase_id)
+        return result
+
+    except Exception as e:
+        logger.error(f"[memory/publish-status] Failed: {e}")
+        return {"published": False}
+
+
+@app.post("/api/v1/memory/unpublish")
+async def unpublish_cognitive_phrase(
+    request: dict,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+):
+    """Remove a phrase from public memory (Proxy to Cloud Backend)"""
+    try:
+        if not cloud_client:
+            return {"success": False, "error": "Cloud client not initialized"}
+
+        phrase_id = request.get("phrase_id")
+        if not phrase_id:
+            raise HTTPException(status_code=400, detail="Missing phrase_id")
+        if not x_user_id:
+            raise HTTPException(status_code=400, detail="Missing X-User-Id header")
+
+        if x_ami_api_key:
+            cloud_client.set_user_api_key(x_ami_api_key)
+
+        logger.info(f"[memory/unpublish] Unpublishing phrase {phrase_id} for user {x_user_id}...")
+        result = await cloud_client.unpublish_phrase(user_id=x_user_id, phrase_id=phrase_id)
+        logger.info(f"[memory/unpublish] Done: {result}")
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[memory/unpublish] Failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/v1/memory/publish")
 async def publish_cognitive_phrase(
     request: dict,

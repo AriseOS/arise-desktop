@@ -18,6 +18,7 @@ function CognitivePhraseDetailPage({ session, onNavigate, showStatus, phraseId, 
   const [loading, setLoading] = useState(true);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [isPublished, setIsPublished] = useState(false);
 
   // ReactFlow state
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
@@ -58,6 +59,22 @@ function CognitivePhraseDetailPage({ session, onNavigate, showStatus, phraseId, 
     fetchPhrase();
   }, [phraseId]);
 
+  // Check publish status for private phrases
+  useEffect(() => {
+    if (!phraseId || isPublic) return;
+
+    const checkStatus = async () => {
+      try {
+        const status = await api.getPublishStatus(phraseId);
+        setIsPublished(status.published || false);
+      } catch (error) {
+        console.error('Error checking publish status:', error);
+      }
+    };
+
+    checkStatus();
+  }, [phraseId, isPublic]);
+
   // Update graph when data or expansion state changes
   useEffect(() => {
     if (!phrase || states.length === 0) return;
@@ -74,18 +91,29 @@ function CognitivePhraseDetailPage({ session, onNavigate, showStatus, phraseId, 
     setEdges(newEdges);
   }, [phrase, states, intentSequences, expandedNodeIds, handleToggleExpand]);
 
-  const handlePublish = async () => {
+  const handlePublishToggle = async () => {
     setPublishing(true);
     try {
-      const result = await api.publishCognitivePhrase(phraseId);
-      if (result.success) {
-        showStatus('Memory published to community!', 'success');
+      if (isPublished) {
+        const result = await api.unpublishCognitivePhrase(phraseId);
+        if (result.success) {
+          setIsPublished(false);
+          showStatus('Memory unpublished from community', 'success');
+        } else {
+          showStatus('Failed to unpublish memory', 'error');
+        }
       } else {
-        showStatus('Failed to publish memory', 'error');
+        const result = await api.publishCognitivePhrase(phraseId);
+        if (result.success) {
+          setIsPublished(true);
+          showStatus('Memory published to community!', 'success');
+        } else {
+          showStatus('Failed to publish memory', 'error');
+        }
       }
     } catch (error) {
-      console.error('Error publishing phrase:', error);
-      showStatus(`Failed to publish: ${error.message}`, 'error');
+      console.error('Error toggling publish:', error);
+      showStatus(`Failed: ${error.message}`, 'error');
     } finally {
       setPublishing(false);
     }
@@ -156,13 +184,13 @@ function CognitivePhraseDetailPage({ session, onNavigate, showStatus, phraseId, 
         {!isPublic && (
           <div className="header-actions">
             <button
-              className="btn btn-primary"
-              onClick={handlePublish}
+              className={`btn ${isPublished ? 'btn-secondary' : 'btn-primary'}`}
+              onClick={handlePublishToggle}
               disabled={publishing}
               style={{ padding: '6px 14px', fontSize: '13px', gap: '6px' }}
             >
-              <Icon name="upload" size={16} />
-              <span>{publishing ? 'Publishing...' : 'Publish'}</span>
+              <Icon name={isPublished ? 'x' : 'upload'} size={16} />
+              <span>{publishing ? '...' : (isPublished ? 'Unpublish' : 'Publish')}</span>
             </button>
             <button
               className="btn-icon-danger"

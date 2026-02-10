@@ -2356,6 +2356,103 @@ async def share_cognitive_phrase(
         raise HTTPException(500, f"Failed to share phrase: {str(e)}")
 
 
+@app.get("/api/v1/memory/publish-status")
+async def get_publish_status(
+    phrase_id: str,
+    user_id: str,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
+):
+    """Check if a private phrase has been published to public memory.
+
+    Query Parameters:
+        phrase_id: Private phrase ID (source_phrase_id in public)
+        user_id: Contributor user ID
+    """
+    try:
+        from src.common.memory.memory_service import get_public_memory
+        pub = get_public_memory()
+        if not pub or not pub.workflow_memory:
+            return {"published": False}
+
+        wm = pub.workflow_memory
+        existing = wm.phrase_manager.graph_store.query_nodes(
+            label=wm.phrase_manager.node_label,
+            filters={"source_phrase_id": phrase_id, "contributor_id": user_id},
+            limit=1,
+        )
+
+        if existing:
+            return {
+                "published": True,
+                "public_phrase_id": existing[0].get("id"),
+            }
+        return {"published": False}
+
+    except Exception as e:
+        logger.error(f"Failed to check publish status: {e}")
+        return {"published": False}
+
+
+@app.post("/api/v1/memory/unpublish")
+async def unpublish_cognitive_phrase(
+    data: dict,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
+):
+    """Remove a CognitivePhrase from public memory.
+
+    Body:
+        {
+            "user_id": "user123",
+            "phrase_id": "private-phrase-id"
+        }
+
+    Only the original contributor can unpublish.
+    """
+    user_id = data.get("user_id")
+    phrase_id = data.get("phrase_id")
+
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+    if not phrase_id:
+        raise HTTPException(400, "Missing phrase_id")
+
+    try:
+        from src.common.memory.memory_service import get_public_memory
+        pub = get_public_memory()
+        if not pub or not pub.workflow_memory:
+            raise HTTPException(404, "Public memory not available")
+
+        wm = pub.workflow_memory
+
+        # Find the public phrase by source_phrase_id + contributor_id
+        existing = wm.phrase_manager.graph_store.query_nodes(
+            label=wm.phrase_manager.node_label,
+            filters={"source_phrase_id": phrase_id, "contributor_id": user_id},
+            limit=1,
+        )
+
+        if not existing:
+            raise HTTPException(404, "Published phrase not found or not owned by you")
+
+        public_phrase_id = existing[0].get("id")
+        wm.phrase_manager.graph_store.delete_node(wm.phrase_manager.node_label, public_phrase_id)
+
+        logger.info(f"Unpublished phrase: private={phrase_id}, public={public_phrase_id}, user={user_id}")
+
+        return {
+            "success": True,
+            "message": "Memory unpublished from community",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to unpublish phrase: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Failed to unpublish phrase: {str(e)}")
+
+
 # ===== Helper Functions for NL Query =====
 
 async def _get_reasoner_for_user(

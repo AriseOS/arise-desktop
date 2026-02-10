@@ -1600,6 +1600,42 @@ class CloudClient:
         logger.info(f"[CloudClient] Found {result.get('total', 0)} public phrases")
         return result
 
+    async def get_publish_status(
+        self,
+        user_id: str,
+        phrase_id: str,
+    ) -> Dict[str, Any]:
+        """Check if a private phrase has been published."""
+        headers = {}
+        if self.user_api_key:
+            headers["X-Ami-API-Key"] = self.user_api_key
+
+        response = await self.client.get(
+            "/api/v1/memory/publish-status",
+            params={"phrase_id": phrase_id, "user_id": user_id},
+            headers=headers,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def unpublish_phrase(
+        self,
+        user_id: str,
+        phrase_id: str,
+    ) -> Dict[str, Any]:
+        """Remove a phrase from public memory."""
+        headers = {}
+        if self.user_api_key:
+            headers["X-Ami-API-Key"] = self.user_api_key
+
+        response = await self.client.post(
+            "/api/v1/memory/unpublish",
+            json={"user_id": user_id, "phrase_id": phrase_id},
+            headers=headers,
+        )
+        response.raise_for_status()
+        return response.json()
+
     async def publish_phrase(
         self,
         user_id: str,
