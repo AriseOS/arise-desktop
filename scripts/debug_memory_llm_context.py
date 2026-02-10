@@ -19,6 +19,7 @@ Make sure the Cloud Backend is running (port 9000 by default).
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -32,9 +33,9 @@ sys.path.insert(0, str(ROOT))
 # Configuration (edit these for your environment)
 # =============================================================================
 
-API_BASE_URL = "http://localhost:9000"
-API_KEY = "ami_32b02bf612c46de5abb4b4fdcf9cdedfc08734e8c2da7c90da7683e6c4d90a3a"
-USER_ID = "shenyouren"
+API_BASE_URL = os.environ.get("AMI_API_BASE_URL", "http://localhost:9000")
+API_KEY = os.environ.get("AMI_API_KEY", "")
+USER_ID = os.environ.get("AMI_USER_ID", "shenyouren")
 
 # Test data — edit to match your actual recordings/memory
 EXAMPLE_TASK = "收集 Amazon 上卖的最好的 10 款眼镜"
