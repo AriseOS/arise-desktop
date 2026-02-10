@@ -534,6 +534,7 @@ function App() {
         onNavigate={navigate}
         showStatus={showStatus}
         version={versionInfo?.version || '1.0.0'}
+        initialMessage={pageParams.initialMessage}
       />
     );
   };

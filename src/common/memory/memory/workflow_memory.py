@@ -1365,10 +1365,11 @@ class GraphCognitivePhraseManager(CognitivePhraseManager):
         """
         try:
             if hasattr(self.graph_store, 'run_script'):
-                # Atomic increment via SurrealQL
-                safe_id = phrase_id.replace("'", "\\'")
+                # Atomic increment via SurrealQL using RecordID syntax
+                safe_id = phrase_id.replace("`", "\\`")
+                table = self.node_label.lower()
                 self.graph_store.run_script(
-                    f"UPDATE {self.node_label} SET use_count += 1 WHERE id = '{safe_id}'"
+                    f"UPDATE {table}:`{safe_id}` SET use_count += 1"
                 )
             else:
                 # Fallback: read-modify-write (non-atomic)

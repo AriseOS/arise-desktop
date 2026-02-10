@@ -181,26 +181,37 @@ function CognitivePhraseDetailPage({ session, onNavigate, showStatus, phraseId, 
           <Icon name="arrowLeft" />
         </button>
         <h1 className="page-title">{phrase.label || 'Unnamed Workflow'}</h1>
-        {!isPublic && (
-          <div className="header-actions">
+        <div className="header-actions">
+          {isPublic ? (
             <button
-              className={`btn ${isPublished ? 'btn-secondary' : 'btn-primary'}`}
-              onClick={handlePublishToggle}
-              disabled={publishing}
+              className="btn btn-primary"
+              onClick={() => onNavigate('main', { initialMessage: phrase.description })}
               style={{ padding: '6px 14px', fontSize: '13px', gap: '6px' }}
             >
-              <Icon name={isPublished ? 'x' : 'upload'} size={16} />
-              <span>{publishing ? '...' : (isPublished ? 'Unpublish' : 'Publish')}</span>
+              <Icon name="play" size={16} />
+              <span>Run</span>
             </button>
-            <button
-              className="btn-icon-danger"
-              onClick={() => setDeleteConfirm(true)}
-              title="Delete"
-            >
-              <Icon name="trash" />
-            </button>
-          </div>
-        )}
+          ) : (
+            <>
+              <button
+                className={`btn ${isPublished ? 'btn-secondary' : 'btn-primary'}`}
+                onClick={handlePublishToggle}
+                disabled={publishing}
+                style={{ padding: '6px 14px', fontSize: '13px', gap: '6px' }}
+              >
+                <Icon name={isPublished ? 'x' : 'upload'} size={16} />
+                <span>{publishing ? '...' : (isPublished ? 'Unpublish' : 'Publish')}</span>
+              </button>
+              <button
+                className="btn-icon-danger"
+                onClick={() => setDeleteConfirm(true)}
+                title="Delete"
+              >
+                <Icon name="trash" />
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Description */}
