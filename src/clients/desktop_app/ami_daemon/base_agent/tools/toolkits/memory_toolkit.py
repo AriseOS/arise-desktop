@@ -1284,10 +1284,11 @@ class MemoryToolkit(BaseToolkit):
         intent_sequences: List[IntentSequence],
         outgoing_actions: List[Action],
     ) -> str:
-        """Format page operations for LLM context (simplified format).
+        """Format page operations for LLM context with behavioral semantics.
 
         This format is designed for the query_page_operations tool,
-        providing concise, actionable information.
+        providing concise, actionable information with semantic meaning
+        for each operation type.
 
         Args:
             intent_sequences: List of IntentSequence objects.
@@ -1299,26 +1300,49 @@ class MemoryToolkit(BaseToolkit):
         total_count = len(intent_sequences) + len(outgoing_actions)
         lines = [f"## Page Operations ({total_count} recorded)\n"]
 
-        # Collect user interests (select_text) separately
-        user_interests: List[str] = []
+        # Collect behavioral signals separately
+        important_data: List[str] = []  # selectText = user marked this data as important
+        copied_data: List[str] = []  # copy = user extracted this data
+        has_infinite_scroll = False  # scroll + dataload pattern
 
         # In-page operations
         for i, seq in enumerate(intent_sequences, 1):
             nav_marker = " → navigates" if seq.causes_navigation else ""
             lines.append(f"{i}. \"{seq.description or 'Operation'}\"{nav_marker}")
 
+            # Detect scroll + dataload pattern within this sequence
+            seq_has_scroll = False
+            seq_has_dataload = False
+
             # Show intents with actionable info
             for intent in seq.intents:
-                if intent.type.lower() == "selecttext" and intent.text:
-                    # SelectText = user interest signal, not an executable action
+                intent_type = intent.type.lower()
+
+                if intent_type == "selecttext" and intent.text:
                     snippet = intent.text[:100]
                     if len(intent.text) > 100:
                         snippet += "..."
-                    user_interests.append(snippet)
+                    important_data.append(snippet)
                     continue
+
+                if intent_type == "copy" and intent.text:
+                    snippet = intent.text[:100]
+                    if len(intent.text) > 100:
+                        snippet += "..."
+                    copied_data.append(snippet)
+                    continue
+
+                if intent_type in ["scroll", "scrolldown", "scrollup"]:
+                    seq_has_scroll = True
+                if intent_type == "dataload":
+                    seq_has_dataload = True
+
                 intent_line = MemoryToolkit._format_intent_compact(intent)
                 if intent_line:
                     lines.append(f"   {intent_line}")
+
+            if seq_has_scroll and seq_has_dataload:
+                has_infinite_scroll = True
 
         # Navigation actions
         if outgoing_actions:
@@ -1332,12 +1356,33 @@ class MemoryToolkit(BaseToolkit):
                     trigger_text = f" (click \"{action.trigger['text']}\")"
                 lines.append(f"- {desc}{trigger_text}")
 
-        # User interests from text selections
-        if user_interests:
+        # Behavioral signals section
+        has_signals = important_data or copied_data or has_infinite_scroll
+        if has_signals:
             lines.append("")
-            lines.append("**User interests on this page:**")
-            for interest in user_interests:
-                lines.append(f"- \"{interest}\"")
+            lines.append("**User behavioral signals:**")
+
+        if has_infinite_scroll:
+            lines.append(
+                "- [INFINITE SCROLL] This page loads more content on scroll down. "
+                "Scroll repeatedly to load all data before extracting."
+            )
+
+        if important_data:
+            lines.append(
+                "- [IMPORTANT DATA] User previously selected/highlighted the "
+                "following data — treat as high-priority extraction targets:"
+            )
+            for data in important_data:
+                lines.append(f"  - \"{data}\"")
+
+        if copied_data:
+            lines.append(
+                "- [EXTRACTED DATA] User previously copied the following data — "
+                "this is confirmed valuable content to collect:"
+            )
+            for data in copied_data:
+                lines.append(f"  - \"{data}\"")
 
         return "\n".join(lines)
 
@@ -1370,6 +1415,26 @@ class MemoryToolkit(BaseToolkit):
                     distance_str = f"{distance_str}px"
                 return f"- scroll {direction} {distance_str}".strip()
             return f"- scroll {direction}".strip()
+        elif intent_type == "dataload":
+            height_change = attrs.get("height_change", "")
+            if height_change:
+                return f"- [page loaded new content, height +{height_change}px]"
+            return "- [page loaded new content]"
+        elif intent_type in ["select", "selectoption"]:
+            if text:
+                return f"- select option \"{text}\""
+            return "- select option"
+        elif intent_type == "enter":
+            return "- press Enter"
+        elif intent_type == "paste":
+            if text:
+                snippet = text[:60]
+                return f"- paste \"{snippet}\""
+            return "- paste"
+        elif intent_type in ["navigate", "goto"]:
+            target = text or intent.value or ""
+            if target:
+                return f"- navigate to \"{target}\""
 
         return ""
 
