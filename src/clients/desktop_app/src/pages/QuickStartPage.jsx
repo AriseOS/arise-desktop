@@ -236,9 +236,7 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
         onNavigate('recording-analysis', {
           sessionId: sessionId,
           name: analysisResult.name,
-          taskDescription: analysisResult.task_description,
-          userQuery: analysisResult.user_query,
-          detectedPatterns: analysisResult.detected_patterns
+          taskDescription: analysisResult.task_description
         });
       }, 500);
 

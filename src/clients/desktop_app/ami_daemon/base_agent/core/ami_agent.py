@@ -52,7 +52,7 @@ _TOOL_PREFIX_TO_TOOLKIT = {
     "get": "Task Planning Toolkit",
     "complete": "Task Planning Toolkit",
     "report": "Task Planning Toolkit",
-    "replan": "Task Planning Toolkit",
+    "replan": "Replan Toolkit",
 }
 
 
@@ -204,6 +204,10 @@ class AMIAgent:
         # NoteTakingToolkit reference
         self._note_toolkit: Optional[Any] = None
 
+        # Early-stop flag: set by ReplanToolkit.replan_complete_and_handoff
+        # to force astep() to stop after the current tool-call round.
+        self._should_stop_after_tool: bool = False
+
         # Model-visible snapshot export
         self._export_model_visible_snapshots: bool = False
         self._snapshot_export_subdir: str = "model_visible_snapshots"
@@ -223,6 +227,10 @@ class AMIAgent:
     def get_tool(self, name: str) -> Optional[AMITool]:
         """Get a tool by name."""
         return self._tools.get(name)
+
+    def remove_tool(self, name: str) -> None:
+        """Remove a tool by name."""
+        self._tools.pop(name, None)
 
     def _get_anthropic_tools(self) -> List[Dict[str, Any]]:
         """Get all tools in Anthropic schema format."""
@@ -545,6 +553,14 @@ class AMIAgent:
 
                 # Append tool results as user message
                 self._messages.append({"role": "user", "content": tool_results})
+
+                # Check early-stop flag (set by replan_complete_and_handoff)
+                if self._should_stop_after_tool:
+                    stop_reason = "handoff"
+                    logger.info(
+                        f"[AMIAgent] {self.agent_name} stopping after handoff"
+                    )
+                    break
 
                 iteration += 1
 
@@ -964,6 +980,7 @@ class AMIAgent:
         """Reset conversation history."""
         self._messages.clear()
         self._step_count = 0
+        self._should_stop_after_tool = False
 
     def get_messages(self) -> List[Dict[str, Any]]:
         """Get current conversation messages."""

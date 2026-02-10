@@ -26,9 +26,29 @@ from ..events import (
     WorkerAssignedData,
     NoticeData,
     AgentReportData,
+    DynamicTasksAddedData,
 )
 
 logger = logging.getLogger(__name__)
+
+REPLAN_INSTRUCTION = """
+## Task Splitting
+
+You have tools to manage your workload:
+- `replan_get_subtask_list()` — View all tasks and their status
+- `replan_report_progress(items_completed, items_total, details)` — Report progress
+- `replan_add_tasks(tasks)` — Add follow-up tasks for remaining work
+- `replan_complete_and_handoff(summary, remaining_tasks)` — Complete current task and delegate remaining work
+
+**CRITICAL RULE**: If your task involves processing MANY items (more than 5):
+1. Process the first batch (5-10 items)
+2. Call `replan_report_progress` to report what you have done
+3. Call `replan_complete_and_handoff` with your partial results AND tasks for remaining batches
+4. DO NOT try to process all items in one subtask
+5. DO NOT summarize or skip remaining items to finish faster
+
+Example: Task says "Extract 19 products" → Extract 5, then call `replan_complete_and_handoff` with your partial result and follow-up tasks for items 6-10, 11-15, 16-19.
+""".strip()
 
 
 class SubtaskState(Enum):
@@ -134,6 +154,107 @@ class AMITaskExecutor:
                 f"[AMITaskExecutor] Subtask {st.id} ({st.agent_type}): "
                 f"{st.content[:120]}{deps}{guide}"
             )
+
+    async def add_subtasks_async(
+        self,
+        new_subtasks: List[AMISubtask],
+        after_subtask_id: Optional[str] = None,
+    ) -> List[str]:
+        """Add subtasks dynamically during execution.
+
+        Called by ReplanToolkit when the agent decides to split work.
+        New subtasks are inserted after the specified subtask.
+
+        Args:
+            new_subtasks: Subtasks to add.
+            after_subtask_id: Insert after this subtask. If None, append to end.
+
+        Returns:
+            List of new subtask IDs.
+        """
+        # Find insertion position: after the specified subtask AND after any
+        # previously inserted dynamic subtasks (those whose ID starts with
+        # the parent's ID + "_dyn_"). This ensures multiple add_subtasks_async
+        # calls append in chronological order.
+        insert_idx = len(self._subtasks)
+        if after_subtask_id:
+            dyn_prefix = f"{after_subtask_id}_dyn_"
+            found = False
+            for i, s in enumerate(self._subtasks):
+                if s.id == after_subtask_id:
+                    found = True
+                    insert_idx = i + 1
+                elif found and s.id.startswith(dyn_prefix):
+                    # Skip past existing dynamic subtasks from the same parent
+                    insert_idx = i + 1
+                elif found:
+                    # First non-dynamic subtask — insert here
+                    insert_idx = i
+                    break
+
+        # Insert into list and update map
+        for i, subtask in enumerate(new_subtasks):
+            self._subtasks.insert(insert_idx + i, subtask)
+            self._subtask_map[subtask.id] = subtask
+
+        new_ids = [s.id for s in new_subtasks]
+
+        logger.info(
+            f"[AMITaskExecutor] Dynamically added {len(new_subtasks)} subtasks "
+            f"after '{after_subtask_id}': {new_ids}"
+        )
+        for st in new_subtasks:
+            logger.info(
+                f"[AMITaskExecutor]   {st.id} ({st.agent_type}): "
+                f"{st.content[:120]} depends_on={st.depends_on}"
+            )
+
+        # Emit SSE events
+        if self._task_state:
+            new_tasks_data = [
+                {"id": s.id, "content": s.content, "status": "pending"}
+                for s in new_subtasks
+            ]
+            await self._task_state.put_event(DynamicTasksAddedData(
+                task_id=self.task_id,
+                new_tasks=new_tasks_data,
+                added_by_worker=after_subtask_id,
+                reason="Agent-initiated task splitting",
+                total_tasks_now=len(self._subtasks),
+                total_tasks=len(self._subtasks),
+            ))
+            await self._task_state.put_event(AgentReportData(
+                task_id=self.task_id,
+                message=(
+                    f"Added {len(new_subtasks)} follow-up tasks "
+                    f"(total: {len(self._subtasks)})"
+                ),
+                report_type="info",
+            ))
+
+        return new_ids
+
+    def _remove_dynamic_subtasks(self, parent_subtask_id: str) -> None:
+        """Remove all dynamic subtasks spawned by a parent subtask.
+
+        Called before retrying a failed subtask to prevent duplicate
+        dynamic subtasks from being re-added on retry.
+        """
+        dyn_prefix = f"{parent_subtask_id}_dyn_"
+        to_remove = [s for s in self._subtasks if s.id.startswith(dyn_prefix)]
+
+        if not to_remove:
+            return
+
+        for s in to_remove:
+            self._subtasks.remove(s)
+            self._subtask_map.pop(s.id, None)
+
+        removed_ids = [s.id for s in to_remove]
+        logger.info(
+            f"[AMITaskExecutor] Removed {len(removed_ids)} dynamic subtasks "
+            f"from failed attempt: {removed_ids}"
+        )
 
     async def execute(self) -> Dict[str, Any]:
         """
@@ -246,75 +367,103 @@ class AMITaskExecutor:
         # Cross-subtask context is passed via prompt (dependency results + browser state).
         agent.reset()
 
-        # Capture browser page state BEFORE reset clears agent's knowledge of it.
+        # Capture browser page state from live Playwright browser (not affected by reset).
         # This gives the new subtask awareness of where the browser currently is.
         browser_context = await self._get_browser_context(agent)
+
+        # Wire up retry notification: emit SSE when provider retries API calls
+        self._setup_retry_notification(agent, subtask)
+
+        # Inject replan tools — agent can dynamically add follow-up tasks
+        replan_toolkit = self._inject_replan_tools(agent, subtask)
 
         # Mark as running and emit event
         subtask.state = SubtaskState.RUNNING
         await self._emit_subtask_running(subtask)
 
         # Execute with retries
-        while subtask.retry_count <= self._max_retries:
-            try:
-                if self._stopped:
-                    return False
+        try:
+            while subtask.retry_count <= self._max_retries:
+                try:
+                    if self._stopped:
+                        return False
 
-                await self._wait_if_paused()
+                    await self._wait_if_paused()
 
-                logger.info(
-                    f"[AMITaskExecutor] Executing subtask {subtask.id} "
-                    f"(attempt {subtask.retry_count + 1}/{self._max_retries + 1})"
-                )
+                    # Reset handoff state on each attempt to prevent stale data
+                    # from a failed previous attempt leaking into the retry
+                    if replan_toolkit:
+                        replan_toolkit._handoff_result = None
 
-                # Set memory context if agent supports it
-                if hasattr(agent, 'set_memory_context') and subtask.workflow_guide:
-                    agent.set_memory_context(
-                        memory_result=None,
-                        memory_level=subtask.memory_level,
-                        workflow_guide=subtask.workflow_guide,
-                    )
                     logger.info(
-                        f"[AMITaskExecutor] Set memory context for {type(agent).__name__}: "
-                        f"level={subtask.memory_level}, workflow_guide_len={len(subtask.workflow_guide)}"
+                        f"[AMITaskExecutor] Executing subtask {subtask.id} "
+                        f"(attempt {subtask.retry_count + 1}/{self._max_retries + 1})"
                     )
 
-                # Unified execution: build prompt and call astep()
-                prompt = self._build_prompt(subtask, browser_context=browser_context)
-                logger.info(
-                    f"[AMITaskExecutor] Executing {type(agent).__name__}.astep() "
-                    f"for subtask {subtask.id}"
-                )
-                response = await agent.astep(prompt)
+                    # Set memory context if agent supports it
+                    if hasattr(agent, 'set_memory_context') and subtask.workflow_guide:
+                        agent.set_memory_context(
+                            memory_result=None,
+                            memory_level=subtask.memory_level,
+                            workflow_guide=subtask.workflow_guide,
+                        )
+                        logger.info(
+                            f"[AMITaskExecutor] Set memory context for {type(agent).__name__}: "
+                            f"level={subtask.memory_level}, workflow_guide_len={len(subtask.workflow_guide)}"
+                        )
 
-                # Extract result
-                subtask.result = response.text
+                    # Unified execution: build prompt and call astep()
+                    prompt = self._build_prompt(subtask, browser_context=browser_context)
+                    logger.info(
+                        f"[AMITaskExecutor] Executing {type(agent).__name__}.astep() "
+                        f"for subtask {subtask.id}"
+                    )
+                    response = await agent.astep(prompt)
 
-                subtask.state = SubtaskState.DONE
-                await self._emit_subtask_state(subtask)
+                    # Check if agent used complete_and_handoff (replan toolkit)
+                    if replan_toolkit and replan_toolkit._handoff_result is not None:
+                        subtask.result = replan_toolkit._handoff_result
+                    else:
+                        subtask.result = response.text
 
-                result_preview = str(subtask.result)[:200] if subtask.result else "(empty)"
-                logger.info(
-                    f"[AMITaskExecutor] Subtask {subtask.id} completed: "
-                    f"{result_preview}"
-                )
-                return True
-
-            except Exception as e:
-                subtask.retry_count += 1
-                subtask.error = str(e)
-
-                logger.warning(
-                    f"[AMITaskExecutor] Subtask {subtask.id} failed "
-                    f"(attempt {subtask.retry_count}): {e}"
-                )
-
-                if subtask.retry_count > self._max_retries:
-                    subtask.state = SubtaskState.FAILED
+                    subtask.state = SubtaskState.DONE
                     await self._emit_subtask_state(subtask)
-                    return False
 
-        return False
+                    result_preview = str(subtask.result)[:200] if subtask.result else "(empty)"
+                    logger.info(
+                        f"[AMITaskExecutor] Subtask {subtask.id} completed: "
+                        f"{result_preview}"
+                    )
+                    return True
+
+                except Exception as e:
+                    subtask.retry_count += 1
+                    subtask.error = str(e)
+
+                    logger.warning(
+                        f"[AMITaskExecutor] Subtask {subtask.id} failed "
+                        f"(attempt {subtask.retry_count}): {e}"
+                    )
+
+                    # Clean up dynamic subtasks added during this failed attempt
+                    # to prevent duplicates on retry
+                    self._remove_dynamic_subtasks(subtask.id)
+
+                    # Reset replan toolkit state for retry
+                    if replan_toolkit:
+                        replan_toolkit._add_tasks_call_count = 0
+                    agent._should_stop_after_tool = False
+
+                    if subtask.retry_count > self._max_retries:
+                        subtask.state = SubtaskState.FAILED
+                        await self._emit_subtask_state(subtask)
+                        return False
+
+            return False
+
+        finally:
+            # Always clean up replan tools to prevent leaking between subtasks
+            self._remove_replan_tools(agent)
 
     async def _get_browser_context(self, agent: "AMIAgent") -> Optional[str]:
         """Get current browser page URL and title if agent has browser tools.
@@ -337,6 +486,45 @@ class AMITaskExecutor:
         except Exception as e:
             logger.debug(f"[AMITaskExecutor] Failed to get browser context: {e}")
             return None
+
+    # =========================================================================
+    # Replan Tool Injection
+    # =========================================================================
+
+    _REPLAN_TOOL_NAMES = [
+        "replan_get_subtask_list",
+        "replan_report_progress",
+        "replan_add_tasks",
+        "replan_complete_and_handoff",
+    ]
+
+    def _inject_replan_tools(self, agent: "AMIAgent", subtask: AMISubtask):
+        """Inject ReplanToolkit tools into the agent for the current subtask.
+
+        Returns the ReplanToolkit instance so the executor can check
+        _handoff_result after execution.
+        """
+        from ..tools.toolkits.replan_toolkit import ReplanToolkit
+
+        toolkit = ReplanToolkit(
+            executor=self,
+            current_subtask_id=subtask.id,
+            agent=agent,
+        )
+        toolkit.set_task_state(self._task_state)
+
+        for tool in toolkit.get_tools():
+            agent.add_tool(tool)
+
+        logger.info(
+            f"[AMITaskExecutor] Injected replan tools for subtask {subtask.id}"
+        )
+        return toolkit
+
+    def _remove_replan_tools(self, agent: "AMIAgent") -> None:
+        """Remove ReplanToolkit tools from agent after subtask completes."""
+        for name in self._REPLAN_TOOL_NAMES:
+            agent.remove_tool(name)
 
     def _build_prompt(self, subtask: AMISubtask, browser_context: Optional[str] = None) -> str:
         """
@@ -395,6 +583,19 @@ No historical workflow guide available. Please explore and complete the task usi
         if dep_results:
             parts.append("## Results from Previous Tasks\n" + "\n\n".join(dep_results))
 
+        # Workspace files — let agent know what data is available
+        workspace_listing = self._get_workspace_listing()
+        if workspace_listing:
+            parts.append(
+                f"## Workspace Files\n"
+                f"The following files were created by earlier tasks. "
+                f"Use `read_note` or `shell_exec` to read relevant files.\n\n"
+                f"```\n{workspace_listing}\n```"
+            )
+
+        # Replan instruction — guide agent to split large tasks
+        parts.append(REPLAN_INSTRUCTION)
+
         return "\n\n".join(parts)
 
     def _save_result_to_file(self, subtask_id: str, result: str) -> str:
@@ -422,6 +623,78 @@ No historical workflow guide available. Please explore and complete the task usi
             f"cannot save result file for {subtask_id}"
         )
         return f"(file save failed, result truncated): {result[:2000]}..."
+
+    def _get_workspace_listing(self) -> Optional[str]:
+        """List files in workspace for prompt injection.
+
+        Returns a compact file listing so the agent knows what data
+        is available from earlier tasks without an extra tool call.
+        """
+        from ..workspace import get_current_manager
+
+        manager = get_current_manager()
+        if not manager:
+            return None
+
+        notes_dir = manager.notes_dir
+        if not notes_dir.exists():
+            return None
+
+        files = sorted(notes_dir.iterdir())
+        if not files:
+            return None
+
+        lines = []
+        for f in files:
+            if f.is_file():
+                size_kb = f.stat().st_size / 1024
+                name = f.name
+                # For read_note, strip .md extension
+                note_name = f.stem if f.suffix == ".md" else f.name
+                lines.append(f"{name} ({size_kb:.1f}KB) — read_note(\"{note_name}\")")
+
+        return "\n".join(lines) if lines else None
+
+    # =========================================================================
+    # Provider Retry Notification
+    # =========================================================================
+
+    def _setup_retry_notification(self, agent: "AMIAgent", subtask: AMISubtask) -> None:
+        """Wire up provider retry callback to emit SSE events."""
+        provider = getattr(agent, '_provider', None)
+        if provider is None or not hasattr(provider, 'set_on_retry_callback'):
+            return
+
+        progress = self._get_subtask_progress(subtask)
+
+        async def on_retry(attempt: int, max_retries: int, delay: float, error_msg: str) -> None:
+            if not self._task_state:
+                return
+            await self._task_state.put_event(AgentReportData(
+                task_id=self.task_id,
+                message=f"{progress} API error, retrying ({attempt}/{max_retries}) in {delay:.0f}s...",
+                report_type="warning",
+            ))
+
+        provider.set_on_retry_callback(on_retry)
+
+    @staticmethod
+    def _classify_error(error_msg: str) -> str:
+        """Classify error into user-friendly category."""
+        if not error_msg:
+            return ""
+        lower = error_msg.lower()
+        if any(kw in lower for kw in ("connection", "timeout", "timed out", "network", "unreachable", "dns")):
+            return "Network connection error, please check your network"
+        if any(kw in lower for kw in ("429", "rate limit", "too many requests")):
+            return "API rate limited, please try again later"
+        if any(kw in lower for kw in ("500", "502", "503", "504", "internal server error")):
+            return "API server unstable, please try again later"
+        if any(kw in lower for kw in ("400", "bad request")):
+            return "API request error"
+        if any(kw in lower for kw in ("401", "unauthorized", "authentication")):
+            return "API key invalid or expired"
+        return "Unexpected error"
 
     # =========================================================================
     # SSE Event Emission
@@ -495,9 +768,12 @@ No historical workflow guide available. Please explore and complete the task usi
                 report_type="success",
             ))
         elif subtask.state == SubtaskState.FAILED:
+            # Classify error for user-friendly message
+            error_hint = self._classify_error(subtask.error) if subtask.error else ""
+            error_suffix = f" ({error_hint})" if error_hint else ""
             await self._task_state.put_event(AgentReportData(
                 task_id=self.task_id,
-                message=f"✗ {progress} 失败: {safe_preview}",
+                message=f"✗ {progress} 失败: {safe_preview}{error_suffix}",
                 report_type="error",
             ))
 

@@ -46,6 +46,10 @@ class BehaviorRecorder:
 
         # Tab tracking
         self._monitored_tabs: Set[str] = set()
+        self._tab_pages: Dict[str, Any] = {}
+        self._context_page_handler: Optional[Callable[[Any], None]] = None
+        self._fallback_tab_counter: int = 0
+        self._original_register_new_page: Optional[Callable[..., Any]] = None
 
         # Navigation deduplication
         self._last_nav_url: Optional[str] = None
@@ -86,6 +90,8 @@ class BehaviorRecorder:
         self.operations.clear()
         self.snapshots.clear()
         self._monitored_tabs.clear()
+        self._tab_pages.clear()
+        self._fallback_tab_counter = 0
 
         logger.info(f"🎯 Starting behavior recording - Session: {self.session_id}")
 
@@ -94,6 +100,7 @@ class BehaviorRecorder:
 
         # Hook into tab creation
         self._hook_new_tab_creation()
+        self._hook_context_page_creation()
 
         # Start dataload URL cleanup task
         self._dataload_cleanup_task = asyncio.create_task(self._cleanup_dataload_urls())
@@ -118,8 +125,32 @@ class BehaviorRecorder:
             "snapshots": self.snapshots.copy(),
         }
 
+        # Restore browser session hooks
+        if self._browser_session and self._original_register_new_page:
+            try:
+                self._browser_session._register_new_page = self._original_register_new_page
+            except Exception as e:
+                logger.debug(f"Failed to restore _register_new_page hook: {e}")
+        self._original_register_new_page = None
+
+        # Remove context page listener
+        if (
+            self._browser_session
+            and self._context_page_handler
+            and getattr(self._browser_session, "_context", None)
+        ):
+            try:
+                self._browser_session._context.remove_listener(
+                    "page",
+                    self._context_page_handler,
+                )
+            except Exception as e:
+                logger.debug(f"Failed to remove context page listener: {e}")
+        self._context_page_handler = None
+
         # Cleanup
         self._monitored_tabs.clear()
+        self._tab_pages.clear()
         self._browser_session = None
         self._recent_dataload_urls.clear()
 
@@ -172,6 +203,11 @@ class BehaviorRecorder:
         if tab_id in self._monitored_tabs:
             return
 
+        # Avoid duplicate setup when multiple hooks observe the same page.
+        for existing_page in self._tab_pages.values():
+            if existing_page is page:
+                return
+
         if page.is_closed():
             logger.debug(f"Tab {tab_id} is closed, skipping")
             return
@@ -218,6 +254,11 @@ class BehaviorRecorder:
             page.on("response", lambda response: self._handle_response(response, tab_id))
 
             self._monitored_tabs.add(tab_id)
+            self._tab_pages[tab_id] = page
+
+            # In shared-browser mode, setup may happen after initial load.
+            # Record current URL so popup navigations are not missed.
+            self._record_initial_navigation(tab_id, page)
             logger.info(f"✅ Recording setup complete for tab {tab_id}")
 
         except Exception as e:
@@ -228,7 +269,11 @@ class BehaviorRecorder:
         if not self._browser_session:
             return
 
+        if self._original_register_new_page is not None:
+            return
+
         original_register = self._browser_session._register_new_page
+        self._original_register_new_page = original_register
 
         async def recording_aware_register(tab_id: str, page: "Page") -> None:
             await original_register(tab_id, page)
@@ -237,6 +282,87 @@ class BehaviorRecorder:
                 await self._setup_for_tab(tab_id, page)
 
         self._browser_session._register_new_page = recording_aware_register
+
+    def _hook_context_page_creation(self) -> None:
+        """Hook into context-level page events for shared-browser popup capture."""
+        if not self._browser_session:
+            return
+
+        context = getattr(self._browser_session, "_context", None)
+        if not context or self._context_page_handler:
+            return
+
+        def handle_new_page(page: "Page") -> None:
+            if not self._is_recording:
+                return
+            self._create_background_task(self._handle_context_new_page(page))
+
+        context.on("page", handle_new_page)
+        self._context_page_handler = handle_new_page
+
+    async def _handle_context_new_page(self, page: "Page") -> None:
+        """Auto-setup recorder for popup/new-tab pages opened during recording."""
+        if not self._is_recording:
+            return
+
+        try:
+            # Give browser session a moment to register this page first.
+            await asyncio.sleep(0.2)
+
+            if page.is_closed():
+                return
+
+            # Skip if already monitored by page identity.
+            for existing_page in self._tab_pages.values():
+                if existing_page is page:
+                    return
+
+            opener = None
+            try:
+                opener = await page.opener()
+            except Exception:
+                opener = None
+
+            # Only track pages opened from already-monitored tabs.
+            if opener is None:
+                return
+            opener_tab_id = self._find_tab_id_by_page(opener)
+            if not opener_tab_id or opener_tab_id not in self._monitored_tabs:
+                return
+
+            tab_id = self._find_tab_id_by_page(page)
+            if not tab_id:
+                self._fallback_tab_counter += 1
+                tab_id = f"auto-tab-{self._fallback_tab_counter:03d}"
+
+            await self._setup_for_tab(tab_id, page)
+        except Exception as e:
+            logger.debug(f"Failed to auto-setup new page recording: {e}")
+
+    def _find_tab_id_by_page(self, page: "Page") -> Optional[str]:
+        """Find tab ID for a Playwright page from known tab registries."""
+        if self._browser_session:
+            for tab_id, known_page in self._browser_session._pages.items():
+                if known_page is page:
+                    return tab_id
+
+        for tab_id, known_page in self._tab_pages.items():
+            if known_page is page:
+                return tab_id
+
+        return None
+
+    def _record_initial_navigation(self, tab_id: str, page: "Page") -> None:
+        """Record current URL as initial navigation for late-attached tabs."""
+        try:
+            url = page.url
+        except Exception:
+            return
+
+        if not url or url in ["about:blank", "chrome://newtab/", "chrome://new-tab-page/"]:
+            return
+
+        self._handle_navigation({"frame": {"url": url}}, tab_id)
 
     # ------------------------------------------------------------------
     # Event Handling
@@ -463,8 +589,10 @@ class BehaviorRecorder:
             # Wait for page to stabilize
             await asyncio.sleep(1.0)
 
-            # Get page from session
-            page = self._browser_session._pages.get(tab_id)
+            # Get page from recorder-tracked tabs first, then session registry.
+            page = self._tab_pages.get(tab_id)
+            if (not page or page.is_closed()) and self._browser_session:
+                page = self._browser_session._pages.get(tab_id)
             if not page or page.is_closed():
                 return
 

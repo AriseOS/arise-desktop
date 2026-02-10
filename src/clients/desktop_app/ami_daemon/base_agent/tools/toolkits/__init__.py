@@ -42,6 +42,7 @@ from .human_toolkit import HumanToolkit
 from .browser_toolkit import BrowserToolkit
 from .memory_toolkit import MemoryToolkit
 from .task_planning_toolkit import TaskPlanningToolkit
+from .replan_toolkit import ReplanToolkit
 from .long_term_memory_toolkit import (
     LongTermMemoryToolkit,
     LONG_TERM_MEMORY_PROMPT_SECTION,
@@ -87,6 +88,7 @@ __all__ = [
 
     # Task planning
     "TaskPlanningToolkit",
+    "ReplanToolkit",
 
     # Document toolkits (for DocumentAgent)
     "FileToolkit",

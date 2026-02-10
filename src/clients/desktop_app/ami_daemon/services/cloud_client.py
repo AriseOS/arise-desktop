@@ -143,58 +143,6 @@ class CloudClient:
         response.raise_for_status()
         return response.json()
 
-    async def upload_recording(
-        self,
-        operations: List[Dict[str, Any]],
-        task_description: str,
-        user_query: Optional[str] = None,
-        user_id: str = "default_user",
-        recording_id: Optional[str] = None,
-        dom_snapshots: Optional[Dict[str, dict]] = None,
-        add_to_memory: Optional[bool] = None,
-        generate_embeddings: Optional[bool] = None
-    ) -> str:
-        """Upload recording data to Cloud Backend
-
-        Args:
-            operations: List of operation dictionaries
-            task_description: User's description of what they did
-            user_query: User's description of what they want to do
-            user_id: User ID (default: "default_user")
-            recording_id: Optional recording ID (use App Backend's session_id to keep IDs in sync)
-            dom_snapshots: Optional URL -> DOM dict mapping for pre-generating scripts
-            add_to_memory: Optional toggle to add to workflow memory
-            generate_embeddings: Optional toggle for embedding generation
-
-        Returns:
-            recording_id: Cloud Backend recording ID
-        """
-        payload = {
-            "user_id": user_id,
-            "user_api_key": self.user_api_key,
-            "task_description": task_description,
-            "user_query": user_query,
-            "operations": operations,
-            "recording_id": recording_id
-        }
-
-        if add_to_memory is not None:
-            payload["add_to_memory"] = add_to_memory
-        if generate_embeddings is not None:
-            payload["generate_embeddings"] = generate_embeddings
-
-        # Include DOM snapshots if provided
-        if dom_snapshots:
-            payload["dom_snapshots"] = dom_snapshots
-            logger.info(f"Uploading recording with {len(dom_snapshots)} DOM snapshots")
-
-        response = await self.client.post(
-            "/api/v1/recordings",
-            json=payload
-        )
-        response.raise_for_status()
-        return response.json()["recording_id"]
-
     async def update_recording_metadata(
         self,
         recording_id: str,

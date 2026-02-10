@@ -345,17 +345,6 @@ class CurrentOperationsResponse(BaseModel):
     operations: List[Dict[str, Any]] = []
 
 
-class UploadRecordingRequest(BaseModel):
-    task_description: str
-    user_query: Optional[str] = None  # What user wants to do
-    user_id: str
-
-
-class UploadRecordingResponse(BaseModel):
-    recording_id: str
-    status: str
-
-
 class AnalyzeRecordingRequest(BaseModel):
     """Request model for analyzing recording"""
     user_id: str  # session_id is in URL path
@@ -1106,56 +1095,6 @@ async def delete_recording(session_id: str, user_id: str):
         raise
     except Exception as e:
         logger.error(f"Failed to delete recording: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ============================================================================
-# Recording Upload API
-# ============================================================================
-
-@app.post("/api/v1/recordings/{session_id}/upload", response_model=UploadRecordingResponse)
-async def upload_recording_to_cloud(
-    session_id: str,
-    request: UploadRecordingRequest,
-    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key")
-):
-    """Upload recording to Cloud Backend for intent extraction
-
-    Headers:
-        X-Ami-API-Key: User's Ami API key (optional, for API Proxy)
-    """
-    try:
-        logger.info(f"Uploading recording from session: {session_id}")
-
-        # Update cloud client with user's API key if provided
-        update_cloud_client_api_key(x_ami_api_key)
-
-        # Load operations from local storage (includes dom_snapshots if available)
-        recording_data = storage_manager.get_recording(
-            request.user_id, session_id
-        )
-        operations = recording_data.get("operations", [])
-        dom_snapshots = recording_data.get("dom_snapshots", {})
-
-        # Upload recording to Cloud Backend (with task_description, user_query, and DOM snapshots)
-        # Use session_id as recording_id to keep IDs in sync between local and cloud
-        recording_id = await cloud_client.upload_recording(
-            operations=operations,
-            task_description=request.task_description,
-            user_query=request.user_query,
-            user_id=request.user_id,
-            recording_id=session_id,
-            dom_snapshots=dom_snapshots
-        )
-        logger.info(f"Recording uploaded: {recording_id}")
-
-        return {
-            "recording_id": recording_id,
-            "status": "success"
-        }
-
-    except Exception as e:
-        logger.error(f"Failed to upload recording: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

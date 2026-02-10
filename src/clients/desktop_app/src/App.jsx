@@ -15,10 +15,8 @@ import SetupPage from "./pages/SetupPage";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import SettingsPage from "./pages/SettingsPage";
-import RecordingPage from "./pages/RecordingPage";
 import QuickStartPage from "./pages/QuickStartPage";
 import RecordingAnalysisPage from "./pages/RecordingAnalysisPage";
-import UserFlowsPage from "./pages/UserFlowsPage";
 import GenerationPage from "./pages/GenerationPage";
 import MyWorkflowsPage from "./pages/MyWorkflowsPage";
 import WorkflowDetailPage from "./pages/WorkflowDetailPage";
@@ -661,29 +659,9 @@ function App() {
       case "main":
         return renderMainPage();
 
-      case "recording":
-        return (
-          <RecordingPage
-            session={session}
-            onNavigate={navigate}
-            showStatus={showStatus}
-            version={versionInfo?.version || '1.0.0'}
-          />
-        );
-
       case "quick-start":
         return (
           <QuickStartPage
-            session={session}
-            onNavigate={navigate}
-            showStatus={showStatus}
-            version={versionInfo?.version || '1.0.0'}
-          />
-        );
-
-      case "user-flows":
-        return (
-          <UserFlowsPage
             session={session}
             onNavigate={navigate}
             showStatus={showStatus}
@@ -878,7 +856,7 @@ function App() {
   // Bottom navigation bar - New 3-tab design: Ami, Library, Explore
   const renderBottomNav = () => {
     // Hide navigation on certain pages
-    const hideNavPages = ["quick-start", "recording", "execution-monitor", "execution-result", "workflow-execution-live"];
+    const hideNavPages = ["quick-start", "execution-monitor", "execution-result", "workflow-execution-live"];
     if (hideNavPages.includes(currentPage)) {
       return null;
     }
