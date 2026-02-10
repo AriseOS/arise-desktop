@@ -11,7 +11,8 @@ import '../styles/CognitivePhraseDetailPage.css';
 const nodeTypes = { custom: CustomNode };
 const edgeTypes = { floating: SimpleFloatingEdge };
 
-function CognitivePhraseDetailPage({ session, onNavigate, showStatus, phraseId }) {
+function CognitivePhraseDetailPage({ session, onNavigate, showStatus, phraseId, source = 'private' }) {
+  const isPublic = source === 'public';
   const [phrase, setPhrase] = useState(null);
   const [states, setStates] = useState([]);
   const [intentSequences, setIntentSequences] = useState([]);
@@ -42,7 +43,9 @@ function CognitivePhraseDetailPage({ session, onNavigate, showStatus, phraseId }
 
     const fetchPhrase = async () => {
       try {
-        const data = await api.getCognitivePhrase(phraseId);
+        const data = isPublic
+          ? await api.getPublicPhrase(phraseId)
+          : await api.getCognitivePhrase(phraseId);
         setPhrase(data.phrase);
         setStates(data.states || []);
         setIntentSequences(data.intent_sequences || []);
@@ -55,7 +58,7 @@ function CognitivePhraseDetailPage({ session, onNavigate, showStatus, phraseId }
     };
 
     fetchPhrase();
-  }, [phraseId]);
+  }, [phraseId, isPublic]);
 
   // Update graph when data or expansion state changes
   useEffect(() => {
@@ -119,8 +122,8 @@ function CognitivePhraseDetailPage({ session, onNavigate, showStatus, phraseId }
         <div className="error-container">
           <Icon name="alertCircle" />
           <h3>Memory not found</h3>
-          <button className="btn btn-primary" onClick={() => onNavigate('memories')}>
-            Back to Memories
+          <button className="btn btn-primary" onClick={() => onNavigate(isPublic ? 'workflows' : 'memories')}>
+            {isPublic ? 'Back to Explore' : 'Back to Memories'}
           </button>
         </div>
       </div>
@@ -131,17 +134,19 @@ function CognitivePhraseDetailPage({ session, onNavigate, showStatus, phraseId }
     <div className="cognitive-phrase-detail-page">
       {/* Header */}
       <div className="page-header">
-        <button className="btn-icon" onClick={() => onNavigate('memories')} aria-label="Go Back">
+        <button className="btn-icon" onClick={() => onNavigate(isPublic ? 'workflows' : 'memories')} aria-label="Go Back">
           <Icon name="arrowLeft" />
         </button>
         <h1 className="page-title">{phrase.label || 'Unnamed Workflow'}</h1>
-        <button
-          className="btn-icon-danger"
-          onClick={() => setDeleteConfirm(true)}
-          title="Delete"
-        >
-          <Icon name="trash" />
-        </button>
+        {!isPublic && (
+          <button
+            className="btn-icon-danger"
+            onClick={() => setDeleteConfirm(true)}
+            title="Delete"
+          >
+            <Icon name="trash" />
+          </button>
+        )}
       </div>
 
       {/* Description */}

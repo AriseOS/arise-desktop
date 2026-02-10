@@ -28,6 +28,7 @@ import RecordingsLibraryPage from "./pages/RecordingsLibraryPage";
 import RecordingDetailPage from "./pages/RecordingDetailPage";
 import CognitivePhrasesPage from "./pages/CognitivePhrasesPage";
 import CognitivePhraseDetailPage from "./pages/CognitivePhraseDetailPage";
+import ExplorePage from "./pages/ExplorePage";
 // MetaflowPreviewPage removed - MetaFlow is now internal, users work with Workflows directly
 // DataManagementPage removed - Data is now per-workflow, see WorkflowDetailPage "Data" tab
 import WorkflowExecutionLivePage from "./pages/WorkflowExecutionLivePage";
@@ -682,11 +683,10 @@ function App() {
 
       case "workflows":
         return (
-          <MyWorkflowsPage
+          <ExplorePage
             session={session}
             onNavigate={navigate}
-            onLogout={() => { }}
-            version={versionInfo?.version || '1.0.0'}
+            showStatus={showStatus}
           />
         );
 
@@ -799,6 +799,7 @@ function App() {
             onNavigate={navigate}
             showStatus={showStatus}
             phraseId={pageParams.phraseId}
+            source={pageParams.source || 'private'}
             version={versionInfo?.version || '1.0.0'}
           />
         );

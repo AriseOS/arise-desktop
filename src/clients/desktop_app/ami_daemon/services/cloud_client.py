@@ -1562,6 +1562,57 @@ class CloudClient:
         logger.info(f"[CloudClient] Cognitive phrase deleted: {phrase_id}")
         return result
 
+    async def list_public_phrases(self, limit: int = 50) -> dict:
+        """List CognitivePhrases from public memory.
+
+        Args:
+            limit: Maximum number of phrases to return
+
+        Returns:
+            dict with:
+                - success: bool
+                - phrases: list of phrase objects
+                - total: int
+        """
+        headers = {}
+        if self.user_api_key:
+            headers["X-Ami-API-Key"] = self.user_api_key
+
+        logger.info(f"[CloudClient] Listing public phrases (limit={limit})")
+
+        response = await self.client.get(
+            "/api/v1/memory/public/phrases",
+            params={"limit": limit},
+            headers=headers,
+        )
+        response.raise_for_status()
+        result = response.json()
+
+        logger.info(f"[CloudClient] Found {result.get('total', 0)} public phrases")
+        return result
+
+    async def get_public_phrase(self, phrase_id: str) -> dict:
+        """Get a single CognitivePhrase from public memory with details.
+
+        Args:
+            phrase_id: CognitivePhrase ID
+
+        Returns:
+            dict with phrase, states, intent_sequences
+        """
+        headers = {}
+        if self.user_api_key:
+            headers["X-Ami-API-Key"] = self.user_api_key
+
+        logger.info(f"[CloudClient] Getting public phrase: {phrase_id}")
+
+        response = await self.client.get(
+            f"/api/v1/memory/public/phrases/{phrase_id}",
+            headers=headers,
+        )
+        response.raise_for_status()
+        return response.json()
+
     async def share_cognitive_phrase(
         self, phrase_id: str, user_id: Optional[str] = None
     ) -> dict:

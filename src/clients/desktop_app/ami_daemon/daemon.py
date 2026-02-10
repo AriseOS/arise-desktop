@@ -1451,6 +1451,66 @@ async def delete_cognitive_phrase(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/v1/memory/public/phrases")
+async def list_public_phrases(
+    limit: int = 50,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
+):
+    """
+    List CognitivePhrases from public memory (Proxy to Cloud Backend)
+
+    Query Parameters:
+        limit: Maximum number of phrases to return (default: 50)
+    """
+    try:
+        if not cloud_client:
+            return {"success": False, "error": "Cloud client not initialized"}
+
+        if x_ami_api_key:
+            cloud_client.set_user_api_key(x_ami_api_key)
+
+        logger.info(f"[memory/public] Proxying list public phrases to Cloud Backend (limit={limit})...")
+
+        result = await cloud_client.list_public_phrases(limit=limit)
+        logger.info(f"[memory/public] Found {result.get('total', 0)} public phrases")
+        return result
+
+    except Exception as e:
+        logger.error(f"[memory/public] Failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/memory/public/phrases/{phrase_id}")
+async def get_public_phrase(
+    phrase_id: str,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
+):
+    """
+    Get a single CognitivePhrase from public memory (Proxy to Cloud Backend)
+    """
+    try:
+        if not cloud_client:
+            return {"success": False, "error": "Cloud client not initialized"}
+
+        if x_ami_api_key:
+            cloud_client.set_user_api_key(x_ami_api_key)
+
+        logger.info(f"[memory/public] Proxying get public phrase to Cloud Backend: {phrase_id}...")
+
+        result = await cloud_client.get_public_phrase(phrase_id)
+        if not result.get("success"):
+            raise HTTPException(status_code=404, detail=f"Public phrase {phrase_id} not found")
+
+        logger.info(f"[memory/public] Got public phrase: {phrase_id}")
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[memory/public] Failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/v1/memory/share")
 async def share_cognitive_phrase(
     data: dict,

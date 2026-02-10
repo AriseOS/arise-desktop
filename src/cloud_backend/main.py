@@ -2248,6 +2248,108 @@ async def delete_cognitive_phrase(
         raise HTTPException(500, f"Failed to delete cognitive phrase: {str(e)}")
 
 
+@app.get("/api/v1/memory/public/phrases")
+async def list_public_phrases(
+    limit: Optional[int] = 50,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
+):
+    """
+    List CognitivePhrases from public memory.
+
+    Returns shared phrases ordered by contributed_at (newest first).
+
+    Query Parameters:
+        limit: Maximum number of phrases to return (default: 50)
+
+    Returns:
+        {
+            "success": true,
+            "phrases": [...],
+            "total": 10
+        }
+    """
+    try:
+        from src.common.memory.memory_service import get_public_memory
+        wm = get_public_memory().workflow_memory
+
+        phrases = wm.phrase_manager.list_phrases(limit=limit)
+
+        phrase_list = []
+        for phrase in phrases:
+            phrase_list.append({
+                "id": phrase.id,
+                "label": phrase.label,
+                "description": phrase.description,
+                "contributor_id": phrase.contributor_id,
+                "contributed_at": phrase.contributed_at,
+                "use_count": phrase.use_count,
+                "upvote_count": phrase.upvote_count,
+                "created_at": phrase.created_at,
+            })
+
+        return {
+            "success": True,
+            "phrases": phrase_list,
+            "total": len(phrase_list),
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to list public phrases: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Failed to list public phrases: {str(e)}")
+
+
+@app.get("/api/v1/memory/public/phrases/{phrase_id}")
+async def get_public_phrase(
+    phrase_id: str,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
+):
+    """
+    Get a single CognitivePhrase from public memory with its States and IntentSequences.
+    """
+    try:
+        from src.common.memory.memory_service import get_public_memory
+        wm = get_public_memory().workflow_memory
+
+        phrase = wm.phrase_manager.get_phrase(phrase_id)
+        if not phrase:
+            raise HTTPException(404, f"Public phrase not found: {phrase_id}")
+
+        states = []
+        for state_id in phrase.state_path:
+            state = wm.state_manager.get_state(state_id)
+            if state:
+                states.append(state.to_dict())
+
+        intent_sequences = []
+        if phrase.execution_plan:
+            for step in phrase.execution_plan:
+                for seq_id in step.in_page_sequence_ids:
+                    seq = wm.intent_sequence_manager.get_sequence(seq_id)
+                    if seq:
+                        intent_sequences.append(seq.to_dict())
+                if step.navigation_sequence_id:
+                    seq = wm.intent_sequence_manager.get_sequence(step.navigation_sequence_id)
+                    if seq:
+                        intent_sequences.append(seq.to_dict())
+
+        return {
+            "success": True,
+            "phrase": phrase.to_dict(),
+            "states": states,
+            "intent_sequences": intent_sequences,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get public phrase: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Failed to get public phrase: {str(e)}")
+
+
 @app.post("/api/v1/memory/share")
 async def share_cognitive_phrase(
     data: dict,
