@@ -37,6 +37,7 @@ import BackendErrorPage from "./pages/BackendErrorPage";
 import AgentPage from "./pages/AgentPage";
 import MemoryPage from "./pages/MemoryPage";
 import HomePage from "./pages/HomePage";
+import ExplorePage from "./pages/ExplorePage";
 
 // Import setup styles
 import "./styles/SetupPage.css";
@@ -691,6 +692,15 @@ function App() {
           />
         );
 
+      case "explore":
+        return (
+          <ExplorePage
+            session={session}
+            onNavigate={navigate}
+            showStatus={showStatus}
+          />
+        );
+
       case "workflows":
         return (
           <MyWorkflowsPage
@@ -810,6 +820,7 @@ function App() {
             onNavigate={navigate}
             showStatus={showStatus}
             phraseId={pageParams.phraseId}
+            isPublic={pageParams.isPublic || false}
             version={versionInfo?.version || '1.0.0'}
           />
         );
@@ -876,7 +887,7 @@ function App() {
     const navItems = [
       { id: "main", icon: "robot", label: "Ami" },
       { id: "memories", icon: "brain", label: "Memories" },
-      { id: "workflows", icon: "compass", label: "Explore" },
+      { id: "explore", icon: "compass", label: "Explore" },
     ];
 
     return (

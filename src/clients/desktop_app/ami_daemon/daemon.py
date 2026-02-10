@@ -1580,9 +1580,41 @@ async def list_cognitive_phrases(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/v1/memory/phrases/public")
+async def list_public_cognitive_phrases(
+    limit: int = 50,
+    sort: str = "popular",
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
+):
+    """
+    List CognitivePhrases from public (community) memory (Proxy to Cloud Backend)
+
+    Query Parameters:
+        limit: Maximum number of phrases to return (default: 50)
+        sort: Sort order - "popular" or "recent"
+    """
+    try:
+        if not cloud_client:
+            return {"success": False, "error": "Cloud client not initialized"}
+
+        if x_ami_api_key:
+            cloud_client.set_user_api_key(x_ami_api_key)
+
+        logger.info(f"[memory/public] Proxying list request to Cloud Backend (limit={limit}, sort={sort})...")
+
+        result = await cloud_client.list_public_phrases(limit=limit, sort=sort)
+        logger.info(f"[memory/public] Found {result.get('total', 0)} public phrases")
+        return result
+
+    except Exception as e:
+        logger.error(f"[memory/public] Failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/v1/memory/phrases/{phrase_id}")
 async def get_cognitive_phrase(
     phrase_id: str,
+    source: Optional[str] = None,
     x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
 ):
@@ -1592,8 +1624,11 @@ async def get_cognitive_phrase(
     Path Parameters:
         phrase_id: CognitivePhrase ID
 
+    Query Parameters:
+        source: "public" to read from public memory
+
     Headers:
-        X-User-Id: User ID for private memory routing (required)
+        X-User-Id: User ID for private memory routing (required for private)
     """
     try:
         if not cloud_client:
@@ -1602,9 +1637,9 @@ async def get_cognitive_phrase(
         if x_ami_api_key:
             cloud_client.set_user_api_key(x_ami_api_key)
 
-        logger.info(f"[memory/phrases] Proxying get request to Cloud Backend: {phrase_id}...")
+        logger.info(f"[memory/phrases] Proxying get request to Cloud Backend: {phrase_id} (source={source})...")
 
-        result = await cloud_client.get_cognitive_phrase(phrase_id, user_id=x_user_id)
+        result = await cloud_client.get_cognitive_phrase(phrase_id, user_id=x_user_id, source=source)
         if not result.get("success"):
             raise HTTPException(status_code=404, detail=f"Phrase {phrase_id} not found")
 
@@ -1653,6 +1688,49 @@ async def delete_cognitive_phrase(
         raise
     except Exception as e:
         logger.error(f"[memory/phrases] Failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/memory/publish")
+async def publish_cognitive_phrase(
+    request: dict,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+):
+    """
+    Publish a CognitivePhrase from private memory to public memory (Proxy to Cloud Backend)
+
+    Body:
+        { "phrase_id": "uuid" }
+
+    Headers:
+        X-User-Id: User ID who owns the phrase (required)
+    """
+    try:
+        if not cloud_client:
+            return {"success": False, "error": "Cloud client not initialized"}
+
+        phrase_id = request.get("phrase_id")
+        if not phrase_id:
+            raise HTTPException(status_code=400, detail="Missing phrase_id")
+
+        user_id = x_user_id
+        if not user_id:
+            raise HTTPException(status_code=400, detail="Missing X-User-Id header")
+
+        if x_ami_api_key:
+            cloud_client.set_user_api_key(x_ami_api_key)
+
+        logger.info(f"[memory/publish] Publishing phrase {phrase_id} for user {user_id}...")
+
+        result = await cloud_client.publish_phrase(user_id=user_id, phrase_id=phrase_id)
+        logger.info(f"[memory/publish] Published: public_id={result.get('public_phrase_id')}")
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[memory/publish] Failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

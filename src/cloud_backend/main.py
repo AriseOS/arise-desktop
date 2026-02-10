@@ -2090,9 +2090,71 @@ async def list_cognitive_phrases(
         raise HTTPException(500, f"Failed to list cognitive phrases: {str(e)}")
 
 
+@app.get("/api/v1/memory/phrases/public")
+async def list_public_cognitive_phrases(
+    limit: Optional[int] = 50,
+    sort: Optional[str] = "popular",
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
+):
+    """
+    List CognitivePhrases from public (community) memory.
+
+    Query Parameters:
+        limit: Maximum number of phrases to return (default: 50)
+        sort: Sort order - "popular" (by use_count), "recent" (by contributed_at)
+
+    Returns:
+        {
+            "success": true,
+            "phrases": [...],
+            "total": 10
+        }
+    """
+    try:
+        from src.common.memory.memory_service import get_public_memory
+        pub = get_public_memory()
+        if not pub or not pub.workflow_memory:
+            return {"success": True, "phrases": [], "total": 0}
+
+        phrases = pub.workflow_memory.phrase_manager.list_phrases(limit=limit)
+
+        phrase_list = []
+        for phrase in phrases:
+            phrase_list.append({
+                "id": phrase.id,
+                "label": phrase.label,
+                "description": phrase.description,
+                "contributor_id": phrase.contributor_id,
+                "contributed_at": phrase.contributed_at,
+                "use_count": phrase.use_count,
+                "upvote_count": phrase.upvote_count,
+                "state_count": len(phrase.state_path) if phrase.state_path else 0,
+                "created_at": phrase.created_at,
+            })
+
+        # Sort
+        if sort == "recent":
+            phrase_list.sort(key=lambda p: p.get("contributed_at") or 0, reverse=True)
+        else:
+            phrase_list.sort(key=lambda p: p.get("use_count", 0), reverse=True)
+
+        return {
+            "success": True,
+            "phrases": phrase_list,
+            "total": len(phrase_list)
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to list public cognitive phrases: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Failed to list public cognitive phrases: {str(e)}")
+
+
 @app.get("/api/v1/memory/phrases/{phrase_id}")
 async def get_cognitive_phrase(
     phrase_id: str,
+    source: Optional[str] = None,
     x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
     x_user_id: Optional[str] = Header(None, alias="X-User-Id")
 ):
@@ -2104,7 +2166,10 @@ async def get_cognitive_phrase(
 
     Headers:
         X-Ami-API-Key: User's API key (optional)
-        X-User-Id: User ID for private memory routing (required)
+        X-User-Id: User ID for private memory routing (required for private)
+
+    Query Parameters:
+        source: "public" to read from public memory (default: private)
 
     Path Parameters:
         phrase_id: CognitivePhrase ID
@@ -2112,34 +2177,28 @@ async def get_cognitive_phrase(
     Returns:
         {
             "success": true,
-            "phrase": {
-                "id": "uuid",
-                "label": "short label",
-                "description": "description",
-                "state_path": ["state1", "state2"],
-                "action_path": ["action1"],
-                "access_count": 5,
-                "success_count": 3,
-                "created_at": 1234567890,
-                "duration": 5000,
-                "execution_plan": [...]
-            },
+            "phrase": {...},
             "states": [...],
             "intent_sequences": [...]
         }
 
     Errors:
-        400: Missing X-User-Id header
+        400: Missing X-User-Id header (private only)
         404: Phrase not found
-        503: Memory service not initialized
         500: Failed to get phrase
     """
-    if not x_user_id:
-        raise HTTPException(400, "Missing X-User-Id header")
-
     try:
-        from src.common.memory.memory_service import get_private_memory
-        wm = get_private_memory(x_user_id).workflow_memory
+        if source == "public":
+            from src.common.memory.memory_service import get_public_memory
+            pub = get_public_memory()
+            if not pub or not pub.workflow_memory:
+                raise HTTPException(404, "Public memory not available")
+            wm = pub.workflow_memory
+        else:
+            if not x_user_id:
+                raise HTTPException(400, "Missing X-User-Id header")
+            from src.common.memory.memory_service import get_private_memory
+            wm = get_private_memory(x_user_id).workflow_memory
 
         # Get the phrase
         phrase = wm.phrase_manager.get_phrase(phrase_id)

@@ -1014,8 +1014,9 @@ export const api = {
    * @param {string} phraseId - CognitivePhrase ID
    * @returns {Promise<object>} Response with phrase, states, and intent_sequences
    */
-  async getCognitivePhrase(phraseId) {
-    return await this.callAppBackend(`/api/v1/memory/phrases/${phraseId}`);
+  async getCognitivePhrase(phraseId, { source } = {}) {
+    const params = source ? `?source=${source}` : '';
+    return await this.callAppBackend(`/api/v1/memory/phrases/${phraseId}${params}`);
   },
 
   /**
@@ -1027,6 +1028,30 @@ export const api = {
   async deleteCognitivePhrase(phraseId) {
     return await this.callAppBackend(`/api/v1/memory/phrases/${phraseId}`, {
       method: 'DELETE'
+    });
+  },
+
+  /**
+   * Publish a cognitive phrase from private memory to public memory
+   *
+   * @param {string} phraseId - CognitivePhrase ID to publish
+   * @returns {Promise<object>} Result with success and public_phrase_id
+   */
+  /**
+   * List public (community) cognitive phrases
+   *
+   * @param {number} limit - Maximum number of phrases to return
+   * @param {string} sort - Sort order: "popular" or "recent"
+   * @returns {Promise<object>} Result with phrases array and total count
+   */
+  async listPublicCognitivePhrases(limit = 50, sort = 'popular') {
+    return await this.callAppBackend(`/api/v1/memory/phrases/public?limit=${limit}&sort=${sort}`);
+  },
+
+  async publishCognitivePhrase(phraseId) {
+    return await this.callAppBackend('/api/v1/memory/publish', {
+      method: 'POST',
+      body: JSON.stringify({ phrase_id: phraseId }),
     });
   },
 
