@@ -1444,32 +1444,25 @@ async def query_cognitive_phrase(
     try:
         from src.common.memory.memory_service import get_private_memory, get_public_memory
 
-        # Search private memory first
+        # Reasoner now has both private + public memory injected
         user_reasoner = await _get_reasoner_for_user(x_ami_api_key, user_id)
-        can_satisfy, matching_phrases, reasoning = await user_reasoner.phrase_checker.check(query)
-        source = "private"
-        wm = get_private_memory(user_id).workflow_memory
 
-        # If private didn't match, try public memory
-        if not can_satisfy or not matching_phrases:
-            try:
-                public_reasoner = await _get_reasoner_for_user(
-                    x_ami_api_key, user_id=None, use_public=True
+        # Merged phrase check: single LLM call across private + public
+        private_wm = get_private_memory(user_id).workflow_memory
+        public_memory_service = get_public_memory()
+        public_wm = public_memory_service.workflow_memory if public_memory_service else None
+
+        private_phrases = private_wm.phrase_manager.list_phrases()
+        public_phrases = public_wm.phrase_manager.list_phrases() if public_wm else []
+
+        if private_phrases or public_phrases:
+            can_satisfy, matching_phrases, reasoning, source = (
+                await user_reasoner.phrase_checker.check_merged(
+                    query, private_phrases, public_phrases
                 )
-                pub_ok, pub_phrases, pub_reasoning = await public_reasoner.phrase_checker.check(query)
-                if pub_ok and pub_phrases:
-                    can_satisfy = pub_ok
-                    matching_phrases = pub_phrases
-                    reasoning = pub_reasoning
-                    source = "public"
-                    wm = get_public_memory().workflow_memory
-                    # Atomically increment use_count on public phrase
-                    try:
-                        wm.phrase_manager.increment_use_count(pub_phrases[0].id)
-                    except Exception as uc_err:
-                        logger.warning(f"Failed to increment use_count: {uc_err}")
-            except Exception as pub_err:
-                logger.warning(f"Public phrase query failed: {pub_err}")
+            )
+        else:
+            can_satisfy, matching_phrases, reasoning, source = False, [], "No phrases", "private"
 
         if not can_satisfy or not matching_phrases:
             logger.info(f"No CognitivePhrase found for: {query[:50]}...")
@@ -1483,6 +1476,16 @@ async def query_cognitive_phrase(
         # Get the first (best) matching phrase
         phrase = matching_phrases[0]
 
+        # Use the correct memory based on source
+        wm = public_wm if source == "public" and public_wm else private_wm
+
+        # Increment use_count for public phrases
+        if source == "public" and public_wm:
+            try:
+                public_wm.phrase_manager.increment_use_count(phrase.id)
+            except Exception as uc_err:
+                logger.warning(f"Failed to increment use_count: {uc_err}")
+
         # Expand state_path and action_path to full objects
         states = []
         for state_id in phrase.state_path:
@@ -1491,7 +1494,6 @@ async def query_cognitive_phrase(
                 states.append(state.to_dict() if hasattr(state, 'to_dict') else state)
 
         actions = []
-        # action_path contains action types, we need to get actual actions between states
         for i in range(len(phrase.state_path) - 1):
             source_id = phrase.state_path[i]
             target_id = phrase.state_path[i + 1]
@@ -1515,7 +1517,7 @@ async def query_cognitive_phrase(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ CognitivePhrase query failed: {e}")
+        logger.error(f"CognitivePhrase query failed: {e}")
         import traceback
         traceback.print_exc()
         raise HTTPException(500, f"CognitivePhrase query failed: {str(e)}")
@@ -1588,10 +1590,9 @@ async def query_memory(
         raise HTTPException(400, "Missing user_id")
 
     try:
-        # Get Reasoner instance with user's private memory
+        # Reasoner has both private + public memory; handles merged queries internally
         user_reasoner = await _get_reasoner_for_user(x_ami_api_key, user_id)
 
-        # Call unified query on private memory
         result = await user_reasoner.query(
             target=target,
             current_state=current_state,
@@ -1600,30 +1601,9 @@ async def query_memory(
             as_type=as_type,
             top_k=top_k,
         )
-        source = "private"
 
-        # For task queries: if private didn't find a match, try public memory
-        if result.query_type == "task" and not result.success:
-            try:
-                public_reasoner = await _get_reasoner_for_user(
-                    x_ami_api_key, user_id=None, use_public=True
-                )
-                public_result = await public_reasoner.query(
-                    target=target, as_type="task",
-                )
-                if public_result.success:
-                    result = public_result
-                    source = "public"
-                    # Atomically increment use_count on the public CognitivePhrase
-                    if result.cognitive_phrase:
-                        from src.common.memory.memory_service import get_public_memory
-                        try:
-                            pub_wm = get_public_memory().workflow_memory
-                            pub_wm.phrase_manager.increment_use_count(result.cognitive_phrase.id)
-                        except Exception as uc_err:
-                            logger.warning(f"Failed to increment use_count: {uc_err}")
-            except Exception as pub_err:
-                logger.warning(f"Public memory query failed, using private result: {pub_err}")
+        # Source comes from Reasoner's internal logic (metadata or result.source)
+        source = result.metadata.get("source", "private")
 
         # Log IntentSequence usage for debugging quick-task behavior
         intent_seq_used = result.query_type == "action"
@@ -1774,22 +1754,50 @@ async def get_state_by_url(
         raise HTTPException(400, "Missing url")
 
     try:
-        from src.common.memory.memory_service import get_private_memory
-        wm = get_private_memory(user_id).workflow_memory
+        from src.common.memory.memory_service import get_private_memory, get_public_memory
 
-        state = wm.find_state_by_url(url)
+        # Search both private and public memory
+        priv_wm = get_private_memory(user_id).workflow_memory
+        public_memory_service = get_public_memory()
+        pub_wm = public_memory_service.workflow_memory if public_memory_service else None
+
+        state = priv_wm.find_state_by_url(url)
+        source = "private"
+        wm = priv_wm
+
+        # If not found in private, try public
+        if not state and pub_wm:
+            state = pub_wm.find_state_by_url(url)
+            if state:
+                source = "public"
+                wm = pub_wm
+
         if not state:
             raise HTTPException(404, f"No State found for URL: {url}")
 
-        # Get linked IntentSequences
+        # Get linked IntentSequences from the found state's memory
         sequences = []
         if wm.intent_sequence_manager:
             sequences = wm.intent_sequence_manager.list_by_state(state.id)
+
+        # Also merge sequences from the other memory if both have the URL
+        if source == "private" and pub_wm:
+            pub_state = pub_wm.find_state_by_url(url)
+            if pub_state and pub_wm.intent_sequence_manager:
+                pub_sequences = pub_wm.intent_sequence_manager.list_by_state(pub_state.id)
+                # Deduplicate by description
+                existing_descs = {(s.description or "").strip().lower() for s in sequences}
+                for ps in pub_sequences:
+                    desc = (ps.description or "").strip().lower()
+                    if desc and desc not in existing_descs:
+                        sequences.append(ps)
+                        existing_descs.add(desc)
 
         return {
             "success": True,
             "state": state.to_dict(),
             "intent_sequences": [seq.to_dict() for seq in sequences],
+            "source": source,
         }
 
     except HTTPException:
@@ -2452,13 +2460,20 @@ async def _get_reasoner_for_user(
     max_depth = reasoner_config.get("max_depth", 3)
     similarity_thresholds = reasoner_config.get("similarity_thresholds", {})
 
-    # Create Reasoner with user's private memory
+    # Inject public memory for merged queries (skip when already using public)
+    public_wm = None
+    if not use_public:
+        public_memory_service = get_public_memory()
+        public_wm = public_memory_service.workflow_memory if public_memory_service else None
+
+    # Create Reasoner with user's memory + public memory
     reasoner = Reasoner(
         memory=user_memory.workflow_memory,
         llm_provider=llm_provider,
         embedding_service=embedding_service,
         max_depth=max_depth,
         similarity_thresholds=similarity_thresholds,
+        public_memory=public_wm,
     )
 
     return reasoner

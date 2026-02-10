@@ -95,6 +95,11 @@ class QueryResult(BaseModel):
         default_factory=list, description="Subtask decomposition results for task queries"
     )
 
+    # Memory source: "private", "public", or "merged"
+    source: Optional[str] = Field(
+        default=None, description="Memory source that produced this result"
+    )
+
     # Metadata
     metadata: Dict[str, Any] = Field(
         default_factory=dict, description="Additional query metadata"

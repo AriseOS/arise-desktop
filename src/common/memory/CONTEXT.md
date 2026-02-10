@@ -201,7 +201,21 @@ Recording → POST /recordings → POST /memory/add → Memory 图
 - `ontology/cognitive_phrase.py` - CognitivePhrase/ExecutionStep 定义
 - `ontology/query_result.py` - QueryResult 统一查询结果（V2）
 
+## Private + Public 并行查询
+
+Reasoner 支持 `public_memory` 参数，所有查询层同时查 Private + Public：
+
+| 查询层 | 融合方式 |
+|--------|---------|
+| L1 CognitivePhrase | 合并 phrases 列表，单次 LLM 调用选最佳 |
+| L2 Path Retrieval | 两边并行跑 embedding+BFS，LLM 选一条路径 |
+| Navigation | 两边各跑 shortest path，LLM 选一条 |
+| Action | 合并去重 IntentSequences（不用 LLM） |
+
+QueryResult 包含 `source` 字段标识结果来源（"private"/"public"/"merged"）。
+
 ## 设计文档
 
 - `docs/memory-graph-redesign-v2.md` - V2 重新设计
+- `docs/memory-merge-private-public-design.md` - Private + Public 并行查询设计
 - `docs/design/memory-graph-ontology-design.md` - 原有设计思路

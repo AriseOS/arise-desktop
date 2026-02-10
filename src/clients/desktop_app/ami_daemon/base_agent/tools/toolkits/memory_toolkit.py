@@ -452,7 +452,7 @@ class MemoryToolkit(BaseToolkit):
     - query_actions(state, target?): Action level - Get available operations
 
     Supports two memory backends:
-    - Public Memory: Cloud Backend via HTTP (memory_api_base_url)
+    - Remote Memory: Cloud Backend via HTTP (memory_api_base_url)
     - Local Memory: SurrealDB via direct call (use_local_memory=True)
 
     Design: Memory is a tool, Agent is the decision maker.
@@ -488,7 +488,7 @@ class MemoryToolkit(BaseToolkit):
         self._agent = agent
         self._use_local_memory = use_local_memory
 
-        mode = "local (SurrealDB)" if use_local_memory else f"public ({memory_api_base_url})"
+        mode = "local (SurrealDB)" if use_local_memory else f"remote ({memory_api_base_url})"
         logger.info(
             f"MemoryToolkit initialized (user_id={user_id}, mode={mode})"
         )
@@ -853,7 +853,7 @@ class MemoryToolkit(BaseToolkit):
             return await self._call_local_query(payload)
 
         # Otherwise use HTTP to Cloud Backend
-        logger.info(f"[Memory] Using public memory ({self._memory_api_base_url})")
+        logger.info(f"[Memory] Using remote memory ({self._memory_api_base_url})")
         return await self._call_http_query(payload)
 
     async def query_task(self, task: str) -> QueryResult:

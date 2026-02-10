@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
-"""Debug script: inspect Memory → LLM context strings.
+"""Debug script: test private+public memory merge across all query types.
 
-This script mimics how the Agent uses MemoryToolkit:
+Tests 4 query endpoints to verify the private+public merge logic:
 
-1) Task-level query: query_task()
-   - Shows how the memory result is formatted for LLM context
-     via MemoryToolkit.format_task_result().
+1. POST /api/v1/memory/phrase/query  — L1 merged phrase match
+2. POST /api/v1/memory/query (task)  — L1→L2→L3 full pipeline
+3. POST /api/v1/memory/query (action) — merged action/page-operations query
+4. POST /api/v1/memory/state          — merged state-by-URL query
 
-2) Page-level query: query_page_operations()
-   - Shows the page-operations summary string that gets cached on the
-     agent side and injected into subsequent LLM calls.
+Each test prints the `source` field to verify private/public selection.
 
-Configure the API base URL, user API key, and user_id below, then run:
+Configure API_BASE_URL, API_KEY, USER_ID below, then run:
 
     python scripts/debug_memory_llm_context.py
 
@@ -19,176 +18,251 @@ Make sure the Cloud Backend is running (port 9000 by default).
 """
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
+import httpx
 
 # Ensure src/ is on sys.path
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src.clients.desktop_app.ami_daemon.base_agent.tools.toolkits.memory_toolkit import (  # noqa: E402
-    MemoryToolkit,
-    QueryResult,
-)
-
-
 # =============================================================================
 # Configuration (edit these for your environment)
 # =============================================================================
 
-API_BASE_URL = "http://localhost:9000"  # Cloud Backend base URL
-API_KEY = ""  # User's Ami/CRS API key (X-Ami-API-Key)
-USER_ID = "shenyouren"  # User id / username
+API_BASE_URL = "http://localhost:9000"
+API_KEY = "ami_32b02bf612c46de5abb4b4fdcf9cdedfc08734e8c2da7c90da7683e6c4d90a3a"
+USER_ID = "shenyouren"
+
+# Test data — edit to match your actual recordings/memory
+EXAMPLE_TASK = "收集 Amazon 上卖的最好的 10 款眼镜"
+EXAMPLE_URL = "https://www.amazon.com/"
 
 
-async def debug_task_query(task: str) -> None:
-    """Run a task-level memory query and print LLM context text."""
+# =============================================================================
+# HTTP helpers
+# =============================================================================
 
-    print("=" * 80)
-    print("Task-level Memory Query")
-    print("=" * 80)
-    print(f"Task: {task}\n")
-
-    toolkit = MemoryToolkit(
-        memory_api_base_url=API_BASE_URL,
-        ami_api_key=API_KEY,
-        user_id=USER_ID,
-    )
-
-    result: QueryResult = await toolkit.query_task(task)
-
-    print("--- Raw summary ---")
-    print(f"success: {result.success}")
-    print(f"query_type: {result.query_type}")
-    print(f"states: {len(result.states)} actions: {len(result.actions)}")
-
-    # 打印原始 state 数据（检查是否包含 LLM 推理）
-    print(f"\n--- Raw State Data (from API) ---")
-    for i, state in enumerate(result.states, 1):
-        desc = state.description
-        print(f"\nState {i}:")
-        print(f"  ID: {state.id[:16]}...")
-        print(f"  Description length: {len(desc)}")
-        if len(desc) > 300:
-            print(f"  Description (first 300 chars): {desc[:300]}")
-            print(f"  ...")
-            print(f"  Description (last 200 chars): {desc[-200:]}")
-        else:
-            print(f"  Description: {desc}")
-
-    if result.cognitive_phrase:
-        print(f"cognitive_phrase.id: {result.cognitive_phrase.id}")
-        print(f"cognitive_phrase.description: {result.cognitive_phrase.description}")
-
-        # 打印所有属性
-        print(f"\n--- cognitive_phrase attributes ---")
-        phrase_dict = result.cognitive_phrase.model_dump() if hasattr(result.cognitive_phrase, 'model_dump') else result.cognitive_phrase.__dict__
-        for key in phrase_dict.keys():
-            if key == 'execution_plan':
-                print(f"{key}: ({len(phrase_dict[key])} steps)")
-            elif key == 'state_path':
-                print(f"{key}: ({len(phrase_dict[key])} states)")
-            else:
-                val = str(phrase_dict[key])[:100] if phrase_dict[key] else 'None'
-                print(f"{key}: {val}")
-
-        # 打印 execution_plan
-        print(f"\n--- execution_plan ({len(result.cognitive_phrase.execution_plan)} steps) ---")
-        for step in result.cognitive_phrase.execution_plan:
-            if hasattr(step, 'index'):
-                state_id = step.state_id[:8] if step.state_id else 'None'
-                nav_seq_id = step.navigation_sequence_id[:8] if step.navigation_sequence_id else 'None'
-                nav_action_id = step.navigation_action_id[:8] if step.navigation_action_id else 'None'
-                in_page_count = len(step.in_page_sequence_ids) if step.in_page_sequence_ids else 0
-                print(f"  Step {step.index}: state_id={state_id}, nav_seq_id={nav_seq_id}, nav_action_id={nav_action_id}, in_page_seqs={in_page_count}")
-
-        # 打印 result.states 的顺序
-        print(f"\n--- result.states order ({len(result.states)} states) ---")
-        for i, state in enumerate(result.states, 1):
-            print(f"  {i}. {state.id[:8]}... : {state.page_url[:80]}")
-
-        # 打印 workflow_guide 的详细信息
-        if result.cognitive_phrase.execution_plan:
-            print(f"\n--- Execution Plan ({len(result.cognitive_phrase.execution_plan)} steps) ---")
-            for i, step in enumerate(result.cognitive_phrase.execution_plan, 1):
-                if hasattr(step, 'index'):
-                    state_id = step.state_id[:8] if step.state_id else 'None'
-                    nav_seq_id = step.navigation_sequence_id[:8] if step.navigation_sequence_id else 'None'
-                    nav_action_id = step.navigation_action_id[:8] if step.navigation_action_id else 'None'
-                    in_page_count = len(step.in_page_sequence_ids) if step.in_page_sequence_ids else 0
-                    print(f"  Step {i}: state_id={state_id}, nav_seq_id={nav_seq_id}, nav_action_id={nav_action_id}, in_page_seqs={in_page_count}")
-
-            # 打印每个 step 对应的 state URL
-            print(f"\n--- State URLs in Execution Plan (with timestamps) ---")
-            for i, step in enumerate(result.cognitive_phrase.execution_plan, 1):
-                if hasattr(step, 'state_id') and step.state_id:
-                    # 找到对应的 state
-                    for state in result.states:
-                        if state.id == step.state_id:
-                            from datetime import datetime
-                            # Handle timestamp if available (may not be in toolkit State)
-                            timestamp = getattr(state, 'timestamp', None)
-                            if timestamp:
-                                ts_str = datetime.fromtimestamp(timestamp / 1000).strftime('%Y-%m-%d %H:%M:%S')
-                            else:
-                                ts_str = 'None'
-                            print(f"  Step {i}: {state.page_url[:100]}")
-                            print(f"         timestamp={ts_str}, id={state.id[:8]}")
-                            break
-    print()
-
-    print("--- LLM context (format_task_result) ---")
-    context_text = MemoryToolkit.format_task_result(result)
-    if context_text:
-        print(context_text)
-    else:
-        print("(empty context)")
+async def _post(endpoint: str, payload: dict) -> dict:
+    """POST to Cloud Backend and return JSON response."""
+    url = f"{API_BASE_URL}{endpoint}"
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            url,
+            json=payload,
+            headers={"X-Ami-API-Key": API_KEY},
+            timeout=60.0,
+        )
+        resp.raise_for_status()
+        return resp.json()
 
 
-async def debug_page_operations(url: str) -> None:
-    """Run a page-level memory query and print LLM context text.
-
-    This uses query_page_operations(), which returns exactly the string
-    that the agent caches and injects into LLM prompts.
-    """
-
+def _print_header(title: str) -> None:
     print("\n" + "=" * 80)
-    print("Page-level Memory Query (query_page_operations)")
+    print(f"  {title}")
     print("=" * 80)
-    print(f"URL: {url}\n")
 
-    toolkit = MemoryToolkit(
-        memory_api_base_url=API_BASE_URL,
-        ami_api_key=API_KEY,
-        user_id=USER_ID,
-    )
 
-    context_text = await toolkit.query_page_operations(url)
+# =============================================================================
+# Test 1: CognitivePhrase query (L1 merged)
+# =============================================================================
 
-    print("--- LLM context (page operations) ---")
-    if context_text:
-        print(context_text)
+async def test_phrase_query(task: str) -> None:
+    _print_header(f"Test 1: CognitivePhrase Query (L1 merged)\n  Task: {task}")
+
+    data = await _post("/api/v1/memory/phrase/query", {
+        "user_id": USER_ID,
+        "query": task,
+    })
+
+    source = data.get("source", "?")
+    success = data.get("success", False)
+    phrase = data.get("phrase")
+    reasoning = data.get("reasoning", "")
+
+    print(f"\nsuccess: {success}")
+    print(f"source:  {source}")
+    print(f"reasoning: {reasoning[:200]}")
+
+    if phrase:
+        print(f"\nMatched phrase:")
+        print(f"  id:          {phrase.get('id', '?')}")
+        print(f"  label:       {phrase.get('label', '?')}")
+        print(f"  description: {phrase.get('description', '?')[:120]}")
+        print(f"  states:      {len(phrase.get('states', []))}")
+        print(f"  actions:     {len(phrase.get('actions', []))}")
+
+        # Show state URLs
+        for i, state in enumerate(phrase.get("states", []), 1):
+            url = state.get("page_url", "?")
+            print(f"    State {i}: {url[:100]}")
     else:
-        print("(no recorded operations / empty context)")
+        print("\nNo matching phrase found.")
 
+
+# =============================================================================
+# Test 2: Unified query (task type — L1→L2→L3 pipeline)
+# =============================================================================
+
+async def test_task_query(task: str) -> None:
+    _print_header(f"Test 2: Unified Task Query (L1→L2→L3)\n  Task: {task}")
+
+    data = await _post("/api/v1/memory/query", {
+        "user_id": USER_ID,
+        "target": task,
+    })
+
+    source = data.get("source", "?")
+    success = data.get("success", False)
+    query_type = data.get("query_type", "?")
+    metadata = data.get("metadata", {})
+    method = metadata.get("method", "?")
+
+    print(f"\nsuccess:    {success}")
+    print(f"query_type: {query_type}")
+    print(f"source:     {source}")
+    print(f"method:     {method}")
+
+    # States
+    states = data.get("states", [])
+    if states:
+        print(f"\nPath ({len(states)} states):")
+        for i, s in enumerate(states, 1):
+            url = s.get("page_url", "?")
+            desc = s.get("description", "")[:80]
+            print(f"  {i}. {url[:80]}")
+            if desc:
+                print(f"     {desc}")
+
+    # CognitivePhrase
+    cp = data.get("cognitive_phrase")
+    if cp:
+        print(f"\nCognitivePhrase: {cp.get('id', '?')}")
+        print(f"  label: {cp.get('label', '?')}")
+
+    # Subtasks
+    subtasks = data.get("subtasks", [])
+    if subtasks:
+        print(f"\nSubtasks ({len(subtasks)}):")
+        for st in subtasks:
+            found = st.get("found", False)
+            print(f"  [{st.get('task_id')}] {st.get('target', '?')[:80]}  (found={found})")
+
+    # Metadata
+    print(f"\nMetadata: {json.dumps(metadata, ensure_ascii=False, default=str)}")
+
+
+# =============================================================================
+# Test 3: Unified query (action type — page operations, merged)
+# =============================================================================
+
+async def test_action_query(url: str) -> None:
+    _print_header(f"Test 3: Action/Page-Operations Query (merged)\n  URL: {url}")
+
+    # Exploration query (empty target)
+    data = await _post("/api/v1/memory/query", {
+        "user_id": USER_ID,
+        "target": "",
+        "current_state": url,
+    })
+
+    source = data.get("source", "?")
+    success = data.get("success", False)
+    query_type = data.get("query_type", "?")
+    metadata = data.get("metadata", {})
+
+    print(f"\nsuccess:    {success}")
+    print(f"query_type: {query_type}")
+    print(f"source:     {source}")
+    print(f"method:     {metadata.get('method', '?')}")
+
+    # IntentSequences
+    sequences = data.get("intent_sequences", [])
+    if sequences:
+        print(f"\nIntentSequences ({len(sequences)}):")
+        for i, seq in enumerate(sequences[:10], 1):
+            desc = seq.get("description", "?")[:100]
+            print(f"  {i}. {desc}")
+        if len(sequences) > 10:
+            print(f"  ... and {len(sequences) - 10} more")
+    else:
+        print("\nNo IntentSequences found.")
+
+    # Outgoing actions
+    actions = data.get("outgoing_actions", [])
+    if actions:
+        print(f"\nOutgoing Actions ({len(actions)}):")
+        for i, a in enumerate(actions[:5], 1):
+            target = a.get("target", "?")[:8]
+            atype = a.get("action_type", "?")
+            print(f"  {i}. -> {target}... ({atype})")
+
+
+# =============================================================================
+# Test 4: State-by-URL query (merged)
+# =============================================================================
+
+async def test_state_query(url: str) -> None:
+    _print_header(f"Test 4: State-by-URL Query (merged)\n  URL: {url}")
+
+    data = await _post("/api/v1/memory/state", {
+        "user_id": USER_ID,
+        "url": url,
+    })
+
+    source = data.get("source", "?")
+    success = data.get("success", False)
+    state = data.get("state")
+
+    print(f"\nsuccess: {success}")
+    print(f"source:  {source}")
+
+    if state:
+        print(f"\nState:")
+        print(f"  id:          {state.get('id', '?')[:16]}...")
+        print(f"  page_url:    {state.get('page_url', '?')[:100]}")
+        print(f"  page_title:  {state.get('page_title', '?')}")
+        print(f"  description: {state.get('description', '?')[:120]}")
+
+    sequences = data.get("intent_sequences", [])
+    if sequences:
+        print(f"\nIntentSequences ({len(sequences)}):")
+        for i, seq in enumerate(sequences[:10], 1):
+            desc = seq.get("description", "?")[:100]
+            print(f"  {i}. {desc}")
+    else:
+        print("\nNo IntentSequences found.")
+
+
+# =============================================================================
+# Main
+# =============================================================================
 
 async def main() -> None:
-    # Validate API key
     if not API_KEY or not API_KEY.strip():
-        print("❌ Error: API_KEY is empty or not set.")
-        print("   Please edit this script and set a valid API_KEY.")
-        print(f"   Current value: '{API_KEY}'")
+        print("Error: API_KEY is empty. Edit this script and set a valid key.")
         sys.exit(1)
 
-    # Example task and URL – edit to match your recordings/memory
-    example_task = "收集 Product HUnt 周榜产品信息"
-    example_url = "https://www.amazon.com/"
+    print(f"Cloud Backend: {API_BASE_URL}")
+    print(f"User ID:       {USER_ID}")
+    print(f"Task:          {EXAMPLE_TASK}")
+    print(f"URL:           {EXAMPLE_URL}")
 
-    await debug_task_query(example_task)
-    await debug_page_operations(example_url)
+    # Run all 4 tests
+    # Test 1 & 2 both test task queries (phrase-only vs full pipeline)
+    await test_phrase_query(EXAMPLE_TASK)
+    await test_task_query(EXAMPLE_TASK)
+
+    # Test 3 & 4 both test URL-based queries
+    await test_action_query(EXAMPLE_URL)
+    await test_state_query(EXAMPLE_URL)
+
+    print("\n" + "=" * 80)
+    print("  All tests completed.")
+    print("=" * 80)
 
 
 if __name__ == "__main__":
     asyncio.run(main())
-

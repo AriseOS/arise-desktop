@@ -709,6 +709,16 @@ async def share_phrase(user_id: str, phrase_id: str) -> str:
         if a:
             actions[aid] = a
 
+    # Also collect actions between adjacent states in state_path (by graph edge lookup).
+    # navigation_action_id in execution_plan may be None if the action was not indexed
+    # during phrase creation, but the action edge still exists in the graph.
+    for i in range(len(phrase.state_path) - 1):
+        src_id = phrase.state_path[i]
+        tgt_id = phrase.state_path[i + 1]
+        a = private_wm.get_action(src_id, tgt_id)
+        if a and a.id not in actions:
+            actions[a.id] = a
+
     sequences = {}
     for seqid in sequence_ids:
         if private_wm.intent_sequence_manager:
@@ -803,6 +813,9 @@ async def share_phrase(user_id: str, phrase_id: str) -> str:
                 id_map[old_id] = new_seq.id
 
     # Copy actions with remapped source/target (upsert handles dedup)
+    # Also build reverse lookup: (old_source, old_target) → new_action_id
+    # for back-filling execution_plan steps that have navigation_action_id=None.
+    action_by_edge = {}  # (old_source, old_target) → new_action_id
     for old_id, action in actions.items():
         new_source = id_map.get(action.source, action.source)
         new_target = id_map.get(action.target, action.target)
@@ -822,6 +835,7 @@ async def share_phrase(user_id: str, phrase_id: str) -> str:
             )
         public_wm.action_manager.create_action(new_action)
         id_map[old_id] = new_action.id
+        action_by_edge[(action.source, action.target)] = new_action.id
 
     # 6. Copy phrase with contributor fields
     new_phrase = phrase.model_copy(deep=True)
@@ -837,12 +851,23 @@ async def share_phrase(user_id: str, phrase_id: str) -> str:
 
     from src.common.memory.ontology.cognitive_phrase import ExecutionStep
     new_plan = []
-    for step in new_phrase.execution_plan:
+    for idx, step in enumerate(new_phrase.execution_plan):
+        # Remap navigation_action_id; back-fill from action_by_edge if originally None
+        nav_action_id = None
+        if step.navigation_action_id:
+            nav_action_id = id_map.get(step.navigation_action_id, step.navigation_action_id)
+        elif idx < len(phrase.state_path) - 1:
+            # navigation_action_id was None in original phrase, try to resolve
+            # from state_path adjacency
+            old_src = phrase.state_path[idx]
+            old_tgt = phrase.state_path[idx + 1]
+            nav_action_id = action_by_edge.get((old_src, old_tgt))
+
         new_step = ExecutionStep(
             index=step.index,
             state_id=id_map.get(step.state_id, step.state_id),
             in_page_sequence_ids=[id_map.get(sid, sid) for sid in step.in_page_sequence_ids],
-            navigation_action_id=id_map.get(step.navigation_action_id, step.navigation_action_id) if step.navigation_action_id else None,
+            navigation_action_id=nav_action_id,
             navigation_sequence_id=id_map.get(step.navigation_sequence_id, step.navigation_sequence_id) if step.navigation_sequence_id else None,
         )
         new_plan.append(new_step)
