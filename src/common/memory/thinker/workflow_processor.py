@@ -1538,30 +1538,18 @@ class WorkflowProcessor:
         description = str(
             semantic.get("description") or f"页面: {state.page_title or state.page_url}"
         ).strip()[:240]
-        keywords = self._refine_state_keywords(
-            state=state,
-            context=context or {},
-            label=label,
-            raw_keywords=semantic.get("keywords"),
-            max_keywords=4,
-        )
-        modifier = self._extract_state_modifier_from_description(description)
-        if modifier:
-            modifier_lower = modifier.lower()
-            keyword_set = {str(item or "").lower() for item in keywords}
-            if modifier_lower not in keyword_set:
-                if len(keywords) >= 4:
-                    keywords = keywords[:3] + [modifier]
-                else:
-                    keywords.append(modifier)
+        keywords = self._normalize_keywords(semantic.get("keywords"), max_keywords=4)
 
-        # Keep one domain_url keyword aligned with Domain.domain_url normalization.
+        # Keep one domain keyword aligned with Domain.domain_url normalization.
         domain_source = str(state.domain or "").strip() or self._extract_domain_from_url(state.page_url)
         domain_keyword = normalize_domain_url(domain_source, "website") if domain_source else ""
         if domain_keyword:
             keyword_set = {str(item or "").lower() for item in keywords}
             if domain_keyword.lower() not in keyword_set:
-                keywords.append(domain_keyword)
+                if len(keywords) >= 4:
+                    keywords = keywords[:3] + [domain_keyword]
+                else:
+                    keywords.append(domain_keyword)
 
         semantic["version"] = "semantic_v1"
         semantic["label"] = label
