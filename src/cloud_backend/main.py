@@ -2459,6 +2459,7 @@ async def _get_reasoner_for_user(
     reasoner_config = config_service.get("reasoner", {})
     max_depth = reasoner_config.get("max_depth", 3)
     similarity_thresholds = reasoner_config.get("similarity_thresholds", {})
+    path_planning_config = reasoner_config.get("path_planning", {})
 
     # Inject public memory for merged queries (skip when already using public)
     public_wm = None
@@ -2473,7 +2474,7 @@ async def _get_reasoner_for_user(
         embedding_service=embedding_service,
         max_depth=max_depth,
         similarity_thresholds=similarity_thresholds,
-        public_memory=public_wm,
+        path_planning_config=path_planning_config,
     )
 
     return reasoner
