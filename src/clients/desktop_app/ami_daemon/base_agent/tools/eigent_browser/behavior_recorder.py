@@ -16,6 +16,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set
 
+from src.common.timestamp_utils import get_current_timestamp
+
 if TYPE_CHECKING:
     from playwright.async_api import Page, Response
 
@@ -460,7 +462,7 @@ class BehaviorRecorder:
         # Create navigation operation
         nav_data = {
             "type": "navigate",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": get_current_timestamp(),
             "url": url,
             "tab_id": tab_id,
         }
@@ -537,7 +539,7 @@ class BehaviorRecorder:
             # Record dataload operation
             data = {
                 "type": "dataload",
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": get_current_timestamp(),
                 "url": response.frame.url if response.frame else "",
                 "request_url": request_url,
                 "method": request.method,
@@ -608,7 +610,7 @@ class BehaviorRecorder:
                     self.snapshots[url_hash] = {
                         "url": url,
                         "snapshot_text": snapshot_text,
-                        "captured_at": datetime.now().isoformat(),
+                        "captured_at": get_current_timestamp(),
                     }
                     logger.info(f"📸 Snapshot captured for: {url[:60]}...")
                     return
@@ -626,7 +628,7 @@ class BehaviorRecorder:
             self.snapshots[url_hash] = {
                 "url": url,
                 "simple": dom_content,
-                "captured_at": datetime.now().isoformat(),
+                "captured_at": get_current_timestamp(),
             }
             logger.info(f"📸 Simple snapshot captured for: {url[:60]}...")
 

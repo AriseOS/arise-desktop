@@ -22,6 +22,7 @@ from typing import Optional
 # Import memgraph ontology for unified data model
 from src.common.memory.ontology.state import State
 from src.common.memory.ontology.intent import Intent
+from src.common.memory.ontology.page_instance import PageInstance
 from src.common.memory.ontology.action import Action
 
 
@@ -271,6 +272,7 @@ class StateActionGraph:
 
     states: Dict[str, State] = field(default_factory=dict)
     actions: List[Action] = field(default_factory=list)
+    page_instances: List[PageInstance] = field(default_factory=list)
     phases: List[Phase] = field(default_factory=list)
     episodes: List[Episode] = field(default_factory=list)
 
@@ -334,6 +336,7 @@ class StateActionGraph:
         return {
             "states": {sid: s.to_dict() for sid, s in self.states.items()},
             "actions": [a.to_dict() for a in self.actions],
+            "page_instances": [pi.to_dict() for pi in self.page_instances],
             "phases": [p.to_dict() for p in self.phases],
             "episodes": [ep.to_dict() for ep in self.episodes]
         }
@@ -373,6 +376,15 @@ class StateActionGraph:
                 action = Action.from_dict(dict(action_data or {}))
             actions.append(action)
 
+        # Page instances
+        raw_page_instances = payload.get("page_instances") or []
+        page_instances: List[PageInstance] = []
+        for pi_data in raw_page_instances:
+            if isinstance(pi_data, PageInstance):
+                page_instances.append(pi_data)
+            elif isinstance(pi_data, dict):
+                page_instances.append(PageInstance.from_dict(pi_data))
+
         # Phases / Episodes
         phases = [
             Phase.from_dict(phase) if isinstance(phase, dict) else phase
@@ -386,6 +398,7 @@ class StateActionGraph:
         return cls(
             states=states,
             actions=actions,
+            page_instances=page_instances,
             phases=phases,
             episodes=episodes,
         )

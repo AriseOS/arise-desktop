@@ -11,7 +11,7 @@ References:
 
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -245,7 +245,7 @@ class LongTermMemory:
             Path to daily log file
         """
         if date is None:
-            date = datetime.utcnow()
+            date = datetime.now(timezone.utc)
         filename = date.strftime(DAILY_LOG_FORMAT)
         return self._daily_logs_dir / filename
 
@@ -314,7 +314,7 @@ class LongTermMemory:
             True if appended successfully
         """
         if date is None:
-            date = datetime.utcnow()
+            date = datetime.now(timezone.utc)
 
         log_path = self.get_daily_log_path(date)
 
@@ -328,7 +328,7 @@ class LongTermMemory:
 
         # Add timestamp if requested
         if timestamp:
-            ts = datetime.utcnow().strftime("%H:%M")
+            ts = datetime.now(timezone.utc).strftime("%H:%M")
             content = f"- [{ts}] {content}"
 
         new_content = current + "\n" + content
@@ -349,7 +349,7 @@ class LongTermMemory:
             List of (date, content) tuples, newest first
         """
         results = []
-        today = datetime.utcnow()
+        today = datetime.now(timezone.utc)
 
         for i in range(days):
             date = today - timedelta(days=i)

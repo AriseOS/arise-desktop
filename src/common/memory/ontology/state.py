@@ -116,16 +116,16 @@ class State(BaseModel):
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary.
 
+        PageInstances are now independent graph nodes linked via HAS_INSTANCE edges,
+        so they are excluded from the State's serialized form to avoid writing
+        them into the database as nested JSON.
+
         Returns:
-            Dictionary representation of the state.
+            Dictionary representation of the state (without instances).
         """
         data = self.model_dump()
-        # Handle instances
-        if self.instances:
-            data["instances"] = [
-                instance.to_dict() if hasattr(instance, "to_dict") else instance
-                for instance in self.instances
-            ]
+        # Exclude instances — they are stored as independent nodes
+        data.pop("instances", None)
         return data
 
     @classmethod
@@ -138,21 +138,11 @@ class State(BaseModel):
         Returns:
             State instance.
         """
-        from src.common.memory.ontology.page_instance import PageInstance
-
-        # Convert instance dicts to PageInstance objects if needed
-        if "instances" in data and data["instances"]:
-            instances = []
-            for inst_data in data["instances"]:
-                if isinstance(inst_data, dict):
-                    instances.append(PageInstance.from_dict(inst_data))
-                else:
-                    instances.append(inst_data)
-            data["instances"] = instances
-
-        # Drop legacy intent_sequences field if present in data
-        data.pop("intent_sequences", None)
-
+        # Copy to avoid mutating caller's dict; drop legacy/independent fields
+        data = {
+            k: v for k, v in data.items()
+            if k not in ("instances", "intent_sequences")
+        }
         return cls(**data)
 
     def add_instance(self, instance) -> None:

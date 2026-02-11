@@ -199,6 +199,7 @@ class WorkflowProcessor:
         workflow_data: Union[List[Dict[str, Any]], str],
         session_id: Optional[str] = None,
         store_to_memory: bool = True,
+        snapshots: Optional[Dict[str, Dict]] = None,
     ) -> WorkflowProcessingResult:
         """Process complete workflow through URL-based pipeline.
 
@@ -206,6 +207,8 @@ class WorkflowProcessor:
             workflow_data: Workflow events (list of dicts or JSON string).
             session_id: Session ID for grouping.
             store_to_memory: Whether to store results to memory.
+            snapshots: URL -> snapshot data mapping from recording.
+                Each value: {url, snapshot/snapshot_text, captured_at}
 
         Returns:
             WorkflowProcessingResult with all extracted structures.
@@ -333,6 +336,7 @@ class WorkflowProcessor:
                 segment=segment,
                 state_id=state.id,
                 session_id=session_id,
+                snapshots=snapshots,
             )
             page_instances.append(instance)
 
@@ -547,11 +551,16 @@ class WorkflowProcessor:
         """
         normalized = dict(event)
 
-        # Normalize timestamp
+        # Normalize timestamp to int milliseconds
         ts = event.get("timestamp")
         if isinstance(ts, str):
             normalized["timestamp"] = self._parse_timestamp(ts)
-        elif ts is None:
+        elif isinstance(ts, datetime):
+            # yaml.safe_load auto-converts +00:00 timestamps to datetime objects
+            normalized["timestamp"] = int(ts.timestamp() * 1000)
+        elif isinstance(ts, (int, float)):
+            normalized["timestamp"] = int(ts)
+        else:
             normalized["timestamp"] = 0
 
         # Normalize page_title / title
@@ -640,11 +649,14 @@ class WorkflowProcessor:
         """Parse timestamp string to milliseconds.
 
         Supports formats:
-        - "2026-01-20 13:31:56" (local time)
-        - "2026-01-20T13:31:56" (ISO format)
-        - "2026-01-20 05:31:56" (UTC time)
-        - "2026-01-30T05:57:30.619Z" (ISO 8601 with Z suffix)
-        - "2026-01-30T05:57:30Z" (ISO 8601 with Z suffix, no milliseconds)
+        - "2026-01-30T05:57:30.619Z"           (JS UTC — Z suffix)
+        - "2026-01-30T05:57:30.619000+00:00"   (Python UTC — get_current_timestamp())
+        - "2026-01-30T13:57:30.619000"          (Python local — datetime.now().isoformat())
+        - "2026-01-30 13:57:30"                 (Python local — space separator)
+
+        Timezone handling:
+        - Z or +00:00 suffix → UTC
+        - No timezone info → local time (Python datetime.now())
 
         Args:
             ts: Timestamp string.
@@ -652,30 +664,25 @@ class WorkflowProcessor:
         Returns:
             Timestamp in milliseconds.
         """
-        from datetime import datetime
+        from datetime import datetime, timezone
 
         try:
-            # Remove Z suffix (UTC indicator) for easier parsing
-            # Z is equivalent to +00:00 timezone
-            ts_normalized = ts.replace('Z', '') if ts.endswith('Z') else ts
+            # 1. Handle +00:00 or Z suffix via fromisoformat (Python 3.11+)
+            #    Replace Z with +00:00 for fromisoformat compatibility
+            if ts.endswith('Z'):
+                ts_iso = ts[:-1] + '+00:00'
+            else:
+                ts_iso = ts
 
-            # Try common formats (including normalized ISO 8601)
-            for fmt in [
-                "%Y-%m-%d %H:%M:%S",         # 2026-01-30 05:57:30
-                "%Y-%m-%dT%H:%M:%S",         # 2026-01-30T05:57:30
-                "%Y-%m-%d %H:%M:%S.%f",     # 2026-01-30 05:57:30.619
-                "%Y-%m-%dT%H:%M:%S.%f",     # 2026-01-30T05:57:30.619 (original)
-            ]:
-                try:
-                    dt = datetime.strptime(ts_normalized, fmt)
-                    return int(dt.timestamp() * 1000)
-                except ValueError:
-                    continue
+            # Replace space separator with T for fromisoformat
+            if 'T' not in ts_iso and ' ' in ts_iso:
+                ts_iso = ts_iso.replace(' ', 'T', 1)
 
-            # Fallback: return 0
-            logger.info(f"Warning: Could not parse timestamp: {ts}")
-            return 0
-        except Exception:
+            dt = datetime.fromisoformat(ts_iso)
+            return int(dt.timestamp() * 1000)
+
+        except (ValueError, AttributeError):
+            logger.warning(f"Could not parse timestamp: {ts}")
             return 0
 
     def _segment_by_url(
@@ -814,27 +821,34 @@ class WorkflowProcessor:
         segment: URLSegment,
         state_id: str,
         session_id: Optional[str] = None,
+        snapshots: Optional[Dict[str, Dict]] = None,
     ) -> PageInstance:
-        """Create PageInstance from segment.
+        """Create PageInstance from segment with optional snapshot.
 
         Args:
             segment: URLSegment to process.
             state_id: ID of the parent State.
             session_id: Session ID.
+            snapshots: URL -> snapshot data mapping.
 
         Returns:
-            PageInstance object.
+            PageInstance object with _parent_state_id set for later storage.
         """
+        # Match snapshot by URL
+        snapshot_text = None
+        if snapshots and segment.url in snapshots:
+            snapshot_data = snapshots[segment.url]
+            snapshot_text = snapshot_data.get("snapshot") or snapshot_data.get("snapshot_text")
+
         instance = PageInstance(
             url=segment.url,
             page_title=segment.page_title,
             timestamp=segment.timestamp,
             session_id=session_id,
+            snapshot_text=snapshot_text,
         )
-
-        # Add to State in memory
-        if self.memory:
-            self.memory.add_page_instance(state_id, instance)
+        # Tag with parent state ID for _store_to_memory
+        instance._parent_state_id = state_id
 
         return instance
 
@@ -2162,7 +2176,7 @@ JSON:"""
         Args:
             domains: Domains to store.
             states: States to store.
-            page_instances: PageInstances (already added to states).
+            page_instances: PageInstances to store as independent nodes.
             intent_sequences: IntentSequences to store (with embeddings for dedup).
             actions: Actions to store.
             manages: Manages to store.
@@ -2180,7 +2194,7 @@ JSON:"""
         # Note: States are already stored via _get_or_create_state.
         # We only need to update descriptions and embeddings for new states
         for state in states:
-            # Re-read from memory to get the version with instances/sequences
+            # Re-read from memory to get latest version
             memory_state = self.memory.get_state(state.id)
             if memory_state:
                 # Update description and embedding from our local state object
@@ -2193,6 +2207,30 @@ JSON:"""
                     self.memory.state_manager.update_state(memory_state)
                 except Exception as e:
                     logger.info(f"Warning: Failed to update state {state.id}: {e}")
+
+        # Store PageInstances as independent nodes with HAS_INSTANCE edges
+        # ID is deterministic from URL, so upsert naturally deduplicates.
+        # Within batch: keep the one with snapshot_text if duplicates exist.
+        if self.memory.page_instance_manager:
+            pi_stored = 0
+            best: Dict[str, tuple] = {}  # url -> (state_id, instance)
+            for instance in page_instances:
+                state_id = getattr(instance, '_parent_state_id', None)
+                if not state_id:
+                    continue
+                prev = best.get(instance.url)
+                if prev is None or (instance.snapshot_text and not prev[1].snapshot_text):
+                    best[instance.url] = (state_id, instance)
+
+            for url, (state_id, instance) in best.items():
+                try:
+                    self.memory.page_instance_manager.create_instance(instance)
+                    self.memory.page_instance_manager.link_to_state(state_id, instance.id)
+                    self.memory.url_index.add_url(instance.url, state_id)
+                    pi_stored += 1
+                except Exception as e:
+                    logger.info(f"Warning: Failed to store PageInstance {instance.id}: {e}")
+            logger.info(f"  PageInstances: {pi_stored} stored")
 
         # Store IntentSequences with deduplication
         # Now they have embeddings (from Stage 6), so both content hash and

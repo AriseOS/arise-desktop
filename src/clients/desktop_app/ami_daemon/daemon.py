@@ -1318,6 +1318,7 @@ class AddToMemoryRequest(BaseModel):
     recording_id: Optional[str] = None  # Load operations from existing recording
     operations: Optional[List[Dict[str, Any]]] = None  # Direct operations array
     session_id: Optional[str] = None
+    snapshots: Optional[Dict[str, Dict[str, Any]]] = None  # URL -> snapshot data
     generate_embeddings: bool = True
 
 
@@ -1380,6 +1381,7 @@ async def add_to_memory(
         # Get operations - either from recording_id or directly
         operations = request.operations
         session_id = request.session_id
+        snapshots = request.snapshots
 
         if request.recording_id and not operations:
             # Load operations from local recording
@@ -1393,7 +1395,12 @@ async def add_to_memory(
             operations = recording_data.get("operations", [])
             if not session_id:
                 session_id = recording_data.get("session_id") or request.recording_id
+            # Extract snapshots from recording if not provided directly
+            if not snapshots:
+                snapshots = recording_data.get("snapshots")
             logger.info(f"[memory/add] Loaded {len(operations)} operations from recording {request.recording_id}")
+            if snapshots:
+                logger.info(f"[memory/add] Loaded {len(snapshots)} snapshots from recording")
 
         if not operations:
             logger.warning("[memory/add] No operations provided")
@@ -1412,6 +1419,7 @@ async def add_to_memory(
             user_id=request.user_id,
             operations=operations,
             session_id=session_id,
+            snapshots=snapshots,
         )
 
         logger.info(f"[memory/add] Result: states_added={result.get('states_added')}, "

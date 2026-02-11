@@ -772,6 +772,17 @@ async def share_phrase(user_id: str, phrase_id: str) -> str:
             if needs_update:
                 public_wm.state_manager.update_state(existing_or_new)
 
+    # Copy PageInstances for each state
+    if private_wm.page_instance_manager and public_wm.page_instance_manager:
+        for old_state_id in states:
+            new_state_id = id_map.get(old_state_id, old_state_id)
+            instances = private_wm.page_instance_manager.list_by_state(old_state_id)
+            for inst in instances:
+                # ID is deterministic from URL — upsert naturally deduplicates
+                public_wm.page_instance_manager.create_instance(inst)
+                public_wm.page_instance_manager.link_to_state(new_state_id, inst.id)
+                public_wm.url_index.add_url(inst.url, new_state_id)
+
     # Copy Manage relations (Domain → State) with remapped state IDs
     for old_state_id in states:
         manages = private_wm.manage_manager.list_manages(state_id=old_state_id)

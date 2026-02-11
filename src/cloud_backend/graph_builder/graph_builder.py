@@ -172,6 +172,8 @@ class GraphBuilder:
         action_id_counter = 1
         sequence_id_counter = 1
         instance_id_counter = 1
+        # Per-state URL dedup: {state_id: set(urls)}
+        seen_instance_urls_by_state: dict[str, set] = {}
 
         action_event_types = {"click", "input", "scroll", "navigation"}
 
@@ -354,19 +356,27 @@ class GraphBuilder:
 
                 # Enter the target state and update it with the concrete URL visit
                 current_state_id = event_state.id
-                instance_id_counter = self._update_state_with_event_instance(
+                state_seen = seen_instance_urls_by_state.setdefault(event_state.id, set())
+                instance_id_counter, pi = self._update_state_with_event_instance(
                     state=event_state,
                     event=event,
                     instance_id_counter=instance_id_counter,
+                    seen_urls=state_seen,
                 )
+                if pi:
+                    graph.page_instances.append(pi)
                 continue
 
             # Normal in-state operation
-            instance_id_counter = self._update_state_with_event_instance(
+            state_seen = seen_instance_urls_by_state.setdefault(current_state.id, set())
+            instance_id_counter, pi = self._update_state_with_event_instance(
                 state=current_state,
                 event=event,
                 instance_id_counter=instance_id_counter,
+                seen_urls=state_seen,
             )
+            if pi:
+                graph.page_instances.append(pi)
             intent = add_intent(current_state, event)
             # Update recent-intent indices for trigger resolution
             last_intent_by_state[current_state.id] = intent
@@ -570,25 +580,21 @@ class GraphBuilder:
         state: State,
         event: Event,
         instance_id_counter: int,
-    ) -> int:
-        """Update a State with concrete URL instance and metadata from an event.
+        seen_urls: set,
+    ) -> tuple[int, "PageInstance | None"]:
+        """Update a State with concrete URL metadata from an event.
 
-        This aligns graph_builder output with memgraph's abstract State model:
-        - State identity: canonical URL (query/fragment removed)
-        - Concrete visits: stored as PageInstance entries
-        - page_root/dom_hash: metadata only
+        PageInstances are collected independently (not nested in State).
 
         Args:
             state: State to update
             event: Event providing concrete URL and metadata
             instance_id_counter: Counter for deterministic PageInstance IDs
+            seen_urls: Set of URLs already added as PageInstances (for dedup)
 
         Returns:
-            Updated instance_id_counter
+            Tuple of (updated instance_id_counter, PageInstance or None)
         """
-        # Ensure lists exist for legacy states
-        if state.instances is None:
-            state.instances = []
         if state.attributes is None:
             state.attributes = {}
 
@@ -615,24 +621,23 @@ class GraphBuilder:
         if event.dom_hash:
             state.attributes["dom_hash"] = event.dom_hash
 
-        # Add PageInstance for this concrete URL visit (dedup by URL string)
-        existing_urls = {
-            inst.url if hasattr(inst, "url") else inst.get("url")
-            for inst in state.instances
-        }
-        if event.url and event.url not in existing_urls:
+        # Create PageInstance for this concrete URL visit (dedup by URL string)
+        created_instance = None
+        if event.url and event.url not in seen_urls:
             instance_id = self._make_scoped_id("PI", instance_id_counter)
-            instance = PageInstance(
+            created_instance = PageInstance(
                 id=instance_id,
                 url=event.url,
                 page_title=None,
                 timestamp=event.timestamp,
                 session_id=self.session_id,
             )
-            state.instances.append(instance)
+            # Tag with parent state ID
+            created_instance._parent_state_id = state.id
+            seen_urls.add(event.url)
             instance_id_counter += 1
 
-        return instance_id_counter
+        return instance_id_counter, created_instance
 
     def _make_scoped_id(self, prefix: str, counter: int) -> str:
         """Create deterministic, session-scoped IDs to avoid cross-recording collisions."""

@@ -11,6 +11,7 @@ from src.common.memory.ontology.action import Action
 from src.common.memory.ontology.cognitive_phrase import CognitivePhrase
 from src.common.memory.ontology.domain import Domain, Manage
 from src.common.memory.ontology.intent_sequence import IntentSequence
+from src.common.memory.ontology.page_instance import PageInstance
 from src.common.memory.ontology.state import State
 
 
@@ -553,6 +554,70 @@ class IntentSequenceManager(ABC):
         """
 
 
+class PageInstanceManager(ABC):
+    """Abstract PageInstance Manager for PageInstance CRUD operations.
+
+    Manages PageInstance as independent graph nodes with HAS_INSTANCE
+    relationships to States.
+    """
+
+    @abstractmethod
+    def create_instance(self, instance: PageInstance) -> bool:
+        """Create a new PageInstance node.
+
+        Args:
+            instance: PageInstance object to create.
+
+        Returns:
+            True if created successfully, False otherwise.
+        """
+
+    @abstractmethod
+    def get_instance(self, instance_id: str) -> Optional[PageInstance]:
+        """Get a PageInstance by ID.
+
+        Args:
+            instance_id: Unique instance identifier.
+
+        Returns:
+            PageInstance object if found, None otherwise.
+        """
+
+    @abstractmethod
+    def delete_instance(self, instance_id: str) -> bool:
+        """Delete a PageInstance.
+
+        Args:
+            instance_id: Unique instance identifier.
+
+        Returns:
+            True if deleted successfully, False otherwise.
+        """
+
+    @abstractmethod
+    def link_to_state(self, state_id: str, instance_id: str) -> bool:
+        """Create HAS_INSTANCE relationship from State to PageInstance.
+
+        Args:
+            state_id: State ID (source).
+            instance_id: PageInstance ID (target).
+
+        Returns:
+            True if created successfully, False otherwise.
+        """
+
+    @abstractmethod
+    def list_by_state(self, state_id: str) -> List[PageInstance]:
+        """List all PageInstances belonging to a State.
+
+        Args:
+            state_id: State ID to query.
+
+        Returns:
+            List of PageInstance objects linked to this State.
+        """
+
+
 class CognitivePhraseManager(ABC):
     """Abstract CognitivePhrase Manager for CognitivePhrase CRUD operations.
 
@@ -653,6 +718,7 @@ class Memory(ABC):
         manage_manager: ManageManager instance for Manage operations.
         phrase_manager: CognitivePhraseManager instance for CognitivePhrase operations.
         intent_sequence_manager: IntentSequenceManager instance for IntentSequence operations (v2).
+        page_instance_manager: PageInstanceManager instance for PageInstance operations.
     """
 
     def __init__(
@@ -663,6 +729,7 @@ class Memory(ABC):
         manage_manager: ManageManager,
         phrase_manager: CognitivePhraseManager,
         intent_sequence_manager: Optional[IntentSequenceManager] = None,
+        page_instance_manager: Optional[PageInstanceManager] = None,
     ):
         """Initialize Memory with component managers.
 
@@ -673,6 +740,7 @@ class Memory(ABC):
             manage_manager: ManageManager instance.
             phrase_manager: CognitivePhraseManager instance.
             intent_sequence_manager: IntentSequenceManager instance (optional, v2).
+            page_instance_manager: PageInstanceManager instance (optional).
         """
         self.domain_manager = domain_manager
         self.state_manager = state_manager
@@ -680,6 +748,7 @@ class Memory(ABC):
         self.manage_manager = manage_manager
         self.phrase_manager = phrase_manager
         self.intent_sequence_manager = intent_sequence_manager
+        self.page_instance_manager = page_instance_manager
 
     # Domain operations
     def create_domain(self, domain: Domain) -> bool:
@@ -933,6 +1002,7 @@ __all__ = [
     "StateManager",
     "ActionManager",
     "IntentSequenceManager",
+    "PageInstanceManager",
     "CognitivePhraseManager",
     "Memory",
 ]

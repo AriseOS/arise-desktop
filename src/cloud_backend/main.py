@@ -21,7 +21,7 @@ import sys
 import uuid
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Header, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -561,6 +561,7 @@ async def upload_recording(data: dict):
                 workflow_data={"operations": operations},
                 session_id=recording_id,
                 store_to_memory=True,
+                snapshots=dom_snapshots,
             )
 
             memory_result = {
@@ -1286,6 +1287,7 @@ async def add_to_memory(
     recording_id = data.get("recording_id")
     operations = data.get("operations")
     session_id = data.get("session_id")
+    snapshots = data.get("snapshots")
     generate_embeddings = data.get("generate_embeddings", True)
     generate_descriptions = data.get("generate_descriptions", True)
 
@@ -1303,6 +1305,8 @@ async def add_to_memory(
         operations = recording.get("operations", [])
         if not session_id:
             session_id = recording.get("session_id")
+        if not snapshots:
+            snapshots = recording.get("snapshots")
 
     if not operations:
         raise HTTPException(400, "No operations to process")
@@ -1360,6 +1364,7 @@ async def add_to_memory(
             workflow_data={"operations": operations},
             session_id=session_id,
             store_to_memory=True,
+            snapshots=snapshots,
         )
 
         processing_time_ms = int((time.time() - start_time) * 1000)
@@ -1886,7 +1891,10 @@ async def get_memory_stats(
             # Fallback: load entities (for NetworkX or other backends)
             all_states = wm.state_manager.list_states()
             total_states = len(all_states)
-            total_page_instances = sum(len(s.instances) for s in all_states)
+            total_page_instances = 0
+            if wm.page_instance_manager:
+                for s in all_states:
+                    total_page_instances += len(wm.page_instance_manager.list_by_state(s.id))
             domains = sorted({s.domain for s in all_states if s.domain})
             total_actions = len(wm.action_manager.list_actions())
             total_intent_sequences = 0
@@ -1932,8 +1940,9 @@ async def clear_memory(
     """
     Clear User's Private Workflow Memory
 
-    This endpoint deletes all States, Actions, Domains, Manage edges,
-    IntentSequences, and CognitivePhrases from the user's private memory.
+    This endpoint deletes all States, PageInstances, Actions, Domains,
+    IntentSequences, CognitivePhrases, and all relationship edges
+    from the user's private memory.
     This operation is irreversible. Only clears the user's private database.
 
     Headers:
@@ -1946,7 +1955,7 @@ async def clear_memory(
         {
             "success": true,
             "deleted_states": 10,
-            "deleted_actions": 8,
+            "deleted_page_instances": 9,
             "deleted_domains": 2,
             "deleted_phrases": 3,
             "deleted_sequences": 5
@@ -1969,8 +1978,16 @@ async def clear_memory(
 
         if has_delete_all:
             # Use efficient bulk deletion - delete ALL nodes and edges
-            actions_count = graph_store.delete_all_nodes_by_label("Action")
+            # Delete relation tables first (edges), then nodes
+            graph_store.delete_all_nodes_by_label("action")
+            graph_store.delete_all_nodes_by_label("has_instance")
+            graph_store.delete_all_nodes_by_label("has_sequence")
+            graph_store.delete_all_nodes_by_label("manages")
+
+            # Delete node tables
             states_count = graph_store.delete_all_nodes_by_label("State")
+            page_instances_count = graph_store.delete_all_nodes_by_label("PageInstance")
+            actions_count = 0  # Action edges already deleted above
             domains_count = graph_store.delete_all_nodes_by_label("Domain")
             phrases_count = graph_store.delete_all_nodes_by_label("CognitivePhrase")
             sequences_count = graph_store.delete_all_nodes_by_label("IntentSequence")
@@ -1987,9 +2004,20 @@ async def clear_memory(
             domains_count = len(all_domains)
             phrases_count = len(all_phrases)
             sequences_count = 0
+            page_instances_count = 0
 
             for action in all_actions:
                 wm.delete_action(action.source, action.target)
+            # Delete PageInstances and IntentSequences linked to each state
+            for state in all_states:
+                if wm.page_instance_manager:
+                    for inst in wm.page_instance_manager.list_by_state(state.id):
+                        wm.page_instance_manager.delete_instance(inst.id)
+                        page_instances_count += 1
+                if wm.intent_sequence_manager:
+                    for seq in wm.intent_sequence_manager.list_by_state(state.id):
+                        wm.intent_sequence_manager.delete_sequence(seq.id)
+                        sequences_count += 1
             for state in all_states:
                 wm.delete_state(state.id)
             for domain in all_domains:
@@ -2001,14 +2029,14 @@ async def clear_memory(
         wm.url_index.clear()
 
         logger.info(f"✅ Memory cleared: "
-                   f"{states_count} states, {actions_count} actions, "
+                   f"{states_count} states, {page_instances_count} page_instances, "
                    f"{domains_count} domains, {phrases_count} phrases, "
                    f"{sequences_count} sequences")
 
         return {
             "success": True,
             "deleted_states": states_count,
-            "deleted_actions": actions_count,
+            "deleted_page_instances": page_instances_count,
             "deleted_domains": domains_count,
             "deleted_phrases": phrases_count,
             "deleted_sequences": sequences_count,
@@ -3256,7 +3284,7 @@ async def create_workflow_session(
             "session": session,
             "user_id": user_id,
             "workflow_id": workflow_id,
-            "created_at": datetime.now().isoformat()
+            "created_at": datetime.now(timezone.utc).isoformat()
         }
 
         history_restored = bool(chat_history and len(chat_history) > 0)
@@ -4320,7 +4348,7 @@ async def generate_script_stream(
                 metadata["generated_scripts"][request.step_id] = {
                     "script_type": request.script_type,
                     "script_path": script_path,
-                    "generated_at": datetime.utcnow().isoformat(),
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
                     "turns": result.turns
                 }
 
@@ -4352,7 +4380,7 @@ async def generate_script_stream(
                 metadata["resources"][resource_type].append(resource_entry)
 
                 # Update timestamp
-                metadata["updated_at"] = datetime.utcnow().isoformat()
+                metadata["updated_at"] = datetime.now(timezone.utc).isoformat()
 
                 storage_service.save_workflow_metadata(x_user_id, workflow_id, metadata)
                 logger.info(f"[{request_id}] Updated metadata with resources: {files_to_sync}")

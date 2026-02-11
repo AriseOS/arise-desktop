@@ -17,6 +17,7 @@ from src.common.memory.memory.memory import (
     IntentSequenceManager,
     ManageManager,
     Memory,
+    PageInstanceManager,
     StateManager,
 )
 from src.common.memory.memory.url_index import URLIndex
@@ -1909,6 +1910,137 @@ class GraphIntentSequenceManager(IntentSequenceManager):
             return False
 
 
+class GraphPageInstanceManager(PageInstanceManager):
+    """GraphStore-based PageInstance Manager.
+
+    Manages PageInstance as independent graph nodes with HAS_INSTANCE
+    relationships to States. Follows the same pattern as GraphIntentSequenceManager.
+    """
+
+    def __init__(self, graph_store: GraphStore):
+        """Initialize GraphPageInstanceManager.
+
+        Args:
+            graph_store: GraphStore instance for storage operations.
+        """
+        self.graph_store = graph_store
+        self.node_label = "PageInstance"
+        self.rel_type = "has_instance"
+
+    def create_instance(self, instance: PageInstance) -> bool:
+        """Create a new PageInstance node.
+
+        Args:
+            instance: PageInstance object to create.
+
+        Returns:
+            True if created (or already exists), False on error.
+        """
+        try:
+            properties = instance.to_dict()
+            self.graph_store.upsert_node(
+                label=self.node_label, properties=properties, id_key="id"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Error creating PageInstance: {e}")
+            return False
+
+    def get_instance(self, instance_id: str) -> Optional[PageInstance]:
+        """Get a PageInstance by ID.
+
+        Args:
+            instance_id: Unique instance identifier.
+
+        Returns:
+            PageInstance object if found, None otherwise.
+        """
+        try:
+            node = self.graph_store.get_node(
+                label=self.node_label, id_value=instance_id, id_key="id"
+            )
+            if node:
+                return PageInstance.from_dict(node)
+            return None
+        except Exception as e:
+            logger.error(f"Error getting PageInstance: {e}")
+            return None
+
+    def delete_instance(self, instance_id: str) -> bool:
+        """Delete a PageInstance.
+
+        Args:
+            instance_id: Unique instance identifier.
+
+        Returns:
+            True if deleted successfully, False otherwise.
+        """
+        try:
+            return self.graph_store.delete_node(
+                label=self.node_label, id_value=instance_id, id_key="id"
+            )
+        except Exception as e:
+            logger.error(f"Error deleting PageInstance: {e}")
+            return False
+
+    def link_to_state(self, state_id: str, instance_id: str) -> bool:
+        """Create HAS_INSTANCE relationship from State to PageInstance.
+
+        Args:
+            state_id: State ID (source).
+            instance_id: PageInstance ID (target).
+
+        Returns:
+            True if created successfully, False otherwise.
+        """
+        try:
+            self.graph_store.upsert_relationship(
+                start_node_label="State",
+                start_node_id_value=state_id,
+                end_node_label=self.node_label,
+                end_node_id_value=instance_id,
+                rel_type=self.rel_type,
+                properties={},
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Error linking PageInstance to State: {e}")
+            return False
+
+    def list_by_state(self, state_id: str) -> List[PageInstance]:
+        """List all PageInstances belonging to a State.
+
+        Args:
+            state_id: State ID to query.
+
+        Returns:
+            List of PageInstance objects linked to this State.
+        """
+        try:
+            rels = self.graph_store.query_relationships(
+                start_node_label="State",
+                start_node_id_value=state_id,
+                end_node_label=self.node_label,
+                rel_type=self.rel_type,
+            )
+
+            instances = []
+            for rel_data in rels:
+                end_node = rel_data.get("end", {})
+                if end_node:
+                    try:
+                        inst = PageInstance.from_dict(end_node)
+                        instances.append(inst)
+                    except Exception as e:
+                        logger.error(f"Error parsing PageInstance: {e}")
+                        continue
+
+            return instances
+        except Exception as e:
+            logger.error(f"Error listing PageInstances by State: {e}")
+            return []
+
+
 class WorkflowMemory(Memory):
     """Workflow Memory implementation.
 
@@ -1918,7 +2050,7 @@ class WorkflowMemory(Memory):
     New Features (from memory-graph-ontology-design.md):
         - URL Index: Fast URL to State lookup using in-memory Dict
         - State Merge: Real-time merge when same URL is encountered
-        - PageInstance: Concrete URL instances within abstract States
+        - PageInstance: Independent graph nodes linked to States via HAS_INSTANCE
         - IntentSequence: Ordered operation sequences with semantic search
     """
 
@@ -1957,6 +2089,9 @@ class WorkflowMemory(Memory):
         else:
             intent_sequence_manager = GraphIntentSequenceManager(graph_store)
 
+        # Create PageInstanceManager
+        page_instance_manager = GraphPageInstanceManager(graph_store)
+
         if phrase_manager is None:
             if use_graph_phrase_manager:
                 phrase_manager = GraphCognitivePhraseManager(graph_store)
@@ -1970,6 +2105,7 @@ class WorkflowMemory(Memory):
             manage_manager,
             phrase_manager,
             intent_sequence_manager,
+            page_instance_manager,
         )
         self.graph_store = graph_store
 
@@ -2135,7 +2271,8 @@ class WorkflowMemory(Memory):
         """Export all memory data.
 
         Returns:
-            Dictionary containing all states, actions, and phrases.
+            Dictionary containing all states, actions, phrases,
+            page_instances, and intent_sequences.
         """
         # Get all states
         states = self.state_manager.list_states()
@@ -2146,14 +2283,38 @@ class WorkflowMemory(Memory):
         # Get all phrases
         phrases = self.phrase_manager.list_phrases()
 
+        # Get all page instances (per-state)
+        page_instances = []
+        if self.page_instance_manager:
+            for state in states:
+                instances = self.page_instance_manager.list_by_state(state.id)
+                for inst in instances:
+                    pi_dict = inst.to_dict()
+                    pi_dict["_parent_state_id"] = state.id
+                    page_instances.append(pi_dict)
+
+        # Get all intent sequences (per-state)
+        intent_sequences = []
+        if self.intent_sequence_manager:
+            for state in states:
+                sequences = self.intent_sequence_manager.list_by_state(state.id)
+                for seq in sequences:
+                    seq_dict = seq.to_dict()
+                    seq_dict["_parent_state_id"] = state.id
+                    intent_sequences.append(seq_dict)
+
         return {
             "states": [state.to_dict() for state in states],
             "actions": [action.to_dict() for action in actions],
             "phrases": [phrase.to_dict() for phrase in phrases],
+            "page_instances": page_instances,
+            "intent_sequences": intent_sequences,
             "metadata": {
                 "state_count": len(states),
                 "action_count": len(actions),
                 "phrase_count": len(phrases),
+                "page_instance_count": len(page_instances),
+                "intent_sequence_count": len(intent_sequences),
             },
         }
 
@@ -2179,6 +2340,37 @@ class WorkflowMemory(Memory):
                 if not self.action_manager.batch_create_actions(actions):
                     return False
 
+            # Import page instances (independent nodes + edges)
+            if "page_instances" in data and self.page_instance_manager:
+                for pi_data in data["page_instances"]:
+                    parent_state_id = pi_data.get("_parent_state_id")
+                    pi_clean = {
+                        k: v for k, v in pi_data.items()
+                        if k != "_parent_state_id"
+                    }
+                    instance = PageInstance.from_dict(pi_clean)
+                    self.page_instance_manager.create_instance(instance)
+                    if parent_state_id:
+                        self.page_instance_manager.link_to_state(
+                            parent_state_id, instance.id
+                        )
+                        self.url_index.add_url(instance.url, parent_state_id)
+
+            # Import intent sequences (independent nodes + edges)
+            if "intent_sequences" in data and self.intent_sequence_manager:
+                for seq_data in data["intent_sequences"]:
+                    parent_state_id = seq_data.get("_parent_state_id")
+                    seq_clean = {
+                        k: v for k, v in seq_data.items()
+                        if k != "_parent_state_id"
+                    }
+                    sequence = IntentSequence.from_dict(seq_clean)
+                    self.intent_sequence_manager.create_sequence(sequence)
+                    if parent_state_id:
+                        self.intent_sequence_manager.link_to_state(
+                            parent_state_id, sequence.id
+                        )
+
             # Import phrases
             if "phrases" in data:
                 for phrase_data in data["phrases"]:
@@ -2188,7 +2380,7 @@ class WorkflowMemory(Memory):
 
             return True
         except Exception as e:
-            logger.error(f" importing memory: {e}")
+            logger.error(f"Error importing memory: {e}")
             return False
 
     # ==================== NEW METHODS FOR ABSTRACT STATE DESIGN ====================
@@ -2304,30 +2496,29 @@ class WorkflowMemory(Memory):
         state_id: str,
         instance: PageInstance,
     ) -> bool:
-        """Add a PageInstance to an existing State.
+        """Add a PageInstance as an independent node linked to a State.
 
-        This method adds a concrete URL instance to an abstract State,
-        and updates the URL index accordingly.
+        Creates the PageInstance node, links it to the State via HAS_INSTANCE,
+        and updates the URL index.
 
         Args:
-            state_id: ID of the State to add instance to.
+            state_id: ID of the State to link instance to.
             instance: PageInstance to add.
 
         Returns:
             True if added successfully, False otherwise.
         """
         try:
-            # Get existing state
-            state = self.get_state(state_id)
-            if not state:
-                logger.error(f": State {state_id} not found")
+            if not self.page_instance_manager:
+                logger.error("PageInstanceManager not initialized")
                 return False
 
-            # Add instance to state
-            state.add_instance(instance)
+            # Create independent node
+            if not self.page_instance_manager.create_instance(instance):
+                return False
 
-            # Update state in graph
-            if not self.state_manager.update_state(state):
+            # Link to state
+            if not self.page_instance_manager.link_to_state(state_id, instance.id):
                 return False
 
             # Update URL index
@@ -2335,7 +2526,7 @@ class WorkflowMemory(Memory):
 
             return True
         except Exception as e:
-            logger.error(f" adding page instance: {e}")
+            logger.error(f"Error adding page instance: {e}")
             return False
 
     def find_path(
@@ -2534,13 +2725,18 @@ class WorkflowMemory(Memory):
         all_states = self.state_manager.list_states()
 
         # Calculate statistics
-        total_page_instances = 0
         domains = set()
-
         for state in all_states:
-            total_page_instances += len(state.instances)
             if state.domain:
                 domains.add(state.domain)
+
+        # Count PageInstances from independent table
+        total_page_instances = 0
+        try:
+            pi_nodes = self.graph_store.query_nodes(label="PageInstance")
+            total_page_instances = len(pi_nodes)
+        except Exception:
+            total_page_instances = 0
 
         # Count IntentSequences
         total_intent_sequences = 0
@@ -2592,6 +2788,7 @@ class WorkflowMemory(Memory):
             domains_count = self.graph_store.delete_all_nodes_by_label("Domain")
             phrases_count = self.graph_store.delete_all_nodes_by_label("CognitivePhrase")
             sequences_count = self.graph_store.delete_all_nodes_by_label("IntentSequence")
+            self.graph_store.delete_all_nodes_by_label("PageInstance")
             # Actions are edges, deleted via DETACH DELETE on States
             actions_count = 0
         else:
@@ -2609,6 +2806,15 @@ class WorkflowMemory(Memory):
 
             for action in all_actions:
                 self.delete_action(action.source, action.target)
+            # Delete PageInstances and IntentSequences linked to each state
+            for state in all_states:
+                if self.page_instance_manager:
+                    for inst in self.page_instance_manager.list_by_state(state.id):
+                        self.page_instance_manager.delete_instance(inst.id)
+                if self.intent_sequence_manager:
+                    for seq in self.intent_sequence_manager.list_by_state(state.id):
+                        self.intent_sequence_manager.delete_sequence(seq.id)
+                        sequences_count += 1
             for state in all_states:
                 self.delete_state(state.id)
             for domain in all_domains:

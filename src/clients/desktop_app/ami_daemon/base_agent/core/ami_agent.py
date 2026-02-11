@@ -15,7 +15,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 from src.common.llm import AnthropicProvider
@@ -946,7 +946,7 @@ class AMIAgent:
                 "# Model-visible page snapshot",
                 f"tool: {func_name}",
                 f"truncated: {str(was_truncated).lower()}",
-                f"timestamp_utc: {datetime.utcnow().isoformat()}Z",
+                f"timestamp_utc: {datetime.now(timezone.utc).isoformat()}",
                 "",
             ]
             dir_manager.write_file(filename, "\n".join(header) + content)

@@ -1282,6 +1282,7 @@ class CloudClient:
         recording_id: Optional[str] = None,
         operations: Optional[List[Dict[str, Any]]] = None,
         session_id: Optional[str] = None,
+        snapshots: Optional[Dict[str, Dict]] = None,
         generate_embeddings: bool = True
     ) -> Dict[str, Any]:
         """Add recording to user's workflow memory
@@ -1291,6 +1292,7 @@ class CloudClient:
             recording_id: Recording ID to load operations from (optional)
             operations: Direct operations array (optional)
             session_id: Session identifier (optional)
+            snapshots: URL -> snapshot data mapping (optional)
             generate_embeddings: Whether to generate embeddings for semantic search
 
         Returns:
@@ -1316,6 +1318,8 @@ class CloudClient:
             payload["operations"] = operations
         if session_id:
             payload["session_id"] = session_id
+        if snapshots:
+            payload["snapshots"] = snapshots
 
         headers = {}
         if self.user_api_key:

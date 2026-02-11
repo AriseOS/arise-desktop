@@ -4,7 +4,7 @@
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Text, JSON
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 from pathlib import Path
 
@@ -63,8 +63,8 @@ class User(Base):
     full_name = Column(String(100), nullable=True)
     is_active = Column(Boolean, default=True)
     is_admin = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     last_login = Column(DateTime, nullable=True)
 
 # 用户会话模型 (用于管理登录状态)
@@ -75,7 +75,7 @@ class UserSession(Base):
     user_id = Column(Integer, nullable=False)
     session_token = Column(String(255), unique=True, index=True, nullable=False)
     expires_at = Column(DateTime, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     is_active = Column(Boolean, default=True)
 
 # 聊天历史模型
@@ -87,7 +87,7 @@ class ChatHistory(Base):
     session_id = Column(String(100), nullable=False)
     message = Column(Text, nullable=False)
     response = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 # Agent构建会话模型 - 重构为最简版本
 class AgentBuild(Base):
@@ -114,7 +114,7 @@ class AgentBuild(Base):
     workflow_data = Column(Text, nullable=True)  # BaseAgent Workflow对象数据
     
     # 时间戳
-    started_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     completed_at = Column(DateTime, nullable=True)
 
 # 保留原有的兼容性，暂时不删除
@@ -131,8 +131,8 @@ class AgentBuildSession(Base):
     progress_message = Column(Text, nullable=True)  # 进度消息
     error_message = Column(Text, nullable=True)  # 错误信息
     result_data = Column(Text, nullable=True)  # 构建结果 (JSON)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     completed_at = Column(DateTime, nullable=True)
 
 # 录制会话模型 - 存储workflow录制数据
@@ -152,9 +152,9 @@ class RecordingSessionDB(Base):
     operation_count = Column(Integer, default=0)
 
     # 时间戳
-    started_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     stopped_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 # 生成的Agent信息模型
 class GeneratedAgent(Base):
@@ -173,8 +173,8 @@ class GeneratedAgent(Base):
     metadata_path = Column(String(255), nullable=True)  # 元数据文件路径
     cost_analysis = Column(String(100), nullable=True)  # 成本分析
     status = Column(String(50), default="active")  # active, inactive, deleted
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 # 创建数据表
 def create_tables():

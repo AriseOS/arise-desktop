@@ -11,6 +11,7 @@ Key principles:
 
 import hashlib
 import logging
+from datetime import datetime
 from typing import Any
 from typing import Dict
 from typing import List
@@ -76,23 +77,20 @@ class EventNormalizer:
 
         url = op.get("url", "")
 
-        # Handle timestamp - support both string and int formats
+        # Handle timestamp - support string, datetime, int, and float formats
         timestamp = op.get("timestamp", 0)
         if isinstance(timestamp, str):
-            from datetime import datetime
             try:
-                # Try "YYYY-MM-DD HH:MM:SS" format (from CDPRecorder)
-                dt = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+                dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
                 timestamp = int(dt.timestamp() * 1000)
-            except ValueError:
-                try:
-                    # Try ISO format
-                    dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                    timestamp = int(dt.timestamp() * 1000)
-                except Exception:
-                    logger.warning(f"Failed to parse timestamp: {timestamp}")
-                    timestamp = 0
-        elif not isinstance(timestamp, int):
+            except Exception:
+                logger.warning(f"Failed to parse timestamp: {timestamp}")
+                timestamp = 0
+        elif isinstance(timestamp, datetime):
+            timestamp = int(timestamp.timestamp() * 1000)
+        elif isinstance(timestamp, (int, float)):
+            timestamp = int(timestamp)
+        else:
             timestamp = 0
 
         event_type = self._map_operation_type(op_type)

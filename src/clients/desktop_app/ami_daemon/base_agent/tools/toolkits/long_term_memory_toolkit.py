@@ -18,7 +18,7 @@ References:
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -135,7 +135,7 @@ class LongTermMemoryToolkit(BaseToolkit):
             }, ensure_ascii=False)
 
         # Format the fact with timestamp
-        timestamp = datetime.utcnow().strftime("%Y-%m-%d")
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         formatted_fact = f"- [{timestamp}] {fact}"
 
         # Append to MEMORY.md
@@ -178,7 +178,7 @@ class LongTermMemoryToolkit(BaseToolkit):
         success = self._memory.append_to_daily_log(note, timestamp=True)
 
         if success:
-            date = datetime.utcnow().strftime("%Y-%m-%d")
+            date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             return json.dumps({
                 "success": True,
                 "message": f"Added to daily log ({date})",

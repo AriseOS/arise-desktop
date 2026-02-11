@@ -305,7 +305,7 @@ class SurrealDBGraphStore(GraphStore):
         async def _init():
             client = await self._get_client()
             # Define entity tables
-            tables = ["domain", "state", "cognitivephrase", "intentsequence"]
+            tables = ["domain", "state", "cognitivephrase", "intentsequence", "pageinstance"]
             for table in tables:
                 try:
                     await client.query(f"DEFINE TABLE {table} SCHEMALESS")
@@ -319,6 +319,7 @@ class SurrealDBGraphStore(GraphStore):
             rel_table_defs = [
                 ("manages", "record<domain>", "record<state>"),
                 ("has_sequence", "record<state>", "record<intentsequence>"),
+                ("has_instance", "record<state>", "record<pageinstance>"),
                 ("action", "record<state>", "record<state>"),
             ]
             rel_tables = [t[0] for t in rel_table_defs]
@@ -374,6 +375,8 @@ class SurrealDBGraphStore(GraphStore):
                 ("cognitivephrase", "session_id"),
                 ("intentsequence", "state_id"),
                 ("intentsequence", "content_hash"),  # For deduplication
+                ("pageinstance", "url"),
+                ("pageinstance", "session_id"),
             ]
             for table, field in single_field_indexes:
                 try:
@@ -908,7 +911,7 @@ class SurrealDBGraphStore(GraphStore):
         return self._run(_batch_delete)
 
     # Known relation tables for querying when rel_type is not specified
-    _RELATION_TABLES = ["manages", "has_sequence", "action"]
+    _RELATION_TABLES = ["manages", "has_sequence", "has_instance", "action"]
 
     def query_relationships(
         self,

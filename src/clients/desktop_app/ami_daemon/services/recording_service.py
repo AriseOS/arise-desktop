@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from src.clients.desktop_app.ami_daemon.services.storage_manager import StorageManager
+from src.common.timestamp_utils import get_current_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ class RecordingService:
         # Recording state
         self.current_session_id: Optional[str] = None
         self.current_user_id: Optional[str] = None
-        self.recording_start_time: Optional[datetime] = None
+        self.recording_start_time: Optional[str] = None
         self.task_metadata: Dict[str, Any] = {}
         self._is_recording = False
 
@@ -99,7 +100,7 @@ class RecordingService:
             f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         )
         self.current_user_id = user_id
-        self.recording_start_time = datetime.now()
+        self.recording_start_time = get_current_timestamp()
         self.task_metadata = metadata or {}
 
         logger.info(f"Starting recording session: {self.current_session_id}")
@@ -169,12 +170,8 @@ class RecordingService:
             # Prepare recording data
             recording_data = {
                 "session_id": self.current_session_id,
-                "created_at": (
-                    self.recording_start_time.isoformat()
-                    if self.recording_start_time
-                    else None
-                ),
-                "ended_at": datetime.now().isoformat(),
+                "created_at": self.recording_start_time,
+                "ended_at": get_current_timestamp(),
                 "operations_count": len(operations),
                 "task_metadata": self.task_metadata,
                 "operations": operations,

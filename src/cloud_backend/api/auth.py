@@ -1,7 +1,7 @@
 """
 用户认证系统
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 import secrets
 import hashlib
@@ -34,9 +34,9 @@ class AuthService:
         """创建访问令牌"""
         to_encode = data.copy()
         if expires_delta:
-            expire = datetime.utcnow() + expires_delta
+            expire = datetime.now(timezone.utc) + expires_delta
         else:
-            expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+            expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         to_encode.update({"exp": expire})
         encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
         return encoded_jwt
@@ -110,7 +110,7 @@ class AuthService:
     def create_session(self, db: Session, user_id: int) -> str:
         """创建用户会话"""
         session_token = secrets.token_urlsafe(32)
-        expires_at = datetime.utcnow() + timedelta(hours=24)
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
         
         session = UserSession(
             user_id=user_id,
@@ -126,7 +126,7 @@ class AuthService:
         session = db.query(UserSession).filter(
             UserSession.session_token == session_token,
             UserSession.is_active == True,
-            UserSession.expires_at > datetime.utcnow()
+            UserSession.expires_at > datetime.now(timezone.utc)
         ).first()
         
         if not session:

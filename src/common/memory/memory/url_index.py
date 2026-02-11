@@ -102,8 +102,8 @@ class URLIndex:
     def build_from_graph(self, graph_store: GraphStore) -> int:
         """Build the index from a GraphStore.
 
-        This method queries all State nodes from the graph and builds
-        the URL index from their instances field.
+        This method queries all State nodes for primary URLs, then queries
+        HAS_INSTANCE relationships to get PageInstance URLs.
 
         Args:
             graph_store: GraphStore to build index from.
@@ -122,21 +122,27 @@ class URLIndex:
                 state = State.from_dict(node_data)
                 state_id = state.id
 
-                # Add primary URL (backward compatibility)
+                # Add primary URL
                 if state.page_url:
                     self.add_url(state.page_url, state_id)
                     url_count += 1
 
-                # Add all instance URLs
-                for instance in state.instances:
-                    url = (
-                        instance.url
-                        if hasattr(instance, "url")
-                        else instance.get("url")
+                # Query PageInstance URLs via HAS_INSTANCE relationships
+                try:
+                    rels = graph_store.query_relationships(
+                        start_node_label="State",
+                        start_node_id_value=state_id,
+                        end_node_label="PageInstance",
+                        rel_type="has_instance",
                     )
-                    if url and url != state.page_url:  # Avoid duplicates
-                        self.add_url(url, state_id)
-                        url_count += 1
+                    for rel_data in rels:
+                        end_node = rel_data.get("end", {})
+                        inst_url = end_node.get("url") if end_node else None
+                        if inst_url and inst_url != state.page_url:
+                            self.add_url(inst_url, state_id)
+                            url_count += 1
+                except Exception as e:
+                    logger.warning(f"Failed to query PageInstances for state {state_id}: {e}")
 
             return url_count
 

@@ -7,9 +7,29 @@ import json
 import yaml
 from pathlib import Path
 from typing import List, Optional, Dict, Any
+import datetime as _dt
 from datetime import datetime
 
 from src.common.timestamp_utils import get_current_timestamp
+
+
+def _yaml_datetime_to_str(obj):
+    """Recursively convert datetime/date objects from yaml.safe_load back to ISO strings.
+
+    yaml.safe_load auto-converts ISO timestamps to datetime objects and bare dates
+    (e.g. 2026-01-28) to date objects. Both cause json.dumps() failures.
+    Convert them all back to strings.
+    """
+    # Check datetime BEFORE date because datetime is a subclass of date
+    if isinstance(obj, _dt.datetime):
+        return obj.isoformat()
+    if isinstance(obj, _dt.date):
+        return obj.isoformat()
+    if isinstance(obj, dict):
+        return {k: _yaml_datetime_to_str(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_yaml_datetime_to_str(item) for item in obj]
+    return obj
 
 
 class StorageManager:
@@ -130,11 +150,20 @@ class StorageManager:
         snapshot_text = snapshot_data.get("snapshot_text", "")
 
         # Write YAML manually with literal block scalar (|)
+        # In YAML literal block, the first content line sets the base indentation.
+        # All subsequent lines must have >= that indentation. Since snapshot_text
+        # lines have varying indentation (tree structure), we must ensure the
+        # first line has the LEAST indentation. We achieve this by writing all
+        # lines with a uniform prefix so the minimum indent is always the prefix.
+        # Using 2-space prefix: even lines with 0 original indent get 2 spaces,
+        # so the base indent is 2 and no line can violate it.
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(f"url: {url}\n")
             f.write(f"captured_at: {captured_at}\n")
-            f.write("snapshot: |\n")
-            # Indent each line with 2 spaces for literal block
+            f.write("snapshot: |2\n")
+            # Indent each line with 2 spaces for literal block.
+            # The |2 indicator tells YAML the content indent is exactly 2,
+            # so lines with deeper original indent are preserved correctly.
             for line in snapshot_text.split("\n"):
                 f.write(f"  {line}\n")
 
@@ -156,6 +185,9 @@ class StorageManager:
         if yaml_path.exists():
             with open(yaml_path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
+            # yaml.safe_load auto-converts +00:00 timestamps to datetime objects;
+            # convert them all back to ISO strings for downstream JSON serialization
+            data = _yaml_datetime_to_str(data)
         elif json_path.exists():
             # Legacy JSON format
             with open(json_path, "r", encoding="utf-8") as f:
@@ -170,7 +202,7 @@ class StorageManager:
             for snapshot_file in snapshot_dir.glob("*.yaml"):
                 try:
                     with open(snapshot_file, "r", encoding="utf-8") as f:
-                        snapshot_data = yaml.safe_load(f)
+                        snapshot_data = _yaml_datetime_to_str(yaml.safe_load(f))
                         url = snapshot_data.get("url")
                         if url:
                             snapshots[url] = snapshot_data
@@ -295,7 +327,7 @@ class StorageManager:
             try:
                 with open(recording_file, "r", encoding="utf-8") as f:
                     if recording_file.suffix == ".yaml":
-                        recording_data = yaml.safe_load(f)
+                        recording_data = _yaml_datetime_to_str(yaml.safe_load(f))
                     else:
                         recording_data = json.load(f)
 
