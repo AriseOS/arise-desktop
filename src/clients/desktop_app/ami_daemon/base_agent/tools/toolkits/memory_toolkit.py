@@ -15,6 +15,7 @@ Architecture:
 """
 
 import logging
+import json
 import re
 from datetime import datetime
 from pathlib import Path as FsPath
@@ -514,14 +515,10 @@ class MemoryToolkit(BaseToolkit):
             text = " ".join(text.splitlines())
             return text.strip()
 
-        def _format_state_line(state: Dict[str, Any]) -> str:
-            desc = _clean_inline(state.get("description") or state.get("page_title") or state.get("page_url"))
-            url = _clean_inline(state.get("page_url"))
-            state_id = _clean_inline(state.get("id"))
-            parts = [p for p in [desc, url] if p]
-            if state_id:
-                parts.append(f"id={state_id}")
-            return " | ".join(parts) if parts else "N/A"
+        def _clean_block(value: Any) -> str:
+            if value is None:
+                return ""
+            return str(value).replace("\r", "").strip()
 
         def _to_float(value: Any) -> float:
             try:
@@ -529,11 +526,26 @@ class MemoryToolkit(BaseToolkit):
             except (TypeError, ValueError):
                 return 0.0
 
-        def _to_int(value: Any) -> int:
-            try:
-                return int(value)
-            except (TypeError, ValueError):
-                return 0
+        def _state_line(state: Dict[str, Any]) -> str:
+            desc = _clean_inline(
+                state.get("description") or state.get("page_title") or state.get("page_url")
+            )
+            url = _clean_inline(state.get("page_url"))
+            state_id = _clean_inline(state.get("id"))
+            score = _to_float(state.get("score"))
+            alias = _clean_inline(state.get("alias"))
+            parts: List[str] = []
+            if alias:
+                parts.append(f"[{alias}]")
+            if desc:
+                parts.append(desc)
+            if url:
+                parts.append(url)
+            if state_id:
+                parts.append(f"id={state_id}")
+            if score:
+                parts.append(f"score={score:.4f}")
+            return " | ".join(parts) if parts else "N/A"
 
         manager = get_current_manager()
         task_id = "unknown"
@@ -541,13 +553,13 @@ class MemoryToolkit(BaseToolkit):
         output_dir: Optional[FsPath] = None
 
         if manager:
-            output_dir = FsPath(manager.output_dir)
+            output_dir = FsPath(manager.logs_dir)
             task_id = getattr(manager, "task_id", task_id)
             project_id = getattr(manager, "project_id", None)
         else:
             task_state = self.get_task_state()
             if task_state and hasattr(task_state, "dir_manager"):
-                output_dir = FsPath(task_state.dir_manager.output_dir)
+                output_dir = FsPath(task_state.dir_manager.logs_dir)
                 task_id = getattr(task_state, "task_id", task_id)
                 project_id = getattr(task_state, "project_id", None)
 
@@ -560,25 +572,18 @@ class MemoryToolkit(BaseToolkit):
         filename = f"query_path_{timestamp.strftime('%Y%m%d_%H%M%S')}_{task_id}.txt"
         file_path = output_dir / filename
 
-        decomposed = result.get("decomposed") or {}
-        target_query = decomposed.get("target_query", result.get("query", ""))
-        key_queries = decomposed.get("key_queries") or []
-
-        candidate_states = result.get("candidate_states") or {}
-        target_candidates = candidate_states.get("target_states") or []
-        key_candidates_by_type = candidate_states.get("key_states_by_type") or {}
-
-        score_weights = result.get("score_weights") or {"target_weight": 1.0, "key_weight": 0.3}
-        score_formula = result.get(
-            "score_formula",
-            "score = has_target * target_weight * target_score + key_type_coverage * key_weight",
+        metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+        debug_info = (
+            metadata.get("path_planning_debug")
+            if isinstance(metadata.get("path_planning_debug"), dict)
+            else {}
         )
+        query_result = result.get("query_result") if isinstance(result.get("query_result"), dict) else {}
 
         lines: List[str] = []
-        lines.append("=== Memory Query Path Report ===")
+        lines.append("=== Memory Path Planning Debug Report ===")
         lines.append(f"Time: {timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
         lines.append(f"Task: {_clean_inline(task)}")
-        lines.append(f"Query: {_clean_inline(result.get('query', task))}")
         lines.append(f"User ID: {_clean_inline(self._user_id)}")
         lines.append(f"Task ID: {_clean_inline(task_id)}")
         if project_id:
@@ -586,140 +591,179 @@ class MemoryToolkit(BaseToolkit):
         lines.append(f"API Base URL: {_clean_inline(self._memory_api_base_url)}")
         lines.append("")
 
-        lines.append("[Decomposed Query]")
-        lines.append(f"target_query: {_clean_inline(target_query)}")
-        if key_queries:
-            lines.append("key_queries:")
-            for idx, kq in enumerate(key_queries, 1):
-                lines.append(f"  {idx}. {_clean_inline(kq)}")
+        lines.append("[Quick Task Memory Summary]")
+        lines.append(f"success: {bool(query_result.get('success', False))}")
+        lines.append(f"query_type: {_clean_inline(query_result.get('query_type', 'task'))}")
+        lines.append(f"method: {_clean_inline(metadata.get('method')) or 'N/A'}")
+        lines.append(f"has_global_path: {bool(metadata.get('has_global_path', False))}")
+        lines.append(f"states_count: {int(query_result.get('states_count', 0) or 0)}")
+        lines.append(f"actions_count: {int(query_result.get('actions_count', 0) or 0)}")
+        lines.append(
+            f"cognitive_phrase_id: "
+            f"{_clean_inline(query_result.get('cognitive_phrase_id')) or '(none)'}"
+        )
+        lines.append("")
+
+        config = debug_info.get("config") if isinstance(debug_info.get("config"), dict) else {}
+        lines.append("[Config]")
+        lines.append(f"user_id: {_clean_inline(self._user_id)}")
+        lines.append(f"task: {_clean_inline(debug_info.get('task') or task)}")
+        lines.append(f"candidate_top_k: {int(config.get('candidate_top_k', 0) or 0)}")
+        lines.append(f"min_score: {_to_float(config.get('min_score')):.4f}")
+        lines.append(f"max_states: {int(config.get('max_states', 0) or 0)}")
+        lines.append(f"max_actions: {int(config.get('max_actions', 0) or 0)}")
+        lines.append("")
+
+        embedding_candidates = (
+            debug_info.get("embedding_candidates")
+            if isinstance(debug_info.get("embedding_candidates"), list)
+            else []
+        )
+        lines.append("[Embedding Candidates]")
+        if not embedding_candidates:
+            lines.append("No states above threshold.")
         else:
-            lines.append("key_queries: (none)")
+            for item in embedding_candidates:
+                state = item.get("state") if isinstance(item.get("state"), dict) else {}
+                score = _to_float(item.get("score"))
+                rank = int(item.get("rank", 0) or 0)
+                state_line = _state_line({
+                    "id": state.get("id"),
+                    "description": state.get("description"),
+                    "page_title": state.get("page_title"),
+                    "page_url": state.get("page_url"),
+                })
+                lines.append(f"{rank:>2}. score={score:.4f} | {state_line}")
         lines.append("")
 
-        lines.append("[Candidate Target States]")
-        if target_candidates:
-            for item in target_candidates:
-                score = _to_float(item.get("similarity_score"))
-                state = item.get("state") or {}
-                lines.append(f"- ({score:.4f}) {_format_state_line(state)}")
+        subgraph = debug_info.get("subgraph") if isinstance(debug_info.get("subgraph"), dict) else {}
+        states_text = _clean_block(subgraph.get("states_text"))
+        actions_text = _clean_block(subgraph.get("actions_text"))
+        lines.append("[Subgraph Sent To LLM]")
+        lines.append("## Task")
+        lines.append(_clean_inline(debug_info.get("task") or task))
+        lines.append("")
+        lines.append("## States")
+        lines.append(states_text or "(none)")
+        lines.append("")
+        lines.append("## Actions")
+        lines.append(actions_text or "(none)")
+        lines.append("")
+
+        llm_info = debug_info.get("llm") if isinstance(debug_info.get("llm"), dict) else {}
+        lines.append("[Full Prompt (System + User)]")
+        lines.append("[System Prompt]")
+        lines.append(_clean_block(llm_info.get("system_prompt")) or "(none)")
+        lines.append("")
+        lines.append("[User Prompt]")
+        lines.append(_clean_block(llm_info.get("user_prompt")) or "(none)")
+        lines.append("")
+
+        lines.append("[LLM Raw JSON Result]")
+        raw_result = llm_info.get("raw_result")
+        if raw_result is None:
+            lines.append("(none)")
         else:
-            lines.append("(none)")
+            try:
+                lines.append(json.dumps(raw_result, ensure_ascii=False, indent=2))
+            except TypeError:
+                lines.append(_clean_inline(raw_result))
         lines.append("")
+        stop_reason = _clean_inline(llm_info.get("stop_reason"))
+        if stop_reason:
+            lines.append(f"stop_reason: {stop_reason}")
+            lines.append("")
 
-        lines.append("[Candidate Key States]")
-        if key_candidates_by_type:
-            for kq, items in key_candidates_by_type.items():
-                lines.append(f"- key_query: {_clean_inline(kq)}")
-                for item in items or []:
-                    score = _to_float(item.get("similarity_score"))
-                    state = item.get("state") or {}
-                    lines.append(f"  - ({score:.4f}) {_format_state_line(state)}")
+        attempts = llm_info.get("attempts") if isinstance(llm_info.get("attempts"), list) else []
+        lines.append("[LLM Attempts]")
+        if not attempts:
+            lines.append("(none)")
         else:
-            lines.append("(none)")
+            for attempt in attempts:
+                if not isinstance(attempt, dict):
+                    continue
+                attempt_no = int(attempt.get("attempt", 0) or 0)
+                status = _clean_inline(attempt.get("status")) or "unknown"
+                lines.append(f"Attempt {attempt_no}: status={status}")
+
+                failure_feedback = _clean_block(attempt.get("failure_feedback"))
+                if failure_feedback:
+                    lines.append("Failure Feedback:")
+                    lines.append(failure_feedback)
+
+                failed_edge = (
+                    attempt.get("failed_edge")
+                    if isinstance(attempt.get("failed_edge"), dict)
+                    else {}
+                )
+                if failed_edge:
+                    source_alias = _clean_inline(failed_edge.get("source_alias"))
+                    source_id = _clean_inline(failed_edge.get("source_id"))
+                    target_alias = _clean_inline(failed_edge.get("target_alias"))
+                    target_id = _clean_inline(failed_edge.get("target_id"))
+                    lines.append(
+                        f"Failed Edge: {source_alias}({source_id}) -> {target_alias}({target_id})"
+                    )
+
+                attempt_result = attempt.get("raw_result")
+                lines.append("Raw Result:")
+                if attempt_result is None:
+                    lines.append("(none)")
+                else:
+                    try:
+                        lines.append(json.dumps(attempt_result, ensure_ascii=False, indent=2))
+                    except TypeError:
+                        lines.append(_clean_inline(attempt_result))
+                lines.append("")
         lines.append("")
 
-        lines.append("[Score Weights]")
-        lines.append(f"target_weight: {_to_float(score_weights.get('target_weight')):.4f}")
-        lines.append(f"key_weight: {_to_float(score_weights.get('key_weight')):.4f}")
-        lines.append(f"formula: {_clean_inline(score_formula)}")
-        lines.append("")
+        resolved = (
+            debug_info.get("resolved_path")
+            if isinstance(debug_info.get("resolved_path"), dict)
+            else {}
+        )
+        state_ids = resolved.get("state_ids") if isinstance(resolved.get("state_ids"), list) else []
+        resolved_states = resolved.get("states") if isinstance(resolved.get("states"), list) else []
+        resolved_actions = resolved.get("actions") if isinstance(resolved.get("actions"), list) else []
 
-        paths = result.get("paths") or []
-        paths_sorted = sorted(paths, key=lambda p: _to_float(p.get("score")), reverse=True)
-
-        lines.append("[Paths] (sorted by score desc)")
-        if not paths_sorted:
-            lines.append("(none)")
-        for idx, path in enumerate(paths_sorted, 1):
-            score = _to_float(path.get("score"))
-            path_length = _to_int(path.get("path_length"))
-            has_target = _to_float(path.get("has_target"))
-            target_score = _to_float(path.get("target_score"))
-            key_types_hit = _to_int(path.get("key_types_hit"))
-            key_types_total = _to_int(path.get("key_types_total"))
-            key_coverage = _to_float(path.get("key_type_coverage"))
-            target_weight = _to_float(score_weights.get("target_weight"))
-            key_weight = _to_float(score_weights.get("key_weight"))
-            target_component = has_target * target_weight * target_score
-            key_component = key_coverage * key_weight
-
-            lines.append(
-                f"{idx}) score={score:.4f} | length={path_length} | "
-                f"has_target={int(has_target)} | target_score={target_score:.4f} | "
-                f"key_coverage={key_coverage:.4f} ({key_types_hit}/{key_types_total})"
-            )
-            lines.append(
-                f"   score_components: target={target_component:.4f} | key={key_component:.4f} | total={score:.4f}"
-            )
-            if path.get("description"):
-                lines.append(f"   description: {_clean_inline(path.get('description'))}")
-            if path.get("start_url"):
-                lines.append(f"   start_url: {_clean_inline(path.get('start_url'))}")
-
-            steps = path.get("steps") or []
-            lines.append("   path_chain:")
-            if steps:
-                for step_idx, step in enumerate(steps, 1):
-                    state = step.get("state") or {}
-                    lines.append(f"     {step_idx}. {_format_state_line(state)}")
-            else:
-                lines.append("     (none)")
-
-            lines.append("   steps:")
-            if steps:
-                for step_idx, step in enumerate(steps, 1):
-                    state = step.get("state") or {}
-                    action = step.get("action") or {}
-                    intent_seq = step.get("intent_sequence") or {}
-
-                    lines.append(f"     step {step_idx}:")
-                    lines.append(f"       state: {_format_state_line(state)}")
-
-                    if action:
-                        action_desc = _clean_inline(action.get("description"))
-                        action_type = _clean_inline(action.get("type"))
-                        action_line = action_desc or "N/A"
-                        if action_type:
-                            action_line += f" | type={action_type}"
-                        lines.append(f"       action: {action_line}")
-
-                        trigger = action.get("trigger_intent") or {}
-                        if trigger:
-                            trig_text = _clean_inline(trigger.get("text"))
-                            trig_selector = _clean_inline(trigger.get("css_selector") or trigger.get("xpath"))
-                            trig_desc = _clean_inline(trigger.get("description"))
-                            trig_parts = []
-                            if trig_text:
-                                trig_parts.append(f"text={trig_text}")
-                            if trig_selector:
-                                trig_parts.append(f"selector={trig_selector}")
-                            if trig_desc:
-                                trig_parts.append(f"desc={trig_desc}")
-                            if trig_parts:
-                                lines.append(f"       trigger: {' | '.join(trig_parts)}")
-
-                    if intent_seq:
-                        seq_desc = _clean_inline(intent_seq.get("description"))
-                        lines.append(f"       intent_sequence: {seq_desc or 'N/A'}")
-                        intents = intent_seq.get("intents") or []
-                        if intents:
-                            lines.append("       intents:")
-                            for intent in intents:
-                                intent_type = _clean_inline(intent.get("type"))
-                                intent_text = _clean_inline(intent.get("text"))
-                                intent_value = _clean_inline(intent.get("value"))
-                                parts = []
-                                if intent_type:
-                                    parts.append(f"type={intent_type}")
-                                if intent_text:
-                                    parts.append(f"text={intent_text}")
-                                if intent_value:
-                                    parts.append(f"value={intent_value}")
-                                lines.append(f"         - {' | '.join(parts) if parts else 'N/A'}")
-                        else:
-                            lines.append("       intents: (none)")
+        lines.append("[Resolved Path]")
+        if not state_ids:
+            lines.append("No valid path resolved from LLM output.")
+        else:
+            lines.append(f"State path IDs: {' -> '.join(str(sid) for sid in state_ids)}")
+            lines.append("")
+            lines.append("States:")
+            for item in resolved_states:
+                state_line = _state_line(item if isinstance(item, dict) else {})
+                index = int(item.get("index", 0) or 0) if isinstance(item, dict) else 0
+                lines.append(f"  {index}. {state_line}")
 
             lines.append("")
+            lines.append("Actions:")
+            if not resolved_actions:
+                lines.append("  (single-state path)")
+            else:
+                for item in resolved_actions:
+                    if not isinstance(item, dict):
+                        continue
+                    index = int(item.get("index", 0) or 0)
+                    source_alias = _clean_inline(item.get("source_alias"))
+                    target_alias = _clean_inline(item.get("target_alias"))
+                    desc = _clean_inline(item.get("description")) or "N/A"
+                    lines.append(f"  {index}. {source_alias} -> {target_alias} | {desc}")
+
+            reasoning = _clean_block(resolved.get("reasoning"))
+            if reasoning:
+                lines.append("")
+                lines.append(f"Reasoning: {reasoning}")
+
+        if not debug_info:
+            lines.append("")
+            lines.append("[Note]")
+            lines.append(
+                "No L2 path-planning debug payload was returned for this query. "
+                "This usually means L1 match, direct decomposition, or planning fallback."
+            )
 
         file_path.write_text("\n".join(lines), encoding="utf-8")
         logger.info(f"[Memory] query_path report written: {file_path}")
@@ -887,6 +931,26 @@ class MemoryToolkit(BaseToolkit):
                 )
         else:
             logger.info(f"[Memory] No task result for: {task[:30]}...")
+
+        try:
+            self._write_query_path_report(
+                task=task,
+                result={
+                    "metadata": result.metadata or {},
+                    "query_result": {
+                        "success": result.success,
+                        "query_type": result.query_type.value,
+                        "states_count": len(result.states),
+                        "actions_count": len(result.actions),
+                        "cognitive_phrase_id": (
+                            result.cognitive_phrase.id
+                            if result.cognitive_phrase else ""
+                        ),
+                    },
+                },
+            )
+        except Exception as e:
+            logger.warning(f"[Memory] Failed to write query_path report: {e}")
 
         return result
 
