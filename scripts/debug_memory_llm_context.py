@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
-"""Debug script: test private+public memory merge across all query types.
+"""Debug script: test PlannerAgent's Memory analysis pipeline.
 
-Tests 4 query endpoints to verify the private+public merge logic:
+Tests the /api/v1/memory/plan endpoint which runs PlannerAgent server-side.
+Shows every piece of data returned:
 
-1. POST /api/v1/memory/phrase/query  — L1 merged phrase match
-2. POST /api/v1/memory/query (task)  — L1→L2→L3 full pipeline
-3. POST /api/v1/memory/query (action) — merged action/page-operations query
-4. POST /api/v1/memory/state          — merged state-by-URL query
+1. Coverage items (phrase/graph) with full workflow_guide
+2. Uncovered parts
+3. User preferences
 
-Each test prints the `source` field to verify private/public selection.
+This lets you see exactly what the PlannerAgent produces before
+AMITaskPlanner does subtask decomposition.
 
 Configure API_BASE_URL, API_KEY, USER_ID below, then run:
 
     python scripts/debug_memory_llm_context.py
+    python scripts/debug_memory_llm_context.py "your task here"
 
 Make sure the Cloud Backend is running (port 9000 by default).
 """
@@ -37,16 +39,14 @@ API_BASE_URL = os.environ.get("AMI_API_BASE_URL", "http://localhost:9000")
 API_KEY = os.environ.get("AMI_API_KEY", "")
 USER_ID = os.environ.get("AMI_USER_ID", "shenyouren")
 
-# Test data — edit to match your actual recordings/memory
-EXAMPLE_TASK = "收集 Amazon 上卖的最好的 10 款眼镜"
-EXAMPLE_URL = "https://www.amazon.com/"
+DEFAULT_TASK = "收集 Amazon 上卖的最好的 10 款眼镜"
 
 
 # =============================================================================
 # HTTP helpers
 # =============================================================================
 
-async def _post(endpoint: str, payload: dict) -> dict:
+async def _post(endpoint: str, payload: dict, timeout: float = 300.0) -> dict:
     """POST to Cloud Backend and return JSON response."""
     url = f"{API_BASE_URL}{endpoint}"
     async with httpx.AsyncClient() as client:
@@ -54,7 +54,7 @@ async def _post(endpoint: str, payload: dict) -> dict:
             url,
             json=payload,
             headers={"X-Ami-API-Key": API_KEY},
-            timeout=60.0,
+            timeout=timeout,
         )
         resp.raise_for_status()
         return resp.json()
@@ -66,175 +66,87 @@ def _print_header(title: str) -> None:
     print("=" * 80)
 
 
+def _print_section(title: str) -> None:
+    print(f"\n--- {title} ---")
+
+
 # =============================================================================
-# Test 1: CognitivePhrase query (L1 merged)
+# PlannerAgent test
 # =============================================================================
 
-async def test_phrase_query(task: str) -> None:
-    _print_header(f"Test 1: CognitivePhrase Query (L1 merged)\n  Task: {task}")
+async def test_planner_agent(task: str) -> dict:
+    """Call /api/v1/memory/plan and display the full MemoryPlan."""
+    _print_header(f"PlannerAgent: Memory Analysis\n  Task: {task}")
 
-    data = await _post("/api/v1/memory/phrase/query", {
+    print("\nCalling PlannerAgent (this may take 10-30s)...")
+    data = await _post("/api/v1/memory/plan", {
         "user_id": USER_ID,
-        "query": task,
+        "task": task,
     })
 
-    source = data.get("source", "?")
     success = data.get("success", False)
-    phrase = data.get("phrase")
-    reasoning = data.get("reasoning", "")
-
     print(f"\nsuccess: {success}")
-    print(f"source:  {source}")
-    print(f"reasoning: {reasoning[:200]}")
 
-    if phrase:
-        print(f"\nMatched phrase:")
-        print(f"  id:          {phrase.get('id', '?')}")
-        print(f"  label:       {phrase.get('label', '?')}")
-        print(f"  description: {phrase.get('description', '?')[:120]}")
-        print(f"  states:      {len(phrase.get('states', []))}")
-        print(f"  actions:     {len(phrase.get('actions', []))}")
+    memory_plan = data.get("memory_plan", {})
+    plan_steps = memory_plan.get("steps", [])
+    preferences = memory_plan.get("preferences", [])
 
-        # Show state URLs
-        for i, state in enumerate(phrase.get("states", []), 1):
-            url = state.get("page_url", "?")
-            print(f"    State {i}: {url[:100]}")
+    # --- Plan Steps ---
+    _print_section(f"Plan Steps ({len(plan_steps)})")
+    if not plan_steps:
+        print("  (none — L3, no Memory match)")
+    for step in plan_steps:
+        index = step.get("index", "?")
+        source = step.get("source", "none")
+        content = step.get("content", "")
+        phrase_id = step.get("phrase_id")
+        state_ids = step.get("state_ids", [])
+        workflow_guide = step.get("workflow_guide", "")
+
+        source_label = {"phrase": "from Memory", "graph": "from graph", "none": "no Memory"}.get(source, source)
+        print(f"\n  [Step {index}] ({source_label})")
+        print(f"      Content:    {content}")
+        if phrase_id:
+            print(f"      Phrase ID:  {phrase_id}")
+        if state_ids:
+            print(f"      State IDs:  {', '.join(state_ids)}")
+
+        if workflow_guide:
+            print(f"      Workflow Guide ({len(workflow_guide)} chars):")
+            for line in workflow_guide.split("\n"):
+                print(f"        {line}")
+        else:
+            print("      Workflow Guide: (empty)")
+
+    # --- Preferences ---
+    _print_section(f"User Preferences ({len(preferences)})")
+    if not preferences:
+        print("  (none detected)")
+    for pref in preferences:
+        print(f"  - {pref}")
+
+    # --- Summary ---
+    _print_section("Summary")
+    has_phrase = any(
+        s.get("source") == "phrase" and s.get("phrase_id")
+        for s in plan_steps
+    )
+    has_graph = any(s.get("source") == "graph" for s in plan_steps)
+    if has_phrase:
+        level = "L1 (phrase match)"
+    elif has_graph:
+        level = "L2 (graph exploration)"
     else:
-        print("\nNo matching phrase found.")
+        level = "L3 (no match)"
+    print(f"  Memory Level: {level}")
+    guide_total = sum(len(s.get("workflow_guide", "")) for s in plan_steps)
+    print(f"  Total workflow_guide chars: {guide_total}")
 
+    # --- Raw JSON ---
+    _print_section("Raw Response (JSON)")
+    print(json.dumps(data, ensure_ascii=False, indent=2, default=str))
 
-# =============================================================================
-# Test 2: Unified query (task type — L1→L2→L3 pipeline)
-# =============================================================================
-
-async def test_task_query(task: str) -> None:
-    _print_header(f"Test 2: Unified Task Query (L1→L2→L3)\n  Task: {task}")
-
-    data = await _post("/api/v1/memory/query", {
-        "user_id": USER_ID,
-        "target": task,
-    })
-
-    source = data.get("source", "?")
-    success = data.get("success", False)
-    query_type = data.get("query_type", "?")
-    metadata = data.get("metadata", {})
-    method = metadata.get("method", "?")
-
-    print(f"\nsuccess:    {success}")
-    print(f"query_type: {query_type}")
-    print(f"source:     {source}")
-    print(f"method:     {method}")
-
-    # States
-    states = data.get("states", [])
-    if states:
-        print(f"\nPath ({len(states)} states):")
-        for i, s in enumerate(states, 1):
-            url = s.get("page_url", "?")
-            desc = s.get("description", "")[:80]
-            print(f"  {i}. {url[:80]}")
-            if desc:
-                print(f"     {desc}")
-
-    # CognitivePhrase
-    cp = data.get("cognitive_phrase")
-    if cp:
-        print(f"\nCognitivePhrase: {cp.get('id', '?')}")
-        print(f"  label: {cp.get('label', '?')}")
-
-    # Subtasks
-    subtasks = data.get("subtasks", [])
-    if subtasks:
-        print(f"\nSubtasks ({len(subtasks)}):")
-        for st in subtasks:
-            found = st.get("found", False)
-            print(f"  [{st.get('task_id')}] {st.get('target', '?')[:80]}  (found={found})")
-
-    # Metadata
-    print(f"\nMetadata: {json.dumps(metadata, ensure_ascii=False, default=str)}")
-
-
-# =============================================================================
-# Test 3: Unified query (action type — page operations, merged)
-# =============================================================================
-
-async def test_action_query(url: str) -> None:
-    _print_header(f"Test 3: Action/Page-Operations Query (merged)\n  URL: {url}")
-
-    # Exploration query (empty target)
-    data = await _post("/api/v1/memory/query", {
-        "user_id": USER_ID,
-        "target": "",
-        "current_state": url,
-    })
-
-    source = data.get("source", "?")
-    success = data.get("success", False)
-    query_type = data.get("query_type", "?")
-    metadata = data.get("metadata", {})
-
-    print(f"\nsuccess:    {success}")
-    print(f"query_type: {query_type}")
-    print(f"source:     {source}")
-    print(f"method:     {metadata.get('method', '?')}")
-
-    # IntentSequences
-    sequences = data.get("intent_sequences", [])
-    if sequences:
-        print(f"\nIntentSequences ({len(sequences)}):")
-        for i, seq in enumerate(sequences[:10], 1):
-            desc = seq.get("description", "?")[:100]
-            print(f"  {i}. {desc}")
-        if len(sequences) > 10:
-            print(f"  ... and {len(sequences) - 10} more")
-    else:
-        print("\nNo IntentSequences found.")
-
-    # Outgoing actions
-    actions = data.get("outgoing_actions", [])
-    if actions:
-        print(f"\nOutgoing Actions ({len(actions)}):")
-        for i, a in enumerate(actions[:5], 1):
-            target = a.get("target", "?")[:8]
-            atype = a.get("action_type", "?")
-            print(f"  {i}. -> {target}... ({atype})")
-
-
-# =============================================================================
-# Test 4: State-by-URL query (merged)
-# =============================================================================
-
-async def test_state_query(url: str) -> None:
-    _print_header(f"Test 4: State-by-URL Query (merged)\n  URL: {url}")
-
-    data = await _post("/api/v1/memory/state", {
-        "user_id": USER_ID,
-        "url": url,
-    })
-
-    source = data.get("source", "?")
-    success = data.get("success", False)
-    state = data.get("state")
-
-    print(f"\nsuccess: {success}")
-    print(f"source:  {source}")
-
-    if state:
-        print(f"\nState:")
-        print(f"  id:          {state.get('id', '?')[:16]}...")
-        print(f"  page_url:    {state.get('page_url', '?')[:100]}")
-        print(f"  page_title:  {state.get('page_title', '?')}")
-        print(f"  description: {state.get('description', '?')[:120]}")
-
-    sequences = data.get("intent_sequences", [])
-    if sequences:
-        print(f"\nIntentSequences ({len(sequences)}):")
-        for i, seq in enumerate(sequences[:10], 1):
-            desc = seq.get("description", "?")[:100]
-            print(f"  {i}. {desc}")
-    else:
-        print("\nNo IntentSequences found.")
+    return data
 
 
 # =============================================================================
@@ -242,26 +154,21 @@ async def test_state_query(url: str) -> None:
 # =============================================================================
 
 async def main() -> None:
+    task = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_TASK
+
     if not API_KEY or not API_KEY.strip():
-        print("Error: API_KEY is empty. Edit this script and set a valid key.")
+        print("Error: AMI_API_KEY is empty.")
+        print("  Set via: export AMI_API_KEY='your-key'")
         sys.exit(1)
 
     print(f"Cloud Backend: {API_BASE_URL}")
     print(f"User ID:       {USER_ID}")
-    print(f"Task:          {EXAMPLE_TASK}")
-    print(f"URL:           {EXAMPLE_URL}")
+    print(f"Task:          {task}")
 
-    # Run all 4 tests
-    # Test 1 & 2 both test task queries (phrase-only vs full pipeline)
-    await test_phrase_query(EXAMPLE_TASK)
-    await test_task_query(EXAMPLE_TASK)
-
-    # Test 3 & 4 both test URL-based queries
-    await test_action_query(EXAMPLE_URL)
-    await test_state_query(EXAMPLE_URL)
+    await test_planner_agent(task)
 
     print("\n" + "=" * 80)
-    print("  All tests completed.")
+    print("  Done.")
     print("=" * 80)
 
 

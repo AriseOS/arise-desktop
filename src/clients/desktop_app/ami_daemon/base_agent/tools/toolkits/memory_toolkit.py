@@ -1683,6 +1683,64 @@ class MemoryToolkit(BaseToolkit):
         return ""
 
     # =========================================================================
+    # Planner Agent
+    # =========================================================================
+
+    async def plan_task(self, task: str) -> "MemoryPlanResult":
+        """Get Memory coverage analysis for the given task via PlannerAgent.
+
+        Calls the Cloud Backend /api/v1/memory/plan endpoint which runs the
+        PlannerAgent server-side. The agent uses Memory tools to recall workflows,
+        explore the graph, and produce a MemoryPlan (coverage + preferences + uncovered).
+
+        Subtask decomposition is NOT done here — that's AMITaskPlanner's job.
+
+        Args:
+            task: User's task description.
+
+        Returns:
+            MemoryPlanResult with coverage analysis and preferences.
+
+        Raises:
+            RuntimeError: If HTTP request fails or response is invalid.
+        """
+        if not HTTPX_AVAILABLE:
+            raise RuntimeError("httpx not available, cannot call PlannerAgent API")
+
+        url = f"{self._memory_api_base_url}/api/v1/memory/plan"
+        payload = {
+            "user_id": self._user_id,
+            "task": task,
+        }
+
+        logger.info(f"[MemoryToolkit] Calling PlannerAgent API: task={task[:80]}...")
+
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            response = await client.post(
+                url,
+                json=payload,
+                headers={"X-Ami-API-Key": self._ami_api_key},
+            )
+
+        if response.status_code != 200:
+            error_msg = response.text[:500] if response.text else "Unknown error"
+            raise RuntimeError(
+                f"PlannerAgent API returned {response.status_code}: {error_msg}"
+            )
+
+        data = response.json()
+        if not data.get("success"):
+            raise RuntimeError(f"PlannerAgent API returned failure: {data}")
+
+        result = MemoryPlanResult.from_dict(data)
+        step_count = len(result.memory_plan.steps)
+        logger.info(
+            f"[MemoryToolkit] PlannerAgent returned {step_count} steps, "
+            f"{len(result.memory_plan.preferences)} preferences"
+        )
+        return result
+
+    # =========================================================================
     # Utility Methods
     # =========================================================================
 
@@ -1723,6 +1781,58 @@ class MemoryToolkit(BaseToolkit):
 
 
 # =============================================================================
+# Client-side MemoryPlan models (mirrors src/common/memory/planner/models.py)
+# =============================================================================
+
+@dataclass
+class PlanStepData:
+    """A single step in the execution plan (client-side model)."""
+    index: int = 0
+    content: str = ""
+    source: str = "none"  # "phrase" | "graph" | "none"
+    phrase_id: Optional[str] = None
+    state_ids: List[str] = field(default_factory=list)
+    workflow_guide: str = ""
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> "PlanStepData":
+        return cls(
+            index=data.get("index", 0),
+            content=data.get("content", ""),
+            source=data.get("source", "none"),
+            phrase_id=data.get("phrase_id"),
+            state_ids=data.get("state_ids", []),
+            workflow_guide=data.get("workflow_guide", ""),
+        )
+
+
+@dataclass
+class MemoryPlanData:
+    """Execution-oriented step plan (client-side model)."""
+    steps: List[PlanStepData] = field(default_factory=list)
+    preferences: List[str] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> "MemoryPlanData":
+        steps = [PlanStepData.from_dict(s) for s in data.get("steps", [])]
+        return cls(
+            steps=steps,
+            preferences=data.get("preferences", []),
+        )
+
+
+@dataclass
+class MemoryPlanResult:
+    """Complete output of PlannerAgent (client-side model)."""
+    memory_plan: MemoryPlanData = field(default_factory=MemoryPlanData)
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> "MemoryPlanResult":
+        memory_plan_data = data.get("memory_plan", {})
+        return cls(memory_plan=MemoryPlanData.from_dict(memory_plan_data))
+
+
+# =============================================================================
 # Exported Symbols
 # =============================================================================
 
@@ -1737,6 +1847,10 @@ __all__ = [
     "QueryType",
     "SubTaskResult",
     "QueryResult",
+    # Planner models
+    "PlanStepData",
+    "MemoryPlanData",
+    "MemoryPlanResult",
     # Toolkit
     "MemoryToolkit",
 ]

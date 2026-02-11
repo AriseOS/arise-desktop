@@ -53,44 +53,31 @@ _MAX_GUIDE_INTENTS = 20
 # 3. Strategic Grouping - group sequential actions by same worker type
 # 4. Aggressive Parallelization - parallelize across different workers
 # 5. Explicit Dependencies - LLM specifies which tasks depend on which
-FINE_GRAINED_DECOMPOSE_PROMPT = r"""You need to decompose a task into atomic, executable subtasks.
+FINE_GRAINED_DECOMPOSE_PROMPT = r"""You are a task decomposer. Convert a user's task into atomic subtasks for specialized agents.
 
-**CRITICAL PRINCIPLES:**
+**HOW TO WORK:**
+- If an EXECUTION PLAN is provided below: use it as the backbone. Map each plan step into one or more subtasks, assign the right agent type and dependencies. Split coarse steps if needed. Add a final deliverable step if missing.
+- If no EXECUTION PLAN is provided: decompose the task from scratch using your own knowledge.
 
-1. **Self-Contained Subtasks**: Each subtask must be FULLY self-sufficient and independently understandable.
-   - DO NOT use relative references like "the previous result" or "the data above"
-   - DO write explicit instructions with all necessary context
-   - Example: Instead of "Analyze the document", write "Analyze the document titled 'Q2 Report' and extract key metrics"
+**SUBTASK RULES:**
 
-2. **Clear Deliverables**: Each subtask must specify a concrete output.
-   - DO NOT use vague verbs like "research" or "look into" without defining output
-   - DO specify the format: "Return a JSON list of...", "Write to file products.md..."
-   - Example: "Extract all product names and prices, return as JSON list with 'name' and 'price' keys"
+1. **Self-Contained**: Each subtask must include all context needed to execute it independently — specific URLs, search keywords, output format. Never use relative references like "the previous result".
 
-3. **Atomic Actions**: Each subtask should require only 1-2 tool calls.
-   - Browser subtasks: one navigation or one data extraction
-   - Document subtasks: one file read or one file write
-   - Code subtasks: one command execution
+2. **Clear Deliverables**: Each subtask must specify what it produces.
+   - Good: "Extract top 10 products (name, price, rating, URL), save to products.md"
+   - Bad: "Research products"
 
-4. **Strategic Grouping**: Group ONLY sequential actions that:
-   - Must be done by the SAME worker type
-   - Are tightly coupled (e.g., navigate to page + extract data from same page)
+3. **Atomic**: Each subtask ≈ 1-2 tool calls.
+   - Browser: one navigation or one data extraction
+   - Document: one file operation
+   - Code: one command execution
 
-5. **Aggressive Parallelization**: Create separate subtasks for:
-   - Different worker types (browser vs document)
-   - Independent operations (processing multiple items in parallel)
+4. **Dependencies**: Only add depends_on when there is real data dependency. Independent tasks should NOT have depends_on (allows parallel execution).
 
-6. **Explicit Dependencies**: You MUST specify dependencies for each task.
-   - If a task needs data from another task, add depends_on attribute
-   - If tasks are independent, do NOT add depends_on (they can run in parallel)
-   - Example: Task 3 needs results from Task 1 and 2 → depends_on="1,2"
-
-7. **Deliverable Format**: The final task should produce a well-formatted deliverable for the user.
-   - Use visual-friendly formats: HTML, CSV, Excel (.xlsx), Word (.docx), PowerPoint (.pptx)
-   - Markdown (.md) is for intermediate notes only, NEVER as a final deliverable
-   - If the user's request is a simple question with a short answer, no file is needed — a text reply is sufficient
-   - If the user specifies a format, use that format
-   - Choose the format that best serves the content: tabular data suits spreadsheets, rich reports suit HTML, formal documents suit Word
+5. **Final Deliverable**: The last task should produce a user-friendly output.
+   - Prefer: HTML, Excel (.xlsx), CSV, Word (.docx), PowerPoint (.pptx)
+   - Markdown (.md) is for intermediate notes only, NEVER as final deliverable
+   - Simple questions need only a text reply, no file
 
 **LANGUAGE POLICY**: Write subtask content in the SAME language as the user's task.
 
@@ -106,29 +93,15 @@ FINE_GRAINED_DECOMPOSE_PROMPT = r"""You need to decompose a task into atomic, ex
 </tasks>
 
 Each <task> element:
-- Has "id" attribute: Sequential number (1, 2, 3...)
-- Has "type" attribute: browser, document, code, or multi_modal
-- Has optional "depends_on" attribute: Comma-separated list of task IDs that must complete first
-  - ONLY add depends_on if the task NEEDS data from previous tasks
-  - Independent tasks should NOT have depends_on (allows parallel execution)
-- Contains a self-contained, actionable description with clear deliverable
-
-**IMPORTANT**: Do NOT assume sequential dependencies. Only add depends_on when there is actual data dependency.
-
-Example of INDEPENDENT tasks (can run in parallel):
-<tasks>
-<task id="1" type="browser">Search Amazon for AI glasses and extract top 3 products</task>
-<task id="2" type="browser">Search ProductHunt for AI wearables and extract top products</task>
-<task id="3" type="document" depends_on="1,2">Combine results from Amazon and ProductHunt searches into a comparison report</task>
-</tasks>
+- "id": Sequential number (1, 2, 3...)
+- "type": browser, document, code, or multi_modal
+- "depends_on" (optional): Comma-separated task IDs this task needs data from
 
 **TASK TO DECOMPOSE:**
 {task}
 {memory_context}
 
-**REMINDER**: Your decomposition must serve the USER'S task above. If memory context is provided, use it only as a navigation reference — the specific actions (sort order, filters, search queries) must match what the USER asked for, not what was done in a past task.
-
-Now decompose this task into atomic subtasks:"""
+Now decompose into atomic subtasks:"""
 
 
 # Legacy coarse-grained prompt (kept for backward compatibility)
@@ -232,12 +205,19 @@ class AMITaskPlanner:
 
     async def decompose_and_query_memory(self, task: str) -> List[AMISubtask]:
         """
-        Memory-First decomposition: query Memory first, then decompose with context.
+        Memory-First decomposition: uses PlannerAgent if available, falls back
+        to old Reasoner-based query + fixed decompose flow.
 
-        Flow:
+        PlannerAgent path (decoupled):
+        1. Call plan_task() → MemoryPlanResult (coverage + preferences + uncovered)
+        2. Format memory_plan as memory_context text
+        3. Call _fine_grained_decompose(task, memory_context) → subtasks
+        4. Assign coverage workflow_guide to matching browser subtasks
+
+        Fallback (old) path:
         1. Query Memory for the whole task (single query)
         2. Format Memory result as context for LLM decomposition
-        3. Decompose with Memory context (LLM sees known workflow)
+        3. Decompose with Memory context
         4. Assign Memory result to browser-type subtasks (whole injection)
 
         Args:
@@ -248,6 +228,261 @@ class AMITaskPlanner:
         """
         logger.info(f"[AMITaskPlanner] Memory-First decomposing task: {task[:100]}...")
 
+        # Try PlannerAgent path first
+        if self._memory_toolkit and self._memory_toolkit.is_available():
+            try:
+                subtasks = await self._plan_with_planner_agent(task)
+                return subtasks
+            except Exception as e:
+                logger.warning(
+                    f"[AMITaskPlanner] PlannerAgent failed, falling back to old path: {e}",
+                    exc_info=True,
+                )
+
+        # Fallback: old Reasoner-based path
+        return await self._decompose_with_old_path(task)
+
+    async def _plan_with_planner_agent(self, task: str) -> List[AMISubtask]:
+        """Use PlannerAgent for Memory-powered decomposition.
+
+        New decoupled flow:
+        1. Call plan_task() → MemoryPlanResult (coverage + preferences + uncovered)
+        2. Format memory_plan as memory_context text for LLM decomposition
+        3. Call _fine_grained_decompose(task, memory_context) → List[AMISubtask]
+        4. Assign workflow_guide from coverage items to matching browser subtasks
+
+        Args:
+            task: User's task description.
+
+        Returns:
+            List of AMISubtask objects with per-subtask workflow_guide.
+        """
+        # Step 1: Get MemoryPlan from PlannerAgent
+        await self._emit_event(DecomposeProgressData(
+            task_id=self.task_id,
+            progress=0.1,
+            message="Analyzing Memory coverage...",
+            is_final=False,
+        ))
+
+        plan_result = await self._memory_toolkit.plan_task(task)
+        memory_plan = plan_result.memory_plan
+
+        # Determine memory level based on coverage
+        has_phrase_coverage = any(
+            c.source == "phrase" and c.phrase_id
+            for c in memory_plan.steps
+        )
+        has_graph_coverage = any(
+            c.source == "graph" for c in memory_plan.steps
+        )
+        if has_phrase_coverage:
+            level = "L1"
+        elif has_graph_coverage:
+            level = "L2"
+        else:
+            level = "L3"
+
+        # Emit memory level event
+        await self._emit_event(MemoryLevelData(
+            task_id=self.task_id,
+            level=level,
+            reason="PlannerAgent Memory analysis",
+            states_count=len(memory_plan.steps),
+            method="planner_agent",
+        ))
+
+        # Emit human-readable memory report
+        memory_report = self._build_planner_agent_report(memory_plan)
+        await self._emit_event(AgentReportData(
+            task_id=self.task_id,
+            message=memory_report,
+            report_type="info",
+        ))
+
+        # Step 2: Format memory_plan as context for decomposition
+        memory_context = self._format_memory_plan_for_decompose(memory_plan)
+
+        # Step 3: Decompose with memory context using existing LLM decomposition
+        subtasks = await self._fine_grained_decompose(task, memory_context=memory_context)
+
+        # Step 4: Assign workflow_guide from coverage items to browser subtasks
+        self._assign_coverage_guides(subtasks, memory_plan)
+
+        # Log summary
+        type_counts: Dict[str, int] = {}
+        for st in subtasks:
+            type_counts[st.agent_type] = type_counts.get(st.agent_type, 0) + 1
+            deps = f" depends_on={st.depends_on}" if st.depends_on else ""
+            mem = f" memory={st.memory_level}" if st.memory_level != "L3" else ""
+            logger.info(
+                f"[AMITaskPlanner] PlannerAgent subtask {st.id} ({st.agent_type}): "
+                f"{st.content[:120]}{deps}{mem}"
+            )
+        logger.info(
+            f"[AMITaskPlanner] PlannerAgent decomposition: {len(subtasks)} subtasks "
+            f"(types: {type_counts})"
+        )
+
+        # Emit final decomposition event
+        await self._emit_decompose_result(subtasks)
+
+        return subtasks
+
+    @staticmethod
+    def _format_memory_plan_for_decompose(memory_plan) -> str:
+        """Format MemoryPlan as context string for the decomposition prompt.
+
+        The MemoryPlan contains an execution-oriented step plan from the
+        PlannerAgent. Each step is a concrete action with optional Memory
+        backing (workflow_guide with URLs, clicks, operations).
+
+        Args:
+            memory_plan: MemoryPlanData from PlannerAgent.
+
+        Returns:
+            Formatted context string, or empty if no useful data.
+        """
+        steps = getattr(memory_plan, "steps", None) or []
+        preferences = getattr(memory_plan, "preferences", None) or []
+
+        if not steps and not preferences:
+            return ""
+
+        lines = [
+            "\n\n**EXECUTION PLAN** (from Memory analysis of user's past workflows)",
+            "",
+            "The following step plan was generated from the user's workflow memory. "
+            "Use it as the basis for your decomposition:",
+            "- Steps with workflow details have proven URLs and operations — follow them.",
+            "- Steps without workflow details need to be planned from scratch.",
+            "- Adapt specific values (search keywords, filters) to the current task.",
+            "",
+        ]
+
+        if steps:
+            for step in steps:
+                # step may be PlanStep (server) or PlanStepData (client)
+                index = getattr(step, "index", 0)
+                content = getattr(step, "content", "")
+                source = getattr(step, "source", "none")
+                workflow_guide = getattr(step, "workflow_guide", "")
+
+                source_tag = ""
+                if source == "phrase":
+                    source_tag = " [from Memory]"
+                elif source == "graph":
+                    source_tag = " [from Memory graph]"
+
+                lines.append(f"**Step {index}**{source_tag}: {content}")
+                if workflow_guide:
+                    # Indent workflow guide under the step
+                    for guide_line in workflow_guide.split("\n"):
+                        lines.append(f"  {guide_line}")
+                lines.append("")
+
+        if preferences:
+            lines.append("**User Preferences** (apply to all steps):")
+            for pref in preferences:
+                lines.append(f"- {pref}")
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _assign_coverage_guides(subtasks: List[AMISubtask], memory_plan) -> None:
+        """Assign workflow_guide from coverage items to matching browser subtasks.
+
+        Strategy: All coverage items with workflow_guide are concatenated
+        and assigned to all browser-type subtasks (whole injection, same as
+        the old _assign_memory_to_subtasks approach). The dynamic page
+        operations layer provides fine-grained per-page guidance at runtime.
+
+        Args:
+            subtasks: List of decomposed subtasks.
+            memory_plan: MemoryPlanData with coverage items.
+        """
+        # Collect all workflow guides from coverage items
+        guides = []
+        has_phrase = False
+        for item in memory_plan.steps:
+            if item.workflow_guide:
+                guides.append(item.workflow_guide)
+                # Only count as phrase coverage if the guide was actually extracted
+                if item.source == "phrase" and item.phrase_id:
+                    has_phrase = True
+
+        if not guides:
+            return
+
+        combined_guide = "\n\n".join(guides)
+        level = "L1" if has_phrase else "L2"
+
+        assigned_count = 0
+        for subtask in subtasks:
+            if subtask.agent_type == "browser":
+                subtask.workflow_guide = combined_guide
+                subtask.memory_level = level
+                assigned_count += 1
+
+        logger.info(
+            f"[AMITaskPlanner] Assigned {level} workflow_guide "
+            f"({len(combined_guide)} chars) to {assigned_count}/{len(subtasks)} "
+            f"browser subtasks"
+        )
+
+    @staticmethod
+    def _build_planner_agent_report(memory_plan) -> str:
+        """Build a human-readable memory report for chat display.
+
+        Args:
+            memory_plan: MemoryPlanData from PlannerAgent.
+        """
+        import html as html_mod
+
+        if not memory_plan.steps:
+            return "**Memory analysis: no matching workflows found (L3)**"
+
+        has_phrase = any(
+            c.source == "phrase" and c.phrase_id
+            for c in memory_plan.steps
+        )
+        level_label = "L1" if has_phrase else "L2"
+
+        # Build step list
+        li_items = []
+        for item in memory_plan.steps:
+            source_tag = {"phrase": "Memory", "graph": "graph", "none": "new"}.get(item.source, item.source)
+            li_items.append(f"<li>[{source_tag}] {html_mod.escape(item.content)}</li>")
+
+        coverage_html = ""
+        if li_items:
+            coverage_html = (
+                f"\n\n<details><summary>Execution plan ({len(li_items)} steps)</summary>"
+                f"<ul>{''.join(li_items)}</ul></details>"
+            )
+
+        # Build preferences
+        prefs_html = ""
+        if memory_plan.preferences:
+            pref_items = [
+                f"<li>{html_mod.escape(p)}</li>" for p in memory_plan.preferences
+            ]
+            prefs_html = (
+                f"\n\n<details><summary>User preferences ({len(pref_items)})</summary>"
+                f"<ul>{''.join(pref_items)}</ul></details>"
+            )
+
+        return f"**Memory analysis ({level_label})**{coverage_html}{prefs_html}"
+
+    async def _decompose_with_old_path(self, task: str) -> List[AMISubtask]:
+        """Old Reasoner-based decomposition path (fallback).
+
+        Args:
+            task: User's task description.
+
+        Returns:
+            List of AMISubtask objects.
+        """
         # Step 1: Query Memory for the whole task
         task_memory = await self._query_task_memory(task)
 
@@ -261,6 +496,12 @@ class AMITaskPlanner:
         self._assign_memory_to_subtasks(subtasks, task_memory)
 
         # Emit final decomposition event
+        await self._emit_decompose_result(subtasks)
+
+        return subtasks
+
+    async def _emit_decompose_result(self, subtasks: List[AMISubtask]) -> None:
+        """Emit the final decomposition result event."""
         subtasks_data = [
             {
                 "id": st.id,
@@ -279,8 +520,6 @@ class AMITaskPlanner:
             sub_tasks=subtasks_data,
             is_final=True,
         ))
-
-        return subtasks
 
     def _build_workers_info(self) -> str:
         """Build worker descriptions string for the decomposition prompt."""

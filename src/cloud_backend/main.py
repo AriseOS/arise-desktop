@@ -4751,6 +4751,106 @@ def _find_dom_for_step(
     return None
 
 
+@app.post("/api/v1/memory/plan")
+async def plan_with_memory(
+    data: dict,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
+):
+    """
+    Memory-Powered Task Analysis
+
+    Uses PlannerAgent to analyze Memory coverage for the user's task.
+    The PlannerAgent outputs a MemoryPlan (coverage + preferences + uncovered),
+    NOT subtasks — subtask decomposition is done client-side by AMITaskPlanner.
+
+    Headers:
+        X-Ami-API-Key: User's API key (required)
+
+    Body:
+        {
+            "user_id": "user123",
+            "task": "Search for top AI products on Product Hunt this week"
+        }
+
+    Returns:
+        {
+            "success": true,
+            "memory_plan": {
+                "steps": [
+                    {
+                        "index": 1,
+                        "content": "...",
+                        "source": "phrase",
+                        "phrase_id": "xxx",
+                        "workflow_guide": "..."
+                    }
+                ],
+                "preferences": ["pref1", "pref2"]
+            }
+        }
+    """
+    logger.info(f"PlannerAgent request: data keys={list(data.keys())}")
+
+    if not x_ami_api_key:
+        raise HTTPException(400, "Missing X-Ami-API-Key header")
+
+    user_id = data.get("user_id")
+    task = data.get("task")
+
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+    if not task:
+        raise HTTPException(400, "Missing task")
+
+    try:
+        from src.common.llm import get_cached_anthropic_provider, get_cached_embedding_service
+        from src.common.memory.memory_service import get_private_memory, get_public_memory
+
+        # Get private + public memory
+        private_ms = get_private_memory(user_id)
+        public_ms = get_public_memory()
+
+        # Create LLM provider with user's API key (cached)
+        llm_provider = get_cached_anthropic_provider(
+            api_key=x_ami_api_key,
+            model=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
+            base_url=config_service.get("llm.proxy_url", "https://api.ariseos.com/api"),
+        )
+
+        # Create EmbeddingService with user's API key (cached)
+        embedding_service = get_cached_embedding_service(
+            api_key=x_ami_api_key,
+            base_url=config_service.get("embedding.base_url", "https://api.ariseos.com/openai/v1"),
+            model=config_service.get("embedding.model", "BAAI/bge-m3"),
+            dimension=config_service.get("embedding.dimension", 1024),
+        )
+
+        plan_result = await private_ms.plan(
+            task=task,
+            llm_provider=llm_provider,
+            embedding_service=embedding_service,
+            public_memory_service=public_ms,
+        )
+
+        response = plan_result.to_dict()
+        response["success"] = True
+        step_count = len(plan_result.memory_plan.steps)
+        logger.info(
+            f"PlannerAgent completed: {step_count} steps, "
+            f"{len(plan_result.memory_plan.preferences)} preferences "
+            f"for user={user_id}"
+        )
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        logger.error(f"PlannerAgent failed: {e}\n{error_trace}")
+        raise HTTPException(500, f"PlannerAgent failed: {str(e)}")
+
+
 if __name__ == "__main__":
     # Load config to get server settings
     from core.config_service import CloudConfigService
