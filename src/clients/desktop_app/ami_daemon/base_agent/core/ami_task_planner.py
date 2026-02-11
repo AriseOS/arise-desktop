@@ -318,22 +318,25 @@ class AMITaskPlanner:
             result = await self._memory_toolkit.query_task(task)
 
             # Determine level for logging and event
-            if result.cognitive_phrase:
-                level = "L1"
+            level = self._get_memory_level(result)
+            memory_hit = self._is_memory_hit(result)
+            if level == "L1" and result.cognitive_phrase:
                 states_count = len(result.cognitive_phrase.states) if hasattr(result.cognitive_phrase, 'states') else 0
                 logger.info(
                     f"[AMITaskPlanner] Memory L1 match: CognitivePhrase with "
                     f"{states_count} states"
                 )
-            elif result.states:
-                level = "L2"
+            elif level == "L2" and result.states:
                 logger.info(
                     f"[AMITaskPlanner] Memory L2 match: {len(result.states)} states, "
                     f"{len(result.actions)} actions"
                 )
             else:
                 level = "L3"
-                logger.info("[AMITaskPlanner] Memory L3: no match")
+                logger.info(
+                    "[AMITaskPlanner] Memory L3: no path hit "
+                    f"(success={result.success}, memory_hit={memory_hit})"
+                )
 
             # Emit memory level event
             await self._emit_event(MemoryLevelData(
@@ -357,6 +360,45 @@ class AMITaskPlanner:
         except Exception as e:
             logger.warning(f"[AMITaskPlanner] Memory query failed: {e}")
             return None
+
+    @staticmethod
+    def _is_memory_hit(task_memory: Optional["QueryResult"]) -> bool:
+        """Return whether task memory contains a reusable L1/L2 path."""
+        if not task_memory:
+            return False
+
+        metadata = task_memory.metadata if isinstance(task_memory.metadata, dict) else {}
+        marker = metadata.get("memory_hit")
+        if isinstance(marker, bool):
+            return marker
+        if isinstance(marker, str):
+            normalized = marker.strip().lower()
+            if normalized in {"true", "1", "yes"}:
+                return True
+            if normalized in {"false", "0", "no"}:
+                return False
+
+        # Backward-compatible fallback for older backend payloads.
+        return bool(task_memory.cognitive_phrase or task_memory.states)
+
+    @staticmethod
+    def _get_memory_level(task_memory: Optional["QueryResult"]) -> str:
+        """Get memory level from metadata with backward-compatible fallback."""
+        if not task_memory:
+            return "L3"
+
+        metadata = task_memory.metadata if isinstance(task_memory.metadata, dict) else {}
+        raw_level = metadata.get("memory_level")
+        if isinstance(raw_level, str):
+            normalized = raw_level.strip().upper()
+            if normalized in {"L1", "L2", "L3"}:
+                return normalized
+
+        if task_memory.cognitive_phrase:
+            return "L1"
+        if task_memory.states:
+            return "L2"
+        return "L3"
 
     def _build_memory_report(self, level: str, result: "QueryResult") -> str:
         """Build a human-readable memory summary for chat display.
@@ -424,10 +466,11 @@ class AMITaskPlanner:
         if not task_memory:
             logger.info("[AMITaskPlanner] No memory result, skipping context")
             return ""
-        if not task_memory.success:
+        if not self._is_memory_hit(task_memory):
             logger.info(
-                f"[AMITaskPlanner] Memory result not successful "
-                f"(success={task_memory.success}), skipping context"
+                "[AMITaskPlanner] Memory not hit for context "
+                f"(success={task_memory.success}, "
+                f"memory_level={self._get_memory_level(task_memory)}), skipping context"
             )
             return ""
 
@@ -466,15 +509,16 @@ class AMITaskPlanner:
         The dynamic page operations layer will provide fine-grained per-page
         guidance during execution.
         """
-        if not task_memory or not task_memory.success:
+        if not task_memory or not self._is_memory_hit(task_memory):
             return
 
         from ..tools.toolkits import MemoryToolkit
 
-        if task_memory.cognitive_phrase:
+        level = self._get_memory_level(task_memory)
+        if level == "L1" and task_memory.cognitive_phrase:
             level = "L1"
             guide = MemoryToolkit.format_cognitive_phrase(task_memory.cognitive_phrase)
-        elif task_memory.states:
+        elif level == "L2" and task_memory.states:
             level = "L2"
             guide = MemoryToolkit.format_navigation_path(
                 task_memory.states, task_memory.actions or []
