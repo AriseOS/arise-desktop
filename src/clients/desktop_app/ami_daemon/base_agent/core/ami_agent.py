@@ -564,6 +564,40 @@ class AMIAgent:
 
                 iteration += 1
 
+                # Approaching iteration limit: force a final LLM call without
+                # tools so the model summarises what it has instead of
+                # requesting yet another tool call.
+                if iteration >= self._max_iterations:
+                    logger.warning(
+                        f"[AMIAgent] {self.agent_name} approaching max iterations "
+                        f"({iteration}/{self._max_iterations}), forcing final output"
+                    )
+                    # Inject a nudge so the model knows it must conclude now
+                    self._messages.append({
+                        "role": "user",
+                        "content": (
+                            "You have used all available tool calls. "
+                            "Based on everything you have gathered so far, "
+                            "produce your final output NOW. "
+                            "Do NOT request any more tools."
+                        ),
+                    })
+                    final_response = await self._provider.generate_with_tools(
+                        system_prompt=self._system_prompt,
+                        messages=self._messages,
+                        tools=[],  # no tools — force text output
+                        max_tokens=self._max_tokens,
+                    )
+                    self._messages.append({
+                        "role": "assistant",
+                        "content": self._response_to_content_blocks(final_response),
+                    })
+                    forced_text = final_response.get_text()
+                    if forced_text:
+                        final_text = forced_text
+                    stop_reason = "max_iterations"
+                    break
+
             if iteration >= self._max_iterations:
                 logger.warning(
                     f"[AMIAgent] {self.agent_name} hit max iterations ({self._max_iterations})"

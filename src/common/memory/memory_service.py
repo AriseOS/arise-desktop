@@ -475,6 +475,54 @@ class MemoryService:
             logger.error(f"Failed to delete phrase: {e}")
             return False
 
+    # ==================== Planner Agent ====================
+
+    async def plan(
+        self,
+        task: str,
+        llm_provider,
+        embedding_service,
+        task_state=None,
+        public_memory_service: Optional["MemoryService"] = None,
+    ):
+        """Create a memory-powered plan for the given task using PlannerAgent.
+
+        The PlannerAgent uses 5 Memory tools (recall_phrases, search_states,
+        get_connected_actions, get_neighbors, get_page_capabilities) to explore
+        the memory graph and produce structured subtasks with per-subtask
+        memory references.
+
+        Args:
+            task: User's task description.
+            llm_provider: AnthropicProvider for the PlannerAgent's LLM calls.
+            embedding_service: EmbeddingService for query encoding.
+            task_state: Optional TaskState for SSE events.
+            public_memory_service: Optional public MemoryService for shared memories.
+
+        Returns:
+            PlanResult with MemoryPlan (coverage + preferences + uncovered).
+        """
+        if not self._initialized:
+            raise RuntimeError("MemoryService not initialized. Call initialize() first.")
+
+        from src.common.memory.planner.planner_agent import PlannerAgent
+
+        public_wm = None
+        if public_memory_service:
+            try:
+                public_wm = public_memory_service.workflow_memory
+            except RuntimeError:
+                pass  # Public memory not initialized
+
+        agent = PlannerAgent(
+            memory=self._workflow_memory,
+            llm_provider=llm_provider,
+            embedding_service=embedding_service,
+            task_state=task_state,
+            public_memory=public_wm,
+        )
+        return await agent.plan(task)
+
     # ==================== Lifecycle ====================
 
     def close(self) -> None:

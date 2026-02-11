@@ -88,5 +88,9 @@ Entry point for ALL user requests. Decides:
 ### Memory Integration
 
 **Two-layer Memory usage**:
-- Layer 1 (Planner): workflow_guide from task-level Memory query -> injected via AMITaskExecutor._build_prompt()
+- Layer 1 (Planner): PlannerAgent outputs MemoryPlan (coverage + preferences + uncovered), AMITaskPlanner uses it as context for _fine_grained_decompose, then assigns workflow_guide from coverage items to browser subtasks -> injected via AMITaskExecutor._build_prompt()
 - Layer 2 (Runtime): page operations auto-queried per URL change -> auto-injected by AMIAgent._enrich_message()
+
+**Decoupled responsibility**:
+- PlannerAgent (Memory layer): only analyzes Memory coverage, outputs `<memory_plan>` XML
+- AMITaskPlanner (Agent layer): receives MemoryPlan, does subtask decomposition with worker capabilities, assigns agent_type/depends_on
