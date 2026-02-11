@@ -1290,6 +1290,7 @@ async def add_to_memory(
     snapshots = data.get("snapshots")
     generate_embeddings = data.get("generate_embeddings", True)
     generate_descriptions = data.get("generate_descriptions", True)
+    skip_cognitive_phrase = data.get("skip_cognitive_phrase", False)
 
     if not user_id:
         raise HTTPException(400, "Missing user_id")
@@ -1365,6 +1366,7 @@ async def add_to_memory(
             session_id=session_id,
             store_to_memory=True,
             snapshots=snapshots,
+            skip_cognitive_phrase=skip_cognitive_phrase,
         )
 
         processing_time_ms = int((time.time() - start_time) * 1000)

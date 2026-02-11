@@ -79,6 +79,23 @@ class AMIBrowserAgent(AMIAgent):
         logger.info(f"[AMIBrowserAgent] User request set: {user_request[:50]}...")
 
     # =========================================================================
+    # Reset (clear page ops cache for online learning)
+    # =========================================================================
+
+    def reset(self) -> None:
+        """Reset conversation history and page operations cache.
+
+        Clearing page ops state ensures the next subtask re-queries Memory,
+        picking up operations saved by the previous subtask (online learning).
+        """
+        super().reset()
+        self._page_ops_checked_urls.clear()
+        self._page_ops_inflight.clear()
+        self._cached_page_operations = None
+        self._cached_page_operations_url = None
+        self._cached_page_operations_ids = None
+
+    # =========================================================================
     # Page Operations (URL-triggered async queries)
     # =========================================================================
 

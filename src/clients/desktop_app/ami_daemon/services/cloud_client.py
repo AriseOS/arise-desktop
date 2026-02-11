@@ -1283,7 +1283,8 @@ class CloudClient:
         operations: Optional[List[Dict[str, Any]]] = None,
         session_id: Optional[str] = None,
         snapshots: Optional[Dict[str, Dict]] = None,
-        generate_embeddings: bool = True
+        generate_embeddings: bool = True,
+        skip_cognitive_phrase: bool = False,
     ) -> Dict[str, Any]:
         """Add recording to user's workflow memory
 
@@ -1294,6 +1295,7 @@ class CloudClient:
             session_id: Session identifier (optional)
             snapshots: URL -> snapshot data mapping (optional)
             generate_embeddings: Whether to generate embeddings for semantic search
+            skip_cognitive_phrase: Skip CognitivePhrase creation (for online learning)
 
         Returns:
             dict with:
@@ -1320,6 +1322,8 @@ class CloudClient:
             payload["session_id"] = session_id
         if snapshots:
             payload["snapshots"] = snapshots
+        if skip_cognitive_phrase:
+            payload["skip_cognitive_phrase"] = True
 
         headers = {}
         if self.user_api_key:

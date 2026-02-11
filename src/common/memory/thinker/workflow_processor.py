@@ -200,6 +200,7 @@ class WorkflowProcessor:
         session_id: Optional[str] = None,
         store_to_memory: bool = True,
         snapshots: Optional[Dict[str, Dict]] = None,
+        skip_cognitive_phrase: bool = False,
     ) -> WorkflowProcessingResult:
         """Process complete workflow through URL-based pipeline.
 
@@ -209,6 +210,8 @@ class WorkflowProcessor:
             store_to_memory: Whether to store results to memory.
             snapshots: URL -> snapshot data mapping from recording.
                 Each value: {url, snapshot/snapshot_text, captured_at}
+            skip_cognitive_phrase: If True, skip CognitivePhrase creation.
+                Useful for online learning where per-subtask phrases add noise.
 
         Returns:
             WorkflowProcessingResult with all extracted structures.
@@ -424,18 +427,21 @@ class WorkflowProcessor:
             )
             logger.info("  Stored all structures to memory")
 
-            # Create cognitive phrase
-            cognitive_phrase = await self._create_cognitive_phrase(
-                states=states,
-                actions=actions,
-                intent_sequences=intent_sequences,
-                workflow_data=events,
-                session_id=session_id,
-            )
-            if cognitive_phrase:
-                success = self.memory.create_phrase(cognitive_phrase)
-                if success:
-                    logger.info(f"  Created cognitive phrase: {cognitive_phrase.description[:80]}...")
+            # Create cognitive phrase (skip for online learning subtasks)
+            if skip_cognitive_phrase:
+                logger.info("  Skipping cognitive phrase creation (skip_cognitive_phrase=True)")
+            else:
+                cognitive_phrase = await self._create_cognitive_phrase(
+                    states=states,
+                    actions=actions,
+                    intent_sequences=intent_sequences,
+                    workflow_data=events,
+                    session_id=session_id,
+                )
+                if cognitive_phrase:
+                    success = self.memory.create_phrase(cognitive_phrase)
+                    if success:
+                        logger.info(f"  Created cognitive phrase: {cognitive_phrase.description[:80]}...")
         else:
             logger.info("Stage 7: Skipping memory storage")
         logger.info("")

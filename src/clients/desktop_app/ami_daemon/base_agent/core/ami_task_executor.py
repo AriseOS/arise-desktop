@@ -95,6 +95,8 @@ class AMITaskExecutor:
         agents: Dict[str, "AMIAgent"],  # {"browser": agent, "document": agent, ...}
         max_retries: int = 2,
         user_request: str = "",  # User's original request for context
+        cloud_client: Optional[Any] = None,
+        user_id: Optional[str] = None,
     ):
         """
         Initialize the executor.
@@ -105,12 +107,16 @@ class AMITaskExecutor:
             agents: Dictionary mapping agent_type to ChatAgent instances.
             max_retries: Maximum retry attempts for failed subtasks.
             user_request: The user's original request (for agent context).
+            cloud_client: CloudClient for saving recorded operations to Memory.
+            user_id: User ID for Memory API calls.
         """
         self.task_id = task_id
         self._task_state = task_state
         self._agents = agents
         self._max_retries = max_retries
         self._user_request = user_request
+        self._cloud_client = cloud_client
+        self._user_id = user_id
 
         # Subtask management
         self._subtasks: List[AMISubtask] = []
@@ -368,6 +374,10 @@ class AMITaskExecutor:
         subtask.state = SubtaskState.RUNNING
         await self._emit_subtask_running(subtask)
 
+        # Online Learning: recorder is created per-attempt inside the retry loop
+        # to avoid accumulating operations from failed attempts.
+        recorder = None
+
         # Execute with retries
         try:
             while subtask.retry_count <= self._max_retries:
@@ -376,6 +386,10 @@ class AMITaskExecutor:
                         return False
 
                     await self._wait_if_paused()
+
+                    # Online Learning: fresh recorder for each attempt
+                    if subtask.agent_type == "browser":
+                        recorder = await self._start_behavior_recorder()
 
                     # Reset handoff state on each attempt to prevent stale data
                     # from a failed previous attempt leaking into the retry
@@ -416,6 +430,10 @@ class AMITaskExecutor:
                     subtask.state = SubtaskState.DONE
                     await self._emit_subtask_state(subtask)
 
+                    # Online Learning: save recorded operations to Memory on success
+                    if recorder:
+                        await self._save_recorded_operations(recorder, subtask)
+
                     result_preview = str(subtask.result)[:200] if subtask.result else "(empty)"
                     logger.info(
                         f"[AMITaskExecutor] Subtask {subtask.id} completed: "
@@ -424,6 +442,12 @@ class AMITaskExecutor:
                     return True
 
                 except Exception as e:
+                    # Online Learning: stop recorder from failed attempt
+                    # before creating a fresh one on retry
+                    if recorder:
+                        await self._stop_behavior_recorder(recorder)
+                        recorder = None
+
                     subtask.retry_count += 1
                     subtask.error = str(e)
 
@@ -449,6 +473,10 @@ class AMITaskExecutor:
             return False
 
         finally:
+            # Online Learning: stop recorder to release CDP session
+            if recorder:
+                await self._stop_behavior_recorder(recorder)
+                recorder = None
             # Always clean up replan tools to prevent leaking between subtasks
             self._remove_replan_tools(agent)
 
@@ -473,6 +501,67 @@ class AMITaskExecutor:
         except Exception as e:
             logger.debug(f"[AMITaskExecutor] Failed to get browser context: {e}")
             return None
+
+    # =========================================================================
+    # Online Learning (BehaviorRecorder)
+    # =========================================================================
+
+    async def _start_behavior_recorder(self):
+        """Start BehaviorRecorder for a browser subtask.
+
+        Returns the recorder instance, or None if startup fails.
+        All errors are caught — recorder failure must not block task execution.
+        """
+        try:
+            from ..tools.eigent_browser.behavior_recorder import BehaviorRecorder
+            from ..tools.eigent_browser.browser_session import HybridBrowserSession
+
+            session = await HybridBrowserSession.get_session(session_id=self.task_id)
+            recorder = BehaviorRecorder(enable_snapshot_capture=False)
+            await recorder.start_recording(session)
+            logger.info("[OnlineLearning] Recorder started")
+            return recorder
+        except Exception as e:
+            logger.warning(f"[OnlineLearning] Failed to start recorder: {e}")
+            return None
+
+    async def _stop_behavior_recorder(self, recorder) -> None:
+        """Stop a running BehaviorRecorder."""
+        try:
+            await recorder.stop_recording()
+            logger.info("[OnlineLearning] Recorder stopped")
+        except Exception as e:
+            logger.warning(f"[OnlineLearning] Failed to stop recorder: {e}")
+
+    async def _save_recorded_operations(self, recorder, subtask: AMISubtask) -> None:
+        """Save recorded operations to Memory via CloudClient.
+
+        Only called when a subtask succeeds (SubtaskState.DONE).
+        """
+        if not self._cloud_client or not self._user_id:
+            logger.debug("[OnlineLearning] No cloud_client or user_id, skipping memory save")
+            return
+
+        operations = recorder.operations
+        if not operations:
+            logger.debug("[OnlineLearning] No operations recorded, skipping")
+            return
+
+        try:
+            logger.info(
+                f"[OnlineLearning] Saving {len(operations)} operations to memory "
+                f"(subtask={subtask.id})"
+            )
+            result = await self._cloud_client.add_to_memory(
+                user_id=self._user_id,
+                operations=operations,
+                session_id=f"{self.task_id}_{subtask.id}",
+                generate_embeddings=True,
+                skip_cognitive_phrase=True,
+            )
+            logger.info(f"[OnlineLearning] Memory save result: {result}")
+        except Exception as e:
+            logger.warning(f"[OnlineLearning] Failed to save to memory: {e}")
 
     # =========================================================================
     # Replan Tool Injection

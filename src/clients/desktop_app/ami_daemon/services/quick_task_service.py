@@ -1858,6 +1858,8 @@ Response:"""
                             task_state=state,
                             agents=agents_dict,
                             user_request=current_question,  # Pass original request for context
+                            cloud_client=self._cloud_client,
+                            user_id=self._user_id,
                         )
                         executor.set_subtasks(subtasks)
 
