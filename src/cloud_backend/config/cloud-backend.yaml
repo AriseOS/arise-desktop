@@ -177,6 +177,10 @@ reasoner:
     min_score: 0.15  # Minimum embedding similarity score for candidate recall
     max_states: 20  # Maximum number of states sent to planner prompt
     max_actions: 50  # Maximum number of actions sent to planner prompt
+    domain_prefilter_enabled: true  # Try lightweight fuzzy domain prefilter before subgraph planning
+    domain_match_threshold: 0.45  # Minimum fuzzy score to accept matched domain
+    domain_min_candidates: 3  # Fall back to full candidates if filtered pool is too small
+    domain_fallback_to_full_graph: true  # Retry once without domain filter when filtered planning fails
 
 # Memory Configuration
 # IntentSequence and workflow storage settings

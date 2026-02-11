@@ -526,6 +526,12 @@ class MemoryToolkit(BaseToolkit):
             except (TypeError, ValueError):
                 return 0.0
 
+        def _to_int(value: Any) -> int:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return 0
+
         def _state_line(state: Dict[str, Any]) -> str:
             desc = _clean_inline(
                 state.get("description") or state.get("page_title") or state.get("page_url")
@@ -594,6 +600,13 @@ class MemoryToolkit(BaseToolkit):
         lines.append("[Quick Task Memory Summary]")
         lines.append(f"success: {bool(query_result.get('success', False))}")
         lines.append(f"query_type: {_clean_inline(query_result.get('query_type', 'task'))}")
+        lines.append(
+            f"memory_hit: {bool(query_result.get('memory_hit', metadata.get('memory_hit', False)))}"
+        )
+        lines.append(
+            f"memory_level: "
+            f"{_clean_inline(query_result.get('memory_level', metadata.get('memory_level', '')))}"
+        )
         lines.append(f"method: {_clean_inline(metadata.get('method')) or 'N/A'}")
         lines.append(f"has_global_path: {bool(metadata.get('has_global_path', False))}")
         lines.append(f"states_count: {int(query_result.get('states_count', 0) or 0)}")
@@ -612,6 +625,77 @@ class MemoryToolkit(BaseToolkit):
         lines.append(f"min_score: {_to_float(config.get('min_score')):.4f}")
         lines.append(f"max_states: {int(config.get('max_states', 0) or 0)}")
         lines.append(f"max_actions: {int(config.get('max_actions', 0) or 0)}")
+        lines.append("")
+
+        domain_prefilter = (
+            debug_info.get("domain_prefilter")
+            if isinstance(debug_info.get("domain_prefilter"), dict)
+            else {}
+        )
+        lines.append("[Domain Prefilter]")
+        if not domain_prefilter:
+            lines.append("(none)")
+        else:
+            lines.append(f"enabled: {bool(domain_prefilter.get('enabled', False))}")
+            lines.append(f"applied: {bool(domain_prefilter.get('applied', False))}")
+            lines.append(
+                f"selected_domain: "
+                f"{_clean_inline(domain_prefilter.get('selected_domain')) or '(none)'}"
+            )
+            lines.append(f"selected_score: {_to_float(domain_prefilter.get('selected_score')):.4f}")
+            lines.append(f"threshold: {_to_float(domain_prefilter.get('threshold')):.4f}")
+            lines.append(f"min_candidates: {_to_int(domain_prefilter.get('min_candidates'))}")
+            lines.append(f"reason: {_clean_inline(domain_prefilter.get('reason')) or '(none)'}")
+            lines.append(
+                f"candidate_count_before: {_to_int(domain_prefilter.get('candidate_count_before'))}"
+            )
+            lines.append(
+                f"candidate_count_after: {_to_int(domain_prefilter.get('candidate_count_after'))}"
+            )
+
+            top_domain_matches = (
+                domain_prefilter.get("top_domain_matches")
+                if isinstance(domain_prefilter.get("top_domain_matches"), list)
+                else []
+            )
+            lines.append("top_domain_matches:")
+            if not top_domain_matches:
+                lines.append("  (none)")
+            else:
+                for item in top_domain_matches:
+                    if not isinstance(item, dict):
+                        continue
+                    domain_value = _clean_inline(item.get("domain"))
+                    domain_name = _clean_inline(item.get("domain_name"))
+                    score = _to_float(item.get("score"))
+                    detail = domain_value or domain_name or "(unknown)"
+                    if domain_name and domain_name != domain_value:
+                        detail = f"{detail} ({domain_name})"
+                    lines.append(f"  - {detail}: {score:.4f}")
+
+        domain_prefilter_fallback = (
+            debug_info.get("domain_prefilter_fallback")
+            if isinstance(debug_info.get("domain_prefilter_fallback"), dict)
+            else {}
+        )
+        if domain_prefilter_fallback:
+            lines.append("fallback:")
+            lines.append(f"  triggered: {bool(domain_prefilter_fallback.get('triggered', False))}")
+            lines.append(
+                f"  reason: {_clean_inline(domain_prefilter_fallback.get('reason')) or '(none)'}"
+            )
+            lines.append(
+                f"  stop_reason: "
+                f"{_clean_inline(domain_prefilter_fallback.get('stop_reason')) or '(none)'}"
+            )
+            lines.append(
+                f"  selected_domain: "
+                f"{_clean_inline(domain_prefilter_fallback.get('selected_domain')) or '(none)'}"
+            )
+            lines.append(
+                f"  selected_score: "
+                f"{_to_float(domain_prefilter_fallback.get('selected_score')):.4f}"
+            )
         lines.append("")
 
         embedding_candidates = (
@@ -773,6 +857,41 @@ class MemoryToolkit(BaseToolkit):
     # V2 Three-Level Query Methods
     # =========================================================================
 
+    @staticmethod
+    def is_task_memory_hit(result: Optional[QueryResult]) -> bool:
+        """Return whether task query contains reusable L1/L2 memory path."""
+        if not result:
+            return False
+        metadata = result.metadata if isinstance(result.metadata, dict) else {}
+        marker = metadata.get("memory_hit")
+        if isinstance(marker, bool):
+            return marker
+        if isinstance(marker, str):
+            normalized = marker.strip().lower()
+            if normalized in {"true", "1", "yes"}:
+                return True
+            if normalized in {"false", "0", "no"}:
+                return False
+        # Backward-compatible fallback for older backend payloads.
+        return bool(result.cognitive_phrase or result.states)
+
+    @staticmethod
+    def get_task_memory_level(result: Optional[QueryResult]) -> str:
+        """Get task memory level from metadata with fallback."""
+        if not result:
+            return "L3"
+        metadata = result.metadata if isinstance(result.metadata, dict) else {}
+        raw_level = metadata.get("memory_level")
+        if isinstance(raw_level, str):
+            normalized = raw_level.strip().upper()
+            if normalized in {"L1", "L2", "L3"}:
+                return normalized
+        if result.cognitive_phrase:
+            return "L1"
+        if result.states:
+            return "L2"
+        return "L3"
+
     async def _call_local_query(self, payload: Dict[str, Any]) -> QueryResult:
         """Call local Memory Service directly (SurrealDB).
 
@@ -919,9 +1038,13 @@ class MemoryToolkit(BaseToolkit):
         logger.info(f"[Memory] Task query: {task[:50]}...")
 
         result = await self._call_v2_query({"target": task})
+        memory_hit = MemoryToolkit.is_task_memory_hit(result)
+        memory_level = MemoryToolkit.get_task_memory_level(result)
 
-        if result.success:
-            if result.cognitive_phrase:
+        if not result.success:
+            logger.info(f"[Memory] Task query failed: {task[:30]}...")
+        elif memory_hit:
+            if memory_level == "L1" and result.cognitive_phrase:
                 logger.info(
                     f"[Memory] Found CognitivePhrase: {result.cognitive_phrase.id}"
                 )
@@ -930,7 +1053,10 @@ class MemoryToolkit(BaseToolkit):
                     f"[Memory] Found composed path: {len(result.states)} states"
                 )
         else:
-            logger.info(f"[Memory] No task result for: {task[:30]}...")
+            logger.info(
+                f"[Memory] Task query fallback to L3 "
+                f"(memory_hit={memory_hit}, memory_level={memory_level})"
+            )
 
         try:
             self._write_query_path_report(
@@ -940,6 +1066,8 @@ class MemoryToolkit(BaseToolkit):
                     "query_result": {
                         "success": result.success,
                         "query_type": result.query_type.value,
+                        "memory_hit": memory_hit,
+                        "memory_level": memory_level,
                         "states_count": len(result.states),
                         "actions_count": len(result.actions),
                         "cognitive_phrase_id": (
@@ -1116,7 +1244,7 @@ class MemoryToolkit(BaseToolkit):
         from CognitivePhrase is only needed at runtime (workflow_guide), not
         during task decomposition.
         """
-        if not result.success:
+        if not MemoryToolkit.is_task_memory_hit(result):
             return ""
 
         if result.states:
@@ -1544,11 +1672,10 @@ class MemoryToolkit(BaseToolkit):
     @staticmethod
     def format_result(result: QueryResult) -> str:
         """Format any QueryResult based on its type."""
-        if not result.success:
-            return ""
-
         if result.query_type == QueryType.TASK:
             return MemoryToolkit.format_task_result(result)
+        if not result.success:
+            return ""
         elif result.query_type == QueryType.NAVIGATION:
             return MemoryToolkit.format_navigation_path(result.states, result.actions)
         elif result.query_type == QueryType.ACTION:

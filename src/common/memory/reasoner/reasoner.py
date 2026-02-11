@@ -13,15 +13,19 @@ The Reasoner is responsible for orchestrating the entire retrieval process:
 """
 
 import asyncio
+from difflib import SequenceMatcher
 import logging
 import json
+import re
 import uuid
 from typing import Any, Dict, List, Literal, Optional, Tuple
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
 from src.common.memory.memory.memory import Memory
 from src.common.memory.ontology.action import Action
+from src.common.memory.ontology.domain import normalize_domain_url
 from src.common.memory.ontology.intent_sequence import IntentSequence
 from src.common.memory.ontology.query_result import QueryResult, SubTaskResult
 from src.common.memory.ontology.state import State
@@ -65,6 +69,10 @@ class Reasoner:
     DEFAULT_PATH_PLANNING_MIN_SCORE = 0.15
     DEFAULT_PATH_PLANNING_MAX_STATES = 20
     DEFAULT_PATH_PLANNING_MAX_ACTIONS = 50
+    DEFAULT_PATH_PLANNING_DOMAIN_PREFILTER_ENABLED = True
+    DEFAULT_PATH_PLANNING_DOMAIN_MATCH_THRESHOLD = 0.45
+    DEFAULT_PATH_PLANNING_DOMAIN_MIN_CANDIDATES = 3
+    DEFAULT_PATH_PLANNING_DOMAIN_FALLBACK_TO_FULL_GRAPH = True
 
     def __init__(
         self,
@@ -92,6 +100,10 @@ class Reasoner:
                 - min_score: Minimum embedding score for candidates (default 0.15)
                 - max_states: Maximum states sent to LLM (default 20)
                 - max_actions: Maximum actions sent to LLM (default 50)
+                - domain_prefilter_enabled: Enable domain fuzzy prefilter (default True)
+                - domain_match_threshold: Minimum score to accept matched domain (default 0.45)
+                - domain_min_candidates: Min candidates after domain filter (default 3)
+                - domain_fallback_to_full_graph: Retry once with full candidates (default True)
         """
         self.memory = memory
         self.public_memory = public_memory
@@ -119,6 +131,33 @@ class Reasoner:
         )
         self.path_planning_max_actions = max(
             1, int(planning_config.get("max_actions", self.DEFAULT_PATH_PLANNING_MAX_ACTIONS))
+        )
+        self.path_planning_domain_prefilter_enabled = bool(
+            planning_config.get(
+                "domain_prefilter_enabled",
+                self.DEFAULT_PATH_PLANNING_DOMAIN_PREFILTER_ENABLED,
+            )
+        )
+        self.path_planning_domain_match_threshold = float(
+            planning_config.get(
+                "domain_match_threshold",
+                self.DEFAULT_PATH_PLANNING_DOMAIN_MATCH_THRESHOLD,
+            )
+        )
+        self.path_planning_domain_min_candidates = max(
+            1,
+            int(
+                planning_config.get(
+                    "domain_min_candidates",
+                    self.DEFAULT_PATH_PLANNING_DOMAIN_MIN_CANDIDATES,
+                )
+            ),
+        )
+        self.path_planning_domain_fallback_to_full_graph = bool(
+            planning_config.get(
+                "domain_fallback_to_full_graph",
+                self.DEFAULT_PATH_PLANNING_DOMAIN_FALLBACK_TO_FULL_GRAPH,
+            )
         )
 
         # Initialize components
@@ -167,6 +206,210 @@ class Reasoner:
     def _safe_text(value: Any) -> str:
         """Normalize any value to a stripped string."""
         return str(value or "").strip()
+
+    @classmethod
+    def _normalize_domain_match_text(cls, value: Any) -> str:
+        """Normalize free text for lightweight fuzzy domain matching."""
+        text = cls._safe_text(value).lower()
+        if not text:
+            return ""
+        text = re.sub(r"[^\w\u4e00-\u9fff\.\-]+", " ", text)
+        return " ".join(text.split())
+
+    @classmethod
+    def _extract_domain_from_state(cls, state: State) -> str:
+        """Extract normalized domain key from a state."""
+        state_domain = cls._safe_text(state.domain)
+        if state_domain:
+            return cls._safe_text(normalize_domain_url(state_domain, "website"))
+
+        page_url = cls._safe_text(state.page_url)
+        if not page_url:
+            return ""
+
+        try:
+            parsed = urlparse(page_url)
+            host = cls._safe_text(parsed.hostname or parsed.netloc)
+            if not host and parsed.path:
+                host = cls._safe_text(parsed.path.split("/")[0])
+            if host:
+                return cls._safe_text(normalize_domain_url(host, "website"))
+        except Exception:
+            pass
+
+        return cls._safe_text(normalize_domain_url(page_url, "website"))
+
+    @classmethod
+    def _build_domain_terms(cls, domain_url: str, domain_name: str) -> List[str]:
+        """Build a compact list of terms used for fuzzy domain scoring."""
+        terms: List[str] = []
+        url_norm = cls._normalize_domain_match_text(domain_url)
+        name_norm = cls._normalize_domain_match_text(domain_name)
+
+        if url_norm:
+            terms.append(url_norm)
+            host = url_norm.split(":")[0]
+            if host.startswith("www."):
+                host = host[4:]
+            if host:
+                terms.append(host)
+                primary = host.split(".")[0]
+                if primary and len(primary) >= 2:
+                    terms.append(primary)
+
+        if name_norm:
+            terms.append(name_norm)
+
+        deduped: List[str] = []
+        seen = set()
+        for term in terms:
+            if term and term not in seen:
+                seen.add(term)
+                deduped.append(term)
+        return deduped
+
+    @classmethod
+    def _score_task_domain_match(
+        cls,
+        task_text: str,
+        domain_url: str,
+        domain_name: str,
+    ) -> float:
+        """Score domain relevance using lightweight string similarity."""
+        task_norm = cls._normalize_domain_match_text(task_text)
+        if not task_norm:
+            return 0.0
+
+        terms = cls._build_domain_terms(domain_url, domain_name)
+        if not terms:
+            return 0.0
+
+        contains_score = 0.0
+        for term in terms:
+            if len(term) < 2:
+                continue
+            if term in task_norm:
+                contains_score = max(contains_score, 1.0)
+
+        ratio_score = 0.0
+        for term in terms:
+            if len(term) < 2:
+                continue
+            ratio_score = max(
+                ratio_score,
+                SequenceMatcher(None, task_norm, term).ratio(),
+            )
+
+        return max(contains_score, ratio_score)
+
+    def _select_best_domain_for_task(
+        self,
+        target: str,
+        memory: Memory,
+    ) -> Tuple[Optional[str], float, List[Dict[str, Any]]]:
+        """Pick the best matched domain from memory for the given task."""
+        try:
+            domains = memory.domain_manager.list_domains(limit=None)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning(f"[L2] Failed to list domains for prefilter: {exc}")
+            return None, 0.0, []
+
+        if not domains:
+            return None, 0.0, []
+
+        scored_domains: List[Dict[str, Any]] = []
+        for domain in domains:
+            domain_url = self._safe_text(getattr(domain, "domain_url", ""))
+            domain_name = self._safe_text(getattr(domain, "domain_name", ""))
+            domain_type = self._safe_text(
+                getattr(domain, "domain_type", "website")
+            ) or "website"
+            normalized_url = self._safe_text(
+                normalize_domain_url(domain_url, domain_type)
+            ) if domain_url else ""
+            if not normalized_url and not domain_name:
+                continue
+
+            score = self._score_task_domain_match(
+                task_text=target,
+                domain_url=normalized_url,
+                domain_name=domain_name,
+            )
+            scored_domains.append({
+                "domain": normalized_url or domain_url,
+                "domain_name": domain_name,
+                "score": float(score),
+            })
+
+        if not scored_domains:
+            return None, 0.0, []
+
+        scored_domains.sort(key=lambda item: item["score"], reverse=True)
+        best = scored_domains[0]
+        debug_top = scored_domains[:5]
+        best_domain = self._safe_text(best.get("domain")) or None
+        best_score = float(best.get("score", 0.0))
+        return best_domain, best_score, debug_top
+
+    def _apply_domain_prefilter(
+        self,
+        target: str,
+        scored_candidates: List[Tuple[State, float]],
+        memory: Memory,
+    ) -> Tuple[List[Tuple[State, float]], Optional[str], Dict[str, Any]]:
+        """Apply optional domain prefilter to recalled candidates."""
+        debug_info: Dict[str, Any] = {
+            "enabled": self.path_planning_domain_prefilter_enabled,
+            "threshold": float(self.path_planning_domain_match_threshold),
+            "min_candidates": int(self.path_planning_domain_min_candidates),
+            "candidate_count_before": len(scored_candidates),
+            "applied": False,
+            "selected_domain": None,
+            "selected_score": 0.0,
+            "reason": "disabled",
+            "top_domain_matches": [],
+        }
+
+        if (
+            not self.path_planning_domain_prefilter_enabled
+            or not scored_candidates
+        ):
+            if scored_candidates:
+                debug_info["reason"] = "disabled"
+            else:
+                debug_info["reason"] = "empty_candidates"
+            return scored_candidates, None, debug_info
+
+        matched_domain, matched_score, top_matches = self._select_best_domain_for_task(
+            target=target,
+            memory=memory,
+        )
+        debug_info["top_domain_matches"] = top_matches
+        debug_info["selected_domain"] = matched_domain
+        debug_info["selected_score"] = float(matched_score)
+
+        if not matched_domain:
+            debug_info["reason"] = "no_domain_found"
+            return scored_candidates, None, debug_info
+
+        if matched_score < self.path_planning_domain_match_threshold:
+            debug_info["reason"] = "below_threshold"
+            return scored_candidates, None, debug_info
+
+        filtered_candidates = [
+            (state, score)
+            for state, score in scored_candidates
+            if self._extract_domain_from_state(state) == matched_domain
+        ]
+        debug_info["candidate_count_after"] = len(filtered_candidates)
+
+        if len(filtered_candidates) < self.path_planning_domain_min_candidates:
+            debug_info["reason"] = "filtered_too_small"
+            return scored_candidates, None, debug_info
+
+        debug_info["applied"] = True
+        debug_info["reason"] = "matched"
+        return filtered_candidates, matched_domain, debug_info
 
     @classmethod
     def _get_state_reasoning_text(cls, state: State) -> str:
@@ -691,9 +934,14 @@ class Reasoner:
             method = "direct_decomposition"
 
         has_global_path = len(global_states) > 0
+        memory_hit = has_global_path
+        memory_level = "L2" if has_global_path else "L3"
         metadata: Dict[str, Any] = {
             "method": method,
+            "decompose_mode": method,
             "has_global_path": has_global_path,
+            "memory_hit": memory_hit,
+            "memory_level": memory_level,
             "source": path_source,
         }
         if path_result and isinstance(path_result.get("debug"), dict):
@@ -764,6 +1012,9 @@ class Reasoner:
             cognitive_phrase=best_phrase,
             metadata={
                 "method": "cognitive_phrase_match",
+                "decompose_mode": "cognitive_phrase_match",
+                "memory_hit": True,
+                "memory_level": "L1",
                 "reasoning": reasoning,
                 "num_phrases": len(phrases),
                 "source": source,
@@ -871,6 +1122,7 @@ class Reasoner:
         top_k: int,
         min_score: float,
         memory: Optional[Memory] = None,
+        allow_domain_prefilter: bool = True,
     ) -> Optional[Dict[str, Any]]:
         """L2: plan navigation path with LLM over a recalled subgraph."""
         if not self.llm_provider or not self.embedding_service:
@@ -899,13 +1151,67 @@ class Reasoner:
                 )
                 return None
 
+            planning_candidates = scored_candidates
+            selected_domain: Optional[str] = None
+            domain_prefilter_debug: Dict[str, Any] = {
+                "enabled": self.path_planning_domain_prefilter_enabled,
+                "applied": False,
+                "reason": "prefilter_not_attempted",
+                "candidate_count_before": len(scored_candidates),
+                "candidate_count_after": len(scored_candidates),
+            }
+
+            if allow_domain_prefilter:
+                planning_candidates, selected_domain, domain_prefilter_debug = (
+                    self._apply_domain_prefilter(
+                        target=target,
+                        scored_candidates=scored_candidates,
+                        memory=memory,
+                    )
+                )
+                if "candidate_count_after" not in domain_prefilter_debug:
+                    domain_prefilter_debug["candidate_count_after"] = len(planning_candidates)
+            else:
+                domain_prefilter_debug.update({
+                    "reason": "prefilter_bypassed_for_fallback",
+                })
+
             candidate_states, subgraph_actions, score_by_state_id = self._build_path_planning_subgraph(
-                scored_candidates=scored_candidates,
+                scored_candidates=planning_candidates,
                 max_states=self.path_planning_max_states,
                 max_actions=self.path_planning_max_actions,
                 memory=memory,
+                restrict_domain=(
+                    selected_domain
+                    if domain_prefilter_debug.get("applied") else None
+                ),
             )
             if not candidate_states:
+                if (
+                    allow_domain_prefilter
+                    and domain_prefilter_debug.get("applied")
+                    and self.path_planning_domain_fallback_to_full_graph
+                ):
+                    logger.info(
+                        "[L2] Domain prefilter produced empty subgraph, retrying full candidates"
+                    )
+                    fallback_result = await self._plan_path_with_llm(
+                        target=target,
+                        top_k=top_k,
+                        min_score=min_score,
+                        memory=memory,
+                        allow_domain_prefilter=False,
+                    )
+                    if isinstance(fallback_result, dict):
+                        fallback_debug = fallback_result.get("debug")
+                        if isinstance(fallback_debug, dict):
+                            fallback_debug["domain_prefilter_fallback"] = {
+                                "triggered": True,
+                                "reason": "empty_subgraph_after_prefilter",
+                                "selected_domain": selected_domain,
+                                "selected_score": domain_prefilter_debug.get("selected_score", 0.0),
+                            }
+                    return fallback_result
                 return None
 
             state_map = {state.id: state for state in candidate_states}
@@ -1070,7 +1376,7 @@ class Reasoner:
 
             reasoning = self._safe_text(final_planner_result.get("reasoning"))
             embedding_candidates_debug = []
-            for idx, (state, score) in enumerate(scored_candidates, 1):
+            for idx, (state, score) in enumerate(planning_candidates, 1):
                 embedding_candidates_debug.append({
                     "rank": idx,
                     "state": {
@@ -1151,7 +1457,20 @@ class Reasoner:
                     "min_score": float(min_score),
                     "max_states": int(self.path_planning_max_states),
                     "max_actions": int(self.path_planning_max_actions),
+                    "domain_prefilter_enabled": bool(
+                        self.path_planning_domain_prefilter_enabled
+                    ),
+                    "domain_match_threshold": float(
+                        self.path_planning_domain_match_threshold
+                    ),
+                    "domain_min_candidates": int(
+                        self.path_planning_domain_min_candidates
+                    ),
+                    "domain_fallback_to_full_graph": bool(
+                        self.path_planning_domain_fallback_to_full_graph
+                    ),
                 },
+                "domain_prefilter": domain_prefilter_debug,
                 "embedding_candidates": embedding_candidates_debug,
                 "subgraph": {
                     "states": candidate_states_debug,
@@ -1203,13 +1522,45 @@ class Reasoner:
                 "[L2] No valid connected path after replanning (stop_reason=%s)",
                 stop_reason,
             )
-            return {
+            empty_result = {
                 "target_query": target,
                 "key_queries": [],
                 "paths": [],
                 "planner_result": final_planner_result,
                 "debug": debug_payload,
             }
+
+            if (
+                allow_domain_prefilter
+                and domain_prefilter_debug.get("applied")
+                and self.path_planning_domain_fallback_to_full_graph
+            ):
+                logger.info(
+                    "[L2] Domain prefilter planning failed (stop_reason=%s), retrying full candidates",
+                    stop_reason,
+                )
+                fallback_result = await self._plan_path_with_llm(
+                    target=target,
+                    top_k=top_k,
+                    min_score=min_score,
+                    memory=memory,
+                    allow_domain_prefilter=False,
+                )
+                if isinstance(fallback_result, dict):
+                    fallback_debug = fallback_result.get("debug")
+                    if isinstance(fallback_debug, dict):
+                        fallback_debug["domain_prefilter_fallback"] = {
+                            "triggered": True,
+                            "reason": "no_valid_path_after_prefilter",
+                            "stop_reason": stop_reason,
+                            "selected_domain": selected_domain,
+                            "selected_score": domain_prefilter_debug.get(
+                                "selected_score", 0.0
+                            ),
+                        }
+                return fallback_result
+
+            return empty_result
         except Exception as exc:
             logger.error(f"[L2] Path planning failed: {exc}")
             import traceback
@@ -1222,15 +1573,24 @@ class Reasoner:
         max_states: int,
         max_actions: int,
         memory: Optional[Memory] = None,
+        restrict_domain: Optional[str] = None,
     ) -> tuple[List[State], List[Action], Dict[str, float]]:
         """Build a bounded state/action subgraph for LLM planning."""
         memory = memory or self.memory
 
         candidate_states: List[State] = []
         score_by_state_id: Dict[str, float] = {}
+        normalized_restrict_domain = self._safe_text(restrict_domain)
+
+        def _state_allowed(state: State) -> bool:
+            if not normalized_restrict_domain:
+                return True
+            return self._extract_domain_from_state(state) == normalized_restrict_domain
 
         # Seed states from embedding recall (already sorted by score desc).
         for state, score in scored_candidates:
+            if not _state_allowed(state):
+                continue
             if state.id in score_by_state_id:
                 if score > score_by_state_id[state.id]:
                     score_by_state_id[state.id] = float(score)
@@ -1254,6 +1614,8 @@ class Reasoner:
                     continue
                 bridge_state = memory.get_state(target_id)
                 if not bridge_state:
+                    continue
+                if not _state_allowed(bridge_state):
                     continue
                 candidate_states.append(bridge_state)
                 parent_score = score_by_state_id.get(state.id, 0.0)
