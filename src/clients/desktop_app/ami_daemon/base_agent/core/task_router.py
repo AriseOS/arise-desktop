@@ -60,12 +60,12 @@ ROUTING_PATTERNS: Dict[str, Dict[str, Any]] = {
     },
     AgentType.DEVELOPER.value: {
         "keywords": [
-            "code", "coding", "programming", "debug", "fix", "bug",
-            "implement", "function", "class", "module", "test",
+            "code", "coding", "programming", "debug", "bug",
+            "implement", "function", "class", "module",
             "git", "commit", "push", "pull", "branch", "merge",
-            "npm", "pip", "install", "build", "compile", "run",
+            "npm", "pip", "compile", "build",
             "python", "javascript", "typescript", "java", "rust",
-            "error", "exception", "stack trace", "refactor",
+            "refactor", "stack trace",
         ],
         "patterns": [
             r"write\s+.*\s+code",

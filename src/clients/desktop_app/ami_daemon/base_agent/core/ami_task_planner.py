@@ -110,7 +110,7 @@ COARSE_DECOMPOSE_PROMPT = """Split the task by work type. Keep related operation
 Types:
 - browser: Web browsing, research, online operations
 - document: Writing reports, creating files
-- code: Programming, terminal commands
+- code: Writing or modifying code, debugging programs, git operations
 
 **CRITICAL Language Policy**:
 - The subtask "content" field MUST be in the SAME language as the user's task.
@@ -141,8 +141,10 @@ DEFAULT_WORKER_DESCRIPTIONS = {
         "and data files."
     ),
     "code": (
-        "Developer Agent: Can execute terminal commands, write and run code, "
-        "manage files. Use for programming tasks and system operations."
+        "Developer Agent: Can write code, debug programs, and use development tools "
+        "(git, npm, pip, compilers). Use ONLY for programming tasks that require "
+        "writing or modifying code. Do NOT use for general web research, data "
+        "extraction, or file operations that other agents can handle."
     ),
     "multi_modal": (
         "Multi-Modal Agent: Can process images, audio, and video. "
@@ -998,11 +1000,10 @@ class AMITaskPlanner:
         if any(kw in content_lower for kw in document_keywords):
             return "document"
 
-        # Code indicators
+        # Code indicators (strict: only programming-specific keywords)
         code_keywords = [
-            "run", "execute", "command", "terminal", "shell", "script",
-            "python", "npm", "pip", "git", "compile", "build", "install",
-            "运行", "执行", "命令", "脚本", "编译",
+            "code", "coding", "programming", "debug", "compile", "build",
+            "python", "npm", "pip", "git", "编程", "代码", "编译", "调试",
         ]
         if any(kw in content_lower for kw in code_keywords):
             return "code"
