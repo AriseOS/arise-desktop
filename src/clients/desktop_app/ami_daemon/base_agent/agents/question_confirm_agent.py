@@ -18,7 +18,7 @@ import logging
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Union
 
-from .base_agent import BaseStepAgent, AgentMetadata, InputSchema, FieldSchema
+from ._base import BaseStepAgent, AgentMetadata, InputSchema, FieldSchema
 from ..core.schemas import AgentContext, AgentInput, AgentOutput
 from ..tools.toolkits import HumanToolkit, FunctionTool
 from ..prompts import (

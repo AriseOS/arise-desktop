@@ -34,16 +34,9 @@ VALID_AGENT_TYPES = {
 # Control flow keys (v2 syntax)
 CONTROL_FLOW_KEYS = {"foreach", "if", "while"}
 
-# Try to import agent schemas for input validation
-try:
-    from src.clients.desktop_app.ami_daemon.base_agent.agents import get_all_agent_schemas
-    AGENT_SCHEMAS = get_all_agent_schemas()
-    AGENT_SCHEMAS_AVAILABLE = True
-    logger.info(f"Agent schemas loaded: {list(AGENT_SCHEMAS.keys())}")
-except (ImportError, ModuleNotFoundError) as e:
-    AGENT_SCHEMAS = {}
-    AGENT_SCHEMAS_AVAILABLE = False
-    logger.warning(f"Agent schemas not available: {e}")
+# Agent schemas removed (step agents deleted), use hardcoded AGENT_SPECIFIC_FIELDS fallback
+AGENT_SCHEMAS = {}
+AGENT_SCHEMAS_AVAILABLE = False
 
 # Fallback: Agent-specific required fields (used when schemas not available)
 # Format: { agent_type: { "step": [...], "inputs": [...] } }

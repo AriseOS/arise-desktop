@@ -24,15 +24,9 @@ except (ImportError, ModuleNotFoundError):
     WORKFLOW_SCHEMA_AVAILABLE = False
     logger.warning("Workflow schema not available, skipping Pydantic validation")
 
-# Try to import agent schemas for input validation
-try:
-    from src.clients.desktop_app.ami_daemon.base_agent.agents import get_all_agent_schemas
-    AGENT_SCHEMAS = get_all_agent_schemas()
-    AGENT_SCHEMAS_AVAILABLE = True
-except (ImportError, ModuleNotFoundError):
-    AGENT_SCHEMAS = {}
-    AGENT_SCHEMAS_AVAILABLE = False
-    logger.warning("Agent schemas not available, skipping agent input validation")
+# Agent schemas removed (step agents deleted), skip agent input validation
+AGENT_SCHEMAS = {}
+AGENT_SCHEMAS_AVAILABLE = False
 
 
 class WorkflowYAMLValidator:

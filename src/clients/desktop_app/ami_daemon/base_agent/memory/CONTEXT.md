@@ -1,19 +1,11 @@
 # base_agent/memory/
 
-Multi-layer memory system for BaseAgent.
+Session and conversation memory for BaseAgent.
 
 ## Architecture
 
 ```
 Memory Systems
-├── Layer 1-3: MemoryManager (workflow state)
-│   ├── Layer 1: Variables (in-memory)
-│   │   └── Python dict, workflow variable passing
-│   ├── Layer 2: KV Storage (persistent)
-│   │   └── SQLite, script caching, config storage
-│   └── Layer 3: Long-term Memory (semantic)
-│       └── mem0 + ChromaDB (TODO: not yet enabled)
-│
 └── Conversation Memory (session history)
     ├── ConversationStore
     │   └── Manages index.json and conversation lifecycle
@@ -25,9 +17,7 @@ Memory Systems
 
 | File | Purpose |
 |------|---------|
-| `memory_manager.py` | Unified interface for workflow memory layers |
-| `sqlite_kv_storage.py` | Layer 2: SQLite-based key-value storage |
-| `mem0_memory.py` | Layer 3: Semantic memory via mem0 |
+| `session_manager.py` | Session-based conversation persistence |
 | `conversation_types.py` | Type definitions for conversation storage |
 | `conversation_store.py` | Conversation index management |
 | `transcript_manager.py` | JSONL transcript file management |
@@ -35,16 +25,6 @@ Memory Systems
 ## Key Principle
 
 **Memory belongs to users, not Agent instances.**
-
-```python
-# Correct: specify user_id
-agent1 = BaseAgent(..., user_id="user123")
-agent2 = BaseAgent(..., user_id="user123")
-# Both share the same memory
-
-# Wrong: random ID, no persistence
-agent = BaseAgent(...)  # Gets random agent_xxx-uuid
-```
 
 ## Conversation Memory
 

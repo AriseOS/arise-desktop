@@ -13,15 +13,15 @@ Core framework components for BaseAgent. No CAMEL-AI dependency.
 | `ami_task_executor.py` | Lightweight task executor (~250 lines, sequential with dependency resolution) |
 | `agent_factories.py` | Factory functions to create configured agents (browser, developer, etc.) |
 | `orchestrator_agent.py` | Top-level Orchestrator that decides task handling approach |
-| `base_agent.py` | Main BaseAgent class - the container for agent execution |
 | `schemas.py` | Data structures (AgentContext, AgentResult, etc.) |
 | `token_usage.py` | TokenUsage and SessionTokenUsage for LLM cost tracking |
 | `cost_calculator.py` | Model pricing and cost calculation utilities |
 | `budget_controller.py` | Budget enforcement during task execution |
-| `agent_registry.py` | Central agent registration and lookup |
 | `task_router.py` | Routes tasks to appropriate specialized agents |
 
-### Deleted Files (replaced by AMI implementations)
+### Deleted Files
+- `base_agent.py` - Old BaseAgent class (used MemoryManager, no longer needed)
+- `agent_registry.py` - Old registry system (replaced by AMITaskPlanner routing)
 - `listen_chat_agent.py` - Replaced by `ami_agent.py`
 - `listen_browser_agent.py` - Replaced by `ami_browser_agent.py`
 - `ami_model_backend.py` - Replaced by direct AnthropicProvider calls
@@ -63,7 +63,6 @@ Orchestrator Agent (entry point)
 ### Agent Factories
 
 All agents created via factory functions in `agent_factories.py`:
-- `create_browser_agent()` -> AMIAgent
 - `create_listen_browser_agent()` -> AMIBrowserAgent (with Memory page ops)
 - `create_developer_agent()` -> AMIAgent
 - `create_document_agent()` -> AMIAgent

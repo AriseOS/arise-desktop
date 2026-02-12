@@ -40,5 +40,7 @@ htmldocx>=0.0.6
 # - pytest, pytest-asyncio
 # - mypy, black, isort
 # - jupyter, ipython
-# - chromadb (brings numpy, pandas, etc.)
-# - mem0ai (if not used)
+# - chromadb (removed, was only used by mem0)
+# - mem0ai (removed, never enabled)
+# - camel-ai (removed, replaced by AMI Task Executor)
+# - browser-use (removed, replaced by eigent_browser)

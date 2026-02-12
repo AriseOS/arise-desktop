@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
 
-from .base_agent import BaseStepAgent, AgentMetadata, InputSchema, FieldSchema
+from ._base import BaseStepAgent, AgentMetadata, InputSchema, FieldSchema
 from ..core.schemas import AgentContext, AgentInput, AgentOutput
 from ..tools.toolkits import TerminalToolkit, HumanToolkit, FunctionTool
 from ..workspace import get_working_directory, get_current_manager

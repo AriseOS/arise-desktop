@@ -41,12 +41,6 @@ from .browser_toolkit import BrowserToolkit
 from .memory_toolkit import MemoryToolkit
 from .task_planning_toolkit import TaskPlanningToolkit
 from .replan_toolkit import ReplanToolkit
-from .long_term_memory_toolkit import (
-    LongTermMemoryToolkit,
-    LONG_TERM_MEMORY_PROMPT_SECTION,
-    get_long_term_memory_prompt,
-)
-
 # Document toolkits (for DocumentAgent)
 from .file_toolkit import FileToolkit
 from .pptx_toolkit import PPTXToolkit
@@ -79,9 +73,6 @@ __all__ = [
     "HumanToolkit",
     "BrowserToolkit",
     "MemoryToolkit",
-    "LongTermMemoryToolkit",
-    "LONG_TERM_MEMORY_PROMPT_SECTION",
-    "get_long_term_memory_prompt",
 
     # Task planning
     "TaskPlanningToolkit",

@@ -4,19 +4,21 @@ Task Router Module
 Routes tasks to appropriate specialized agents based on task analysis.
 Based on Eigent's multi-agent architecture where different task types
 are handled by specialized agents.
-
-References:
-- Eigent: third-party/eigent/backend/app/utils/workforce.py
-- Eigent: third-party/eigent/backend/app/service/task.py
 """
 
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from .agent_registry import AgentType, get_registry
-
 logger = logging.getLogger(__name__)
+
+
+# Agent type constants (aligned with AMITaskPlanner routing)
+AGENT_TYPE_BROWSER = "browser_agent"
+AGENT_TYPE_DEVELOPER = "developer_agent"
+AGENT_TYPE_DOCUMENT = "document_agent"
+AGENT_TYPE_SOCIAL_MEDIUM = "social_medium_agent"
+AGENT_TYPE_QUESTION_CONFIRM = "question_confirm_agent"
 
 
 @dataclass
@@ -43,7 +45,7 @@ class RoutingResult:
 
 # Keywords and patterns for rule-based routing
 ROUTING_PATTERNS: Dict[str, Dict[str, Any]] = {
-    AgentType.BROWSER.value: {
+    AGENT_TYPE_BROWSER: {
         "keywords": [
             "search", "find", "look up", "research", "browse", "navigate",
             "website", "web page", "url", "link", "click", "scroll",
@@ -58,7 +60,7 @@ ROUTING_PATTERNS: Dict[str, Dict[str, Any]] = {
         ],
         "priority": 10,
     },
-    AgentType.DEVELOPER.value: {
+    AGENT_TYPE_DEVELOPER: {
         "keywords": [
             "code", "coding", "programming", "debug", "bug",
             "implement", "function", "class", "module",
@@ -75,7 +77,7 @@ ROUTING_PATTERNS: Dict[str, Dict[str, Any]] = {
         ],
         "priority": 10,
     },
-    AgentType.DOCUMENT.value: {
+    AGENT_TYPE_DOCUMENT: {
         "keywords": [
             "document", "doc", "file", "folder", "create", "write",
             "notion", "google drive", "gdrive", "notes", "markdown",
@@ -89,7 +91,7 @@ ROUTING_PATTERNS: Dict[str, Dict[str, Any]] = {
         ],
         "priority": 8,
     },
-    AgentType.SOCIAL_MEDIUM.value: {
+    AGENT_TYPE_SOCIAL_MEDIUM: {
         "keywords": [
             "email", "mail", "send", "inbox", "gmail", "outlook",
             "calendar", "schedule", "meeting", "event", "appointment",
@@ -103,7 +105,7 @@ ROUTING_PATTERNS: Dict[str, Dict[str, Any]] = {
         ],
         "priority": 8,
     },
-    AgentType.QUESTION_CONFIRM.value: {
+    AGENT_TYPE_QUESTION_CONFIRM: {
         "keywords": [
             "confirm", "verify", "clarify", "ask", "question",
             "approve", "decide", "choose", "option", "preference",
@@ -138,7 +140,6 @@ class TaskRouter:
         """
         self.use_llm = use_llm
         self.llm_provider = llm_provider
-        self._registry = get_registry()
 
     def route(self, task: str, context: Optional[Dict[str, Any]] = None) -> RoutingResult:
         """Route a task to the appropriate agent.
@@ -206,10 +207,10 @@ class TaskRouter:
         # Find best match
         if not scores:
             return RoutingResult(
-                agent_type=AgentType.BROWSER.value,
+                agent_type=AGENT_TYPE_BROWSER,
                 confidence=0.3,
                 reasoning="No specific patterns matched, defaulting to browser agent",
-                alternative_agents=[AgentType.QUESTION_CONFIRM.value],
+                alternative_agents=[AGENT_TYPE_QUESTION_CONFIRM],
             )
 
         best_agent = max(scores, key=scores.get)
@@ -253,31 +254,23 @@ class TaskRouter:
         """
         if not self.llm_provider:
             return RoutingResult(
-                agent_type=AgentType.BROWSER.value,
+                agent_type=AGENT_TYPE_BROWSER,
                 confidence=0.3,
                 reasoning="LLM not available, using default",
             )
 
         # Build available agents description
-        available_agents = []
-        for agent_type in AgentType:
-            info = self._registry.get(agent_type.value)
-            if info:
-                available_agents.append(
-                    f"- {agent_type.value}: {info.description}"
-                )
-            else:
-                # Use default descriptions for unregistered agents
-                descriptions = {
-                    AgentType.BROWSER: "Web automation, research, data collection",
-                    AgentType.DEVELOPER: "Coding, debugging, git operations",
-                    AgentType.DOCUMENT: "Document creation, Google Drive, Notion",
-                    AgentType.SOCIAL_MEDIUM: "Email, calendar, communication",
-                    AgentType.QUESTION_CONFIRM: "User confirmations and Q&A",
-                }
-                available_agents.append(
-                    f"- {agent_type.value}: {descriptions.get(agent_type, 'General tasks')}"
-                )
+        descriptions = {
+            AGENT_TYPE_BROWSER: "Web automation, research, data collection",
+            AGENT_TYPE_DEVELOPER: "Coding, debugging, git operations",
+            AGENT_TYPE_DOCUMENT: "Document creation, Google Drive, Notion",
+            AGENT_TYPE_SOCIAL_MEDIUM: "Email, calendar, communication",
+            AGENT_TYPE_QUESTION_CONFIRM: "User confirmations and Q&A",
+        }
+        available_agents = [
+            f"- {agent_type}: {desc}"
+            for agent_type, desc in descriptions.items()
+        ]
 
         # This would typically call the LLM
         # For now, return a placeholder that falls back to rule-based
@@ -390,7 +383,7 @@ class TaskRouter:
             if any(kw in task_lower for kw in keywords):
                 agents_needed.add(agent_type)
 
-        return list(agents_needed) or [AgentType.BROWSER.value]
+        return list(agents_needed) or [AGENT_TYPE_BROWSER]
 
 
 # Global router instance

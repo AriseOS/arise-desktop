@@ -78,11 +78,6 @@ from ..base_agent.events import (
     FilePreviewData,
 )
 from ..base_agent.core.task_router import TaskRouter, RoutingResult, get_router
-from ..base_agent.core.agent_registry import (
-    get_registry,
-    register_default_agents,
-    AgentType,
-)
 from ..base_agent.core.cost_calculator import DEFAULT_MODEL
 from ..base_agent.core.orchestrator_agent import (
     create_orchestrator_agent,
@@ -587,9 +582,6 @@ class QuickTaskService:
 
         # Initialize TaskRouter for agent selection (Eigent Migration)
         self._task_router = get_router()
-
-        # Register default agents on first service initialization
-        register_default_agents()
 
     def set_cloud_client(self, cloud_client):
         """Set CloudClient for memory API calls."""
