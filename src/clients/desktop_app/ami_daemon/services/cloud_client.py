@@ -1606,13 +1606,13 @@ class CloudClient:
         phrase_id: str,
     ) -> Dict[str, Any]:
         """Check if a private phrase has been published."""
-        headers = {}
+        headers = {"X-User-Id": user_id}
         if self.user_api_key:
             headers["X-Ami-API-Key"] = self.user_api_key
 
         response = await self.client.get(
             "/api/v1/memory/publish-status",
-            params={"phrase_id": phrase_id, "user_id": user_id},
+            params={"phrase_id": phrase_id},
             headers=headers,
         )
         response.raise_for_status()
@@ -1624,13 +1624,13 @@ class CloudClient:
         phrase_id: str,
     ) -> Dict[str, Any]:
         """Remove a phrase from public memory."""
-        headers = {}
+        headers = {"X-User-Id": user_id}
         if self.user_api_key:
             headers["X-Ami-API-Key"] = self.user_api_key
 
         response = await self.client.post(
             "/api/v1/memory/unpublish",
-            json={"user_id": user_id, "phrase_id": phrase_id},
+            json={"phrase_id": phrase_id},
             headers=headers,
         )
         response.raise_for_status()

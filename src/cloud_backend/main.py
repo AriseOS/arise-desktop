@@ -2116,7 +2116,10 @@ async def list_public_cognitive_phrases(
         if not pub or not pub.workflow_memory:
             return {"success": True, "phrases": [], "total": 0}
 
-        phrases = pub.workflow_memory.phrase_manager.list_phrases(limit=limit)
+        # Fetch ALL phrases first (no limit), sort in Python, then truncate.
+        # list_phrases applies DB-level limit before sorting, so passing limit
+        # here would truncate before we can sort by the right field.
+        phrases = pub.workflow_memory.phrase_manager.list_phrases(limit=None)
 
         phrase_list = []
         for phrase in phrases:
@@ -2132,11 +2135,13 @@ async def list_public_cognitive_phrases(
                 "created_at": phrase.created_at,
             })
 
-        # Sort
+        # Sort then apply limit
         if sort == "recent":
             phrase_list.sort(key=lambda p: p.get("contributed_at") or 0, reverse=True)
         else:
             phrase_list.sort(key=lambda p: p.get("use_count", 0), reverse=True)
+
+        phrase_list = phrase_list[:limit]
 
         return {
             "success": True,
@@ -2359,15 +2364,20 @@ async def share_cognitive_phrase(
 @app.get("/api/v1/memory/publish-status")
 async def get_publish_status(
     phrase_id: str,
-    user_id: str,
     x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
 ):
     """Check if a private phrase has been published to public memory.
 
     Query Parameters:
         phrase_id: Private phrase ID (source_phrase_id in public)
-        user_id: Contributor user ID
+
+    Headers:
+        X-User-Id: Contributor user ID (required)
     """
+    if not x_user_id:
+        return {"published": False}
+
     try:
         from src.common.memory.memory_service import get_public_memory
         pub = get_public_memory()
@@ -2377,7 +2387,7 @@ async def get_publish_status(
         wm = pub.workflow_memory
         existing = wm.phrase_manager.graph_store.query_nodes(
             label=wm.phrase_manager.node_label,
-            filters={"source_phrase_id": phrase_id, "contributor_id": user_id},
+            filters={"source_phrase_id": phrase_id, "contributor_id": x_user_id},
             limit=1,
         )
 
@@ -2397,22 +2407,23 @@ async def get_publish_status(
 async def unpublish_cognitive_phrase(
     data: dict,
     x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
 ):
     """Remove a CognitivePhrase from public memory.
 
     Body:
-        {
-            "user_id": "user123",
-            "phrase_id": "private-phrase-id"
-        }
+        { "phrase_id": "private-phrase-id" }
+
+    Headers:
+        X-User-Id: Contributor user ID (required)
 
     Only the original contributor can unpublish.
     """
-    user_id = data.get("user_id")
+    user_id = x_user_id
     phrase_id = data.get("phrase_id")
 
     if not user_id:
-        raise HTTPException(400, "Missing user_id")
+        raise HTTPException(400, "Missing X-User-Id header")
     if not phrase_id:
         raise HTTPException(400, "Missing phrase_id")
 
