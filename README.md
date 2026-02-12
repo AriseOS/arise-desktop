@@ -94,7 +94,7 @@ Ami uses a **Desktop-First + Cloud-Enhanced** architecture:
 
 ### Prerequisites
 
-- **Python 3.11+** (required by the desktop daemon and `browser-use>=0.1.0`)
+- **Python 3.11+** (required by the desktop daemon)
 - **Node.js 16+** (for desktop app frontend)
 - **Rust** (for Tauri desktop app)
 
@@ -129,7 +129,7 @@ source .venv/bin/activate
 # Install Python dependencies
 pip install -r requirements.txt
 
-# Install desktop daemon dependencies (browser-use needs 3.11+)
+# Install desktop daemon dependencies
 pip install -r src/clients/desktop_app/ami_daemon/requirements.txt
 
 # Install browser automation dependencies
@@ -137,8 +137,6 @@ playwright install chromium --with-deps
 ```
 
 ### Python Environment & Debugging
-
-`browser-use>=0.1.0` only ships wheels for Python ≥3.11. Use one of the following flows to install and debug consistently:
 
 | Option | Steps |
 | --- | --- |
