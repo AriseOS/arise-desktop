@@ -133,7 +133,7 @@ cors:
 #
 # SurrealDB setup:
 #   docker run -d --name surrealdb -p 8000:8000 \
-#     surrealdb/surrealdb:latest start --user root --pass your_password
+#     surrealdb/surrealdb:latest start --allow-experimental record_references --user root --pass your_password
 #
 graph_store:
   backend: surrealdb  # Options: networkx, neo4j, surrealdb

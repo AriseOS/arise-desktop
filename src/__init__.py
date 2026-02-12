@@ -8,7 +8,7 @@ Directory structure:
 - agent_builder/: AI-assisted agent development
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # Only import modules that exist
 # TODO: Restore other imports when modules are implemented
