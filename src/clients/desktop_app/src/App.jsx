@@ -29,7 +29,6 @@ import RecordingsLibraryPage from "./pages/RecordingsLibraryPage";
 import RecordingDetailPage from "./pages/RecordingDetailPage";
 import CognitivePhrasesPage from "./pages/CognitivePhrasesPage";
 import CognitivePhraseDetailPage from "./pages/CognitivePhraseDetailPage";
-import ExplorePage from "./pages/ExplorePage";
 // MetaflowPreviewPage removed - MetaFlow is now internal, users work with Workflows directly
 // DataManagementPage removed - Data is now per-workflow, see WorkflowDetailPage "Data" tab
 import WorkflowExecutionLivePage from "./pages/WorkflowExecutionLivePage";
