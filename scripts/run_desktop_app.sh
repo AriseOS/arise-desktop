@@ -19,7 +19,7 @@ done
 
 echo "🚀 Starting Ami Desktop App..."
 if [ "$USE_LOCAL_CLOUD" = true ]; then
-    echo "   Mode: Using LOCAL Cloud Backend (http://localhost:9000)"
+    echo "   Mode: Using LOCAL Cloud Backend (http://localhost:9090)"
 else
     echo "   Mode: Using REMOTE Cloud Backend"
 fi
@@ -68,9 +68,9 @@ export no_proxy="localhost,127.0.0.1,::1"
 export NO_PROXY="localhost,127.0.0.1,::1"  
 
 if [ "$USE_LOCAL_CLOUD" = true ]; then
-    echo "   APP_BACKEND_CLOUD_API_URL=http://localhost:9000"
+    echo "   APP_BACKEND_CLOUD_API_URL=http://localhost:9090"
     echo ""
-    eval "$ENV_VARS APP_BACKEND_CLOUD_API_URL=http://localhost:9000 npm run tauri dev"
+    eval "$ENV_VARS APP_BACKEND_CLOUD_API_URL=http://localhost:9090 npm run tauri dev"
 else
     echo ""
     eval "$ENV_VARS npm run tauri dev"

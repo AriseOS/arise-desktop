@@ -12,7 +12,7 @@ FOR %%A IN (%*) DO (
 
 REM Ensure daemon sees local cloud setting before it starts
 IF "%USE_LOCAL_CLOUD%"=="true" (
-    SET "APP_BACKEND_CLOUD_API_URL=http://localhost:9000"
+    SET "APP_BACKEND_CLOUD_API_URL=http://localhost:9090"
 )
 
 REM Logging + daemon health check configuration
@@ -28,7 +28,7 @@ set "DAEMON_TIMEOUT_SECONDS=12"
 echo.
 echo Starting Ami Desktop App...
 IF "%USE_LOCAL_CLOUD%"=="true" (
-    echo    Mode: Using LOCAL Cloud Backend (http://localhost:9000^)
+    echo    Mode: Using LOCAL Cloud Backend (http://localhost:9090^)
 ) ELSE (
     echo    Mode: Using REMOTE Cloud Backend
 )
@@ -129,10 +129,10 @@ echo.
 
 REM Set environment variables and run
 IF "%USE_LOCAL_CLOUD%"=="true" (
-    echo    APP_BACKEND_CLOUD_API_URL=http://localhost:9000
+    echo    APP_BACKEND_CLOUD_API_URL=http://localhost:9090
     echo.
     set AMI_DEV_MODE=1
-    set APP_BACKEND_CLOUD_API_URL=http://localhost:9000
+    set APP_BACKEND_CLOUD_API_URL=http://localhost:9090
     cd src\clients\desktop_app
     call npm run tauri dev
     cd ..\..\..
