@@ -113,7 +113,7 @@ async def update_budget_settings(config: BudgetConfig):
         }
 
         save_settings(settings)
-        logger.info(f"Budget settings updated: {config.dict()}")
+        logger.info(f"Budget settings updated: {config.model_dump()}")
 
         return {
             "success": True,

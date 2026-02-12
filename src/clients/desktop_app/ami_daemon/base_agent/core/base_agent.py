@@ -224,7 +224,7 @@ class BaseAgent:
             tool = self.tools[tool_name]
             return {
                 'name': tool_name,
-                'metadata': tool.metadata.dict(),
+                'metadata': tool.metadata.model_dump(),
                 'actions': tool.get_available_actions(),
                 'status': tool.status.value
             }

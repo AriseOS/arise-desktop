@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 import logging
 
 logger = logging.getLogger(__name__)
@@ -145,9 +145,7 @@ class AgentContext(BaseModel):
     # 私有字段 - 浏览器会话信息
     _browser_session_info: Optional[Any] = PrivateAttr(default=None)
 
-    class Config:
-        """Pydantic配置"""
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     async def get_browser_session(self):
         """获取浏览器会话（懒加载）

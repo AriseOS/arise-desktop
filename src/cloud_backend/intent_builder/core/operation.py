@@ -4,7 +4,7 @@ Shared Operation data structure for Intent Builder
 This module provides a unified Operation definition used by both Intent and MetaFlow.
 """
 from typing import Any, Dict, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ElementInfo(BaseModel):
@@ -23,8 +23,7 @@ class ElementInfo(BaseModel):
     type: Optional[str] = None
     value: Optional[str] = None
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class Operation(BaseModel):
@@ -69,7 +68,4 @@ class Operation(BaseModel):
     distance: Optional[int] = None  # For scroll
     params: Optional[Dict[str, Any]] = None  # For store and other params
 
-    class Config:
-        populate_by_name = True
-        # Allow extra fields for future extensibility
-        extra = "allow"
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
