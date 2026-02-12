@@ -12,7 +12,8 @@ All tools search both private and public memory when available.
 
 import json
 import logging
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 from src.common.memory.ontology.action import Action
 from src.common.memory.ontology.cognitive_phrase import CognitivePhrase
@@ -92,6 +93,72 @@ class PlannerTools:
         }
         return json.dumps(result, ensure_ascii=False, default=str)
 
+    def get_phrase_recall_candidates(
+        self,
+        query: str,
+        top_k: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """Build scored phrase-recall candidates for debugging/reporting.
+
+        This method is side-channel only and does not affect PlannerAgent's
+        decision path. It mirrors recall_phrases' private-first + dedup strategy.
+        """
+        try:
+            vector = self.embedding_service.encode(query)
+        except Exception as e:
+            logger.warning(f"Embedding failed for recall debug candidates: {e}")
+            return []
+        if not vector:
+            return []
+
+        candidates: List[Tuple[CognitivePhrase, float, str]] = []
+
+        try:
+            private_ranked = self.memory.phrase_manager.search_phrases_by_embedding_with_scores(
+                vector,
+                top_k=top_k,
+            )
+            candidates.extend((phrase, score, "private") for phrase, score in private_ranked)
+        except Exception as e:
+            logger.warning(f"Private phrase score search failed: {e}")
+
+        if self.public_memory:
+            try:
+                public_ranked = (
+                    self.public_memory.phrase_manager.search_phrases_by_embedding_with_scores(
+                        vector,
+                        top_k=top_k,
+                    )
+                )
+                candidates.extend((phrase, score, "public") for phrase, score in public_ranked)
+            except Exception as e:
+                logger.warning(f"Public phrase score search failed: {e}")
+
+        deduped: List[Tuple[CognitivePhrase, float, str]] = []
+        seen_ids = set()
+        for phrase, score, source in candidates:
+            if phrase.id in seen_ids:
+                continue
+            seen_ids.add(phrase.id)
+            deduped.append((phrase, score, source))
+            if len(deduped) >= top_k:
+                break
+
+        output: List[Dict[str, Any]] = []
+        for rank, (phrase, score, source) in enumerate(deduped, start=1):
+            page_url, domain = self._get_phrase_primary_url_domain(phrase)
+            output.append({
+                "rank": rank,
+                "phrase_id": phrase.id,
+                "label": phrase.label,
+                "description": phrase.description,
+                "source": source,
+                "similarity_score": round(float(score), 4),
+                "page_url": page_url,
+                "domain": domain,
+            })
+        return output
+
     def _enrich_phrase(self, phrase: CognitivePhrase) -> Optional[EnrichedPhrase]:
         """Resolve States, Actions, IntentSequences for a CognitivePhrase."""
         try:
@@ -168,6 +235,27 @@ class PlannerTools:
         if self.public_memory and self.public_memory.state_manager.get_state(state_id):
             return self.public_memory
         return self.memory
+
+    def _get_phrase_primary_url_domain(self, phrase: CognitivePhrase) -> Tuple[str, str]:
+        """Get the first available URL/domain pair for a phrase."""
+        memory = self._get_memory_for_phrase(phrase)
+        for state_id in phrase.state_path:
+            state = memory.state_manager.get_state(state_id)
+            if not state:
+                continue
+            page_url = state.page_url or ""
+            domain = state.domain or self._derive_domain(page_url)
+            return page_url, domain
+        return "", ""
+
+    @staticmethod
+    def _derive_domain(page_url: str) -> str:
+        if not page_url:
+            return ""
+        try:
+            return urlparse(page_url).netloc
+        except Exception:
+            return ""
 
     async def search_states(self, query: str, top_k: int = 10) -> str:
         """Search for related page nodes by embedding similarity.

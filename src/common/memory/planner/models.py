@@ -195,13 +195,21 @@ class PlanResult:
     """
 
     memory_plan: MemoryPlan = field(default_factory=MemoryPlan)
+    debug_trace: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "memory_plan": self.memory_plan.to_dict(),
+            "debug_trace": self.debug_trace,
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "PlanResult":
         memory_plan_data = data.get("memory_plan", {})
-        return cls(memory_plan=MemoryPlan.from_dict(memory_plan_data))
+        debug_trace = data.get("debug_trace", {})
+        if not isinstance(debug_trace, dict):
+            debug_trace = {}
+        return cls(
+            memory_plan=MemoryPlan.from_dict(memory_plan_data),
+            debug_trace=debug_trace,
+        )

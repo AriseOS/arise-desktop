@@ -14,7 +14,9 @@ Subtask decomposition is done by AMITaskPlanner.
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 from .models import PlanStep, MemoryPlan, PlanResult
 from .prompts import PLANNER_SYSTEM_PROMPT
@@ -120,10 +122,12 @@ class PlannerAgent:
                 "PlannerAgent output contained no <memory_plan>. "
                 "Treating full output as a single uncovered step."
             )
+            fallback_plan = MemoryPlan(steps=[
+                PlanStep(index=1, content=text.strip()[:2000], source="none"),
+            ])
             return PlanResult(
-                memory_plan=MemoryPlan(steps=[
-                    PlanStep(index=1, content=text.strip()[:2000], source="none"),
-                ])
+                memory_plan=fallback_plan,
+                debug_trace=self._build_debug_trace(fallback_plan),
             )
 
         plan_content = plan_match.group(1)
@@ -153,7 +157,10 @@ class PlannerAgent:
         # Fill workflow_guide for steps with Memory backing
         self._fill_workflow_guides(memory_plan.steps)
 
-        return PlanResult(memory_plan=memory_plan)
+        return PlanResult(
+            memory_plan=memory_plan,
+            debug_trace=self._build_debug_trace(memory_plan),
+        )
 
     def _parse_steps(self, plan_content: str) -> List[PlanStep]:
         """Parse <steps>/<step> elements into PlanStep list."""
@@ -338,6 +345,172 @@ class PlannerAgent:
         if len(guide_lines) <= 1:
             return ""
         return "\n".join(guide_lines)
+
+    def _build_debug_trace(self, memory_plan: MemoryPlan) -> Dict[str, Any]:
+        """Build side-channel debug trace for PlannerAgent reporting."""
+        selected_phrase_ids = sorted({
+            step.phrase_id
+            for step in (memory_plan.steps or [])
+            if step.source == "phrase" and step.phrase_id
+        })
+
+        recall_calls = self._extract_recall_tool_calls()
+        recall_debug_items: List[Dict[str, Any]] = []
+
+        for call_index, call in enumerate(recall_calls, start=1):
+            query = call.get("query", "")
+            top_k = call.get("top_k", 5)
+            tool_result_phrases = call.get("phrases", [])
+
+            scored_candidates = []
+            if query:
+                scored_candidates = self._tools_impl.get_phrase_recall_candidates(
+                    query=query,
+                    top_k=top_k,
+                )
+
+            scored_by_phrase_id: Dict[str, Dict[str, Any]] = {}
+            for candidate in scored_candidates:
+                phrase_id = candidate.get("phrase_id")
+                if phrase_id:
+                    scored_by_phrase_id[phrase_id] = candidate
+
+            merged_phrases: List[Dict[str, Any]] = []
+            for result_rank, phrase_data in enumerate(tool_result_phrases, start=1):
+                phrase_id = phrase_data.get("id")
+                score_item = scored_by_phrase_id.get(phrase_id, {})
+                fallback_url, fallback_domain = self._extract_primary_url_domain(
+                    phrase_data
+                )
+                merged_phrases.append({
+                    "result_rank": result_rank,
+                    "phrase_id": phrase_id,
+                    "label": phrase_data.get("label", ""),
+                    "description": phrase_data.get("description", ""),
+                    "similarity_score": score_item.get("similarity_score"),
+                    "candidate_rank": score_item.get("rank"),
+                    "memory_source": score_item.get("source", ""),
+                    "domain": score_item.get("domain") or fallback_domain,
+                    "page_url": score_item.get("page_url") or fallback_url,
+                    "selected_in_plan": phrase_id in selected_phrase_ids if phrase_id else False,
+                })
+
+            item: Dict[str, Any] = {
+                "call_index": call_index,
+                "tool_use_id": call.get("tool_use_id"),
+                "query": query,
+                "top_k": top_k,
+                "result_count": len(tool_result_phrases),
+                "scored_candidates": scored_candidates,
+                "tool_result_phrases": merged_phrases,
+            }
+            if call.get("parse_error"):
+                item["parse_error"] = call["parse_error"]
+            recall_debug_items.append(item)
+
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "selected_phrase_ids": selected_phrase_ids,
+            "recall_phrases_calls": recall_debug_items,
+        }
+
+    def _extract_recall_tool_calls(self) -> List[Dict[str, Any]]:
+        """Extract recall_phrases tool calls + their tool_result payloads."""
+        ordered_calls: List[Dict[str, Any]] = []
+        tool_results: Dict[str, str] = {}
+
+        for msg in self._agent.get_messages():
+            content = msg.get("content", [])
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                block_type = block.get("type")
+                if block_type == "tool_use" and block.get("name") == "recall_phrases":
+                    tool_input = block.get("input", {})
+                    if not isinstance(tool_input, dict):
+                        tool_input = {}
+                    query = str(tool_input.get("query", "") or "")
+                    raw_top_k = tool_input.get("top_k", 5)
+                    try:
+                        top_k = int(raw_top_k)
+                    except (TypeError, ValueError):
+                        top_k = 5
+                    ordered_calls.append({
+                        "tool_use_id": block.get("id"),
+                        "query": query,
+                        "top_k": top_k,
+                    })
+                    continue
+                if block_type == "tool_result":
+                    tool_use_id = block.get("tool_use_id")
+                    block_content = block.get("content", "")
+                    if isinstance(tool_use_id, str) and isinstance(block_content, str):
+                        tool_results[tool_use_id] = block_content
+
+        extracted_calls: List[Dict[str, Any]] = []
+        for call in ordered_calls:
+            tool_use_id = call.get("tool_use_id")
+            raw_content = tool_results.get(tool_use_id, "")
+            phrases, parse_error = self._extract_recall_phrases_from_result(raw_content)
+            item = dict(call)
+            item["phrases"] = phrases
+            if parse_error:
+                item["parse_error"] = parse_error
+            extracted_calls.append(item)
+        return extracted_calls
+
+    @staticmethod
+    def _extract_recall_phrases_from_result(
+        raw_content: str,
+    ) -> Tuple[List[Dict[str, Any]], str]:
+        """Parse recall_phrases tool_result content."""
+        if not raw_content:
+            return [], ""
+        try:
+            data = json.loads(raw_content)
+        except (json.JSONDecodeError, TypeError):
+            return [], "tool_result is not valid JSON (possibly truncated)"
+
+        phrases = data.get("phrases", [])
+        if not isinstance(phrases, list):
+            return [], "tool_result JSON missing list field: phrases"
+
+        normalized: List[Dict[str, Any]] = []
+        for phrase in phrases:
+            if isinstance(phrase, dict):
+                normalized.append(phrase)
+        return normalized, ""
+
+    @staticmethod
+    def _extract_primary_url_domain(phrase_data: Dict[str, Any]) -> Tuple[str, str]:
+        """Extract first URL/domain from EnrichedPhrase dict."""
+        steps = phrase_data.get("steps", [])
+        if not isinstance(steps, list):
+            return "", ""
+
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            state = step.get("state", {})
+            if not isinstance(state, dict):
+                continue
+            page_url = state.get("page_url", "") or ""
+            if not page_url:
+                continue
+            domain = state.get("domain") or PlannerAgent._derive_domain(page_url)
+            return page_url, domain
+        return "", ""
+
+    @staticmethod
+    def _derive_domain(page_url: str) -> str:
+        if not page_url:
+            return ""
+        try:
+            return urlparse(page_url).netloc
+        except Exception:
+            return ""
 
     def _extract_tool_result_data(self) -> Dict[str, Any]:
         """Extract all useful data from the agent's tool result history.
