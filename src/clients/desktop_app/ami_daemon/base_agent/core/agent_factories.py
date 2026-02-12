@@ -368,9 +368,14 @@ to be embedded in your work.
 
 - When using `write_to_file`, the `content` format MUST match the target file type:
     - `.html` / `.htm`: content must be HTML markup.
-    - `.docx`: content must be plain text or Markdown (headings, bullets, paragraphs).
+    - `.docx`: write content in **Markdown**. The system auto-converts Markdown to
+      properly formatted Word elements. Supported: headings (`#`–`####`), **bold**,
+      *italic*, `inline code`, bullet lists (`-`), numbered lists (`1.`), tables,
+      fenced code blocks, and blockquotes (`>`).
     - `.md`: content must be Markdown.
-    - `.pdf`: content must be plain text or Markdown.
+    - `.pdf`: write content in **Markdown**. The system auto-converts Markdown to
+      formatted PDF with proper typography and CJK support. Supported elements are
+      the same as `.docx` above.
     - `.csv` / `.json` / `.yaml`: use the appropriate data format.
     If there's no specified format for the document, default to `.html`.
 

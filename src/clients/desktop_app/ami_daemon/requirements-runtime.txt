@@ -32,6 +32,10 @@ openai>=1.0.0
 # JSON parsing
 json-repair>=0.30.0
 
+# Document formatting (Markdown → DOCX/PDF)
+markdown>=3.5.0
+htmldocx>=0.0.6
+
 # DO NOT include these (dev/test only):
 # - pytest, pytest-asyncio
 # - mypy, black, isort

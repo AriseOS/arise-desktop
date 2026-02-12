@@ -112,6 +112,238 @@ class FileToolkit(BaseToolkit):
             logger.warning(f"Failed to create backup: {e}")
             return None
 
+    def _markdown_to_html(self, content: str) -> str:
+        """Convert Markdown content to HTML.
+
+        Shared by DOCX and PDF paths.
+
+        Args:
+            content: Markdown-formatted string.
+
+        Returns:
+            HTML string.
+        """
+        import markdown
+
+        return markdown.markdown(
+            content,
+            extensions=["tables", "fenced_code", "sane_lists"],
+        )
+
+    def _register_cjk_font(self) -> str:
+        """Register a CJK-capable font for PDF generation.
+
+        Searches for platform-specific font files and registers the first
+        available one with reportlab. Falls back to Helvetica.
+
+        Returns:
+            Registered font name for use in reportlab styles.
+        """
+        import os
+        import platform as plat
+
+        from reportlab.lib.fonts import addMapping
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+
+        font_paths = []
+        system = plat.system()
+
+        if system == "Darwin":
+            font_paths = [
+                "/System/Library/Fonts/STHeiti Light.ttc",
+                "/System/Library/Fonts/STHeiti Medium.ttc",
+                "/System/Library/Fonts/Supplemental/Songti.ttc",
+                "/System/Library/Fonts/PingFang.ttc",
+                "/Library/Fonts/Arial Unicode.ttf",
+            ]
+        elif system == "Windows":
+            # Prefer .ttf over .ttc (fewer postscript outline issues)
+            font_paths = [
+                r"C:\Windows\Fonts\msyh.ttf",
+                r"C:\Windows\Fonts\msyh.ttc",
+                r"C:\Windows\Fonts\simsun.ttf",
+                r"C:\Windows\Fonts\simsun.ttc",
+                r"C:\Windows\Fonts\simhei.ttf",
+                r"C:\Windows\Fonts\malgun.ttf",
+            ]
+        elif system == "Linux":
+            font_paths = [
+                "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+                "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+                "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            ]
+
+        for font_path in font_paths:
+            if os.path.exists(font_path):
+                try:
+                    font_name = "CJKFont"
+                    if font_name not in pdfmetrics.getRegisteredFontNames():
+                        pdfmetrics.registerFont(TTFont(font_name, font_path))
+                        addMapping(font_name, 0, 0, font_name)
+                        addMapping(font_name, 0, 1, font_name)
+                        addMapping(font_name, 1, 0, font_name)
+                        addMapping(font_name, 1, 1, font_name)
+                    return font_name
+                except Exception:
+                    continue
+
+        logger.warning("No CJK font found, falling back to Helvetica")
+        return "Helvetica"
+
+    def _html_to_pdf_flowables(self, html: str, font_name: str) -> list:
+        """Convert HTML string to a list of reportlab flowables.
+
+        Parses HTML block elements and maps them to reportlab equivalents.
+
+        Args:
+            html: HTML string (from _markdown_to_html).
+            font_name: Font name to use in paragraph styles.
+
+        Returns:
+            List of reportlab flowable objects.
+        """
+        from bs4 import BeautifulSoup
+        from reportlab.lib import colors
+        from reportlab.lib.styles import ParagraphStyle
+        from reportlab.lib.units import inch
+        from reportlab.platypus import (
+            HRFlowable,
+            ListFlowable,
+            ListItem,
+            Paragraph,
+            Preformatted,
+            Spacer,
+            Table,
+            TableStyle,
+        )
+
+        # Define styles
+        styles = {
+            "body": ParagraphStyle(
+                "body", fontName=font_name, fontSize=11, leading=15,
+                spaceAfter=8,
+            ),
+            "h1": ParagraphStyle(
+                "h1", fontName=font_name, fontSize=22, leading=28,
+                spaceAfter=12, spaceBefore=16, textColor=colors.HexColor("#1a1a1a"),
+            ),
+            "h2": ParagraphStyle(
+                "h2", fontName=font_name, fontSize=18, leading=24,
+                spaceAfter=10, spaceBefore=14, textColor=colors.HexColor("#1a1a1a"),
+            ),
+            "h3": ParagraphStyle(
+                "h3", fontName=font_name, fontSize=15, leading=20,
+                spaceAfter=8, spaceBefore=12, textColor=colors.HexColor("#333333"),
+            ),
+            "h4": ParagraphStyle(
+                "h4", fontName=font_name, fontSize=13, leading=18,
+                spaceAfter=6, spaceBefore=10, textColor=colors.HexColor("#333333"),
+            ),
+            "code": ParagraphStyle(
+                "code", fontName="Courier", fontSize=9, leading=12,
+                spaceAfter=8, leftIndent=12, rightIndent=12,
+                backColor=colors.HexColor("#f5f5f5"),
+            ),
+            "blockquote": ParagraphStyle(
+                "blockquote", fontName=font_name, fontSize=11, leading=15,
+                leftIndent=24, spaceAfter=8, textColor=colors.HexColor("#555555"),
+            ),
+        }
+
+        soup = BeautifulSoup(html, "html.parser")
+        flowables = []
+
+        for element in soup.children:
+            if element.name is None:
+                # NavigableString (whitespace)
+                text = str(element).strip()
+                if text:
+                    flowables.append(Paragraph(text, styles["body"]))
+                continue
+
+            tag = element.name
+
+            if tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+                level = tag  # e.g. "h1"
+                style = styles.get(level, styles["h4"])
+                flowables.append(Paragraph(str(element.decode_contents()), style))
+
+            elif tag == "p":
+                flowables.append(
+                    Paragraph(str(element.decode_contents()), styles["body"])
+                )
+
+            elif tag in ("ul", "ol"):
+                items = []
+                for li in element.find_all("li", recursive=False):
+                    items.append(
+                        ListItem(
+                            Paragraph(str(li.decode_contents()), styles["body"])
+                        )
+                    )
+                if items:
+                    if tag == "ul":
+                        flowables.append(
+                            ListFlowable(items, bulletType="bullet")
+                        )
+                    else:
+                        flowables.append(
+                            ListFlowable(
+                                items,
+                                bulletType="1",
+                                bulletFontName="Helvetica",
+                                start=1,
+                            )
+                        )
+
+            elif tag == "table":
+                rows_data = []
+                for tr in element.find_all("tr"):
+                    cells = tr.find_all(["th", "td"])
+                    rows_data.append(
+                        [Paragraph(str(c.decode_contents()), styles["body"]) for c in cells]
+                    )
+                if rows_data:
+                    table_style_cmds = [
+                        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ("TOPPADDING", (0, 0), (-1, -1), 4),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                    ]
+                    # Grey background for header row
+                    if element.find("th"):
+                        table_style_cmds.append(
+                            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e0e0e0"))
+                        )
+                    t = Table(rows_data)
+                    t.setStyle(TableStyle(table_style_cmds))
+                    flowables.append(t)
+                    flowables.append(Spacer(1, 8))
+
+            elif tag == "pre":
+                code_tag = element.find("code")
+                code_text = code_tag.get_text() if code_tag else element.get_text()
+                flowables.append(Preformatted(code_text, styles["code"]))
+
+            elif tag == "blockquote":
+                inner = element.get_text(separator="\n").strip()
+                flowables.append(Paragraph(inner, styles["blockquote"]))
+
+            elif tag == "hr":
+                flowables.append(HRFlowable(width="100%", color=colors.grey))
+
+            else:
+                # Fallback: render as paragraph
+                text = str(element.decode_contents()).strip()
+                if text:
+                    flowables.append(Paragraph(text, styles["body"]))
+
+        return flowables
+
     @listen_toolkit(
         inputs=lambda self, title, content, filename, **kw: f"Writing to {filename}",
         return_msg=lambda r: r[:200] if isinstance(r, str) else str(r)
@@ -129,12 +361,17 @@ class FileToolkit(BaseToolkit):
         Supports various file formats including:
         - Text files (.txt, .md, .html, .json, .yaml, .xml)
         - CSV files (.csv) - content can be a list of lists
-        - Word documents (.docx)
-        - PDF files (.pdf) with optional LaTeX support
+        - Word documents (.docx) - Markdown auto-converted to formatted Word
+        - PDF files (.pdf) - Markdown auto-converted to formatted PDF with CJK support
+
+        For .docx and .pdf, write content in Markdown. Supported elements:
+        headings (#-####), bold, italic, inline code, bullet/numbered lists,
+        tables, fenced code blocks, blockquotes, and horizontal rules.
 
         Args:
             title: Title or heading for the content.
             content: The content to write. For CSV, can be a list of lists.
+                For .docx and .pdf, use Markdown formatting.
             filename: The filename to write to.
             encoding: File encoding (default: utf-8).
             use_latex: Whether to render LaTeX in PDF files.
@@ -184,9 +421,10 @@ class FileToolkit(BaseToolkit):
                         json.dump(content, f, indent=2, ensure_ascii=False)
 
             elif suffix == ".docx":
-                # Handle Word documents
+                # Handle Word documents (Markdown → HTML → DOCX)
                 try:
                     from docx import Document
+                    from htmldocx import HtmlToDocx
 
                     doc = Document()
 
@@ -194,50 +432,70 @@ class FileToolkit(BaseToolkit):
                     if title:
                         doc.add_heading(title, level=1)
 
-                    # Add content
+                    # Convert content
                     if isinstance(content, str):
-                        for paragraph in content.split("\n\n"):
-                            if paragraph.strip():
-                                doc.add_paragraph(paragraph.strip())
+                        html = self._markdown_to_html(content)
+                        parser = HtmlToDocx()
+                        parser.add_html_to_document(html, doc)
                     elif isinstance(content, list):
                         for row in content:
                             doc.add_paragraph(", ".join(str(cell) for cell in row))
 
                     doc.save(str(filepath))
                 except ImportError:
-                    return "Error: python-docx package required for .docx files. Install with: pip install python-docx"
+                    return "Error: python-docx and htmldocx packages required for .docx files. Install with: pip install python-docx htmldocx"
 
             elif suffix == ".pdf":
-                # Handle PDF files
+                # Handle PDF files (Markdown → HTML → reportlab flowables)
                 try:
                     from reportlab.lib.pagesizes import letter
-                    from reportlab.pdfgen import canvas
+                    from reportlab.lib.styles import ParagraphStyle
                     from reportlab.lib.units import inch
+                    from reportlab.platypus import (
+                        Paragraph,
+                        SimpleDocTemplate,
+                        Spacer,
+                    )
 
-                    c = canvas.Canvas(str(filepath), pagesize=letter)
-                    width, height = letter
+                    font_name = self._register_cjk_font()
+
+                    doc = SimpleDocTemplate(
+                        str(filepath),
+                        pagesize=letter,
+                        leftMargin=1 * inch,
+                        rightMargin=1 * inch,
+                        topMargin=1 * inch,
+                        bottomMargin=1 * inch,
+                    )
+
+                    flowables = []
 
                     # Add title
                     if title:
-                        c.setFont("Helvetica-Bold", 16)
-                        c.drawString(1 * inch, height - 1 * inch, title)
+                        title_style = ParagraphStyle(
+                            "title",
+                            fontName=font_name,
+                            fontSize=24,
+                            leading=30,
+                            spaceAfter=16,
+                        )
+                        flowables.append(Paragraph(title, title_style))
+                        flowables.append(Spacer(1, 8))
 
-                    # Add content
-                    c.setFont("Helvetica", 12)
-                    y_position = height - 1.5 * inch
-
+                    # Convert content
                     if isinstance(content, str):
-                        for line in content.split("\n"):
-                            if y_position < 1 * inch:
-                                c.showPage()
-                                y_position = height - 1 * inch
-                                c.setFont("Helvetica", 12)
-                            if len(line) > 80:
-                                logger.warning(f"PDF line truncated from {len(line)} to 80 chars")
-                            c.drawString(1 * inch, y_position, line[:80])  # Truncate long lines
-                            y_position -= 14
+                        html = self._markdown_to_html(content)
+                        flowables.extend(self._html_to_pdf_flowables(html, font_name))
+                    elif isinstance(content, list):
+                        body_style = ParagraphStyle(
+                            "body_list", fontName=font_name, fontSize=11, leading=15,
+                        )
+                        for row in content:
+                            flowables.append(
+                                Paragraph(", ".join(str(cell) for cell in row), body_style)
+                            )
 
-                    c.save()
+                    doc.build(flowables)
                 except ImportError:
                     return "Error: reportlab package required for .pdf files. Install with: pip install reportlab"
 
