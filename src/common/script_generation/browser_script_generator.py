@@ -82,6 +82,15 @@ class BrowserScriptGenerator:
             # Copy skills to working directory for Claude Agent to use
             SkillManager.prepare_browser_skills(working_dir)
 
+            # Copy element_tools.py to working directory root for both:
+            # 1. Claude Agent to run: python element_tools.py ...
+            # 2. App to import when executing generated script
+            element_tools_src = SkillManager.get_skill_path("element-finder") / "tools" / "element_tools.py"
+            element_tools_dest = working_dir / "element_tools.py"
+            if element_tools_src and element_tools_src.exists():
+                shutil.copy2(element_tools_src, element_tools_dest)
+                logger.info(f"Copied element_tools.py to {element_tools_dest}")
+
             # Save input files
             await self._save_input_files(working_dir, task, dom_dict, page_url)
 

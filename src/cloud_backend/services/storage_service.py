@@ -1182,7 +1182,7 @@ class StorageService:
                 metadata = json.load(f)
 
             # Scan for resources
-            resources = {"scraper_scripts": []}
+            resources = {"scraper_scripts": [], "browser_scripts": []}
 
             # Scan each step directory for script files (now directly in step directory)
             for step_dir in workflow_path.iterdir():
@@ -1193,7 +1193,7 @@ class StorageService:
 
                 step_id = step_dir.name
 
-                # Check for extraction_script.py directly in step directory
+                # Check for extraction_script.py (scraper_agent)
                 extraction_script = step_dir / "extraction_script.py"
                 if extraction_script.exists():
                     files = ["extraction_script.py"]
@@ -1208,7 +1208,24 @@ class StorageService:
                         "step_id": step_id,
                         "files": files
                     })
-                    logger.info(f"Found resource: {step_id} with {len(files)} files")
+                    logger.info(f"Found scraper resource: {step_id} with {len(files)} files")
+
+                # Check for find_element.py (browser_agent)
+                find_element_script = step_dir / "find_element.py"
+                if find_element_script.exists():
+                    files = ["find_element.py"]
+                    # Include element_tools.py (required for script execution)
+                    if (step_dir / "element_tools.py").exists():
+                        files.append("element_tools.py")
+                    # Include task.json (for cache validation)
+                    if (step_dir / "task.json").exists():
+                        files.append("task.json")
+
+                    resources["browser_scripts"].append({
+                        "step_id": step_id,
+                        "files": files
+                    })
+                    logger.info(f"Found browser resource: {step_id} with {len(files)} files")
 
             # Check if resources actually changed
             old_resources = metadata.get("resources", {})
@@ -1227,7 +1244,7 @@ class StorageService:
             with open(metadata_path, 'w', encoding='utf-8') as f:
                 json.dump(metadata, f, indent=2, ensure_ascii=False)
 
-            logger.info(f"Updated metadata with {len(resources.get('scraper_scripts', []))} scraper_scripts (changed: {resources_changed})")
+            logger.info(f"Updated metadata with {len(resources.get('scraper_scripts', []))} scraper_scripts, {len(resources.get('browser_scripts', []))} browser_scripts (changed: {resources_changed})")
             return True
 
         except Exception as e:

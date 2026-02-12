@@ -809,8 +809,14 @@ async def _pregenerate_scripts_background(
             if result.get("error"):
                 logger.warning(f"   Error: {result['error']}")
 
-        # Update workflow metadata with script generation status
+        # Update workflow metadata with script generation status and resources
         try:
+            # First, scan and update resources in metadata.json (for client sync)
+            if result.get("generated", 0) > 0:
+                await storage_service.update_workflow_resources(user_id, workflow_id)
+                logger.info(f"✅ Background: Updated metadata with {result['generated']} generated scripts for sync")
+
+            # Then update script_pregeneration status
             metadata = await storage_service.get_workflow_metadata(user_id, workflow_id)
             if metadata:
                 metadata["script_pregeneration"] = {
@@ -4513,7 +4519,7 @@ async def generate_script_stream(
 
             # Update workflow metadata
             try:
-                metadata = storage_service.load_workflow_metadata(x_user_id, workflow_id) or {}
+                metadata = await storage_service.get_workflow_metadata(x_user_id, workflow_id) or {}
                 if "generated_scripts" not in metadata:
                     metadata["generated_scripts"] = {}
                 metadata["generated_scripts"][request.step_id] = {
@@ -4553,7 +4559,7 @@ async def generate_script_stream(
                 # Update timestamp
                 metadata["updated_at"] = datetime.now(timezone.utc).isoformat()
 
-                storage_service.save_workflow_metadata(x_user_id, workflow_id, metadata)
+                await storage_service.save_workflow_metadata(x_user_id, workflow_id, metadata)
                 logger.info(f"[{request_id}] Updated metadata with resources: {files_to_sync}")
             except Exception as e:
                 logger.warning(f"[{request_id}] Failed to update metadata: {e}")
