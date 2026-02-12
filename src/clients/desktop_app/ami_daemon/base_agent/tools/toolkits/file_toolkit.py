@@ -272,6 +272,66 @@ class FileToolkit(BaseToolkit):
             return error_msg
 
     @listen_toolkit(
+        inputs=lambda self, content, filename, **kw: f"Appending to {filename}",
+        return_msg=lambda r: r[:200] if isinstance(r, str) else str(r)
+    )
+    def append_to_file(
+        self,
+        content: str,
+        filename: str,
+        encoding: Optional[str] = None,
+    ) -> str:
+        """Append content to an existing file. Creates the file if it does not exist.
+
+        Use this tool instead of write_to_file when you need to ADD data to a file
+        without losing existing content. Ideal for:
+        - .jsonl files: each call appends one JSON object per line
+        - .txt/.md files: each call appends text to the end
+        - .csv files: each call appends rows to the end
+        - Any text-based file that accumulates data across multiple steps
+
+        Args:
+            content: The content to append. For .jsonl files, should be a valid JSON string.
+            filename: The filename to append to.
+            encoding: File encoding (default: utf-8).
+
+        Returns:
+            Success message with file path, or error message.
+        """
+        effective_encoding = encoding or self._default_encoding
+        filepath = self._resolve_filepath(filename)
+
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+
+        logger.info(f"Appending to file: {filepath}")
+
+        try:
+            suffix = filepath.suffix.lower()
+
+            if suffix == ".jsonl":
+                import json
+                # Validate and normalize JSON, write as single line
+                try:
+                    data = json.loads(content)
+                    line = json.dumps(data, ensure_ascii=False) + "\n"
+                except json.JSONDecodeError:
+                    line = content.rstrip("\n") + "\n"
+
+                with open(filepath, "a", encoding=effective_encoding) as f:
+                    f.write(line)
+            else:
+                with open(filepath, "a", encoding=effective_encoding) as f:
+                    f.write(content)
+
+            logger.info(f"Successfully appended to file: {filepath}")
+            return f"Content successfully appended to file: {filepath}"
+
+        except Exception as e:
+            error_msg = f"Error appending to file {filepath}: {str(e)}"
+            logger.error(error_msg)
+            return error_msg
+
+    @listen_toolkit(
         inputs=lambda self, filepath: f"Reading {filepath}",
         return_msg=lambda r: f"Read {len(r)} chars" if isinstance(r, str) else str(r)
     )
@@ -354,6 +414,7 @@ class FileToolkit(BaseToolkit):
         """
         return [
             FunctionTool(self.write_to_file),
+            FunctionTool(self.append_to_file),
             FunctionTool(self.read_file),
             FunctionTool(self.file_exists),
             FunctionTool(self.list_files),

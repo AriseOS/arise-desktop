@@ -35,6 +35,7 @@ from ..events import (
     MemoryLevelData,
     NoticeData,
 )
+from ..i18n import t
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,7 @@ FINE_GRAINED_DECOMPOSE_PROMPT = r"""You are a task decomposer. Convert a user's 
 
 **HOW TO WORK:**
 - If an EXECUTION PLAN is provided below: this plan comes from the user's past successful workflows stored in Memory. It represents a proven execution path. Convert each plan step into subtasks, preserving the plan's structure and order. Assign the right agent type and dependencies. Add a final deliverable step if missing.
+- IMPORTANT: Preserve specific operation details from the EXECUTION PLAN steps (e.g., scroll to load, specific fields to extract, exact click targets). Do NOT summarize away actionable details — they are critical for correct execution.
 - If no EXECUTION PLAN is provided: decompose the task from scratch using your own knowledge.
 
 **SUBTASK RULES:**
@@ -87,9 +89,8 @@ FINE_GRAINED_DECOMPOSE_PROMPT = r"""You are a task decomposer. Convert a user's 
 **OUTPUT FORMAT (XML):**
 <tasks>
 <task id="1" type="browser">Visit producthunt.com and navigate to the weekly leaderboard page</task>
-<task id="2" type="browser" depends_on="1">Extract the top 10 products with names, descriptions, and URLs. Return as JSON list.</task>
-<task id="3" type="browser" depends_on="2">Save the extracted products to a note file named 'products.md'</task>
-<task id="4" type="document" depends_on="3">Read products.md and generate an HTML report with product cards</task>
+<task id="2" type="browser" depends_on="1">Extract the top 10 products (name, tagline, votes, profile URL). Save to products.md</task>
+<task id="3" type="document" depends_on="2">Read products.md and generate an HTML report with product cards</task>
 </tasks>
 
 Each <task> element:
@@ -203,6 +204,10 @@ class AMITaskPlanner:
             f"memory_toolkit={'available' if memory_toolkit else 'not available'}"
         )
 
+    @property
+    def _lang(self) -> str:
+        return getattr(self._task_state, 'user_language', 'en') if self._task_state else 'en'
+
     async def _emit_event(self, event: Any) -> None:
         """Emit an event to the task's event queue."""
         if self._task_state and hasattr(self._task_state, 'put_event'):
@@ -266,7 +271,7 @@ class AMITaskPlanner:
         await self._emit_event(DecomposeProgressData(
             task_id=self.task_id,
             progress=0.1,
-            message="Analyzing Memory coverage...",
+            message=t("planner.analyzing_memory", self._lang),
             is_final=False,
         ))
 
@@ -435,8 +440,7 @@ class AMITaskPlanner:
             f"browser subtasks"
         )
 
-    @staticmethod
-    def _build_planner_agent_report(memory_plan) -> str:
+    def _build_planner_agent_report(self, memory_plan) -> str:
         """Build a human-readable memory report for chat display.
 
         Args:
@@ -444,8 +448,10 @@ class AMITaskPlanner:
         """
         import html as html_mod
 
+        lang = self._lang
+
         if not memory_plan.steps:
-            return "**Memory analysis: no matching workflows found (L3)**"
+            return t("planner.memory.analysis_l3", lang)
 
         has_phrase = any(
             c.source == "phrase" and c.phrase_id
@@ -461,8 +467,9 @@ class AMITaskPlanner:
 
         coverage_html = ""
         if li_items:
+            summary = t("planner.memory.execution_plan", lang, count=len(li_items))
             coverage_html = (
-                f"\n\n<details><summary>Execution plan ({len(li_items)} steps)</summary>"
+                f"\n\n<details><summary>{summary}</summary>"
                 f"<ul>{''.join(li_items)}</ul></details>"
             )
 
@@ -472,12 +479,14 @@ class AMITaskPlanner:
             pref_items = [
                 f"<li>{html_mod.escape(p)}</li>" for p in memory_plan.preferences
             ]
+            summary = t("planner.memory.user_preferences", lang, count=len(pref_items))
             prefs_html = (
-                f"\n\n<details><summary>User preferences ({len(pref_items)})</summary>"
+                f"\n\n<details><summary>{summary}</summary>"
                 f"<ul>{''.join(pref_items)}</ul></details>"
             )
 
-        return f"**Memory analysis ({level_label})**{coverage_html}{prefs_html}"
+        header = t("planner.memory.analysis", lang, level=level_label)
+        return f"{header}{coverage_html}{prefs_html}"
 
     async def _decompose_with_old_path(self, task: str) -> List[AMISubtask]:
         """Old Reasoner-based decomposition path (fallback).
@@ -521,7 +530,7 @@ class AMITaskPlanner:
         await self._emit_event(DecomposeProgressData(
             task_id=self.task_id,
             progress=1.0,
-            message="Decomposition complete",
+            message=t("planner.decompose_complete", self._lang),
             sub_tasks=subtasks_data,
             is_final=True,
         ))
@@ -554,7 +563,7 @@ class AMITaskPlanner:
         await self._emit_event(DecomposeProgressData(
             task_id=self.task_id,
             progress=0.1,
-            message="Querying Memory for task workflow...",
+            message=t("planner.querying_memory", self._lang),
             is_final=False,
         ))
 
@@ -653,6 +662,8 @@ class AMITaskPlanner:
         """
         import html as html_mod
 
+        lang = self._lang
+
         if level == "L1":
             # Full workflow match - show expandable step list
             steps_html = ""
@@ -669,13 +680,14 @@ class AMITaskPlanner:
                         if desc:
                             li_items.append(f"<li>{html_mod.escape(str(desc))}</li>")
                     if li_items:
+                        summary = t("planner.memory.view_steps", lang, count=len(li_items))
                         steps_html = (
-                            f"\n\n<details><summary>查看工作流步骤 ({len(li_items)} 步)</summary>"
+                            f"\n\n<details><summary>{summary}</summary>"
                             f"<ol>{''.join(li_items)}</ol></details>"
                         )
             if not steps_html:
-                return "**找到完整工作流记忆 (L1)**（无详细步骤）"
-            return f"**找到完整工作流记忆 (L1)**{steps_html}"
+                return t("planner.memory.l1_no_steps", lang)
+            return f"{t('planner.memory.l1_found', lang)}{steps_html}"
 
         elif level == "L2":
             # Partial navigation match - show expandable path
@@ -691,14 +703,15 @@ class AMITaskPlanner:
                     if desc:
                         li_items.append(f"<li>{html_mod.escape(str(desc))}</li>")
                 if li_items:
+                    summary = t("planner.memory.view_path", lang, count=len(li_items))
                     path_html = (
-                        f"\n\n<details><summary>查看导航路径 ({len(li_items)} 页)</summary>"
+                        f"\n\n<details><summary>{summary}</summary>"
                         f"<ol>{''.join(li_items)}</ol></details>"
                     )
-            return f"**找到部分导航记忆 (L2)**{path_html}"
+            return f"{t('planner.memory.l2_found', lang)}{path_html}"
 
         else:
-            return "**未找到历史工作流记忆 (L3)**"
+            return t("planner.memory.l3_none", lang)
 
     def _format_memory_for_decompose(self, task_memory: Optional["QueryResult"]) -> str:
         """
@@ -810,7 +823,7 @@ class AMITaskPlanner:
         await self._emit_event(DecomposeProgressData(
             task_id=self.task_id,
             progress=0.3,
-            message="Analyzing task and creating atomic subtasks...",
+            message=t("planner.analyzing_task", self._lang),
             is_final=False,
         ))
 
@@ -857,7 +870,7 @@ class AMITaskPlanner:
         await self._emit_event(DecomposeProgressData(
             task_id=self.task_id,
             progress=0.8,
-            message=f"Created {len(subtasks)} atomic subtasks",
+            message=t("planner.created_subtasks", self._lang, count=len(subtasks)),
             is_final=False,
         ))
 
@@ -1432,7 +1445,7 @@ class AMITaskPlanner:
         await self._emit_event(DecomposeProgressData(
             task_id=self.task_id,
             progress=0.1,
-            message="Analyzing task types...",
+            message=t("planner.analyzing_types", self._lang),
             is_final=False,
         ))
 
@@ -1468,7 +1481,7 @@ class AMITaskPlanner:
         await self._emit_event(DecomposeProgressData(
             task_id=self.task_id,
             progress=0.3,
-            message=f"Identified {len(subtasks)} subtasks",
+            message=t("planner.identified_subtasks", self._lang, count=len(subtasks)),
             is_final=False,
         ))
 

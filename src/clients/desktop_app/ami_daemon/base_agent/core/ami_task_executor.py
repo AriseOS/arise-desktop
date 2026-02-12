@@ -28,6 +28,7 @@ from ..events import (
     AgentReportData,
     DynamicTasksAddedData,
 )
+from ..i18n import t
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +154,10 @@ class AMITaskExecutor:
             f"with agents: {list(agents.keys())}"
         )
 
+    @property
+    def _lang(self) -> str:
+        return getattr(self._task_state, 'user_language', 'en') if self._task_state else 'en'
+
     def set_subtasks(self, subtasks: List[AMISubtask]) -> None:
         """Set subtasks to execute."""
         self._subtasks = subtasks
@@ -236,10 +241,8 @@ class AMITaskExecutor:
             ))
             await self._task_state.put_event(AgentReportData(
                 task_id=self.task_id,
-                message=(
-                    f"Added {len(new_subtasks)} follow-up tasks "
-                    f"(total: {len(self._subtasks)})"
-                ),
+                message=t("executor.tasks_added", self._lang,
+                          count=len(new_subtasks), total=len(self._subtasks)),
                 report_type="info",
             ))
 
@@ -511,6 +514,8 @@ class AMITaskExecutor:
                 recorder = None
             # Always clean up replan tools to prevent leaking between subtasks
             self._remove_replan_tools(agent)
+            # Tab cleanup: close all non-current tabs to prevent accumulation
+            await self._cleanup_subtask_tabs(agent)
 
     async def _get_browser_context(self, agent: "AMIAgent") -> Optional[str]:
         """Get current browser page URL and title if agent has browser tools.
@@ -533,6 +538,48 @@ class AMITaskExecutor:
         except Exception as e:
             logger.debug(f"[AMITaskExecutor] Failed to get browser context: {e}")
             return None
+
+    # =========================================================================
+    # Tab Cleanup Between Subtasks
+    # =========================================================================
+
+    async def _cleanup_subtask_tabs(self, agent: "AMIAgent") -> None:
+        """Close all tabs except the current active tab.
+
+        Called after each subtask to prevent tab accumulation during
+        long multi-subtask executions. Only the current active tab is
+        preserved so the next subtask can continue from the same page.
+        """
+        tool = agent.get_tool("browser_get_page_snapshot")
+        if tool is None:
+            return
+
+        toolkit = tool.func.__self__
+        session = toolkit._session
+        if session is None:
+            return
+
+        try:
+            tab_info = await session.get_tab_info()
+            current_tab_id = session._current_tab_id
+
+            tabs_to_close = [
+                t["tab_id"] for t in tab_info
+                if t["tab_id"] != current_tab_id
+            ]
+
+            if not tabs_to_close:
+                return
+
+            for tab_id in tabs_to_close:
+                await session.close_tab(tab_id)
+
+            logger.info(
+                f"[AMITaskExecutor] Tab cleanup: closed {len(tabs_to_close)} tabs "
+                f"(kept current: {current_tab_id})"
+            )
+        except Exception as e:
+            logger.warning(f"[AMITaskExecutor] Tab cleanup failed: {e}")
 
     # =========================================================================
     # Online Learning (BehaviorRecorder)
@@ -799,34 +846,38 @@ No historical workflow guide available. Please explore and complete the task usi
 
         progress = self._get_subtask_progress(subtask)
 
+        lang = self._lang
+
         async def on_retry(attempt: int, max_retries: int, delay: float, error_msg: str) -> None:
             if not self._task_state:
                 return
             await self._task_state.put_event(AgentReportData(
                 task_id=self.task_id,
-                message=f"{progress} API error, retrying ({attempt}/{max_retries}) in {delay:.0f}s...",
+                message=t("executor.api_retry", lang,
+                          progress=progress, attempt=attempt,
+                          max_retries=max_retries, delay=f"{delay:.0f}"),
                 report_type="warning",
             ))
 
         provider.set_on_retry_callback(on_retry)
 
-    @staticmethod
-    def _classify_error(error_msg: str) -> str:
+    def _classify_error(self, error_msg: str) -> str:
         """Classify error into user-friendly category."""
         if not error_msg:
             return ""
+        lang = self._lang
         lower = error_msg.lower()
         if any(kw in lower for kw in ("connection", "timeout", "timed out", "network", "unreachable", "dns")):
-            return "Network connection error, please check your network"
+            return t("executor.error.network", lang)
         if any(kw in lower for kw in ("429", "rate limit", "too many requests")):
-            return "API rate limited, please try again later"
+            return t("executor.error.rate_limit", lang)
         if any(kw in lower for kw in ("500", "502", "503", "504", "internal server error")):
-            return "API server unstable, please try again later"
+            return t("executor.error.server", lang)
         if any(kw in lower for kw in ("400", "bad request")):
-            return "API request error"
+            return t("executor.error.bad_request", lang)
         if any(kw in lower for kw in ("401", "unauthorized", "authentication")):
-            return "API key invalid or expired"
-        return "Unexpected error"
+            return t("executor.error.unauthorized", lang)
+        return t("executor.error.unexpected", lang)
 
     # =========================================================================
     # SSE Event Emission
@@ -857,7 +908,8 @@ No historical workflow guide available. Please explore and complete the task usi
             content_preview += "..."
         await self._task_state.put_event(AgentReportData(
             task_id=self.task_id,
-            message=f"{progress} 正在执行: {html_mod.escape(content_preview)}",
+            message=t("executor.running", self._lang,
+                      progress=progress, preview=html_mod.escape(content_preview)),
             report_type="info",
         ))
 
@@ -896,7 +948,8 @@ No historical workflow guide available. Please explore and complete the task usi
         if subtask.state == SubtaskState.DONE:
             await self._task_state.put_event(AgentReportData(
                 task_id=self.task_id,
-                message=f"✓ {progress} 完成: {safe_preview}",
+                message=t("executor.completed", self._lang,
+                          progress=progress, preview=safe_preview),
                 report_type="success",
             ))
         elif subtask.state == SubtaskState.FAILED:
@@ -905,7 +958,9 @@ No historical workflow guide available. Please explore and complete the task usi
             error_suffix = f" ({error_hint})" if error_hint else ""
             await self._task_state.put_event(AgentReportData(
                 task_id=self.task_id,
-                message=f"✗ {progress} 失败: {safe_preview}{error_suffix}",
+                message=t("executor.failed", self._lang,
+                          progress=progress, preview=safe_preview,
+                          error_suffix=error_suffix),
                 report_type="error",
             ))
 

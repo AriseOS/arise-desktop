@@ -191,6 +191,9 @@ class TaskState:
     user_id: str = "default"
     project_id: str = "default"
 
+    # Language for SSE messages (detected from user input)
+    user_language: str = "en"
+
     # Execution state
     current_step: Optional[Dict] = None
     progress: float = 0.0
@@ -647,6 +650,8 @@ class QuickTaskService:
         effective_user_id = user_id or self._user_id or "default"
         effective_project_id = project_id or "default"
 
+        from ..base_agent.i18n import detect_language
+
         state = TaskState(
             task_id=task_id,
             task=task,
@@ -654,6 +659,7 @@ class QuickTaskService:
             status=TaskStatus.PENDING,
             user_id=effective_user_id,
             project_id=effective_project_id,
+            user_language=detect_language(task),
         )
         self._tasks[task_id] = state
 
@@ -706,6 +712,8 @@ class QuickTaskService:
             # Create new task with fresh workspace but preserve conversation history
             new_task_id = str(uuid.uuid4())[:8]
 
+            from ..base_agent.i18n import detect_language
+
             new_state = TaskState(
                 task_id=new_task_id,
                 task=new_task,
@@ -713,6 +721,7 @@ class QuickTaskService:
                 status=TaskStatus.PENDING,
                 user_id=old_state.user_id,
                 project_id=old_state.project_id,
+                user_language=detect_language(new_task),
                 # Copy conversation history from old task
                 conversation_history=list(old_state.conversation_history),
                 last_task_result=old_state.last_task_result,
@@ -735,7 +744,10 @@ class QuickTaskService:
 
         else:
             # Continue in the same workspace
+            from ..base_agent.i18n import detect_language
+
             old_state.task = new_task
+            old_state.user_language = detect_language(new_task)
             old_state.status = TaskStatus.PENDING
             old_state.error = None
             old_state.result = None
@@ -1814,7 +1826,12 @@ Response:"""
                         # Use HTML inside <details> (Markdown not parsed in raw HTML blocks)
                         # Escape subtask content to prevent XSS
                         import html as html_mod
-                        type_labels = {"browser": "浏览器", "document": "文档", "code": "代码", "multi_modal": "多模态"}
+                        from ..base_agent.i18n import t as _t
+                        lang = state.user_language
+                        type_labels = {
+                            k: _t(f"service.type.{k}", lang)
+                            for k in ("browser", "document", "code", "multi_modal")
+                        }
                         li_items = []
                         for st in subtasks:
                             label = type_labels.get(st.agent_type, st.agent_type)
@@ -1823,8 +1840,8 @@ Response:"""
                         await state.put_event(AgentReportData(
                             task_id=task_id,
                             message=(
-                                f"**任务已拆解为 {len(subtasks)} 个子任务**\n\n"
-                                f"<details><summary>查看子任务列表</summary>"
+                                f"{_t('service.task_decomposed', lang, count=len(subtasks))}\n\n"
+                                f"<details><summary>{_t('service.view_subtasks', lang)}</summary>"
                                 f"<ol>{''.join(li_items)}</ol></details>"
                             ),
                             report_type="info",
@@ -1878,16 +1895,21 @@ Response:"""
                             ))
 
                             # Report: Execution completed
+                            from ..base_agent.i18n import t as _t
+                            lang = state.user_language
                             if result["failed"] == 0:
                                 await state.put_event(AgentReportData(
                                     task_id=task_id,
-                                    message=f"全部 {result['completed']} 个子任务执行完成！",
+                                    message=_t("service.all_completed", lang,
+                                               count=result["completed"]),
                                     report_type="success",
                                 ))
                             else:
                                 await state.put_event(AgentReportData(
                                     task_id=task_id,
-                                    message=f"执行完成：{result['completed']} 成功，{result['failed']} 失败",
+                                    message=_t("service.execution_summary", lang,
+                                               completed=result["completed"],
+                                               failed=result["failed"]),
                                     report_type="warning",
                                 ))
 
