@@ -56,7 +56,7 @@ _MAX_GUIDE_INTENTS = 20
 FINE_GRAINED_DECOMPOSE_PROMPT = r"""You are a task decomposer. Convert a user's task into atomic subtasks for specialized agents.
 
 **HOW TO WORK:**
-- If an EXECUTION PLAN is provided below: use it as the backbone. Map each plan step into one or more subtasks, assign the right agent type and dependencies. Split coarse steps if needed. Add a final deliverable step if missing.
+- If an EXECUTION PLAN is provided below: this plan comes from the user's past successful workflows stored in Memory. It represents a proven execution path. Convert each plan step into subtasks, preserving the plan's structure and order. Assign the right agent type and dependencies. Add a final deliverable step if missing.
 - If no EXECUTION PLAN is provided: decompose the task from scratch using your own knowledge.
 
 **SUBTASK RULES:**
