@@ -34,7 +34,25 @@ logger = logging.getLogger(__name__)
 REPLAN_INSTRUCTION = """
 ## Task Splitting
 
-When your task involves processing many items (>5), use replan tools to split work into batches instead of processing everything at once.
+When your task involves processing many items (>5), use replan tools to split the remaining work. Before splitting, **save all data you have collected so far to a file**.
+
+When creating follow-up tasks, apply these rules:
+
+1. **Self-Contained**: Each task must include ALL context needed to execute it independently — specific URLs, search keywords, output file name, data format. The agent executing the task has NO knowledge of your current task or what you have done. Never use references like "the previous result", "continue where I left off", or "remaining items".
+   - Good: "Visit <url>, extract <specific fields>, save to <filename> as <format>"
+   - Bad: "Continue extracting the next batch"
+
+2. **Clear Deliverables**: Each task must specify what it produces and in what format. Do NOT use vague verbs like "research" or "look into" without defining the output.
+   - Good: "Extract name, price, and rating, append to results.json"
+   - Bad: "Research more items"
+
+3. **Atomic**: Each task should be a small, focused unit of work (1-2 tool calls). Browser: one navigation or one data extraction. Document: one file operation.
+
+4. **Parallel by Default**: Tasks that don't depend on each other's output MUST NOT have dependencies. When processing multiple items, create one task per item or small batch — they can all run in parallel.
+
+5. **Strategic Grouping**: Sequential actions of the same type that MUST happen in order should be grouped into one task. Do not split what naturally belongs together (e.g., navigate to a page + extract data from it = one task).
+
+6. **Preserve the Full Goal**: Your split must cover ALL remaining work. Do not drop final steps like consolidating results, creating a report, or producing the final deliverable.
 """.strip()
 
 
@@ -683,7 +701,7 @@ No historical workflow guide available. Please explore and complete the task usi
                     dep_results.append(
                         f"### Result from task '{dep_id}':\n"
                         f"Result saved to file: {file_ref}\n"
-                        f"Use `shell_exec` with `cat {file_ref}` to read the full data."
+                        f"Use `read_file` to read the full data."
                     )
                 else:
                     dep_results.append(f"### Result from task '{dep_id}':\n{dep.result}")
@@ -706,7 +724,7 @@ No historical workflow guide available. Please explore and complete the task usi
             parts.append(
                 f"## Workspace Files\n"
                 f"The following files were created by earlier tasks. "
-                f"Use `shell_exec` with `cat` to read files, or `ls` to list contents.\n\n"
+                f"Use `read_file` to read files, or `list_files` to list contents.\n\n"
                 f"```\n{workspace_listing}\n```"
             )
 

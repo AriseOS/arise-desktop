@@ -143,9 +143,15 @@ class ReplanToolkit(BaseToolkit):
     async def replan_add_tasks(self, tasks: str) -> str:
         """Add follow-up tasks to the execution queue.
 
-        Use this when you realize the current task involves more work than
-        you can complete in one go. The new tasks will execute after the
-        current subtask finishes.
+        Use this when your task involves more work than you can complete in
+        one go. Save your collected data to a file BEFORE calling this.
+
+        Each task in the JSON array MUST follow these rules:
+        - Self-contained: include ALL context (URLs, keywords, file names).
+          The executing agent knows NOTHING about your current task.
+        - Clear deliverables: specify output file and data format.
+        - Atomic: 1-2 tool calls per task (e.g., one page visit + extraction).
+        - Parallel: tasks that don't depend on each other should be independent.
 
         Args:
             tasks: JSON string describing the tasks to add.
@@ -226,8 +232,12 @@ class ReplanToolkit(BaseToolkit):
         """Complete the current subtask and hand off remaining work.
 
         Use this when you have partially completed a large task and want to
-        delegate the remaining work to follow-up subtasks. This is the
-        primary tool for preventing task laziness.
+        delegate the remaining work to follow-up subtasks. You MUST save
+        all collected data to a file BEFORE calling this tool.
+
+        The remaining_tasks follow the same rules as replan_add_tasks:
+        each task must be self-contained, have clear deliverables, and be
+        atomic. Tasks that can run in parallel should NOT have dependencies.
 
         Args:
             summary: Summary of work completed in this subtask.
