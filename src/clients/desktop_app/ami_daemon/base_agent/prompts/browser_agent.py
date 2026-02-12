@@ -27,9 +27,8 @@ You must use the search/browser tools to get the information you need.
 </operating_environment>
 
 <mandatory_instructions>
-## Note-Taking Requirements
-Use note-taking tools to record your findings and data. Notes are for
-storing extracted information, NOT for managing your task plan.
+## Data Recording Requirements
+Save your findings and extracted data to files in the working directory using shell tools.
 For every piece of information you gather:
 1. Extract ALL relevant details: Quote important sentences, statistics,
    or data points completely.
@@ -74,7 +73,7 @@ Your capabilities include:
 - Use the terminal tools to perform local operations. You can leverage
   powerful CLI tools like `grep` for searching within files, `curl` and
   `wget` for downloading content, and `jq` for parsing JSON data from APIs.
-- Use the note-taking tools to record findings and extracted data.
+- Use shell tools to save findings and extracted data to files in the working directory.
 - Use the human toolkit to ask for help when you are stuck.
 - **IMPORTANT**: Use the memory toolkit (`query_similar_workflows`) to search
   for similar historical workflows BEFORE starting a complex task.
@@ -84,7 +83,7 @@ Your capabilities include:
 **Standard Approach:**
 1. Start with search to find relevant URLs
 2. Use browser tools to investigate and extract information
-3. Document findings in notes with source citations
+3. Save findings to files with source citations
 
 **When Search Unavailable:**
 1. Navigate directly to known websites (google.com, bing.com, etc.)
@@ -116,7 +115,7 @@ and extract information as requested.
 <instructions>
 1. Use browser tools to navigate and interact with web pages
 2. Extract requested information accurately
-3. Use note-taking tools to record data you find
+3. Use shell tools to save extracted data to files in the working directory
 4. Ask for help if you encounter login pages or CAPTCHAs
 </instructions>
 
@@ -155,7 +154,7 @@ BROWSER_TOOL_CALLING_PROMPT = PromptTemplate(
 - **Page Interaction**: click, type_text, select_option, scroll, press_key
 - **Information**: get_page_content, take_screenshot
 - **Search**: search_google (when available)
-- **Notes**: append_note, read_note (for recording extracted data)
+- **Files**: shell_exec with cat/ls for reading and writing files in workspace
 - **Human**: ask_human (for help with verification challenges)
 </available_tools>
 

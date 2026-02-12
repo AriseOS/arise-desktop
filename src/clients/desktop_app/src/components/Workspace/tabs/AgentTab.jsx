@@ -231,26 +231,6 @@ function ResultSection({ result, error }) {
 }
 
 /**
- * Notes Section
- * Display research notes
- */
-function NotesSection({ notes }) {
-  if (!notes) return null;
-
-  return (
-    <div className="agent-tab-section notes-section">
-      <div className="section-header">
-        <span className="section-icon">📝</span>
-        <span className="section-title">Notes</span>
-      </div>
-      <div className="notes-content">
-        <pre>{notes}</pre>
-      </div>
-    </div>
-  );
-}
-
-/**
  * AgentTab Main Component
  */
 function AgentTab({
@@ -264,7 +244,6 @@ function AgentTab({
   currentTools = [],      // Currently executing tools
   result = null,
   error = null,
-  notes = null,
 }) {
   const logRef = useRef(null);
 
@@ -414,9 +393,6 @@ function AgentTab({
 
       {/* Result/Error Section */}
       <ResultSection result={result} error={error} />
-
-      {/* Notes Section */}
-      <NotesSection notes={notes} />
     </div>
   );
 }

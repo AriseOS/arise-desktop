@@ -194,6 +194,11 @@ class ReplanToolkit(BaseToolkit):
         # Inherit parent's dependencies so dynamic subtasks see the same
         # upstream context (e.g., product URL list from an earlier subtask).
         inherited_deps = (parent.depends_on if parent else []) + [self._current_subtask_id]
+        logger.info(
+            f"[ReplanToolkit] Creating dynamic subtasks from '{self._current_subtask_id}': "
+            f"parent.depends_on={parent.depends_on if parent else None}, "
+            f"inherited_deps={inherited_deps}"
+        )
 
         new_subtasks = []
         for i, task in enumerate(task_list):

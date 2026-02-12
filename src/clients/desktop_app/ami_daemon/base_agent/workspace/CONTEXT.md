@@ -19,10 +19,7 @@ Each task gets an isolated workspace:
     ├── browser_data/               # User-level (shared across ALL tasks)
     └── projects/{project_id}/
         └── tasks/{task_id}/        # Task-level isolation
-            ├── workspace/          # Main working directory
-            │   ├── output/         # Generated output files
-            │   └── temp/           # Temporary files (auto-cleaned)
-            ├── notes/              # Task notes (markdown)
+            ├── workspace/          # Main working directory (all file operations)
             ├── logs/               # Execution logs
             └── browser_data/       # Task-specific browser data (optional)
 ```
@@ -33,15 +30,11 @@ Each task gets an isolated workspace:
 
 This is intentional for cross-agent data sharing:
 
-1. **Notes sharing**: Browser Agent writes findings via `write_note()`, other agents read via `read_note()`
+1. **File sharing**: Browser Agent writes findings via `shell_exec`, other agents read via `shell_exec` with `cat`
 2. **File sharing**: All agents can access files in the same `workspace/` directory
 3. **Terminal commands**: `TerminalToolkit` executes in the shared workspace
 
-From `agent_factories.py`:
-```python
-# Use working_directory for notes so files can be accessed by shell in same directory
-notes_dir = working_directory
-```
+All file operations use shell tools (`shell_exec`). No NoteTakingToolkit — agents use `cat`, `ls`, `grep` etc. via shell.
 
 ## How Workspace is Configured
 
@@ -92,6 +85,5 @@ Default: User-level (shared) to preserve login sessions.
 
 ## Related Documentation
 
-- Design doc: `docs/design/migration/04-working-directory.md`
 - Agent factories: `base_agent/core/agent_factories.py`
-- Toolkits using workspace: `base_agent/tools/toolkits/terminal_toolkit.py`, `note_taking_toolkit.py`
+- Toolkits using workspace: `base_agent/tools/toolkits/terminal_toolkit.py`

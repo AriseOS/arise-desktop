@@ -493,11 +493,15 @@ def parse_task_logs(log_files, task_id: str, full: bool = False, verbose: bool =
                 ))
             continue
 
-        # ─── Notes ────────────────────────────────────────────────────
-        if "Note created:" in msg:
-            m = re.search(r"Note created: (\S+)", msg)
+        # ─── File saved to workspace ─────────────────────────────────
+        if "[AMITaskExecutor] Saved large result for" in msg:
+            m = re.search(r"Saved large result for (\S+) to (\S+) \((\d+) chars\)", msg)
             if m:
-                trace.events.append(Event(ts, "note", f"Note created: {m.group(1)}", subtask_id=current_subtask_id))
+                trace.events.append(Event(
+                    ts, "file_saved",
+                    f"Saved {m.group(1)} result to {m.group(2)} ({m.group(3)} chars)",
+                    subtask_id=current_subtask_id,
+                ))
             continue
 
         # ─── Search ───────────────────────────────────────────────────
@@ -634,7 +638,7 @@ def format_trace(trace: Trace) -> str:
             "truncation":     " ~~",
             "browser_nav":    "NAV",
             "page_memory":    "MEM",
-            "note":           "NOT",
+            "file_saved":     "SAV",
             "search":         "SRC",
             "cancelled":      "XXX",
             "error":          "ERR",

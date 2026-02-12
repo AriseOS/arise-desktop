@@ -6,7 +6,7 @@ Uses EigentStyleBrowserAgent for Tool-calling based browser automation.
 
 Features:
 - Tool-calling architecture with Anthropic tool_use API
-- Complete Toolkit system (NoteTaking, Search, Terminal, Human, Browser, Memory)
+- Complete Toolkit system (Search, Terminal, Human, Browser, Memory)
 - Memory-guided planning with semantic search
 - Real-time progress streaming via SSE
 - Typed event system with 30+ action types
@@ -101,7 +101,6 @@ TOOL_PREFIX_TO_TOOLKIT = {
     "shell": "Terminal Toolkit",
     "terminal": "Terminal Toolkit",
     "search": "Search Toolkit",
-    "note": "Note Taking Toolkit",
     "human": "Human Toolkit",
     "memory": "Memory Toolkit",
     "task": "Task Planning Toolkit",
@@ -201,7 +200,6 @@ class TaskState:
     tools_called: List[Dict] = field(default_factory=list)  # History of tool calls (legacy, simple format)
     toolkit_events: List[Dict] = field(default_factory=list)  # Detailed toolkit events for restoration
     thinking_logs: List[Dict] = field(default_factory=list)  # Agent thinking/reasoning logs
-    notes_content: Optional[str] = None  # Notes created during execution
     loop_iteration: int = 0  # Current iteration in the agent loop
 
     # Conversation history for multi-turn context (Eigent TaskLock pattern)
@@ -273,22 +271,9 @@ class TaskState:
         return str(self._dir_manager.workspace)
 
     @property
-    def notes_directory(self) -> str:
-        """Get the notes directory path."""
-        return str(self._dir_manager.notes_dir)
-
-    @property
     def browser_data_directory(self) -> str:
         """Get the browser data directory path."""
         return str(self._dir_manager.browser_data_dir)
-
-    def get_output_path(self, filename: str) -> str:
-        """Get path for output file."""
-        return str(self._dir_manager.output_dir / filename)
-
-    def write_output(self, filename: str, content: str) -> str:
-        """Write file to output directory."""
-        return str(self._dir_manager.write_file(f"output/{filename}", content))
 
     # ===== Event System Properties =====
 
@@ -1709,7 +1694,6 @@ Response:"""
             task_state=state,
             task_id=task_id,
             working_directory=state.working_directory,
-            notes_directory=state.notes_directory,
             browser_data_directory=state.browser_data_directory,
             headless=headless,
             memory_api_base_url=self._cloud_client.api_url if self._cloud_client else None,
@@ -2099,7 +2083,6 @@ Response:"""
                 task_state=state,
                 task_id=task_id,
                 working_directory=state.working_directory,
-                notes_directory=state.notes_directory,
                 browser_data_directory=state.browser_data_directory,
                 headless=headless,
                 export_model_visible_snapshots=False,
@@ -2115,7 +2098,6 @@ Response:"""
                 task_state=state,
                 task_id=task_id,
                 working_directory=state.working_directory,
-                notes_directory=state.notes_directory,
                 llm_api_key=self._llm_api_key,
                 llm_model=self._llm_model,
                 llm_base_url=self._llm_base_url,
@@ -2124,7 +2106,6 @@ Response:"""
                 task_state=state,
                 task_id=task_id,
                 working_directory=state.working_directory,
-                notes_directory=state.notes_directory,
                 llm_api_key=self._llm_api_key,
                 llm_model=self._llm_model,
                 llm_base_url=self._llm_base_url,
@@ -2134,7 +2115,6 @@ Response:"""
                 task_state=state,
                 task_id=task_id,
                 working_directory=state.working_directory,
-                notes_directory=state.notes_directory,
                 llm_api_key=self._llm_api_key,
                 llm_model=self._llm_model,
                 llm_base_url=self._llm_base_url,
@@ -2302,9 +2282,10 @@ Response:"""
         attachments = []
         workspace = Path(state.working_directory)
 
-        excluded_dirs = {"notes", ".git", "__pycache__", ".venv", "node_modules"}
+        excluded_dirs = {".git", "__pycache__", ".venv", "node_modules"}
         excluded_extensions = {".pyc", ".pyo", ".log"}
-        excluded_prefixes = (".", "note_")
+        excluded_prefixes = (".",)
+        excluded_suffixes = ("_result.md",)  # Intermediate files from _save_result_to_file
 
         if workspace.exists():
             for item in workspace.rglob("*"):
@@ -2315,6 +2296,9 @@ Response:"""
                     continue
 
                 if item.name.startswith(excluded_prefixes):
+                    continue
+
+                if any(item.name.endswith(s) for s in excluded_suffixes):
                     continue
 
                 if item.suffix.lower() in excluded_extensions:

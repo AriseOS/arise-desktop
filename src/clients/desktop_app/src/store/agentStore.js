@@ -101,7 +101,6 @@ const createInitialTaskState = (taskDescription = '', type = 'normal') => ({
 
   // Workspace
   terminalOutput: [],
-  notesContent: null,
   selectedFile: null,
   fileList: [],  // Eigent: generated files list
 
@@ -1247,7 +1246,6 @@ export const useAgentStore = create((set, get) => ({
         // allows retry after failure via wait_confirm event that follows
         updateTask({
           error: event.error,
-          notesContent: event.notes,
           executionPhase: 'failed',
           // Clear decomposition state
           taskInfo: [],
@@ -2079,7 +2077,6 @@ export const useAgentStore = create((set, get) => ({
       // Results
       result: detail.result,
       error: detail.error,
-      notesContent: detail.notes_content,
 
       // Convert backend messages to frontend format
       // Use 'role' field to match addMessage() format

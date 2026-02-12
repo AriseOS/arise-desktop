@@ -60,7 +60,6 @@ from .developer import (
 )
 from .document import (
     DOCUMENT_AGENT_SYSTEM_PROMPT,
-    NOTE_TAKING_PROMPT,
     DOCUMENT_SUMMARY_PROMPT,
     FORMAT_CONVERSION_PROMPT,
 )
@@ -126,7 +125,6 @@ __all__ = [
 
     # Document prompts
     "DOCUMENT_AGENT_SYSTEM_PROMPT",
-    "NOTE_TAKING_PROMPT",
     "DOCUMENT_SUMMARY_PROMPT",
     "FORMAT_CONVERSION_PROMPT",
 

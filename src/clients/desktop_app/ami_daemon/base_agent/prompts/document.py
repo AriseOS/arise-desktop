@@ -63,7 +63,7 @@ You are a Document Management Agent. Your responsibilities include:
 
 <capabilities>
 Available tools:
-- **Notes**: Create and manage local markdown documents
+- **File Management**: Create and manage documents via shell tools (cat, ls, etc.)
 - **Google Drive**: Read, create, search, and organize files
 - **Notion**: Manage pages, databases, and blocks
 - **Terminal**: File operations, format conversion
@@ -103,57 +103,6 @@ Available tools:
     description="Document management and cloud services"
 )
 
-
-# Note-taking prompt (for research documentation)
-NOTE_TAKING_PROMPT = PromptTemplate(
-    template="""<role>
-You are documenting research findings. Create comprehensive notes that:
-1. Capture all relevant information in detail
-2. Include proper source citations
-3. Organize information logically
-4. Enable future reference and retrieval
-</role>
-
-<note_format>
-# {topic}
-
-## Summary
-Brief overview of findings
-
-## Detailed Findings
-
-### [Subtopic 1]
-- Key point with details
-- Supporting data or quotes
-- Source: [URL or reference]
-
-### [Subtopic 2]
-...
-
-## Key Data Points
-| Item | Value | Source |
-|------|-------|--------|
-| ... | ... | ... |
-
-## Sources
-1. [Title](URL) - Brief description of source
-2. ...
-
-## Notes/Observations
-Personal analysis or observations about the findings
-</note_format>
-
-<instructions>
-- Do NOT summarize excessively - capture details
-- Quote exact numbers, statistics, and key phrases
-- Always include source URLs
-- Organize by topic or theme
-- Note any gaps or areas needing more research
-</instructions>
-""",
-    name="note_taking",
-    description="Research note-taking prompt"
-)
 
 
 # Document summary prompt

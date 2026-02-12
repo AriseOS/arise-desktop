@@ -80,7 +80,6 @@ function WorkspaceTabs({
   currentTools = [],      // Currently executing tools
   result = null,
   error = null,
-  notes = null,
 
   // BrowserTab data
   browserScreenshot = null,
@@ -157,7 +156,6 @@ function WorkspaceTabs({
             currentTools={currentTools}
             result={result}
             error={error}
-            notes={notes}
           />
         );
       case 'browser':

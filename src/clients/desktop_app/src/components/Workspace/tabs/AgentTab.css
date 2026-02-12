@@ -357,57 +357,28 @@
   color: var(--text-primary);
 }
 
-/* Notes Section */
-.notes-section {
-  border-color: var(--accent-primary);
-}
-
-.notes-section .section-header {
-  background: var(--accent-light);
-}
-
-.notes-content {
-  padding: 12px;
-  max-height: 200px;
-  overflow-y: auto;
-}
-
-.notes-content pre {
-  margin: 0;
-  font-family: 'SF Mono', Monaco, 'Courier New', monospace;
-  font-size: 11px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: var(--text-primary);
-}
-
 /* Scrollbar styling */
 .agent-tab::-webkit-scrollbar,
 .timeline-container::-webkit-scrollbar,
-.result-content::-webkit-scrollbar,
-.notes-content::-webkit-scrollbar {
+.result-content::-webkit-scrollbar {
   width: 6px;
 }
 
 .agent-tab::-webkit-scrollbar-track,
 .timeline-container::-webkit-scrollbar-track,
-.result-content::-webkit-scrollbar-track,
-.notes-content::-webkit-scrollbar-track {
+.result-content::-webkit-scrollbar-track {
   background: transparent;
 }
 
 .agent-tab::-webkit-scrollbar-thumb,
 .timeline-container::-webkit-scrollbar-thumb,
-.result-content::-webkit-scrollbar-thumb,
-.notes-content::-webkit-scrollbar-thumb {
+.result-content::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb);
   border-radius: 3px;
 }
 
 .agent-tab::-webkit-scrollbar-thumb:hover,
 .timeline-container::-webkit-scrollbar-thumb:hover,
-.result-content::-webkit-scrollbar-thumb:hover,
-.notes-content::-webkit-scrollbar-thumb:hover {
+.result-content::-webkit-scrollbar-thumb:hover {
   background: var(--scrollbar-thumb-hover);
 }

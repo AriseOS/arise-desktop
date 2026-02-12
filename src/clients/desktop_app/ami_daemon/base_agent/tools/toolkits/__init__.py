@@ -5,7 +5,6 @@ Ported from CAMEL-AI/Eigent project to provide tool-calling capabilities.
 These toolkits enable agents to use function calling with Anthropic's tool_use API.
 
 Core Toolkits:
-- NoteTakingToolkit: Create and manage markdown notes
 - SearchToolkit: Web search (Google API or DuckDuckGo fallback)
 - TerminalToolkit: Shell command execution with safety controls
 - HumanToolkit: Human-in-the-loop interaction
@@ -35,7 +34,6 @@ Direct API Toolkits:
 """
 
 from .base_toolkit import BaseToolkit, FunctionTool
-from .note_taking_toolkit import NoteTakingToolkit
 from .search_toolkit import SearchToolkit
 from .terminal_toolkit import TerminalToolkit
 from .human_toolkit import HumanToolkit
@@ -76,7 +74,6 @@ __all__ = [
     "FunctionTool",
 
     # Core toolkits
-    "NoteTakingToolkit",
     "SearchToolkit",
     "TerminalToolkit",
     "HumanToolkit",

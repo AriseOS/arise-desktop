@@ -79,7 +79,6 @@ LLM function-calling toolkits ported from Eigent/CAMEL-AI:
 | `search_toolkit.py` | Web search (Google/DuckDuckGo) |
 | `human_toolkit.py` | Human-in-the-loop interaction |
 | `memory_toolkit.py` | Query memory system |
-| `note_taking_toolkit.py` | Markdown note management (for data storage) |
 | `task_planning_toolkit.py` | Task decomposition and re-planning (from CAMEL) |
 
 ### Task Planning Toolkit
@@ -119,7 +118,7 @@ new_subtasks = toolkit.replan_tasks(
 
 **Key distinction:**
 - `TaskPlanningToolkit`: For managing task plans (decomposition, progress, re-planning)
-- `NoteTakingToolkit`: For storing extracted data and findings
+- Shell tools (`shell_exec`): For storing extracted data and findings via file operations
 
 ### MCP Integration
 

@@ -22,11 +22,10 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 from .base_agent import BaseStepAgent, AgentMetadata, InputSchema, FieldSchema
 from ..core.schemas import AgentContext, AgentInput, AgentOutput
-from ..tools.toolkits import NoteTakingToolkit, HumanToolkit, FunctionTool
+from ..tools.toolkits import HumanToolkit, FunctionTool
 from ..workspace import get_working_directory, get_current_manager
 from ..prompts import (
     DOCUMENT_AGENT_SYSTEM_PROMPT,
-    NOTE_TAKING_PROMPT,
     DOCUMENT_SUMMARY_PROMPT,
     PromptContext,
 )
@@ -97,11 +96,6 @@ class DocumentAgent(BaseStepAgent):
                 required=False,
                 description="Additional metadata for the document"
             ),
-            "notes_directory": FieldSchema(
-                type="str",
-                required=False,
-                description="Directory for notes storage"
-            ),
             "max_iterations": FieldSchema(
                 type="int",
                 required=False,
@@ -119,7 +113,7 @@ class DocumentAgent(BaseStepAgent):
             {
                 "task": "Summarize the meeting notes",
                 "document_type": "summarize",
-                "file_path": "notes/meeting-2025-01-22.md"
+                "file_path": "meeting-2025-01-22.md"
             }
         ]
     )
@@ -133,13 +127,12 @@ class DocumentAgent(BaseStepAgent):
         super().__init__(metadata)
 
         self._llm_provider: Optional[AnthropicProvider] = None
-        self._note_taking_toolkit: Optional[NoteTakingToolkit] = None
         self._human_toolkit: Optional[HumanToolkit] = None
         self._gdrive_toolkit = None  # GoogleDriveMCPToolkit when available
         self._notion_toolkit = None  # NotionMCPToolkit when available
         self._progress_callback: Optional[Callable] = None
         self._task_id: Optional[str] = None
-        self._notes_dir: str = ""
+        self._workspace_dir: str = ""
         self._messages: List[Dict[str, Any]] = []
 
     async def initialize(self, context: AgentContext) -> bool:
@@ -154,23 +147,14 @@ class DocumentAgent(BaseStepAgent):
         try:
             self._task_id = context.workflow_id
 
-            # Get notes directory
+            # Get workspace directory
             manager = get_current_manager()
-            if manager:
-                self._notes_dir = str(manager.notes_dir)
-            else:
-                self._notes_dir = str(Path.home() / ".ami" / "notes")
-
-            # Ensure notes directory exists
-            Path(self._notes_dir).mkdir(parents=True, exist_ok=True)
+            if not manager:
+                raise RuntimeError("WorkingDirectoryManager required for DocumentAgent")
+            self._workspace_dir = str(manager.workspace)
 
             # Initialize LLM provider
             self._llm_provider = AnthropicProvider()
-
-            # Initialize NoteTaking toolkit
-            self._note_taking_toolkit = NoteTakingToolkit(
-                notes_dir=self._notes_dir
-            )
 
             # Initialize Human toolkit
             self._human_toolkit = HumanToolkit()
@@ -234,14 +218,7 @@ class DocumentAgent(BaseStepAgent):
         doc_format = data.get("format", "markdown")
         title = data.get("title", "")
         metadata = data.get("metadata", {})
-        notes_dir = data.get("notes_directory", self._notes_dir)
         max_iterations = data.get("max_iterations", 15)
-
-        # Update notes directory if specified
-        if notes_dir and notes_dir != self._notes_dir:
-            self._notes_dir = notes_dir
-            Path(self._notes_dir).mkdir(parents=True, exist_ok=True)
-            self._note_taking_toolkit = NoteTakingToolkit(notes_dir=notes_dir)
 
         try:
             # Handle simple direct operations
@@ -265,7 +242,7 @@ class DocumentAgent(BaseStepAgent):
 
             # Complex operations - use LLM loop
             prompt_context = PromptContext(
-                working_directory=self._notes_dir,
+                working_directory=self._workspace_dir,
             )
             system_prompt = DOCUMENT_AGENT_SYSTEM_PROMPT.format(prompt_context)
 
@@ -333,7 +310,7 @@ class DocumentAgent(BaseStepAgent):
 
             # Ensure full path
             if not Path(file_path).is_absolute():
-                file_path = str(Path(self._notes_dir) / file_path)
+                file_path = str(Path(self._workspace_dir) / file_path)
 
             # Add metadata header for markdown
             if doc_format == "markdown" and (title or metadata):
@@ -376,7 +353,7 @@ class DocumentAgent(BaseStepAgent):
         """
         try:
             if not Path(file_path).is_absolute():
-                file_path = str(Path(self._notes_dir) / file_path)
+                file_path = str(Path(self._workspace_dir) / file_path)
 
             if not Path(file_path).exists():
                 return {
@@ -453,7 +430,7 @@ class DocumentAgent(BaseStepAgent):
         if title:
             parts.append(f"**Title:** {title}")
 
-        parts.append(f"\n**Notes Directory:** {self._notes_dir}")
+        parts.append(f"\n**Working Directory:** {self._workspace_dir}")
         parts.append("\nPlease proceed with this document task.")
 
         return "\n\n".join(parts)
@@ -465,10 +442,6 @@ class DocumentAgent(BaseStepAgent):
             List of tool definitions
         """
         tools = []
-
-        # NoteTaking tools
-        for tool in self._note_taking_toolkit.get_tools():
-            tools.append(tool.to_anthropic_format())
 
         # Human tools
         for tool in self._human_toolkit.get_tools():
@@ -529,7 +502,7 @@ class DocumentAgent(BaseStepAgent):
             },
             {
                 "name": "list_documents",
-                "description": "List documents in the notes directory",
+                "description": "List documents in the working directory",
                 "input_schema": {
                     "type": "object",
                     "properties": {
@@ -737,14 +710,14 @@ class DocumentAgent(BaseStepAgent):
 
         elif tool_name == "list_documents":
             pattern = tool_input.get("pattern", "*")
-            path = Path(self._notes_dir)
+            path = Path(self._workspace_dir)
             files = list(path.glob(pattern))
             return "\n".join(str(f.relative_to(path)) for f in files[:100])
 
         elif tool_name == "append_to_document":
             file_path = tool_input["path"]
             if not Path(file_path).is_absolute():
-                file_path = str(Path(self._notes_dir) / file_path)
+                file_path = str(Path(self._workspace_dir) / file_path)
 
             if Path(file_path).exists():
                 with open(file_path, "a") as f:
@@ -752,12 +725,6 @@ class DocumentAgent(BaseStepAgent):
                 documents_modified.append(file_path)
                 return f"Appended to {file_path}"
             return f"File not found: {file_path}"
-
-        # NoteTaking toolkit
-        note_tools = {t.name: t for t in self._note_taking_toolkit.get_tools()}
-        if tool_name in note_tools:
-            result = await note_tools[tool_name].async_execute(**tool_input)
-            return result
 
         # Human toolkit
         human_tools = {t.name: t for t in self._human_toolkit.get_tools()}
@@ -803,7 +770,6 @@ class DocumentAgent(BaseStepAgent):
         """
         logger.debug(f"DocumentAgent cleanup for task {self._task_id}")
         self._llm_provider = None
-        self._note_taking_toolkit = None
         self._human_toolkit = None
         self._progress_callback = None
         self._messages = []

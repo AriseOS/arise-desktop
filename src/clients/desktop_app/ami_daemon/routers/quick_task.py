@@ -383,7 +383,6 @@ class TaskDetailResponse(BaseModel):
     # Results
     result: Optional[Any] = None
     error: Optional[str] = None
-    notes_content: Optional[str] = None
 
     # User/Project info
     user_id: str
@@ -456,7 +455,6 @@ async def get_task_detail(task_id: str):
         thinking_logs=thinking_logs,
         result=state.result,
         error=state.error,
-        notes_content=state.notes_content,
         user_id=state.user_id,
         project_id=state.project_id,
     )
@@ -543,11 +541,11 @@ async def get_workspace_file(task_id: str, file_path: str):
     """
     Get contents of a file in task's directory.
 
-    Supports files in workspace/, notes/, and other task directories.
+    Supports files in workspace/ and other task directories.
 
     Args:
         task_id: Task ID
-        file_path: Relative path to file within task directory (e.g., "notes/task_plan.md" or "workspace/output/result.txt")
+        file_path: Relative path to file within task directory (e.g., "workspace/result.txt")
     """
     import os
     
@@ -605,10 +603,9 @@ async def get_workspace_file(task_id: str, file_path: str):
 @router.get("/workspace/{task_id}/files", response_model=WorkspaceFilesResponse)
 async def list_workspace_files(task_id: str):
     """
-    List files in task's working directory and notes directory.
+    List files in task's working directory.
 
     Returns list of files created by the task with total size.
-    Includes both workspace/ and notes/ directories.
     """
     import os
 
@@ -625,10 +622,9 @@ async def list_workspace_files(task_id: str):
     files = []
     total_size = 0
 
-    # Scan both workspace/ and notes/ directories
+    # Scan workspace directory
     directories_to_scan = [
         task_root / "workspace",
-        task_root / "notes",
     ]
 
     try:
@@ -664,7 +660,7 @@ async def list_workspace_files(task_id: str):
 @router.delete("/workspace/{task_id}", response_model=WorkspaceCleanupResponse)
 async def cleanup_workspace(task_id: str, force: bool = False):
     """
-    Clean up task's directory (workspace, notes, logs, browser data).
+    Clean up task's directory (workspace, logs, browser data).
 
     Removes all files created by the task.
     By default, only allows cleanup after task completion.

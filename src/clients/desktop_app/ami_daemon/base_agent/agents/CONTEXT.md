@@ -202,7 +202,6 @@ Also update `docs/base_app/*_agent_spec.md` (source of truth for specs).
 
 Full Tool-calling architecture browser agent ported from CAMEL-AI/Eigent. Uses Anthropic tool_use API with complete Toolkit system:
 
-- **NoteTakingToolkit** - Research documentation
 - **SearchToolkit** - Web search
 - **TerminalToolkit** - Terminal commands
 - **HumanToolkit** - Human-in-the-loop

@@ -138,13 +138,16 @@ DEFAULT_WORKER_DESCRIPTIONS = {
     "document": (
         "Document Agent: Can read and write files (Markdown, HTML, JSON, YAML, "
         "Word, PDF, PowerPoint, Excel, CSV). Use for creating reports, documents, "
-        "and data files."
+        "and data files. Also capable of data analysis, filtering, comparison, "
+        "and summarization — use this agent (NOT code) for tasks like "
+        "'read JSON and filter by criteria' or 'analyze data and generate report'."
     ),
     "code": (
         "Developer Agent: Can write code, debug programs, and use development tools "
-        "(git, npm, pip, compilers). Use ONLY for programming tasks that require "
-        "writing or modifying code. Do NOT use for general web research, data "
-        "extraction, or file operations that other agents can handle."
+        "(git, npm, pip, compilers). Use ONLY for software engineering tasks: "
+        "building applications, writing scripts that must be reused, fixing bugs, "
+        "managing repositories. Do NOT use for data analysis, filtering, or report "
+        "generation — those are document agent tasks."
     ),
     "multi_modal": (
         "Multi-Modal Agent: Can process images, audio, and video. "
@@ -990,20 +993,23 @@ class AMITaskPlanner:
         if any(kw in content_lower for kw in browser_keywords):
             return "browser"
 
-        # Document indicators
+        # Document indicators (includes data analysis/filtering)
         document_keywords = [
             "write", "create", "generate", "report", "document", "file",
             "markdown", "html", "pdf", "word", "excel", "powerpoint",
-            "read file", "save", "export", "写", "生成", "报告", "文档",
-            "创建", "保存",
+            "read file", "save", "export", "analyze", "filter", "compare",
+            "summarize", "classify", "rank", "sort",
+            "写", "生成", "报告", "文档", "创建", "保存",
+            "分析", "筛选", "过滤", "比较", "汇总", "分类", "排序",
         ]
         if any(kw in content_lower for kw in document_keywords):
             return "document"
 
-        # Code indicators (strict: only programming-specific keywords)
+        # Code indicators (strict: only software engineering tasks)
         code_keywords = [
             "code", "coding", "programming", "debug", "compile", "build",
-            "python", "npm", "pip", "git", "编程", "代码", "编译", "调试",
+            "npm", "pip", "git", "deploy", "repository",
+            "编程", "代码", "编译", "调试", "部署",
         ]
         if any(kw in content_lower for kw in code_keywords):
             return "code"

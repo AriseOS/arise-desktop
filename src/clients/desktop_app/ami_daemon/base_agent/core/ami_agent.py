@@ -44,7 +44,6 @@ _TOOL_PREFIX_TO_TOOLKIT = {
     "shell": "Terminal Toolkit",
     "terminal": "Terminal Toolkit",
     "search": "Search Toolkit",
-    "note": "Note Taking Toolkit",
     "human": "Human Toolkit",
     "memory": "Memory Toolkit",
     "task": "Task Planning Toolkit",
@@ -201,9 +200,6 @@ class AMIAgent:
         # Step counting
         self._step_count: int = 0
 
-        # NoteTakingToolkit reference
-        self._note_toolkit: Optional[Any] = None
-
         # Early-stop flag: set by ReplanToolkit.replan_complete_and_handoff
         # to force astep() to stop after the current tool-call round.
         self._should_stop_after_tool: bool = False
@@ -248,13 +244,6 @@ class AMIAgent:
             f"[AMIAgent] {self.agent_name} workflow guide set "
             f"(level={memory_level}, {len(content)} chars)"
         )
-        if self._note_toolkit:
-            try:
-                self._note_toolkit.create_note(
-                    note_name="workflow_guide", content=content, overwrite=True
-                )
-            except Exception as e:
-                logger.warning(f"[AMIAgent] Failed to save workflow guide note: {e}")
 
     def set_memory_context(
         self,
@@ -265,10 +254,6 @@ class AMIAgent:
         """Set memory context (called by AMITaskExecutor)."""
         if workflow_guide:
             self.set_workflow_guide(workflow_guide, memory_level)
-
-    def set_note_toolkit(self, note_toolkit: Any) -> None:
-        """Set NoteTakingToolkit reference."""
-        self._note_toolkit = note_toolkit
 
     # =========================================================================
     # Workflow Hints

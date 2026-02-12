@@ -25,7 +25,7 @@ import '../styles/AgentPage.css';
  *
  * Uses EigentStyleBrowserAgent with full Tool-calling architecture:
  * - SSE for real-time event streaming (migrated from WebSocket)
- * - Complete Toolkit system (NoteTaking, Search, Terminal, Human, Browser, Memory)
+ * - Complete Toolkit system (Search, Terminal, Human, Browser, Memory)
  * - Memory-guided planning with semantic search
  * - ChatBox for conversation history display
  * - TaskCard for task progress visualization
@@ -81,7 +81,6 @@ function AgentPage({ session, onNavigate, showStatus, version }) {
   const currentTools = activeTask?.currentTools || [];
   const result = activeTask?.result || null;
   const error = activeTask?.error || null;
-  const notesContent = activeTask?.notesContent || null;
   const tokenUsage = activeTask?.tokenUsage || { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 };
   const currentModel = activeTask?.currentModel || '';
   const humanQuestion = activeTask?.humanQuestion || null;
@@ -526,7 +525,6 @@ function AgentPage({ session, onNavigate, showStatus, version }) {
                   currentTools={currentTools}
                   result={result}
                   error={error}
-                  notes={notesContent}
                   // BrowserTab data
                   browserScreenshot={browserScreenshot}
                   browserUrl={browserUrl}

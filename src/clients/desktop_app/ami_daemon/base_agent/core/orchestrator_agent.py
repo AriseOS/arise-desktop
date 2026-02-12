@@ -3,7 +3,7 @@ Orchestrator Agent - Top-level coordinator that decides how to handle user reque
 
 The Orchestrator Agent replaces the hardcoded question_confirm classification with
 an LLM-powered decision system. It has access to:
-- Basic tools (search, browse_url, file operations, terminal, notes)
+- Basic tools (search, browse_url, file operations, terminal)
 - A special `decompose_task` tool to trigger Workforce for complex tasks
 - An `attach_file` tool to include file references in responses
 
@@ -66,7 +66,6 @@ Structure: `{{task_id}}/workspace/` - each task folder contains output files (re
 ## Your Tools
 - shell_exec: Execute terminal commands to explore user's files
 - search_google: Quick web search for simple questions (weather, facts, etc.) - reply directly with search results, do NOT use decompose_task
-- write_note, read_note: Take notes (shared with other agents)
 - ask_human: Ask user for clarification
 - attach_file: Attach a file to your response (user can click to open/preview it)
 - decompose_task: Delegate work to your team (ONLY for tasks that require interacting with websites, writing code, or creating documents)
@@ -215,7 +214,6 @@ async def create_orchestrator_agent(
     task_state: Any,
     task_id: str,
     working_directory: str,
-    notes_directory: Optional[str] = None,
     browser_data_directory: Optional[str] = None,
     headless: bool = False,
     memory_api_base_url: Optional[str] = None,
@@ -233,7 +231,6 @@ async def create_orchestrator_agent(
         task_state: TaskState for SSE event emission
         task_id: Task identifier (used as session_id for browser)
         working_directory: Directory for current task (passed to decompose_task/Workforce)
-        notes_directory: Directory for notes (defaults to working_directory)
         browser_data_directory: Directory for browser user data
         headless: Whether to run browser in headless mode
         memory_api_base_url: API URL for memory service
@@ -251,7 +248,6 @@ async def create_orchestrator_agent(
     logger.info(f"[OrchestratorAgent] Working directory: {working_directory}")
 
     agent_name = "orchestrator_agent"
-    notes_dir = notes_directory or working_directory
 
     # Determine user workspace root (for Orchestrator to explore all user files)
     user_workspace = str(WorkingDirectoryManager.USERS_DIR / (user_id or "default") / "projects" / "default" / "tasks")
@@ -259,7 +255,6 @@ async def create_orchestrator_agent(
 
     # Lazy import to avoid circular dependency (toolkits -> base_toolkit -> ami_tool -> core/__init__ -> orchestrator_agent)
     from ..tools.toolkits import (
-        NoteTakingToolkit,
         SearchToolkit,
         HumanToolkit,
         MemoryToolkit,
@@ -267,9 +262,6 @@ async def create_orchestrator_agent(
     )
 
     # Initialize toolkits
-    note_toolkit = NoteTakingToolkit(notes_directory=notes_dir)
-    note_toolkit.set_task_state(task_state)
-
     search_toolkit = SearchToolkit()
     search_toolkit.set_task_state(task_state)
 
@@ -282,7 +274,6 @@ async def create_orchestrator_agent(
     logger.info("[OrchestratorAgent] TerminalToolkit added (user workspace root)")
 
     tools = [
-        *note_toolkit.get_tools(),
         *search_toolkit.get_tools(),
         *human_toolkit.get_tools(),
         *terminal_toolkit.get_tools(),
@@ -338,9 +329,6 @@ async def create_orchestrator_agent(
         system_prompt=system_message,
         tools=tools,
     )
-
-    # Set NoteTakingToolkit reference
-    agent.set_note_toolkit(note_toolkit)
 
     # Set agent reference in toolkits (for memory caching)
     if memory_api_base_url and ami_api_key and user_id:

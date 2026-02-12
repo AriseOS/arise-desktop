@@ -81,24 +81,26 @@ comprehensive and well-documented information.
 
 <operating_environment>
 - **System**: {platform_system} ({platform_machine})
-- **Working Directory**: `{working_directory}`. All local file operations must
-occur here, but you can access files from any place in the file system. For all file system operations, you MUST use absolute paths to ensure precision and avoid ambiguity.
+- **Working Directory**: `{working_directory}`. The shell tool (`shell_exec`) already runs in this directory, so use **relative paths** for all file operations (e.g., `cat data.json`, NOT `cat {working_directory}/data.json`).
 The current date is {now_str}(Accurate to the hour). For any date-related tasks, you MUST use this as the current date.
 </operating_environment>
 
 <mandatory_instructions>
-- You MUST use the note-taking tools to record your findings. This is a
-    critical part of your role. Your notes are the primary source of
-    information for your teammates. To avoid information loss, you must not
-    summarize your findings. Instead, record all information in detail.
+- Your shell tool runs in the working directory. Use **relative paths** for file operations:
+    - Read files: `shell_exec` with `cat filename`
+    - Write files: `shell_exec` with `cat > filename << 'EOF' ... EOF`
+    - List files: `shell_exec` with `ls`
+    - Search files: `shell_exec` with `grep <pattern> filename`
+- Save all research findings and extracted data to files in the working directory.
+    Record ALL relevant details without summarizing. Cite source URLs.
     For every piece of information you gather, you must:
     1.  **Extract ALL relevant details**: Quote all important sentences,
         statistics, or data points. Your goal is to capture the information
         as completely as possible.
     2.  **Cite your source**: Include the exact URL where you found the
         information.
-    Your notes should be a detailed and complete record of the information
-    you have discovered. High-quality, detailed notes are essential for the
+    Your files should be a detailed and complete record of the information
+    you have discovered. High-quality, detailed files are essential for the
     team's success.
 
 - **CRITICAL URL POLICY**: You are STRICTLY FORBIDDEN from inventing,
@@ -129,8 +131,7 @@ The current date is {now_str}(Accurate to the hour). For any date-related tasks,
 Your capabilities include:
 - Search and get information from the web using the search tools.
 - Use the rich browser related toolset to investigate websites.
-- Use the terminal tools to perform local operations.
-- Use the note-taking tools to record your findings.
+- Use the terminal/shell tools for local operations and file management.
 - Use the human toolkit to ask for help when you are stuck.
 - Use the memory toolkit to query known page operations when exploring unfamiliar pages.
 </capabilities>
@@ -199,13 +200,12 @@ and generation.
 
 <operating_environment>
 - **System**: {platform_system} ({platform_machine})
-- **Working Directory**: `{working_directory}`. All local file operations must
-occur here, but you can access files from any place in the file system. For all file system operations, you MUST use absolute paths to ensure precision and avoid ambiguity.
+- **Working Directory**: `{working_directory}`. The shell tool (`shell_exec`) already runs in this directory, so use **relative paths** for all file operations (e.g., `cat data.json`, NOT `cat {working_directory}/data.json`).
 The current date is {now_str}(Accurate to the hour). For any date-related tasks, you MUST use this as the current date.
 </operating_environment>
 
 <mandatory_instructions>
-- You MUST use the `read_note` tool to read the ALL notes from other agents.
+- You MUST use `shell_exec` with `cat` or `ls` (relative paths) to read files from the working directory left by other agents.
 
 - You SHOULD keep the user informed by providing message_title and message_description
     parameters when calling tools. These optional parameters are available on all tools
@@ -227,10 +227,9 @@ Your capabilities are extensive and powerful:
   can run any command-line tool, manage files, and interact with the OS. If
   a tool is missing, you MUST install it with the appropriate package manager
   (e.g., `pip3`, `uv`, or `apt-get`). Your capabilities include:
-    - **IMPORTANT:** Before the task gets started, you can use `shell_exec` to
-      run `ls {working_directory}` to check for important files in the working
-      directory, and then use terminal commands like `cat`, `grep`, or `head`
-      to read and examine these files.
+    - **IMPORTANT:** Before the task gets started, run `ls` to check for
+      important files in the working directory, then use `cat`, `grep`, or
+      `head` to read and examine these files.
     - **Text & Data Processing**: `awk`, `sed`, `grep`, `jq`.
     - **File System & Execution**: `find`, `xargs`, `tar`, `zip`, `unzip`,
       `chmod`.
@@ -253,8 +252,8 @@ Your capabilities are extensive and powerful:
   files, and manage deployments.
 - **Human Collaboration**: If you are stuck or need clarification, you can
   ask for human input via the console.
-- **Note Management**: You can write and read notes to coordinate with other
-  agents and track your work.
+- **File Management**: Use shell tools to read and write files in the working
+  directory to coordinate with other agents and track your work.
 </capabilities>
 
 <philosophy>
@@ -324,8 +323,8 @@ these tips to maximize your effectiveness:
 - If you get stuck, encounter an issue you cannot solve (like a CAPTCHA),
     encounter persistent network errors, or need clarification, use the
     `ask_human` tool.
-- Document your progress and findings in notes so other agents can build
-    upon your work.
+- Document your progress and findings in workspace files (via shell tools)
+    so other agents can build upon your work.
 </collaboration_and_assistance>
 
 <language_policy>
@@ -358,14 +357,13 @@ to be embedded in your work.
 
 <operating_environment>
 - **System**: {platform_system} ({platform_machine})
-- **Working Directory**: `{working_directory}`. All local file operations must
-occur here, but you can access files from any place in the file system. For all file system operations, you MUST use absolute paths to ensure precision and avoid ambiguity.
+- **Working Directory**: `{working_directory}`. The shell tool (`shell_exec`) already runs in this directory, so use **relative paths** for all file operations (e.g., `cat data.json`, NOT `cat {working_directory}/data.json`).
 The current date is {now_str}(Accurate to the hour). For any date-related tasks, you MUST use this as the current date.
 </operating_environment>
 
 <mandatory_instructions>
-- Before creating any document, you MUST use the `read_note` tool to gather
-    all information collected by other team members by reading ALL notes.
+- Before creating any document, you MUST use `shell_exec` with `ls` and `cat`
+    (relative paths) to read files from the working directory left by other team members.
 
 - You MUST use the available tools to create or modify documents (e.g.,
     `write_to_file`, `create_presentation`). Your primary output should be
@@ -454,7 +452,7 @@ Your capabilities include:
 
 - Terminal and File System:
     - You have access to a full suite of terminal tools to interact with
-    the file system within your working directory (`{working_directory}`).
+    the file system. The shell already runs in your working directory.
     - You can execute shell commands (`shell_exec`), list files, and manage
     your workspace as needed to support your document creation tasks.
     - You can also use the terminal to create data visualizations such as
@@ -522,15 +520,14 @@ presentations, and other documents.
 
 <operating_environment>
 - **System**: {platform_system} ({platform_machine})
-- **Working Directory**: `{working_directory}`. All local file operations must
-occur here, but you can access files from any place in the file system. For all file system operations, you MUST use absolute paths to ensure precision and avoid ambiguity.
+- **Working Directory**: `{working_directory}`. The shell tool (`shell_exec`) already runs in this directory, so use **relative paths** for all file operations (e.g., `cat data.json`, NOT `cat {working_directory}/data.json`).
 The current date is {now_str}(Accurate to the hour). For any date-related tasks, you MUST use this as the current date.
 </operating_environment>
 
 <mandatory_instructions>
-- You MUST use the `read_note` tool to to gather all information collected
-    by other team members by reading ALL notes and write down your findings in
-    the notes.
+- You MUST use `shell_exec` with `ls` and `cat` (relative paths) to read files
+    from the working directory left by other team members. Save your findings
+    to files in the working directory.
 
 - When you complete your task, your final response must be a comprehensive
     summary of your analysis or the generated media, presented in a clear,
@@ -604,8 +601,7 @@ be a comprehensive summary of your actions, presented in a clear, detailed,
 and easy-to-read format. Avoid using markdown tables for presenting data;
 use plain text formatting instead.
 
-- **Working Directory**: `{working_directory}`. All local file operations must
-occur here, but you can access files from any place in the file system. For all file system operations, you MUST use absolute paths to ensure precision and avoid ambiguity.
+- **Working Directory**: `{working_directory}`. The shell tool (`shell_exec`) already runs in this directory, so use **relative paths** for all file operations (e.g., `cat data.json`, NOT `cat {working_directory}/data.json`).
 The current date is {now_str}(Accurate to the hour). For any date-related tasks, you MUST use this as the current date.
 
 Your integrated toolkits enable you to:
@@ -628,11 +624,10 @@ Your integrated toolkits enable you to:
    - Ask questions to users and send messages via console.
 
 5. File System Access:
-   - You can use terminal tools to interact with the local file system in
-   your working directory (`{working_directory}`), for example, to access
-   files needed for posting. You can use tools like `find` to locate files,
-   `grep` to search within them, and `curl` to interact with web APIs that
-   are not covered by other tools.
+   - The shell already runs in your working directory. Use relative paths
+   (e.g., `cat file.txt`) to access files needed for posting. You can use
+   `find`, `grep`, and `curl` to locate files, search within them, and
+   interact with web APIs not covered by other tools.
 
 When assisting users, always:
 - Identify which platform's functionality is needed for the task.
@@ -729,7 +724,6 @@ async def create_browser_agent(
     task_state: Any,
     task_id: str,
     working_directory: str,
-    notes_directory: Optional[str] = None,
     browser_data_directory: Optional[str] = None,
     headless: bool = False,
     memory_api_base_url: Optional[str] = None,
@@ -746,7 +740,6 @@ async def create_browser_agent(
         task_state: TaskState for SSE event emission
         task_id: Task identifier (used as session_id for browser)
         working_directory: Directory for file operations
-        notes_directory: Directory for notes (defaults to working_directory)
         browser_data_directory: Directory for browser user data
         headless: Whether to run browser in headless mode
         memory_api_base_url: API URL for memory service
@@ -760,7 +753,7 @@ async def create_browser_agent(
         Configured AMIAgent instance
     """
     from ..tools.toolkits import (
-        NoteTakingToolkit, SearchToolkit, TerminalToolkit,
+        SearchToolkit, TerminalToolkit,
         HumanToolkit, BrowserToolkit, MemoryToolkit,
     )
 
@@ -770,12 +763,8 @@ async def create_browser_agent(
     logger.info(f"[AgentFactory] Headless mode: {headless}")
 
     agent_name = "browser_agent"
-    notes_dir = working_directory
 
     # Initialize toolkits
-    note_toolkit = NoteTakingToolkit(notes_directory=notes_dir)
-    note_toolkit.set_task_state(task_state)
-
     search_toolkit = SearchToolkit()
     search_toolkit.set_task_state(task_state)
 
@@ -794,7 +783,6 @@ async def create_browser_agent(
     logger.info(f"[AgentFactory] BrowserToolkit created with session_id={task_id}")
 
     tools = [
-        *note_toolkit.get_tools(),
         *search_toolkit.get_tools(),
         *terminal_toolkit.get_tools(),
         *human_toolkit.get_tools(),
@@ -836,9 +824,6 @@ async def create_browser_agent(
         tools=tools,
     )
 
-    # Set NoteTakingToolkit reference for workflow guide persistence
-    agent.set_note_toolkit(note_toolkit)
-
     # Set agent reference in toolkits for URL change notifications and cache
     browser_toolkit.set_agent(agent)
     if memory_api_base_url and ami_api_key and user_id:
@@ -852,7 +837,6 @@ async def create_listen_browser_agent(
     task_state: Any,
     task_id: str,
     working_directory: str,
-    notes_directory: Optional[str] = None,
     browser_data_directory: Optional[str] = None,
     headless: bool = False,
     export_model_visible_snapshots: bool = False,
@@ -867,14 +851,13 @@ async def create_listen_browser_agent(
     Create an AMIBrowserAgent with full browser automation capabilities.
 
     This factory creates an AMIBrowserAgent which includes:
-    - All toolkits (Browser, NoteTaking, Search, Terminal, Human, Memory)
+    - All toolkits (Browser, Search, Terminal, Human, Memory)
     - Memory page operations (auto-queried on URL change)
 
     Args:
         task_state: TaskState for SSE event emission
         task_id: Task identifier (used as session_id for browser)
         working_directory: Directory for file operations
-        notes_directory: Directory for notes (defaults to working_directory)
         browser_data_directory: Directory for browser user data
         headless: Whether to run browser in headless mode
         export_model_visible_snapshots: Whether to export model-visible snapshots
@@ -891,17 +874,13 @@ async def create_listen_browser_agent(
     logger.info(f"[AgentFactory] Creating AMIBrowserAgent for task {task_id}")
 
     from ..tools.toolkits import (
-        NoteTakingToolkit, SearchToolkit, TerminalToolkit,
+        SearchToolkit, TerminalToolkit,
         HumanToolkit, BrowserToolkit, MemoryToolkit,
     )
 
     agent_name = "listen_browser_agent"
-    notes_dir = working_directory
 
     # Initialize toolkits
-    note_toolkit = NoteTakingToolkit(notes_directory=notes_dir)
-    note_toolkit.set_task_state(task_state)
-
     search_toolkit = SearchToolkit()
     search_toolkit.set_task_state(task_state)
 
@@ -930,7 +909,6 @@ async def create_listen_browser_agent(
 
     # Build tools list
     tools = [
-        *note_toolkit.get_tools(),
         *search_toolkit.get_tools(),
         *terminal_toolkit.get_tools(),
         *human_toolkit.get_tools(),
@@ -965,9 +943,6 @@ async def create_listen_browser_agent(
         memory_toolkit=memory_toolkit,
     )
 
-    # Set NoteTakingToolkit reference
-    agent.set_note_toolkit(note_toolkit)
-
     if export_model_visible_snapshots:
         agent.enable_model_visible_snapshot_export(True)
 
@@ -984,7 +959,6 @@ def create_developer_agent(
     task_state: Any,
     task_id: str,
     working_directory: str,
-    notes_directory: Optional[str] = None,
     llm_api_key: Optional[str] = None,
     llm_model: Optional[str] = None,
     llm_base_url: Optional[str] = None,
@@ -996,7 +970,6 @@ def create_developer_agent(
         task_state: TaskState for SSE event emission
         task_id: Task identifier
         working_directory: Directory for file operations
-        notes_directory: Directory for notes (defaults to working_directory)
         llm_api_key: LLM API key
         llm_model: LLM model name
         llm_base_url: LLM base URL
@@ -1008,16 +981,12 @@ def create_developer_agent(
     logger.info(f"[AgentFactory] Working directory: {working_directory}")
 
     from ..tools.toolkits import (
-        NoteTakingToolkit, TerminalToolkit, HumanToolkit,
+        TerminalToolkit, HumanToolkit,
     )
 
     agent_name = "developer_agent"
-    notes_dir = working_directory
 
     # Initialize toolkits
-    note_toolkit = NoteTakingToolkit(notes_directory=notes_dir)
-    note_toolkit.set_task_state(task_state)
-
     terminal_toolkit = TerminalToolkit(working_directory=working_directory)
     terminal_toolkit.set_task_state(task_state)
 
@@ -1025,7 +994,6 @@ def create_developer_agent(
     human_toolkit.set_task_state(task_state)
 
     tools = [
-        *note_toolkit.get_tools(),
         *terminal_toolkit.get_tools(),
         *human_toolkit.get_tools(),
     ]
@@ -1054,9 +1022,6 @@ def create_developer_agent(
         tools=tools,
     )
 
-    # Set NoteTakingToolkit reference for workflow guide persistence
-    agent.set_note_toolkit(note_toolkit)
-
     logger.info(f"[AgentFactory] Developer agent created with {len(tools)} tools")
     return agent
 
@@ -1065,7 +1030,6 @@ async def create_document_agent(
     task_state: Any,
     task_id: str,
     working_directory: str,
-    notes_directory: Optional[str] = None,
     llm_api_key: Optional[str] = None,
     llm_model: Optional[str] = None,
     llm_base_url: Optional[str] = None,
@@ -1080,7 +1044,6 @@ async def create_document_agent(
         task_state: TaskState for SSE event emission
         task_id: Task identifier
         working_directory: Directory for file operations
-        notes_directory: Directory for notes (defaults to working_directory)
         llm_api_key: LLM API key
         llm_model: LLM model name
         llm_base_url: LLM base URL
@@ -1092,13 +1055,12 @@ async def create_document_agent(
     logger.info(f"[AgentFactory] Working directory: {working_directory}")
 
     from ..tools.toolkits import (
-        NoteTakingToolkit, TerminalToolkit, HumanToolkit,
+        TerminalToolkit, HumanToolkit,
         FileToolkit, PPTXToolkit, ExcelToolkit, MarkItDownToolkit,
         GoogleDriveMCPToolkit,
     )
 
     agent_name = "document_agent"
-    notes_dir = working_directory
 
     # Initialize toolkits
     file_toolkit = FileToolkit(working_directory=working_directory)
@@ -1113,9 +1075,6 @@ async def create_document_agent(
     markitdown_toolkit = MarkItDownToolkit()
     markitdown_toolkit.set_task_state(task_state)
 
-    note_toolkit = NoteTakingToolkit(notes_directory=notes_dir)
-    note_toolkit.set_task_state(task_state)
-
     terminal_toolkit = TerminalToolkit(working_directory=working_directory)
     terminal_toolkit.set_task_state(task_state)
 
@@ -1127,7 +1086,6 @@ async def create_document_agent(
         *pptx_toolkit.get_tools(),
         *excel_toolkit.get_tools(),
         *markitdown_toolkit.get_tools(),
-        *note_toolkit.get_tools(),
         *terminal_toolkit.get_tools(),
         *human_toolkit.get_tools(),
     ]
@@ -1168,9 +1126,6 @@ async def create_document_agent(
         tools=tools,
     )
 
-    # Set NoteTakingToolkit reference for workflow guide persistence
-    agent.set_note_toolkit(note_toolkit)
-
     logger.info(f"[AgentFactory] Document agent created with {len(tools)} tools")
     return agent
 
@@ -1179,7 +1134,6 @@ def create_multi_modal_agent(
     task_state: Any,
     task_id: str,
     working_directory: str,
-    notes_directory: Optional[str] = None,
     llm_api_key: Optional[str] = None,
     llm_model: Optional[str] = None,
     llm_base_url: Optional[str] = None,
@@ -1194,7 +1148,6 @@ def create_multi_modal_agent(
         task_state: TaskState for SSE event emission
         task_id: Task identifier
         working_directory: Directory for file operations
-        notes_directory: Directory for notes (defaults to working_directory)
         llm_api_key: LLM API key (used for OpenAI audio/image APIs when on OpenAI platform)
         llm_model: LLM model name
         llm_base_url: LLM base URL
@@ -1206,13 +1159,12 @@ def create_multi_modal_agent(
     logger.info(f"[AgentFactory] Working directory: {working_directory}")
 
     from ..tools.toolkits import (
-        NoteTakingToolkit, TerminalToolkit, HumanToolkit,
+        TerminalToolkit, HumanToolkit,
         VideoDownloaderToolkit, ImageAnalysisToolkit,
         AudioAnalysisToolkit, ImageGenerationToolkit,
     )
 
     agent_name = "multi_modal_agent"
-    notes_dir = working_directory
 
     # Create vision provider for ImageAnalysisToolkit
     vision_provider = None
@@ -1230,9 +1182,6 @@ def create_multi_modal_agent(
     image_toolkit = ImageAnalysisToolkit(provider=vision_provider)
     image_toolkit.set_task_state(task_state)
 
-    note_toolkit = NoteTakingToolkit(notes_directory=notes_dir)
-    note_toolkit.set_task_state(task_state)
-
     terminal_toolkit = TerminalToolkit(working_directory=working_directory)
     terminal_toolkit.set_task_state(task_state)
 
@@ -1242,7 +1191,6 @@ def create_multi_modal_agent(
     tools = [
         *video_toolkit.get_tools(),
         *image_toolkit.get_tools(),
-        *note_toolkit.get_tools(),
         *terminal_toolkit.get_tools(),
         *human_toolkit.get_tools(),
     ]
@@ -1312,9 +1260,6 @@ def create_multi_modal_agent(
         tools=tools,
     )
 
-    # Set NoteTakingToolkit reference for workflow guide persistence
-    agent.set_note_toolkit(note_toolkit)
-
     logger.info(f"[AgentFactory] Multi-modal agent created with {len(tools)} tools")
     return agent
 
@@ -1345,7 +1290,7 @@ async def create_social_medium_agent(
         Configured AMIAgent instance
     """
     from ..tools.toolkits import (
-        NoteTakingToolkit, TerminalToolkit, HumanToolkit,
+        TerminalToolkit, HumanToolkit,
         GmailMCPToolkit, NotionMCPToolkit, GoogleCalendarToolkit,
     )
 
@@ -1355,9 +1300,6 @@ async def create_social_medium_agent(
     agent_name = "social_medium_agent"
 
     # Initialize core toolkits
-    note_toolkit = NoteTakingToolkit(notes_directory=working_directory)
-    note_toolkit.set_task_state(task_state)
-
     terminal_toolkit = TerminalToolkit(working_directory=working_directory)
     terminal_toolkit.set_task_state(task_state)
 
@@ -1365,7 +1307,6 @@ async def create_social_medium_agent(
     human_toolkit.set_task_state(task_state)
 
     tools = [
-        *note_toolkit.get_tools(),
         *terminal_toolkit.get_tools(),
         *human_toolkit.get_tools(),
     ]
@@ -1423,9 +1364,6 @@ async def create_social_medium_agent(
         system_prompt=system_message,
         tools=tools,
     )
-
-    # Set NoteTakingToolkit reference for workflow guide persistence
-    agent.set_note_toolkit(note_toolkit)
 
     logger.info(f"[AgentFactory] Social medium agent created with {len(tools)} tools")
     return agent

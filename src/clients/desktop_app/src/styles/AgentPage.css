@@ -751,43 +751,7 @@
   color: var(--status-error-text);
 }
 
-/* Notes Section */
-.agent-page .notes-section {
-  margin-bottom: 20px;
-  padding: 16px;
-  background: var(--bg-app);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-subtle);
-}
 
-.agent-page .notes-section h4 {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text-primary);
-  margin: 0 0 12px 0;
-}
-
-.agent-page .notes-icon {
-  font-size: 16px;
-}
-
-.agent-page .notes-content {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  padding: 16px;
-  font-size: 13px;
-  font-family: inherit;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 400px;
-  overflow-y: auto;
-  margin: 0;
-}
 
 /* Tools Summary */
 .agent-page .tool-history.collapsed {
@@ -1617,10 +1581,9 @@
   overflow-y: auto;
 }
 
-/* Result/Error/Notes Cards - Compact, collapsible */
+/* Result/Error Cards - Compact, collapsible */
 .agent-page .result-card,
-.agent-page .error-card,
-.agent-page .notes-card {
+.agent-page .error-card {
   flex: 0 0 auto;
   /* Don't grow */
   max-height: 15vh;
@@ -1633,8 +1596,7 @@
 }
 
 .agent-page .result-card h4,
-.agent-page .error-card h4,
-.agent-page .notes-card h4 {
+.agent-page .error-card h4 {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1645,8 +1607,7 @@
 }
 
 .agent-page .result-card .result-content,
-.agent-page .error-card .error-content,
-.agent-page .notes-card .notes-content {
+.agent-page .error-card .error-content {
   background: var(--bg-app);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);

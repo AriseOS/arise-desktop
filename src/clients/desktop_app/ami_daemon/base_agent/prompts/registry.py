@@ -38,7 +38,6 @@ from .developer import (
 )
 from .document import (
     DOCUMENT_AGENT_SYSTEM_PROMPT,
-    NOTE_TAKING_PROMPT,
     DOCUMENT_SUMMARY_PROMPT,
     FORMAT_CONVERSION_PROMPT,
 )
@@ -97,7 +96,6 @@ AUXILIARY_PROMPTS: Dict[str, PromptTemplate] = {
     "refactoring": REFACTORING_PROMPT,
 
     # Document
-    "note_taking": NOTE_TAKING_PROMPT,
     "document_summary": DOCUMENT_SUMMARY_PROMPT,
     "format_conversion": FORMAT_CONVERSION_PROMPT,
 

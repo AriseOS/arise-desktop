@@ -170,7 +170,6 @@ class TaskCompletedData(BaseActionData):
 
     action: Literal[Action.task_completed] = Action.task_completed
     output: Optional[Any] = None
-    notes: Optional[str] = None
     tools_called: List[Dict] = Field(default_factory=list)
     loop_iterations: int = 0
     duration_seconds: Optional[float] = None
@@ -181,7 +180,6 @@ class TaskFailedData(BaseActionData):
 
     action: Literal[Action.task_failed] = Action.task_failed
     error: str
-    notes: Optional[str] = None
     tools_called: List[Dict] = Field(default_factory=list)
     step: Optional[int] = None
 

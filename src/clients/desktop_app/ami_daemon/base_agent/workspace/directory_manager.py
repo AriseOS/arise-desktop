@@ -34,9 +34,6 @@ class WorkingDirectoryManager:
 
     Directory structure:
         workspace/      - Main working directory for task execution
-            output/     - Generated output files
-            temp/       - Temporary files (auto-cleaned)
-        notes/          - Task notes (markdown files)
         logs/           - Execution logs
         browser_data/   - Task-specific browser profile
     """
@@ -115,9 +112,6 @@ class WorkingDirectoryManager:
         """Create all required directories."""
         try:
             self.workspace.mkdir(parents=True, exist_ok=True)
-            self.output_dir.mkdir(parents=True, exist_ok=True)
-            self.temp_dir.mkdir(parents=True, exist_ok=True)
-            self.notes_dir.mkdir(parents=True, exist_ok=True)
             self.logs_dir.mkdir(parents=True, exist_ok=True)
             # Browser data created on demand to save space
         except Exception as e:
@@ -133,21 +127,6 @@ class WorkingDirectoryManager:
     def workspace(self) -> Path:
         """Main working directory for task execution."""
         return self._task_root / "workspace"
-
-    @property
-    def output_dir(self) -> Path:
-        """Directory for generated output files."""
-        return self._task_root / "workspace" / "output"
-
-    @property
-    def temp_dir(self) -> Path:
-        """Directory for temporary files."""
-        return self._task_root / "workspace" / "temp"
-
-    @property
-    def notes_dir(self) -> Path:
-        """Directory for task notes."""
-        return self._task_root / "notes"
 
     @property
     def logs_dir(self) -> Path:
@@ -272,16 +251,6 @@ class WorkingDirectoryManager:
         search_dir = directory or self.workspace
         return list(search_dir.rglob(pattern))
 
-    def cleanup_temp(self) -> None:
-        """Remove all temporary files."""
-        if self.temp_dir.exists():
-            try:
-                shutil.rmtree(self.temp_dir)
-                self.temp_dir.mkdir()
-                logger.debug(f"Cleaned temp directory: {self.temp_dir}")
-            except Exception as e:
-                logger.warning(f"Failed to clean temp directory: {e}")
-
     def cleanup_all(self) -> None:
         """Remove entire task directory."""
         if self._task_root.exists():
@@ -324,8 +293,6 @@ class WorkingDirectoryManager:
             "task_id": self.task_id,
             "task_root": str(self._task_root),
             "workspace": str(self.workspace),
-            "output_dir": str(self.output_dir),
-            "notes_dir": str(self.notes_dir),
             "logs_dir": str(self.logs_dir),
             "browser_data_dir": str(self.USERS_DIR / self.user_id / "browser_data"),
             "task_browser_data_dir": str(self._task_root / "browser_data"),

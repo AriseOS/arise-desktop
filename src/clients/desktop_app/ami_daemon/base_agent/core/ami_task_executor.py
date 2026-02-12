@@ -415,6 +415,20 @@ class AMITaskExecutor:
 
                     # Unified execution: build prompt and call astep()
                     prompt = self._build_prompt(subtask, browser_context=browser_context)
+                    # Dump full prompt to file for debugging (logger truncates long messages)
+                    try:
+                        import pathlib, datetime
+                        debug_dir = pathlib.Path.home() / ".ami" / "logs" / "prompts"
+                        debug_dir.mkdir(parents=True, exist_ok=True)
+                        ts = datetime.datetime.now().strftime("%H%M%S")
+                        dump_path = debug_dir / f"{ts}_{subtask.id}.txt"
+                        dump_path.write_text(prompt, encoding="utf-8")
+                        logger.info(
+                            f"[AMITaskExecutor] Prompt for subtask {subtask.id} "
+                            f"dumped to {dump_path} ({len(prompt)} chars)"
+                        )
+                    except Exception as e:
+                        logger.warning(f"[AMITaskExecutor] Failed to dump prompt: {e}")
                     logger.info(
                         f"[AMITaskExecutor] Executing {type(agent).__name__}.astep() "
                         f"for subtask {subtask.id}"
@@ -642,22 +656,49 @@ No historical workflow guide available. Please explore and complete the task usi
 
         # Previous results from dependencies
         dep_results = []
+        logger.info(
+            f"[AMITaskExecutor] _build_prompt for subtask {subtask.id}: "
+            f"depends_on={subtask.depends_on}"
+        )
         for dep_id in subtask.depends_on:
             dep = self._subtask_map.get(dep_id)
-            if dep and dep.result:
+            if dep is None:
+                logger.warning(
+                    f"[AMITaskExecutor] Dependency '{dep_id}' NOT FOUND in _subtask_map "
+                    f"(map keys: {list(self._subtask_map.keys())[:20]})"
+                )
+            elif not dep.result:
+                logger.warning(
+                    f"[AMITaskExecutor] Dependency '{dep_id}' found but has NO RESULT "
+                    f"(status={getattr(dep, 'status', 'unknown')})"
+                )
+            else:
+                logger.info(
+                    f"[AMITaskExecutor] Dependency '{dep_id}' has result "
+                    f"({len(dep.result)} chars)"
+                )
                 if len(dep.result) > 2000:
                     # Large result: write to workspace file, inject file reference
                     file_ref = self._save_result_to_file(dep_id, dep.result)
                     dep_results.append(
                         f"### Result from task '{dep_id}':\n"
                         f"Result saved to file: {file_ref}\n"
-                        f"Use `read_note` tool with note_name=\"{dep_id}_result\" to read the full data."
+                        f"Use `shell_exec` with `cat {file_ref}` to read the full data."
                     )
                 else:
                     dep_results.append(f"### Result from task '{dep_id}':\n{dep.result}")
 
         if dep_results:
+            logger.info(
+                f"[AMITaskExecutor] Injecting {len(dep_results)} dependency results "
+                f"into prompt for subtask {subtask.id}"
+            )
             parts.append("## Results from Previous Tasks\n" + "\n\n".join(dep_results))
+        else:
+            logger.warning(
+                f"[AMITaskExecutor] NO dependency results injected for subtask {subtask.id} "
+                f"(depends_on={subtask.depends_on})"
+            )
 
         # Workspace files — let agent know what data is available
         workspace_listing = self._get_workspace_listing()
@@ -665,7 +706,7 @@ No historical workflow guide available. Please explore and complete the task usi
             parts.append(
                 f"## Workspace Files\n"
                 f"The following files were created by earlier tasks. "
-                f"Use `read_note` or `shell_exec` to read relevant files.\n\n"
+                f"Use `shell_exec` with `cat` to read files, or `ls` to list contents.\n\n"
                 f"```\n{workspace_listing}\n```"
             )
 
@@ -675,30 +716,30 @@ No historical workflow guide available. Please explore and complete the task usi
         return "\n\n".join(parts)
 
     def _save_result_to_file(self, subtask_id: str, result: str) -> str:
-        """Save large subtask result to a note file in workspace.
+        """Save large subtask result to a file in workspace.
 
         Returns:
-            The note name (without .md extension) for read_note access.
+            The relative filename (shell_exec cwd is already workspace).
+
+        Raises:
+            RuntimeError: If no WorkingDirectoryManager is available.
         """
         from ..workspace import get_current_manager
 
-        note_name = f"{subtask_id}_result"
         manager = get_current_manager()
-        if manager:
-            file_path = manager.notes_dir / f"{note_name}.md"
-            file_path.write_text(result, encoding="utf-8")
-            logger.info(
-                f"[AMITaskExecutor] Saved large result for {subtask_id} "
-                f"to {file_path} ({len(result)} chars)"
+        if not manager:
+            raise RuntimeError(
+                f"WorkingDirectoryManager required to save result for {subtask_id}"
             )
-            return str(file_path)
 
-        # Fallback: no workspace manager, just truncate
-        logger.warning(
-            f"[AMITaskExecutor] No WorkingDirectoryManager, "
-            f"cannot save result file for {subtask_id}"
+        file_name = f"{subtask_id}_result.md"
+        file_path = manager.workspace / file_name
+        file_path.write_text(result, encoding="utf-8")
+        logger.info(
+            f"[AMITaskExecutor] Saved large result for {subtask_id} "
+            f"to {file_path} ({len(result)} chars)"
         )
-        return f"(file save failed, result truncated): {result[:2000]}..."
+        return file_name
 
     def _get_workspace_listing(self) -> Optional[str]:
         """List files in workspace for prompt injection.
@@ -712,11 +753,11 @@ No historical workflow guide available. Please explore and complete the task usi
         if not manager:
             return None
 
-        notes_dir = manager.notes_dir
-        if not notes_dir.exists():
+        workspace_dir = manager.workspace
+        if not workspace_dir.exists():
             return None
 
-        files = sorted(notes_dir.iterdir())
+        files = sorted(workspace_dir.iterdir())
         if not files:
             return None
 
@@ -724,10 +765,7 @@ No historical workflow guide available. Please explore and complete the task usi
         for f in files:
             if f.is_file():
                 size_kb = f.stat().st_size / 1024
-                name = f.name
-                # For read_note, strip .md extension
-                note_name = f.stem if f.suffix == ".md" else f.name
-                lines.append(f"{name} ({size_kb:.1f}KB) — read_note(\"{note_name}\")")
+                lines.append(f"{f.name} ({size_kb:.1f}KB)")
 
         return "\n".join(lines) if lines else None
 
