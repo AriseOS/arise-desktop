@@ -102,19 +102,6 @@ function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
   };
 
   const duration = getDuration();
-  // Navigate to replay page
-  const handleReplay = () => {
-    if (!sessionId) {
-      showStatus("No recording to replay", "error");
-      return;
-    }
-
-    onNavigate('replay', {
-      sessionId: sessionId,
-      userId: userId,
-      recordingName: recordingName
-    });
-  };
 
   const renderPatternBadges = () => {
     const badges = [];
@@ -258,14 +245,6 @@ function RecordingAnalysisPage({ session, pageData, onNavigate, showStatus }) {
             onClick={() => onNavigate("main")}
           >
             {t('analysis.cancel')}
-          </button>
-          <button
-            className="btn-primary-alt"
-            onClick={handleReplay}
-            disabled={isAdding}
-          >
-            <span className="btn-icon"><Icon icon="play" /></span>
-            <span>Replay Recording</span>
           </button>
           <button
             className="btn-primary"

@@ -79,14 +79,6 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
     });
   };
 
-  const handleReplay = () => {
-    onNavigate('replay', {
-      sessionId: sessionId,
-      userId: userId,
-      recordingName: recording?.task_metadata?.name || sessionId
-    });
-  };
-
   const formatTimestamp = (timestamp) => {
     if (!timestamp) return 'N/A';
     const date = new Date(timestamp);
@@ -598,18 +590,13 @@ function RecordingDetailPage({ session, onNavigate, showStatus, sessionId }) {
         {/* Action Buttons */}
         <div className="action-section">
           <div className="action-buttons-row">
-            <button className="btn-replay-recording" onClick={handleReplay}>
-              <Icon icon="play" />
-              Replay Recording
-            </button>
             <button className="btn-generate-workflow" onClick={handleGenerateWorkflow}>
               <Icon icon="zap" />
               {t('recordingDetail.generateWorkflow')}
             </button>
           </div>
           <p className="action-hint">
-            <strong>Replay:</strong> Test recording by replaying operations step-by-step<br/>
-            <strong>Generate:</strong> {t('recordingDetail.generateHint')}
+            {t('recordingDetail.generateHint')}
           </p>
         </div>
       </div>
