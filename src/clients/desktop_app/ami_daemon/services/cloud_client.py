@@ -1658,7 +1658,7 @@ class CloudClient:
         Returns:
             dict with success and public_phrase_id
         """
-        headers = {}
+        headers = {"X-User-Id": user_id}
         if self.user_api_key:
             headers["X-Ami-API-Key"] = self.user_api_key
 
@@ -1666,7 +1666,7 @@ class CloudClient:
 
         response = await self.client.post(
             "/api/v1/memory/share",
-            json={"user_id": user_id, "phrase_id": phrase_id},
+            json={"phrase_id": phrase_id},
             headers=headers,
         )
         response.raise_for_status()

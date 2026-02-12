@@ -1053,12 +1053,12 @@ export const api = {
   },
 
   /**
-   * Publish a cognitive phrase from private memory to public memory
+   * Share a cognitive phrase from private memory to public memory
    *
-   * @param {string} phraseId - CognitivePhrase ID to publish
+   * @param {string} phraseId - CognitivePhrase ID to share
    * @returns {Promise<object>} Result with success and public_phrase_id
    */
-  async publishCognitivePhrase(phraseId) {
+  async shareCognitivePhrase(phraseId) {
     return await this.callAppBackend('/api/v1/memory/publish', {
       method: 'POST',
       body: JSON.stringify({ phrase_id: phraseId }),

@@ -103,7 +103,7 @@ function CognitivePhraseDetailPage({ session, onNavigate, showStatus, phraseId, 
           showStatus('Failed to unpublish memory', 'error');
         }
       } else {
-        const result = await api.publishCognitivePhrase(phraseId);
+        const result = await api.shareCognitivePhrase(phraseId);
         if (result.success) {
           setIsPublished(true);
           showStatus('Memory published to community!', 'success');
