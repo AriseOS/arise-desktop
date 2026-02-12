@@ -20,7 +20,10 @@ No CAMEL dependencies - uses AnthropicProvider for LLM calls.
 import asyncio
 import logging
 import re
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from urllib.parse import urlparse
 
 from src.common.llm import AnthropicProvider
 
@@ -35,6 +38,7 @@ from ..events import (
     MemoryLevelData,
     NoticeData,
 )
+from ..workspace import get_current_manager
 
 logger = logging.getLogger(__name__)
 
@@ -300,6 +304,13 @@ class AMITaskPlanner:
             report_type="info",
         ))
 
+        # Emit side-channel report file for debugging (no effect on planning logic)
+        self._write_planneragent_report(
+            task=task,
+            level=level,
+            plan_result=plan_result,
+        )
+
         # Step 2: Format memory_plan as context for decomposition
         memory_context = self._format_memory_plan_for_decompose(memory_plan)
 
@@ -403,10 +414,14 @@ class AMITaskPlanner:
         """
         # Collect all workflow guides from coverage items
         guides = []
+        seen_guides = set()
         has_phrase = False
         for item in memory_plan.steps:
             if item.workflow_guide:
-                guides.append(item.workflow_guide)
+                # Deduplicate identical guide blocks while preserving order.
+                if item.workflow_guide not in seen_guides:
+                    guides.append(item.workflow_guide)
+                    seen_guides.add(item.workflow_guide)
                 # Only count as phrase coverage if the guide was actually extracted
                 if item.source == "phrase" and item.phrase_id:
                     has_phrase = True
@@ -473,6 +488,206 @@ class AMITaskPlanner:
             )
 
         return f"**Memory analysis ({level_label})**{coverage_html}{prefs_html}"
+
+    def _write_planneragent_report(self, task: str, level: str, plan_result: Any) -> None:
+        """Write PlannerAgent debug report into current task workspace.
+
+        Side-channel only: failure here must never affect planning flow.
+        """
+        try:
+            report_path = self._resolve_planner_report_path()
+            content = self._build_planneragent_report_markdown(
+                task=task,
+                level=level,
+                plan_result=plan_result,
+            )
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(content, encoding="utf-8")
+            logger.info(f"[AMITaskPlanner] PlannerAgent report written: {report_path}")
+        except Exception as e:
+            logger.warning(f"[AMITaskPlanner] Failed to write PlannerAgent report: {e}")
+
+    def _resolve_planner_report_path(self) -> Path:
+        """Resolve planner report output path with workspace priority."""
+        manager = get_current_manager()
+        if manager and getattr(manager, "workspace", None):
+            return Path(manager.workspace) / "planneragent_report.md"
+
+        if self._task_state and hasattr(self._task_state, "dir_manager"):
+            dir_manager = getattr(self._task_state, "dir_manager", None)
+            if dir_manager and getattr(dir_manager, "workspace", None):
+                return Path(dir_manager.workspace) / "planneragent_report.md"
+
+        return Path.cwd() / f"planneragent_report_{self.task_id}.md"
+
+    def _build_planneragent_report_markdown(
+        self,
+        task: str,
+        level: str,
+        plan_result: Any,
+    ) -> str:
+        """Build markdown report for PlannerAgent side-channel debugging."""
+        memory_plan = getattr(plan_result, "memory_plan", None)
+        debug_trace = getattr(plan_result, "debug_trace", {})
+        if not isinstance(debug_trace, dict):
+            debug_trace = {}
+
+        steps = getattr(memory_plan, "steps", None) or []
+        selected_phrase_ids = sorted({
+            getattr(step, "phrase_id", "")
+            for step in steps
+            if getattr(step, "source", "") == "phrase" and getattr(step, "phrase_id", "")
+        })
+
+        def _md_cell(value: Any) -> str:
+            text = str(value) if value is not None else ""
+            text = text.replace("\r", " ").replace("\n", " ").strip()
+            return text.replace("|", "\\|")
+
+        lines: List[str] = [
+            "# PlannerAgent Report",
+            "",
+            "## 1) Task Summary",
+            f"- Generated at (UTC): {datetime.now(timezone.utc).isoformat()}",
+            f"- Task ID: {self.task_id}",
+            f"- Memory level: {level}",
+            f"- User task: {task}",
+            "",
+        ]
+
+        recall_calls = debug_trace.get("recall_phrases_calls", [])
+        if not isinstance(recall_calls, list):
+            recall_calls = []
+
+        lines.append("## 2) recall_phrases Calls")
+        if not recall_calls:
+            lines.append("- No recall_phrases call trace found.")
+        else:
+            for call in recall_calls:
+                if not isinstance(call, dict):
+                    continue
+                call_index = call.get("call_index", "?")
+                query = call.get("query", "")
+                top_k = call.get("top_k", 5)
+                result_count = call.get("result_count", 0)
+                lines.append("")
+                lines.append(f"### Call {call_index}")
+                lines.append(f"- query: `{query}`")
+                lines.append(f"- top_k: `{top_k}`")
+                lines.append(f"- result_count: `{result_count}`")
+
+                if call.get("parse_error"):
+                    lines.append(f"- parse_error: `{call.get('parse_error')}`")
+
+                phrases = call.get("tool_result_phrases", [])
+                if not isinstance(phrases, list) or not phrases:
+                    lines.append("- no phrase results")
+                    continue
+
+                lines.append("")
+                lines.append("| result_rank | score | selected_in_plan | phrase_id | domain | page_url | description |")
+                lines.append("| --- | --- | --- | --- | --- | --- | --- |")
+                for item in phrases:
+                    if not isinstance(item, dict):
+                        continue
+                    score = item.get("similarity_score")
+                    score_text = f"{float(score):.4f}" if isinstance(score, (int, float)) else "N/A"
+                    lines.append(
+                        "| "
+                        + " | ".join([
+                            _md_cell(item.get("result_rank", "")),
+                            _md_cell(score_text),
+                            _md_cell("yes" if item.get("selected_in_plan") else "no"),
+                            _md_cell(item.get("phrase_id", "")),
+                            _md_cell(item.get("domain", "")),
+                            _md_cell(item.get("page_url", "")),
+                            _md_cell(item.get("description", "")),
+                        ])
+                        + " |"
+                    )
+
+        lines.extend([
+            "",
+            "## 3) Planner Output Steps",
+            "",
+            "| step | source | phrase_id | content |",
+            "| --- | --- | --- | --- |",
+        ])
+        for step in steps:
+            lines.append(
+                "| "
+                + " | ".join([
+                    _md_cell(getattr(step, "index", "")),
+                    _md_cell(getattr(step, "source", "")),
+                    _md_cell(getattr(step, "phrase_id", "")),
+                    _md_cell(getattr(step, "content", "")),
+                ])
+                + " |"
+            )
+
+        lines.extend([
+            "",
+            "## 4) Workflow Guide Source Mapping",
+        ])
+        has_guide = False
+        for step in steps:
+            guide = getattr(step, "workflow_guide", "") or ""
+            if not guide:
+                continue
+            has_guide = True
+            urls = self._extract_urls_from_workflow_guide(guide)
+            domains = []
+            for url in urls:
+                domain = self._derive_domain(url)
+                if domain and domain not in domains:
+                    domains.append(domain)
+            lines.append("")
+            lines.append(
+                f"- Step {getattr(step, 'index', '?')} "
+                f"(source={getattr(step, 'source', '')}, phrase_id={getattr(step, 'phrase_id', '') or 'N/A'})"
+            )
+            lines.append(f"  domains: {', '.join(domains) if domains else 'N/A'}")
+            lines.append(f"  url_count: {len(urls)}")
+        if not has_guide:
+            lines.append("- No workflow_guide generated.")
+
+        if selected_phrase_ids:
+            lines.extend([
+                "",
+                "## 5) Selected Phrase IDs",
+                "",
+            ])
+            for phrase_id in selected_phrase_ids:
+                lines.append(f"- {phrase_id}")
+
+        return "\n".join(lines) + "\n"
+
+    @staticmethod
+    def _extract_urls_from_workflow_guide(workflow_guide: str) -> List[str]:
+        """Extract URL entries from a workflow_guide block."""
+        if not workflow_guide:
+            return []
+
+        urls: List[str] = []
+        seen = set()
+        for line in workflow_guide.splitlines():
+            match = re.search(r"\bURL:\s*(\S+)", line, flags=re.IGNORECASE)
+            if not match:
+                continue
+            url = match.group(1).strip().rstrip(".,);")
+            if url and url not in seen:
+                seen.add(url)
+                urls.append(url)
+        return urls
+
+    @staticmethod
+    def _derive_domain(page_url: str) -> str:
+        if not page_url:
+            return ""
+        try:
+            return urlparse(page_url).netloc
+        except Exception:
+            return ""
 
     async def _decompose_with_old_path(self, task: str) -> List[AMISubtask]:
         """Old Reasoner-based decomposition path (fallback).

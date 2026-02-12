@@ -1223,15 +1223,17 @@ class InMemoryCognitivePhraseManager(CognitivePhraseManager):
     def search_phrases_by_embedding(
         self, query_vector: List[float], top_k: int = 10
     ) -> List[CognitivePhrase]:
-        """Search cognitive phrases by embedding vector.
+        """Search cognitive phrases by embedding vector."""
+        scored = self.search_phrases_by_embedding_with_scores(
+            query_vector=query_vector,
+            top_k=top_k,
+        )
+        return [phrase for phrase, _ in scored]
 
-        Args:
-            query_vector: Query embedding vector.
-            top_k: Number of top results to return.
-
-        Returns:
-            List of top-k similar CognitivePhrase objects.
-        """
+    def search_phrases_by_embedding_with_scores(
+        self, query_vector: List[float], top_k: int = 10
+    ) -> List[Tuple[CognitivePhrase, float]]:
+        """Search cognitive phrases by embedding vector and return similarity scores."""
         # Simple cosine similarity implementation
         def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
             """Calculate cosine similarity between two vectors."""
@@ -1257,8 +1259,7 @@ class InMemoryCognitivePhraseManager(CognitivePhraseManager):
         # Sort by similarity (descending)
         similarities.sort(key=lambda x: x[1], reverse=True)
 
-        # Return top-k
-        return [phrase for phrase, _ in similarities[:top_k]]
+        return similarities[:top_k]
 
 
 class GraphCognitivePhraseManager(CognitivePhraseManager):
@@ -1466,15 +1467,17 @@ class GraphCognitivePhraseManager(CognitivePhraseManager):
     def search_phrases_by_embedding(
         self, query_vector: List[float], top_k: int = 10
     ) -> List[CognitivePhrase]:
-        """Search cognitive phrases by embedding vector using GraphStore vector search.
+        """Search cognitive phrases by embedding vector using GraphStore vector search."""
+        scored = self.search_phrases_by_embedding_with_scores(
+            query_vector=query_vector,
+            top_k=top_k,
+        )
+        return [phrase for phrase, _ in scored]
 
-        Args:
-            query_vector: Query embedding vector.
-            top_k: Number of top results to return.
-
-        Returns:
-            List of top-k similar CognitivePhrase objects.
-        """
+    def search_phrases_by_embedding_with_scores(
+        self, query_vector: List[float], top_k: int = 10
+    ) -> List[Tuple[CognitivePhrase, float]]:
+        """Search cognitive phrases by embedding vector and return similarity scores."""
         try:
             # Try to use GraphStore's vector search
             results = self.graph_store.vector_search(
@@ -1484,32 +1487,49 @@ class GraphCognitivePhraseManager(CognitivePhraseManager):
                 topk=top_k,
             )
 
-            phrases = []
+            phrases: List[Tuple[CognitivePhrase, float]] = []
             for node, score in results:
                 try:
                     phrase = CognitivePhrase.from_dict(node)
-                    phrases.append(phrase)
+                    phrases.append((phrase, float(score)))
                 except Exception as e:
                     logger.error(f" converting phrase from vector search: {e}")
                     continue
 
-            return phrases
+            return phrases[:top_k]
         except Exception as e:
             # Fallback to manual cosine similarity if vector search not available
             logger.warning(f"Vector search failed, using fallback: {e}")
-            return self._search_phrases_by_embedding_fallback(query_vector, top_k)
+            return self._search_phrases_by_embedding_fallback_with_scores(
+                query_vector,
+                top_k,
+            )
 
     def _search_phrases_by_embedding_fallback(
         self, query_vector: List[float], top_k: int = 10
     ) -> List[CognitivePhrase]:
         """Fallback embedding search using manual cosine similarity.
 
+        Returns:
+            List of top-k similar CognitivePhrase objects.
+        """
+        scored = self._search_phrases_by_embedding_fallback_with_scores(
+            query_vector=query_vector,
+            top_k=top_k,
+        )
+        return [phrase for phrase, _ in scored]
+
+    def _search_phrases_by_embedding_fallback_with_scores(
+        self, query_vector: List[float], top_k: int = 10
+    ) -> List[Tuple[CognitivePhrase, float]]:
+        """Fallback embedding search using manual cosine similarity with scores.
+
         Args:
             query_vector: Query embedding vector.
             top_k: Number of top results to return.
 
         Returns:
-            List of top-k similar CognitivePhrase objects.
+            List of top-k ``(phrase, score)`` tuples.
         """
 
         def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
@@ -1539,8 +1559,7 @@ class GraphCognitivePhraseManager(CognitivePhraseManager):
         # Sort by similarity (descending)
         similarities.sort(key=lambda x: x[1], reverse=True)
 
-        # Return top-k
-        return [phrase for phrase, _ in similarities[:top_k]]
+        return similarities[:top_k]
 
 
 class GraphIntentSequenceManager(IntentSequenceManager):

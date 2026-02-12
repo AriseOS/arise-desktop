@@ -1825,11 +1825,18 @@ class MemoryPlanData:
 class MemoryPlanResult:
     """Complete output of PlannerAgent (client-side model)."""
     memory_plan: MemoryPlanData = field(default_factory=MemoryPlanData)
+    debug_trace: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: Dict) -> "MemoryPlanResult":
         memory_plan_data = data.get("memory_plan", {})
-        return cls(memory_plan=MemoryPlanData.from_dict(memory_plan_data))
+        debug_trace = data.get("debug_trace", {})
+        if not isinstance(debug_trace, dict):
+            debug_trace = {}
+        return cls(
+            memory_plan=MemoryPlanData.from_dict(memory_plan_data),
+            debug_trace=debug_trace,
+        )
 
 
 # =============================================================================

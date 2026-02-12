@@ -37,7 +37,7 @@ browser:
 llm:
   provider: anthropic  # openai or anthropic
   # model: claude-sonnet-4-5-20250929 # Model name
-  model: glm-4.7
+  model: glm-5
   # Use CRS (Claude Relay Service) for all LLM calls
   # Migration: Changed from old API Proxy to CRS
   use_proxy: true

@@ -704,6 +704,25 @@ class CognitivePhraseManager(ABC):
             List of top-k similar CognitivePhrase objects.
         """
 
+    def search_phrases_by_embedding_with_scores(
+        self, query_vector: List[float], top_k: int = 10
+    ) -> List[Tuple[CognitivePhrase, float]]:
+        """Search cognitive phrases by embedding vector and return scores.
+
+        Default implementation keeps backward compatibility by reusing
+        ``search_phrases_by_embedding`` and assigning score 0.0.
+        Concrete managers should override this to return real similarity scores.
+
+        Args:
+            query_vector: Query embedding vector.
+            top_k: Number of top results to return.
+
+        Returns:
+            List of ``(phrase, similarity_score)`` tuples.
+        """
+        phrases = self.search_phrases_by_embedding(query_vector, top_k=top_k)
+        return [(phrase, 0.0) for phrase in phrases]
+
 
 class Memory(ABC):
     """Abstract Memory interface integrating all memory components.
