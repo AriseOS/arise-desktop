@@ -12,6 +12,7 @@ Records user actions in the same format as ActionExecutor expects:
 import asyncio
 import json
 import logging
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set
@@ -675,7 +676,10 @@ class BehaviorRecorder:
 
     def _get_tracker_script(self) -> str:
         """Get JavaScript tracking script."""
-        script_path = Path(__file__).parent / "scripts" / "behavior_tracker.js"
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            script_path = Path(sys._MEIPASS) / "base_agent" / "tools" / "eigent_browser" / "scripts" / "behavior_tracker.js"
+        else:
+            script_path = Path(__file__).parent / "scripts" / "behavior_tracker.js"
         if script_path.exists():
             try:
                 return script_path.read_text(encoding="utf-8")

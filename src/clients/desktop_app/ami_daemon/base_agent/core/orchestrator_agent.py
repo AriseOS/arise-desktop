@@ -110,6 +110,11 @@ class DecomposeTaskTool:
         self._callback = callback
         self._triggered = False
         self._task_description: Optional[str] = None
+        self._agent: Optional["AMIAgent"] = None
+
+    def set_agent(self, agent: "AMIAgent") -> None:
+        """Set agent reference so decompose_task can stop the agent loop."""
+        self._agent = agent
 
     @property
     def triggered(self) -> bool:
@@ -154,6 +159,12 @@ class DecomposeTaskTool:
         self._triggered = True
         self._task_description = task_description
         logger.info(f"[DecomposeTaskTool] Triggered with: {task_description[:100]}...")
+
+        # Stop the Orchestrator agent loop immediately after this tool call.
+        # Without this, the LLM keeps calling search_google/ask_human/etc.
+        # and never reaches the AMITaskPlanner → Memory → Executor path.
+        if self._agent:
+            self._agent._should_stop_after_tool = True
 
         return (
             "Task delegated successfully. The team will now execute this task. "
@@ -339,6 +350,9 @@ async def create_orchestrator_agent(
     # Set agent reference in toolkits (for memory caching)
     if memory_api_base_url and ami_api_key and user_id:
         memory_toolkit.set_agent(agent)
+
+    # Set agent reference in decompose_tool so it can stop the agent loop
+    decompose_tool.set_agent(agent)
 
     logger.info(f"[OrchestratorAgent] Created with {len(tools)} tools (including decompose_task, attach_file)")
     return agent, decompose_tool, attach_tool

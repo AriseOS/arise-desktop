@@ -32,6 +32,12 @@ a = Analysis(
         # Config files
         ('config/app-backend.yaml', 'config'),
 
+        # Browser automation JS scripts
+        (str(spec_dir / 'base_agent' / 'tools' / 'eigent_browser' / 'unified_analyzer.js'),
+         'base_agent/tools/eigent_browser'),
+        (str(spec_dir / 'base_agent' / 'tools' / 'eigent_browser' / 'scripts' / 'behavior_tracker.js'),
+         'base_agent/tools/eigent_browser/scripts'),
+
     ] + playwright_browsers,
     hiddenimports=[
         # Uvicorn and FastAPI

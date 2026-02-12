@@ -6,6 +6,7 @@ Converts DOM into LLM-friendly text format with element references [ref=eN].
 """
 
 import logging
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
@@ -134,7 +135,10 @@ class PageSnapshot:
 
         # Load JS once and cache it at class level
         if PageSnapshot._snapshot_js_cache is None:
-            js_path = Path(__file__).parent / "unified_analyzer.js"
+            if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+                js_path = Path(sys._MEIPASS) / "base_agent" / "tools" / "eigent_browser" / "unified_analyzer.js"
+            else:
+                js_path = Path(__file__).parent / "unified_analyzer.js"
             PageSnapshot._snapshot_js_cache = js_path.read_text(encoding="utf-8")
 
         js_code = PageSnapshot._snapshot_js_cache
