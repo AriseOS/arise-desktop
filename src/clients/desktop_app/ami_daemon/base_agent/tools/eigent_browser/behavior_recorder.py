@@ -445,7 +445,12 @@ class BehaviorRecorder:
             logger.error(f"Error processing operation: {e}")
 
     def _handle_navigation(self, event: Dict[str, Any], tab_id: str) -> None:
-        """Handle CDP navigation event."""
+        """Handle CDP Page.frameNavigated event.
+
+        Converts the CDP event into a navigate operation and routes it through
+        _process_operation so that JS-reported and CDP-reported navigations
+        share the same deduplication queue (async task ordering).
+        """
         frame = event.get("frame", {})
         url = frame.get("url", "")
         parent_id = frame.get("parentId")
@@ -458,32 +463,15 @@ class BehaviorRecorder:
         if url in ["about:blank", "chrome://newtab/", "chrome://new-tab-page/"]:
             return
 
-        logger.debug(f"Navigation detected in tab {tab_id}: {url}")
+        logger.debug(f"CDP navigation detected in tab {tab_id}: {url}")
 
-        # Create navigation operation
-        nav_data = {
+        # Route through _process_operation for unified deduplication
+        nav_payload = json.dumps({
             "type": "navigate",
             "timestamp": get_current_timestamp(),
             "url": url,
-            "tab_id": tab_id,
-        }
-
-        # Deduplicate
-        now = datetime.now()
-        if self._last_nav_url and self._last_nav_time:
-            time_diff = (now - self._last_nav_time).total_seconds()
-            if url == self._last_nav_url and time_diff < self._nav_dedup_seconds:
-                return
-
-        self._last_nav_url = url
-        self._last_nav_time = now
-
-        self.operations.append(nav_data)
-        self._log_operation(nav_data)
-
-        # Capture snapshot
-        if self._enable_snapshot_capture and url not in self.snapshots:
-            self._create_background_task(self._capture_snapshot(url, tab_id))
+        })
+        self._create_background_task(self._process_operation(nav_payload, tab_id))
 
     # ------------------------------------------------------------------
     # Dataload Detection (Network-based)
@@ -686,7 +674,7 @@ class BehaviorRecorder:
             except Exception as e:
                 logger.warning(f"Could not load behavior_tracker.js: {e}")
 
-        # Minimal fallback
+        # Minimal fallback (navigate handled by Python CDP, not JS)
         logger.warning("Using minimal fallback tracker script")
         return """
         (function() {
@@ -712,14 +700,5 @@ class BehaviorRecorder:
                     report('click', { ref: ref, text: e.target.textContent?.slice(0, 100) });
                 }
             }, true);
-
-            let currentUrl = location.href;
-            setInterval(() => {
-                if (location.href !== currentUrl) {
-                    const fromUrl = currentUrl;
-                    currentUrl = location.href;
-                    report('navigate', { url: currentUrl, from_url: fromUrl });
-                }
-            }, 500);
         })();
         """

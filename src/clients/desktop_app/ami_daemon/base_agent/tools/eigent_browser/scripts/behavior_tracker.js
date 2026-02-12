@@ -199,6 +199,9 @@
             return;
         }
 
+        // Flush all pending type events before click (may trigger navigation)
+        flushAllPendingTypes();
+
         const info = getElementInfo(e.target);
         // Always report click, even without ref (e.g., navigation links)
         report('click', info);
@@ -208,8 +211,32 @@
     // Input Handler (debounced)
     // =========================================================================
 
-    const inputTimeouts = new Map();
+    const inputTimeouts = new Map();  // key -> { timeout, element, info }
     const INPUT_DEBOUNCE_MS = 1500;
+
+    /**
+     * Flush a pending type event immediately (cancel its debounce timer).
+     * Called before navigation-triggering actions (Enter, form submit) to
+     * ensure the type event is reported before the page unloads.
+     */
+    function flushPendingType(key) {
+        const pending = inputTimeouts.get(key);
+        if (!pending) return;
+
+        clearTimeout(pending.timeout);
+        inputTimeouts.delete(key);
+
+        const value = (pending.element.value || '').trim();
+        if (value) {
+            report('type', pending.info, { value: value });
+        }
+    }
+
+    function flushAllPendingTypes() {
+        for (const key of Array.from(inputTimeouts.keys())) {
+            flushPendingType(key);
+        }
+    }
 
     document.addEventListener('input', function(e) {
         const element = e.target;
@@ -228,10 +255,10 @@
         const info = getElementInfo(element);
         if (!info) return;
 
-        // Debounce by element ref
-        const key = info.ref;
+        // Debounce by element ref (fall back to tagName to avoid null-key collisions)
+        const key = info.ref || ('__' + tagName + '_' + (element.name || element.id || 'anon'));
         if (inputTimeouts.has(key)) {
-            clearTimeout(inputTimeouts.get(key));
+            clearTimeout(inputTimeouts.get(key).timeout);
         }
 
         const timeout = setTimeout(() => {
@@ -244,11 +271,13 @@
             inputTimeouts.delete(key);
         }, INPUT_DEBOUNCE_MS);
 
-        inputTimeouts.set(key, timeout);
+        inputTimeouts.set(key, { timeout, element, info });
     }, true);
 
     // =========================================================================
-    // Navigation Handler
+    // Navigation Handler (SPA detection)
+    // CDP Page.frameNavigated catches full page loads; JS polling catches
+    // pushState/replaceState SPA navigations. Deduplication is done in Python.
     // =========================================================================
 
     let currentUrl = window.location.href;
@@ -258,6 +287,9 @@
         // URL polling for SPA navigation
         setInterval(function() {
             if (window.location.href !== currentUrl) {
+                // Flush pending type events before SPA navigation
+                flushAllPendingTypes();
+
                 const fromUrl = currentUrl;
                 currentUrl = window.location.href;
 
@@ -270,6 +302,8 @@
 
         // Popstate for browser back/forward
         window.addEventListener('popstate', function() {
+            flushAllPendingTypes();
+
             const fromUrl = currentUrl;
             currentUrl = window.location.href;
 
@@ -279,6 +313,9 @@
             });
         });
     }
+
+    // Flush all pending type events before page unload
+    window.addEventListener('beforeunload', flushAllPendingTypes);
 
     // =========================================================================
     // Scroll Handler (throttled)
@@ -328,7 +365,12 @@
 
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Enter') {
+            // Flush pending type for this element before enter triggers navigation
             const info = getElementInfo(e.target);
+            const key = info && info.ref
+                ? info.ref
+                : ('__' + e.target.tagName.toLowerCase() + '_' + (e.target.name || e.target.id || 'anon'));
+            flushPendingType(key);
             report('enter', info);
         }
     }, true);
