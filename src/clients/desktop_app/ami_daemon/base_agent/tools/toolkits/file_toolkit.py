@@ -89,9 +89,6 @@ class FileToolkit(BaseToolkit):
     def _create_backup(self, filepath: Path) -> Optional[Path]:
         """Create a backup of a file if it exists.
 
-        Only keeps the single most recent backup per file. Previous backups
-        are deleted before creating a new one.
-
         Args:
             filepath: Path to the file.
 
@@ -102,8 +99,10 @@ class FileToolkit(BaseToolkit):
             return None
 
         import shutil
+        import datetime
 
-        backup_path = filepath.with_suffix(f".bak{filepath.suffix}")
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = filepath.with_suffix(f".{timestamp}.bak{filepath.suffix}")
 
         try:
             shutil.copy2(filepath, backup_path)
