@@ -144,14 +144,20 @@ class DecomposeTaskTool:
         Returns:
             Confirmation that the task has been queued for execution.
         """
+        if self._triggered:
+            return (
+                "Task already delegated and is being executed. "
+                "Do NOT call decompose_task again. "
+                "Summarize your plan to the user and stop."
+            )
+
         self._triggered = True
         self._task_description = task_description
         logger.info(f"[DecomposeTaskTool] Triggered with: {task_description[:100]}...")
 
         return (
-            f"Task queued for Workforce execution: {task_description[:100]}...\n"
-            "The Workforce will decompose this into subtasks and coordinate "
-            "specialized agents. You will receive the results when complete."
+            "Task delegated successfully. The team will now execute this task. "
+            "Summarize what you plan to do for the user."
         )
 
 

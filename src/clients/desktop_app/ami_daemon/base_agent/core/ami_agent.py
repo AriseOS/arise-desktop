@@ -413,6 +413,21 @@ class AMIAgent:
         """Update the task state for event emission."""
         self._task_state = task_state
 
+    def _check_steering_queue(self) -> Optional[str]:
+        """Non-blocking check for user steering messages in TaskState queue.
+
+        Returns the message if one is queued, None otherwise.
+        """
+        if not self._task_state:
+            return None
+        queue = getattr(self._task_state, "_user_message_queue", None)
+        if queue is None:
+            return None
+        try:
+            return queue.get_nowait()
+        except asyncio.QueueEmpty:
+            return None
+
     # =========================================================================
     # Core Execution Loop
     # =========================================================================
@@ -523,7 +538,10 @@ class AMIAgent:
 
                 # Execute tools and collect results
                 tool_results = []
-                for tool_use in response.get_tool_uses():
+                tool_uses = response.get_tool_uses()
+                steering_message = None
+
+                for i, tool_use in enumerate(tool_uses):
                     all_tool_calls.append({
                         "id": tool_use.id,
                         "name": tool_use.name,
@@ -540,7 +558,39 @@ class AMIAgent:
                         "content": result_content,
                     })
 
-                # Append tool results as user message
+                    # Check for steering message after each tool call
+                    steering_message = self._check_steering_queue()
+                    if steering_message:
+                        # Skip remaining tool calls with "Skipped" results
+                        for skipped in tool_uses[i + 1:]:
+                            tool_results.append({
+                                "type": "tool_result",
+                                "tool_use_id": skipped.id,
+                                "content": "Skipped: user sent a new message.",
+                                "is_error": True,
+                            })
+                        logger.info(
+                            f"[AMIAgent] {self.agent_name} steering: "
+                            f"skipped {len(tool_uses) - i - 1} remaining tools"
+                        )
+                        break
+
+                # Append tool results (and steering message if any) as user message
+                # Anthropic requires user/assistant alternation, so steering text
+                # goes into the same user message as tool results.
+                if steering_message:
+                    tool_results.append({
+                        "type": "text",
+                        "text": (
+                            f"[USER MESSAGE] The user has sent a new message "
+                            f"while you were working. Read it carefully and adjust "
+                            f"your plan accordingly:\n\n{steering_message}"
+                        ),
+                    })
+                    logger.info(
+                        f"[AMIAgent] {self.agent_name} injected steering message: "
+                        f"{steering_message[:100]}..."
+                    )
                 self._messages.append({"role": "user", "content": tool_results})
 
                 # Check early-stop flag (set by replan_complete_and_handoff)
