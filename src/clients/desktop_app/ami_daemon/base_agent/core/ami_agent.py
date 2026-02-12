@@ -52,6 +52,10 @@ _TOOL_PREFIX_TO_TOOLKIT = {
     "complete": "Task Planning Toolkit",
     "report": "Task Planning Toolkit",
     "replan": "Replan Toolkit",
+    "write": "File Toolkit",
+    "read": "File Toolkit",
+    "file": "File Toolkit",
+    "list": "File Toolkit",
 }
 
 

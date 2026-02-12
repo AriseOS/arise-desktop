@@ -110,6 +110,11 @@ TOOL_PREFIX_TO_TOOLKIT = {
     "complete": "Task Planning Toolkit", # complete_subtask
     "report": "Task Planning Toolkit",   # report_subtask_failure
     "replan": "Task Planning Toolkit",   # replan_task
+    # File operations
+    "write": "File Toolkit",             # write_to_file
+    "read": "File Toolkit",              # read_file
+    "file": "File Toolkit",              # file_exists
+    "list": "File Toolkit",              # list_files
 }
 
 

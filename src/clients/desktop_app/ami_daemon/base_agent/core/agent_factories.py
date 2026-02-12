@@ -81,16 +81,12 @@ comprehensive and well-documented information.
 
 <operating_environment>
 - **System**: {platform_system} ({platform_machine})
-- **Working Directory**: `{working_directory}`. The shell tool (`shell_exec`) already runs in this directory, so use **relative paths** for all file operations (e.g., `cat data.json`, NOT `cat {working_directory}/data.json`).
-The current date is {now_str}(Accurate to the hour). For any date-related tasks, you MUST use this as the current date.
+- **Working Directory**: `{working_directory}`
+- The current date is {now_str}(Accurate to the hour). For any date-related tasks, you MUST use this as the current date.
 </operating_environment>
 
 <mandatory_instructions>
-- Your shell tool runs in the working directory. Use **relative paths** for file operations:
-    - Read files: `shell_exec` with `cat filename`
-    - Write files: `shell_exec` with `cat > filename << 'EOF' ... EOF`
-    - List files: `shell_exec` with `ls`
-    - Search files: `shell_exec` with `grep <pattern> filename`
+- Use the file tools (`write_to_file`, `read_file`, `list_files`) for all file operations.
 - Save all research findings and extracted data to files in the working directory.
     Record ALL relevant details without summarizing. Cite source URLs.
     For every piece of information you gather, you must:
@@ -131,7 +127,8 @@ The current date is {now_str}(Accurate to the hour). For any date-related tasks,
 Your capabilities include:
 - Search and get information from the web using the search tools.
 - Use the rich browser related toolset to investigate websites.
-- Use the terminal/shell tools for local operations and file management.
+- Use the file tools (`write_to_file`, `read_file`) to save and read data files.
+- Use the terminal/shell tools for local operations (grep, curl, etc.).
 - Use the human toolkit to ask for help when you are stuck.
 - Use the memory toolkit to query known page operations when exploring unfamiliar pages.
 </capabilities>
@@ -200,12 +197,12 @@ and generation.
 
 <operating_environment>
 - **System**: {platform_system} ({platform_machine})
-- **Working Directory**: `{working_directory}`. The shell tool (`shell_exec`) already runs in this directory, so use **relative paths** for all file operations (e.g., `cat data.json`, NOT `cat {working_directory}/data.json`).
-The current date is {now_str}(Accurate to the hour). For any date-related tasks, you MUST use this as the current date.
+- **Working Directory**: `{working_directory}`
+- The current date is {now_str}(Accurate to the hour). For any date-related tasks, you MUST use this as the current date.
 </operating_environment>
 
 <mandatory_instructions>
-- You MUST use `shell_exec` with `cat` or `ls` (relative paths) to read files from the working directory left by other agents.
+- Use the file tools (`read_file`, `list_files`) to read files from the working directory left by other agents.
 
 - You SHOULD keep the user informed by providing message_title and message_description
     parameters when calling tools. These optional parameters are available on all tools
@@ -252,8 +249,8 @@ Your capabilities are extensive and powerful:
   files, and manage deployments.
 - **Human Collaboration**: If you are stuck or need clarification, you can
   ask for human input via the console.
-- **File Management**: Use shell tools to read and write files in the working
-  directory to coordinate with other agents and track your work.
+- **File Management**: Use file tools (`write_to_file`, `read_file`) to
+  read and write files in the working directory.
 </capabilities>
 
 <philosophy>
@@ -357,13 +354,13 @@ to be embedded in your work.
 
 <operating_environment>
 - **System**: {platform_system} ({platform_machine})
-- **Working Directory**: `{working_directory}`. The shell tool (`shell_exec`) already runs in this directory, so use **relative paths** for all file operations (e.g., `cat data.json`, NOT `cat {working_directory}/data.json`).
-The current date is {now_str}(Accurate to the hour). For any date-related tasks, you MUST use this as the current date.
+- **Working Directory**: `{working_directory}`
+- The current date is {now_str}(Accurate to the hour). For any date-related tasks, you MUST use this as the current date.
 </operating_environment>
 
 <mandatory_instructions>
-- Before creating any document, you MUST use `shell_exec` with `ls` and `cat`
-    (relative paths) to read files from the working directory left by other team members.
+- Before creating any document, use `list_files` and `read_file` to read
+    files from the working directory left by other team members.
 
 - You MUST use the available tools to create or modify documents (e.g.,
     `write_to_file`, `create_presentation`). Your primary output should be
@@ -520,14 +517,13 @@ presentations, and other documents.
 
 <operating_environment>
 - **System**: {platform_system} ({platform_machine})
-- **Working Directory**: `{working_directory}`. The shell tool (`shell_exec`) already runs in this directory, so use **relative paths** for all file operations (e.g., `cat data.json`, NOT `cat {working_directory}/data.json`).
-The current date is {now_str}(Accurate to the hour). For any date-related tasks, you MUST use this as the current date.
+- **Working Directory**: `{working_directory}`
+- The current date is {now_str}(Accurate to the hour). For any date-related tasks, you MUST use this as the current date.
 </operating_environment>
 
 <mandatory_instructions>
-- You MUST use `shell_exec` with `ls` and `cat` (relative paths) to read files
-    from the working directory left by other team members. Save your findings
-    to files in the working directory.
+- Use `list_files` and `read_file` to read files from the working directory
+    left by other team members. Use `write_to_file` to save your findings.
 
 - When you complete your task, your final response must be a comprehensive
     summary of your analysis or the generated media, presented in a clear,
@@ -601,7 +597,7 @@ be a comprehensive summary of your actions, presented in a clear, detailed,
 and easy-to-read format. Avoid using markdown tables for presenting data;
 use plain text formatting instead.
 
-- **Working Directory**: `{working_directory}`. The shell tool (`shell_exec`) already runs in this directory, so use **relative paths** for all file operations (e.g., `cat data.json`, NOT `cat {working_directory}/data.json`).
+- **Working Directory**: `{working_directory}`
 The current date is {now_str}(Accurate to the hour). For any date-related tasks, you MUST use this as the current date.
 
 Your integrated toolkits enable you to:
@@ -755,6 +751,7 @@ async def create_browser_agent(
     from ..tools.toolkits import (
         SearchToolkit, TerminalToolkit,
         HumanToolkit, BrowserToolkit, MemoryToolkit,
+        FileToolkit,
     )
 
     logger.info(f"[AgentFactory] Creating browser agent for task {task_id}")
@@ -771,6 +768,9 @@ async def create_browser_agent(
     terminal_toolkit = TerminalToolkit(working_directory=working_directory)
     terminal_toolkit.set_task_state(task_state)
 
+    file_toolkit = FileToolkit(working_directory=working_directory)
+    file_toolkit.set_task_state(task_state)
+
     human_toolkit = HumanToolkit()
     human_toolkit.set_task_state(task_state)
 
@@ -785,6 +785,7 @@ async def create_browser_agent(
     tools = [
         *search_toolkit.get_tools(),
         *terminal_toolkit.get_tools(),
+        *file_toolkit.get_tools(),
         *human_toolkit.get_tools(),
         *browser_toolkit.get_tools(),
     ]
@@ -874,7 +875,7 @@ async def create_listen_browser_agent(
     logger.info(f"[AgentFactory] Creating AMIBrowserAgent for task {task_id}")
 
     from ..tools.toolkits import (
-        SearchToolkit, TerminalToolkit,
+        SearchToolkit, TerminalToolkit, FileToolkit,
         HumanToolkit, BrowserToolkit, MemoryToolkit,
     )
 
@@ -886,6 +887,9 @@ async def create_listen_browser_agent(
 
     terminal_toolkit = TerminalToolkit(working_directory=working_directory)
     terminal_toolkit.set_task_state(task_state)
+
+    file_toolkit = FileToolkit(working_directory=working_directory)
+    file_toolkit.set_task_state(task_state)
 
     human_toolkit = HumanToolkit()
     human_toolkit.set_task_state(task_state)
@@ -911,6 +915,7 @@ async def create_listen_browser_agent(
     tools = [
         *search_toolkit.get_tools(),
         *terminal_toolkit.get_tools(),
+        *file_toolkit.get_tools(),
         *human_toolkit.get_tools(),
         *browser_toolkit.get_tools(),
     ]
@@ -981,7 +986,7 @@ def create_developer_agent(
     logger.info(f"[AgentFactory] Working directory: {working_directory}")
 
     from ..tools.toolkits import (
-        TerminalToolkit, HumanToolkit,
+        TerminalToolkit, HumanToolkit, FileToolkit,
     )
 
     agent_name = "developer_agent"
@@ -990,11 +995,15 @@ def create_developer_agent(
     terminal_toolkit = TerminalToolkit(working_directory=working_directory)
     terminal_toolkit.set_task_state(task_state)
 
+    file_toolkit = FileToolkit(working_directory=working_directory)
+    file_toolkit.set_task_state(task_state)
+
     human_toolkit = HumanToolkit()
     human_toolkit.set_task_state(task_state)
 
     tools = [
         *terminal_toolkit.get_tools(),
+        *file_toolkit.get_tools(),
         *human_toolkit.get_tools(),
     ]
 
@@ -1159,7 +1168,7 @@ def create_multi_modal_agent(
     logger.info(f"[AgentFactory] Working directory: {working_directory}")
 
     from ..tools.toolkits import (
-        TerminalToolkit, HumanToolkit,
+        TerminalToolkit, HumanToolkit, FileToolkit,
         VideoDownloaderToolkit, ImageAnalysisToolkit,
         AudioAnalysisToolkit, ImageGenerationToolkit,
     )
@@ -1185,6 +1194,9 @@ def create_multi_modal_agent(
     terminal_toolkit = TerminalToolkit(working_directory=working_directory)
     terminal_toolkit.set_task_state(task_state)
 
+    file_toolkit = FileToolkit(working_directory=working_directory)
+    file_toolkit.set_task_state(task_state)
+
     human_toolkit = HumanToolkit()
     human_toolkit.set_task_state(task_state)
 
@@ -1192,6 +1204,7 @@ def create_multi_modal_agent(
         *video_toolkit.get_tools(),
         *image_toolkit.get_tools(),
         *terminal_toolkit.get_tools(),
+        *file_toolkit.get_tools(),
         *human_toolkit.get_tools(),
     ]
 
@@ -1290,7 +1303,7 @@ async def create_social_medium_agent(
         Configured AMIAgent instance
     """
     from ..tools.toolkits import (
-        TerminalToolkit, HumanToolkit,
+        TerminalToolkit, HumanToolkit, FileToolkit,
         GmailMCPToolkit, NotionMCPToolkit, GoogleCalendarToolkit,
     )
 
@@ -1303,11 +1316,15 @@ async def create_social_medium_agent(
     terminal_toolkit = TerminalToolkit(working_directory=working_directory)
     terminal_toolkit.set_task_state(task_state)
 
+    file_toolkit = FileToolkit(working_directory=working_directory)
+    file_toolkit.set_task_state(task_state)
+
     human_toolkit = HumanToolkit()
     human_toolkit.set_task_state(task_state)
 
     tools = [
         *terminal_toolkit.get_tools(),
+        *file_toolkit.get_tools(),
         *human_toolkit.get_tools(),
     ]
 
