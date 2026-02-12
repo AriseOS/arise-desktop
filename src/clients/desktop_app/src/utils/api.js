@@ -1014,8 +1014,9 @@ export const api = {
    * @param {string} phraseId - CognitivePhrase ID
    * @returns {Promise<object>} Response with phrase, states, and intent_sequences
    */
-  async getCognitivePhrase(phraseId) {
-    return await this.callAppBackend(`/api/v1/memory/phrases/${phraseId}`);
+  async getCognitivePhrase(phraseId, { source } = {}) {
+    const params = source ? `?source=${source}` : '';
+    return await this.callAppBackend(`/api/v1/memory/phrases/${phraseId}${params}`);
   },
 
   /**
@@ -1031,35 +1032,49 @@ export const api = {
   },
 
   /**
-   * List cognitive phrases from public memory
+   * List public (community) cognitive phrases
    *
-   * @param {number} limit - Maximum number of phrases to return (default: 50)
-   * @returns {Promise<object>} Response with phrases array
+   * @param {number} limit - Maximum number of phrases to return
+   * @param {string} sort - Sort order: "popular" or "recent"
+   * @returns {Promise<object>} Result with phrases array and total count
    */
-  async listPublicPhrases(limit = 50) {
-    return await this.callAppBackend(`/api/v1/memory/public/phrases?limit=${limit}`);
+  async listPublicCognitivePhrases(limit = 50, sort = 'popular') {
+    return await this.callAppBackend(`/api/v1/memory/phrases/public?limit=${limit}&sort=${sort}`);
   },
 
   /**
-   * Get a single public cognitive phrase with full details
+   * Check if a private phrase has been published to public memory
    *
-   * @param {string} phraseId - CognitivePhrase ID
-   * @returns {Promise<object>} Response with phrase, states, and intent_sequences
+   * @param {string} phraseId - Private phrase ID
+   * @returns {Promise<object>} { published: bool, public_phrase_id?: string }
    */
-  async getPublicPhrase(phraseId) {
-    return await this.callAppBackend(`/api/v1/memory/public/phrases/${phraseId}`);
+  async getPublishStatus(phraseId) {
+    return await this.callAppBackend(`/api/v1/memory/publish-status?phrase_id=${phraseId}`);
   },
 
   /**
-   * Share a cognitive phrase from private memory to public memory
+   * Publish a cognitive phrase from private memory to public memory
    *
-   * @param {string} phraseId - CognitivePhrase ID to share
-   * @returns {Promise<object>} Result with { success, public_phrase_id }
+   * @param {string} phraseId - CognitivePhrase ID to publish
+   * @returns {Promise<object>} Result with success and public_phrase_id
    */
-  async shareCognitivePhrase(phraseId) {
-    return await this.callAppBackend('/api/v1/memory/share', {
+  async publishCognitivePhrase(phraseId) {
+    return await this.callAppBackend('/api/v1/memory/publish', {
       method: 'POST',
-      body: JSON.stringify({ phrase_id: phraseId })
+      body: JSON.stringify({ phrase_id: phraseId }),
+    });
+  },
+
+  /**
+   * Remove a phrase from public memory
+   *
+   * @param {string} phraseId - Private phrase ID
+   * @returns {Promise<object>} Result with success status
+   */
+  async unpublishCognitivePhrase(phraseId) {
+    return await this.callAppBackend('/api/v1/memory/unpublish', {
+      method: 'POST',
+      body: JSON.stringify({ phrase_id: phraseId }),
     });
   },
 

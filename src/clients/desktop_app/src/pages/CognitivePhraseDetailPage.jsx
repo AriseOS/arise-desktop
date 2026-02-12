@@ -11,13 +11,14 @@ import '../styles/CognitivePhraseDetailPage.css';
 const nodeTypes = { custom: CustomNode };
 const edgeTypes = { floating: SimpleFloatingEdge };
 
-function CognitivePhraseDetailPage({ session, onNavigate, showStatus, phraseId, source = 'private' }) {
-  const isPublic = source === 'public';
+function CognitivePhraseDetailPage({ session, onNavigate, showStatus, phraseId, isPublic = false }) {
   const [phrase, setPhrase] = useState(null);
   const [states, setStates] = useState([]);
   const [intentSequences, setIntentSequences] = useState([]);
   const [loading, setLoading] = useState(true);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [isPublished, setIsPublished] = useState(false);
 
   // ReactFlow state
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
@@ -43,9 +44,7 @@ function CognitivePhraseDetailPage({ session, onNavigate, showStatus, phraseId, 
 
     const fetchPhrase = async () => {
       try {
-        const data = isPublic
-          ? await api.getPublicPhrase(phraseId)
-          : await api.getCognitivePhrase(phraseId);
+        const data = await api.getCognitivePhrase(phraseId, isPublic ? { source: 'public' } : {});
         setPhrase(data.phrase);
         setStates(data.states || []);
         setIntentSequences(data.intent_sequences || []);
@@ -58,6 +57,22 @@ function CognitivePhraseDetailPage({ session, onNavigate, showStatus, phraseId, 
     };
 
     fetchPhrase();
+  }, [phraseId, isPublic]);
+
+  // Check publish status for private phrases
+  useEffect(() => {
+    if (!phraseId || isPublic) return;
+
+    const checkStatus = async () => {
+      try {
+        const status = await api.getPublishStatus(phraseId);
+        setIsPublished(status.published || false);
+      } catch (error) {
+        console.error('Error checking publish status:', error);
+      }
+    };
+
+    checkStatus();
   }, [phraseId, isPublic]);
 
   // Update graph when data or expansion state changes
@@ -75,6 +90,34 @@ function CognitivePhraseDetailPage({ session, onNavigate, showStatus, phraseId, 
     setNodes(newNodes);
     setEdges(newEdges);
   }, [phrase, states, intentSequences, expandedNodeIds, handleToggleExpand]);
+
+  const handlePublishToggle = async () => {
+    setPublishing(true);
+    try {
+      if (isPublished) {
+        const result = await api.unpublishCognitivePhrase(phraseId);
+        if (result.success) {
+          setIsPublished(false);
+          showStatus('Memory unpublished from community', 'success');
+        } else {
+          showStatus('Failed to unpublish memory', 'error');
+        }
+      } else {
+        const result = await api.publishCognitivePhrase(phraseId);
+        if (result.success) {
+          setIsPublished(true);
+          showStatus('Memory published to community!', 'success');
+        } else {
+          showStatus('Failed to publish memory', 'error');
+        }
+      }
+    } catch (error) {
+      console.error('Error toggling publish:', error);
+      showStatus(`Failed: ${error.message}`, 'error');
+    } finally {
+      setPublishing(false);
+    }
+  };
 
   const handleDelete = async () => {
     setDeleteConfirm(false);
@@ -122,7 +165,7 @@ function CognitivePhraseDetailPage({ session, onNavigate, showStatus, phraseId, 
         <div className="error-container">
           <Icon name="alertCircle" />
           <h3>Memory not found</h3>
-          <button className="btn btn-primary" onClick={() => onNavigate(isPublic ? 'workflows' : 'memories')}>
+          <button className="btn btn-primary" onClick={() => onNavigate(isPublic ? 'explore' : 'memories')}>
             {isPublic ? 'Back to Explore' : 'Back to Memories'}
           </button>
         </div>
@@ -134,19 +177,41 @@ function CognitivePhraseDetailPage({ session, onNavigate, showStatus, phraseId, 
     <div className="cognitive-phrase-detail-page">
       {/* Header */}
       <div className="page-header">
-        <button className="btn-icon" onClick={() => onNavigate(isPublic ? 'workflows' : 'memories')} aria-label="Go Back">
+        <button className="btn-icon" onClick={() => onNavigate(isPublic ? 'explore' : 'memories')} aria-label="Go Back">
           <Icon name="arrowLeft" />
         </button>
         <h1 className="page-title">{phrase.label || 'Unnamed Workflow'}</h1>
-        {!isPublic && (
-          <button
-            className="btn-icon-danger"
-            onClick={() => setDeleteConfirm(true)}
-            title="Delete"
-          >
-            <Icon name="trash" />
-          </button>
-        )}
+        <div className="header-actions">
+          {isPublic ? (
+            <button
+              className="btn btn-primary"
+              onClick={() => onNavigate('main', { initialMessage: phrase.description })}
+              style={{ padding: '6px 14px', fontSize: '13px', gap: '6px' }}
+            >
+              <Icon name="play" size={16} />
+              <span>Run</span>
+            </button>
+          ) : (
+            <>
+              <button
+                className={`btn ${isPublished ? 'btn-secondary' : 'btn-primary'}`}
+                onClick={handlePublishToggle}
+                disabled={publishing}
+                style={{ padding: '6px 14px', fontSize: '13px', gap: '6px' }}
+              >
+                <Icon name={isPublished ? 'x' : 'upload'} size={16} />
+                <span>{publishing ? '...' : (isPublished ? 'Unpublish' : 'Publish')}</span>
+              </button>
+              <button
+                className="btn-icon-danger"
+                onClick={() => setDeleteConfirm(true)}
+                title="Delete"
+              >
+                <Icon name="trash" />
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Description */}
@@ -165,17 +230,29 @@ function CognitivePhraseDetailPage({ session, onNavigate, showStatus, phraseId, 
             <span className="stat-value">{phrase.action_path?.length || 0}</span>
             <span className="stat-label">Actions</span>
           </div>
-          <div className="stat-item">
-            <span className="stat-value">{phrase.access_count || 0}</span>
-            <span className="stat-label">Accesses</span>
-          </div>
-          <div className="stat-item">
-            <span className="stat-value">{phrase.success_count || 0}</span>
-            <span className="stat-label">Successes</span>
-          </div>
+          {isPublic ? (
+            <div className="stat-item">
+              <span className="stat-value">{phrase.use_count || 0}</span>
+              <span className="stat-label">Uses</span>
+            </div>
+          ) : (
+            <>
+              <div className="stat-item">
+                <span className="stat-value">{phrase.access_count || 0}</span>
+                <span className="stat-label">Accesses</span>
+              </div>
+              <div className="stat-item">
+                <span className="stat-value">{phrase.success_count || 0}</span>
+                <span className="stat-label">Successes</span>
+              </div>
+            </>
+          )}
         </div>
         <div className="meta-info">
-          <span className="meta-item"><Icon name="clock" /> {formatDate(phrase.created_at)}</span>
+          {isPublic && phrase.contributor_id && (
+            <span className="meta-item"><Icon name="user" /> {phrase.contributor_id}</span>
+          )}
+          <span className="meta-item"><Icon name="clock" /> {formatDate(isPublic ? phrase.contributed_at : phrase.created_at)}</span>
         </div>
       </div>
 

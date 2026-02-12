@@ -1,33 +1,34 @@
 import React, { useState, useEffect } from 'react';
 import Icon from '../components/Icons';
 import { api } from '../utils/api';
-import '../styles/CognitivePhrasesPage.css';
+import '../styles/ExplorePage.css';
 
 function ExplorePage({ session, onNavigate, showStatus }) {
   const [phrases, setPhrases] = useState([]);
   const [filteredPhrases, setFilteredPhrases] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [sortBy, setSortBy] = useState('popular');
   const [loading, setLoading] = useState(true);
 
-  // Fetch public phrases from API
   useEffect(() => {
-    const fetchPhrases = async () => {
-      try {
-        const data = await api.listPublicPhrases(100);
-        setPhrases(data.phrases || []);
-        setFilteredPhrases(data.phrases || []);
-      } catch (error) {
-        console.error('Error fetching public phrases:', error);
-        showStatus(`Failed to load public library: ${error.message}`, 'error');
-        setPhrases([]);
-        setFilteredPhrases([]);
-      } finally {
-        setLoading(false);
-      }
-    };
+    fetchPublicPhrases();
+  }, [sortBy]);
 
-    fetchPhrases();
-  }, []);
+  const fetchPublicPhrases = async () => {
+    setLoading(true);
+    try {
+      const data = await api.listPublicCognitivePhrases(100, sortBy);
+      setPhrases(data.phrases || []);
+      setFilteredPhrases(data.phrases || []);
+    } catch (error) {
+      console.error('Error fetching public phrases:', error);
+      showStatus(`Failed to load community memories: ${error.message}`, 'error');
+      setPhrases([]);
+      setFilteredPhrases([]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Search filter
   useEffect(() => {
@@ -40,7 +41,8 @@ function ExplorePage({ session, onNavigate, showStatus }) {
     const filtered = phrases.filter(phrase => {
       const labelMatch = phrase.label?.toLowerCase().includes(query);
       const descMatch = phrase.description?.toLowerCase().includes(query);
-      return labelMatch || descMatch;
+      const contributorMatch = phrase.contributor_id?.toLowerCase().includes(query);
+      return labelMatch || descMatch || contributorMatch;
     });
 
     setFilteredPhrases(filtered);
@@ -53,8 +55,7 @@ function ExplorePage({ session, onNavigate, showStatus }) {
   };
 
   const formatDate = (timestamp) => {
-    if (!timestamp) return 'Unknown';
-
+    if (!timestamp) return '';
     const date = new Date(timestamp);
     const now = new Date();
     const diffMs = now - date;
@@ -66,39 +67,41 @@ function ExplorePage({ session, onNavigate, showStatus }) {
     if (diffMins < 60) return `${diffMins}m ago`;
     if (diffHours < 24) return `${diffHours}h ago`;
     if (diffDays < 7) return `${diffDays}d ago`;
-
     return date.toLocaleDateString();
   };
 
   if (loading) {
     return (
-      <div className="cognitive-phrases-page">
+      <div className="explore-page">
         <div className="loading-container">
           <div className="spinner-large"></div>
-          <p>Loading...</p>
+          <p>Loading community memories...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="cognitive-phrases-page">
+    <div className="explore-page">
       {/* Header */}
-      <div className="page-header">
-        <h1 className="page-title"><Icon name="compass" /> Explore</h1>
-        <div className="header-spacer"></div>
-      </div>
+      <div className="explore-header">
+        <div className="explore-header-top">
+          <button className="btn-icon" onClick={() => onNavigate('main')} aria-label="Go Back">
+            <Icon name="arrowLeft" />
+          </button>
+          <h1 className="explore-title">
+            <Icon name="compass" /> Explore
+          </h1>
+          <div className="header-spacer"></div>
+        </div>
 
-      {/* Search Bar */}
-      <div className="search-section">
-        <div className="search-input-wrapper">
-          <span className="search-icon">
-            <Icon name="search" />
-          </span>
+        {/* Search */}
+        <div className="explore-search-wrapper">
+          <span className="search-icon"><Icon name="search" /></span>
           <input
             type="text"
-            className="search-input"
-            placeholder="Search public memories..."
+            className="explore-search-input"
+            placeholder="Search community memories..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
@@ -108,76 +111,90 @@ function ExplorePage({ session, onNavigate, showStatus }) {
             </button>
           )}
         </div>
+
+        {/* Sort tabs + count */}
+        <div className="explore-toolbar">
+          <div className="sort-tabs">
+            <button
+              className={`sort-tab ${sortBy === 'popular' ? 'active' : ''}`}
+              onClick={() => setSortBy('popular')}
+            >
+              <Icon name="activity" size={14} />
+              Popular
+            </button>
+            <button
+              className={`sort-tab ${sortBy === 'recent' ? 'active' : ''}`}
+              onClick={() => setSortBy('recent')}
+            >
+              <Icon name="clock" size={14} />
+              Newest
+            </button>
+          </div>
+          <span className="explore-count">
+            {filteredPhrases.length} {filteredPhrases.length === 1 ? 'memory' : 'memories'}
+          </span>
+        </div>
       </div>
 
-      {/* Results Count */}
-      <div className="results-info">
-        <p className="results-count">
-          {filteredPhrases.length === 0
-            ? 'No shared memories yet'
-            : `${filteredPhrases.length} shared ${filteredPhrases.length === 1 ? 'memory' : 'memories'}`}
-        </p>
-      </div>
-
-      {/* Phrases List */}
-      <div className="phrases-list">
+      {/* Grid */}
+      <div className="explore-content">
         {filteredPhrases.length === 0 ? (
-          <div className="empty-state">
+          <div className="explore-empty">
             {phrases.length === 0 ? (
               <>
-                <div className="empty-icon"><Icon name="compass" /></div>
-                <h3>No shared memories yet</h3>
-                <p>Be the first to share! Go to Memories and share a workflow to the public library.</p>
-                <button className="btn-start-recording" onClick={() => onNavigate('memories')}>
-                  <span className="button-icon"><Icon name="brain" /></span>
-                  <span>Go to Memories</span>
-                </button>
+                <div className="empty-icon"><Icon name="globe" /></div>
+                <h3>No community memories yet</h3>
+                <p>Be the first to publish a memory! Go to Memories, open a workflow, and click Publish.</p>
               </>
             ) : (
               <>
                 <div className="empty-icon"><Icon name="search" /></div>
                 <h3>No results found</h3>
-                <p>Try adjusting your search query</p>
-                <button className="btn-clear-search" onClick={() => setSearchQuery('')}>
+                <p>Try a different search query</p>
+                <button className="btn btn-secondary" onClick={() => setSearchQuery('')}>
                   Clear Search
                 </button>
               </>
             )}
           </div>
         ) : (
-          filteredPhrases.map((phrase) => (
-            <div key={phrase.id} className="phrase-card" onClick={() => onNavigate('memory-detail', { phraseId: phrase.id, source: 'public' })}>
-              <div className="phrase-header">
-                <div className="phrase-icon"><Icon name="route" /></div>
-                <div className="phrase-info">
-                  <h3 className="phrase-title">
-                    {phrase.label || 'Unnamed Workflow'}
-                  </h3>
-                  <p className="phrase-description">
-                    {truncateText(phrase.description, 120)}
-                  </p>
-                  <div className="phrase-meta">
-                    {phrase.contributor_id && (
-                      <span className="meta-item">
-                        <Icon name="user" />
-                        {phrase.contributor_id}
-                      </span>
-                    )}
-                    {phrase.contributed_at && (
-                      <span className="meta-item">
-                        <Icon name="clock" />
-                        {formatDate(phrase.contributed_at)}
-                      </span>
-                    )}
-                    <span className="meta-item">
-                      <Icon name="activity" />
-                      {phrase.use_count || 0} uses
+          <div className="explore-grid">
+            {filteredPhrases.map((phrase) => (
+              <div key={phrase.id} className="explore-card" onClick={() => onNavigate('memory-detail', { phraseId: phrase.id, isPublic: true })}>
+                <div className="card-icon">
+                  <Icon name="route" />
+                </div>
+                <h3 className="card-title">
+                  {truncateText(phrase.label || 'Unnamed Workflow', 60)}
+                </h3>
+                <p className="card-description">
+                  {truncateText(phrase.description, 100)}
+                </p>
+                <div className="card-stats">
+                  <span className="card-stat" title="Times used">
+                    <Icon name="activity" size={13} />
+                    {phrase.use_count || 0}
+                  </span>
+                  <span className="card-stat" title="Steps">
+                    <Icon name="route" size={13} />
+                    {phrase.state_count || 0}
+                  </span>
+                  {phrase.contributed_at && (
+                    <span className="card-stat" title="Published">
+                      <Icon name="clock" size={13} />
+                      {formatDate(phrase.contributed_at)}
                     </span>
-                  </div>
+                  )}
+                </div>
+                <div className="card-footer">
+                  <span className="card-contributor" title={phrase.contributor_id}>
+                    <Icon name="user" size={13} />
+                    {phrase.contributor_id || 'Anonymous'}
+                  </span>
                 </div>
               </div>
-            </div>
-          ))
+            ))}
+          </div>
         )}
       </div>
     </div>

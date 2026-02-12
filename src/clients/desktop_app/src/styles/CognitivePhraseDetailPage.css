@@ -23,6 +23,13 @@
   border-bottom: 1px solid var(--border-subtle);
 }
 
+.cognitive-phrase-detail-page .header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .cognitive-phrase-detail-page .page-title {
   flex: 1;
   font-size: 20px;

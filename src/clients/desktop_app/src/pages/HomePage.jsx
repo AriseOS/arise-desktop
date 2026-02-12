@@ -35,7 +35,7 @@ import '../styles/HomePage.css';
  * - Display = sessionMessages + taskMessages (continuous conversation)
  * - Each new task has its own workspace, but messages appear continuous
  */
-function HomePage({ session, onNavigate, showStatus, version }) {
+function HomePage({ session, onNavigate, showStatus, version, initialMessage }) {
   const { t } = useTranslation();
 
   // Agent Store
@@ -180,6 +180,23 @@ function HomePage({ session, onNavigate, showStatus, version }) {
       }
     }
   };
+
+  // Auto-submit initial message (e.g. from Explore page "Run" button)
+  useEffect(() => {
+    if (!initialMessage) return;
+
+    setInputText(initialMessage);
+    // Use a short delay to ensure state is set before submitting
+    const timer = setTimeout(() => {
+      const text = initialMessage.trim();
+      if (!text) return;
+      setInputText('');
+      const newTaskId = createTask(text);
+      startTask(newTaskId, showStatus);
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [initialMessage]);
 
   // Handle key press
   const handleKeyPress = (e) => {
