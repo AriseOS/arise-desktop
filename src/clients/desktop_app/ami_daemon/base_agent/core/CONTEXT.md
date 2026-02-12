@@ -77,12 +77,21 @@ Each factory:
 4. Creates AnthropicProvider
 5. Returns AMIAgent/AMIBrowserAgent
 
-### Orchestrator Agent
+### Orchestrator Agent (Persistent Session)
 
-Entry point for ALL user requests. Decides:
+Entry point for ALL user requests. Runs as a persistent `OrchestratorSession` loop:
 1. **Direct Reply**: Simple questions, greetings
 2. **Tool Use**: Single operations (search, terminal, file ops)
-3. **decompose_task**: Complex multi-step tasks -> triggers AMITaskPlanner + AMITaskExecutor
+3. **decompose_task**: Spawn parallel executor for complex tasks (non-blocking)
+4. **inject_message**: Forward message to running executor's child agent
+5. **replan_task**: Replace pending subtasks of a running executor with a new plan
+6. **cancel_task**: Cancel a specific running executor
+
+Key classes:
+- `OrchestratorSession`: Persistent loop (wait for event -> Orchestrator.astep() -> handle -> repeat)
+- `ExecutorHandle`: Tracks running executor (executor_id, task_label, async_task)
+- `InjectMessageTool` / `CancelTaskTool`: New tools for message routing and cancellation
+- All SSE events carry `executor_id` + `task_label` for frontend executor tracking
 
 ### Memory Integration
 

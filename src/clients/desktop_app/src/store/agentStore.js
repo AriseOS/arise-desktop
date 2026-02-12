@@ -104,6 +104,9 @@ const createInitialTaskState = (taskDescription = '', type = 'normal') => ({
   selectedFile: null,
   fileList: [],  // Eigent: generated files list
 
+  // Parallel executor tracking (Persistent Orchestrator)
+  executors: {},  // { "exec_1": { id, label, status, subtasks, startedAt } }
+
   // Human interaction
   humanQuestion: null,
   humanQuestionContext: null,
@@ -901,6 +904,8 @@ export const useAgentStore = create((set, get) => ({
           store.addMessage(taskId, 'assistant', content, {
             type: 'simple_answer',
             attachments: attachments,
+            executorId: event.executor_id,
+            taskLabel: event.task_label,
           });
 
           // Mark task as having a wait_confirm response
@@ -1008,11 +1013,29 @@ export const useAgentStore = create((set, get) => ({
             agent_type: t.agent_type || null,  // Preserve agent_type from backend
           }));
 
+          // Store subtasks under executor if executor_id present
+          const executorId = event.executor_id;
+          if (executorId) {
+            const currentTask2 = store.tasks[taskId];
+            const executors = { ...currentTask2?.executors };
+            if (executors[executorId]) {
+              executors[executorId] = {
+                ...executors[executorId],
+                subtasks: normalizedSubtasks,
+              };
+            }
+            updateTask({ executors });
+          }
+
           // Update task with decomposition data (display only, no confirmation needed)
+          // When executor_id is present, append subtasks to support parallel executors
+          const currentTask3 = store.tasks[taskId];
+          const prevSubtasks = executorId ? (currentTask3?.subtasks || []) : [];
+          const prevTaskRunning = executorId ? (currentTask3?.taskRunning || []) : [];
           updateTask({
-            subtasks: normalizedSubtasks,
-            taskInfo: normalizedSubtasks,
-            taskRunning: normalizedSubtasks.map(t => ({ ...t })),
+            subtasks: [...prevSubtasks, ...normalizedSubtasks],
+            taskInfo: [...prevSubtasks, ...normalizedSubtasks],
+            taskRunning: [...prevTaskRunning, ...normalizedSubtasks.map(t => ({ ...t }))],
             summaryTask: summaryTask,
             streamingDecomposeText: '',  // Clear streaming text on completion
           });
@@ -1090,6 +1113,20 @@ export const useAgentStore = create((set, get) => ({
             return agent;
           });
 
+          // Update executor-specific subtask state
+          const execId = (event.data || event).executor_id || event.executor_id;
+          if (execId && currentTask.executors?.[execId]) {
+            const executors = { ...currentTask.executors };
+            const execSubtasks = (executors[execId].subtasks || []).map(t => {
+              if (t.id === effectiveSubTaskId) {
+                return { ...t, status: mapState(state), state, result: subTaskResult || t.result };
+              }
+              return t;
+            });
+            executors[execId] = { ...executors[execId], subtasks: execSubtasks };
+            updateTask({ executors });
+          }
+
           updateTask({
             taskRunning: updatedTaskRunning,
             subtasks: updatedSubtasks,
@@ -1103,23 +1140,64 @@ export const useAgentStore = create((set, get) => ({
         }
         break;
 
-      // TaskPlanningToolkit: task_replanned event (automatic plan adjustment during execution)
+      // TaskPlanningToolkit: task_replanned event (plan adjustment during execution)
       case 'task_replanned':
         {
-          const newSubtasks = event.subtasks || event.data?.subtasks || [];
+          const allSubtasks = event.subtasks || event.data?.subtasks || [];
           const reason = event.reason || event.data?.reason || '';
+          const executorId = event.executor_id || event.data?.executor_id;
 
           const currentTask = store.tasks[taskId];
           if (!currentTask) break;
 
-          // Replace subtasks with new plan
-          updateTask({
-            subtasks: newSubtasks,
-            taskInfo: newSubtasks,
-            taskRunning: newSubtasks.map(t => ({ ...t, status: 'pending' })),
-          });
+          // Map states to UI statuses
+          const mapState = (s) => {
+            if (!s) return 'pending';
+            const stateUpper = s.toUpperCase();
+            if (stateUpper === 'DONE') return 'completed';
+            if (stateUpper === 'FAILED') return 'failed';
+            if (stateUpper === 'RUNNING') return 'running';
+            return 'pending';
+          };
 
-          addNotice('info', 'Task Re-planned', `${newSubtasks.length} new subtasks${reason ? `: ${reason}` : ''}`);
+          const normalizedSubtasks = allSubtasks.map(t => ({
+            ...t,
+            status: mapState(t.state || t.status),
+            executor_id: t.executor_id || executorId,
+          }));
+
+          if (executorId) {
+            // Replace only this executor's subtasks, keep others
+            const otherSubtasks = (currentTask.subtasks || []).filter(
+              t => t.executor_id !== executorId
+            );
+            const merged = [...otherSubtasks, ...normalizedSubtasks];
+
+            // Update executor-specific subtasks
+            const executors = { ...currentTask.executors };
+            if (executors[executorId]) {
+              executors[executorId] = {
+                ...executors[executorId],
+                subtasks: normalizedSubtasks,
+              };
+            }
+
+            updateTask({
+              subtasks: merged,
+              taskInfo: merged,
+              taskRunning: merged.map(t => ({ ...t })),
+              executors,
+            });
+          } else {
+            // Legacy: replace all subtasks
+            updateTask({
+              subtasks: normalizedSubtasks,
+              taskInfo: normalizedSubtasks,
+              taskRunning: normalizedSubtasks.map(t => ({ ...t })),
+            });
+          }
+
+          addNotice('info', 'Task Re-planned', `${allSubtasks.length} subtasks${reason ? `: ${reason}` : ''}`);
         }
         break;
 
@@ -1545,6 +1623,20 @@ export const useAgentStore = create((set, get) => ({
       // ===== Workforce Events (CAMEL-based multi-agent coordination) =====
       case 'workforce_started':
         {
+          const executorId = event.executor_id;
+          const taskLabel = event.task_label;
+          if (executorId) {
+            const currentTask = store.tasks[taskId];
+            const executors = { ...currentTask?.executors };
+            executors[executorId] = {
+              id: executorId,
+              label: taskLabel,
+              status: 'running',
+              subtasks: [],
+              startedAt: new Date().toISOString(),
+            };
+            updateTask({ executors });
+          }
           updateTask({
             workforce: {
               ...store.tasks[taskId]?.workforce,
@@ -1562,26 +1654,62 @@ export const useAgentStore = create((set, get) => ({
 
       case 'workforce_completed':
         {
-          const currentWorkforce = store.tasks[taskId]?.workforce || {};
-          updateTask({
-            workforce: {
-              ...currentWorkforce,
-              isActive: false,
-            },
-          });
-          addNotice('success', 'Workforce Completed', `${currentWorkforce.completedTasks || 0} tasks completed`);
+          const executorId = event.executor_id;
+          if (executorId) {
+            const currentTask = store.tasks[taskId];
+            const executors = { ...currentTask?.executors };
+            if (executors[executorId]) {
+              executors[executorId] = { ...executors[executorId], status: 'completed' };
+            }
+            updateTask({ executors });
+
+            // Only deactivate workforce if no other executors are still running
+            const hasRunningExecutors = Object.values(executors).some(
+              e => e.status === 'running'
+            );
+            if (!hasRunningExecutors) {
+              const currentWorkforce = store.tasks[taskId]?.workforce || {};
+              updateTask({
+                workforce: { ...currentWorkforce, isActive: false },
+              });
+            }
+          } else {
+            // Legacy: no executor_id, deactivate workforce unconditionally
+            const currentWorkforce = store.tasks[taskId]?.workforce || {};
+            updateTask({
+              workforce: { ...currentWorkforce, isActive: false },
+            });
+          }
+          addNotice('success', 'Workforce Completed', `Executor completed`);
         }
         break;
 
       case 'workforce_stopped':
         {
-          updateTask({
-            workforce: {
-              ...store.tasks[taskId]?.workforce,
-              isActive: false,
-            },
-          });
-          addNotice('warning', 'Workforce Stopped', event.message || 'Coordination stopped');
+          const executorId = event.executor_id;
+          if (executorId) {
+            const currentTask = store.tasks[taskId];
+            const executors = { ...currentTask?.executors };
+            if (executors[executorId]) {
+              executors[executorId] = { ...executors[executorId], status: 'stopped' };
+            }
+            updateTask({ executors });
+
+            // Only deactivate workforce if no other executors are still running
+            const hasRunningExecutors = Object.values(executors).some(
+              e => e.status === 'running'
+            );
+            if (!hasRunningExecutors) {
+              updateTask({
+                workforce: { ...store.tasks[taskId]?.workforce, isActive: false },
+              });
+            }
+          } else {
+            updateTask({
+              workforce: { ...store.tasks[taskId]?.workforce, isActive: false },
+            });
+          }
+          addNotice('warning', 'Workforce Stopped', event.reason || event.message || 'Coordination stopped');
         }
         break;
 
@@ -1785,10 +1913,15 @@ export const useAgentStore = create((set, get) => ({
       // ===== Agent Report Events (for HomePage chat-style display) =====
       case 'agent_report':
         {
-          const { message, report_type } = event;
+          const { message, report_type, executor_id, task_label, agent_type } = event;
           if (message) {
             // Add agent report as a message for display in chat
-            addMessage('agent', message, { reportType: report_type || 'info' });
+            addMessage('agent', message, {
+              reportType: report_type || 'info',
+              agentType: agent_type,
+              executorId: executor_id,
+              taskLabel: task_label,
+            });
           }
         }
         break;

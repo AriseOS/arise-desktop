@@ -95,6 +95,28 @@ class AMIBrowserAgent(AMIAgent):
         self._cached_page_operations_url = None
         self._cached_page_operations_ids = None
 
+    def clone(self) -> "AMIBrowserAgent":
+        """Create a lightweight clone sharing provider, tools, and memory toolkit.
+
+        Overrides AMIAgent.clone() to preserve browser-agent-specific setup:
+        - memory_toolkit (shared, stateless query interface)
+        """
+        new_agent = AMIBrowserAgent(
+            task_state=self._task_state,
+            agent_name=self.agent_name,
+            provider=self._provider,
+            system_prompt=self._system_prompt,
+            tools=list(self._tools.values()),
+            context_token_limit=self._context_token_limit,
+            max_iterations=self._max_iterations,
+            max_steps=self._max_steps,
+            max_tokens=self._max_tokens,
+            tool_result_max_chars=self._tool_result_max_chars,
+            memory_toolkit=self._memory_toolkit,
+        )
+        new_agent._disable_shared_queue = self._disable_shared_queue
+        return new_agent
+
     # =========================================================================
     # Page Operations (URL-triggered async queries)
     # =========================================================================

@@ -116,6 +116,8 @@ class AMITaskExecutor:
         user_request: str = "",  # User's original request for context
         cloud_client: Optional[Any] = None,
         user_id: Optional[str] = None,
+        executor_id: str = "",
+        task_label: str = "",
     ):
         """
         Initialize the executor.
@@ -128,6 +130,8 @@ class AMITaskExecutor:
             user_request: The user's original request (for agent context).
             cloud_client: CloudClient for saving recorded operations to Memory.
             user_id: User ID for Memory API calls.
+            executor_id: Unique executor identifier (e.g., "exec_1") for parallel execution.
+            task_label: Human-readable label for this executor's task.
         """
         self.task_id = task_id
         self._task_state = task_state
@@ -136,6 +140,11 @@ class AMITaskExecutor:
         self._user_request = user_request
         self._cloud_client = cloud_client
         self._user_id = user_id
+        self.executor_id = executor_id
+        self.task_label = task_label
+
+        # Track the currently executing agent (for message injection)
+        self._current_agent: Optional["AMIAgent"] = None
 
         # Subtask management
         self._subtasks: List[AMISubtask] = []
@@ -157,6 +166,10 @@ class AMITaskExecutor:
     @property
     def _lang(self) -> str:
         return getattr(self._task_state, 'user_language', 'en') if self._task_state else 'en'
+
+    def get_current_agent(self) -> Optional["AMIAgent"]:
+        """Get the agent currently executing a subtask (for message injection)."""
+        return self._current_agent
 
     def set_subtasks(self, subtasks: List[AMISubtask]) -> None:
         """Set subtasks to execute."""
@@ -238,12 +251,16 @@ class AMITaskExecutor:
                 reason="Agent-initiated task splitting",
                 total_tasks_now=len(self._subtasks),
                 total_tasks=len(self._subtasks),
+                executor_id=self.executor_id,
+                task_label=self.task_label,
             ))
             await self._task_state.put_event(AgentReportData(
                 task_id=self.task_id,
                 message=t("executor.tasks_added", self._lang,
                           count=len(new_subtasks), total=len(self._subtasks)),
                 report_type="info",
+                executor_id=self.executor_id,
+                task_label=self.task_label,
             ))
 
         return new_ids
@@ -399,6 +416,9 @@ class AMITaskExecutor:
         # to avoid accumulating operations from failed attempts.
         recorder = None
 
+        # Track current agent for message injection
+        self._current_agent = agent
+
         # Execute with retries
         try:
             while subtask.retry_count <= self._max_retries:
@@ -508,6 +528,8 @@ class AMITaskExecutor:
             return False
 
         finally:
+            # Clear current agent tracking
+            self._current_agent = None
             # Online Learning: stop recorder to release CDP session
             if recorder:
                 await self._stop_behavior_recorder(recorder)
@@ -848,6 +870,8 @@ No historical workflow guide available. Please explore and complete the task usi
 
         lang = self._lang
 
+        subtask_agent_type = subtask.agent_type
+
         async def on_retry(attempt: int, max_retries: int, delay: float, error_msg: str) -> None:
             if not self._task_state:
                 return
@@ -857,6 +881,9 @@ No historical workflow guide available. Please explore and complete the task usi
                           progress=progress, attempt=attempt,
                           max_retries=max_retries, delay=f"{delay:.0f}"),
                 report_type="warning",
+                agent_type=subtask_agent_type,
+                executor_id=self.executor_id,
+                task_label=self.task_label,
             ))
 
         provider.set_on_retry_callback(on_retry)
@@ -911,6 +938,9 @@ No historical workflow guide available. Please explore and complete the task usi
             message=t("executor.running", self._lang,
                       progress=progress, preview=html_mod.escape(content_preview)),
             report_type="info",
+            agent_type=subtask.agent_type,
+            executor_id=self.executor_id,
+            task_label=self.task_label,
         ))
 
         # Emit assign_task event (for compatibility)
@@ -924,6 +954,8 @@ No historical workflow guide available. Please explore and complete the task usi
             worker_name=agent_name,
             agent_type=subtask.agent_type,
             agent_id=subtask.agent_type,
+            executor_id=self.executor_id,
+            task_label=self.task_label,
         ))
 
         # Emit subtask state
@@ -931,6 +963,8 @@ No historical workflow guide available. Please explore and complete the task usi
             task_id=self.task_id,
             subtask_id=subtask.id,
             state="RUNNING",
+            executor_id=self.executor_id,
+            task_label=self.task_label,
         ))
 
     async def _emit_subtask_state(self, subtask: AMISubtask) -> None:
@@ -951,6 +985,9 @@ No historical workflow guide available. Please explore and complete the task usi
                 message=t("executor.completed", self._lang,
                           progress=progress, preview=safe_preview),
                 report_type="success",
+                agent_type=subtask.agent_type,
+                executor_id=self.executor_id,
+                task_label=self.task_label,
             ))
         elif subtask.state == SubtaskState.FAILED:
             # Classify error for user-friendly message
@@ -962,12 +999,17 @@ No historical workflow guide available. Please explore and complete the task usi
                           progress=progress, preview=safe_preview,
                           error_suffix=error_suffix),
                 report_type="error",
+                agent_type=subtask.agent_type,
+                executor_id=self.executor_id,
+                task_label=self.task_label,
             ))
 
         await self._task_state.put_event(SubtaskStateData(
             task_id=self.task_id,
             subtask_id=subtask.id,
             state=subtask.state.value,
+            executor_id=self.executor_id,
+            task_label=self.task_label,
         ))
 
     # =========================================================================
@@ -1037,6 +1079,81 @@ No historical workflow guide available. Please explore and complete the task usi
     def get_subtask(self, subtask_id: str) -> Optional[AMISubtask]:
         """Get a subtask by ID."""
         return self._subtask_map.get(subtask_id)
+
+    def get_subtasks_detail(self) -> List[Dict[str, Any]]:
+        """Get detailed subtask list with states for Orchestrator context.
+
+        Returns serialized subtask info so the Orchestrator LLM can see
+        the full plan and produce valid replan requests.
+        """
+        details = []
+        for st in self._subtasks:
+            result_preview = None
+            if st.result:
+                result_preview = st.result[:200] + ("..." if len(st.result) > 200 else "")
+            details.append({
+                "id": st.id,
+                "content": st.content,
+                "agent_type": st.agent_type,
+                "state": st.state.value,
+                "depends_on": st.depends_on,
+                "result_preview": result_preview,
+            })
+        return details
+
+    def replan_subtasks(self, new_pending: List[AMISubtask]) -> Dict[str, Any]:
+        """Replace all PENDING subtasks with new ones.
+
+        Preserves DONE/RUNNING/FAILED subtasks. Validates dependency
+        integrity and ID uniqueness.
+
+        Args:
+            new_pending: New subtasks to replace existing PENDING ones.
+                         All must have state=PENDING.
+
+        Returns:
+            Dict with removed_count, added_count, kept_ids.
+
+        Raises:
+            ValueError: On dependency violation or ID collision.
+        """
+        kept = [s for s in self._subtasks if s.state != SubtaskState.PENDING]
+        kept_ids = {s.id for s in kept}
+        new_ids = {s.id for s in new_pending}
+
+        # Validate no ID collision with kept subtasks
+        collision = kept_ids & new_ids
+        if collision:
+            raise ValueError(
+                f"New subtask IDs collide with existing non-PENDING IDs: {collision}"
+            )
+
+        # Validate dependencies: each depends_on must reference kept_ids or new_ids
+        all_valid_ids = kept_ids | new_ids
+        for s in new_pending:
+            invalid_deps = set(s.depends_on) - all_valid_ids
+            if invalid_deps:
+                raise ValueError(
+                    f"Subtask '{s.id}' depends on non-existent IDs: {invalid_deps}. "
+                    f"Valid IDs: {sorted(all_valid_ids)}"
+                )
+
+        removed_count = len(self._subtasks) - len(kept)
+        added_count = len(new_pending)
+
+        self._subtasks = kept + list(new_pending)
+        self._subtask_map = {s.id: s for s in self._subtasks}
+
+        logger.info(
+            f"[AMITaskExecutor] Replanned: removed {removed_count} PENDING, "
+            f"added {added_count} new, kept {len(kept)} non-PENDING"
+        )
+
+        return {
+            "removed_count": removed_count,
+            "added_count": added_count,
+            "kept_ids": sorted(kept_ids),
+        }
 
     def get_results(self) -> Dict[str, Optional[str]]:
         """Get all subtask results."""

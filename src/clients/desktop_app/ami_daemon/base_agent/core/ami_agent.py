@@ -204,6 +204,16 @@ class AMIAgent:
         # Step counting
         self._step_count: int = 0
 
+        # Per-agent steering queue: messages injected via InjectMessageTool
+        # bypass the shared TaskState queue and go directly to this agent.
+        self._injected_steering_queue: asyncio.Queue = asyncio.Queue()
+
+        # When True, _check_steering_queue() only checks per-agent queue,
+        # never falls back to shared _user_message_queue. Must be set when
+        # agent runs under Persistent Orchestrator — the Orchestrator owns
+        # the shared queue and routes messages via inject_steering_message().
+        self._disable_shared_queue: bool = False
+
         # Early-stop flag: set by ReplanToolkit.replan_complete_and_handoff
         # to force astep() to stop after the current tool-call round.
         self._should_stop_after_tool: bool = False
@@ -413,11 +423,33 @@ class AMIAgent:
         """Update the task state for event emission."""
         self._task_state = task_state
 
-    def _check_steering_queue(self) -> Optional[str]:
-        """Non-blocking check for user steering messages in TaskState queue.
+    def inject_steering_message(self, message: str) -> None:
+        """Inject a steering message directly to this agent (non-blocking).
 
-        Returns the message if one is queued, None otherwise.
+        Used by InjectMessageTool to route messages to a specific child agent
+        without going through the shared TaskState queue.
         """
+        self._injected_steering_queue.put_nowait(message)
+
+    def _check_steering_queue(self) -> Optional[str]:
+        """Non-blocking check for steering messages.
+
+        Checks per-agent injected queue first.
+        If _disable_shared_queue is False, also falls back to shared TaskState queue.
+        When running under Persistent Orchestrator, _disable_shared_queue is True
+        so the Orchestrator exclusively owns the shared queue.
+        """
+        # Check per-agent injected queue first (from InjectMessageTool)
+        try:
+            return self._injected_steering_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            pass
+
+        # Skip shared queue if disabled (Persistent Orchestrator mode)
+        if self._disable_shared_queue:
+            return None
+
+        # Fallback to shared TaskState queue (legacy non-orchestrator mode)
         if not self._task_state:
             return None
         queue = getattr(self._task_state, "_user_message_queue", None)
@@ -1058,6 +1090,37 @@ class AMIAgent:
         self._messages.clear()
         self._step_count = 0
         self._should_stop_after_tool = False
+
+    def clone(self) -> "AMIAgent":
+        """Create a lightweight clone sharing provider and tools but with fresh state.
+
+        Used by Persistent Orchestrator to give each parallel executor its own
+        agent instance, avoiding conversation history and state corruption when
+        multiple executors use the same agent type simultaneously.
+
+        The clone shares:
+        - Provider (LLM client — stateless, thread-safe)
+        - Tools (bound methods on toolkit instances — stateless callables)
+        - System prompt, config (max_iterations, max_tokens, etc.)
+
+        The clone gets fresh:
+        - Conversation history (_messages)
+        - Step count, steering queue, control flags
+        """
+        new_agent = AMIAgent(
+            task_state=self._task_state,
+            agent_name=self.agent_name,
+            provider=self._provider,
+            system_prompt=self._system_prompt,
+            tools=list(self._tools.values()),
+            context_token_limit=self._context_token_limit,
+            max_iterations=self._max_iterations,
+            max_steps=self._max_steps,
+            max_tokens=self._max_tokens,
+            tool_result_max_chars=self._tool_result_max_chars,
+        )
+        new_agent._disable_shared_queue = self._disable_shared_queue
+        return new_agent
 
     def get_messages(self) -> List[Dict[str, Any]]:
         """Get current conversation messages."""

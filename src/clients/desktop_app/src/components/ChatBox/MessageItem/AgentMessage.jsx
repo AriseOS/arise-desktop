@@ -15,6 +15,7 @@ import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import Icon from '../../Icons';
 import FileAttachmentCard from './FileAttachmentCard';
+import { getAgentConfig } from '../../AgentNode/AgentNode';
 
 // Allow <details>/<summary> and list tags through sanitizer, block dangerous tags
 const sanitizeSchema = {
@@ -26,22 +27,13 @@ const sanitizeSchema = {
 };
 
 function AgentMessage({ message }) {
-  const { content, timestamp, step, attaches, attachments } = message;
+  const { content, timestamp, step, attaches, attachments, executorId, taskLabel, agentType } = message;
 
   // DS-11: Use new attachments field, fallback to legacy attaches
   const fileAttachments = attachments || attaches || [];
 
-  // DEBUG - Always log message info to trace the issue
-  console.log('[AgentMessage] Rendering message:', {
-    hasContent: !!content,
-    hasAttachments: !!attachments,
-    hasAttaches: !!attaches,
-    fileAttachmentsCount: fileAttachments.length,
-    step: step,
-  });
-  if (fileAttachments.length > 0) {
-    console.log('[AgentMessage] Attachments detail:', JSON.stringify(fileAttachments, null, 2));
-  }
+  // Get agent config for icon/color differentiation
+  const agentConfig = agentType ? getAgentConfig(agentType) : null;
 
   // Format timestamp
   const formatTime = (ts) => {
@@ -60,10 +52,31 @@ function AgentMessage({ message }) {
   return (
     <div className={`agent-message ${getMessageClass()}`}>
       <div className="message-header">
-        <div className="message-avatar agent-avatar">
-          <Icon name="bot" size={16} />
+        <div className="message-avatar agent-avatar"
+          style={agentConfig ? { background: agentConfig.bgColor } : undefined}
+        >
+          {agentConfig ? (
+            <span style={{ fontSize: '14px' }}>{agentConfig.icon}</span>
+          ) : (
+            <Icon name="bot" size={16} />
+          )}
         </div>
-        <span className="message-sender">Ami</span>
+        <span className="message-sender">{agentConfig ? agentConfig.name : 'Ami'}</span>
+        {(taskLabel || executorId) && (
+          <span className="executor-badge" style={{
+            fontSize: '11px',
+            padding: '1px 6px',
+            marginLeft: '6px',
+            borderRadius: '8px',
+            backgroundColor: agentConfig?.bgColor || 'var(--color-surface-subtle, #e8e8e8)',
+            color: agentConfig?.color || 'var(--color-text-secondary, #666)',
+            border: agentConfig ? `1px solid ${agentConfig.borderColor}` : 'none',
+          }}
+            title={executorId ? `Executor: ${executorId}` : ''}
+          >
+            {taskLabel || executorId}
+          </span>
+        )}
         {timestamp && (
           <span className="message-time">{formatTime(timestamp)}</span>
         )}
@@ -79,8 +92,6 @@ function AgentMessage({ message }) {
         {fileAttachments && fileAttachments.length > 0 && (
           <div className="message-attachments">
             {fileAttachments.map((file, index) => {
-              // Debug log for each file
-              console.log(`[AgentMessage] Rendering attachment ${index}:`, file);
               try {
                 // Check if it's new format (FileAttachment) or legacy format
                 if (file.file_path) {

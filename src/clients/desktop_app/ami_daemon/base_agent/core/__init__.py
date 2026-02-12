@@ -55,11 +55,16 @@ from .agent_factories import (
     summarize_subtasks_results,
 )
 
-# Orchestrator Agent (LLM-driven task classification)
+# Orchestrator Agent (Persistent session with parallel executors)
 from .orchestrator_agent import (
     create_orchestrator_agent,
-    run_orchestrator,
+    OrchestratorSession,
     DecomposeTaskTool,
+    AttachFileTool,
+    InjectMessageTool,
+    CancelTaskTool,
+    ReplanTaskTool,
+    ExecutorHandle,
 )
 
 __all__ = [
@@ -119,6 +124,11 @@ __all__ = [
 
     # Orchestrator Agent
     "create_orchestrator_agent",
-    "run_orchestrator",
+    "OrchestratorSession",
     "DecomposeTaskTool",
+    "AttachFileTool",
+    "InjectMessageTool",
+    "CancelTaskTool",
+    "ReplanTaskTool",
+    "ExecutorHandle",
 ]

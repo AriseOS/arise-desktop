@@ -226,6 +226,8 @@ class TaskDecomposedData(BaseActionData):
     summary_task: Optional[str] = None  # Main task summary
     original_task_id: Optional[str] = None
     total_subtasks: int = 0
+    executor_id: Optional[str] = None
+    task_label: Optional[str] = None
 
 
 class SubtaskStateData(BaseActionData):
@@ -236,6 +238,8 @@ class SubtaskStateData(BaseActionData):
     state: str  # OPEN, RUNNING, DONE, FAILED, DELETED, ABANDONED
     result: Optional[str] = None
     failure_count: int = 0
+    executor_id: Optional[str] = None
+    task_label: Optional[str] = None
 
 
 class TaskReplannedData(BaseActionData):
@@ -245,6 +249,8 @@ class TaskReplannedData(BaseActionData):
     subtasks: List[Dict]  # New subtask list
     original_task_id: Optional[str] = None
     reason: Optional[str] = None  # Why re-planned
+    executor_id: Optional[str] = None
+    task_label: Optional[str] = None
 
 
 class StreamingDecomposeData(BaseActionData):
@@ -278,6 +284,8 @@ class ActivateAgentData(BaseActionData):
     agent_id: Optional[str] = None
     process_task_id: Optional[str] = None
     message: Optional[str] = None
+    executor_id: Optional[str] = None
+    task_label: Optional[str] = None
 
 
 class DeactivateAgentData(BaseActionData):
@@ -290,6 +298,8 @@ class DeactivateAgentData(BaseActionData):
     message: Optional[str] = None
     tokens_used: Optional[int] = None
     duration_seconds: Optional[float] = None
+    executor_id: Optional[str] = None
+    task_label: Optional[str] = None
 
 
 class AgentThinkingData(BaseActionData):
@@ -528,6 +538,8 @@ class WaitConfirmData(BaseActionData):
     context: str = "initial"  # DS-10: 'initial' or 'mid_execution'
     # DS-11: Files created during task execution
     attachments: Optional[List[FileAttachment]] = None
+    executor_id: Optional[str] = None
+    task_label: Optional[str] = None
 
 
 class ConfirmedData(BaseActionData):
@@ -559,6 +571,9 @@ class AgentReportData(BaseActionData):
     action: Literal[Action.agent_report] = Action.agent_report
     message: str  # Human-readable report message
     report_type: str = "info"  # info, success, warning, error, thinking
+    agent_type: Optional[str] = None  # browser, document, code, multi_modal
+    executor_id: Optional[str] = None
+    task_label: Optional[str] = None
 
 
 # ===== Memory Events =====
@@ -646,6 +661,8 @@ class WorkforceStartedData(BaseActionData):
     total_tasks: int
     workers_count: int
     description: Optional[str] = None
+    executor_id: Optional[str] = None
+    task_label: Optional[str] = None
 
 
 class WorkforceCompletedData(BaseActionData):
@@ -656,6 +673,8 @@ class WorkforceCompletedData(BaseActionData):
     failed_count: int
     total_count: int
     duration_seconds: Optional[float] = None
+    executor_id: Optional[str] = None
+    task_label: Optional[str] = None
 
 
 class WorkforceStoppedData(BaseActionData):
@@ -665,6 +684,8 @@ class WorkforceStoppedData(BaseActionData):
     reason: Optional[str] = None
     completed_count: int = 0
     pending_count: int = 0
+    executor_id: Optional[str] = None
+    task_label: Optional[str] = None
 
 
 class WorkerAssignedData(BaseActionData):
@@ -675,6 +696,8 @@ class WorkerAssignedData(BaseActionData):
     worker_id: Optional[str] = None
     subtask_id: str
     subtask_content: str
+    executor_id: Optional[str] = None
+    task_label: Optional[str] = None
 
 
 class WorkerStartedData(BaseActionData):
@@ -684,6 +707,8 @@ class WorkerStartedData(BaseActionData):
     worker_name: str
     worker_id: Optional[str] = None
     subtask_id: str
+    executor_id: Optional[str] = None
+    task_label: Optional[str] = None
 
 
 class WorkerCompletedData(BaseActionData):
@@ -695,6 +720,8 @@ class WorkerCompletedData(BaseActionData):
     subtask_id: str
     result_preview: Optional[str] = None  # Truncated result
     duration_seconds: Optional[float] = None
+    executor_id: Optional[str] = None
+    task_label: Optional[str] = None
 
 
 class WorkerFailedData(BaseActionData):
@@ -707,6 +734,8 @@ class WorkerFailedData(BaseActionData):
     error: str
     failure_count: int = 0  # DS-7: Renamed from retry_count to match frontend
     will_retry: bool = False
+    executor_id: Optional[str] = None
+    task_label: Optional[str] = None
 
 
 class DynamicTasksAddedData(BaseActionData):
@@ -718,6 +747,8 @@ class DynamicTasksAddedData(BaseActionData):
     reason: Optional[str] = None
     total_tasks_now: int = 0
     total_tasks: int = 0  # DS-6: Alias for frontend compatibility
+    executor_id: Optional[str] = None
+    task_label: Optional[str] = None
 
 
 class AssignTaskData(BaseActionData):
@@ -742,6 +773,8 @@ class AssignTaskData(BaseActionData):
     # DS-2: Backward compatible aliases for frontend
     agent_id: Optional[str] = None  # Alias for assignee_id
     task_id: Optional[str] = None  # Alias for subtask_id (note: conflicts with base task_id)
+    executor_id: Optional[str] = None
+    task_label: Optional[str] = None
 
 
 # ===== Type Alias for All Action Data Types =====
