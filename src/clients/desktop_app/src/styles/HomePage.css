@@ -259,13 +259,44 @@
   animation: fadeIn 0.3s ease;
 }
 
+/* Agent messages: avatar + bubble, left-aligned */
+.home-page-v2 .message.agent .message-row,
+.home-page-v2 .message.ai .message-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+/* User messages: no avatar, right-aligned */
 .home-page-v2 .message.user {
   text-align: right;
 }
 
-.home-page-v2 .message.agent,
-.home-page-v2 .message.ai {
-  text-align: left;
+/* Avatars */
+.home-page-v2 .msg-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.home-page-v2 .msg-avatar.agent-avatar {
+  background: rgba(99, 102, 241, 0.1);
+  color: #6366F1;
+}
+
+.home-page-v2 .msg-avatar .avatar-emoji {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.home-page-v2 .message-body {
+  max-width: 85%;
+  min-width: 0;
 }
 
 .home-page-v2 .message-bubble {

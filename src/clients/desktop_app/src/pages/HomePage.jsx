@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import Icon from '../components/Icons';
+import { getAgentConfig } from '../components/AgentNode/AgentNode';
 
 // Allow <details>/<summary> and list tags through sanitizer, block dangerous tags
 const sanitizeSchema = {
@@ -110,6 +111,7 @@ function HomePage({ session, onNavigate, showStatus, version, initialMessage }) 
             attachments: msg.attachments || [],
             isContext: msg.is_context,
             reportType: msg.metadata?.reportType,
+            agentType: msg.metadata?.agentType,
           }));
 
           setSessionMessages(messages);
@@ -372,6 +374,9 @@ function HomePage({ session, onNavigate, showStatus, version, initialMessage }) 
     // Get report type for agent messages
     const reportType = message.reportType || 'info';
 
+    // Get agent config for avatar
+    const agentConfig = (isAgent || isAssistant) ? getAgentConfig(message.agentType) : null;
+
     // Format timestamp
     const timestamp = message.timestamp
       ? new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -380,35 +385,64 @@ function HomePage({ session, onNavigate, showStatus, version, initialMessage }) 
     // DS-11: Get file attachments
     const attachments = message.attachments || message.attaches || [];
 
-    return (
-      <div key={message.id || index} className={`message ${messageType} ${isAgent ? `report-${reportType}` : ''}`}>
-        <div className="message-bubble markdown-content">
-          {isUser ? (
-            message.content
-          ) : (
-            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]}>{message.content}</ReactMarkdown>
+    if (isUser) {
+      // User messages: simple right-aligned bubble, no avatar
+      return (
+        <div key={message.id || index} className="message user">
+          <div className="message-bubble">
+            {message.content}
+          </div>
+          {attachments.length > 0 && (
+            <div className="message-attachments">
+              {attachments.map((file, idx) => (
+                file.file_path ? (
+                  <FileAttachmentCard key={`file-${idx}`} file={file} />
+                ) : (
+                  <div key={`attach-${idx}`} className="attachment-item legacy">
+                    <Icon name="file" size={14} />
+                    <span>{file.fileName || file.name}</span>
+                  </div>
+                )
+              ))}
+            </div>
           )}
+          {timestamp && <div className="message-time">{timestamp}</div>}
         </div>
-        {/* DS-11: Render file attachments */}
-        {attachments.length > 0 && (
-          <div className="message-attachments">
-            {attachments.map((file, idx) => (
-              file.file_path ? (
-                <FileAttachmentCard key={`file-${idx}`} file={file} />
-              ) : (
-                <div key={`attach-${idx}`} className="attachment-item legacy">
-                  <Icon name="file" size={14} />
-                  <span>{file.fileName || file.name}</span>
-                </div>
-              )
-            ))}
+      );
+    }
+
+    // Agent/assistant messages: avatar on left + bubble
+    return (
+      <div key={message.id || index} className={`message agent ${isAgent ? `report-${reportType}` : ''}`}>
+        <div className="message-row">
+          <div className="msg-avatar agent-avatar" style={agentConfig ? { background: agentConfig.bgColor, color: agentConfig.color } : undefined}>
+            {agentConfig ? (
+              <span className="avatar-emoji">{agentConfig.icon}</span>
+            ) : (
+              <Icon name="bot" size={14} />
+            )}
           </div>
-        )}
-        {timestamp && (
-          <div className="message-time">
-            {timestamp}
+          <div className="message-body">
+            <div className="message-bubble markdown-content">
+              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]}>{message.content}</ReactMarkdown>
+            </div>
+            {attachments.length > 0 && (
+              <div className="message-attachments">
+                {attachments.map((file, idx) => (
+                  file.file_path ? (
+                    <FileAttachmentCard key={`file-${idx}`} file={file} />
+                  ) : (
+                    <div key={`attach-${idx}`} className="attachment-item legacy">
+                      <Icon name="file" size={14} />
+                      <span>{file.fileName || file.name}</span>
+                    </div>
+                  )
+                ))}
+              </div>
+            )}
+            {timestamp && <div className="message-time">{timestamp}</div>}
           </div>
-        )}
+        </div>
       </div>
     );
   };
