@@ -6,6 +6,7 @@ Provides rotating file handlers for system logs with the following features:
 - Separate error log file
 - JSON format for easy parsing
 - Console output for development
+- UTF-8 BOM for Windows compatibility
 
 Log separation principle:
 - System logs (app.log): App startup/shutdown, service status, config loading, network
@@ -19,6 +20,55 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any
+
+# UTF-8 BOM bytes
+_UTF8_BOM = b"\xef\xbb\xbf"
+
+
+class _BomRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """RotatingFileHandler that writes UTF-8 BOM at the start of each new log file.
+
+    On Windows, text editors (Notepad, VS Code, etc.) default to the system
+    encoding (GBK for Chinese locale) when opening files without a BOM.
+    Writing the BOM ensures these editors auto-detect UTF-8.
+
+    Unlike using encoding="utf-8-sig", this approach writes the BOM only once
+    at the true start of each file, not on every stream open (which would
+    insert spurious BOMs in the middle of appended files).
+    """
+
+    def __init__(self, filename, **kwargs):
+        kwargs.setdefault("encoding", "utf-8")
+        super().__init__(filename, **kwargs)
+        self._ensure_bom()
+
+    def _ensure_bom(self):
+        """Write UTF-8 BOM if the file doesn't already start with one."""
+        path = Path(self.baseFilename)
+        if not path.exists():
+            return
+        size = path.stat().st_size
+        if size == 0:
+            # Empty file: write BOM
+            self._prepend_bom(path)
+        elif size >= 3:
+            # Check if BOM already present
+            with open(path, "rb") as f:
+                if f.read(3) != _UTF8_BOM:
+                    return  # Non-empty file without BOM: don't corrupt existing data
+
+    def _prepend_bom(self, path: Path):
+        """Write BOM to an empty file by closing stream, writing BOM, and reopening."""
+        if self.stream:
+            self.stream.close()
+        with open(path, "wb") as f:
+            f.write(_UTF8_BOM)
+        self.stream = self._open()
+
+    def doRollover(self):
+        """Override to write BOM at the start of each new rotated file."""
+        super().doRollover()
+        self._ensure_bom()
 
 
 class JsonFormatter(logging.Formatter):
@@ -120,11 +170,10 @@ def setup_logging(
 
     # Main app log - rotating file handler with JSON format
     app_log_file = log_dir / "app.log"
-    app_handler = logging.handlers.RotatingFileHandler(
+    app_handler = _BomRotatingFileHandler(
         filename=app_log_file,
         maxBytes=max_bytes,
         backupCount=backup_count,
-        encoding="utf-8",
     )
     app_handler.setLevel(file_level)
     app_handler.setFormatter(JsonFormatter())
@@ -132,11 +181,10 @@ def setup_logging(
 
     # Error log - only WARNING and above
     error_log_file = log_dir / "error.log"
-    error_handler = logging.handlers.RotatingFileHandler(
+    error_handler = _BomRotatingFileHandler(
         filename=error_log_file,
         maxBytes=max_bytes,
         backupCount=backup_count,
-        encoding="utf-8",
     )
     error_handler.setLevel(logging.WARNING)
     error_handler.setFormatter(JsonFormatter())

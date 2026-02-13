@@ -15,10 +15,12 @@ Event emission:
 """
 
 import asyncio
+import locale
 import logging
 import os
 import shlex
 import subprocess
+import sys
 from pathlib import Path
 from typing import List, Optional
 
@@ -215,6 +217,11 @@ class TerminalToolkit(BaseToolkit):
 
         try:
             # Execute the command
+            # On non-Windows: set LC_ALL=C.UTF-8 so subprocess outputs UTF-8
+            # On Windows: LC_ALL has no effect; use system encoding for text decoding
+            env = {**os.environ}
+            if sys.platform != "win32":
+                env["LC_ALL"] = "C.UTF-8"
             result = subprocess.run(
                 command,
                 shell=True,
@@ -222,7 +229,9 @@ class TerminalToolkit(BaseToolkit):
                 capture_output=True,
                 text=True,
                 timeout=effective_timeout,
-                env={**os.environ, "LC_ALL": "C.UTF-8"},
+                env=env,
+                encoding="utf-8" if sys.platform != "win32" else locale.getpreferredencoding(False),
+                errors="replace",
             )
 
             # Combine stdout and stderr
@@ -295,12 +304,15 @@ class TerminalToolkit(BaseToolkit):
         logger.info(f"Executing async command: {command[:100]}{'...' if len(command) > 100 else ''}")
 
         try:
+            env = {**os.environ}
+            if sys.platform != "win32":
+                env["LC_ALL"] = "C.UTF-8"
             process = await asyncio.create_subprocess_shell(
                 command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(self._working_directory),
-                env={**os.environ, "LC_ALL": "C.UTF-8"},
+                env=env,
             )
 
             try:
@@ -314,13 +326,16 @@ class TerminalToolkit(BaseToolkit):
                 return f"Command timed out after {effective_timeout} seconds"
 
             # Combine output
+            # On Windows, subprocess output uses system encoding (e.g. GBK)
+            # unless the process explicitly outputs UTF-8
+            _encoding = "utf-8" if sys.platform != "win32" else locale.getpreferredencoding(False)
             output = ""
             if stdout:
-                output += stdout.decode("utf-8", errors="replace")
+                output += stdout.decode(_encoding, errors="replace")
             if stderr:
                 if output:
                     output += "\n--- stderr ---\n"
-                output += stderr.decode("utf-8", errors="replace")
+                output += stderr.decode(_encoding, errors="replace")
 
             if process.returncode != 0:
                 output += f"\n[Exit code: {process.returncode}]"

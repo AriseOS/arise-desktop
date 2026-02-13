@@ -107,6 +107,24 @@ a = Analysis(
 
         # File sync utilities
         'pathspec',
+
+        # Document generation (lazy imports in file_toolkit)
+        'reportlab',
+        'reportlab.lib',
+        'reportlab.pdfbase',
+        'reportlab.platypus',
+        'docx',
+        'markdown',
+        'pypdf',
+        'bs4',
+        'lxml',
+
+        # Office toolkits (lazy imports in excel_toolkit, pptx_toolkit)
+        'openpyxl',
+        'pptx',
+
+        # Document conversion (lazy import in markitdown_toolkit)
+        'markitdown',
     ],
     hookspath=[],
     hooksconfig={},
@@ -143,6 +161,20 @@ a = Analysis(
 
         # Claude Code SDK (no longer used)
         'claude_agent_sdk',
+
+        # Google API (not used by daemon, 91MB discovery_cache)
+        'googleapiclient',
+        'google.api_core',
+        'google.auth',
+        'google_auth_oauthlib',
+        'google_auth_httplib2',
+        'httplib2',
+
+        # Cloud/memory-only packages (not needed by daemon)
+        'surrealdb',
+        'neo4j',
+        'networkx',
+
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,

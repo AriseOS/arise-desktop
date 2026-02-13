@@ -1,6 +1,6 @@
 # App Version
 app:
-  version: "0.2.0"
+  version: "0.2.3"
 
 # Daemon HTTP Server Configuration
 daemon:
@@ -37,7 +37,7 @@ browser:
 llm:
   provider: anthropic  # openai or anthropic
   # model: claude-sonnet-4-5-20250929 # Model name
-  model: glm-5
+  model: Kimi
   # Use CRS (Claude Relay Service) for all LLM calls
   # Migration: Changed from old API Proxy to CRS
   use_proxy: true
