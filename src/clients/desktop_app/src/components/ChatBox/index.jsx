@@ -99,7 +99,7 @@ function getBottomBoxState(task) {
  * @param {Object} props
  * @param {Array} props.messages - Chat messages
  * @param {Array} props.notices - Notice cards
- * @param {Object} props.task - Current task state from chatStore
+ * @param {Object} props.task - Current task state from agentStore
  * @param {function} props.onSendMessage - Send message callback
  * @param {string} props.inputValue - Current input value
  * @param {function} props.onInputChange - Input change callback

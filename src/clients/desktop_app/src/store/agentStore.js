@@ -1,7 +1,6 @@
 /**
  * Agent Store - Task management using Zustand
  *
- * Inspired by Eigent's chatStore pattern for managing multiple concurrent tasks.
  * Each task has its own state including messages, agents, progress, etc.
  */
 
@@ -168,7 +167,6 @@ const createInitialTaskState = (taskDescription = '', type = 'normal') => ({
  * Agent Store
  *
  * Manages multiple tasks with their individual states.
- * Similar to Eigent's chatStore pattern.
  */
 export const useAgentStore = create((set, get) => ({
   // Active task tracking
