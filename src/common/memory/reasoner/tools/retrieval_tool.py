@@ -72,7 +72,7 @@ class RetrievalTool(TaskTool):
         max_depth = params.get("max_depth", self.max_depth)
 
         # Step a: Find initial states using embedding
-        initial_states = self._find_states_by_embedding(target, top_k)
+        initial_states = await self._find_states_by_embedding(target, top_k)
 
         if not initial_states:
             return ToolResult(False, states=[], actions=[], reasoning="No states found in memory",
@@ -95,11 +95,11 @@ class RetrievalTool(TaskTool):
         result = await self._explore_neighbors(target, best_state, max_depth)
         return result
 
-    def _find_states_by_embedding(self, target: str, top_k: int = 10) -> List[State]:
+    async def _find_states_by_embedding(self, target: str, top_k: int = 10) -> List[State]:
         """Find states using embedding similarity."""
         if self.embedding_service:
             try:
-                query_embedding = self.embedding_service.encode(target)
+                query_embedding = await self.embedding_service.encode_async(target)
                 results = self.memory.state_manager.search_states_by_embedding(
                     query_embedding, top_k=top_k
                 )

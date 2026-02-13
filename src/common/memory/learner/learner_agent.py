@@ -118,7 +118,7 @@ class LearnerAgent:
         phrase_ids = []
         for candidate in learning_plan.phrase_candidates:
             if candidate.should_create:
-                pid = self._create_phrase(candidate)
+                pid = await self._create_phrase(candidate)
                 if pid:
                     phrase_ids.append(pid)
 
@@ -300,7 +300,7 @@ class LearnerAgent:
             reason=reason,
         )
 
-    def _create_phrase(self, candidate: PhraseCandidate) -> Optional[str]:
+    async def _create_phrase(self, candidate: PhraseCandidate) -> Optional[str]:
         """Create a CognitivePhrase from a phrase candidate.
 
         This is code logic (not LLM), responsible for:
@@ -393,7 +393,7 @@ class LearnerAgent:
         embedding_text = candidate.description[:280] if candidate.description else (candidate.label[:120] if candidate.label else "")
         if self._embedding_service and embedding_text:
             try:
-                embedding = self._embedding_service.embed(embedding_text)
+                embedding = await self._embedding_service.embed_async(embedding_text)
                 if embedding:
                     phrase.embedding_vector = embedding
             except Exception as e:

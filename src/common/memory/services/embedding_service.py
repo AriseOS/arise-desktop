@@ -151,6 +151,10 @@ class EmbeddingService:
         """
         return self.embed(text, **kwargs)
 
+    async def encode_async(self, text: str, **kwargs: Any) -> Optional[List[float]]:
+        """Async alias for embed_async() - for compatibility with Reasoner interface."""
+        return await self.embed_async(text, **kwargs)
+
     def embed_batch(self, texts: List[str], **kwargs: Any) -> Optional[List[List[float]]]:
         """Generate embeddings for multiple texts.
 

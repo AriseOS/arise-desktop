@@ -2367,7 +2367,7 @@ JSON:"""
         embedding_text = self._get_phrase_embedding_text(phrase)
         if self.embedding_service and embedding_text:
             try:
-                embedding = self.embedding_service.embed(embedding_text)
+                embedding = await self.embedding_service.embed_async(embedding_text)
                 if embedding:
                     phrase.embedding_vector = embedding
             except Exception as e:

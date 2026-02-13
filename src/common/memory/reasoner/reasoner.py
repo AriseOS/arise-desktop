@@ -1131,7 +1131,7 @@ class Reasoner:
         memory = memory or self.memory
 
         try:
-            query_vector = self.embedding_service.encode(target)
+            query_vector = await self.embedding_service.encode_async(target)
             if not query_vector:
                 logger.info("[L2] Empty embedding for target, skip planning")
                 return None
@@ -2047,7 +2047,7 @@ class Reasoner:
 
         # Gather sequences from both memories
         all_sequences: List[IntentSequence] = []
-        query_vector = self.embedding_service.encode(target) if self.embedding_service else None
+        query_vector = await self.embedding_service.encode_async(target) if self.embedding_service else None
 
         for mem in self._active_memories():
             state_id = await self._resolve_state_id(current_state, memory=mem)
@@ -2195,9 +2195,9 @@ class Reasoner:
             return None
 
         try:
-            query_vector = self.embedding_service.encode(state_ref)
+            query_vector = await self.embedding_service.encode_async(state_ref)
             if query_vector is None:
-                logger.error("[_resolve_state_id] encode() returned None")
+                logger.error("[_resolve_state_id] encode_async() returned None")
                 return None
 
             results = memory.state_manager.search_states_by_embedding(

@@ -5,6 +5,7 @@ This module provides a local implementation of text embeddings using the BGE
 Uses sentence-transformers for efficient local embedding generation.
 """
 
+import asyncio
 import warnings
 from typing import Any, List, Optional
 
@@ -200,8 +201,7 @@ class LocalBGEModel(EmbeddingModel):
     async def embed_async(self, text: str, **kwargs: Any) -> EmbeddingResponse:
         """Generates an embedding for a single text input (async).
 
-        Note: Currently wraps the synchronous method. For true async support,
-        consider using a thread pool executor in production.
+        Runs synchronous model inference in a thread to avoid blocking the event loop.
 
         Args:
             text: Input text to embed.
@@ -210,17 +210,14 @@ class LocalBGEModel(EmbeddingModel):
         Returns:
             EmbeddingResponse containing the embedding vector.
         """
-        # For now, just call synchronous version
-        # TODO: Implement true async using asyncio.to_thread or similar
-        return self.embed(text, **kwargs)
+        return await asyncio.to_thread(self.embed, text, **kwargs)
 
     async def embed_batch_async(
         self, texts: List[str], **kwargs: Any
     ) -> List[EmbeddingResponse]:
         """Generates embeddings for multiple text inputs (async).
 
-        Note: Currently wraps the synchronous method. For true async support,
-        consider using a thread pool executor in production.
+        Runs synchronous model inference in a thread to avoid blocking the event loop.
 
         Args:
             texts: List of input texts to embed.
@@ -229,9 +226,7 @@ class LocalBGEModel(EmbeddingModel):
         Returns:
             List of EmbeddingResponse objects, one per input text.
         """
-        # For now, just call synchronous version
-        # TODO: Implement true async using asyncio.to_thread or similar
-        return self.embed_batch(texts, **kwargs)
+        return await asyncio.to_thread(self.embed_batch, texts, **kwargs)
 
     def check_config(self) -> bool:
         """Validates the model configuration.

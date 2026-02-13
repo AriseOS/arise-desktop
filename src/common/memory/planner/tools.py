@@ -51,7 +51,7 @@ class PlannerTools:
             top_k: Number of results to return, default 5
         """
         try:
-            vector = self.embedding_service.encode(query)
+            vector = await self.embedding_service.encode_async(query)
         except Exception as e:
             logger.error(f"Embedding failed for recall_phrases: {e}")
             return json.dumps({"phrases": [], "error": f"Embedding failed: {e}"})
@@ -266,7 +266,7 @@ class PlannerTools:
             top_k: Number of results to return, default 10
         """
         try:
-            vector = self.embedding_service.encode(query)
+            vector = await self.embedding_service.encode_async(query)
         except Exception as e:
             logger.error(f"Embedding failed for search_states: {e}")
             return json.dumps({"states": [], "error": f"Embedding failed: {e}"})
@@ -327,7 +327,7 @@ class PlannerTools:
             max_depth: Maximum BFS depth for path finding, default 5
         """
         try:
-            vector = self.embedding_service.encode(query)
+            vector = await self.embedding_service.encode_async(query)
         except Exception as e:
             logger.error(f"Embedding failed for explore_graph: {e}")
             return json.dumps({"error": f"Embedding failed: {e}", "paths": []})
