@@ -82,9 +82,12 @@ class ActionExecutor:
                 }
 
             result = await handler(action)
+            # Detect handlers that return error messages without raising
+            msg = result.get("message", "")
+            is_error = msg.startswith("Error:") or msg.startswith("Action failed:")
             return {
-                "success": True,
-                "message": result["message"],
+                "success": not is_error,
+                "message": msg,
                 "details": result.get("details", {}),
             }
         except Exception as exc:
@@ -492,7 +495,11 @@ class ActionExecutor:
         }
 
     async def _mouse_control(self, action: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle mouse_control action based on the coordinates"""
+        """Handle mouse_control action based on the coordinates.
+
+        Uses JS-level elementFromPoint + dispatchEvent instead of CDP Input
+        events, because off-screen WebContentsView doesn't support CDP mouse input.
+        """
         control = action.get("control", "click")
         x_coord = action.get("x", 0)
         y_coord = action.get("y", 0)
@@ -507,16 +514,60 @@ class ActionExecutor:
                     "Invalid coordinates, outside viewport bounds :"
                     f"({x_coord}, {y_coord})"
                 )
+
             if control == "click":
-                await self.page.mouse.click(x_coord, y_coord)
+                found = await self.page.evaluate(
+                    """([x, y]) => {
+                        const el = document.elementFromPoint(x, y);
+                        if (!el) return false;
+                        const opts = {bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0};
+                        el.dispatchEvent(new MouseEvent('mousedown', opts));
+                        el.dispatchEvent(new MouseEvent('mouseup', opts));
+                        el.dispatchEvent(new MouseEvent('click', opts));
+                        if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable) el.focus();
+                        return true;
+                    }""",
+                    [x_coord, y_coord],
+                )
+                if not found:
+                    raise ValueError(f"No element found at coordinates ({x_coord}, {y_coord})")
                 message = "Action 'click' performed on the target"
             elif control == "right_click":
-                await self.page.mouse.click(
-                    x_coord, y_coord, button="right"
+                found = await self.page.evaluate(
+                    """([x, y]) => {
+                        const el = document.elementFromPoint(x, y);
+                        if (!el) return false;
+                        const opts = {bubbles: true, cancelable: true, clientX: x, clientY: y, button: 2};
+                        el.dispatchEvent(new MouseEvent('mousedown', opts));
+                        el.dispatchEvent(new MouseEvent('mouseup', opts));
+                        el.dispatchEvent(new MouseEvent('contextmenu', opts));
+                        return true;
+                    }""",
+                    [x_coord, y_coord],
                 )
+                if not found:
+                    raise ValueError(f"No element found at coordinates ({x_coord}, {y_coord})")
                 message = "Action 'right_click' performed on the target"
             elif control == "dblclick":
-                await self.page.mouse.dblclick(x_coord, y_coord)
+                found = await self.page.evaluate(
+                    """([x, y]) => {
+                        const el = document.elementFromPoint(x, y);
+                        if (!el) return false;
+                        const opts = {bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0};
+                        el.dispatchEvent(new MouseEvent('mousedown', opts));
+                        el.dispatchEvent(new MouseEvent('mouseup', opts));
+                        el.dispatchEvent(new MouseEvent('click', opts));
+                        el.dispatchEvent(new MouseEvent('mousedown', opts));
+                        el.dispatchEvent(new MouseEvent('mouseup', opts));
+                        el.dispatchEvent(new MouseEvent('click', opts));
+                        el.dispatchEvent(new MouseEvent('dblclick', opts));
+                        if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable) el.focus();
+                        return true;
+                    }""",
+                    [x_coord, y_coord],
+                )
+                if not found:
+                    raise ValueError(f"No element found at coordinates ({x_coord}, {y_coord})")
                 message = "Action 'dblclick' performed on the target"
             else:
                 return {
@@ -595,12 +646,30 @@ class ActionExecutor:
                 }
             )
 
-            # Perform the drag operation
-            await self.page.mouse.move(from_x, from_y)
-            await self.page.mouse.down()
-            # Destination coordinates
-            await self.page.mouse.move(to_x, to_y)
-            await self.page.mouse.up()
+            # Perform drag via JS events (CDP Input events don't work off-screen)
+            drag_success = await self.page.evaluate(
+                """([fromX, fromY, toX, toY]) => {
+                    const fromEl = document.elementFromPoint(fromX, fromY);
+                    const toEl = document.elementFromPoint(toX, toY);
+                    if (!fromEl) return false;
+                    const dt = new DataTransfer();
+                    const common = {bubbles: true, cancelable: true, button: 0, dataTransfer: dt};
+                    fromEl.dispatchEvent(new MouseEvent('mousedown', {...common, clientX: fromX, clientY: fromY}));
+                    fromEl.dispatchEvent(new DragEvent('dragstart', {...common, clientX: fromX, clientY: fromY}));
+                    const moveTarget = toEl || fromEl;
+                    moveTarget.dispatchEvent(new DragEvent('dragover', {...common, clientX: toX, clientY: toY}));
+                    moveTarget.dispatchEvent(new DragEvent('drop', {...common, clientX: toX, clientY: toY}));
+                    moveTarget.dispatchEvent(new MouseEvent('mouseup', {...common, clientX: toX, clientY: toY}));
+                    fromEl.dispatchEvent(new DragEvent('dragend', {...common, clientX: toX, clientY: toY}));
+                    return true;
+                }""",
+                [from_x, from_y, to_x, to_y],
+            )
+
+            if not drag_success:
+                raise ValueError(
+                    f"No element found at source coordinates ({from_x}, {from_y})"
+                )
 
             return {
                 "message": (
@@ -722,5 +791,8 @@ class ActionExecutor:
             "enter",
             "back",
             "forward",
+            "mouse_control",
+            "mouse_drag",
+            "press_key",
         }
         return action.get("type") in change_types

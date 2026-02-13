@@ -157,8 +157,7 @@ Ported from CAMEL-AI/Eigent project for LLM-friendly browser automation.
 |------|---------|
 | `page_snapshot.py` | DOM → YAML-like text snapshot with `[ref=eN]` element references |
 | `action_executor.py` | Execute browser actions (click, type, scroll, etc.) |
-| `browser_session.py` | Multi-tab browser session management (singleton pattern) |
-| `browser_launcher.py` | Subprocess-based Chrome launch with CDP (anti-detection) |
+| `browser_session.py` | Multi-tab browser session management (Electron CDP connection) |
 | `behavior_recorder.py` | User behavior recording for HybridBrowserSession |
 | `config_loader.py` | Browser config and timeout settings |
 | `unified_analyzer.js` | JS script for DOM analysis and element ref assignment |

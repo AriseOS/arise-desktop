@@ -132,10 +132,14 @@ class RecordingService:
             self._is_recording = True
             self._notify_status_change("recording")
 
+            # Extract webview_id for frontend embedded browser display
+            webview_id = getattr(self._browser_session, 'webview_id', None)
+
             return {
                 "session_id": self.current_session_id,
                 "status": "recording",
                 "url": url,
+                "webview_id": webview_id,
             }
 
         except Exception as e:

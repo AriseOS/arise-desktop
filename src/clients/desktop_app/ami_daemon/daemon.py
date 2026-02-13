@@ -76,8 +76,7 @@ from src.clients.desktop_app.ami_daemon.routers.session import router as session
 # Load configuration first (needed for logging setup)
 config = get_config()
 
-# Set CAMEL_WORKDIR from config to prevent context files from being written in src-tauri/
-# This avoids Tauri dev mode triggering rebuild when agent writes files
+# Set CAMEL_WORKDIR from config to prevent context files from being written in the app directory
 _camel_workdir = config.get("camel.workdir")
 if _camel_workdir:
     Path(_camel_workdir).mkdir(parents=True, exist_ok=True)
@@ -96,6 +95,11 @@ log_dir = setup_logging(
 )
 logger = logging.getLogger(__name__)
 logger.info("App Backend daemon starting")
+
+# Browser CDP port (set by Electron via env var)
+BROWSER_CDP_PORT = os.environ.get('BROWSER_CDP_PORT')
+if BROWSER_CDP_PORT:
+    logger.info(f"Browser CDP port from Electron: {BROWSER_CDP_PORT}")
 
 # Global service instances
 storage_manager = StorageManager(config.get("storage.base_path"))
@@ -207,7 +211,7 @@ async def lifespan(app: FastAPI):
     - On startup: Initialize all services
     - On shutdown: Cleanup all resources (triggered by SIGTERM/SIGINT)
     """
-    global browser_manager, workflow_executor, history_manager, cdp_recorder, recording_service, replay_service, cloud_client, version_check_result
+    global browser_manager, recording_service, replay_service, cloud_client, version_check_result
 
     # ========== STARTUP ==========
     logger.info("=" * 60)
@@ -334,12 +338,14 @@ class StartRecordingResponse(BaseModel):
     session_id: str
     status: str
     url: str
+    webview_id: Optional[str] = None
 
 
 class StopRecordingResponse(BaseModel):
     session_id: str
     operations_count: int
     local_file_path: str
+    snapshot_count: Optional[int] = None
 
 
 class CurrentOperationsResponse(BaseModel):
@@ -674,7 +680,7 @@ async def upload_diagnostic(data: dict = None):
 async def shutdown_app():
     """Graceful shutdown endpoint for cross-platform process termination.
 
-    This endpoint is called by the Tauri app (especially on Windows) to trigger
+    This endpoint is called by the Electron app (especially on Windows) to trigger
     a graceful shutdown of the daemon. It ensures all resources are properly
     cleaned up before the process exits.
 
@@ -717,55 +723,8 @@ async def shutdown_app():
 # Browser Control APIs
 # ============================================================================
 
-@app.post("/api/v1/browser/start")
-async def start_browser(headless: bool = False):
-    """Start browser on demand
-
-    Args:
-        headless: Whether to run in headless mode (default: False)
-
-    Returns:
-        Browser status including PID and state
-    """
-    try:
-        if not browser_manager:
-            raise HTTPException(status_code=500, detail="Browser manager not initialized")
-
-        logger.info(f"API: Starting browser (headless={headless})")
-        result = await browser_manager.start_browser(headless=headless)
-
-        return result
-
-    except RuntimeError as e:
-        logger.error(f"Failed to start browser: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        logger.error(f"Unexpected error starting browser: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/v1/browser/stop")
-async def stop_browser():
-    """Stop browser gracefully
-
-    Returns:
-        Browser status
-    """
-    try:
-        if not browser_manager:
-            raise HTTPException(status_code=500, detail="Browser manager not initialized")
-
-        logger.info("API: Stopping browser")
-        result = await browser_manager.stop_browser()
-
-        return result
-
-    except RuntimeError as e:
-        logger.error(f"Failed to stop browser: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        logger.error(f"Unexpected error stopping browser: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+# Browser start/stop endpoints removed — Electron IS the browser.
+# Browser is always available via CDP at BROWSER_CDP_PORT.
 
 
 @app.get("/api/v1/browser/status")
@@ -1952,7 +1911,7 @@ async def cleanup_resources():
     """Cleanup all resources before shutdown
 
     This function is called by the lifespan shutdown context manager
-    when uvicorn receives SIGTERM/SIGINT from the parent process (Tauri).
+    when uvicorn receives SIGTERM/SIGINT from the parent process (Electron).
     """
     global browser_manager
     global recording_service, cloud_client
@@ -1996,19 +1955,12 @@ async def cleanup_resources():
         # 4. Stop legacy browser manager
         if browser_manager:
             try:
-                # Check if there are any managed sessions
-                browser_status = browser_manager.get_status()
-                total_sessions = browser_status.get('total_sessions', 0)
-
-                if total_sessions > 0:
-                    logger.info(f"Stopping browser manager ({total_sessions} sessions)...")
-                    await asyncio.wait_for(
-                        browser_manager.cleanup(),
-                        timeout=5.0
-                    )
-                    logger.info("✓ Browser manager stopped, all sessions closed")
-                else:
-                    logger.info("✓ No active browser sessions")
+                logger.info("Cleaning up browser manager...")
+                await asyncio.wait_for(
+                    browser_manager.cleanup(),
+                    timeout=5.0
+                )
+                logger.info("✓ Browser manager cleanup complete")
             except asyncio.TimeoutError:
                 logger.error("⚠️  Browser manager cleanup timeout")
                 cleanup_errors.append("Browser manager: timeout")

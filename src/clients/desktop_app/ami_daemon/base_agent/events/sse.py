@@ -319,6 +319,7 @@ class SSEEmitter:
         page_url: Optional[str] = None,
         page_title: Optional[str] = None,
         screenshot_url: Optional[str] = None,
+        webview_id: Optional[str] = None,
     ) -> None:
         """Emit browser action event."""
         await self.emit(BrowserActionData(
@@ -329,6 +330,7 @@ class SSEEmitter:
             page_url=page_url,
             page_title=page_title,
             screenshot_url=screenshot_url,
+            webview_id=webview_id,
             task_id=self._task_id,
         ))
 

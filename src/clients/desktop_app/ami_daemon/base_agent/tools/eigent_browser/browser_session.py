@@ -14,15 +14,12 @@ Ported from CAMEL-AI/Eigent project.
 from __future__ import annotations
 
 import asyncio
-import json
-import re
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Optional, Tuple
 
-import aiohttp
 import logging
 
 from .action_executor import ActionExecutor
@@ -41,7 +38,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Lock file name
-LOCK_FILE_NAME = "ami_browser.lock"
 
 # Tab Group colors
 TAB_GROUP_COLORS = ["blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange", "grey"]
@@ -115,27 +111,15 @@ class HybridBrowserSession:
     # Class-level stealth config cache (avoids re-computing per instance)
     _stealth_config_cache: ClassVar[Optional[Dict[str, Any]]] = None
 
-    # === Class-level: Daemon lifecycle management ===
+    # === Class-level: Daemon session (Electron CDP) ===
     _daemon_session: ClassVar[Optional["HybridBrowserSession"]] = None
-    _health_check_task: ClassVar[Optional[asyncio.Task]] = None
-    _auto_restart: ClassVar[bool] = True
-    _health_check_interval: ClassVar[int] = 5  # seconds
-    _restart_delay: ClassVar[float] = 1.0  # seconds
-    _close_on_daemon_exit: ClassVar[bool] = True
     _daemon_config: ClassVar[Optional[Dict[str, Any]]] = None
-    _browser_pid: ClassVar[Optional[int]] = None
-    _cdp_url: ClassVar[Optional[str]] = None
-    _ami_dir: ClassVar[Path] = Path.home() / ".ami"
-
-    # Bug #18 fix: Restart retry tracking
-    _restart_attempts: ClassVar[int] = 0
-    _max_restart_attempts: ClassVar[int] = 5
-    _max_restart_delay: ClassVar[float] = 30.0  # Max delay with exponential backoff
 
     # Shared browser resources for non-daemon mode
-    # When no daemon exists, the first session to launch a browser becomes the "primary"
-    # and other sessions can reuse its browser resources
     _primary_session: ClassVar[Optional["HybridBrowserSession"]] = None
+
+    # Lock to prevent two sessions from claiming the same pool page concurrently
+    _pool_claim_lock: ClassVar[asyncio.Lock] = asyncio.Lock()
 
     _initialized: bool
     _creation_params: Dict[str, Any]
@@ -275,8 +259,6 @@ class HybridBrowserSession:
         self._browser: Optional[Browser] = None
         self._context: Optional[BrowserContext] = None
         self._page: Optional[Page] = None
-        self._browser_launcher: Optional[Any] = None
-
         # Dictionary-based tab management with monotonic IDs
         self._pages: Dict[str, Page] = {}
         self._console_logs: Dict[str, Any] = {}
@@ -286,9 +268,15 @@ class HybridBrowserSession:
         self.snapshot: Optional[PageSnapshot] = None
         self.executor: Optional[ActionExecutor] = None
 
+        # Background tasks set to prevent GC of fire-and-forget tasks
+        self._background_tasks: set = set()
+
         # Tab Group management (V3)
         self._tab_groups: Dict[str, TabGroup] = {}
         self._color_index: int = 0
+
+        # WebView ID mapping: page object id → Electron view ID ("0"-"7")
+        self._page_to_view_id: Dict[int, str] = {}
 
         self._ensure_lock: asyncio.Lock = asyncio.Lock()
 
@@ -300,43 +288,14 @@ class HybridBrowserSession:
                 self.__class__._stealth_config_cache = ConfigLoader.get_browser_config().get_stealth_config()
             self._stealth_config = self.__class__._stealth_config_cache
 
-    def _find_chrome_executable(self) -> Optional[str]:
-        """Find system Chrome executable path.
+    @property
+    def webview_id(self) -> Optional[str]:
+        """Return the Electron WebContentsView ID for the primary page.
 
-        Returns path to Chrome or None if not found.
-        Priority: System Chrome > Playwright bundled Chromium
+        Returns "0"-"7" or None if the page wasn't claimed from the pool.
         """
-        import platform
-        import os
-
-        system = platform.system()
-
-        if system == "Darwin":  # macOS
-            paths = [
-                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-                os.path.expanduser("~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
-            ]
-        elif system == "Windows":
-            paths = [
-                "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-                "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-                os.path.expandvars("%LOCALAPPDATA%\\Google\\Chrome\\Application\\chrome.exe"),
-            ]
-        else:  # Linux
-            paths = [
-                "/usr/bin/google-chrome",
-                "/usr/bin/google-chrome-stable",
-                "/usr/bin/chromium",
-                "/usr/bin/chromium-browser",
-            ]
-
-        for path in paths:
-            if os.path.exists(path):
-                logger.info(f"Found system Chrome: {path}")
-                return path
-
-        # Fallback: let Playwright use its bundled Chromium
-        logger.warning("System Chrome not found, will use Playwright bundled Chromium")
+        if self._page is not None:
+            return self._page_to_view_id.get(id(self._page))
         return None
 
     # ------------------------------------------------------------------
@@ -350,7 +309,7 @@ class HybridBrowserSession:
             raise RuntimeError("Browser context is not available")
 
         tab_id = await TabIdGenerator.generate_tab_id()
-        new_page = await self._context.new_page()
+        new_page = await self._claim_pool_page()
         await self._register_new_page(tab_id, new_page)
 
         if url:
@@ -424,6 +383,8 @@ class HybridBrowserSession:
                 logger.error(f"[PAGE EVENT] Unhandled exception in page registration: {exc}")
 
         task = asyncio.create_task(register())
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
         task.add_done_callback(handle_task_exception)
 
     async def register_page(self, new_page: "Page") -> str:
@@ -470,10 +431,27 @@ class HybridBrowserSession:
             logger.warning(f"Error switching to tab {tab_id}: {e}")
             return False
 
+    async def _return_page_to_pool(self, page: "Page") -> None:
+        """Return a page to the Electron WebView pool for reuse.
+
+        Instead of page.close() which permanently destroys the WebContentsView,
+        navigate back to the pool marker URL (with viewId) so the page can be
+        claimed again.
+        """
+        try:
+            if not page.is_closed():
+                view_id = self._page_to_view_id.pop(id(page), None)
+                pool_url = f'about:blank?ami=pool&viewId={view_id}' if view_id is not None else 'about:blank?ami=pool'
+                await page.goto(pool_url)
+                logger.debug(f"Returned page to pool (viewId={view_id})")
+        except Exception as e:
+            logger.warning(f"Failed to return page to pool: {e}")
+
     async def close_tab(self, tab_id: str) -> bool:
         """Close a specific tab by ID.
 
         Also removes the tab from any Tab Group it belongs to.
+        Returns the page to the Electron WebView pool instead of destroying it.
         """
         if tab_id not in self._pages:
             logger.warning(f"Invalid tab ID: {tab_id}")
@@ -482,10 +460,10 @@ class HybridBrowserSession:
         page = self._pages[tab_id]
 
         try:
-            if not page.is_closed():
-                await page.close()
+            await self._return_page_to_pool(page)
 
             del self._pages[tab_id]
+            self._console_logs.pop(tab_id, None)
 
             # Bug #14 fix: Also remove from Tab Groups
             for group in self._tab_groups.values():
@@ -578,192 +556,153 @@ class HybridBrowserSession:
     async def _ensure_browser_inner(self) -> None:
         """Internal browser initialization logic.
 
-        V3: First tries to use daemon session's browser if available.
-        Then tries to use primary session's browser (non-daemon mode).
-        Otherwise launches new browser via subprocess + CDP.
+        Connects to Electron's embedded Chromium via CDP.
+        BROWSER_CDP_PORT env var is set by Electron's DaemonLauncher.
+        Claims a pool page (identified by 'ami=pool' marker URL).
         """
         from playwright.async_api import async_playwright
-        from .browser_launcher import BrowserLauncher
+        import os
 
         if self._page is not None:
-            return
+            # Verify the connection is still alive
+            if not self._page.is_closed() and self._browser and self._browser.is_connected():
+                return
+            # Page or connection is dead, need to reconnect
+            logger.warning("Browser connection lost, reconnecting...")
+            self._page = None
+            self._pages = {}
+            self._current_tab_id = None
+            self._context = None
+            self._browser = None
+            self._playwright = None
 
-        # V3: Try to reuse daemon session's browser
+        # Reuse existing browser connection if daemon session is alive
         daemon = self.__class__._daemon_session
         if daemon and daemon._context and daemon._browser and daemon._browser.is_connected():
             logger.info("Reusing daemon session's browser")
-
-            # Share browser resources
             self._playwright = daemon._playwright
             self._browser = daemon._browser
             self._context = daemon._context
-            self._browser_launcher = daemon._browser_launcher
 
-            # Bug #19 fix: Create initial page in Tab Group using session_id as task_id
-            # This ensures all tabs created by this session are grouped together
             try:
                 initial_tab_id, self._page = await self.create_tab_in_group(
                     task_id=self._session_id,
                     url=None
                 )
                 self._current_tab_id = initial_tab_id
-
                 self._page.set_default_navigation_timeout(self._navigation_timeout)
                 self._page.set_default_timeout(self._navigation_timeout)
-
                 self.snapshot = PageSnapshot(self._page)
                 self.executor = ActionExecutor(
-                    self._page,
-                    self,
+                    self._page, self,
                     default_timeout=self._default_timeout,
                     short_timeout=self._short_timeout,
                 )
-
                 logger.info(f"Browser session initialized (reusing daemon browser, Tab Group: {self._session_id})")
                 return
             except Exception as e:
-                # Context/browser became invalid, clear references and fall through to launch new browser
-                logger.warning(f"Failed to reuse daemon browser (context may be closed): {e}")
+                logger.warning(f"Failed to reuse daemon browser: {e}")
+                # Only clear self's references — do NOT corrupt daemon's state.
+                # The failure is likely transient (e.g., pool exhaustion).
                 self._playwright = None
                 self._browser = None
                 self._context = None
-                self._browser_launcher = None
-                # Also clear daemon session's invalid state to trigger restart
-                daemon._context = None
-                daemon._browser = None
 
-        # Non-daemon mode: Try to reuse primary session's browser
+        # Reuse primary session's browser (non-daemon mode)
         primary = self.__class__._primary_session
         if primary and primary is not self and primary._context and primary._browser and primary._browser.is_connected():
-            logger.info("Reusing primary session's browser (non-daemon mode)")
-
-            # Share browser resources
+            logger.info("Reusing primary session's browser")
             self._playwright = primary._playwright
             self._browser = primary._browser
             self._context = primary._context
-            self._browser_launcher = primary._browser_launcher
 
-            # Create a new page for this session
             try:
-                self._page = await self._context.new_page()
+                self._page = await self._claim_pool_page()
                 initial_tab_id = await TabIdGenerator.generate_tab_id()
                 await self._register_new_page(initial_tab_id, self._page)
                 self._current_tab_id = initial_tab_id
-
                 self._page.set_default_navigation_timeout(self._navigation_timeout)
                 self._page.set_default_timeout(self._navigation_timeout)
-
                 self.snapshot = PageSnapshot(self._page)
                 self.executor = ActionExecutor(
-                    self._page,
-                    self,
+                    self._page, self,
                     default_timeout=self._default_timeout,
                     short_timeout=self._short_timeout,
                 )
-
-                logger.info(f"Browser session initialized (reusing primary session's browser)")
+                logger.info("Browser session initialized (reusing primary session's browser)")
                 return
             except Exception as e:
-                # Context/browser became invalid, clear references and fall through to launch new browser
-                logger.warning(f"Failed to reuse primary browser (context may be closed): {e}")
+                logger.warning(f"Failed to reuse primary browser: {e}")
                 self._playwright = None
                 self._browser = None
                 self._context = None
-                self._browser_launcher = None
 
-        # Launch browser via subprocess (no Playwright launch fingerprints)
-        # Add retry mechanism for first browser startup (问题 9)
-        max_retries = 3
-        retry_delay = 2.0
-        last_error = None
+        # Connect to Electron's Chromium via CDP (with timeout + retry)
+        cdp_port = os.environ.get('BROWSER_CDP_PORT')
+        if not cdp_port:
+            raise RuntimeError(
+                "BROWSER_CDP_PORT env var not set. "
+                "Daemon must be launched by Electron with BROWSER_CDP_PORT."
+            )
 
+        cdp_url = f'http://127.0.0.1:{cdp_port}'
+        logger.info(f"Connecting to Electron CDP at {cdp_url}...")
+
+        # Bypass proxy for localhost
+        os.environ.setdefault('NO_PROXY', '127.0.0.1,localhost')
+        os.environ.setdefault('no_proxy', '127.0.0.1,localhost')
+
+        import asyncio
+
+        self._playwright = await async_playwright().start()
+
+        max_retries = 5
         for attempt in range(max_retries):
             try:
-                logger.info(f"Creating BrowserLauncher (headless={self._headless}, user_data_dir={self._user_data_dir}, attempt {attempt + 1}/{max_retries})")
-                self._browser_launcher = BrowserLauncher(
-                    headless=self._headless,
-                    user_data_dir=self._user_data_dir,
-                    enable_stealth=self._stealth,
+                self._browser = await asyncio.wait_for(
+                    self._playwright.chromium.connect_over_cdp(cdp_url),
+                    timeout=15,
                 )
-
-                cdp_url = await self._browser_launcher.launch()
-                logger.info(f"Browser launched via subprocess, CDP URL: {cdp_url}")
-
-                # Connect to browser via Playwright's CDP connection
-                # Bypass proxy for localhost (fixes Clash/proxy software interference with Node.js driver)
-                import os
-                os.environ.setdefault('NO_PROXY', '127.0.0.1,localhost')
-                os.environ.setdefault('no_proxy', '127.0.0.1,localhost')
-
-                logger.info("Starting Playwright...")
-                self._playwright = await async_playwright().start()
-                logger.info(f"Playwright started, connecting to CDP at {cdp_url}...")
-
-                self._browser = await self._playwright.chromium.connect_over_cdp(cdp_url)
-                logger.info("Playwright connected via CDP successfully")
-
-                # Success - break out of retry loop
                 break
-
-            except Exception as e:
-                last_error = e
-                logger.warning(f"Browser startup attempt {attempt + 1}/{max_retries} failed: {e}")
-
-                # Clean up on failure
-                if self._playwright:
-                    try:
-                        await self._playwright.stop()
-                    except Exception:
-                        pass
-                    self._playwright = None
-                if self._browser_launcher:
-                    try:
-                        await self._browser_launcher.close()
-                    except Exception:
-                        pass
-                    self._browser_launcher = None
-
+            except (asyncio.TimeoutError, Exception) as e:
                 if attempt < max_retries - 1:
-                    logger.info(f"Retrying browser startup in {retry_delay}s...")
-                    await asyncio.sleep(retry_delay)
-                    retry_delay *= 1.5  # Exponential backoff
+                    delay = 2 ** attempt  # 1s, 2s, 4s, 8s
+                    logger.warning(
+                        f"CDP connection attempt {attempt + 1}/{max_retries} failed: {e}. "
+                        f"Retrying in {delay}s..."
+                    )
+                    await asyncio.sleep(delay)
                 else:
-                    logger.error(f"Failed to launch browser after {max_retries} attempts")
-                    raise RuntimeError(f"Failed to launch browser after {max_retries} attempts: {last_error}") from last_error
+                    await self._playwright.stop()
+                    self._playwright = None
+                    raise RuntimeError(
+                        f"Failed to connect to Electron CDP at {cdp_url} "
+                        f"after {max_retries} attempts: {e}"
+                    )
 
-        # Get the default context (created by Chrome)
+        logger.info("Connected to Electron via CDP")
+
+        # Get the default context (Electron's persist:user_login partition)
         contexts = self._browser.contexts
         if contexts:
             self._context = contexts[0]
         else:
             self._context = await self._browser.new_context()
 
-        # Listen for new pages (tabs/popups) opened by any means (JS, target="_blank", etc.)
         self._context.on("page", self._on_new_page)
 
-        # Get existing pages or create new one
-        pages = self._context.pages
-        if pages:
-            self._page = pages[0]
-            initial_tab_id = await TabIdGenerator.generate_tab_id()
-            await self._register_new_page(initial_tab_id, pages[0])
-            self._current_tab_id = initial_tab_id
-            for page in pages[1:]:
-                tab_id = await TabIdGenerator.generate_tab_id()
-                await self._register_new_page(tab_id, page)
-        else:
-            self._page = await self._context.new_page()
-            initial_tab_id = await TabIdGenerator.generate_tab_id()
-            await self._register_new_page(initial_tab_id, self._page)
-            self._current_tab_id = initial_tab_id
+        # Claim a pool page (marked with 'ami=pool' in URL)
+        self._page = await self._claim_pool_page()
+        initial_tab_id = await TabIdGenerator.generate_tab_id()
+        await self._register_new_page(initial_tab_id, self._page)
+        self._current_tab_id = initial_tab_id
 
         self._page.set_default_navigation_timeout(self._navigation_timeout)
         self._page.set_default_timeout(self._navigation_timeout)
 
         self.snapshot = PageSnapshot(self._page)
         self.executor = ActionExecutor(
-            self._page,
-            self,
+            self._page, self,
             default_timeout=self._default_timeout,
             short_timeout=self._short_timeout,
         )
@@ -773,7 +712,58 @@ class HybridBrowserSession:
             self.__class__._primary_session = self
             logger.info("Registered as primary session for browser sharing")
 
-        logger.info("Browser session initialized successfully (subprocess + CDP)")
+        logger.info("Browser session initialized (Electron CDP)")
+
+    async def _claim_pool_page(self) -> "Page":
+        """Claim an available pool page from Electron's WebView pool.
+
+        Pool pages are identified by 'ami=pool' in their URL and include
+        'viewId=N' to identify the WebContentsView slot. The viewId is
+        extracted and stored in _page_to_view_id for frontend display.
+
+        Once claimed, the page is navigated to about:blank to mark it as in-use.
+
+        Uses a class-level lock to prevent two sessions from claiming the same
+        pool page concurrently. Retries up to 3 times with 3s delay to handle
+        race conditions where Electron's WebView hasn't finished loading yet.
+        """
+        if not self._context:
+            raise RuntimeError("No browser context available")
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            async with self.__class__._pool_claim_lock:
+                pages = self._context.pages
+                for page in pages:
+                    try:
+                        url = page.url
+                        if 'ami=pool' in url:
+                            # Extract viewId from URL (e.g. about:blank?ami=pool&viewId=3)
+                            view_id = None
+                            if 'viewId=' in url:
+                                try:
+                                    view_id = url.split('viewId=')[1].split('&')[0]
+                                except (IndexError, ValueError):
+                                    pass
+                            logger.info(f"Claiming pool page: {url} (viewId={view_id})")
+                            await page.goto('about:blank')
+                            if view_id is not None:
+                                self._page_to_view_id[id(page)] = view_id
+                            return page
+                    except Exception:
+                        continue
+
+            if attempt < max_retries - 1:
+                logger.info(
+                    f"No pool page available (attempt {attempt + 1}/{max_retries}), "
+                    f"retrying in 3s..."
+                )
+                await asyncio.sleep(3)
+
+        raise RuntimeError(
+            "No pool pages available (all 8 WebView slots are in use). "
+            "Wait for a running browser task to finish before starting a new one."
+        )
 
     async def close(self) -> None:
         """Close browser session and clean up resources."""
@@ -818,53 +808,67 @@ class HybridBrowserSession:
             self.snapshot = None
             self.executor = None
 
+    def _is_connection_owner(self) -> bool:
+        """Check if this session owns the Playwright/browser/context connection.
+
+        In Electron CDP mode, only the daemon session or primary session owns
+        the connection. All other sessions borrow shared references and must
+        NOT close context/browser/playwright on cleanup.
+        """
+        return (
+            self.__class__._daemon_session is self
+            or self.__class__._primary_session is self
+        )
+
     async def _close_session(self) -> None:
         """Internal session close logic with thorough cleanup.
 
-        Closes resources in order: pages -> context -> browser -> playwright.
-        Each step waits for completion to avoid Chrome crash on macOS.
+        In Electron CDP mode, the context, browser, and playwright connection
+        are shared across all sessions. Only the connection owner (daemon/primary
+        session) may close them. Borrowing sessions return pages to the pool
+        instead of closing them.
         """
+        is_owner = self._is_connection_owner()
+
         try:
-            # Step 1: Close all pages gracefully
-            pages_to_close = list(self._pages.values())
-            for page in pages_to_close:
+            # Step 1: Return all pages to pool.
+            # In Electron CDP mode, pages are Electron-owned WebContentsViews.
+            # We NEVER call page.close() — that would destroy the WebContentsView
+            # via CDP. Instead, navigate back to the pool marker URL.
+            pages_to_release = list(self._pages.values())
+            for page in pages_to_release:
                 try:
                     if not page.is_closed():
-                        await page.close()
-                        await asyncio.sleep(0.1)  # Small delay between page closes
+                        await page.goto('about:blank?ami=pool')
+                        logger.debug("Returned page to pool")
                 except Exception as e:
-                    logger.warning(f"Error closing page: {e}")
+                    logger.warning(f"Error returning page to pool: {e}")
 
             self._pages.clear()
             self._page = None
 
-            # Wait for pages to fully close
+            # Borrowers stop here — do NOT touch shared resources
+            if not is_owner:
+                logger.debug("Borrowing session cleaned up (pages returned to pool)")
+                return
+
+            # Owner-only cleanup below (daemon/primary session shutdown).
+            # Do NOT close context — Electron owns it.
+            # Only disconnect the Playwright CDP connection.
             await asyncio.sleep(0.2)
 
-            # Step 2: Close context
-            if self._context:
-                try:
-                    await self._context.close()
-                    await asyncio.sleep(0.2)
-                except Exception as e:
-                    logger.warning(f"Error closing context: {e}")
-                finally:
-                    self._context = None
-
-            # Step 3: Close browser gracefully
+            # Step 2: Disconnect browser (drops CDP connection, does NOT close Electron)
             if self._browser:
                 try:
-                    # Check if browser is still connected before closing
                     if self._browser.is_connected():
                         await self._browser.close()
-                        # Wait for browser process to terminate gracefully
-                        await asyncio.sleep(0.5)
+                        await asyncio.sleep(0.3)
                 except Exception as e:
-                    logger.warning(f"Error closing browser: {e}")
+                    logger.warning(f"Error disconnecting browser: {e}")
                 finally:
                     self._browser = None
 
-            # Step 4: Stop playwright
+            # Step 3: Stop playwright
             if self._playwright:
                 try:
                     await self._playwright.stop()
@@ -873,15 +877,6 @@ class HybridBrowserSession:
                 finally:
                     self._playwright = None
 
-            # Step 5: Close browser launcher (kills subprocess)
-            if self._browser_launcher:
-                try:
-                    await self._browser_launcher.close()
-                except Exception as e:
-                    logger.warning(f"Error closing browser launcher: {e}")
-                finally:
-                    self._browser_launcher = None
-
         except Exception as e:
             logger.error(f"Error during session cleanup: {e}")
         finally:
@@ -889,19 +884,27 @@ class HybridBrowserSession:
             self._pages = {}
             self._current_tab_id = None
             self._context = None
-            self._browser = None
-            self._playwright = None
-            self._browser_launcher = None
+            if is_owner:
+                self._browser = None
+                self._playwright = None
 
     @classmethod
     async def close_all_sessions(cls) -> None:
-        """Close all browser sessions and clean up the singleton registry."""
+        """Close all browser sessions and clean up the singleton registry.
+
+        Closes borrowing sessions first, then owners, to ensure CDP
+        connection is alive while borrowers return pages to the pool.
+        """
         logger.debug("Closing all browser sessions...")
         async with cls._instances_lock:
             instances_to_close = list(cls._instances.values())
             cls._instances.clear()
 
-        for instance in instances_to_close:
+        # Close borrowers first, then owners
+        borrowers = [i for i in instances_to_close if not i._is_connection_owner()]
+        owners = [i for i in instances_to_close if i._is_connection_owner()]
+
+        for instance in borrowers + owners:
             try:
                 await instance._close_session()
             except Exception as e:
@@ -1025,7 +1028,7 @@ class HybridBrowserSession:
         return logs
 
     # =========================================================================
-    # Daemon Lifecycle Management (V3)
+    # Daemon Lifecycle Management (Electron CDP)
     # =========================================================================
 
     @classmethod
@@ -1033,39 +1036,23 @@ class HybridBrowserSession:
         cls,
         config: Optional[Dict[str, Any]] = None,
     ) -> "HybridBrowserSession":
-        """Start daemon-level browser session
+        """Start daemon-level browser session.
 
-        Called by Daemon on startup. Initializes the global browser session:
-        1. Check for existing browser, reconnect if found
-        2. Otherwise launch new browser
-        3. Start health check loop
-
-        Args:
-            config: Configuration dict with browser settings
-
-        Returns:
-            The daemon session instance
+        Called by Daemon on startup. Creates a session that will connect to
+        Electron's embedded Chromium via CDP (BROWSER_CDP_PORT env var).
+        No external Chrome, no lock files, no health checks needed.
         """
         if cls._daemon_session is not None:
             logger.warning("Daemon session already exists, returning existing session")
             return cls._daemon_session
 
-        logger.info("Starting daemon browser session...")
-
-        # Store config
+        logger.info("Starting daemon browser session (Electron CDP)...")
         cls._daemon_config = config or {}
 
-        # Load config values
         browser_config = cls._daemon_config.get("browser", {}) if cls._daemon_config else {}
-        cls._auto_restart = browser_config.get("auto_restart", True)
-        cls._health_check_interval = browser_config.get("health_check_interval", 5)
-        cls._restart_delay = browser_config.get("restart_delay", 1.0)
-        cls._close_on_daemon_exit = browser_config.get("close_on_daemon_exit", True)
-
         headless = browser_config.get("headless", False)
         user_data_dir = browser_config.get("user_data_dir")
 
-        # Create session instance
         session = cls(
             session_id="daemon",
             headless=headless,
@@ -1073,30 +1060,11 @@ class HybridBrowserSession:
             stealth=True,
         )
 
-        # Check for existing browser
-        existing_cdp_url = await cls._find_existing_browser()
+        await session.ensure_browser()
 
-        if existing_cdp_url:
-            logger.info(f"Found existing browser, reconnecting to {existing_cdp_url}")
-            try:
-                await session._connect_to_existing(existing_cdp_url)
-                logger.info("Reconnected to existing browser successfully")
-            except Exception as e:
-                logger.warning(f"Failed to reconnect to existing browser: {e}")
-                logger.info("Will launch new browser instead")
-                await session._cleanup_failed_connection()
-                await session.ensure_browser()
-        else:
-            logger.info("No existing browser found, launching new browser")
-            await session.ensure_browser()
-
-        # Write lock file
-        await cls._write_lock_file(session)
-
-        # Store as daemon session
         cls._daemon_session = session
 
-        # Register in singleton registry with special daemon key
+        # Register in singleton registry
         try:
             loop = asyncio.get_running_loop()
             loop_id = str(id(loop))
@@ -1107,47 +1075,17 @@ class HybridBrowserSession:
         async with cls._instances_lock:
             cls._instances[(loop_id, "daemon")] = session
 
-        # Lazy mode: No health check - browser will be restarted when needed
-        # cls._start_health_check()
-
-        logger.info("Daemon browser session started successfully")
+        logger.info("Daemon browser session started (Electron CDP)")
         return session
 
     @classmethod
     async def stop_daemon_session(cls, force: bool = False) -> None:
-        """Stop daemon-level browser session
-
-        Called by Daemon on shutdown.
-
-        Args:
-            force: If True, always close browser. If False, respect close_on_daemon_exit config.
-        """
+        """Stop daemon-level browser session. Called by Daemon on shutdown."""
         logger.info("Stopping daemon browser session...")
 
-        # Stop health check
-        cls._stop_health_check()
-
-        # Decide whether to close browser
-        should_close = force or cls._close_on_daemon_exit
-
         if cls._daemon_session:
-            if should_close:
-                logger.info("Closing browser...")
-                await cls._daemon_session._close_session()
-                await cls._remove_lock_file()
-            else:
-                logger.info("Keeping browser running (close_on_daemon_exit=False)")
-                # Just disconnect, don't close
-                if cls._daemon_session._playwright:
-                    try:
-                        await cls._daemon_session._playwright.stop()
-                    except Exception as e:
-                        logger.warning(f"Error stopping playwright: {e}")
-                    cls._daemon_session._playwright = None
-                cls._daemon_session._browser = None
-                cls._daemon_session._context = None
+            await cls._daemon_session._close_session()
 
-            # Clear instance references
             try:
                 loop = asyncio.get_running_loop()
                 loop_id = str(id(loop))
@@ -1164,488 +1102,11 @@ class HybridBrowserSession:
 
     @classmethod
     def get_daemon_session(cls) -> Optional["HybridBrowserSession"]:
-        """Get the daemon-level browser session
-
-        Returns:
-            The daemon session or None if not started
-        """
+        """Get the daemon-level browser session."""
         return cls._daemon_session
 
     # =========================================================================
-    # Health Check (V3)
-    # =========================================================================
-
-    @classmethod
-    def _start_health_check(cls) -> None:
-        """Start health check loop"""
-        if cls._health_check_task and not cls._health_check_task.done():
-            return  # Already running
-
-        cls._health_check_task = asyncio.create_task(cls._health_check_loop())
-        logger.debug("Health check started")
-
-    @classmethod
-    def _stop_health_check(cls) -> None:
-        """Stop health check loop"""
-        if cls._health_check_task:
-            cls._health_check_task.cancel()
-            cls._health_check_task = None
-            logger.debug("Health check stopped")
-
-    @classmethod
-    async def _health_check_loop(cls) -> None:
-        """Health check loop - monitors browser status"""
-        logger.debug("Health check loop started")
-
-        while True:
-            try:
-                await asyncio.sleep(cls._health_check_interval)
-
-                if not cls._daemon_session:
-                    continue
-
-                # Check process alive
-                if not cls._check_process_alive():
-                    logger.warning("Browser process died")
-                    await cls._handle_browser_closed()
-                    continue
-
-                # Check CDP connection
-                if not await cls._check_cdp_alive():
-                    logger.warning("CDP connection lost")
-                    await cls._handle_connection_lost()
-                    continue
-
-            except asyncio.CancelledError:
-                logger.debug("Health check loop cancelled")
-                break
-            except Exception as e:
-                logger.error(f"Health check error: {e}")
-                await asyncio.sleep(1)
-
-    @classmethod
-    def _check_process_alive(cls) -> bool:
-        """Check if browser process is alive"""
-        if not cls._browser_pid:
-            return False
-
-        try:
-            import psutil
-            return psutil.pid_exists(cls._browser_pid)
-        except ImportError:
-            # Fallback: try os.kill with signal 0
-            import os
-            import signal
-            try:
-                os.kill(cls._browser_pid, 0)
-                return True
-            except (OSError, ProcessLookupError):
-                return False
-
-    @classmethod
-    async def _check_cdp_alive(cls) -> bool:
-        """Check if CDP is responding"""
-        if not cls._cdp_url:
-            return False
-
-        try:
-            # Extract port from CDP URL (ws://localhost:9222/devtools/...)
-            match = re.search(r':(\d+)', cls._cdp_url)
-            if not match:
-                return False
-            port = match.group(1)
-            http_url = f"http://127.0.0.1:{port}/json/version"
-
-            # Use trust_env=False to bypass system proxy for localhost
-            async with aiohttp.ClientSession(trust_env=False) as session:
-                async with session.get(http_url, timeout=aiohttp.ClientTimeout(total=2)) as resp:
-                    return resp.status == 200
-        except Exception:
-            return False
-
-    @classmethod
-    async def _handle_browser_closed(cls) -> None:
-        """Handle browser being closed by user.
-
-        Bug #18 fix: Implements retry limit with exponential backoff.
-        """
-        if not cls._auto_restart:
-            logger.info("Browser closed, auto-restart disabled")
-            return
-
-        # Check retry limit
-        cls._restart_attempts += 1
-        if cls._restart_attempts > cls._max_restart_attempts:
-            logger.error(f"Browser restart failed after {cls._max_restart_attempts} attempts, giving up")
-            cls._restart_attempts = 0  # Reset for potential manual restart
-            return
-
-        # Calculate delay with exponential backoff
-        delay = min(cls._restart_delay * (2 ** (cls._restart_attempts - 1)), cls._max_restart_delay)
-        logger.info(f"Browser closed, restarting in {delay:.1f}s (attempt {cls._restart_attempts}/{cls._max_restart_attempts})...")
-        await asyncio.sleep(delay)
-
-        if cls._daemon_session:
-            # Clear old state
-            cls._daemon_session._page = None
-            cls._daemon_session._pages = {}
-            cls._daemon_session._console_logs = {}  # Bug #14 fix: Clear console logs
-            cls._daemon_session._context = None
-            cls._daemon_session._browser = None
-            cls._daemon_session._playwright = None
-            cls._daemon_session._browser_launcher = None
-            cls._daemon_session._tab_groups = {}
-
-            try:
-                # Relaunch browser
-                await cls._daemon_session.ensure_browser()
-                await cls._write_lock_file(cls._daemon_session)
-                logger.info("Browser restarted successfully")
-
-                # Reset retry counter on success
-                cls._restart_attempts = 0
-
-            except Exception as e:
-                logger.error(f"Failed to restart browser (attempt {cls._restart_attempts}): {e}")
-
-    @classmethod
-    async def _handle_connection_lost(cls) -> None:
-        """Handle CDP connection lost
-
-        Attempts to reconnect to existing browser via CDP.
-        If reconnection fails, falls back to browser restart.
-        """
-        # Try to reconnect first
-        if cls._cdp_url:
-            # Bug #5 fix: Initialize playwright to None before try block
-            playwright = None
-            try:
-                from playwright.async_api import async_playwright
-
-                # Bug #6 fix: Close old playwright instance before creating new one
-                old_playwright = None
-                if cls._daemon_session:
-                    old_playwright = cls._daemon_session._playwright
-
-                # Create new playwright instance
-                playwright = await async_playwright().start()
-                browser = await playwright.chromium.connect_over_cdp(cls._cdp_url)
-
-                if cls._daemon_session:
-                    # Close old playwright to prevent resource leak
-                    if old_playwright:
-                        try:
-                            await old_playwright.stop()
-                            logger.debug("Closed old playwright instance")
-                        except Exception as e:
-                            logger.warning(f"Error closing old playwright: {e}")
-
-                    cls._daemon_session._playwright = playwright
-                    cls._daemon_session._browser = browser
-                    if browser.contexts:
-                        cls._daemon_session._context = browser.contexts[0]
-                        # Re-register page event listener
-                        cls._daemon_session._context.on("page", cls._daemon_session._on_new_page)
-
-                logger.info("CDP connection restored")
-                return
-            except Exception as e:
-                logger.warning(f"Failed to reconnect CDP: {e}")
-                # Clean up the new playwright if connection failed
-                if playwright:
-                    try:
-                        await playwright.stop()
-                    except Exception:
-                        pass
-
-        # If reconnect fails, treat as browser closed
-        await cls._handle_browser_closed()
-
-    # =========================================================================
-    # Lock File Management (V3)
-    # =========================================================================
-
-    @classmethod
-    def _get_lock_file_path(cls) -> Path:
-        """Get lock file path"""
-        return cls._ami_dir / LOCK_FILE_NAME
-
-    @classmethod
-    async def _find_existing_browser(cls) -> Optional[str]:
-        """Find existing browser instance.
-
-        Strategy:
-        1. Check lock file first (fast path)
-        2. If no lock file, scan processes via pgrep (fallback for unclean shutdown)
-
-        Returns:
-            CDP URL if found, None otherwise
-        """
-        # Strategy 1: Lock file
-        lock_file = cls._get_lock_file_path()
-
-        if lock_file.exists():
-            try:
-                lock_data = json.loads(lock_file.read_text())
-                pid = lock_data.get("pid")
-                cdp_url = lock_data.get("cdp_url")
-
-                if not pid or not cdp_url:
-                    logger.debug("Invalid lock file data")
-                    lock_file.unlink()
-                else:
-                    # Check if process is alive
-                    process_alive = False
-                    try:
-                        import psutil
-                        process_alive = psutil.pid_exists(pid)
-                    except ImportError:
-                        import os
-                        try:
-                            os.kill(pid, 0)
-                            process_alive = True
-                        except (OSError, ProcessLookupError):
-                            pass
-
-                    if not process_alive:
-                        logger.debug(f"Process {pid} not found")
-                        lock_file.unlink()
-                    elif await cls._check_cdp_alive_url(cdp_url):
-                        # Store for later use
-                        cls._browser_pid = pid
-                        cls._cdp_url = cdp_url
-                        return cdp_url
-                    else:
-                        logger.debug("CDP not responding, lock file stale")
-                        lock_file.unlink()
-
-            except Exception as e:
-                logger.warning(f"Error reading lock file: {e}")
-                try:
-                    lock_file.unlink()
-                except Exception:
-                    pass
-
-        # Strategy 2: Process scanning (non-destructive)
-        # Handles case where daemon exited without cleaning up lock file
-        # but Chrome is still running with CDP enabled
-        browser_config = cls._daemon_config.get("browser", {}) if cls._daemon_config else {}
-        user_data_dir = browser_config.get("user_data_dir")
-        if not user_data_dir:
-            return None
-
-        return await cls._find_chrome_by_process(user_data_dir)
-
-    @classmethod
-    async def _find_chrome_by_process(cls, user_data_dir: str) -> Optional[str]:
-        """Find existing Chrome instance by scanning processes (non-destructive).
-
-        Only matches Chrome processes using the exact user_data_dir (e.g. ~/.ami/browser_data).
-        User's personal Chrome (~/Library/Application Support/Google/Chrome) is never affected.
-
-        This method NEVER kills processes — it only detects and returns CDP URL for reuse.
-
-        Returns:
-            CDP URL if a reusable Chrome instance is found, None otherwise.
-        """
-        import subprocess
-        import platform
-
-        try:
-            if platform.system() not in ("Darwin", "Linux"):
-                return None
-
-            result = subprocess.run(
-                ["pgrep", "-f", f"--user-data-dir={user_data_dir}"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-
-            if not result.stdout.strip():
-                logger.debug("No Chrome process found for this profile via pgrep")
-                return None
-
-            pids = result.stdout.strip().split("\n")
-            logger.info(f"Process scan: found {len(pids)} process(es) using {user_data_dir}")
-
-            for pid in pids:
-                try:
-                    pid_int = int(pid.strip())
-                    cmd_result = subprocess.run(
-                        ["ps", "-p", str(pid_int), "-o", "args="],
-                        capture_output=True,
-                        text=True,
-                        timeout=5,
-                    )
-                    cmdline = cmd_result.stdout.strip()
-
-                    port_match = re.search(r"--remote-debugging-port=(\d+)", cmdline)
-                    if port_match:
-                        existing_port = int(port_match.group(1))
-                        cdp_url = f"http://127.0.0.1:{existing_port}"
-
-                        if await cls._check_cdp_alive_url(cdp_url):
-                            logger.info(
-                                f"Found existing Chrome via process scan at {cdp_url} (PID {pid_int})"
-                            )
-                            cls._browser_pid = pid_int
-                            cls._cdp_url = cdp_url
-                            return cdp_url
-                        else:
-                            logger.debug(f"Chrome PID {pid_int} has CDP port {existing_port} but not responding")
-
-                except (ValueError, subprocess.TimeoutExpired):
-                    continue
-
-            logger.debug("No reusable Chrome instance found via process scan")
-            return None
-
-        except FileNotFoundError:
-            logger.debug("pgrep not available")
-            return None
-        except Exception as e:
-            logger.warning(f"Error scanning Chrome processes: {e}")
-            return None
-
-    @classmethod
-    async def _check_cdp_alive_url(cls, cdp_url: str) -> bool:
-        """Check if CDP at given URL is alive"""
-        try:
-            match = re.search(r':(\d+)', cdp_url)
-            if not match:
-                return False
-            port = match.group(1)
-            http_url = f"http://127.0.0.1:{port}/json/version"
-
-            # Use trust_env=False to bypass system proxy for localhost
-            async with aiohttp.ClientSession(trust_env=False) as session:
-                async with session.get(http_url, timeout=aiohttp.ClientTimeout(total=2)) as resp:
-                    return resp.status == 200
-        except Exception:
-            return False
-
-    @classmethod
-    async def _write_lock_file(cls, session: "HybridBrowserSession") -> None:
-        """Write lock file with browser info"""
-        lock_file = cls._get_lock_file_path()
-        lock_file.parent.mkdir(parents=True, exist_ok=True)
-
-        # Get PID from browser launcher (supports both launched and reused browsers)
-        pid = None
-        if session._browser_launcher:
-            pid = session._browser_launcher.browser_pid
-
-        # Get CDP URL
-        cdp_url = None
-        if session._browser_launcher:
-            cdp_url = session._browser_launcher.cdp_url
-
-        if pid and cdp_url:
-            cls._browser_pid = pid
-            cls._cdp_url = cdp_url
-
-            lock_data = {
-                "pid": pid,
-                "cdp_url": cdp_url,
-                "started_at": datetime.now().isoformat()
-            }
-            lock_file.write_text(json.dumps(lock_data, indent=2))
-            logger.debug(f"Lock file written: {lock_file}")
-        else:
-            logger.warning(f"Could not write lock file: pid={pid}, cdp_url={cdp_url}")
-
-    @classmethod
-    async def _remove_lock_file(cls) -> None:
-        """Remove lock file"""
-        lock_file = cls._get_lock_file_path()
-        if lock_file.exists():
-            try:
-                lock_file.unlink()
-                logger.debug("Lock file removed")
-            except Exception as e:
-                logger.warning(f"Failed to remove lock file: {e}")
-
-        cls._browser_pid = None
-        cls._cdp_url = None
-
-    # =========================================================================
-    # Reconnection (V3)
-    # =========================================================================
-
-    async def _connect_to_existing(self, cdp_url: str) -> None:
-        """Reconnect to existing browser instance"""
-        from playwright.async_api import async_playwright
-
-        logger.info(f"Connecting to existing browser at {cdp_url}")
-
-        self._playwright = await async_playwright().start()
-        try:
-            self._browser = await self._playwright.chromium.connect_over_cdp(cdp_url)
-
-            # Get existing context
-            if self._browser.contexts:
-                self._context = self._browser.contexts[0]
-                logger.info(f"Using existing context with {len(self._context.pages)} pages")
-            else:
-                self._context = await self._browser.new_context()
-                logger.info("Created new context")
-
-            # Listen for new pages
-            self._context.on("page", self._on_new_page)
-
-            # Register existing pages
-            pages = self._context.pages
-            if pages:
-                self._page = pages[0]
-                initial_tab_id = await TabIdGenerator.generate_tab_id()
-                await self._register_new_page(initial_tab_id, pages[0])
-                self._current_tab_id = initial_tab_id
-
-                for page in pages[1:]:
-                    tab_id = await TabIdGenerator.generate_tab_id()
-                    await self._register_new_page(tab_id, page)
-            else:
-                self._page = await self._context.new_page()
-                initial_tab_id = await TabIdGenerator.generate_tab_id()
-                await self._register_new_page(initial_tab_id, self._page)
-                self._current_tab_id = initial_tab_id
-
-            # Setup snapshot and executor
-            self._page.set_default_navigation_timeout(self._navigation_timeout)
-            self._page.set_default_timeout(self._navigation_timeout)
-            self.snapshot = PageSnapshot(self._page)
-            self.executor = ActionExecutor(
-                self._page,
-                self,
-                default_timeout=self._default_timeout,
-                short_timeout=self._short_timeout,
-            )
-
-            logger.info("Reconnected to existing browser successfully")
-
-        except Exception as e:
-            # Clean up on failure
-            if self._playwright:
-                await self._playwright.stop()
-                self._playwright = None
-            raise
-
-    async def _cleanup_failed_connection(self) -> None:
-        """Clean up after failed connection attempt"""
-        if self._playwright:
-            try:
-                await self._playwright.stop()
-            except Exception:
-                pass
-            self._playwright = None
-        self._browser = None
-        self._context = None
-        self._page = None
-        self._pages = {}
-
-    # =========================================================================
-    # Tab Group Management (V3) - Internal tracking only
+    # Tab Group Management - Internal tracking only
     # =========================================================================
 
     def _allocate_color(self) -> str:
@@ -1708,16 +1169,26 @@ class HybridBrowserSession:
 
         logger.info(f"Closing Tab Group: {group.title} ({len(group.tabs)} tabs)")
 
-        # Close all pages in the group
+        # Return all pages in the group to the pool
         for tab_id, page in list(group.tabs.items()):
             try:
-                if not page.is_closed():
-                    await page.close()
+                await self._return_page_to_pool(page)
                 # Also remove from main _pages dict
-                if tab_id in self._pages:
-                    del self._pages[tab_id]
+                self._pages.pop(tab_id, None)
+                self._console_logs.pop(tab_id, None)
             except Exception as e:
-                logger.warning(f"Error closing tab {tab_id}: {e}")
+                logger.warning(f"Error returning tab {tab_id} to pool: {e}")
+
+        # Update current tab if it was in this group
+        if self._current_tab_id and self._current_tab_id not in self._pages:
+            if self._pages:
+                next_tab = next(iter(self._pages.keys()))
+                await self.switch_to_tab(next_tab)
+            else:
+                self._current_tab_id = None
+                self._page = None
+                self.snapshot = None
+                self.executor = None
 
         # Remove from registry
         del self._tab_groups[task_id]
@@ -1751,13 +1222,15 @@ class HybridBrowserSession:
         if not group:
             group = await self.create_tab_group(task_id)
 
-        # Create page - validate context is still connected
+        # Claim a pool page instead of creating a new page.
+        # In Electron CDP mode, new_page() creates unmanaged pages outside
+        # the WebContentsView pool, which won't have stealth injection.
         if not self._context:
             raise RuntimeError("Browser context not available")
         if not self._browser or not self._browser.is_connected():
             raise RuntimeError("Browser is disconnected")
 
-        page = await self._context.new_page()
+        page = await self._claim_pool_page()
 
         # Navigate if URL provided
         if url:
@@ -1859,23 +1332,33 @@ class HybridBrowserSession:
 
         page = group.tabs[tab_id]
         try:
-            if not page.is_closed():
-                await page.close()
+            await self._return_page_to_pool(page)
         except Exception as e:
-            logger.warning(f"Error closing tab {tab_id}: {e}")
+            logger.warning(f"Error returning tab {tab_id} to pool: {e}")
 
         del group.tabs[tab_id]
 
-        # Also remove from main _pages dict
-        if tab_id in self._pages:
-            del self._pages[tab_id]
+        # Also remove from main _pages dict and console logs
+        self._pages.pop(tab_id, None)
+        self._console_logs.pop(tab_id, None)
 
-        # Update current tab if needed
+        # Update group's current tab if needed
         if group.current_tab_id == tab_id:
             if group.tabs:
                 group.current_tab_id = next(iter(group.tabs.keys()))
             else:
                 group.current_tab_id = None
+
+        # Update session's current tab if it was the closed one
+        if tab_id == self._current_tab_id:
+            if self._pages:
+                next_tab = next(iter(self._pages.keys()))
+                await self.switch_to_tab(next_tab)
+            else:
+                self._current_tab_id = None
+                self._page = None
+                self.executor = None
+                self.snapshot = None
 
         logger.debug(f"Closed tab {tab_id} in group {task_id}")
         return True

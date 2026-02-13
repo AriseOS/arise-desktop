@@ -353,15 +353,10 @@ class BrowserToolkit(BaseToolkit):
             except Exception:
                 pass
         session._playwright = None
-        session._browser_launcher = None
         session._tab_groups = {}
 
-        # Re-initialize browser
+        # Re-initialize browser (reconnects to Electron CDP)
         await session._ensure_browser_inner()
-
-        # Update lock file if this is daemon session
-        if session is HybridBrowserSession._daemon_session:
-            await HybridBrowserSession._write_lock_file(session)
 
         logger.info("Browser restarted successfully")
 
@@ -568,14 +563,16 @@ class BrowserToolkit(BaseToolkit):
             # Send screenshot event to frontend
             state = self._task_state
             if hasattr(state, 'put_event'):
+                webview_id = getattr(session, 'webview_id', None)
                 await state.put_event(ScreenshotData(
                     task_id=getattr(state, 'task_id', None),
                     screenshot=screenshot_data_uri,
                     url=url,
                     page_title=title,
                     tab_id=tab_id,
+                    webview_id=webview_id,
                 ))
-                logger.debug(f"Screenshot event sent for {url}")
+                logger.debug(f"Screenshot event sent for {url} (webview_id={webview_id})")
 
         except Exception as e:
             logger.warning(f"Failed to send screenshot event: {e}")

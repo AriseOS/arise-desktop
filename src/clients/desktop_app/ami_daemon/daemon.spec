@@ -202,8 +202,7 @@ exe = EXE(
     console=False,  # No console window
     disable_windowed_traceback=False,
     target_arch=None,
-    # Note: We don't sign here because Tauri will overwrite it anyway
-    # Final signing happens in build.sh after Tauri bundles the app
+    # Signing handled by build_app_macos.sh after electron-builder packages the app
     codesign_identity=None,
     entitlements_file=None,
 )

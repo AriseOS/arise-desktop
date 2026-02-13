@@ -403,6 +403,7 @@ class BrowserActionData(BaseActionData):
     screenshot_url: Optional[str] = None  # Base64 or URL to screenshot
     page_url: Optional[str] = None
     page_title: Optional[str] = None
+    webview_id: Optional[str] = None  # Electron WebContentsView ID ("0"-"7")
 
 
 class WriteFileData(BaseActionData):
@@ -428,6 +429,7 @@ class ScreenshotData(BaseActionData):
     url: Optional[str] = None  # Current page URL
     page_title: Optional[str] = None  # Current page title
     tab_id: Optional[str] = None  # Tab ID if multiple tabs
+    webview_id: Optional[str] = None  # Electron WebContentsView ID ("0"-"7")
 
 
 # ===== User Interaction Events =====
