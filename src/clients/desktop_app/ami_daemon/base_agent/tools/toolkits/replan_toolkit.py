@@ -1,14 +1,12 @@
 """
 ReplanToolkit - Agent-initiated dynamic task splitting during execution.
 
-Gives the executing agent tools to:
-1. View the current subtask list and their states
-2. Report progress on the current subtask
-3. Add new subtasks to the executor's queue
-4. Complete current subtask and hand off remaining work
+Gives the executing agent 2 tools following a "review then split" protocol:
+1. replan_review_context() — View full execution context before deciding
+2. replan_split_and_handoff() — Save progress and split remaining work
 
 This toolkit holds a live reference to AMITaskExecutor and directly
-calls executor.add_subtasks() when the agent decides to split work.
+calls executor.add_subtasks_async() when the agent decides to split work.
 
 All tools are async to stay on the main event loop (avoiding thread-safety
 issues with SSE event emission via asyncio.to_thread).
@@ -19,7 +17,6 @@ import logging
 from typing import List, Optional, TYPE_CHECKING
 
 from .base_toolkit import BaseToolkit, FunctionTool
-from ...events.action_types import AgentReportData
 
 if TYPE_CHECKING:
     from ...core.ami_task_executor import AMITaskExecutor
@@ -36,10 +33,11 @@ class ReplanToolkit(BaseToolkit):
     laziness on multi-item tasks (e.g., "extract 19 products" -> agent does 5
     then summarizes).
 
-    The toolkit holds a live reference to AMITaskExecutor. When the agent
-    calls replan_add_tasks or replan_complete_and_handoff, new subtasks are
-    injected directly into the executor's queue with depends_on set to
-    the current subtask.
+    Two-tool protocol:
+    1. replan_review_context() — see what's done, running, pending, and
+       what files exist in workspace. MUST call before splitting.
+    2. replan_split_and_handoff(summary, tasks) — save progress as result,
+       add follow-up tasks, and stop the agent.
     """
 
     agent_name: str = "replan_agent"
@@ -70,102 +68,144 @@ class ReplanToolkit(BaseToolkit):
             f"[ReplanToolkit] Initialized for subtask {current_subtask_id}"
         )
 
-    async def replan_get_subtask_list(self) -> str:
-        """View all subtasks and their current status.
+    async def replan_review_context(self) -> str:
+        """Review the full execution context before deciding how to split work.
 
-        Returns a formatted list showing each subtask's ID, agent type,
-        execution state (PENDING/RUNNING/DONE/FAILED), and content preview.
-        Use this to understand the overall task landscape before deciding
-        whether to split your current work.
-
-        Returns:
-            Formatted string listing all subtasks with their status.
-        """
-        lines = []
-        for subtask in self._executor._subtasks:
-            marker = ">" if subtask.id == self._current_subtask_id else " "
-            content_preview = subtask.content[:80]
-            if len(subtask.content) > 80:
-                content_preview += "..."
-            deps = f" depends_on={subtask.depends_on}" if subtask.depends_on else ""
-            lines.append(
-                f"{marker} [{subtask.state.value}] {subtask.id} "
-                f"({subtask.agent_type}): {content_preview}{deps}"
-            )
-
-        return f"Subtask list ({len(self._executor._subtasks)} total):\n" + "\n".join(lines)
-
-    async def replan_report_progress(
-        self,
-        items_completed: int,
-        items_total: int,
-        details: str,
-    ) -> str:
-        """Report progress on the current subtask.
-
-        Call this periodically to report how many items you have processed
-        out of the total. This helps track progress and prevents premature
-        task completion.
-
-        Args:
-            items_completed: Number of items processed so far.
-            items_total: Total number of items to process.
-            details: Brief description of what was completed.
+        ALWAYS call this BEFORE replan_split_and_handoff.
+        Returns completed task results, current task status, pending tasks,
+        and workspace files.
 
         Returns:
-            Confirmation message with progress percentage.
+            Formatted execution context with task states and workspace files.
         """
-        progress_pct = (
-            round(items_completed / items_total * 100) if items_total > 0 else 0
-        )
+        from ...core.ami_task_executor import SubtaskState
 
-        # Emit SSE event
-        if self._task_state:
-            await self._task_state.put_event(AgentReportData(
-                task_id=self._executor.task_id,
-                message=(
-                    f"Progress: {items_completed}/{items_total} "
-                    f"({progress_pct}%) - {details}"
-                ),
-                report_type="info",
-            ))
+        sections = []
 
-        logger.info(
-            f"[ReplanToolkit] Progress on {self._current_subtask_id}: "
-            f"{items_completed}/{items_total} ({progress_pct}%) - {details}"
-        )
+        # Group subtasks by state
+        done, running, pending, failed = [], [], [], []
+        for st in self._executor._subtasks:
+            if st.state == SubtaskState.DONE:
+                done.append(st)
+            elif st.state == SubtaskState.RUNNING:
+                running.append(st)
+            elif st.state == SubtaskState.PENDING:
+                pending.append(st)
+            elif st.state == SubtaskState.FAILED:
+                failed.append(st)
 
-        return (
-            f"Progress reported: {items_completed}/{items_total} ({progress_pct}%). "
-            f"{'Keep going - you have more items to process.' if items_completed < items_total else 'All items processed.'}"
-        )
+        # Completed: show result summary (truncated to 200 chars)
+        if done:
+            lines = []
+            for st in done:
+                result_preview = (
+                    (st.result[:200] + "...")
+                    if st.result and len(st.result) > 200
+                    else (st.result or "(no result)")
+                )
+                lines.append(
+                    f"  [{st.id}] ({st.agent_type}): {st.content[:80]}\n"
+                    f"    Result: {result_preview}"
+                )
+            sections.append("Completed tasks:\n" + "\n\n".join(lines))
 
-    async def replan_add_tasks(self, tasks: str) -> str:
-        """Add follow-up tasks to the execution queue.
+        # Running: current task
+        if running:
+            lines = [
+                f"  [{st.id}] ({st.agent_type}): {st.content[:120]}"
+                for st in running
+            ]
+            sections.append("Current task (you):\n" + "\n".join(lines))
 
-        Use this when your task involves more work than you can complete in
-        one go. Save your collected data to a file BEFORE calling this.
+        # Failed
+        if failed:
+            lines = []
+            for st in failed:
+                error_preview = (
+                    (st.error[:200] + "...")
+                    if st.error and len(st.error) > 200
+                    else (st.error or "(no error info)")
+                )
+                lines.append(
+                    f"  [{st.id}] ({st.agent_type}): {st.content[:80]}\n"
+                    f"    Error: {error_preview}"
+                )
+            sections.append("Failed tasks:\n" + "\n\n".join(lines))
 
-        Each task in the JSON array MUST follow these rules:
-        - Self-contained: include ALL context (URLs, keywords, file names).
-          The executing agent knows NOTHING about your current task.
-        - Clear deliverables: specify output file and data format.
-        - Atomic: 1-2 tool calls per task (e.g., one page visit + extraction).
-        - Parallel: tasks that don't depend on each other should be independent.
+        # Pending
+        if pending:
+            lines = [
+                f"  [{st.id}] ({st.agent_type}): {st.content[:80]}"
+                for st in pending
+            ]
+            sections.append("Pending tasks:\n" + "\n".join(lines))
+
+        # Workspace files
+        workspace_listing = self._executor._get_workspace_listing()
+        if workspace_listing:
+            sections.append(f"Workspace files:\n{workspace_listing}")
+
+        return "=== Task Execution Context ===\n\n" + "\n\n".join(sections)
+
+    async def replan_split_and_handoff(self, summary: str, tasks: str) -> str:
+        """Save current progress and split remaining work into follow-up tasks.
+
+        You MUST save all collected data to a file BEFORE calling this.
+        After this call, STOP immediately — do not continue working.
 
         Args:
-            tasks: JSON string describing the tasks to add.
+            summary: What you accomplished. This becomes the result for downstream tasks.
+            tasks: JSON array of follow-up tasks.
                 Format: [{"content": "task description", "agent_type": "browser"}, ...]
                 agent_type must be one of: browser, document, code, multi_modal
 
         Returns:
-            Confirmation with the IDs of newly created subtasks.
+            Handoff confirmation or error message.
         """
-        # Parse JSON
+        self._handoff_result = summary
+
         try:
-            task_list = json.loads(tasks)
-        except json.JSONDecodeError as e:
-            return f"Error: Invalid JSON format. {e}"
+            result = await self._create_and_add_subtasks(tasks)
+        except Exception as e:
+            self._handoff_result = None
+            raise  # Let _execute_tool catch and return error to agent
+
+        if result.startswith("Error:"):
+            self._handoff_result = None
+            return result
+
+        # Signal agent to stop after this tool-call round
+        self._agent._should_stop_after_tool = True
+
+        logger.info(
+            f"[ReplanToolkit] Handoff from {self._current_subtask_id}: "
+            f"summary={summary[:100]}..."
+        )
+
+        return (
+            f"HANDOFF COMPLETE. {result}\n\n"
+            f"STOP now. Do NOT continue. Follow-up tasks will handle the remaining work."
+        )
+
+    async def _create_and_add_subtasks(self, tasks: str) -> str:
+        """Parse, validate, and add follow-up subtasks to the executor.
+
+        Args:
+            tasks: JSON string of task array.
+
+        Returns:
+            Confirmation message or "Error: ..." on failure.
+        """
+        # Parse JSON (handle both string and pre-parsed list from API proxies)
+        if isinstance(tasks, list):
+            task_list = tasks
+        elif isinstance(tasks, str):
+            try:
+                task_list = json.loads(tasks)
+            except json.JSONDecodeError as e:
+                return f"Error: Invalid JSON format. {e}"
+        else:
+            return f"Error: tasks must be a JSON string or array, got {type(tasks).__name__}."
 
         if not isinstance(task_list, list):
             return "Error: tasks must be a JSON array."
@@ -193,7 +233,7 @@ class ReplanToolkit(BaseToolkit):
 
         parent = self._executor._subtask_map.get(self._current_subtask_id)
 
-        # Use call count to ensure unique IDs across multiple replan_add_tasks calls
+        # Use call count to ensure unique IDs across multiple calls
         self._add_tasks_call_count += 1
         batch = self._add_tasks_call_count
 
@@ -228,57 +268,11 @@ class ReplanToolkit(BaseToolkit):
             f"They will execute after the current subtask completes."
         )
 
-    async def replan_complete_and_handoff(self, summary: str, remaining_tasks: str) -> str:
-        """Complete the current subtask and hand off remaining work.
-
-        Use this when you have partially completed a large task and want to
-        delegate the remaining work to follow-up subtasks. You MUST save
-        all collected data to a file BEFORE calling this tool.
-
-        The remaining_tasks follow the same rules as replan_add_tasks:
-        each task must be self-contained, have clear deliverables, and be
-        atomic. Tasks that can run in parallel should NOT have dependencies.
-
-        Args:
-            summary: Summary of work completed in this subtask.
-                This becomes the subtask's result for downstream tasks.
-            remaining_tasks: JSON string of tasks for remaining work.
-                Same format as replan_add_tasks.
-
-        Returns:
-            Instruction to stop working on the current subtask.
-        """
-        # Store summary as handoff result
-        self._handoff_result = summary
-
-        # Add remaining tasks
-        result = await self.replan_add_tasks(remaining_tasks)
-
-        if result.startswith("Error:"):
-            self._handoff_result = None  # Rollback
-            return result
-
-        # Signal agent to stop after this tool-call round
-        self._agent._should_stop_after_tool = True
-
-        logger.info(
-            f"[ReplanToolkit] Handoff from {self._current_subtask_id}: "
-            f"summary={summary[:100]}..."
-        )
-
-        return (
-            f"HANDOFF COMPLETE. Your partial result has been saved. {result}\n\n"
-            f"STOP working on this task now. Do NOT continue processing more items. "
-            f"The remaining work will be handled by the follow-up tasks."
-        )
-
     def get_tools(self) -> List[FunctionTool]:
         """Return tools for this toolkit."""
         return [
-            FunctionTool(self.replan_get_subtask_list),
-            FunctionTool(self.replan_report_progress),
-            FunctionTool(self.replan_add_tasks),
-            FunctionTool(self.replan_complete_and_handoff),
+            FunctionTool(self.replan_review_context),
+            FunctionTool(self.replan_split_and_handoff),
         ]
 
     @classmethod

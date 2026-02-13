@@ -214,7 +214,7 @@ class AMIAgent:
         # the shared queue and routes messages via inject_steering_message().
         self._disable_shared_queue: bool = False
 
-        # Early-stop flag: set by ReplanToolkit.replan_complete_and_handoff
+        # Early-stop flag: set by ReplanToolkit.replan_split_and_handoff
         # to force astep() to stop after the current tool-call round.
         self._should_stop_after_tool: bool = False
 
@@ -625,7 +625,7 @@ class AMIAgent:
                     )
                 self._messages.append({"role": "user", "content": tool_results})
 
-                # Check early-stop flag (set by replan_complete_and_handoff)
+                # Check early-stop flag (set by replan_split_and_handoff)
                 if self._should_stop_after_tool:
                     stop_reason = "handoff"
                     logger.info(

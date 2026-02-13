@@ -35,9 +35,21 @@ logger = logging.getLogger(__name__)
 REPLAN_INSTRUCTION = """
 ## Task Splitting
 
-When your task involves processing many items (>5), use replan tools to split the remaining work. Before splitting, **save all data you have collected so far to a file**.
+When your task involves processing many items (>5), you should split the remaining work.
+Before splitting, **save all data you have collected so far to a file**.
 
-When creating follow-up tasks, apply these rules:
+### How to Split (MUST follow this 2-step process)
+
+**Step 1: Review** — Call `replan_review_context()` to see:
+- What previous tasks have accomplished
+- What files are available in the workspace
+- What tasks are still pending
+
+**Step 2: Split** — Call `replan_split_and_handoff(summary, tasks)`:
+- summary: describe what you have done so far
+- tasks: JSON array of follow-up tasks
+
+### Rules for follow-up tasks
 
 1. **Self-Contained**: Each task must include ALL context needed to execute it independently — specific URLs, search keywords, output file name, data format. The agent executing the task has NO knowledge of your current task or what you have done. Never use references like "the previous result", "continue where I left off", or "remaining items".
    - Good: "Visit <url>, extract <specific fields>, save to <filename> as <format>"
@@ -492,7 +504,7 @@ class AMITaskExecutor:
                     )
                     response = await agent.astep(prompt)
 
-                    # Check if agent used complete_and_handoff (replan toolkit)
+                    # Check if agent used split_and_handoff (replan toolkit)
                     if replan_toolkit and replan_toolkit._handoff_result is not None:
                         subtask.result = replan_toolkit._handoff_result
                     else:
@@ -780,10 +792,8 @@ class AMITaskExecutor:
     # =========================================================================
 
     _REPLAN_TOOL_NAMES = [
-        "replan_get_subtask_list",
-        "replan_report_progress",
-        "replan_add_tasks",
-        "replan_complete_and_handoff",
+        "replan_review_context",
+        "replan_split_and_handoff",
     ]
 
     def _inject_replan_tools(self, agent: "AMIAgent", subtask: AMISubtask):

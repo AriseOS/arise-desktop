@@ -22,10 +22,8 @@ logger = logging.getLogger(__name__)
 _SKIP_TOOLS = {
     "browser_get_page_snapshot",
     "send_message",
-    "replan_get_subtask_list",
-    "replan_report_progress",
-    "replan_add_tasks",
-    "replan_complete_and_handoff",
+    "replan_review_context",
+    "replan_split_and_handoff",
 }
 
 # Tool input compression rules per tool type
