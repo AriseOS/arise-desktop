@@ -429,3 +429,149 @@ class SessionManager:
             now = _utc_now_iso()
             index["last_activity"] = now
             self._save_index()
+
+    # ==================== History Traversal ====================
+
+    def _read_session_messages(self, session_id: str) -> List[Dict]:
+        """Read all messages from a session file."""
+        session_file = self.base_path / f"{session_id}.jsonl"
+        if not session_file.exists():
+            return []
+
+        messages = []
+        try:
+            with open(session_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                        if record.get("type") == "message":
+                            messages.append(record)
+                    except json.JSONDecodeError:
+                        continue
+        except IOError:
+            return []
+        return messages
+
+    def _get_previous_session_id(self, session_id: str) -> Optional[str]:
+        """Get previous_session_id from index or session header."""
+        index = self._load_index()
+        session_info = index.get("sessions", {}).get(session_id)
+        if session_info and session_info.get("previous_session_id"):
+            return session_info["previous_session_id"]
+
+        # Fallback: read from session file header
+        session_file = self.base_path / f"{session_id}.jsonl"
+        if not session_file.exists():
+            return None
+        try:
+            with open(session_file, "r", encoding="utf-8") as f:
+                first_line = f.readline().strip()
+                if first_line:
+                    header = json.loads(first_line)
+                    if header.get("type") == "header":
+                        return header.get("previous_session_id")
+        except (IOError, json.JSONDecodeError):
+            pass
+        return None
+
+    def get_history_messages(
+        self, before_timestamp: str, limit: int = 30
+    ) -> Dict[str, Any]:
+        """
+        Get historical messages before a given timestamp by traversing session chain.
+
+        Walks backward through previous_session_id links, skipping context messages
+        (which are duplicates carried forward from earlier sessions).
+
+        Args:
+            before_timestamp: ISO timestamp cursor — only return messages before this
+            limit: Maximum number of messages to return
+
+        Returns:
+            {
+                "messages": [...],
+                "has_more": bool,
+                "oldest_timestamp": str or None,
+            }
+        """
+        index = self._load_index()
+        current_session_id = index.get("current_session_id")
+        if not current_session_id:
+            return {"messages": [], "has_more": False, "oldest_timestamp": None}
+
+        # Parse the cursor timestamp
+        cursor_ts = before_timestamp
+        if cursor_ts.endswith("Z"):
+            cursor_ts = cursor_ts[:-1] + "+00:00"
+        try:
+            cursor_dt = datetime.fromisoformat(cursor_ts)
+            if cursor_dt.tzinfo is None:
+                cursor_dt = cursor_dt.replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError):
+            return {"messages": [], "has_more": False, "oldest_timestamp": None}
+
+        collected: List[Dict] = []
+        # Start from the current session itself — the frontend only loads
+        # the most recent N messages via get_messages(limit=100), so earlier
+        # messages in the same session need to be discoverable here too.
+        # The timestamp cursor ensures we don't return messages the frontend
+        # already has.
+        session_id = current_session_id
+        visited = set()  # Guard against circular references
+        has_more_sessions = False
+
+        while session_id:
+            if session_id in visited:
+                break
+            visited.add(session_id)
+
+            messages = self._read_session_messages(session_id)
+
+            for msg in messages:
+                # Skip context messages (duplicates from carry-over)
+                if msg.get("is_context"):
+                    continue
+
+                # Check timestamp < cursor
+                msg_ts_str = msg.get("timestamp", "")
+                if not msg_ts_str:
+                    continue
+
+                ts = msg_ts_str
+                if ts.endswith("Z"):
+                    ts = ts[:-1] + "+00:00"
+                try:
+                    msg_dt = datetime.fromisoformat(ts)
+                    if msg_dt.tzinfo is None:
+                        msg_dt = msg_dt.replace(tzinfo=timezone.utc)
+                except (ValueError, TypeError):
+                    continue
+
+                if msg_dt < cursor_dt:
+                    collected.append(msg)
+
+            # Move to previous session
+            session_id = self._get_previous_session_id(session_id)
+
+            # Early exit: we have enough and there are more sessions
+            if len(collected) > limit and session_id:
+                has_more_sessions = True
+                break
+
+        # Sort collected by timestamp ascending and take the most recent `limit`
+        collected.sort(key=lambda m: m.get("timestamp", ""))
+
+        has_more = len(collected) > limit or has_more_sessions
+        # Return the most recent `limit` messages (tail)
+        result_messages = collected[-limit:] if len(collected) > limit else collected
+
+        oldest_timestamp = result_messages[0].get("timestamp") if result_messages else None
+
+        return {
+            "messages": result_messages,
+            "has_more": has_more,
+            "oldest_timestamp": oldest_timestamp,
+        }

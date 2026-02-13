@@ -5,6 +5,7 @@ Simple REST API for session-based conversation persistence.
 
 Endpoints:
 - GET  /api/v1/session          - Get current session info and messages
+- GET  /api/v1/session/history  - Get historical messages (cross-session, cursor-based)
 - POST /api/v1/session/message  - Append a message
 - POST /api/v1/session/new      - Force create new session
 """
@@ -72,6 +73,13 @@ class AppendMessageResponse(BaseModel):
     timestamp: str
 
 
+class HistoryResponse(BaseModel):
+    """Cross-session history response (cursor-based pagination)."""
+    messages: List[MessageResponse]
+    has_more: bool
+    oldest_timestamp: Optional[str] = None
+
+
 # ============== Endpoints ==============
 
 @router.get("", response_model=SessionResponse)
@@ -129,6 +137,44 @@ async def get_session(limit: int = 50):
             for m in messages
         ],
         is_new_session=is_new_session,
+    )
+
+
+@router.get("/history", response_model=HistoryResponse)
+async def get_history(before_timestamp: str, limit: int = 30):
+    """
+    Get historical messages across sessions (cursor-based pagination).
+
+    Traverses the session chain backward from current session, filtering
+    out context messages (which are duplicates carried forward).
+
+    Args:
+        before_timestamp: ISO timestamp cursor — only messages before this
+        limit: Maximum messages to return (default: 30)
+
+    Returns:
+        Messages, has_more flag, and oldest_timestamp for next cursor
+    """
+    manager = get_manager()
+
+    result = manager.get_history_messages(before_timestamp, limit=limit)
+
+    return HistoryResponse(
+        messages=[
+            MessageResponse(
+                id=m.get("id", ""),
+                role=m.get("role", ""),
+                content=m.get("content", ""),
+                timestamp=m.get("timestamp", ""),
+                attachments=m.get("attachments"),
+                metadata=m.get("metadata"),
+                is_context=m.get("is_context"),
+                from_session=m.get("from_session"),
+            )
+            for m in result["messages"]
+        ],
+        has_more=result["has_more"],
+        oldest_timestamp=result["oldest_timestamp"],
     )
 
 

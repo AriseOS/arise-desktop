@@ -1131,6 +1131,23 @@ export const api = {
   },
 
   /**
+   * Get historical messages across sessions (cursor-based pagination)
+   *
+   * Traverses the session chain backward, useful for infinite scroll.
+   *
+   * @param {string} beforeTimestamp - ISO timestamp cursor
+   * @param {number} limit - Max messages to return (default: 30)
+   * @returns {Promise<object>} { messages, has_more, oldest_timestamp }
+   */
+  async getSessionHistory(beforeTimestamp, limit = 30) {
+    const params = new URLSearchParams({
+      before_timestamp: beforeTimestamp,
+      limit: String(limit),
+    });
+    return await this.callAppBackend(`/api/v1/session/history?${params}`);
+  },
+
+  /**
    * Touch session to keep it alive
    */
   async touchSession() {

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -19,6 +19,22 @@ import { api } from '../utils/api';
 import { useAgentStore } from '../store';
 import FileAttachmentCard from '../components/ChatBox/MessageItem/FileAttachmentCard';
 import '../styles/HomePage.css';
+
+/**
+ * Format a date for display as a divider label.
+ * Returns "Today", "Yesterday", or a locale date string.
+ */
+function formatDateDivider(date) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const msgDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const diffMs = today - msgDay;
+  const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
 
 /**
  * HomePage - Main dashboard with chat-style interface
@@ -67,10 +83,17 @@ function HomePage({ session, onNavigate, showStatus, version, initialMessage }) 
   // Track which message IDs we've already shown (to avoid duplicates)
   const [shownMessageIds, setShownMessageIds] = useState(new Set());
 
+  // Infinite scroll history state
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [hasMoreHistory, setHasMoreHistory] = useState(true);
+  const [oldestTimestamp, setOldestTimestamp] = useState(null);
+
   const userId = session?.username;
 
   const chatHistoryRef = useRef(null);
   const inputRef = useRef(null);
+  const sentinelRef = useRef(null);
+  const isNearBottomRef = useRef(true);
 
   // Combine session messages with current task messages for display
   // Session messages are history, task messages are current execution
@@ -78,19 +101,41 @@ function HomePage({ session, onNavigate, showStatus, version, initialMessage }) 
     // Start with session messages
     const messages = [...sessionMessages];
 
-    // Add task messages that aren't already in session (new messages from current execution)
+    // Add task messages that aren't already in session (ID-based dedup only)
+    // NOTE: Do NOT use content-based dedup — short messages like "hi", "ok"
+    // would be incorrectly filtered when user sends the same text again.
     taskMessages.forEach(msg => {
-      if (!shownMessageIds.has(msg.id)) {
-        messages.push(msg);
-      }
+      if (shownMessageIds.has(msg.id)) return;
+      messages.push(msg);
+    });
+
+    // Sort by timestamp to prevent ordering issues when mixing session + task messages
+    messages.sort((a, b) => {
+      const ta = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+      const tb = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+      return ta - tb;
     });
 
     return messages;
   }, [sessionMessages, taskMessages, shownMessageIds]);
 
-  // Scroll to bottom when new messages arrive
+  // Track whether user is near the bottom of chat
   useEffect(() => {
-    if (chatHistoryRef.current) {
+    const el = chatHistoryRef.current;
+    if (!el) return;
+
+    const handleScroll = () => {
+      const threshold = 100;
+      isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+    };
+
+    el.addEventListener('scroll', handleScroll, { passive: true });
+    return () => el.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  // Scroll to bottom when new messages arrive (only if user is near bottom)
+  useEffect(() => {
+    if (chatHistoryRef.current && isNearBottomRef.current) {
       chatHistoryRef.current.scrollTop = chatHistoryRef.current.scrollHeight;
     }
   }, [displayMessages]);
@@ -117,7 +162,16 @@ function HomePage({ session, onNavigate, showStatus, version, initialMessage }) 
           setSessionMessages(messages);
           setShownMessageIds(new Set(messages.map(m => m.id)));
 
+          // Record oldest timestamp for history pagination cursor
+          const oldest = messages.reduce((min, m) =>
+            !min || (m.timestamp && m.timestamp < min) ? m.timestamp : min
+          , null);
+          setOldestTimestamp(oldest);
+
           console.log(`[HomePage] Loaded ${messages.length} messages from session`);
+        } else {
+          // No messages in current session — there may still be older sessions
+          setOldestTimestamp(new Date().toISOString());
         }
       } catch (error) {
         console.warn('[HomePage] Failed to load session:', error.message);
@@ -125,7 +179,103 @@ function HomePage({ session, onNavigate, showStatus, version, initialMessage }) 
     };
 
     loadSession();
+
+    // Scroll to bottom on initial load
+    setTimeout(() => {
+      if (chatHistoryRef.current) {
+        chatHistoryRef.current.scrollTop = chatHistoryRef.current.scrollHeight;
+      }
+    }, 100);
   }, []);
+
+  // Guard ref to prevent concurrent history loads (avoids stale closure issues)
+  const isLoadingHistoryRef = useRef(false);
+
+  // Load more history when user scrolls to top
+  const loadMoreHistory = useCallback(async () => {
+    if (isLoadingHistoryRef.current || !hasMoreHistory || !oldestTimestamp) return;
+
+    isLoadingHistoryRef.current = true;
+    setIsLoadingHistory(true);
+    try {
+      const result = await api.getSessionHistory(oldestTimestamp, 30);
+
+      if (result.messages && result.messages.length > 0) {
+        const newMessages = result.messages.map(msg => ({
+          id: msg.id,
+          role: msg.role === 'assistant' ? 'assistant' : msg.role,
+          content: msg.content,
+          timestamp: msg.timestamp,
+          attachments: msg.attachments || [],
+          isContext: msg.is_context,
+          reportType: msg.metadata?.reportType,
+          agentType: msg.metadata?.agentType,
+        }));
+
+        // Preserve scroll position: record scrollHeight before prepend
+        const el = chatHistoryRef.current;
+        const prevScrollHeight = el ? el.scrollHeight : 0;
+
+        setSessionMessages(prev => {
+          // Dedup by id
+          const existingIds = new Set(prev.map(m => m.id));
+          const unique = newMessages.filter(m => !existingIds.has(m.id));
+          return [...unique, ...prev];
+        });
+        setShownMessageIds(prev => {
+          const next = new Set(prev);
+          newMessages.forEach(m => next.add(m.id));
+          return next;
+        });
+
+        // Restore scroll position after DOM update
+        // Double rAF ensures React has flushed the DOM changes
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            if (el) {
+              const newScrollHeight = el.scrollHeight;
+              el.scrollTop += newScrollHeight - prevScrollHeight;
+            }
+          });
+        });
+
+        setOldestTimestamp(result.oldest_timestamp);
+        setHasMoreHistory(result.has_more);
+
+        console.log(`[HomePage] Loaded ${newMessages.length} history messages, has_more=${result.has_more}`);
+      } else {
+        setHasMoreHistory(false);
+      }
+    } catch (error) {
+      console.warn('[HomePage] Failed to load history:', error.message);
+    } finally {
+      isLoadingHistoryRef.current = false;
+      setIsLoadingHistory(false);
+    }
+  }, [hasMoreHistory, oldestTimestamp]);
+
+  // IntersectionObserver to trigger loading when sentinel is visible
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    const container = chatHistoryRef.current;
+    if (!sentinel || !container) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          loadMoreHistory();
+        }
+      },
+      {
+        root: container,
+        rootMargin: '100px 0px 0px 0px',
+        threshold: 0,
+      }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [loadMoreHistory]);
 
   // Poll for operations while recording
   useEffect(() => {
@@ -560,7 +710,70 @@ function HomePage({ session, onNavigate, showStatus, version, initialMessage }) 
           {displayMessages.length === 0 ? (
             renderInstructions()
           ) : (
-            displayMessages.map(renderMessage)
+            <>
+              {/* Sentinel for infinite scroll trigger */}
+              <div ref={sentinelRef} className="scroll-sentinel" />
+
+              {/* Loading indicator */}
+              {isLoadingHistory && (
+                <div className="history-loading">
+                  <div className="history-loading-spinner" />
+                  <span>Loading earlier messages...</span>
+                </div>
+              )}
+
+              {/* Beginning of history */}
+              {!hasMoreHistory && displayMessages.length > 0 && (
+                <div className="history-end">Beginning of conversation history</div>
+              )}
+
+              {/* Messages with date dividers and session boundaries */}
+              {displayMessages.map((message, index) => {
+                const dividers = [];
+                const prevMsg = index > 0 ? displayMessages[index - 1] : null;
+
+                // Date divider — when the calendar day changes
+                if (message.timestamp) {
+                  const msgDate = new Date(message.timestamp);
+                  const prevDate = prevMsg?.timestamp ? new Date(prevMsg.timestamp) : null;
+
+                  if (!prevDate || msgDate.toDateString() !== prevDate.toDateString()) {
+                    dividers.push(
+                      <div key={`date-${message.id || index}`} className="date-divider">
+                        <span className="date-divider-label">{formatDateDivider(msgDate)}</span>
+                      </div>
+                    );
+                  }
+                }
+
+                // Session boundary — detect via:
+                // 1. context→non-context transition (current session's carry-over boundary)
+                // 2. Time gap > 30 min between consecutive messages (session timeout gap)
+                if (prevMsg) {
+                  const isContextBoundary = prevMsg.isContext && !message.isContext;
+                  let isTimeGap = false;
+                  if (prevMsg.timestamp && message.timestamp) {
+                    const gap = new Date(message.timestamp) - new Date(prevMsg.timestamp);
+                    isTimeGap = gap > 30 * 60 * 1000; // 30 minutes
+                  }
+
+                  if (isContextBoundary || isTimeGap) {
+                    dividers.push(
+                      <div key={`session-${message.id || index}`} className="session-divider">
+                        <span className="session-divider-label">New conversation</span>
+                      </div>
+                    );
+                  }
+                }
+
+                return (
+                  <React.Fragment key={message.id || index}>
+                    {dividers}
+                    {renderMessage(message, index)}
+                  </React.Fragment>
+                );
+              })}
+            </>
           )}
         </div>
       </div>
