@@ -626,10 +626,6 @@ export const useAgentStore = create((set, get) => ({
       // Connect SSE
       get().connectSSE(taskId, response.task_id);
 
-      if (showStatusCallback) {
-        showStatusCallback('Task submitted successfully', 'success');
-      }
-
       return true;
     } catch (error) {
       console.error('[AgentStore] Failed to start task:', error);
