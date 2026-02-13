@@ -301,6 +301,10 @@ class AMITaskExecutor:
             f"[AMITaskExecutor] Starting execution of {len(self._subtasks)} subtasks"
         )
 
+        # CognitivePhrase Learning: create collector for execution data
+        from .execution_data_collector import ExecutionDataCollector
+        collector = ExecutionDataCollector()
+
         completed = 0
         failed = 0
 
@@ -318,7 +322,7 @@ class AMITaskExecutor:
                 break
 
             # Execute the subtask
-            success = await self._execute_subtask(subtask)
+            success = await self._execute_subtask(subtask, collector)
 
             if success:
                 completed += 1
@@ -335,6 +339,14 @@ class AMITaskExecutor:
         }
 
         logger.info(f"[AMITaskExecutor] Execution finished: {result}")
+
+        # CognitivePhrase Learning: trigger post-execution learning
+        if self._should_trigger_learning():
+            task_data = collector.build_task_data(
+                self.task_id, self._user_request, self._subtasks
+            )
+            asyncio.create_task(self._learn_from_execution(task_data))
+
         return result
 
     def _get_next_subtask(self) -> Optional[AMISubtask]:
@@ -372,13 +384,17 @@ class AMITaskExecutor:
 
         return None
 
-    async def _execute_subtask(self, subtask: AMISubtask) -> bool:
+    async def _execute_subtask(self, subtask: AMISubtask, collector=None) -> bool:
         """
         Execute a single subtask using astep().
 
         Each subtask starts with a fresh conversation history (agent.reset()).
         Cross-subtask context is passed explicitly via _build_prompt()
         (dependency results injected into prompt, not via conversation history).
+
+        Args:
+            subtask: The subtask to execute.
+            collector: Optional ExecutionDataCollector to record execution data.
 
         Returns:
             True if successful, False otherwise.
@@ -484,6 +500,13 @@ class AMITaskExecutor:
 
                     subtask.state = SubtaskState.DONE
                     await self._emit_subtask_state(subtask)
+
+                    # CognitivePhrase Learning: collect execution data
+                    if collector:
+                        try:
+                            collector.collect_subtask_data(agent, subtask)
+                        except Exception as e:
+                            logger.warning(f"[OnlineLearning] Failed to collect data: {e}")
 
                     # Online Learning: save recorded operations to Memory on success
                     if recorder:
@@ -663,6 +686,94 @@ class AMITaskExecutor:
             logger.info(f"[OnlineLearning] Memory save result: {result}")
         except Exception as e:
             logger.warning(f"[OnlineLearning] Failed to save to memory: {e}")
+
+    # =========================================================================
+    # CognitivePhrase Learning (Post-Execution)
+    # =========================================================================
+
+    def _should_trigger_learning(self) -> bool:
+        """Check if post-execution learning should be triggered.
+
+        Conditions:
+        - Execution was not stopped/cancelled
+        - cloud_client and user_id are available
+        - At least 1 browser subtask
+        - All browser subtasks succeeded
+        - Total subtask count >= 2
+        """
+        if self._stopped:
+            return False
+
+        if not self._cloud_client or not self._user_id:
+            return False
+
+        browser_subtasks = [
+            s for s in self._subtasks if s.agent_type == "browser"
+        ]
+        if not browser_subtasks:
+            return False
+
+        if len(self._subtasks) < 2:
+            return False
+
+        # All browser subtasks must have succeeded
+        all_browser_done = all(
+            s.state == SubtaskState.DONE for s in browser_subtasks
+        )
+        if not all_browser_done:
+            return False
+
+        return True
+
+    async def _learn_from_execution(self, task_data) -> None:
+        """Fire-and-forget: send execution data to Cloud Backend for learning.
+
+        Args:
+            task_data: TaskExecutionData with collected execution trace.
+        """
+        try:
+            logger.info(
+                f"[OnlineLearning] Triggering CognitivePhrase learning "
+                f"for task {self.task_id} "
+                f"({len(task_data.subtasks)} subtasks collected)"
+            )
+
+            # Dump execution data to file for debugging
+            self._dump_execution_data(task_data)
+
+            result = await self._cloud_client.learn_from_execution(
+                user_id=self._user_id,
+                execution_data=task_data.to_dict(),
+            )
+            logger.info(
+                f"[OnlineLearning] Learning result: "
+                f"phrase_created={result.get('phrase_created')}, "
+                f"phrase_id={result.get('phrase_id')}"
+            )
+        except Exception as e:
+            logger.warning(f"[OnlineLearning] Learning request failed: {e}")
+
+    def _dump_execution_data(self, task_data) -> None:
+        """Dump execution data to JSON file for debugging.
+
+        File: ~/.ami/logs/learner_input_{task_id}_{timestamp}.json
+        """
+        import json
+        from datetime import datetime
+        from pathlib import Path
+
+        try:
+            log_dir = Path.home() / ".ami" / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            path = log_dir / f"learner_input_{self.task_id}_{ts}.json"
+            path.write_text(
+                json.dumps(task_data.to_dict(), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            logger.info(f"[OnlineLearning] Execution data dumped to {path}")
+        except Exception as e:
+            logger.warning(f"[OnlineLearning] Failed to dump execution data: {e}")
 
     # =========================================================================
     # Replan Tool Injection
