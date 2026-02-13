@@ -810,8 +810,13 @@ class OrchestratorSession:
                             f"{lost_msg[:100]}..."
                         )
                         await self._task_state.put_user_message(lost_msg)
-                except Exception:
-                    pass  # Task was cancelled or failed, no message to recover
+                except asyncio.CancelledError:
+                    pass  # Task was properly cancelled, no message to recover
+                except Exception as e:
+                    logger.warning(
+                        f"[OrchestratorSession] Failed to recover message from "
+                        f"cancelled wait: {e}"
+                    )
 
         for task in done:
             if task is user_msg_task:

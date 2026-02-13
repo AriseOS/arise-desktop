@@ -523,6 +523,40 @@ class MemoryService:
         )
         return await agent.plan(task)
 
+    # ==================== Learner Agent ====================
+
+    async def learn(
+        self,
+        execution_data,
+        llm_provider,
+        embedding_service,
+    ):
+        """Analyze task execution and optionally create a CognitivePhrase.
+
+        The LearnerAgent uses 4 Memory tools to verify States, Actions,
+        and check for duplicates before creating a phrase from a successful
+        task execution.
+
+        Args:
+            execution_data: TaskExecutionData with execution trace.
+            llm_provider: AnthropicProvider for the LearnerAgent's LLM calls.
+            embedding_service: EmbeddingService for query encoding.
+
+        Returns:
+            LearnResult with phrase creation status and debug info.
+        """
+        if not self._initialized:
+            raise RuntimeError("MemoryService not initialized. Call initialize() first.")
+
+        from src.common.memory.learner.learner_agent import LearnerAgent
+
+        agent = LearnerAgent(
+            memory=self._workflow_memory,
+            llm_provider=llm_provider,
+            embedding_service=embedding_service,
+        )
+        return await agent.learn(execution_data)
+
     # ==================== Lifecycle ====================
 
     def close(self) -> None:

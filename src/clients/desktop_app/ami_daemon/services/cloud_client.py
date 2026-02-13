@@ -1343,6 +1343,66 @@ class CloudClient:
                    f"{result.get('states_merged')} merged")
         return result
 
+    async def learn_from_execution(
+        self,
+        user_id: str,
+        execution_data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Trigger post-execution learning to create CognitivePhrases.
+
+        Called fire-and-forget after successful task execution.
+        Sends execution trace to Cloud Backend for LearnerAgent analysis.
+
+        Args:
+            user_id: User ID.
+            execution_data: TaskExecutionData.to_dict() payload.
+
+        Returns:
+            dict with:
+                - success: bool
+                - phrase_created: bool
+                - phrase_id: Optional[str]
+                - reason: str
+        """
+        payload = {
+            "user_id": user_id,
+            "execution_data": execution_data,
+        }
+
+        headers = {}
+        if self.user_api_key:
+            headers["X-Ami-API-Key"] = self.user_api_key
+
+        logger.info(
+            f"[CloudClient] Triggering learning for user {user_id}, "
+            f"task={execution_data.get('task_id', 'unknown')}"
+        )
+
+        try:
+            response = await self.client.post(
+                "/api/v1/memory/learn",
+                json=payload,
+                headers=headers,
+                timeout=300.0,
+            )
+            response.raise_for_status()
+            result = response.json()
+
+            logger.info(
+                f"[CloudClient] Learning result: phrase_created={result.get('phrase_created')}, "
+                f"phrase_id={result.get('phrase_id')}, reason={result.get('reason', '')[:100]}"
+            )
+            return result
+        except Exception as e:
+            # Fire-and-forget: log error but don't raise
+            logger.warning(f"[CloudClient] Learning request failed: {e}")
+            return {
+                "success": False,
+                "phrase_created": False,
+                "phrase_id": None,
+                "reason": f"Request failed: {e}",
+            }
+
     async def query_memory(
         self,
         user_id: str,

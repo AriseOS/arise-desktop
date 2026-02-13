@@ -5024,6 +5024,111 @@ async def plan_with_memory(
         raise HTTPException(500, f"PlannerAgent failed: {str(e)}")
 
 
+@app.post("/api/v1/memory/learn")
+async def learn_from_execution(
+    data: dict,
+    x_ami_api_key: Optional[str] = Header(None, alias="X-Ami-API-Key"),
+):
+    """
+    Post-Execution Learning
+
+    Analyzes completed task execution data and optionally creates a
+    CognitivePhrase for successful browser workflows. Called fire-and-forget
+    by the client after task completion.
+
+    Headers:
+        X-Ami-API-Key: User's API key (required)
+
+    Body:
+        {
+            "user_id": "user123",
+            "execution_data": {
+                "task_id": "...",
+                "user_request": "...",
+                "subtasks": [...],
+                "completed_count": 3,
+                "failed_count": 0,
+                "total_count": 3
+            }
+        }
+
+    Returns:
+        {
+            "success": true,
+            "phrase_created": true/false,
+            "phrase_id": "xxx" or null,
+            "reason": "..."
+        }
+    """
+    logger.info(f"LearnerAgent request: data keys={list(data.keys())}")
+
+    if not x_ami_api_key:
+        raise HTTPException(400, "Missing X-Ami-API-Key header")
+
+    user_id = data.get("user_id")
+    execution_data_dict = data.get("execution_data")
+
+    if not user_id:
+        raise HTTPException(400, "Missing user_id")
+    if not execution_data_dict:
+        raise HTTPException(400, "Missing execution_data")
+
+    try:
+        from src.common.llm import get_cached_anthropic_provider, get_cached_embedding_service
+        from src.common.memory.learner.models import TaskExecutionData
+        from src.common.memory.memory_service import get_private_memory
+
+        # Deserialize execution data
+        execution_data = TaskExecutionData.from_dict(execution_data_dict)
+
+        # Get private memory (learner only writes to private)
+        private_ms = get_private_memory(user_id)
+
+        # Create LLM provider with user's API key (cached)
+        llm_provider = get_cached_anthropic_provider(
+            api_key=x_ami_api_key,
+            model=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
+            base_url=config_service.get("llm.proxy_url", "https://api.ariseos.com/api"),
+        )
+
+        # Create EmbeddingService with user's API key (cached)
+        embedding_service = get_cached_embedding_service(
+            api_key=x_ami_api_key,
+            base_url=config_service.get("embedding.base_url", "https://api.ariseos.com/openai/v1"),
+            model=config_service.get("embedding.model", "BAAI/bge-m3"),
+            dimension=config_service.get("embedding.dimension", 1024),
+        )
+
+        # Call MemoryService.learn()
+        learn_result = await private_ms.learn(
+            execution_data=execution_data,
+            llm_provider=llm_provider,
+            embedding_service=embedding_service,
+        )
+
+        reason = learn_result.learning_plan.reason
+        logger.info(
+            f"LearnerAgent completed: phrase_created={learn_result.phrase_created}, "
+            f"phrase_id={learn_result.phrase_id}, reason={reason[:100]} "
+            f"for user={user_id}"
+        )
+        return {
+            "success": True,
+            "phrase_created": learn_result.phrase_created,
+            "phrase_id": learn_result.phrase_id,
+            "phrase_ids": learn_result.phrase_ids,
+            "reason": reason,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        logger.error(f"LearnerAgent failed: {e}\n{error_trace}")
+        raise HTTPException(500, f"LearnerAgent failed: {str(e)}")
+
+
 if __name__ == "__main__":
     # Load config to get server settings
     from core.config_service import CloudConfigService
