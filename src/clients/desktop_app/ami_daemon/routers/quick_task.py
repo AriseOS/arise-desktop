@@ -318,6 +318,30 @@ async def cancel_task(task_id: str):
     return {"message": "Task cancelled"}
 
 
+@router.post("/pause/{task_id}")
+async def pause_task(task_id: str):
+    """Pause a running task (user takes control of browser)."""
+    service = get_service()
+    success = await service.pause_task(task_id)
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Task not found or not running")
+
+    return {"message": "Task paused"}
+
+
+@router.post("/resume/{task_id}")
+async def resume_task(task_id: str):
+    """Resume a paused task (give back control to agent)."""
+    service = get_service()
+    success = await service.resume_task(task_id)
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Task not found or not paused")
+
+    return {"message": "Task resumed"}
+
+
 # ============== Task Detail Endpoint (Eigent Migration) ==============
 
 class ConversationEntryResponse(BaseModel):

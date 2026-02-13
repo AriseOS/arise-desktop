@@ -545,6 +545,20 @@ class OrchestratorSession:
                 handle.executor.stop()
                 logger.info(f"[OrchestratorSession] Stopped executor {eid} via external cancel")
 
+    def pause_all_executors(self) -> None:
+        """Pause all running executors. Used by Take Control (user takes browser)."""
+        for eid, handle in self._running_executors.items():
+            if not handle.async_task.done() and not handle.executor.is_paused:
+                handle.executor.pause()
+                logger.info(f"[OrchestratorSession] Paused executor {eid}")
+
+    def resume_all_executors(self) -> None:
+        """Resume all paused executors. Used by Give Back (return control to agent)."""
+        for eid, handle in self._running_executors.items():
+            if not handle.async_task.done() and handle.executor.is_paused:
+                handle.executor.resume()
+                logger.info(f"[OrchestratorSession] Resumed executor {eid}")
+
     async def run(self, initial_message: str) -> None:
         """Main session loop."""
         from ..events import WaitConfirmData, ConfirmedData

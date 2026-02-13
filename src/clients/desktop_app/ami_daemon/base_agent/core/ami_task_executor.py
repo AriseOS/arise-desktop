@@ -319,6 +319,7 @@ class AMITaskExecutor:
 
         completed = 0
         failed = 0
+        _emitted_failures = set()  # Track subtasks whose FAILED state has been emitted
 
         while not self._stopped:
             # Wait if paused
@@ -327,10 +328,48 @@ class AMITaskExecutor:
             if self._stopped:
                 break
 
+            # Emit SSE events for subtasks that were fail-fast marked in _get_next_subtask
+            newly_failed = [
+                s for s in self._subtasks
+                if s.state == SubtaskState.FAILED and s not in _emitted_failures
+            ]
+            for s in newly_failed:
+                _emitted_failures.add(s)
+                failed += 1
+                await self._emit_subtask_state(s)
+
             # Find next executable subtask (dependencies satisfied)
             subtask = self._get_next_subtask()
+
+            # Emit again after _get_next_subtask (it may have marked more subtasks FAILED)
+            newly_failed = [
+                s for s in self._subtasks
+                if s.state == SubtaskState.FAILED and s not in _emitted_failures
+            ]
+            for s in newly_failed:
+                _emitted_failures.add(s)
+                failed += 1
+                await self._emit_subtask_state(s)
+
             if subtask is None:
-                # No more subtasks to execute
+                # Check if there are stuck PENDING subtasks (deadlock detection)
+                stuck = [
+                    s for s in self._subtasks
+                    if s.state == SubtaskState.PENDING
+                ]
+                if stuck:
+                    stuck_ids = [s.id for s in stuck]
+                    logger.warning(
+                        f"[AMITaskExecutor] {len(stuck)} subtasks stuck PENDING "
+                        f"(unresolvable dependencies or circular): "
+                        f"{stuck_ids}"
+                    )
+                    for s in stuck:
+                        s.state = SubtaskState.FAILED
+                        s.error = "Blocked: circular dependency"
+                        failed += 1
+                        _emitted_failures.add(s)
+                        await self._emit_subtask_state(s)
                 break
 
             # Execute the subtask
@@ -369,6 +408,9 @@ class AMITaskExecutor:
         - Its state is PENDING
         - All its dependencies are DONE
 
+        If a dependency FAILED, immediately fail the downstream subtask
+        (don't wait for deadlock detection).
+
         Returns None if no executable subtask found.
         """
         for subtask in self._subtasks:
@@ -380,10 +422,20 @@ class AMITaskExecutor:
             for dep_id in subtask.depends_on:
                 dep = self._subtask_map.get(dep_id)
                 if dep is None:
-                    # Dependency reference is invalid - log and treat as unsatisfied
                     logger.warning(
                         f"[AMITaskExecutor] Subtask {subtask.id} depends on "
                         f"non-existent task '{dep_id}'. Marking as blocked."
+                    )
+                    deps_satisfied = False
+                    break
+                if dep.state == SubtaskState.FAILED:
+                    # Fail fast: propagate failure to downstream subtask
+                    subtask.state = SubtaskState.FAILED
+                    subtask.error = (
+                        f"Dependency '{dep_id}' failed: {dep.error or 'unknown error'}"
+                    )
+                    logger.warning(
+                        f"[AMITaskExecutor] Subtask {subtask.id} failed: {subtask.error}"
                     )
                     deps_satisfied = False
                     break

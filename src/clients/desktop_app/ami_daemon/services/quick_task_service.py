@@ -866,6 +866,54 @@ class QuickTaskService:
         logger.info(f"Task cancelled: {task_id}")
         return True
 
+    async def pause_task(self, task_id: str) -> bool:
+        """Pause a running task (user takes control of browser).
+
+        Pauses all running executors so the agent stops performing actions.
+        """
+        state = self._tasks.get(task_id)
+        if not state:
+            return False
+
+        if state.status != TaskStatus.RUNNING:
+            return False
+
+        session = getattr(state, '_orchestrator_session', None)
+        if session is not None:
+            session.pause_all_executors()
+            logger.info(f"Task {task_id}: all executors paused (take control)")
+        elif state._executor is not None:
+            state._executor.pause()
+            logger.info(f"Task {task_id}: executor paused (take control)")
+        else:
+            return False
+
+        return True
+
+    async def resume_task(self, task_id: str) -> bool:
+        """Resume a paused task (give back control to agent).
+
+        Resumes all paused executors so the agent continues.
+        """
+        state = self._tasks.get(task_id)
+        if not state:
+            return False
+
+        if state.status != TaskStatus.RUNNING:
+            return False
+
+        session = getattr(state, '_orchestrator_session', None)
+        if session is not None:
+            session.resume_all_executors()
+            logger.info(f"Task {task_id}: all executors resumed (give back control)")
+        elif state._executor is not None:
+            state._executor.resume()
+            logger.info(f"Task {task_id}: executor resumed (give back control)")
+        else:
+            return False
+
+        return True
+
     async def provide_human_response(self, task_id: str, response: str) -> bool:
         """Provide a human response to a pending question.
 

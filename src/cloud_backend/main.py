@@ -1627,7 +1627,15 @@ async def query_memory(
             f"uses_intent_sequences={intent_seq_used}, intent_sequences={intent_seq_count}"
         )
 
-        # Convert to API response format
+        # Convert to API response format.
+        # Strip embedding_vector from all serialized objects — these are large
+        # (1024 floats ~4KB each) and never used by the client.
+        def _serialize(obj):
+            d = obj.to_dict() if hasattr(obj, 'to_dict') else obj
+            if isinstance(d, dict):
+                d.pop("embedding_vector", None)
+            return d
+
         response = {
             "success": result.success,
             "query_type": result.query_type,
@@ -1637,10 +1645,10 @@ async def query_memory(
 
         # Add type-specific fields
         if result.query_type == "task":
-            response["states"] = [s.to_dict() if hasattr(s, 'to_dict') else s for s in result.states]
-            response["actions"] = [a.to_dict() if hasattr(a, 'to_dict') else a for a in result.actions]
+            response["states"] = [_serialize(s) for s in result.states]
+            response["actions"] = [_serialize(a) for a in result.actions]
             if result.cognitive_phrase:
-                response["cognitive_phrase"] = result.cognitive_phrase.to_dict() if hasattr(result.cognitive_phrase, 'to_dict') else result.cognitive_phrase
+                response["cognitive_phrase"] = _serialize(result.cognitive_phrase)
             if result.execution_plan:
                 response["execution_plan"] = [
                     step.model_dump() if hasattr(step, 'model_dump') else step
@@ -1658,14 +1666,11 @@ async def query_memory(
                 ]
 
         elif result.query_type == "navigation":
-            response["states"] = [s.to_dict() if hasattr(s, 'to_dict') else s for s in result.states]
-            response["actions"] = [a.to_dict() if hasattr(a, 'to_dict') else a for a in result.actions]
+            response["states"] = [_serialize(s) for s in result.states]
+            response["actions"] = [_serialize(a) for a in result.actions]
 
         elif result.query_type == "action":
-            response["intent_sequences"] = [
-                seq.to_dict() if hasattr(seq, 'to_dict') else seq
-                for seq in result.intent_sequences
-            ]
+            response["intent_sequences"] = [_serialize(seq) for seq in result.intent_sequences]
             # Log intent sequence details for debugging (exclude embeddings to reduce noise)
             try:
                 intent_sequences_detail = []
@@ -1806,10 +1811,19 @@ async def get_state_by_url(
                         sequences.append(ps)
                         existing_descs.add(desc)
 
+        # Strip embedding_vector — large and unused by client
+        state_dict = state.to_dict()
+        state_dict.pop("embedding_vector", None)
+        seq_dicts = []
+        for seq in sequences:
+            sd = seq.to_dict()
+            sd.pop("embedding_vector", None)
+            seq_dicts.append(sd)
+
         return {
             "success": True,
-            "state": state.to_dict(),
-            "intent_sequences": [seq.to_dict() for seq in sequences],
+            "state": state_dict,
+            "intent_sequences": seq_dicts,
             "source": source,
         }
 

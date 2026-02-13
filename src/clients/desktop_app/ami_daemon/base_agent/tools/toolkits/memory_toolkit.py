@@ -120,8 +120,11 @@ def _log_cognitive_phrase_summary(phrase: "CognitivePhrase") -> None:
             if i < len(phrase.actions):
                 action = phrase.actions[i]
                 action_desc = _sanitize_text(action.description, max_len=120)
-                action_text = _sanitize_text(action.element_text, max_len=60)
-                action_selector = _sanitize_text(action.element_selector, max_len=_MAX_SELECTOR_LEN)
+                trigger = action.trigger or {}
+                action_text = _sanitize_text(trigger.get("text"), max_len=60)
+                action_selector = _sanitize_text(
+                    trigger.get("ref") or trigger.get("element_ref"), max_len=_MAX_SELECTOR_LEN
+                )
                 logger.info(
                     "[Memory] phrase step %d action: %s | text=%s | selector=%s",
                     i + 1,
