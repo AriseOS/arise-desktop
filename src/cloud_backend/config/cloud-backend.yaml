@@ -109,7 +109,10 @@ logging:
 cors:
   allow_origins:
     - http://localhost:3000
+    - http://localhost:5173
     - http://localhost:8000
+    - https://ariseos.com
+    - https://www.ariseos.com
   allow_credentials: true
   allow_methods:
     - GET
