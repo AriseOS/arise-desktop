@@ -10,7 +10,8 @@ Core framework components for BaseAgent. No CAMEL-AI dependency.
 | `ami_agent.py` | AMIAgent - Core agent loop with tool calling, context truncation (no summarization) |
 | `ami_browser_agent.py` | AMIBrowserAgent - Browser agent with Memory page operations support |
 | `ami_task_planner.py` | Memory-First task decomposition (query Memory -> decompose -> assign guide) |
-| `ami_task_executor.py` | Lightweight task executor (~250 lines, sequential with dependency resolution) |
+| `ami_task_executor.py` | Task executor with dependency resolution, online learning hooks (BehaviorRecorder + ExecutionDataCollector) |
+| `execution_data_collector.py` | Extracts tool use + thinking from agent messages, compresses into TaskExecutionData for LearnerAgent |
 | `agent_factories.py` | Factory functions to create configured agents (browser, developer, etc.) |
 | `orchestrator_agent.py` | Top-level Orchestrator that decides task handling approach |
 | `schemas.py` | Data structures (AgentContext, AgentResult, etc.) |
@@ -96,10 +97,32 @@ Key classes:
 
 ### Memory Integration
 
-**Two-layer Memory usage**:
+**Two-layer Memory usage (Read)**:
 - Layer 1 (Planner): PlannerAgent outputs MemoryPlan (coverage + preferences + uncovered), AMITaskPlanner uses it as context for _fine_grained_decompose, then assigns workflow_guide from coverage items to browser subtasks -> injected via AMITaskExecutor._build_prompt()
 - Layer 2 (Runtime): page operations auto-queried per URL change -> auto-injected by AMIAgent._enrich_message()
 
 **Decoupled responsibility**:
 - PlannerAgent (Memory layer): only analyzes Memory coverage, outputs `<memory_plan>` XML
 - AMITaskPlanner (Agent layer): receives MemoryPlan, does subtask decomposition with worker capabilities, assigns agent_type/depends_on
+
+### Online Learning Integration (Write)
+
+AMITaskExecutor manages two learning mechanisms during task execution:
+
+**Layer 1: Runtime Learning (BehaviorRecorder)**
+- Before each browser subtask: `_start_behavior_recorder()` starts CDP recording
+- After each successful browser subtask: `_save_recorded_operations()` sends operations to Memory via cloud_client
+- Operations → WorkflowProcessor → State/Action/IntentSequence (immediate graph entities)
+- AMIBrowserAgent.reset() clears `_page_ops_checked_urls` so next subtask queries fresh Memory
+
+**Layer 2: Post-Execution Learning (LearnerAgent)**
+- During each subtask: `ExecutionDataCollector.collect_subtask_data(agent, subtask)` extracts tool records from agent messages
+- After all subtasks: `collector.build_task_data()` assembles TaskExecutionData
+- Fire-and-forget: `asyncio.create_task(_learn_from_execution(task_data))` calls cloud backend
+- Cloud endpoint creates LearnerAgent, analyzes execution, generates CognitivePhrase
+- Auto-shares created phrases to public memory
+
+**ExecutionDataCollector** (`execution_data_collector.py`):
+- Extracts ToolUseRecord from agent's Anthropic-native messages (thinking, tool_name, input_summary, result_summary, judgment, current_url)
+- Compresses input per tool type (keeps only relevant fields, drops page snapshots)
+- Handles dynamic subtask deduplication (same-type repeats → keep first, count rest)
