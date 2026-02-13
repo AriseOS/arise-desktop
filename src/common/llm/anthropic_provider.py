@@ -266,7 +266,7 @@ class AnthropicProvider(BaseProvider):
             logger.info("No proxy from environment, bypassing system proxy settings")
 
         http_client = httpx.Client(
-            timeout=120.0,  # 2 minute timeout for API calls
+            timeout=180.0,  # 3 minute timeout for API calls
             proxy=proxy,  # None disables auto-detection, explicit URL enables proxy
         )
 
@@ -312,60 +312,33 @@ class AnthropicProvider(BaseProvider):
         last_exception = None
         for attempt in range(MAX_RETRIES):
             try:
-                logger.info(f"Calling Anthropic API... (attempt {attempt + 1}/{MAX_RETRIES})")
+                logger.info(f"Calling Anthropic API (stream)... (attempt {attempt + 1}/{MAX_RETRIES})")
 
-                # Make the API call and catch any errors
-                try:
-                    response = await asyncio.to_thread(
-                        self._client.messages.create,
+                text_parts = []
+                final_message = None
+
+                def _stream_collect():
+                    nonlocal final_message
+                    with self._client.messages.stream(
                         model=self.model_name,
-                        system=system_prompt,  # Claude uses separate system parameter
+                        system=system_prompt,
                         messages=messages,
                         temperature=self.temperature,
-                        max_tokens=self.max_tokens
-                    )
+                        max_tokens=self.max_tokens,
+                    ) as stream:
+                        for text in stream.text_stream:
+                            text_parts.append(text)
+                        final_message = stream.get_final_message()
 
-                    logger.info(f"Anthropic API call successful")
+                await asyncio.to_thread(_stream_collect)
 
-                    # Record token usage (Eigent Migration)
-                    self._record_usage(response)
+                result = "".join(text_parts)
+                logger.info(f"Anthropic API call successful (streamed), length={len(result)}")
 
-                    return response.content[0].text
+                if final_message:
+                    self._record_usage(final_message)
 
-                except json.JSONDecodeError as json_err:
-                    logger.error(f"JSONDecodeError caught! {json_err}")
-                    logger.error(f"  This means API Proxy returned invalid/empty JSON")
-
-                    # The JSONDecodeError is raised from httpx response.json()
-                    # Let's trace back through the exception to find the response
-                    import sys
-                    tb = sys.exc_info()[2]
-
-                    # Walk up the traceback to find local variables
-                    logger.error("Searching for httpx response in exception traceback...")
-                    frame = tb.tb_frame
-                    while frame:
-                        local_vars = frame.f_locals
-                        logger.error(f"  Frame: {frame.f_code.co_name}, locals: {list(local_vars.keys())[:10]}")
-
-                        # Look for 'response' or 'self' that might be httpx.Response
-                        if 'response' in local_vars:
-                            resp = local_vars['response']
-                            logger.error(f"  Found 'response': {type(resp)}")
-
-                            # If it's httpx.Response, print its content
-                            if hasattr(resp, 'content'):
-                                logger.error(f"  ✅ Found httpx Response!")
-                                logger.error(f"    Status: {resp.status_code}")
-                                logger.error(f"    Headers: {dict(resp.headers)}")
-                                logger.error(f"    Content length: {len(resp.content)}")
-                                logger.error(f"    Content (bytes): {resp.content}")
-                                logger.error(f"    Content (text): {resp.text}")
-                                break
-
-                        frame = frame.f_back
-
-                    raise
+                return result
 
             except APIStatusError as e:
                 logger.error(f"Anthropic API Status Error: {e.status_code}")
@@ -458,12 +431,21 @@ class AnthropicProvider(BaseProvider):
                         logger.info("[LLM Request] ✅ WORKFLOW GUIDE DETECTED in message!")
                 logger.info("=" * 80)
 
-                response = await asyncio.to_thread(
-                    self._client.messages.create,
-                    **create_kwargs,
-                )
+                # Use streaming to avoid read-timeout on long requests
+                final_message = None
 
-                logger.info(f"Anthropic API call successful (stop={response.stop_reason}, blocks={len(response.content)})")
+                def _stream_collect_tools():
+                    nonlocal final_message
+                    with self._client.messages.stream(**create_kwargs) as stream:
+                        # Consume the stream; we only need the final assembled message
+                        for _text in stream.text_stream:
+                            pass
+                        final_message = stream.get_final_message()
+
+                await asyncio.to_thread(_stream_collect_tools)
+
+                response = final_message
+                logger.info(f"Anthropic API call successful (streamed, stop={response.stop_reason}, blocks={len(response.content)})")
 
                 # Log full response for debugging
                 for i, block in enumerate(response.content):

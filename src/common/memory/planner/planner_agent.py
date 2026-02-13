@@ -233,26 +233,45 @@ class PlannerAgent:
 
     @staticmethod
     def _build_phrase_guide(
-        step: PlanStep, enriched_phrases: Dict
+        plan_step: PlanStep, enriched_phrases: Dict
     ) -> str:
-        """Build workflow_guide for a phrase-based plan step."""
-        phrase_data = enriched_phrases.get(step.phrase_id)
+        """Build workflow_guide for a phrase-based plan step.
+
+        Only includes phrase steps whose state_id is in plan_step.state_ids,
+        avoiding duplication of the entire workflow into every plan step.
+        Falls back to all phrase steps if no state_ids filter is provided.
+        """
+        phrase_data = enriched_phrases.get(plan_step.phrase_id)
         if not phrase_data:
             return ""
 
-        guide_lines = []
-        steps = phrase_data.get("steps", [])
+        all_steps = phrase_data.get("steps", [])
 
-        for step in steps:
-            state = step.get("state", {})
+        # Filter to only the steps relevant to this plan step
+        if plan_step.state_ids:
+            state_id_set = set(plan_step.state_ids)
+            filtered_steps = [
+                s for s in all_steps
+                if s.get("state", {}).get("id") in state_id_set
+                or s.get("state_id") in state_id_set
+            ]
+            # Fall back to all steps if filter matched nothing
+            if not filtered_steps:
+                filtered_steps = all_steps
+        else:
+            filtered_steps = all_steps
+
+        guide_lines = []
+        for phrase_step in filtered_steps:
+            state = phrase_step.get("state", {})
             guide_lines.append(
-                f"Step {step['index']}: {state.get('description', '')}"
+                f"Step {phrase_step['index']}: {state.get('description', '')}"
             )
             if state.get("page_url"):
                 guide_lines.append(f"  URL: {state['page_url']}")
 
             # In-page operations
-            for op in step.get("in_page_operations", []):
+            for op in phrase_step.get("in_page_operations", []):
                 if op.get("description"):
                     guide_lines.append(f"  Operation: {op['description']}")
                 for intent in op.get("intents", [])[:10]:
@@ -265,7 +284,7 @@ class PlannerAgent:
                         guide_lines.append(line)
 
             # Navigation
-            nav = step.get("navigation")
+            nav = phrase_step.get("navigation")
             if nav:
                 desc = nav.get("description", "next")
                 trigger = nav.get("trigger", {})
@@ -274,7 +293,7 @@ class PlannerAgent:
                 guide_lines.append(f"  -> {desc}")
 
             # Navigation sequence (detailed intent-level navigation steps)
-            nav_seq = step.get("navigation_sequence")
+            nav_seq = phrase_step.get("navigation_sequence")
             if nav_seq:
                 if nav_seq.get("description"):
                     guide_lines.append(
@@ -293,22 +312,22 @@ class PlannerAgent:
 
     @staticmethod
     def _build_graph_guide(
-        step: PlanStep,
+        plan_step: PlanStep,
         graph_paths: List[Dict],
     ) -> str:
         """Build workflow_guide for a graph-based plan step.
 
         Finds the matching explore_graph path by checking if the path's
-        state IDs overlap with the step's state_ids, then formats
-        the path steps into a navigation guide.
+        state IDs overlap with the plan_step's state_ids, then formats
+        only the matching steps into a navigation guide.
         """
         # Find the best matching path from explore_graph results
-        item_state_set = set(step.state_ids)
+        item_state_set = set(plan_step.state_ids)
         best_path = None
         best_overlap = 0
         for path in graph_paths:
             path_state_ids = {
-                step.get("state_id") for step in path.get("steps", [])
+                s.get("state_id") for s in path.get("steps", [])
             }
             overlap = len(item_state_set & path_state_ids)
             if overlap > best_overlap:
@@ -318,23 +337,35 @@ class PlannerAgent:
         if not best_path:
             return ""
 
+        # Filter to only steps matching this plan step's state_ids
+        all_path_steps = best_path.get("steps", [])
+        if item_state_set:
+            filtered_steps = [
+                s for s in all_path_steps
+                if s.get("state_id") in item_state_set
+            ]
+            if not filtered_steps:
+                filtered_steps = all_path_steps
+        else:
+            filtered_steps = all_path_steps
+
         guide_lines = ["**Navigation Path (from graph exploration)**:\n"]
 
-        for i, step in enumerate(best_path.get("steps", []), 1):
-            desc = step.get("description") or step.get("page_title") or step.get("state_id", "")
+        for i, path_step in enumerate(filtered_steps, 1):
+            desc = path_step.get("description") or path_step.get("page_title") or path_step.get("state_id", "")
             guide_lines.append(f"Step {i}: {desc}")
-            if step.get("page_url"):
-                guide_lines.append(f"  URL: {step['page_url']}")
+            if path_step.get("page_url"):
+                guide_lines.append(f"  URL: {path_step['page_url']}")
 
             # Operations (capabilities) included in explore_graph results
-            for op in step.get("operations", []):
+            for op in path_step.get("operations", []):
                 if op.get("description"):
                     guide_lines.append(f"  Operation: {op['description']}")
                 for intent_desc in op.get("intents", [])[:5]:
                     guide_lines.append(f"    - {intent_desc}")
 
             # Navigation action to next step
-            next_action = step.get("next_action")
+            next_action = path_step.get("next_action")
             if next_action:
                 action_desc = next_action.get("description") or "Navigate"
                 trigger = next_action.get("trigger")
