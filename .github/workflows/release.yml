@@ -47,9 +47,6 @@ jobs:
           cache: 'npm'
           cache-dependency-path: src/clients/desktop_app/package-lock.json
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Get version
         id: version
         run: |
@@ -59,22 +56,11 @@ jobs:
             echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: src/clients/desktop_app/src-tauri
-          shared-key: "tauri-build"
-          cache-on-failure: true
-          # Cache target directory for incremental compilation
-          cache-targets: true
-          # Cache registry and git dependencies
-          cache-all-crates: true
-
-      - name: Update version in tauri.conf.json
+      - name: Update version in package.json
         run: |
-          cd src/clients/desktop_app/src-tauri
-          sed -i.bak "s/\"version\": \"[^\"]*\"/\"version\": \"${{ steps.version.outputs.version }}\"/" tauri.conf.json
-          rm tauri.conf.json.bak
+          cd src/clients/desktop_app
+          sed -i.bak "s/\"version\": \"[^\"]*\"/\"version\": \"${{ steps.version.outputs.version }}\"/" package.json
+          rm package.json.bak
           echo "Updated version to ${{ steps.version.outputs.version }}"
 
       - name: Cache Python virtual environment
@@ -210,9 +196,6 @@ jobs:
           cache: 'npm'
           cache-dependency-path: src/clients/desktop_app/package-lock.json
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Get version
         id: version
         shell: bash
@@ -223,20 +206,11 @@ jobs:
             echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: src/clients/desktop_app/src-tauri
-          shared-key: "tauri-build-windows"
-          cache-on-failure: true
-          cache-targets: true
-          cache-all-crates: true
-
-      - name: Update version in tauri.conf.json
+      - name: Update version in package.json
         shell: bash
         run: |
-          cd src/clients/desktop_app/src-tauri
-          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${{ steps.version.outputs.version }}\"/" tauri.conf.json
+          cd src/clients/desktop_app
+          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${{ steps.version.outputs.version }}\"/" package.json
 
       - name: Cache Python virtual environment
         uses: actions/cache@v4

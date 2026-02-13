@@ -3,16 +3,17 @@
   "private": true,
   "version": "0.2.0",
   "type": "module",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "tauri": "tauri",
-    "clean:daemon": "find src-tauri/target -name 'ami-daemon' -type f -delete"
+    "electron:dev": "concurrently \"vite\" \"wait-on tcp:1420 && AMI_DEV_MODE=1 VITE_DEV_SERVER_URL=http://localhost:1420 electron .\"",
+    "electron:build": "vite build && electron-builder"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.9.0",
-    "@tauri-apps/plugin-store": "^2.4.1",
+    "electron-store": "^10.0.0",
+    "tree-kill": "^1.2.2",
     "html2canvas": "^1.4.1",
     "i18next": "^25.7.4",
     "js-yaml": "^4.1.1",
@@ -28,10 +29,13 @@
     "zustand": "^5.0.10"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.9.6",
     "@types/react": "^18.2.15",
     "@types/react-dom": "^18.2.7",
     "@vitejs/plugin-react": "^4.0.3",
-    "vite": "^4.4.5"
+    "concurrently": "^9.0.0",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0",
+    "vite": "^4.4.5",
+    "wait-on": "^8.0.0"
   }
 }

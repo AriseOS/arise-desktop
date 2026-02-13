@@ -1,20 +1,42 @@
 # src/clients/desktop_app/
 
-Desktop application built with Tauri (Rust + TypeScript) and Python daemon.
+Desktop application built with Electron and Python daemon.
 
 ## Directories
 
-- `src/` - Frontend source (TypeScript/React)
-- `src-tauri/` - Tauri backend (Rust)
+- `src/` - Frontend source (React/JSX)
+- `electron/` - Electron main process (JS)
 - `ami_daemon/` - Python daemon with BaseAgent runtime
+- `src-tauri/` - Legacy Tauri backend (Rust) — being phased out
 
 ## Architecture
 
 ```
-Tauri Frontend (React) ←→ Tauri Backend (Rust) ←→ ami_daemon (Python)
-                                                       ↓
-                                                  BaseAgent
+Electron Main Process ←→ React Frontend (renderer)
+       ↓
+  WebView Pool (8 WebContentsView, CDP)
+       ↓
+  Python Daemon (launched by DaemonLauncher)
+       ↓
+  BaseAgent (Playwright connects to Electron via CDP)
 ```
+
+### Electron Files
+
+| File | Purpose |
+|------|---------|
+| `electron/main.js` | Entry point: CDP port, BrowserWindow, IPC handlers, daemon lifecycle |
+| `electron/preload.js` | contextBridge exposing `window.electronAPI` |
+| `electron/daemon-launcher.js` | Python daemon spawn, port discovery, graceful shutdown |
+| `electron/webview-manager.js` | WebContentsView pool (8 views) for browser automation |
+| `electron/stealth.js` | Anti-detection script injected into each WebContentsView |
+
+### Key Design Decisions
+
+- **No external Chrome**: Electron's built-in Chromium IS the browser for automation
+- **CDP port**: Found at startup, passed to daemon via `BROWSER_CDP_PORT` env var
+- **Shared cookies**: All WebContentsViews use `persist:user_login` partition
+- **Pool pages**: Identified by `about:blank?ami=pool` marker URL
 
 ## Key Frontend Pages
 
@@ -23,31 +45,7 @@ Tauri Frontend (React) ←→ Tauri Backend (Rust) ←→ ami_daemon (Python)
 - `src/pages/RecordingPage.jsx` - Recording page with real-time operation feedback
 - `src/pages/MyWorkflowsPage.jsx` - Workflow list and management
 
-### RecordingPage Real-time Feedback
-
-`RecordingPage` displays captured operations in real-time during recording:
-- Polls `GET /api/v1/recordings/current/operations` every 500ms
-- Shows operation type (click, input, navigate, etc.) with icons
-- Displays element text, input values, and URLs
-- Auto-scrolls to latest operation
-
-## Logging & Diagnostics
-
-### Execution History UI
-
-`ExecutionHistoryPage` displays workflow execution history:
-- List of all executions with status filter
-- Detail modal showing step logs
-- Manual log upload button
-
-### Diagnostic Upload
-
-Bug icon in bottom navigation triggers diagnostic upload:
-- Calls `api.uploadDiagnostic()` → `POST /api/v1/app/diagnostic`
-- Collects system logs and recent executions
-- Uploaded to Cloud Backend for debugging
-
 ## See Also
 
 - `ami_daemon/CONTEXT.md` for backend daemon details
-- `ami_daemon/base_app/CONTEXT.md` for BaseAgent details
+- `ami_daemon/base_agent/core/CONTEXT.md` for BaseAgent details

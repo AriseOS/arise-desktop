@@ -1,5 +1,5 @@
 #!/bin/bash
-# Quick start script for Ami Desktop App
+# Quick start script for Ami Desktop App (Electron)
 
 # Parse arguments
 USE_LOCAL_CLOUD=false
@@ -37,23 +37,13 @@ if [ ! -d "src/clients/desktop_app/node_modules" ]; then
     echo "📦 Installing dependencies..."
     cd src/clients/desktop_app
     npm install
-
-    # Install Tauri CLI
-    echo "📦 Installing Tauri CLI..."
-    npm install --save-dev @tauri-apps/cli
-
     cd ../../..
 fi
 
-# Check if Tauri CLI is installed
-cd src/clients/desktop_app
-if ! npm list @tauri-apps/cli > /dev/null 2>&1; then
-    echo "📦 Installing Tauri CLI..."
-    npm install --save-dev @tauri-apps/cli
-fi
-
 # Start the app in development mode
-echo "✅ Starting Tauri app (Development Mode)..."
+cd src/clients/desktop_app
+
+echo "✅ Starting Electron app (Development Mode)..."
 echo "   AMI_DEV_MODE=1 → Using Python source code"
 
 # Build environment variables
@@ -63,15 +53,15 @@ if [ "$AMI_DEBUG_MODE" = true ]; then
     echo "   Debug Mode: ENABLED"
 fi
 
-# Disable proxy for local connections (fix 502 error on ports 8765-8774)                                                                  
-export no_proxy="localhost,127.0.0.1,::1"                                                                                                 
-export NO_PROXY="localhost,127.0.0.1,::1"  
+# Disable proxy for local connections (fix 502 error on ports 8765-8774)
+export no_proxy="localhost,127.0.0.1,::1"
+export NO_PROXY="localhost,127.0.0.1,::1"
 
 if [ "$USE_LOCAL_CLOUD" = true ]; then
     echo "   APP_BACKEND_CLOUD_API_URL=http://localhost:9090"
     echo ""
-    eval "$ENV_VARS APP_BACKEND_CLOUD_API_URL=http://localhost:9090 npm run tauri dev"
+    eval "$ENV_VARS APP_BACKEND_CLOUD_API_URL=http://localhost:9090 npm run electron:dev"
 else
     echo ""
-    eval "$ENV_VARS npm run tauri dev"
+    eval "$ENV_VARS npm run electron:dev"
 fi

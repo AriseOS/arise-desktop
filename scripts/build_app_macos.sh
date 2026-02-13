@@ -2,7 +2,7 @@
 
 # Unified Build Script for Ami
 # Builds, signs, and optionally notarizes the complete macOS application
-# Following industry best practices for PyInstaller + Tauri + macOS code signing
+# Following industry best practices for PyInstaller + Electron + macOS code signing
 
 set -e
 
@@ -17,7 +17,7 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 DAEMON_DIR="${PROJECT_ROOT}/src/clients/desktop_app/ami_daemon"
 DESKTOP_DIR="${PROJECT_ROOT}/src/clients/desktop_app"
-TAURI_DIR="${DESKTOP_DIR}/src-tauri"
+ELECTRON_DIR="${DESKTOP_DIR}/electron"
 DIST_DIR="${PROJECT_ROOT}/dist"
 
 # Entitlements file
@@ -34,7 +34,7 @@ NOTARIZE_KEYCHAIN_PROFILE="${NOTARIZE_KEYCHAIN_PROFILE:-ami-notary}"
 CLEAN_BUILD=false
 CREATE_DMG=true
 SKIP_DAEMON=false
-SKIP_TAURI=false
+SKIP_ELECTRON=false
 SKIP_SIGNING=false
 
 while [[ $# -gt 0 ]]; do
@@ -55,8 +55,8 @@ while [[ $# -gt 0 ]]; do
             SKIP_DAEMON=true
             shift
             ;;
-        --skip-tauri)
-            SKIP_TAURI=true
+        --skip-electron)
+            SKIP_ELECTRON=true
             shift
             ;;
         --notarize)
@@ -76,9 +76,9 @@ Build, sign, and package Ami for macOS
 Options:
   --clean              Clean build (remove all build artifacts first)
   --no-dmg             Skip DMG creation
-  --no-sign            Skip code signing (stop after Tauri build)
+  --no-sign            Skip code signing
   --skip-daemon        Skip daemon build (use existing)
-  --skip-tauri         Skip Tauri build (use existing)
+  --skip-electron      Skip Electron build (use existing)
   --notarize           Enable notarization
   --identity NAME      Code signing identity
   --help, -h           Show this help
@@ -113,7 +113,7 @@ EOF
     esac
 done
 
-echo -e "${GREEN}=== Ami macOS Build Script ===${NC}"
+echo -e "${GREEN}=== Ami macOS Build Script (Electron) ===${NC}"
 echo ""
 
 # Fail-fast: --notarize requires CODESIGN_IDENTITY
@@ -136,12 +136,15 @@ if [ ! -f "$ENTITLEMENTS_FILE" ]; then
     exit 1
 fi
 
+# electron-builder output directory
+ELECTRON_DIST="${DESKTOP_DIR}/release"
+
 # Clean build if requested
 if [ "$CLEAN_BUILD" = true ]; then
     echo -e "${YELLOW}Cleaning build artifacts...${NC}"
     rm -rf "${DAEMON_DIR}/build" "${DAEMON_DIR}/dist"
-    rm -rf "${TAURI_DIR}/target/release"
-    rm -rf "${TAURI_DIR}/resources/ami-daemon.app"
+    rm -rf "${ELECTRON_DIST}"
+    rm -rf "${DESKTOP_DIR}/dist"
     rm -rf "${DIST_DIR}"
     echo -e "${GREEN}✓ Clean complete${NC}"
     echo ""
@@ -167,7 +170,7 @@ if [ "$SKIP_DAEMON" = false ]; then
 
     cd "${DAEMON_DIR}"
 
-    # Create isolated build environment (like build_daemon.sh)
+    # Create isolated build environment
     BUILD_VENV="venv-build"
 
     # Find Python 3.12
@@ -222,17 +225,17 @@ if [ "$SKIP_DAEMON" = false ]; then
         exit 1
     fi
 
-    # Copy to Tauri resources
-    TAURI_RESOURCES="${TAURI_DIR}/resources"
-    mkdir -p "${TAURI_RESOURCES}"
-    rm -rf "${TAURI_RESOURCES}/ami-daemon.app"
-    cp -R dist/ami-daemon.app "${TAURI_RESOURCES}/"
+    # Copy daemon to Electron resources (electron-builder extraFiles)
+    ELECTRON_RESOURCES="${DESKTOP_DIR}/resources"
+    mkdir -p "${ELECTRON_RESOURCES}"
+    rm -rf "${ELECTRON_RESOURCES}/ami-daemon.app"
+    cp -R dist/ami-daemon.app "${ELECTRON_RESOURCES}/"
 
-    echo -e "${GREEN}✓ Daemon built and copied to Tauri resources${NC}"
+    echo -e "${GREEN}✓ Daemon built and copied to Electron resources${NC}"
 
     # Verify signing if enabled
     if [ "$SHOULD_SIGN" = true ]; then
-        SIGNATURE=$(codesign -dv "${TAURI_RESOURCES}/ami-daemon.app" 2>&1 | grep "Signature=" | cut -d'=' -f2)
+        SIGNATURE=$(codesign -dv "${ELECTRON_RESOURCES}/ami-daemon.app" 2>&1 | grep "Signature=" | cut -d'=' -f2)
         if [ "$SIGNATURE" = "adhoc" ]; then
             echo -e "${YELLOW}⚠️  Daemon has ad-hoc signature (PyInstaller signing may have failed)${NC}"
         else
@@ -245,72 +248,45 @@ else
     echo ""
 fi
 
-# Step 2: Build frontend
-echo -e "${YELLOW}Step 2: Building frontend...${NC}"
-cd "${DESKTOP_DIR}"
-npm run build
-
-if [ $? -ne 0 ]; then
-    echo -e "${RED}ERROR: Frontend build failed${NC}"
-    exit 1
-fi
-
-echo -e "${GREEN}✓ Frontend built${NC}"
-echo ""
-
-# Step 3: Build Tauri application
-if [ "$SKIP_TAURI" = false ]; then
-    echo -e "${YELLOW}Step 3: Building Tauri application...${NC}"
+# Step 2: Build Electron application (includes frontend via electron:build)
+if [ "$SKIP_ELECTRON" = false ]; then
+    echo -e "${YELLOW}Step 2: Building Electron application...${NC}"
 
     cd "${DESKTOP_DIR}"
 
-    # Build Tauri without daemon in resources (to avoid symlink issue)
-    # We'll copy daemon manually after build
-
-    # Build Tauri
-    npx tauri build --bundles app
+    # electron:build runs "vite build && electron-builder"
+    # electron-builder produces .dmg and .app in release/ directory
+    npx electron-builder --mac
 
     BUILD_RESULT=$?
 
     if [ $BUILD_RESULT -ne 0 ]; then
-        echo -e "${RED}ERROR: Tauri build failed${NC}"
+        echo -e "${RED}ERROR: Electron build failed${NC}"
         exit 1
     fi
 
-    echo -e "${GREEN}✓ Tauri application built${NC}"
-
-    # Manually copy ami-daemon.app with symlinks preserved
-    echo -e "${YELLOW}Copying ami-daemon.app (preserving symlinks)...${NC}"
-    APP_PATH="${TAURI_DIR}/target/release/bundle/macos/Ami.app"
-    DAEMON_SOURCE="${TAURI_DIR}/resources/ami-daemon.app"
-    DAEMON_DEST="${APP_PATH}/Contents/Resources/ami-daemon.app"
-
-    # Remove Tauri's copy (if exists)
-    rm -rf "${DAEMON_DEST}"
-
-    # Copy with symlinks preserved using cp -a (archive mode)
-    cp -a "${DAEMON_SOURCE}" "${DAEMON_DEST}"
-
-    echo -e "${GREEN}✓ ami-daemon.app copied with symlinks preserved${NC}"
+    echo -e "${GREEN}✓ Electron application built${NC}"
     echo ""
 else
-    echo -e "${YELLOW}Step 3: Skipping Tauri build${NC}"
+    echo -e "${YELLOW}Step 2: Skipping Electron build${NC}"
     echo ""
 fi
 
-APP_PATH="${TAURI_DIR}/target/release/bundle/macos/Ami.app"
+# Find the .app bundle produced by electron-builder
+APP_PATH=$(find "${ELECTRON_DIST}" -maxdepth 2 -name "*.app" -type d | head -1)
 
-if [ ! -d "${APP_PATH}" ]; then
-    echo -e "${RED}ERROR: Ami.app not found at ${APP_PATH}${NC}"
+if [ -z "${APP_PATH}" ] || [ ! -d "${APP_PATH}" ]; then
+    echo -e "${RED}ERROR: .app bundle not found in ${ELECTRON_DIST}${NC}"
     exit 1
 fi
 
-# Step 4: Re-sign Ami.app (Tauri overwrites PyInstaller signatures)
+echo -e "${BLUE}App bundle: ${APP_PATH}${NC}"
+
+# Step 3: Re-sign Ami.app (ensure daemon inside is properly signed)
 if [ "$SHOULD_SIGN" = true ]; then
-    echo -e "${YELLOW}Step 4: Re-signing Ami.app...${NC}"
+    echo -e "${YELLOW}Step 3: Re-signing Ami.app...${NC}"
 
     # Sign ami-daemon.app embedded in Ami.app
-    # Use --deep flag for PyInstaller bundles (industry standard workaround)
     EMBEDDED_DAEMON="${APP_PATH}/Contents/Resources/ami-daemon.app"
     if [ -d "${EMBEDDED_DAEMON}" ]; then
         echo "  Signing embedded ami-daemon.app (with --deep for PyInstaller)..."
@@ -327,7 +303,6 @@ if [ "$SHOULD_SIGN" = true ]; then
     fi
 
     # Sign main Ami.app
-    # Use --deep flag to handle embedded PyInstaller bundle
     echo "  Signing Ami.app..."
     codesign --deep --force --options runtime --timestamp \
         --sign "${CODESIGN_IDENTITY}" \
@@ -347,40 +322,51 @@ if [ "$SHOULD_SIGN" = true ]; then
     echo -e "${GREEN}✓ Re-signing complete${NC}"
     echo ""
 else
-    echo -e "${YELLOW}Step 4: Skipping signing (no CODESIGN_IDENTITY)${NC}"
+    echo -e "${YELLOW}Step 3: Skipping signing (no CODESIGN_IDENTITY)${NC}"
     echo ""
 fi
 
-# Step 5: Create DMG
+# Step 4: Create DMG (if electron-builder didn't already, or for custom DMG)
 if [ "$CREATE_DMG" = true ]; then
-    echo -e "${YELLOW}Step 5: Creating DMG...${NC}"
+    # Check if electron-builder already created a DMG
+    EXISTING_DMG=$(find "${ELECTRON_DIST}" -maxdepth 1 -name "*.dmg" | head -1)
 
-    mkdir -p "${DIST_DIR}"
+    if [ -n "${EXISTING_DMG}" ] && [ "$SHOULD_SIGN" = false ]; then
+        echo -e "${YELLOW}Step 4: Using electron-builder DMG${NC}"
+        mkdir -p "${DIST_DIR}"
+        cp "${EXISTING_DMG}" "${DIST_DIR}/"
+        DMG_PATH="${DIST_DIR}/$(basename "${EXISTING_DMG}")"
+        echo -e "${GREEN}✓ DMG copied: ${DMG_PATH}${NC}"
+    else
+        echo -e "${YELLOW}Step 4: Creating DMG...${NC}"
 
-    VERSION=$(grep '"version"' "${TAURI_DIR}/tauri.conf.json" | head -1 | sed 's/.*"version": *"\([^"]*\)".*/\1/')
-    DMG_NAME="Ami-${VERSION}.dmg"
-    DMG_PATH="${DIST_DIR}/${DMG_NAME}"
+        mkdir -p "${DIST_DIR}"
 
-    # Create temporary staging directory
-    TMP_DIR=$(mktemp -d)
-    DMG_STAGING="${TMP_DIR}/dmg_staging"
-    mkdir -p "${DMG_STAGING}"
+        VERSION=$(grep '"version"' "${DESKTOP_DIR}/package.json" | head -1 | sed 's/.*"version": *"\([^"]*\)".*/\1/')
+        DMG_NAME="Ami-${VERSION}.dmg"
+        DMG_PATH="${DIST_DIR}/${DMG_NAME}"
 
-    cp -R "${APP_PATH}" "${DMG_STAGING}/"
-    ln -s /Applications "${DMG_STAGING}/Applications"
+        # Create temporary staging directory
+        TMP_DIR=$(mktemp -d)
+        DMG_STAGING="${TMP_DIR}/dmg_staging"
+        mkdir -p "${DMG_STAGING}"
 
-    rm -f "${DMG_PATH}"
+        cp -R "${APP_PATH}" "${DMG_STAGING}/"
+        ln -s /Applications "${DMG_STAGING}/Applications"
 
-    hdiutil create \
-        -volname "Ami" \
-        -srcfolder "${DMG_STAGING}" \
-        -ov \
-        -format UDZO \
-        "${DMG_PATH}"
+        rm -f "${DMG_PATH}"
 
-    rm -rf "${TMP_DIR}"
+        hdiutil create \
+            -volname "Ami" \
+            -srcfolder "${DMG_STAGING}" \
+            -ov \
+            -format UDZO \
+            "${DMG_PATH}"
 
-    echo -e "${GREEN}✓ DMG created: ${DMG_PATH}${NC}"
+        rm -rf "${TMP_DIR}"
+
+        echo -e "${GREEN}✓ DMG created: ${DMG_PATH}${NC}"
+    fi
 
     # Sign DMG
     if [ "$SHOULD_SIGN" = true ]; then
@@ -390,13 +376,13 @@ if [ "$CREATE_DMG" = true ]; then
     fi
     echo ""
 else
-    echo -e "${YELLOW}Step 5: Skipping DMG creation${NC}"
+    echo -e "${YELLOW}Step 4: Skipping DMG creation${NC}"
     echo ""
 fi
 
-# Step 6: Notarization
+# Step 5: Notarization
 if [ "$SHOULD_SIGN" = true ] && [ "$CREATE_DMG" = true ] && [ "$SKIP_NOTARIZE" = false ]; then
-    echo -e "${YELLOW}Step 6: Notarizing DMG...${NC}"
+    echo -e "${YELLOW}Step 5: Notarizing DMG...${NC}"
     echo "This may take several minutes..."
 
     xcrun notarytool submit "${DMG_PATH}" \
@@ -416,7 +402,7 @@ if [ "$SHOULD_SIGN" = true ] && [ "$CREATE_DMG" = true ] && [ "$SKIP_NOTARIZE" =
     fi
     echo ""
 else
-    echo -e "${YELLOW}Step 6: Skipping notarization${NC}"
+    echo -e "${YELLOW}Step 5: Skipping notarization${NC}"
     echo ""
 fi
 

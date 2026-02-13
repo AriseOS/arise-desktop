@@ -8,7 +8,7 @@ Param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-Write-Host "=== Ami Portable Build (Windows) ===" -ForegroundColor Green
+Write-Host "=== Ami Portable Build - Electron (Windows) ===" -ForegroundColor Green
 
 $ScriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $ProjectRoot = Split-Path -Parent $ScriptDir
@@ -26,9 +26,8 @@ function Invoke-Step {
     & $Action
 }
 
-$DesktopDir    = Join-Path $ProjectRoot 'src/clients/desktop_app'
-$SrcTauriDir   = Join-Path $DesktopDir 'src-tauri'
-$ResourcesDir  = Join-Path $SrcTauriDir 'resources'
+$DesktopDir     = Join-Path $ProjectRoot 'src/clients/desktop_app'
+$ResourcesDir   = Join-Path $DesktopDir 'resources'
 $PortableOutDir = Join-Path $DesktopDir 'portable'
 $PortableBinDir = Join-Path $PortableOutDir 'AmiPortable'
 
@@ -39,12 +38,10 @@ if (-not (Test-Path $PortableBinDir)) {
 # Step 0: Prepare Git Bash bundle for Claude Code CLI
 Invoke-Step "Step 0: Preparing Git Bash bundle for Claude Code CLI..." {
     $gitBashScript = Join-Path $ScriptDir 'prepare_git_bash_windows.ps1'
-    # Use explicit path separators for Windows
     $gitBashOutputDir = Join-Path $ProjectRoot 'src' | Join-Path -ChildPath 'clients' | Join-Path -ChildPath 'desktop_app' | Join-Path -ChildPath 'ami_daemon' | Join-Path -ChildPath 'resources' | Join-Path -ChildPath 'git-bash'
 
     Write-Host "Git Bash output directory: $gitBashOutputDir" -ForegroundColor Cyan
 
-    # Check if git-bash bundle already exists
     $bashExe = Join-Path $gitBashOutputDir 'usr' | Join-Path -ChildPath 'bin' | Join-Path -ChildPath 'bash.exe'
     if (Test-Path $bashExe) {
         Write-Host "Git Bash bundle already exists at: $gitBashOutputDir" -ForegroundColor Green
@@ -104,6 +101,7 @@ if (-not $SkipDaemon) {
 
         Write-Host "Daemon bundle built at: $distDir" -ForegroundColor Green
 
+        # Copy to Electron resources directory
         if (-not (Test-Path $ResourcesDir)) {
             New-Item -ItemType Directory -Path $ResourcesDir -Force | Out-Null
         }
@@ -130,42 +128,31 @@ if (-not $SkipFrontend) {
     Write-Host "Skipping frontend build (per --SkipFrontend)." -ForegroundColor Yellow
 }
 
-# Step 3: Build Tauri app (release exe)
-Invoke-Step "Step 3: Building Tauri application binary (npx tauri build)..." {
+# Step 3: Build Electron app
+Invoke-Step "Step 3: Building Electron application (npx electron-builder)..." {
     Set-Location $DesktopDir
-    npx tauri build
+    npx electron-builder --win
 }
+
+# electron-builder output directory
+$ElectronDist = Join-Path $DesktopDir 'release'
 
 # Step 4: Assemble portable directory
 Invoke-Step "Step 4: Assembling portable directory..." {
     if (Test-Path $PortableBinDir) {
-        if (-not $Force) {
-            Remove-Item $PortableBinDir -Recurse -Force
-        } else {
-            Remove-Item $PortableBinDir -Recurse -Force -ErrorAction SilentlyContinue
-        }
+        Remove-Item $PortableBinDir -Recurse -Force
     }
     New-Item -ItemType Directory -Path $PortableBinDir -Force | Out-Null
 
-    $portableBin = Join-Path $PortableBinDir 'ami-desktop'
-    if (-not (Test-Path $portableBin)) {
-        New-Item -ItemType Directory -Path $portableBin | Out-Null
+    # Find the unpacked directory from electron-builder (win-unpacked)
+    $unpackedDir = Join-Path $ElectronDist 'win-unpacked'
+    if (-not (Test-Path $unpackedDir)) {
+        throw "Electron win-unpacked directory not found at $unpackedDir"
     }
 
-    $exeSource = Join-Path $SrcTauriDir 'target/release/ami-desktop.exe'
-    if (-not (Test-Path $exeSource)) {
-        throw "ami-desktop.exe not found at $exeSource"
-    }
-
-    Copy-Item $exeSource $PortableBinDir -Force
-
-    # Copy Tauri resources directory (includes ami-daemon if present)
-    if (Test-Path $ResourcesDir) {
-        Copy-Item $ResourcesDir (Join-Path $PortableBinDir 'resources') -Recurse -Force
-        Write-Host "Resources copied to portable directory" -ForegroundColor Green
-    } else {
-        Write-Warning "Resources directory not found at $ResourcesDir"
-    }
+    # Copy all files from win-unpacked to portable directory
+    Copy-Item "$unpackedDir\*" $PortableBinDir -Recurse -Force
+    Write-Host "Electron app copied to portable directory" -ForegroundColor Green
 }
 
 # Step 5: Create ZIP archive if not skipped
