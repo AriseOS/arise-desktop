@@ -11,7 +11,7 @@ set "AMI_LOG_DIR=%USERPROFILE%\.ami\logs"
 if not exist "%AMI_LOG_DIR%" mkdir "%AMI_LOG_DIR%" >nul 2>&1
 set "CLOUD_BOOT_LOG=%AMI_LOG_DIR%\cloud-backend-boot.log"
 set "CLOUD_HOST=127.0.0.1"
-set "CLOUD_PORT=9000"
+set "CLOUD_PORT=9090"
 set "CLOUD_HEALTH_URL=http://%CLOUD_HOST%:%CLOUD_PORT%/health"
 set "CLOUD_TIMEOUT_SECONDS=12"
 
