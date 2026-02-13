@@ -284,6 +284,9 @@ function registerIpcHandlers() {
 // ==================== App lifecycle ====================
 
 app.whenReady().then(async () => {
+  // Set app name explicitly (electron-builder's productName only applies to packaged builds)
+  app.setName('Ami');
+
   // CDP port is determined synchronously before app.ready — no await needed.
 
   // Set UA on the shared login partition
@@ -315,6 +318,9 @@ app.whenReady().then(async () => {
   registerIpcHandlers();
 
   // Create main window
+  const iconPath = process.platform === 'darwin'
+    ? path.join(__dirname, '..', 'src-tauri', 'icons', 'icon.icns')
+    : path.join(__dirname, '..', 'src-tauri', 'icons', 'icon.png');
   win = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -322,6 +328,8 @@ app.whenReady().then(async () => {
     minHeight: 700,
     center: true,
     show: false,
+    icon: iconPath,
+    title: 'Ami',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,

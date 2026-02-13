@@ -284,6 +284,9 @@ class InjectMessageTool:
             available = list(self._session._running_executors.keys())
             return f"Error: No running executor with ID '{executor_id}'. Available: {available}"
 
+        if handle.executor is None:
+            return f"Executor {executor_id} is still in planning phase, cannot inject messages yet"
+
         agent = handle.executor.get_current_agent()
         if not agent:
             return f"Executor {executor_id} exists but no agent is currently active"
@@ -321,7 +324,8 @@ class CancelTaskTool:
             available = list(self._session._running_executors.keys())
             return f"Error: No running executor with ID '{executor_id}'. Available: {available}"
 
-        handle.executor.stop()
+        if handle.executor is not None:
+            handle.executor.stop()
         handle.async_task.cancel()
         return f"Executor {executor_id} ({handle.task_label}) is being cancelled"
 
@@ -363,6 +367,10 @@ class ReplanTaskTool:
         if not handle:
             available = list(self._session._running_executors.keys())
             return f"Error: No running executor with ID '{executor_id}'. Available: {available}"
+
+        # Check if executor is still in planning phase
+        if handle.executor is None:
+            return f"Error: Executor {executor_id} is still in planning phase, cannot replan yet"
 
         # Check if executor already completed
         if handle.async_task.done():
@@ -467,11 +475,15 @@ class ReplanTaskTool:
 
 @dataclass
 class ExecutorHandle:
-    """Tracks a running executor and its async task."""
+    """Tracks a running executor and its async task.
+
+    During the planning phase, executor is None and subtasks is empty.
+    They are populated once planning completes inside _plan_and_execute().
+    """
 
     executor_id: str
     task_label: str
-    executor: Any  # AMITaskExecutor
+    executor: Optional[Any]  # AMITaskExecutor, None during planning
     async_task: asyncio.Task
     subtasks: List[Any]  # List[AMISubtask]
     started_at: datetime.datetime = dc_field(default_factory=datetime.datetime.now)
@@ -542,20 +554,22 @@ class OrchestratorSession:
         """Stop all running executors. Used by external cancellation."""
         for eid, handle in self._running_executors.items():
             if not handle.async_task.done():
-                handle.executor.stop()
+                if handle.executor is not None:
+                    handle.executor.stop()
+                handle.async_task.cancel()
                 logger.info(f"[OrchestratorSession] Stopped executor {eid} via external cancel")
 
     def pause_all_executors(self) -> None:
         """Pause all running executors. Used by Take Control (user takes browser)."""
         for eid, handle in self._running_executors.items():
-            if not handle.async_task.done() and not handle.executor.is_paused:
+            if not handle.async_task.done() and handle.executor is not None and not handle.executor.is_paused:
                 handle.executor.pause()
                 logger.info(f"[OrchestratorSession] Paused executor {eid}")
 
     def resume_all_executors(self) -> None:
         """Resume all paused executors. Used by Give Back (return control to agent)."""
         for eid, handle in self._running_executors.items():
-            if not handle.async_task.done() and handle.executor.is_paused:
+            if not handle.async_task.done() and handle.executor is not None and handle.executor.is_paused:
                 handle.executor.resume()
                 logger.info(f"[OrchestratorSession] Resumed executor {eid}")
 
@@ -595,6 +609,13 @@ class OrchestratorSession:
                 ws_folder = self._decompose_tool.workspace_folder
                 logger.info(f"[OrchestratorSession] decompose_task triggered: {task_desc[:100]}... folder={ws_folder}")
 
+                # Emit Orchestrator's reply FIRST so user sees immediate feedback
+                # (e.g., "I'll have the team work on this") before planning starts.
+                if orchestrator_reply:
+                    attachments = await self._build_attachments()
+                    await self._emit_reply(orchestrator_reply, attachments)
+                    orchestrator_reply = None  # Consumed, don't emit again below
+
                 # Emit confirmed event
                 await self._task_state.put_event(ConfirmedData(
                     task_id=self._task_id,
@@ -615,19 +636,16 @@ class OrchestratorSession:
                 break
 
     async def _supervised_execute(self, task_description: str, workspace_folder: str = "") -> None:
-        """Plan subtasks and spawn a non-blocking executor."""
-        from .ami_task_planner import AMITaskPlanner
-        from .ami_task_executor import AMITaskExecutor
-        from ..events import (
-            TaskDecomposedData,
-            AgentReportData,
-            WorkforceStartedData,
-            NoticeData,
-        )
-        from ..i18n import t as _t
-        import html as html_mod
+        """Kick off planning + execution as a background task.
 
-        # Ensure agents are created (lazy init)
+        This method returns immediately after spawning an asyncio task that
+        handles planning (memory query + LLM decomposition) and execution.
+        This keeps the Orchestrator's main loop responsive — users can send
+        messages and get replies while planning is in progress.
+        """
+        # Ensure agents are created (lazy init) — must happen on the main
+        # loop before spawning the background task so that self._agents_dict
+        # and self._planner_provider are available.
         if self._agents_dict is None:
             self._agents_dict, self._planner_provider = await self._create_agents_fn()
             # Disable shared queue fallback — Orchestrator owns the shared queue,
@@ -641,8 +659,71 @@ class OrchestratorSession:
         executor_id = f"exec_{self._executor_counter}"
         task_label = task_description[:20].strip()
 
-        # Plan subtasks
+        # Create memory toolkit before spawning (may need await)
         memory_toolkit = await self._create_memory_toolkit_fn()
+
+        # Capture the parent manager NOW (before any executor mutates it).
+        from ..workspace import get_current_manager
+        parent_manager = get_current_manager()
+
+        # Register a placeholder ExecutorHandle immediately so that
+        # _wait_for_event() includes this task in its waitables.
+        # The subtasks list and executor will be filled in once planning completes.
+        planning_task = asyncio.create_task(
+            self._plan_and_execute(
+                task_description=task_description,
+                workspace_folder=workspace_folder,
+                executor_id=executor_id,
+                task_label=task_label,
+                memory_toolkit=memory_toolkit,
+                parent_manager=parent_manager,
+            ),
+            name=f"plan_and_exec_{executor_id}",
+        )
+
+        self._running_executors[executor_id] = ExecutorHandle(
+            executor_id=executor_id,
+            task_label=task_label,
+            executor=None,  # Set once planning completes
+            async_task=planning_task,
+            subtasks=[],  # Set once planning completes
+            workspace_folder=workspace_folder,
+            child_manager=None,
+        )
+
+        logger.info(f"[OrchestratorSession] Spawned background plan+execute for {executor_id}")
+
+    async def _plan_and_execute(
+        self,
+        task_description: str,
+        workspace_folder: str,
+        executor_id: str,
+        task_label: str,
+        memory_toolkit: Any,
+        parent_manager: Any,
+    ) -> Dict:
+        """Background coroutine: plan subtasks then execute them.
+
+        Runs entirely in the background. Emits SSE events for planning
+        progress (DecomposeProgressData, TaskDecomposedData, etc.) and
+        then acquires _executor_lock to run the executor sequentially.
+
+        Returns:
+            Executor result dict (completed/failed/total counts).
+        """
+        from .ami_task_planner import AMITaskPlanner
+        from .ami_task_executor import AMITaskExecutor
+        from ..events import (
+            TaskDecomposedData,
+            AgentReportData,
+            WorkforceStartedData,
+            NoticeData,
+        )
+        from ..i18n import t as _t
+        from ..workspace import set_current_manager
+        import html as html_mod
+
+        # --- Phase 1: Planning ---
         planner = AMITaskPlanner(
             task_id=self._task_id,
             task_state=self._task_state,
@@ -661,7 +742,7 @@ class OrchestratorSession:
                 title="Decomposition Failed",
                 message="Could not decompose task into subtasks.",
             ))
-            return
+            raise RuntimeError("Decomposition returned no subtasks")
 
         # Store subtask info on task state for frontend
         # Append to existing subtasks to support parallel executors
@@ -735,8 +816,11 @@ class OrchestratorSession:
         )
         executor.set_subtasks(subtasks)
 
-        # Note: we don't set _task_state._executor per-executor (would only track last one).
-        # External cancellation uses _task_state._orchestrator_session.stop_all_executors().
+        # Update the ExecutorHandle with real executor and subtasks
+        handle = self._running_executors.get(executor_id)
+        if handle:
+            handle.executor = executor
+            handle.subtasks = subtasks
 
         # Emit WorkforceStartedData
         await self._task_state.put_event(WorkforceStartedData(
@@ -748,86 +832,52 @@ class OrchestratorSession:
             task_label=task_label,
         ))
 
-        # Capture the parent manager NOW (before any executor mutates it).
-        # This is the task-level manager set by QuickTaskService at task start.
-        from ..workspace import get_current_manager, set_current_manager
-        parent_manager = get_current_manager()
-
         # Create child manager for workspace subdirectory if workspace_folder specified
         child_manager = None
         if workspace_folder and parent_manager:
             child_manager = parent_manager.create_child_manager(workspace_folder)
+            if handle:
+                handle.child_manager = child_manager
             logger.info(
                 f"[OrchestratorSession] Created child workspace: {child_manager.workspace}"
             )
 
-        # Spawn non-blocking, but sequential: acquire _executor_lock before
-        # running execute(). Planning + SSE events fire immediately so the user
-        # sees the subtask list, but actual execution waits for prior executors.
-        async def _run_with_lock(
-            ex: AMITaskExecutor,
-            eid: str,
-            cm: Optional[WorkingDirectoryManager] = None,
-            pm: Optional[WorkingDirectoryManager] = None,
-        ) -> Dict:
-            async with self._executor_lock:
-                logger.info(f"[OrchestratorSession] Executor {eid} acquired lock, starting")
-                # Always set the correct workspace for this executor.
-                # If cm (child_manager) exists, use its subdirectory;
-                # otherwise restore to parent workspace. This is critical
-                # because a prior executor may have mutated toolkit
-                # _working_directory to a different subdirectory.
-                active_manager = cm or pm
-                if active_manager:
-                    set_current_manager(active_manager)
-                    new_workspace = active_manager.workspace
-                    new_workspace_str = str(new_workspace)
-                    # 1. Mutate toolkit _working_directory
-                    updated_toolkits: set = set()
-                    for agent in ex._agents.values():
-                        for tool in agent._tools.values():
-                            bound = getattr(tool.func, '__self__', None)
-                            if (
-                                bound
-                                and hasattr(bound, '_working_directory')
-                                and id(bound) not in updated_toolkits
-                            ):
-                                bound._working_directory = type(bound._working_directory)(new_workspace)
-                                updated_toolkits.add(id(bound))
-                    # 2. Patch agent system prompts so LLM sees correct path
-                    #    Pattern: **Working Directory**: `/old/path`
-                    _ws_re = re.compile(
-                        r"(\*\*Working Directory\*\*:\s*`)([^`]+)(`)"
-                    )
-                    for agent in ex._agents.values():
-                        if hasattr(agent, '_system_prompt') and agent._system_prompt:
-                            agent._system_prompt = _ws_re.sub(
-                                lambda m: m.group(1) + new_workspace_str + m.group(3),
-                                agent._system_prompt,
-                            )
-                    logger.info(
-                        f"[OrchestratorSession] {eid}: updated {len(updated_toolkits)} "
-                        f"toolkit working directories + agent prompts to {new_workspace}"
-                    )
-                return await ex.execute()
-
-        async_task = asyncio.create_task(
-            _run_with_lock(executor, executor_id, child_manager, parent_manager),
-            name=f"executor_{executor_id}",
-        )
-
-        # Register
-        self._running_executors[executor_id] = ExecutorHandle(
-            executor_id=executor_id,
-            task_label=task_label,
-            executor=executor,
-            async_task=async_task,
-            subtasks=subtasks,
-            workspace_folder=workspace_folder,
-            child_manager=child_manager,
-        )
-
-        logger.info(f"[OrchestratorSession] Spawned {executor_id} with {len(subtasks)} subtasks")
+        # --- Phase 2: Execution (sequential via lock) ---
+        async with self._executor_lock:
+            logger.info(f"[OrchestratorSession] Executor {executor_id} acquired lock, starting")
+            active_manager = child_manager or parent_manager
+            if active_manager:
+                set_current_manager(active_manager)
+                new_workspace = active_manager.workspace
+                new_workspace_str = str(new_workspace)
+                # 1. Mutate toolkit _working_directory
+                updated_toolkits: set = set()
+                for agent in executor._agents.values():
+                    for tool in agent._tools.values():
+                        bound = getattr(tool.func, '__self__', None)
+                        if (
+                            bound
+                            and hasattr(bound, '_working_directory')
+                            and id(bound) not in updated_toolkits
+                        ):
+                            bound._working_directory = type(bound._working_directory)(new_workspace)
+                            updated_toolkits.add(id(bound))
+                # 2. Patch agent system prompts so LLM sees correct path
+                #    Pattern: **Working Directory**: `/old/path`
+                _ws_re = re.compile(
+                    r"(\*\*Working Directory\*\*:\s*`)([^`]+)(`)"
+                )
+                for agent in executor._agents.values():
+                    if hasattr(agent, '_system_prompt') and agent._system_prompt:
+                        agent._system_prompt = _ws_re.sub(
+                            lambda m: m.group(1) + new_workspace_str + m.group(3),
+                            agent._system_prompt,
+                        )
+                logger.info(
+                    f"[OrchestratorSession] {executor_id}: updated {len(updated_toolkits)} "
+                    f"toolkit working directories + agent prompts to {new_workspace}"
+                )
+            return await executor.execute()
 
     async def _wait_for_event(self) -> Optional[str]:
         """Wait for user message or executor completion.
@@ -1073,11 +1123,17 @@ class OrchestratorSession:
 
         lines = ["## Currently Running Tasks"]
         for eid, handle in self._running_executors.items():
-            progress = handle.executor.get_progress()
             folder_info = f"  folder={handle.workspace_folder}" if handle.workspace_folder else ""
             lines.append(
                 f"\n### {eid} ({handle.task_label}){folder_info}"
             )
+
+            # executor is None while still in planning phase
+            if handle.executor is None:
+                lines.append("Status: Planning in progress...")
+                continue
+
+            progress = handle.executor.get_progress()
             lines.append(
                 f"Progress: {progress['done']}/{progress['total']} done, "
                 f"{progress['running']} running, {progress['pending']} pending"

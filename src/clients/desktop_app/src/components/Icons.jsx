@@ -211,7 +211,11 @@ export const Icon = ({ name, size = 24, className = "", ...props }) => {
             <rect x="4" y="4" width="16" height="16" rx="2" ry="2" />
         ),
         logIn: (
-            <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
+            <>
+                <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
+                <polyline points="10 17 15 12 10 7" />
+                <line x1="15" y1="12" x2="3" y2="12" />
+            </>
         ),
         clipboard: (
             <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
