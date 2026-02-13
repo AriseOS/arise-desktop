@@ -8,6 +8,7 @@ import Icon from "./components/Icons";
 // Import utilities
 import { auth } from "./utils/auth";
 import { api, onConnectionError } from "./utils/api";
+import { useAgentStore } from "./store";
 
 // Import pages
 import InitializingPage from "./pages/InitializingPage";
@@ -256,6 +257,9 @@ function App() {
         const sessionData = await auth.getSession();
         setSession(sessionData);
         console.log('[App] User is logged in:', sessionData?.username);
+
+        // Recover any running backend tasks (e.g. after webview reload)
+        useAgentStore.getState().recoverRunningTasks();
       } else {
         console.log('[App] User is not logged in');
       }

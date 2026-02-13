@@ -2279,6 +2279,33 @@ export const useAgentStore = create((set, get) => ({
     await store.restoreTask(taskId, taskDescription);
   },
 
+  /**
+   * Recover running tasks on app startup (e.g. after webview reload)
+   * Queries backend for tasks with status=running and restores them with SSE
+   */
+  recoverRunningTasks: async () => {
+    try {
+      const response = await api.callAppBackend('/api/v1/quick-task/tasks?status=running', {
+        method: 'GET',
+      });
+      const runningTasks = response.tasks || [];
+      if (runningTasks.length === 0) return;
+
+      console.log(`[AgentStore] Found ${runningTasks.length} running task(s), restoring...`);
+
+      for (const task of runningTasks) {
+        try {
+          await get().restoreTask(task.task_id, task.task);
+          console.log(`[AgentStore] Restored running task: ${task.task_id}`);
+        } catch (err) {
+          console.warn(`[AgentStore] Failed to restore task ${task.task_id}:`, err.message);
+        }
+      }
+    } catch (error) {
+      console.warn('[AgentStore] Failed to recover running tasks:', error.message);
+    }
+  },
+
   // ============ Selectors (for convenience) ============
 
   /**
