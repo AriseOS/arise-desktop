@@ -1940,134 +1940,138 @@ async def get_memory_stats(
         raise HTTPException(500, f"Failed to get memory stats: {str(e)}")
 
 
-@app.get("/api/v1/memory/stats/public")
-async def get_public_memory_stats():
-    """
-    Get aggregated Memory Service statistics (public, no auth required).
+# In-memory cache for public memory stats (avoid DB queries on every request)
+_public_stats_cache: Dict[str, Any] = {"data": None, "expires_at": 0.0}
+_PUBLIC_STATS_TTL = 30  # seconds
 
-    Used by the landing page to display live stats. Aggregates data from
-    the public memory database and all cached private user databases.
 
-    Returns:
-        {
-            "success": true,
-            "stats": {
-                "total_cognitive_phrases": 123,
-                "total_domains": 56,
-                "total_states": 789,
-                "total_intent_sequences": 2345,
-                "total_executions": 4567,
-                "total_contributors": 42,
-                "domains": ["producthunt.com", "github.com", ...]
-            }
-        }
-    """
-    try:
-        from src.common.memory.memory_service import get_public_memory, _private_stores
+def _fetch_public_memory_stats() -> dict:
+    """Query all memory stores and aggregate stats. Called at most once per TTL."""
+    from src.common.memory.memory_service import get_public_memory, _private_stores
 
-        stats = {
-            "total_cognitive_phrases": 0,
-            "total_domains": 0,
-            "total_states": 0,
-            "total_intent_sequences": 0,
-            "total_executions": 0,
-            "total_contributors": 0,
-            "domains": [],
-        }
+    stats = {
+        "total_cognitive_phrases": 0,
+        "total_domains": 0,
+        "total_states": 0,
+        "total_intent_sequences": 0,
+        "total_executions": 0,
+        "total_contributors": 0,
+        "domains": [],
+    }
 
-        all_domains = set()
-        all_contributors = set()
+    all_domains: set = set()
+    all_contributors: set = set()
 
-        def _count(graph_store, table: str) -> int:
-            try:
-                if hasattr(graph_store, 'run_script'):
-                    result = graph_store.run_script(
-                        f"SELECT count() FROM {table} GROUP ALL"
-                    )
-                    if result and isinstance(result, list) and len(result) > 0:
-                        row = result[0]
-                        return row.get("count", 0) if isinstance(row, dict) else 0
-                return 0
-            except Exception:
-                return 0
-
-        def _get_domains(graph_store) -> set:
-            try:
-                if hasattr(graph_store, 'run_script'):
-                    result = graph_store.run_script(
-                        "SELECT domain FROM state WHERE domain IS NOT NULL GROUP BY domain"
-                    )
-                    if result:
-                        return {
-                            r["domain"] for r in result
-                            if isinstance(r, dict) and r.get("domain")
-                        }
-                return set()
-            except Exception:
-                return set()
-
-        def _sum_use_counts(graph_store) -> int:
-            try:
-                if hasattr(graph_store, 'run_script'):
-                    result = graph_store.run_script(
-                        "SELECT math::sum(use_count) AS total FROM cognitivephrase GROUP ALL"
-                    )
-                    if result and isinstance(result, list) and len(result) > 0:
-                        row = result[0]
-                        return int(row.get("total", 0) or 0) if isinstance(row, dict) else 0
-                return 0
-            except Exception:
-                return 0
-
-        def _get_contributors(graph_store) -> set:
-            try:
-                if hasattr(graph_store, 'run_script'):
-                    result = graph_store.run_script(
-                        "SELECT contributor_id FROM cognitivephrase WHERE contributor_id IS NOT NULL GROUP BY contributor_id"
-                    )
-                    if result:
-                        return {
-                            r["contributor_id"] for r in result
-                            if isinstance(r, dict) and r.get("contributor_id")
-                        }
-                return set()
-            except Exception:
-                return set()
-
-        # 1. Public memory stats
+    def _count(graph_store, table: str) -> int:
         try:
-            pub = get_public_memory()
-            if pub and pub.workflow_memory:
-                gs = pub.workflow_memory.state_manager.graph_store
+            if hasattr(graph_store, 'run_script'):
+                result = graph_store.run_script(
+                    f"SELECT count() FROM {table} GROUP ALL"
+                )
+                if result and isinstance(result, list) and len(result) > 0:
+                    row = result[0]
+                    return row.get("count", 0) if isinstance(row, dict) else 0
+            return 0
+        except Exception:
+            return 0
+
+    def _get_domains(graph_store) -> set:
+        try:
+            if hasattr(graph_store, 'run_script'):
+                result = graph_store.run_script(
+                    "SELECT domain FROM state WHERE domain IS NOT NULL GROUP BY domain"
+                )
+                if result:
+                    return {
+                        r["domain"] for r in result
+                        if isinstance(r, dict) and r.get("domain")
+                    }
+            return set()
+        except Exception:
+            return set()
+
+    def _sum_use_counts(graph_store) -> int:
+        try:
+            if hasattr(graph_store, 'run_script'):
+                result = graph_store.run_script(
+                    "SELECT math::sum(use_count) AS total FROM cognitivephrase GROUP ALL"
+                )
+                if result and isinstance(result, list) and len(result) > 0:
+                    row = result[0]
+                    return int(row.get("total", 0) or 0) if isinstance(row, dict) else 0
+            return 0
+        except Exception:
+            return 0
+
+    def _get_contributors(graph_store) -> set:
+        try:
+            if hasattr(graph_store, 'run_script'):
+                result = graph_store.run_script(
+                    "SELECT contributor_id FROM cognitivephrase WHERE contributor_id IS NOT NULL GROUP BY contributor_id"
+                )
+                if result:
+                    return {
+                        r["contributor_id"] for r in result
+                        if isinstance(r, dict) and r.get("contributor_id")
+                    }
+            return set()
+        except Exception:
+            return set()
+
+    # 1. Public memory stats
+    try:
+        pub = get_public_memory()
+        if pub and pub.workflow_memory:
+            gs = pub.workflow_memory.state_manager.graph_store
+            stats["total_states"] += _count(gs, "state")
+            stats["total_intent_sequences"] += _count(gs, "intentsequence")
+            stats["total_cognitive_phrases"] += _count(gs, "cognitivephrase")
+            stats["total_executions"] += _sum_use_counts(gs)
+            all_domains.update(_get_domains(gs))
+            all_contributors.update(_get_contributors(gs))
+    except Exception as e:
+        logger.warning(f"Failed to get public memory stats: {e}")
+
+    # 2. Aggregate across all cached private memory stores
+    try:
+        for uid, service in list(_private_stores.items()):
+            try:
+                wm = service.workflow_memory
+                gs = wm.state_manager.graph_store
                 stats["total_states"] += _count(gs, "state")
                 stats["total_intent_sequences"] += _count(gs, "intentsequence")
                 stats["total_cognitive_phrases"] += _count(gs, "cognitivephrase")
                 stats["total_executions"] += _sum_use_counts(gs)
                 all_domains.update(_get_domains(gs))
-                all_contributors.update(_get_contributors(gs))
-        except Exception as e:
-            logger.warning(f"Failed to get public memory stats: {e}")
+            except Exception:
+                continue
+        stats["total_contributors"] = max(len(all_contributors), len(_private_stores))
+    except Exception as e:
+        logger.warning(f"Failed to aggregate private memory stats: {e}")
 
-        # 2. Aggregate across all cached private memory stores
-        try:
-            for uid, service in list(_private_stores.items()):
-                try:
-                    wm = service.workflow_memory
-                    gs = wm.state_manager.graph_store
-                    stats["total_states"] += _count(gs, "state")
-                    stats["total_intent_sequences"] += _count(gs, "intentsequence")
-                    stats["total_cognitive_phrases"] += _count(gs, "cognitivephrase")
-                    stats["total_executions"] += _sum_use_counts(gs)
-                    all_domains.update(_get_domains(gs))
-                except Exception:
-                    continue
-            stats["total_contributors"] = max(len(all_contributors), len(_private_stores))
-        except Exception as e:
-            logger.warning(f"Failed to aggregate private memory stats: {e}")
+    stats["domains"] = sorted(all_domains)
+    stats["total_domains"] = len(all_domains)
+    return stats
 
-        stats["domains"] = sorted(all_domains)
-        stats["total_domains"] = len(all_domains)
 
+@app.get("/api/v1/memory/stats/public")
+async def get_public_memory_stats():
+    """
+    Get aggregated Memory Service statistics (public, no auth required).
+
+    Used by the landing page to display live stats. Results are cached
+    for 30 seconds to avoid repeated DB queries under high traffic.
+    """
+    import time
+
+    try:
+        now = time.monotonic()
+        if _public_stats_cache["data"] is not None and now < _public_stats_cache["expires_at"]:
+            return {"success": True, "stats": _public_stats_cache["data"]}
+
+        stats = _fetch_public_memory_stats()
+        _public_stats_cache["data"] = stats
+        _public_stats_cache["expires_at"] = now + _PUBLIC_STATS_TTL
         return {"success": True, "stats": stats}
 
     except Exception as e:
