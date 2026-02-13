@@ -6,7 +6,7 @@
  *
  * Features:
  * - List of available integrations
- * - OAuth flow handling via Tauri
+ * - OAuth flow handling
  * - Token configuration for non-OAuth services
  * - Status indicators (installed/not installed)
  */
@@ -120,53 +120,10 @@ function IntegrationList({
   };
 
   const startOAuthFlow = async (integration) => {
-    try {
-      // Try to use Tauri invoke for OAuth (v2 API)
-      const { invoke } = await import('@tauri-apps/api/core');
-
-      await invoke('open_oauth', {
-        provider: integration.provider,
-        scopes: integration.scopes,
-        integrationId: integration.id,
-      });
-
-      // Poll for completion
-      const pollStatus = async (attempt = 0) => {
-        if (attempt > 60) { // 90 seconds timeout
-          setError('OAuth timeout - please try again');
-          setInstalling(null);
-          return;
-        }
-
-        try {
-          const status = await api.callAppBackend(
-            `/api/v1/integrations/oauth-status/${integration.id}`
-          );
-
-          if (status.completed) {
-            setInstalled(prev => [...prev, integration.id]);
-            onIntegrationChange?.(integration.id, 'installed');
-            setInstalling(null);
-          } else if (status.failed) {
-            setError(status.error || 'OAuth failed');
-            setInstalling(null);
-          } else {
-            // Continue polling
-            setTimeout(() => pollStatus(attempt + 1), 1500);
-          }
-        } catch (e) {
-          // Continue polling on network errors
-          setTimeout(() => pollStatus(attempt + 1), 1500);
-        }
-      };
-
-      pollStatus();
-    } catch (e) {
-      // Tauri not available or invoke failed
-      console.error('OAuth error:', e);
-      setError('OAuth flow not available in this environment');
-      setInstalling(null);
-    }
+    // OAuth flow not yet implemented in Electron
+    console.warn('OAuth flow not yet implemented for integration:', integration.id);
+    setError('OAuth flow not yet available');
+    setInstalling(null);
   };
 
   const handleSaveConfig = async (integrationId, config) => {

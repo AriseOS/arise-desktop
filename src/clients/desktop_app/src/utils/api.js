@@ -100,6 +100,15 @@ export const api = {
     const startTime = Date.now();
 
     while (Date.now() - startTime < timeoutMs) {
+      // Fail fast if Electron's daemon launcher already reported a startup error
+      if (window.electronAPI?.getDaemonStartError) {
+        const startError = await window.electronAPI.getDaemonStartError();
+        if (startError) {
+          console.error('[API] Daemon failed to start:', startError);
+          return false;
+        }
+      }
+
       // Re-read port file on each attempt (daemon may have just written it)
       await initBackendPort(true);
 
@@ -406,9 +415,13 @@ export const api = {
       return await response.json();
     } catch (error) {
       console.error('[API] App Backend error:', error);
-      // Check if this is a connection error and notify App
-      if (isConnectionError(error) && connectionErrorCallback) {
-        connectionErrorCallback({ endpoint, error });
+      // On connection error: invalidate cached port (daemon may have restarted on a new port)
+      if (isConnectionError(error)) {
+        console.warn('[API] Connection error — invalidating cached daemon port');
+        initBackendPort(true).catch(() => {});
+        if (connectionErrorCallback) {
+          connectionErrorCallback({ endpoint, error });
+        }
       }
       throw error;
     }
@@ -444,9 +457,12 @@ export const api = {
         headers
       });
     } catch (error) {
-      // Check if this is a connection error and notify App
-      if (isConnectionError(error) && connectionErrorCallback) {
-        connectionErrorCallback({ endpoint, error });
+      // On connection error: invalidate cached port (daemon may have restarted on a new port)
+      if (isConnectionError(error)) {
+        initBackendPort(true).catch(() => {});
+        if (connectionErrorCallback) {
+          connectionErrorCallback({ endpoint, error });
+        }
       }
       throw error;
     }
@@ -486,29 +502,8 @@ export const api = {
   // Convenience Methods for App Backend
   // ============================================================================
 
-  /**
-   * Start browser (browser-use BrowserSession)
-   *
-   * @param {boolean} headless - Whether to run in headless mode
-   * @returns {Promise<object>} Browser status
-   */
-  async startBrowser(headless = false) {
-    return await this.callAppBackend('/api/v1/browser/start', {
-      method: 'POST',
-      body: JSON.stringify({ headless })
-    });
-  },
-
-  /**
-   * Stop browser
-   *
-   * @returns {Promise<object>} Browser status
-   */
-  async stopBrowser() {
-    return await this.callAppBackend('/api/v1/browser/stop', {
-      method: 'POST'
-    });
-  },
+  // startBrowser / stopBrowser removed — in Electron mode, the browser
+  // (Chromium) is always running. No separate start/stop needed.
 
   /**
    * Start recording

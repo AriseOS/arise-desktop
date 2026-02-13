@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { invoke } from '@tauri-apps/api/core';
 import Icon from '../components/Icons';
 
 const BackendErrorPage = ({ onRetry }) => {
@@ -18,7 +17,7 @@ const BackendErrorPage = ({ onRetry }) => {
     const loadLogs = async () => {
         setLoading(true);
         try {
-            const result = await invoke('read_daemon_logs', { maxLines: 50 });
+            const result = await window.electronAPI.readDaemonLogs(50);
             if (result.success) {
                 setLogs(result.logs || []);
                 setLogPath(result.path || '');

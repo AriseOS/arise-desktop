@@ -1,22 +1,7 @@
 /**
  * Authentication and Session Management
- * Uses Tauri Store API for secure local storage
+ * Uses Electron Store via IPC for secure local storage
  */
-
-import { load } from '@tauri-apps/plugin-store';
-
-// Store instance (lazy loaded)
-let store = null;
-
-/**
- * Get or create store instance
- */
-async function getStore() {
-  if (!store) {
-    store = await load('.ami-settings.dat', { autoSave: true });
-  }
-  return store;
-}
 
 /**
  * Authentication utility
@@ -33,19 +18,15 @@ export const auth = {
    */
   async saveSession(apiKey, username, email, userData = {}, token = null) {
     try {
-      const store = await getStore();
-      await store.set('user_api_key', apiKey);
-      await store.set('username', username);
-      await store.set('email', email);
-      await store.set('user_data', userData);
-      await store.set('login_timestamp', new Date().toISOString());
+      await window.electronAPI.storeSet('user_api_key', apiKey);
+      await window.electronAPI.storeSet('username', username);
+      await window.electronAPI.storeSet('email', email);
+      await window.electronAPI.storeSet('user_data', userData);
+      await window.electronAPI.storeSet('login_timestamp', new Date().toISOString());
 
-      // Store JWT token if provided (CRS uses this for some endpoints)
       if (token) {
-        await store.set('jwt_token', token);
+        await window.electronAPI.storeSet('jwt_token', token);
       }
-
-      await store.save();
 
       console.log('[Auth] Session saved successfully');
     } catch (error) {
@@ -61,13 +42,12 @@ export const auth = {
    */
   async getSession() {
     try {
-      const store = await getStore();
-      const apiKey = await store.get('user_api_key');
-      const username = await store.get('username');
-      const email = await store.get('email');
-      const userData = await store.get('user_data');
-      const loginTimestamp = await store.get('login_timestamp');
-      const token = await store.get('jwt_token'); // CRS JWT token
+      const apiKey = await window.electronAPI.storeGet('user_api_key');
+      const username = await window.electronAPI.storeGet('username');
+      const email = await window.electronAPI.storeGet('email');
+      const userData = await window.electronAPI.storeGet('user_data');
+      const loginTimestamp = await window.electronAPI.storeGet('login_timestamp');
+      const token = await window.electronAPI.storeGet('jwt_token');
 
       if (!apiKey) {
         return null;
@@ -79,7 +59,7 @@ export const auth = {
         email,
         userData: userData || {},
         loginTimestamp,
-        token // CRS JWT token for authenticated endpoints
+        token
       };
     } catch (error) {
       console.error('[Auth] Failed to get session:', error);
@@ -94,8 +74,7 @@ export const auth = {
    */
   async getApiKey() {
     try {
-      const store = await getStore();
-      const apiKey = await store.get('user_api_key');
+      const apiKey = await window.electronAPI.storeGet('user_api_key');
       return apiKey || null;
     } catch (error) {
       console.error('[Auth] Failed to get API key:', error);
@@ -108,14 +87,12 @@ export const auth = {
    */
   async clearSession() {
     try {
-      const store = await getStore();
-      await store.delete('user_api_key');
-      await store.delete('username');
-      await store.delete('email');
-      await store.delete('user_data');
-      await store.delete('login_timestamp');
-      await store.delete('jwt_token'); // Also clear CRS JWT token
-      await store.save();
+      await window.electronAPI.storeDelete('user_api_key');
+      await window.electronAPI.storeDelete('username');
+      await window.electronAPI.storeDelete('email');
+      await window.electronAPI.storeDelete('user_data');
+      await window.electronAPI.storeDelete('login_timestamp');
+      await window.electronAPI.storeDelete('jwt_token');
 
       console.log('[Auth] Session cleared');
     } catch (error) {
@@ -131,8 +108,7 @@ export const auth = {
    */
   async isLoggedIn() {
     try {
-      const store = await getStore();
-      const apiKey = await store.get('user_api_key');
+      const apiKey = await window.electronAPI.storeGet('user_api_key');
       return !!apiKey;
     } catch (error) {
       console.error('[Auth] Failed to check login status:', error);
@@ -147,17 +123,15 @@ export const auth = {
    */
   async updateSession(updates) {
     try {
-      const store = await getStore();
       if (updates.username) {
-        await store.set('username', updates.username);
+        await window.electronAPI.storeSet('username', updates.username);
       }
       if (updates.email) {
-        await store.set('email', updates.email);
+        await window.electronAPI.storeSet('email', updates.email);
       }
       if (updates.userData) {
-        await store.set('user_data', updates.userData);
+        await window.electronAPI.storeSet('user_data', updates.userData);
       }
-      await store.save();
 
       console.log('[Auth] Session updated');
     } catch (error) {

@@ -15,7 +15,6 @@
  */
 
 import React, { useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import Icon from '../../Icons';
 import ImagePreview from './previews/ImagePreview';
 import HtmlPreview from './previews/HtmlPreview';
@@ -98,7 +97,7 @@ function FileAttachmentCard({ file }) {
     setLoading(true);
     setError(null);
     try {
-      const result = await invoke('open_path', { path: file_path });
+      const result = await window.electronAPI.openPath(file_path);
       console.log('[FileAttachmentCard] open_path result:', result);
       if (!result.success) {
         setError(result.error);
@@ -117,7 +116,7 @@ function FileAttachmentCard({ file }) {
     setLoading(true);
     setError(null);
     try {
-      const result = await invoke('reveal_in_folder', { path: file_path });
+      const result = await window.electronAPI.revealInFolder(file_path);
       console.log('[FileAttachmentCard] reveal_in_folder result:', result);
       if (!result.success) {
         setError(result.error);

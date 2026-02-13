@@ -4,8 +4,6 @@
  * Port is dynamically discovered from daemon.port file
  */
 
-import { invoke } from '@tauri-apps/api/core';
-
 // Default port as fallback
 const DEFAULT_PORT = 8765;
 
@@ -36,7 +34,7 @@ export async function initBackendPort(forceRefresh = false) {
 
   portInitPromise = (async () => {
     try {
-      const result = await invoke('get_daemon_port');
+      const result = await window.electronAPI.getDaemonPort();
       if (result.success && result.port) {
         cachedPort = result.port;
         console.log(`Backend port initialized: ${cachedPort} (source: ${result.source}, refresh: ${forceRefresh})`);
@@ -46,7 +44,7 @@ export async function initBackendPort(forceRefresh = false) {
         return cachedPort;
       }
     } catch (error) {
-      console.warn('Failed to get daemon port from Tauri, using default:', error);
+      console.warn('Failed to get daemon port, using default:', error);
     }
     cachedPort = DEFAULT_PORT;
     return cachedPort;

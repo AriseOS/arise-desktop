@@ -98,7 +98,7 @@ function RecordingsLibraryPage({ session, onNavigate, showStatus }) {
 
       // Clear workflow_id from local recording via daemon API
       try {
-        await api.callDaemon(`/api/v1/recordings/${sessionId}/workflow?user_id=${userId}`, {
+        await api.callAppBackend(`/api/v1/recordings/${sessionId}/workflow?user_id=${userId}`, {
           method: 'DELETE'
         });
       } catch (updateError) {

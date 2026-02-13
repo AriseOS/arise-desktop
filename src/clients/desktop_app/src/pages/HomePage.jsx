@@ -76,6 +76,7 @@ function HomePage({ session, onNavigate, showStatus, version, initialMessage }) 
   const [isVoiceActive, setIsVoiceActive] = useState(false);
   const [recordingSteps, setRecordingSteps] = useState([]);
   const [currentSessionId, setCurrentSessionId] = useState(null);
+  const [recordingWebviewId, setRecordingWebviewId] = useState(null);
   const [isStartingRecording, setIsStartingRecording] = useState(false);
 
   // Session messages (historical, loaded from backend)
@@ -367,7 +368,7 @@ function HomePage({ session, onNavigate, showStatus, version, initialMessage }) 
     }
   };
 
-  // Start recording - directly open browser and start recording
+  // Start recording - call API then navigate to recording browser page
   const startRecording = async () => {
     if (isStartingRecording || isRecording) return;
 
@@ -375,7 +376,6 @@ function HomePage({ session, onNavigate, showStatus, version, initialMessage }) 
     showStatus('Starting recording...', 'info');
 
     try {
-      // Call API to start recording with browser
       const result = await api.callAppBackend('/api/v1/recordings/start', {
         method: "POST",
         body: JSON.stringify({
@@ -389,11 +389,13 @@ function HomePage({ session, onNavigate, showStatus, version, initialMessage }) 
         })
       });
 
-      setCurrentSessionId(result.session_id);
-      setIsRecording(true);
-      setRecordingSteps([]);
-      setIsRecordingSandboxOpen(true);
-      showStatus('Recording started! Browser is ready.', 'success');
+      // Navigate to full-page recording browser
+      onNavigate('browser', {
+        mode: 'recording',
+        sessionId: result.session_id,
+        viewId: result.webview_id,
+        source: 'home_page',
+      });
 
     } catch (error) {
       console.error("Start recording error:", error);
@@ -408,6 +410,12 @@ function HomePage({ session, onNavigate, showStatus, version, initialMessage }) 
     if (!isRecording) return;
 
     showStatus('Stopping recording...', 'info');
+
+    // Hide webview before stopping
+    if (recordingWebviewId) {
+      window.electronAPI?.hideWebview(recordingWebviewId);
+      setRecordingWebviewId(null);
+    }
 
     try {
       // 1. Stop recording
@@ -819,6 +827,7 @@ function HomePage({ session, onNavigate, showStatus, version, initialMessage }) 
           </div>
         </div>
       </div>
+
     </div>
   );
 }

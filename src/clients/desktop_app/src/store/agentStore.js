@@ -98,6 +98,8 @@ const createInitialTaskState = (taskDescription = '', type = 'normal') => ({
   // Browser state (for BrowserTab display)
   browserScreenshot: null,  // Current browser screenshot (base64 image)
   browserUrl: '',           // Current browser URL
+  browserViewId: null,      // Electron WebContentsView ID ("0"-"7") for embedded browser
+  isTakeControl: false,     // Whether user has taken control (agent paused)
 
   // Workspace
   terminalOutput: [],
@@ -140,7 +142,6 @@ const createInitialTaskState = (taskDescription = '', type = 'normal') => ({
 
   // Eigent flags
   isPending: false,
-  isTakeControl: false,
   isContextExceeded: false,
 
   // Timing (Eigent: for statistics)
@@ -1371,6 +1372,9 @@ export const useAgentStore = create((set, get) => ({
               streamingDecomposeText: '',
               decompositionProgress: 0,
               decompositionMessage: '',
+              // Clear browser state — App.jsx will auto-navigate back
+              browserViewId: null,
+              isTakeControl: false,
             });
             // Disconnect SSE — backend task has ended
             if (sseClients[taskId]) {
@@ -1387,6 +1391,9 @@ export const useAgentStore = create((set, get) => ({
               taskRunning: updatedTaskRunning,
               // Clear decomposition state
               taskInfo: [],
+              // Clear browser state — App.jsx will auto-navigate back
+              browserViewId: null,
+              isTakeControl: false,
             });
             // Disconnect SSE — backend task has ended
             if (sseClients[taskId]) {
@@ -1403,6 +1410,9 @@ export const useAgentStore = create((set, get) => ({
               taskRunning: updatedTaskRunning,
               // Clear decomposition state
               taskInfo: [],
+              // Clear browser state — App.jsx will auto-navigate back
+              browserViewId: null,
+              isTakeControl: false,
             });
             addNotice('warning', 'Task Cancelled', 'Task was cancelled by user');
             // Disconnect SSE on user cancel
@@ -1539,9 +1549,14 @@ export const useAgentStore = create((set, get) => ({
             }
           }
 
-          // Also update browser URL for BrowserTab display
-          if (event.page_url) {
-            updateTask({ browserUrl: event.page_url });
+          // Also update browser URL and viewId for live browser page
+          const browserUpdates = {};
+          if (event.page_url) browserUpdates.browserUrl = event.page_url;
+          if (event.webview_id) {
+            browserUpdates.browserViewId = event.webview_id;
+          }
+          if (Object.keys(browserUpdates).length > 0) {
+            updateTask(browserUpdates);
           }
         }
         break;
@@ -1596,12 +1611,18 @@ export const useAgentStore = create((set, get) => ({
         {
           const screenshot = event.screenshot || event.image || event.data;
           const url = event.url || event.page_url || '';
+          const webviewId = event.webview_id || null;
 
           if (screenshot) {
-            updateTask({
+            const updates = {
               browserScreenshot: screenshot,
               browserUrl: url,
-            });
+            };
+            // Set browserViewId — App.jsx auto-navigates to live browser page
+            if (webviewId) {
+              updates.browserViewId = webviewId;
+            }
+            updateTask(updates);
           }
         }
         break;
@@ -1988,6 +2009,52 @@ export const useAgentStore = create((set, get) => ({
     }
 
     return true;
+  },
+
+  /**
+   * Pause the agent and take control of the browser.
+   */
+  takeControl: async (taskId) => {
+    const task = get().tasks[taskId];
+    if (!task) return false;
+
+    const backendTaskId = task.backendTaskId;
+    if (!backendTaskId) return false;
+
+    try {
+      await api.callAppBackend(`/api/v1/quick-task/pause/${backendTaskId}`, {
+        method: 'POST',
+      });
+      get().updateTask(taskId, { isTakeControl: true });
+      console.log('[AgentStore] Agent paused, user took control');
+      return true;
+    } catch (error) {
+      console.error('[AgentStore] Failed to pause agent:', error);
+      return false;
+    }
+  },
+
+  /**
+   * Resume the agent and give back browser control.
+   */
+  giveBackControl: async (taskId) => {
+    const task = get().tasks[taskId];
+    if (!task) return false;
+
+    const backendTaskId = task.backendTaskId;
+    if (!backendTaskId) return false;
+
+    try {
+      await api.callAppBackend(`/api/v1/quick-task/resume/${backendTaskId}`, {
+        method: 'POST',
+      });
+      get().updateTask(taskId, { isTakeControl: false });
+      console.log('[AgentStore] Agent resumed, control given back');
+      return true;
+    } catch (error) {
+      console.error('[AgentStore] Failed to resume agent:', error);
+      return false;
+    }
   },
 
   /**

@@ -14,6 +14,7 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
   const [capturedOperations, setCapturedOperations] = useState([]);
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [browserOpening, setBrowserOpening] = useState(false);
+  const [recordingWebviewId, setRecordingWebviewId] = useState(null);
   const operationsListRef = useRef(null);
 
   // Check if user has seen tutorial before
@@ -122,33 +123,16 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
     }
   };
 
+  // In Electron mode, the browser is always running as part of the app.
+  // This will be expanded in Phase 5 to show the embedded browser view.
   const handleOpenBrowserOnly = async () => {
-    if (browserOpening) return;
-
-    setBrowserOpening(true);
-    showStatus(t('quickStart.status.openingBrowser'), "info");
-
-    try {
-      const result = await api.startBrowser(false);
-
-      if (result.status === "already_running") {
-        showStatus(t('quickStart.status.browserAlreadyRunning'), "success");
-      } else {
-        showStatus(t('quickStart.status.browserOpened'), "success");
-      }
-    } catch (error) {
-      console.error("Open browser error:", error);
-      showStatus(`${t('quickStart.status.openBrowserFailed')}: ${error.message}`, "error");
-    } finally {
-      setBrowserOpening(false);
-    }
+    showStatus(t('quickStart.status.browserAlreadyRunning'), "success");
   };
 
   const handleStartRecording = async () => {
     try {
       showStatus(t('quickStart.status.startingRecording'), "info");
 
-      // Use about:blank as default URL - user can navigate anywhere in browser
       const result = await api.callAppBackend('/api/v1/recordings/start', {
         method: "POST",
         body: JSON.stringify({
@@ -161,9 +145,14 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
           }
         })
       });
-      setCurrentSessionId(result.session_id);
-      setStep('recording');
-      showStatus(t('quickStart.status.recordingStarted'), "success");
+
+      // Navigate to full-page recording browser
+      onNavigate('browser', {
+        mode: 'recording',
+        sessionId: result.session_id,
+        viewId: result.webview_id,
+        source: 'quick_start',
+      });
 
     } catch (error) {
       console.error("Start recording error:", error);
@@ -174,6 +163,12 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
   const handleStopRecording = async () => {
     try {
       showStatus(t('quickStart.status.stoppingRecording'), "info");
+
+      // Hide webview before stopping
+      if (recordingWebviewId) {
+        window.electronAPI?.hideWebview(recordingWebviewId);
+        setRecordingWebviewId(null);
+      }
 
       const result = await api.callAppBackend('/api/v1/recordings/stop', {
         method: "POST"
@@ -526,6 +521,7 @@ function QuickStartPage({ session, onNavigate, showStatus, version }) {
       {step === 'input' && renderInput()}
       {step === 'recording' && renderRecording()}
       {step === 'analyzing' && renderAnalyzing()}
+
 
       <div className="footer">
         <p>Ami v{version || '1.0.0'} • {session?.username && t('settings.loggedInAs', { username: session.username })}</p>

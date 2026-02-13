@@ -5,10 +5,23 @@ import jsPDF from 'jspdf'
 import html2canvas from 'html2canvas'
 import { DEFAULT_CONFIG_KEY, getWorkflow } from '../config/index'
 import Icon from '../components/Icons'
+import { auth } from '../utils/auth'
 import '../styles/WorkflowResultPage.css'
 
-// Store blob URLs for cleanup
-const blobUrlsToCleanup = new Set()
+/**
+ * Trigger a file download in Electron using a hidden <a> element.
+ * Revokes the blob URL after a short delay to free memory.
+ */
+function downloadBlob(blobUrl, filename) {
+  const a = document.createElement('a');
+  a.href = blobUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // Revoke after a short delay to ensure download starts
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+}
 
 // Demo markdown content for coffee-market-analysis-workflow
 const DEMO_MARKDOWN = `# 咖啡市场对比调研报告（ Allegro vs. Amazon ）
@@ -112,27 +125,6 @@ function WorkflowResultPage({ session, onNavigate, showStatus, params, version }
 
   useEffect(() => {
     loadResultData()
-
-    // Listen for blob URL cleanup messages from background script
-    const messageListener = (message) => {
-      if (message.action === 'revokeBlobUrl' && message.url) {
-        if (blobUrlsToCleanup.has(message.url)) {
-          URL.revokeObjectURL(message.url)
-          blobUrlsToCleanup.delete(message.url)
-          console.log('Cleaned up blob URL:', message.url)
-        }
-      }
-    }
-
-    chrome.runtime.onMessage.addListener(messageListener)
-
-    // Cleanup on unmount
-    return () => {
-      chrome.runtime.onMessage.removeListener(messageListener)
-      // Clean up any remaining blob URLs
-      blobUrlsToCleanup.forEach(url => URL.revokeObjectURL(url))
-      blobUrlsToCleanup.clear()
-    }
   }, [])
 
   const loadResultData = async () => {
@@ -164,7 +156,7 @@ function WorkflowResultPage({ session, onNavigate, showStatus, params, version }
 
       if (!response.ok) {
         if (response.status === 401) {
-          await chrome.storage.local.clear()
+          await auth.clearSession()
           onNavigate('login')
           return
         }
@@ -339,32 +331,13 @@ function WorkflowResultPage({ session, onNavigate, showStatus, params, version }
         heightLeft -= pdfHeight
       }
 
-      // Get PDF as blob and create URL
+      // Get PDF as blob and download
       const pdfBlob = pdf.output('blob')
       const blobUrl = URL.createObjectURL(pdfBlob)
       const filename = '咖啡市场对比调研报告_Allegro_vs_Amazon.pdf'
 
-      try {
-        // Track blob URL for later cleanup
-        blobUrlsToCleanup.add(blobUrl)
-
-        // Send to background script for download
-        const response = await chrome.runtime.sendMessage({
-          action: 'downloadFile',
-          blobUrl: blobUrl,
-          filename: filename
-        })
-
-        if (response && response.success) {
-          console.log(`Download initiated: ${filename} with ID: ${response.downloadId}`)
-          showStatus(t('workflowResult.pdfDownloaded'), 'success')
-        } else {
-          showStatus(t('workflowResult.pdfDownloadFailed'), 'error')
-        }
-      } catch (error) {
-        console.error('Download error:', error)
-        showStatus(t('workflowResult.pdfDownloadFailed'), 'error')
-      }
+      downloadBlob(blobUrl, filename)
+      showStatus(t('workflowResult.pdfDownloaded'), 'success')
     } catch (error) {
       console.error('PDF generation error:', error)
       showStatus(t('workflowResult.pdfGenerationFailed'), 'error')
@@ -376,74 +349,29 @@ function WorkflowResultPage({ session, onNavigate, showStatus, params, version }
 
     if (resultData.isMultiCollection) {
       // Download separate CSV for each collection
-      let successCount = 0
       for (const collection of resultData.collections) {
         const headers = collection.fields.join(',')
         const rows = collection.data.map(row => row.map(cell => `"${cell}"`).join(',')).join('\n')
         const csvContent = `${headers}\n${rows}`
 
-        try {
-          // Create blob URL
-          const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
-          const blobUrl = URL.createObjectURL(blob)
-          const filename = `${resultData.workflow_name}_${collection.name}.csv`
-
-          // Track blob URL for later cleanup
-          blobUrlsToCleanup.add(blobUrl)
-
-          // Send to background script for download
-          const response = await chrome.runtime.sendMessage({
-            action: 'downloadFile',
-            blobUrl: blobUrl,
-            filename: filename
-          })
-
-          if (response && response.success) {
-            console.log(`Download initiated: ${filename} with ID: ${response.downloadId}`)
-            successCount++
-          }
-        } catch (error) {
-          console.error('Download error:', error)
-        }
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+        const blobUrl = URL.createObjectURL(blob)
+        const filename = `${resultData.workflow_name}_${collection.name}.csv`
+        downloadBlob(blobUrl, filename)
       }
 
-      if (successCount === resultData.collections.length) {
-        showStatus(t('workflowResult.csvDownloadedCount', { count: successCount }), 'success')
-      } else {
-        showStatus(t('workflowResult.csvPartialFailed'), 'error')
-      }
+      showStatus(t('workflowResult.csvDownloadedCount', { count: resultData.collections.length }), 'success')
     } else {
       // Single collection CSV download
       const headers = resultData.fields.join(',')
       const rows = resultData.data.map(row => row.map(cell => `"${cell}"`).join(',')).join('\n')
       const csvContent = `${headers}\n${rows}`
 
-      try {
-        // Create blob URL
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
-        const blobUrl = URL.createObjectURL(blob)
-        const filename = `${resultData.workflow_name}_results.csv`
-
-        // Track blob URL for later cleanup
-        blobUrlsToCleanup.add(blobUrl)
-
-        // Send to background script for download
-        const response = await chrome.runtime.sendMessage({
-          action: 'downloadFile',
-          blobUrl: blobUrl,
-          filename: filename
-        })
-
-        if (response && response.success) {
-          console.log(`Download initiated: ${filename} with ID: ${response.downloadId}`)
-          showStatus(t('workflowResult.csvDownloaded'), 'success')
-        } else {
-          showStatus(t('workflowResult.csvDownloadFailed'), 'error')
-        }
-      } catch (error) {
-        console.error('Download error:', error)
-        showStatus(t('workflowResult.csvDownloadFailed'), 'error')
-      }
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+      const blobUrl = URL.createObjectURL(blob)
+      const filename = `${resultData.workflow_name}_results.csv`
+      downloadBlob(blobUrl, filename)
+      showStatus(t('workflowResult.csvDownloaded'), 'success')
     }
   }
 

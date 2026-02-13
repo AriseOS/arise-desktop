@@ -2,58 +2,65 @@
  * Settings Store
  *
  * Manages application settings including appearance/theme preferences.
- *
- * Ported from Eigent's authStore (appearance management portion).
+ * Persists settings via Electron Store (IPC).
  */
 
 import { createStore } from 'zustand/vanilla';
 
-// Storage key for persistence
+// Storage key for persistence in electron-store
 const STORAGE_KEY = 'ami_settings';
 
-// Load settings from localStorage
-const loadSettings = () => {
-  try {
-    const saved = window.localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      return JSON.parse(saved);
-    }
-  } catch (e) {
-    console.error('[settingsStore] Failed to load settings:', e);
-  }
-  return null;
-};
-
-// Save settings to localStorage
+// Save settings to electron-store (async, fire-and-forget)
 const saveSettings = (settings) => {
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-  } catch (e) {
+  // Extract only the serializable settings (exclude functions)
+  const { appearance, autoConfirmDelay, showTokenUsage, soundEnabled, notificationsEnabled } = settings;
+  const data = { appearance, autoConfirmDelay, showTokenUsage, soundEnabled, notificationsEnabled };
+  window.electronAPI.storeSet(STORAGE_KEY, data).catch((e) => {
     console.error('[settingsStore] Failed to save settings:', e);
-  }
+  });
 };
 
-// Initial state
-const createInitialState = () => {
-  const saved = loadSettings();
-  return {
-    // Appearance: 'light', 'dark', 'transparent', or 'system'
-    appearance: saved?.appearance || 'light',
-    // Auto-confirm delay in seconds (0 = disabled)
-    autoConfirmDelay: saved?.autoConfirmDelay ?? 30,
-    // Show token usage
-    showTokenUsage: saved?.showTokenUsage ?? true,
-    // Enable sound notifications
-    soundEnabled: saved?.soundEnabled ?? true,
-    // Enable desktop notifications
-    notificationsEnabled: saved?.notificationsEnabled ?? true,
-  };
+// Default settings
+const DEFAULTS = {
+  appearance: 'light',
+  autoConfirmDelay: 30,
+  showTokenUsage: true,
+  soundEnabled: true,
+  notificationsEnabled: true,
 };
 
-// Create the store
+// Create the store (starts with defaults, async loads persisted values)
 const settingsStore = createStore((set, get) => ({
-  // State
-  ...createInitialState(),
+  // State (starts with defaults)
+  ...DEFAULTS,
+
+  // Flag to track if persisted settings have been loaded
+  _loaded: false,
+
+  /**
+   * Load persisted settings from electron-store.
+   * Called once on app startup.
+   */
+  loadPersistedSettings: async () => {
+    try {
+      const saved = await window.electronAPI.storeGet(STORAGE_KEY);
+      if (saved && typeof saved === 'object') {
+        set({
+          appearance: saved.appearance || DEFAULTS.appearance,
+          autoConfirmDelay: saved.autoConfirmDelay ?? DEFAULTS.autoConfirmDelay,
+          showTokenUsage: saved.showTokenUsage ?? DEFAULTS.showTokenUsage,
+          soundEnabled: saved.soundEnabled ?? DEFAULTS.soundEnabled,
+          notificationsEnabled: saved.notificationsEnabled ?? DEFAULTS.notificationsEnabled,
+          _loaded: true,
+        });
+      } else {
+        set({ _loaded: true });
+      }
+    } catch (e) {
+      console.error('[settingsStore] Failed to load settings:', e);
+      set({ _loaded: true });
+    }
+  },
 
   // === Appearance ===
 
@@ -158,15 +165,8 @@ const settingsStore = createStore((set, get) => ({
    * Reset all settings to defaults
    */
   resetSettings: () => {
-    const defaults = {
-      appearance: 'light',
-      autoConfirmDelay: 30,
-      showTokenUsage: true,
-      soundEnabled: true,
-      notificationsEnabled: true,
-    };
-    set(defaults);
-    saveSettings(defaults);
+    set({ ...DEFAULTS });
+    saveSettings(DEFAULTS);
   },
 }));
 

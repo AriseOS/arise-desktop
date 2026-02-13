@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke } from "@tauri-apps/api/core";
 import { api } from "../utils/api";
 
 function SetupPage({ onSetupComplete }) {
@@ -18,8 +17,8 @@ function SetupPage({ onSetupComplete }) {
 
   const checkBrowserStatus = async () => {
     try {
-      // Use Tauri command to check browser (no dependency on daemon)
-      const browserInfo = await invoke("check_browser_installed");
+      // Check browser availability (always true with Electron)
+      const browserInfo = await window.electronAPI.checkBrowserInstalled();
       setBrowserInfo(browserInfo);
 
       console.log("Browser check result:", browserInfo);
