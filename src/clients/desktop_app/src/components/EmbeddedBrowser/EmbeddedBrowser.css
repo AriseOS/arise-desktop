@@ -1,0 +1,111 @@
+.embedded-browser {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Controls bar */
+.embedded-browser-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--bg-secondary, #1e1e2e);
+  border-bottom: 1px solid var(--border-color, #313244);
+  flex-shrink: 0;
+  z-index: 1;
+}
+
+.browser-nav-buttons {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.browser-nav-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary, #a6adc8);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.browser-nav-btn:hover {
+  background: var(--bg-hover, #313244);
+  color: var(--text-primary, #cdd6f4);
+}
+
+.browser-url-form {
+  flex: 1;
+  display: flex;
+}
+
+.browser-url-input {
+  width: 100%;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-color, #313244);
+  border-radius: 6px;
+  background: var(--bg-primary, #11111b);
+  color: var(--text-primary, #cdd6f4);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.browser-url-input:focus {
+  border-color: var(--accent-color, #89b4fa);
+}
+
+.browser-url-input::placeholder {
+  color: var(--text-tertiary, #585b70);
+}
+
+.browser-close-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary, #a6adc8);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.browser-close-btn:hover {
+  background: var(--danger-bg, #45293a);
+  color: var(--danger-color, #f38ba8);
+}
+
+/* Viewport — reserves DOM space for native WebContentsView */
+.embedded-browser-viewport {
+  flex: 1;
+  min-height: 200px;
+  background: var(--bg-primary, #11111b);
+}
+
+/* Shield overlay — blocks mouse interaction when not interactive */
+.embedded-browser-shield {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
+  /* Transparent but captures all mouse events */
+  background: transparent;
+  cursor: default;
+}

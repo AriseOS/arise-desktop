@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 import "./extension.css";
 import Icon from "./components/Icons";
@@ -8,7 +7,7 @@ import Icon from "./components/Icons";
 // Import utilities
 import { auth } from "./utils/auth";
 import { api, onConnectionError } from "./utils/api";
-import { useAgentStore } from "./store";
+import { useAgentStore, useBrowserTabStore } from "./store";
 
 // Import pages
 import InitializingPage from "./pages/InitializingPage";
@@ -39,6 +38,7 @@ import AgentPage from "./pages/AgentPage";
 import MemoryPage from "./pages/MemoryPage";
 import HomePage from "./pages/HomePage";
 import ExplorePage from "./pages/ExplorePage";
+import BrowserPage from "./pages/BrowserPage";
 
 // Import setup styles
 import "./styles/SetupPage.css";
@@ -72,6 +72,13 @@ function App() {
   const [diagnosticUploading, setDiagnosticUploading] = useState(false);
   const [diagnosticModalOpen, setDiagnosticModalOpen] = useState(false);
   const [diagnosticDescription, setDiagnosticDescription] = useState("");
+
+  // Live browser auto-navigation — when agent starts browsing, navigate to browser page
+  const activeTaskId = useAgentStore((state) => state.activeTaskId);
+  const browserViewId = useAgentStore((state) => {
+    const t = state.activeTaskId ? state.tasks[state.activeTaskId] : null;
+    return t?.browserViewId || null;
+  });
 
   // Upload diagnostic package - Step 1: Open Modal
   const handleUploadDiagnostic = () => {
@@ -133,14 +140,21 @@ function App() {
 
   // Check setup status on mount
   useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem("ami_language");
+    // Load persisted language from electron-store
+    window.electronAPI.storeGet("ami_language").then((saved) => {
       if (saved === "en" || saved === "zh") {
         setLanguage(saved);
       }
-    } catch (e) {
+    }).catch((e) => {
       console.error("[App] Failed to read language from storage:", e);
-    }
+    });
+
+    // Load persisted settings (appearance, etc.) — await to prevent race with user changes
+    import('./store/settingsStore').then(async (mod) => {
+      await mod.default.getState().loadPersistedSettings();
+    }).catch((e) => {
+      console.error("[App] Failed to load persisted settings:", e);
+    });
 
     checkSetupStatus();
 
@@ -155,18 +169,41 @@ function App() {
   }, []);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem("ami_language", language);
-      i18n.changeLanguage(language);
-    } catch (e) {
+    window.electronAPI.storeSet("ami_language", language).catch((e) => {
       console.error("[App] Failed to save language to storage:", e);
-    }
+    });
+    i18n.changeLanguage(language);
   }, [language, i18n]);
+
+  // Auto-navigate to browser page when agent starts browsing
+  const prevBrowserViewIdRef = useRef(null);
+  useEffect(() => {
+    const isAlreadyOnBrowserPage = currentPage === "browser";
+
+    if (browserViewId && !prevBrowserViewIdRef.current) {
+      if (isAlreadyOnBrowserPage) {
+        // Already on browser page — just switch tab + set mode in store
+        useBrowserTabStore.getState().setViewMode(browserViewId, "live");
+        useBrowserTabStore.getState().switchTab(browserViewId);
+      } else {
+        // Navigate to browser page with live mode
+        navigate("browser", {
+          mode: "live",
+          viewId: browserViewId,
+          taskId: activeTaskId,
+        });
+      }
+    } else if (!browserViewId && prevBrowserViewIdRef.current) {
+      // Agent stopped browsing — reset mode to idle, do NOT navigate away
+      useBrowserTabStore.getState().setViewMode(prevBrowserViewIdRef.current, "idle");
+    }
+    prevBrowserViewIdRef.current = browserViewId;
+  }, [browserViewId]);
 
   const checkSetupStatus = async () => {
     try {
-      // Use Tauri command to check browser (no dependency on daemon)
-      const browserInfo = await invoke("check_browser_installed");
+      // Check browser availability (always true with Electron)
+      const browserInfo = await window.electronAPI.checkBrowserInstalled();
       if (browserInfo.available) {
         // Browser is valid, but now we must wait for Backend
         setBackendChecking(true);
@@ -295,27 +332,9 @@ function App() {
   // Browser state
   const [browserOpening, setBrowserOpening] = useState(false);
 
-  // Open browser handler (subprocess mode - default)
+  // Open browser handler — navigate to browser page in login mode (viewId "7")
   const handleOpenBrowser = async () => {
-    if (browserOpening) return;
-
-    setBrowserOpening(true);
-    showStatus(t('common.browser.opening'), "info");
-
-    try {
-      const result = await api.startBrowser(false, "subprocess");
-
-      if (result.status === "already_running") {
-        showStatus(t('common.browser.alreadyRunning'), "success");
-      } else {
-        showStatus(t('common.browser.opened'), "success");
-      }
-    } catch (error) {
-      console.error("Open browser error:", error);
-      showStatus(`Failed to open browser: ${error.message}`, "error");
-    } finally {
-      setBrowserOpening(false);
-    }
+    navigate("browser", { mode: "login", viewId: "7" });
   };
 
 
@@ -874,12 +893,25 @@ function App() {
           />
         );
 
+      case "browser":
+        return (
+          <BrowserPage
+            mode={pageParams.mode || "login"}
+            onNavigate={navigate}
+            showStatus={showStatus}
+            session={session}
+            viewId={pageParams.viewId}
+            sessionId={pageParams.sessionId}
+            source={pageParams.source}
+          />
+        );
+
       default:
         return renderMainPage();
     }
   };
 
-  // Bottom navigation bar - New 3-tab design: Ami, Library, Explore
+  // Bottom navigation bar - 4-tab design: Ami, Browser, Memories, Explore
   const renderBottomNav = () => {
     // Hide navigation on certain pages
     const hideNavPages = ["quick-start", "execution-monitor", "execution-result", "workflow-execution-live"];
@@ -887,12 +919,26 @@ function App() {
       return null;
     }
 
-    // New navigation: Ami (main), Memories (learned workflows), Explore (discover workflows)
     const navItems = [
       { id: "main", icon: "robot", label: "Ami" },
+      { id: "browser", icon: "globe", label: "Browser" },
       { id: "memories", icon: "brain", label: "Memories" },
       { id: "explore", icon: "compass", label: "Explore" },
     ];
+
+    const handleNavClick = (id) => {
+      if (id === "browser") {
+        if (currentPage === "browser") {
+          // Already on browser page — switch to login tab via store
+          useBrowserTabStore.getState().setViewMode("7", "login");
+          useBrowserTabStore.getState().switchTab("7");
+        } else {
+          navigate("browser", { mode: "login", viewId: "7" });
+        }
+      } else {
+        navigate(id);
+      }
+    };
 
     return (
       <nav className="bottom-nav">
@@ -900,7 +946,7 @@ function App() {
           <button
             key={item.id}
             className={`nav-item ${currentPage === item.id ? 'active' : ''}`}
-            onClick={() => navigate(item.id)}
+            onClick={() => handleNavClick(item.id)}
           >
             <span className="nav-icon">
               <Icon name={item.icon} size={24} />
@@ -924,7 +970,7 @@ function App() {
       )}
 
       {/* Page Content */}
-      <div className={`app-content ${["main", "agent", "workflow-execution-live"].includes(currentPage) ? 'full-width-page' : ''}`}>
+      <div className={`app-content ${["main", "agent", "workflow-execution-live", "browser"].includes(currentPage) ? 'full-width-page' : ''}`}>
         {renderPage()}
       </div>
 

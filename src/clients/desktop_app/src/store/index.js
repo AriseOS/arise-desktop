@@ -13,5 +13,8 @@ export { default as chatStore } from './chatStore';
 // Project store (new - multi-project/session management)
 export { default as projectStore } from './projectStore';
 
+// Browser tab store (multi-tab browser UI state)
+export { default as useBrowserTabStore } from './browserTabStore';
+
 // Re-export types and constants
 export { TaskStatus, TaskType } from './chatStore';
