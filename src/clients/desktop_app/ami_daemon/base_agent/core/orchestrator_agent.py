@@ -19,6 +19,7 @@ import datetime
 import logging
 import os
 import platform
+import re
 from dataclasses import dataclass, field as dc_field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
@@ -60,7 +61,7 @@ You are the first point of contact for user requests. You can:
 ## User's Workspace
 Task files location: `{user_workspace}`
 
-Structure: `{{task_id}}/workspace/` - each task folder contains output files (reports, documents, data, etc.)
+Each `decompose_task` creates a subfolder (via `workspace_folder`) to keep different tasks' files separate.
 
 ## Your Tools
 - shell_exec: Execute terminal commands to explore user's files
@@ -126,6 +127,7 @@ class DecomposeTaskTool:
         self._callback = callback
         self._triggered = False
         self._task_description: Optional[str] = None
+        self._workspace_folder: str = ""
         self._agent: Optional["AMIAgent"] = None
 
     def set_agent(self, agent: "AMIAgent") -> None:
@@ -142,14 +144,20 @@ class DecomposeTaskTool:
         """Get the task description passed to decompose_task."""
         return self._task_description
 
+    @property
+    def workspace_folder(self) -> str:
+        """Get the workspace folder name passed to decompose_task."""
+        return self._workspace_folder
+
     def reset(self) -> None:
         """Reset the trigger state for reuse across multiple decompose calls."""
         self._triggered = False
         self._task_description = None
+        self._workspace_folder = ""
         if self._agent:
             self._agent._should_stop_after_tool = False
 
-    def decompose_task(self, task_description: str) -> str:
+    def decompose_task(self, task_description: str, workspace_folder: str = "") -> str:
         """
         Delegate a task to specialized agents (Browser, Developer, Document, etc.)
 
@@ -163,6 +171,7 @@ class DecomposeTaskTool:
                 - Do NOT add requirements the user didn't mention
                 - Do NOT specify output formats unless user asked
                 - Do NOT add "suggested steps" or implementation details
+            workspace_folder: Short kebab-case folder name for output files (e.g. "stock-analysis", "email-to-bob"). Reuse the same name for related follow-ups; use a different name for unrelated tasks.
 
         Returns:
             Confirmation that the task has been queued for execution.
@@ -176,7 +185,8 @@ class DecomposeTaskTool:
 
         self._triggered = True
         self._task_description = task_description
-        logger.info(f"[DecomposeTaskTool] Triggered with: {task_description[:100]}...")
+        self._workspace_folder = workspace_folder or ""
+        logger.info(f"[DecomposeTaskTool] Triggered with: {task_description[:100]}... folder={self._workspace_folder}")
 
         # Stop the Orchestrator agent loop immediately after this tool call.
         # Without this, the LLM keeps calling search_google/ask_human/etc.
@@ -465,6 +475,8 @@ class ExecutorHandle:
     async_task: asyncio.Task
     subtasks: List[Any]  # List[AMISubtask]
     started_at: datetime.datetime = dc_field(default_factory=datetime.datetime.now)
+    workspace_folder: str = ""
+    child_manager: Any = None  # Optional[WorkingDirectoryManager]
 
 
 # Idle timeout: how long to wait for user input when no executors are running.
@@ -566,7 +578,8 @@ class OrchestratorSession:
             # 5. Handle decompose_task trigger
             if self._decompose_tool.triggered:
                 task_desc = self._decompose_tool.task_description
-                logger.info(f"[OrchestratorSession] decompose_task triggered: {task_desc[:100]}...")
+                ws_folder = self._decompose_tool.workspace_folder
+                logger.info(f"[OrchestratorSession] decompose_task triggered: {task_desc[:100]}... folder={ws_folder}")
 
                 # Emit confirmed event
                 await self._task_state.put_event(ConfirmedData(
@@ -574,7 +587,7 @@ class OrchestratorSession:
                     question=task_desc,
                 ))
 
-                await self._supervised_execute(task_desc)
+                await self._supervised_execute(task_desc, workspace_folder=ws_folder)
 
             # 6. Emit Orchestrator's reply to user
             if orchestrator_reply:
@@ -587,7 +600,7 @@ class OrchestratorSession:
                 logger.info("[OrchestratorSession] Session ending (no more waitables)")
                 break
 
-    async def _supervised_execute(self, task_description: str) -> None:
+    async def _supervised_execute(self, task_description: str, workspace_folder: str = "") -> None:
         """Plan subtasks and spawn a non-blocking executor."""
         from .ami_task_planner import AMITaskPlanner
         from .ami_task_executor import AMITaskExecutor
@@ -721,16 +734,71 @@ class OrchestratorSession:
             task_label=task_label,
         ))
 
+        # Capture the parent manager NOW (before any executor mutates it).
+        # This is the task-level manager set by QuickTaskService at task start.
+        from ..workspace import get_current_manager, set_current_manager
+        parent_manager = get_current_manager()
+
+        # Create child manager for workspace subdirectory if workspace_folder specified
+        child_manager = None
+        if workspace_folder and parent_manager:
+            child_manager = parent_manager.create_child_manager(workspace_folder)
+            logger.info(
+                f"[OrchestratorSession] Created child workspace: {child_manager.workspace}"
+            )
+
         # Spawn non-blocking, but sequential: acquire _executor_lock before
         # running execute(). Planning + SSE events fire immediately so the user
         # sees the subtask list, but actual execution waits for prior executors.
-        async def _run_with_lock(ex: AMITaskExecutor, eid: str) -> Dict:
+        async def _run_with_lock(
+            ex: AMITaskExecutor,
+            eid: str,
+            cm: Optional[WorkingDirectoryManager] = None,
+            pm: Optional[WorkingDirectoryManager] = None,
+        ) -> Dict:
             async with self._executor_lock:
                 logger.info(f"[OrchestratorSession] Executor {eid} acquired lock, starting")
+                # Always set the correct workspace for this executor.
+                # If cm (child_manager) exists, use its subdirectory;
+                # otherwise restore to parent workspace. This is critical
+                # because a prior executor may have mutated toolkit
+                # _working_directory to a different subdirectory.
+                active_manager = cm or pm
+                if active_manager:
+                    set_current_manager(active_manager)
+                    new_workspace = active_manager.workspace
+                    new_workspace_str = str(new_workspace)
+                    # 1. Mutate toolkit _working_directory
+                    updated_toolkits: set = set()
+                    for agent in ex._agents.values():
+                        for tool in agent._tools.values():
+                            bound = getattr(tool.func, '__self__', None)
+                            if (
+                                bound
+                                and hasattr(bound, '_working_directory')
+                                and id(bound) not in updated_toolkits
+                            ):
+                                bound._working_directory = type(bound._working_directory)(new_workspace)
+                                updated_toolkits.add(id(bound))
+                    # 2. Patch agent system prompts so LLM sees correct path
+                    #    Pattern: **Working Directory**: `/old/path`
+                    _ws_re = re.compile(
+                        r"(\*\*Working Directory\*\*:\s*`)([^`]+)(`)"
+                    )
+                    for agent in ex._agents.values():
+                        if hasattr(agent, '_system_prompt') and agent._system_prompt:
+                            agent._system_prompt = _ws_re.sub(
+                                lambda m: m.group(1) + new_workspace_str + m.group(3),
+                                agent._system_prompt,
+                            )
+                    logger.info(
+                        f"[OrchestratorSession] {eid}: updated {len(updated_toolkits)} "
+                        f"toolkit working directories + agent prompts to {new_workspace}"
+                    )
                 return await ex.execute()
 
         async_task = asyncio.create_task(
-            _run_with_lock(executor, executor_id),
+            _run_with_lock(executor, executor_id, child_manager, parent_manager),
             name=f"executor_{executor_id}",
         )
 
@@ -741,6 +809,8 @@ class OrchestratorSession:
             executor=executor,
             async_task=async_task,
             subtasks=subtasks,
+            workspace_folder=workspace_folder,
+            child_manager=child_manager,
         )
 
         logger.info(f"[OrchestratorSession] Spawned {executor_id} with {len(subtasks)} subtasks")
@@ -848,12 +918,19 @@ class OrchestratorSession:
                     duration = (datetime.datetime.now() - handle.started_at).total_seconds()
 
                     # Record task_result in conversation history
+                    # Use executor-specific workspace (child_manager) if present,
+                    # otherwise fall back to task-level working_directory.
                     if hasattr(self._task_state, 'add_conversation'):
+                        exec_working_dir = (
+                            str(handle.child_manager.workspace)
+                            if handle.child_manager
+                            else getattr(self._task_state, 'working_directory', '')
+                        )
                         self._task_state.add_conversation("task_result", {
                             "task_content": handle.task_label,
                             "task_result": msg,
                             "executor_id": eid,
-                            "working_directory": getattr(self._task_state, 'working_directory', ''),
+                            "working_directory": exec_working_dir,
                         })
 
                     # Update state.result for status tracking
@@ -947,23 +1024,30 @@ class OrchestratorSession:
             preview = st.content[:80]
             subtask_summaries.append(f"  - [{status}] {preview}: {result_text}")
 
-        # Collect workspace files
+        # Collect workspace files (prefer child_manager's subdirectory if present)
         file_listing = ""
         try:
-            from ..workspace import get_current_manager
-            manager = get_current_manager()
-            if manager and manager.workspace.exists():
-                files = [f.name for f in sorted(manager.workspace.iterdir()) if f.is_file()]
+            workspace_dir = None
+            if handle.child_manager:
+                workspace_dir = handle.child_manager.workspace
+            else:
+                from ..workspace import get_current_manager
+                manager = get_current_manager()
+                if manager:
+                    workspace_dir = manager.workspace
+            if workspace_dir and workspace_dir.exists():
+                files = [f.name for f in sorted(workspace_dir.iterdir()) if f.is_file()]
                 if files:
                     file_listing = f"\nFiles in workspace: {', '.join(files)}"
         except Exception:
             pass
 
+        folder_info = f" | Folder: {handle.workspace_folder}" if handle.workspace_folder else ""
         return (
             f"[EXECUTION COMPLETE] {handle.executor_id} ({handle.task_label})\n"
             f"Duration: {duration:.0f}s | "
             f"Completed: {result.get('completed', 0)}/{result.get('total', 0)} | "
-            f"Failed: {result.get('failed', 0)}\n"
+            f"Failed: {result.get('failed', 0)}{folder_info}\n"
             f"Subtask Results:\n" + "\n".join(subtask_summaries) +
             file_listing
         )
@@ -976,8 +1060,9 @@ class OrchestratorSession:
         lines = ["## Currently Running Tasks"]
         for eid, handle in self._running_executors.items():
             progress = handle.executor.get_progress()
+            folder_info = f"  folder={handle.workspace_folder}" if handle.workspace_folder else ""
             lines.append(
-                f"\n### {eid} ({handle.task_label})"
+                f"\n### {eid} ({handle.task_label}){folder_info}"
             )
             lines.append(
                 f"Progress: {progress['done']}/{progress['total']} done, "

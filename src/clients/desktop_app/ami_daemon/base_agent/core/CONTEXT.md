@@ -89,8 +89,9 @@ Entry point for ALL user requests. Runs as a persistent `OrchestratorSession` lo
 
 Key classes:
 - `OrchestratorSession`: Persistent loop (wait for event -> Orchestrator.astep() -> handle -> repeat)
-- `ExecutorHandle`: Tracks running executor (executor_id, task_label, async_task)
-- `InjectMessageTool` / `CancelTaskTool`: New tools for message routing and cancellation
+- `ExecutorHandle`: Tracks running executor (executor_id, task_label, async_task, workspace_folder, child_manager)
+- `InjectMessageTool` / `CancelTaskTool`: Tools for message routing and cancellation
+- `decompose_task` accepts `workspace_folder` param → creates subdirectory under workspace via `WorkingDirectoryManager.create_child_manager()`
 - All SSE events carry `executor_id` + `task_label` for frontend executor tracking
 
 ### Memory Integration

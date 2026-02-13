@@ -11,7 +11,7 @@ Per-task directory isolation for agent execution.
 
 ## Directory Structure
 
-Each task gets an isolated workspace:
+Each task gets an isolated workspace, with optional subdirectories per `decompose_task` call:
 
 ```
 ~/.ami/
@@ -19,10 +19,16 @@ Each task gets an isolated workspace:
     ├── browser_data/               # User-level (shared across ALL tasks)
     └── projects/{project_id}/
         └── tasks/{task_id}/        # Task-level isolation
-            ├── workspace/          # Main working directory (all file operations)
+            ├── workspace/          # Main working directory
+            │   ├── stock-analysis/ # Subdirectory created by child_manager
+            │   └── email-to-bob/   # Another subdirectory for a different task
             ├── logs/               # Execution logs
             └── browser_data/       # Task-specific browser data (optional)
 ```
+
+### Workspace Subdirectories (child_manager)
+
+`WorkingDirectoryManager.create_child_manager(subfolder)` creates a child manager whose `workspace` property points to `{parent_workspace}/{subfolder}/`. The Orchestrator's `decompose_task` tool accepts a `workspace_folder` param; when set, a child manager is created and toolkit `_working_directory` fields are mutated before execution.
 
 ## Critical Design Decision: Unified Workspace
 

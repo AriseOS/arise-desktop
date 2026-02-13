@@ -69,6 +69,7 @@ class WorkingDirectoryManager:
             / "tasks"
             / self.task_id
         )
+        self._workspace_override: Optional[Path] = None
 
         if auto_create:
             self._ensure_directories()
@@ -126,7 +127,29 @@ class WorkingDirectoryManager:
     @property
     def workspace(self) -> Path:
         """Main working directory for task execution."""
+        if self._workspace_override is not None:
+            return self._workspace_override
         return self._task_root / "workspace"
+
+    def create_child_manager(self, subfolder: str) -> "WorkingDirectoryManager":
+        """Create child manager with workspace in a subdirectory.
+
+        Args:
+            subfolder: Name for the subdirectory (will be sanitized).
+
+        Returns:
+            New WorkingDirectoryManager whose workspace points to
+            {parent_workspace}/{sanitized_subfolder}/.
+        """
+        sanitized = self._sanitize_path_component(subfolder)
+        child = WorkingDirectoryManager.__new__(WorkingDirectoryManager)
+        child.user_id = self.user_id
+        child.project_id = self.project_id
+        child.task_id = self.task_id
+        child._task_root = self._task_root
+        child._workspace_override = self.workspace / sanitized
+        child._workspace_override.mkdir(parents=True, exist_ok=True)
+        return child
 
     @property
     def logs_dir(self) -> Path:
@@ -252,7 +275,12 @@ class WorkingDirectoryManager:
         return list(search_dir.rglob(pattern))
 
     def cleanup_all(self) -> None:
-        """Remove entire task directory."""
+        """Remove entire task directory (not allowed on child managers)."""
+        if self._workspace_override is not None:
+            raise RuntimeError(
+                "Cannot cleanup_all from a child manager — "
+                "would delete the entire parent task directory"
+            )
         if self._task_root.exists():
             try:
                 shutil.rmtree(self._task_root)
@@ -264,12 +292,16 @@ class WorkingDirectoryManager:
         """
         Get total disk usage in bytes.
 
+        For child managers, scopes to the child workspace subdirectory.
+        For parent managers, scopes to the entire task directory.
+
         Returns:
-            Total size of all files in task directory.
+            Total size of all files in the scoped directory.
         """
+        root = self.workspace if self._workspace_override is not None else self._task_root
         total = 0
         try:
-            for file_path in self._task_root.rglob("*"):
+            for file_path in root.rglob("*"):
                 if file_path.is_file():
                     total += file_path.stat().st_size
         except Exception as e:
