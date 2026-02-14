@@ -7,11 +7,22 @@
 import { create } from 'zustand';
 import { api } from '../utils/api';
 import { SSEClient } from '../utils/sseClient';
+import useBrowserTabStore from './browserTabStore';
 
 // Generate unique task ID (8 char)
 const generateTaskId = () => {
   return Math.random().toString(36).substring(2, 10);
 };
+
+// Reset all "live" browser tabs to "idle" when a task ends
+function _resetLiveTabs() {
+  const { views, setViewMode } = useBrowserTabStore.getState();
+  for (const [id, view] of Object.entries(views)) {
+    if (view.mode === 'live') {
+      setViewMode(id, 'idle');
+    }
+  }
+}
 
 // SSE clients per task
 const sseClients = {};
@@ -1354,6 +1365,8 @@ export const useAgentStore = create((set, get) => ({
               browserViewId: null,
               isTakeControl: false,
             });
+            // Reset all live tabs to idle
+            _resetLiveTabs();
             // Disconnect SSE — backend task has ended
             if (sseClients[taskId]) {
               sseClients[taskId].disconnect();
@@ -1373,6 +1386,7 @@ export const useAgentStore = create((set, get) => ({
               browserViewId: null,
               isTakeControl: false,
             });
+            _resetLiveTabs();
             // Disconnect SSE — backend task has ended
             if (sseClients[taskId]) {
               sseClients[taskId].disconnect();
@@ -1392,6 +1406,7 @@ export const useAgentStore = create((set, get) => ({
               browserViewId: null,
               isTakeControl: false,
             });
+            _resetLiveTabs();
             addNotice('warning', 'Task Cancelled', 'Task was cancelled by user');
             // Disconnect SSE on user cancel
             if (sseClients[taskId]) {
@@ -1532,6 +1547,9 @@ export const useAgentStore = create((set, get) => ({
           if (event.page_url) browserUpdates.browserUrl = event.page_url;
           if (event.webview_id) {
             browserUpdates.browserViewId = event.webview_id;
+            // Mark this tab as live in browserTabStore — supports parallel subtasks
+            // each operating on a different viewId
+            useBrowserTabStore.getState().setViewMode(event.webview_id, 'live');
           }
           if (Object.keys(browserUpdates).length > 0) {
             updateTask(browserUpdates);
@@ -1599,6 +1617,7 @@ export const useAgentStore = create((set, get) => ({
             // Set browserViewId — App.jsx auto-navigates to live browser page
             if (webviewId) {
               updates.browserViewId = webviewId;
+              useBrowserTabStore.getState().setViewMode(webviewId, 'live');
             }
             updateTask(updates);
           }

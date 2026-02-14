@@ -75,9 +75,8 @@ export default function BrowserPage({
     return t?.browserViewId || null;
   });
 
-  // Derive activeMode — if agent is no longer browsing, force idle for live tabs
-  const rawMode = activeView?.mode || 'idle';
-  const activeMode = (rawMode === 'live' && !browserViewId) ? 'idle' : rawMode;
+  // Active tab's mode — agentStore resets live→idle on task completion
+  const activeMode = activeView?.mode || 'idle';
 
   // Derive active tabs from views (memoized to avoid new array on every render)
   const activeTabs = useMemo(() => {
@@ -148,14 +147,13 @@ export default function BrowserPage({
     }
   }, []);
 
-  // --- Watch agentStore browserViewId for live mode ---
+  // --- Watch agentStore browserViewId — auto-switch to agent's tab ---
+  // Live mode is set directly by agentStore SSE handlers (supports parallel subtasks).
+  // This effect only handles tab switching when agent starts browsing.
   const prevBrowserViewIdRef = useRef(null);
   useEffect(() => {
-    if (browserViewId && !prevBrowserViewIdRef.current) {
-      setViewMode(browserViewId, 'live');
+    if (browserViewId && browserViewId !== prevBrowserViewIdRef.current) {
       switchTab(browserViewId);
-    } else if (!browserViewId && prevBrowserViewIdRef.current) {
-      setViewMode(prevBrowserViewIdRef.current, 'idle');
     }
     prevBrowserViewIdRef.current = browserViewId;
   }, [browserViewId]);
