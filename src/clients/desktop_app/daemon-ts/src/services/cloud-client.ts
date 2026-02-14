@@ -91,15 +91,16 @@ export class CloudClient {
 
   // ===== Version =====
 
-  async checkVersion(clientVersion: string, creds?: RequestCredentials): Promise<{
+  async checkVersion(clientVersion: string, platform: string, creds?: RequestCredentials): Promise<{
     compatible: boolean;
     minimum_version?: string;
     update_url?: string;
     message?: string;
   }> {
     try {
-      const result = (await this.get(
-        `/api/v1/version/check?client_version=${encodeURIComponent(clientVersion)}`,
+      const result = (await this.post(
+        "/api/v1/app/version-check",
+        { version: clientVersion, platform },
         creds,
       )) as any;
       return result;

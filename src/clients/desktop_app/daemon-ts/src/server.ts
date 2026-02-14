@@ -25,6 +25,7 @@ import { intentBuilderRouter } from "./routes/intent-builder.js";
 import { sessionRouter } from "./routes/session.js";
 import { integrationsRouter } from "./routes/integrations.js";
 import { loadConfig } from "./utils/config.js";
+import { getCloudClient } from "./services/cloud-client.js";
 
 const logger = createLogger("server");
 
@@ -74,14 +75,31 @@ app.post("/api/v1/app/shutdown", (_req, res) => {
 
 // ===== Version =====
 
-app.get("/api/v1/app/version", (_req, res) => {
-  res.json({
-    version: APP_VERSION,
-    platform: `${platform}-${arch}`,
-    compatible: true,
-    update_required: false,
-    daemon_type: "typescript",
-  });
+app.get("/api/v1/app/version", async (_req, res) => {
+  const platformStr = `${platform}-${arch}`;
+  try {
+    const client = getCloudClient();
+    const result = await client.checkVersion(APP_VERSION, platformStr);
+    res.json({
+      version: APP_VERSION,
+      platform: platformStr,
+      compatible: result.compatible,
+      update_required: !result.compatible,
+      minimum_version: result.minimum_version,
+      update_url: result.update_url,
+      message: result.message,
+      daemon_type: "typescript",
+    });
+  } catch {
+    // Cloud unreachable — assume compatible to avoid blocking the app
+    res.json({
+      version: APP_VERSION,
+      platform: platformStr,
+      compatible: true,
+      update_required: false,
+      daemon_type: "typescript",
+    });
+  }
 });
 
 // ===== Dashboard =====
