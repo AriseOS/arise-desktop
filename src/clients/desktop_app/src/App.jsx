@@ -10,7 +10,6 @@ import { api, onConnectionError } from "./utils/api";
 import { useAgentStore, useBrowserTabStore } from "./store";
 
 // Import pages
-import InitializingPage from "./pages/InitializingPage";
 import SetupPage from "./pages/SetupPage";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
@@ -19,7 +18,6 @@ import RecordingReplayPage from "./pages/RecordingReplayPage";
 import QuickStartPage from "./pages/QuickStartPage";
 import RecordingAnalysisPage from "./pages/RecordingAnalysisPage";
 import GenerationPage from "./pages/GenerationPage";
-import MyWorkflowsPage from "./pages/MyWorkflowsPage";
 import WorkflowDetailPage from "./pages/WorkflowDetailPage";
 import WorkflowGenerationPage from "./pages/WorkflowGenerationPage";
 import WorkflowResultPage from "./pages/WorkflowResultPage";
