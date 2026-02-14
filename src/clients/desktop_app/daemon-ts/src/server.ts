@@ -294,6 +294,22 @@ async function start(): Promise<void> {
     }
     shutdown(1);
   });
+  process.on("unhandledRejection", (reason) => {
+    logger.error({ reason }, "Unhandled rejection");
+    // Don't crash on Playwright-related rejections (timeouts, closed pages, etc.)
+    const msg = reason instanceof Error ? reason.message : String(reason ?? "");
+    if (
+      msg.includes("Timeout") ||
+      msg.includes("Target closed") ||
+      msg.includes("Target page, context or browser has been closed") ||
+      msg.includes("Navigation failed") ||
+      msg.includes("Frame was detached")
+    ) {
+      logger.warn("Suppressed Playwright rejection — not shutting down");
+      return;
+    }
+    shutdown(1);
+  });
 }
 
 start().catch((err) => {

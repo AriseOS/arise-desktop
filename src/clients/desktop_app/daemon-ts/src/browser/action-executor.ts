@@ -228,6 +228,9 @@ export class ActionExecutor {
         const newPagePromise = context.waitForEvent("page", {
           timeout: this.shortTimeout,
         });
+        // Attach a no-op catch immediately so the timeout rejection doesn't
+        // escape as an unhandledRejection/uncaughtException before we await it.
+        newPagePromise.catch(() => {});
 
         await clickTarget.click({ modifiers: ["ControlOrMeta"] });
         logger.debug("Click executed, waiting for page event...");

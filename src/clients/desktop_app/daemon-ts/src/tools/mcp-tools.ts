@@ -72,7 +72,11 @@ export class MCPClient {
 
     this.process.stdout!.on("data", (data: Buffer) => {
       this.buffer += data.toString();
-      this.processBuffer();
+      try {
+        this.processBuffer();
+      } catch (e) {
+        logger.warn({ err: e }, "Error processing MCP buffer");
+      }
     });
 
     this.process.stderr!.on("data", (data: Buffer) => {

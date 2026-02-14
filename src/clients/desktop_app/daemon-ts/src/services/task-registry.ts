@@ -94,4 +94,6 @@ export class TaskRegistry {
 export const taskRegistry = new TaskRegistry();
 
 // Periodic cleanup every 10 minutes to prevent memory leaks from stale tasks
-setInterval(() => taskRegistry.cleanup(), 600_000).unref();
+setInterval(() => {
+  try { taskRegistry.cleanup(); } catch (e) { /* ignore cleanup errors */ }
+}, 600_000).unref();
