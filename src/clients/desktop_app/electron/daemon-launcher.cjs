@@ -1,6 +1,8 @@
 /**
- * DaemonLauncher — Python daemon lifecycle management.
- * Port of src-tauri/src/python_daemon.rs (459 lines → ~150 lines JS).
+ * DaemonLauncher — TypeScript daemon lifecycle management.
+ *
+ * Dev mode (AMI_DEV_MODE=1): runs daemon-ts via tsx or compiled dist/server.js
+ * Production: runs bundled daemon-ts/dist/server.js from app resources
  */
 
 const { spawn } = require('child_process');
@@ -19,7 +21,7 @@ class DaemonLauncher {
   }
 
   /**
-   * Start the Python daemon process and wait for it to write its port file.
+   * Start the daemon process and wait for it to write its port file.
    */
   async start() {
     const { command, args } = this._getDaemonPath();
@@ -84,46 +86,45 @@ class DaemonLauncher {
   // ---- Private helpers ----
 
   _getDaemonPath() {
-    // Dev mode: use Python script
+    // Dev mode: use source files directly
     if (process.env.AMI_DEV_MODE) {
-      console.log('[DaemonLauncher] AMI_DEV_MODE set, using Python script');
-      return this._getPythonScriptPath();
+      console.log('[DaemonLauncher] AMI_DEV_MODE set, using TypeScript daemon (tsx)');
+      return this._getTSDaemonDevPath();
     }
 
-    // Production mode: use bundled binary
+    // Production mode: bundled TS daemon
     const resourcesPath = process.resourcesPath;
-    let binaryPath;
-
-    if (process.platform === 'darwin') {
-      binaryPath = path.join(resourcesPath, 'ami-daemon.app', 'Contents', 'MacOS', 'ami-daemon');
-    } else if (process.platform === 'win32') {
-      binaryPath = path.join(resourcesPath, 'ami-daemon', 'ami-daemon.exe');
-    } else {
-      binaryPath = path.join(resourcesPath, 'ami-daemon', 'ami-daemon');
-    }
-
-    if (fs.existsSync(binaryPath)) {
-      console.log(`[DaemonLauncher] Found bundled binary: ${binaryPath}`);
-      return { command: binaryPath, args: [] };
+    const tsBundlePath = path.join(resourcesPath, 'daemon-ts', 'dist', 'server.js');
+    if (fs.existsSync(tsBundlePath)) {
+      console.log(`[DaemonLauncher] Found bundled TS daemon: ${tsBundlePath}`);
+      return { command: process.execPath, args: [tsBundlePath] };
     }
 
     // Fallback to dev mode
-    console.log('[DaemonLauncher] Bundled binary not found, falling back to Python script');
-    return this._getPythonScriptPath();
+    console.log('[DaemonLauncher] No bundled daemon found, falling back to TS dev mode');
+    return this._getTSDaemonDevPath();
   }
 
-  _getPythonScriptPath() {
+  _getTSDaemonDevPath() {
     // Walk up from electron/ to find the project root
-    // electron/daemon-launcher.js → desktop_app/electron/ → desktop_app/ → clients/ → src/ → project_root/
     const projectRoot = path.resolve(__dirname, '..', '..', '..', '..');
-    const daemonScript = path.join(projectRoot, 'src', 'clients', 'desktop_app', 'ami_daemon', 'daemon.py');
+    const desktopApp = path.join(projectRoot, 'src', 'clients', 'desktop_app');
 
-    if (!fs.existsSync(daemonScript)) {
-      throw new Error(`Daemon script not found at: ${daemonScript}`);
+    // Dev mode: prefer tsx (source) so code changes take effect without rebuild
+    const srcEntry = path.join(desktopApp, 'daemon-ts', 'src', 'server.ts');
+    if (fs.existsSync(srcEntry)) {
+      console.log(`[DaemonLauncher] Using tsx for TS daemon: ${srcEntry}`);
+      return { command: 'npx', args: ['tsx', srcEntry] };
     }
 
-    console.log(`[DaemonLauncher] Using Python script: ${daemonScript}`);
-    return { command: 'python3', args: [daemonScript] };
+    // Fall back to compiled JS
+    const distEntry = path.join(desktopApp, 'daemon-ts', 'dist', 'server.js');
+    if (fs.existsSync(distEntry)) {
+      console.log(`[DaemonLauncher] Using compiled TS daemon: ${distEntry}`);
+      return { command: 'node', args: [distEntry] };
+    }
+
+    throw new Error(`TypeScript daemon not found. Checked:\n  ${srcEntry}\n  ${distEntry}`);
   }
 
   _waitForPortFile(timeoutMs) {

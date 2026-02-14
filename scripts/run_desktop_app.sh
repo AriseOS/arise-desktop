@@ -44,7 +44,7 @@ fi
 cd src/clients/desktop_app
 
 echo "✅ Starting Electron app (Development Mode)..."
-echo "   AMI_DEV_MODE=1 → Using Python source code"
+echo "   AMI_DEV_MODE=1 → Using TypeScript daemon (tsx)"
 
 # Build environment variables
 ENV_VARS="AMI_DEV_MODE=1"

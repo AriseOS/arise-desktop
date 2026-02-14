@@ -27,7 +27,6 @@ function Invoke-Step {
 }
 
 $DesktopDir     = Join-Path $ProjectRoot 'src/clients/desktop_app'
-$ResourcesDir   = Join-Path $DesktopDir 'resources'
 $PortableOutDir = Join-Path $DesktopDir 'portable'
 $PortableBinDir = Join-Path $PortableOutDir 'AmiPortable'
 
@@ -57,62 +56,19 @@ Invoke-Step "Step 0: Preparing Git Bash bundle for Claude Code CLI..." {
     }
 }
 
-# Step 1: Build Python daemon bundle (optional)
+# Step 1: Build TypeScript daemon (optional)
 if (-not $SkipDaemon) {
-    Invoke-Step "Step 1: Building Python daemon bundle (PyInstaller)..." {
-        $backendDir = Join-Path $ProjectRoot 'src/clients/desktop_app/ami_daemon'
-        Set-Location $backendDir
+    Invoke-Step "Step 1: Building TypeScript daemon..." {
+        $daemonTsDir = Join-Path $DesktopDir 'daemon-ts'
+        Set-Location $daemonTsDir
 
-        $venvDir = 'venv-build'
-        if (-not (Test-Path $venvDir)) {
-            Write-Host "Creating build virtual environment..." -ForegroundColor Yellow
-            python -m venv $venvDir
-            Write-Host "Virtual environment created" -ForegroundColor Green
-        }
+        Write-Host "Installing daemon-ts dependencies..." -ForegroundColor Yellow
+        npm ci
 
-        $venvPython = Join-Path $venvDir 'Scripts/python.exe'
-        if (-not (Test-Path $venvPython)) {
-            throw "Virtual environment python not found at $venvPython"
-        }
+        Write-Host "Building TypeScript daemon..." -ForegroundColor Yellow
+        npm run build
 
-        Write-Host "Installing daemon build dependencies..." -ForegroundColor Yellow
-        & $venvPython -m pip install --upgrade pip | Out-Null
-        & $venvPython -m pip install pyinstaller | Out-Null
-        & $venvPython -m pip install -e "$ProjectRoot[desktop,memory]" | Out-Null
-
-        Write-Host "Cleaning previous daemon build artifacts..." -ForegroundColor Yellow
-        if (Test-Path 'build') { Remove-Item 'build' -Recurse -Force }
-        if (Test-Path 'dist')  { Remove-Item 'dist'  -Recurse -Force }
-        if (Test-Path 'ami-daemon.exe') { Remove-Item 'ami-daemon.exe' -Force }
-        if (Test-Path 'ami-daemon')     { Remove-Item 'ami-daemon'     -Force }
-
-        Write-Host "Running PyInstaller (daemon.spec)..." -ForegroundColor Yellow
-        & $venvPython -m PyInstaller 'daemon.spec' --clean --noconfirm
-
-        $distDir = Join-Path 'dist' 'ami-daemon'
-        $binary  = Join-Path $distDir 'ami-daemon.exe'
-
-        if (-not (Test-Path $distDir)) {
-            throw "Daemon bundle directory not found: $distDir"
-        }
-        if (-not (Test-Path $binary)) {
-            throw "Daemon executable not found: $binary"
-        }
-
-        Write-Host "Daemon bundle built at: $distDir" -ForegroundColor Green
-
-        # Copy to Electron resources directory
-        if (-not (Test-Path $ResourcesDir)) {
-            New-Item -ItemType Directory -Path $ResourcesDir -Force | Out-Null
-        }
-
-        $targetDir = Join-Path $ResourcesDir 'ami-daemon'
-        if (Test-Path $targetDir) {
-            Remove-Item $targetDir -Recurse -Force
-        }
-
-        Copy-Item $distDir $targetDir -Recurse
-        Write-Host "Daemon bundle copied to: $targetDir" -ForegroundColor Green
+        Write-Host "TypeScript daemon built successfully" -ForegroundColor Green
     }
 } else {
     Write-Host "Skipping daemon build (per --SkipDaemon)." -ForegroundColor Yellow

@@ -2,7 +2,7 @@
 
 # Unified Build Script for Ami
 # Builds, signs, and optionally notarizes the complete macOS application
-# Following industry best practices for PyInstaller + Electron + macOS code signing
+# TypeScript daemon + Electron + macOS code signing
 
 set -e
 
@@ -15,13 +15,9 @@ NC='\033[0m'
 # Configuration
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-DAEMON_DIR="${PROJECT_ROOT}/src/clients/desktop_app/ami_daemon"
 DESKTOP_DIR="${PROJECT_ROOT}/src/clients/desktop_app"
-ELECTRON_DIR="${DESKTOP_DIR}/electron"
+DAEMON_TS_DIR="${DESKTOP_DIR}/daemon-ts"
 DIST_DIR="${PROJECT_ROOT}/dist"
-
-# Entitlements file
-ENTITLEMENTS_FILE="${DAEMON_DIR}/entitlements.plist"
 
 # Code signing identity
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-}"
@@ -130,19 +126,13 @@ if [ "$(uname -s)" != "Darwin" ]; then
     exit 1
 fi
 
-# Check entitlements file exists
-if [ ! -f "$ENTITLEMENTS_FILE" ]; then
-    echo -e "${RED}ERROR: Entitlements file not found: ${ENTITLEMENTS_FILE}${NC}"
-    exit 1
-fi
-
 # electron-builder output directory
 ELECTRON_DIST="${DESKTOP_DIR}/release"
 
 # Clean build if requested
 if [ "$CLEAN_BUILD" = true ]; then
     echo -e "${YELLOW}Cleaning build artifacts...${NC}"
-    rm -rf "${DAEMON_DIR}/build" "${DAEMON_DIR}/dist"
+    rm -rf "${DAEMON_TS_DIR}/dist"
     rm -rf "${ELECTRON_DIST}"
     rm -rf "${DESKTOP_DIR}/dist"
     rm -rf "${DIST_DIR}"
@@ -164,84 +154,23 @@ else
     echo ""
 fi
 
-# Step 1: Build Python daemon with PyInstaller
+# Step 1: Build TypeScript daemon
 if [ "$SKIP_DAEMON" = false ]; then
-    echo -e "${YELLOW}Step 1: Building Python daemon...${NC}"
+    echo -e "${YELLOW}Step 1: Building TypeScript daemon...${NC}"
 
-    cd "${DAEMON_DIR}"
+    cd "${DAEMON_TS_DIR}"
 
-    # Create isolated build environment
-    BUILD_VENV="venv-build"
-
-    # Find Python 3.12
-    if command -v python3.12 &> /dev/null; then
-        PYTHON_FOR_BUILD="python3.12"
-    elif [ -f "/opt/homebrew/bin/python3.12" ]; then
-        PYTHON_FOR_BUILD="/opt/homebrew/bin/python3.12"
-    elif [ -f "/opt/homebrew/opt/python@3.12/bin/python3.12" ]; then
-        PYTHON_FOR_BUILD="/opt/homebrew/opt/python@3.12/bin/python3.12"
-    else
-        PYTHON_FOR_BUILD="python3"
-        echo -e "${YELLOW}Warning: Python 3.12 not found, using default python3${NC}"
-    fi
-
-    if [ ! -d "${BUILD_VENV}" ]; then
-        echo -e "${YELLOW}Creating isolated build environment with ${PYTHON_FOR_BUILD}...${NC}"
-        ${PYTHON_FOR_BUILD} -m venv "${BUILD_VENV}"
-
-        # Activate and install dependencies
-        source "${BUILD_VENV}/bin/activate"
-        pip install --upgrade pip > /dev/null 2>&1
-        pip install pyinstaller > /dev/null 2>&1
-        pip install -e "${PROJECT_ROOT}[desktop,memory]" > /dev/null 2>&1
-        deactivate
-
-        echo -e "${GREEN}✓ Build environment created${NC}"
-    fi
-
-    # Activate build environment
-    echo -e "${YELLOW}Activating build environment...${NC}"
-    source "${BUILD_VENV}/bin/activate"
-
-    echo "Using Python: $(which python)"
-    python --version
-
-    # Export variables for PyInstaller
-    if [ "$SHOULD_SIGN" = true ]; then
-        export CODESIGN_IDENTITY
-        export ENTITLEMENTS_FILE
-    fi
-
-    # Run PyInstaller
-    pyinstaller daemon.spec --clean --noconfirm
+    npm ci
+    npm run build
 
     BUILD_RESULT=$?
 
-    # Deactivate build environment
-    deactivate
-
     if [ $BUILD_RESULT -ne 0 ]; then
-        echo -e "${RED}ERROR: PyInstaller build failed${NC}"
+        echo -e "${RED}ERROR: TypeScript daemon build failed${NC}"
         exit 1
     fi
 
-    # Copy daemon to Electron resources (electron-builder extraFiles)
-    ELECTRON_RESOURCES="${DESKTOP_DIR}/resources"
-    mkdir -p "${ELECTRON_RESOURCES}"
-    rm -rf "${ELECTRON_RESOURCES}/ami-daemon.app"
-    cp -R dist/ami-daemon.app "${ELECTRON_RESOURCES}/"
-
-    echo -e "${GREEN}✓ Daemon built and copied to Electron resources${NC}"
-
-    # Verify signing if enabled
-    if [ "$SHOULD_SIGN" = true ]; then
-        SIGNATURE=$(codesign -dv "${ELECTRON_RESOURCES}/ami-daemon.app" 2>&1 | grep "Signature=" | cut -d'=' -f2)
-        if [ "$SIGNATURE" = "adhoc" ]; then
-            echo -e "${YELLOW}⚠️  Daemon has ad-hoc signature (PyInstaller signing may have failed)${NC}"
-        else
-            echo -e "${GREEN}✓ Daemon signed with: ${SIGNATURE}${NC}"
-        fi
-    fi
+    echo -e "${GREEN}✓ TypeScript daemon built${NC}"
     echo ""
 else
     echo -e "${YELLOW}Step 1: Skipping daemon build${NC}"
@@ -254,8 +183,10 @@ if [ "$SKIP_ELECTRON" = false ]; then
 
     cd "${DESKTOP_DIR}"
 
-    # electron:build runs "vite build && electron-builder"
-    # electron-builder produces .dmg and .app in release/ directory
+    # Build frontend (Vite)
+    npm run build
+
+    # Build Electron app (electron-builder produces .app in release/)
     npx electron-builder --mac
 
     BUILD_RESULT=$?
@@ -282,27 +213,10 @@ fi
 
 echo -e "${BLUE}App bundle: ${APP_PATH}${NC}"
 
-# Step 3: Re-sign Ami.app (ensure daemon inside is properly signed)
+# Step 3: Sign Ami.app
 if [ "$SHOULD_SIGN" = true ]; then
-    echo -e "${YELLOW}Step 3: Re-signing Ami.app...${NC}"
+    echo -e "${YELLOW}Step 3: Signing Ami.app...${NC}"
 
-    # Sign ami-daemon.app embedded in Ami.app
-    EMBEDDED_DAEMON="${APP_PATH}/Contents/Resources/ami-daemon.app"
-    if [ -d "${EMBEDDED_DAEMON}" ]; then
-        echo "  Signing embedded ami-daemon.app (with --deep for PyInstaller)..."
-        codesign --deep --force --options runtime --timestamp \
-            --entitlements "${ENTITLEMENTS_FILE}" \
-            --sign "${CODESIGN_IDENTITY}" \
-            "${EMBEDDED_DAEMON}"
-
-        if [ $? -eq 0 ]; then
-            echo -e "${GREEN}    ✓ ami-daemon.app signed${NC}"
-        else
-            echo -e "${YELLOW}    ⚠️  ami-daemon.app signing had warnings (may be OK)${NC}"
-        fi
-    fi
-
-    # Sign main Ami.app
     echo "  Signing Ami.app..."
     codesign --deep --force --options runtime --timestamp \
         --sign "${CODESIGN_IDENTITY}" \
@@ -319,7 +233,7 @@ if [ "$SHOULD_SIGN" = true ]; then
     echo "  Verifying signatures..."
     codesign --verify --verbose=2 "${APP_PATH}" 2>&1
 
-    echo -e "${GREEN}✓ Re-signing complete${NC}"
+    echo -e "${GREEN}✓ Signing complete${NC}"
     echo ""
 else
     echo -e "${YELLOW}Step 3: Skipping signing (no CODESIGN_IDENTITY)${NC}"

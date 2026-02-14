@@ -9,7 +9,7 @@
  *    b. Create BrowserWindow (React UI)
  *    c. Create WebViewManager → 8 WebContentsView pool
  *    d. Register IPC handlers
- *    e. Start DaemonLauncher → spawn Python daemon
+ *    e. Start DaemonLauncher → spawn TypeScript daemon
  *    f. Load frontend content
  * 4. Lifecycle: window-all-closed → stop daemon → quit
  */
@@ -58,6 +58,7 @@ console.log(`[Main] CDP port: ${cdpPort}`);
 // ==================== Anti-fingerprint (before app.ready) ====================
 
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled,Accelerated2dCanvas');
+app.commandLine.appendSwitch('log-level', '3');  // Suppress Chromium INFO/WARNING/ERROR noise
 
 const chromeVersion = process.versions.chrome || '131.0.0.0';
 const platformUA = (() => {

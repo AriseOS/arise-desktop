@@ -499,6 +499,31 @@ export const api = {
   },
 
   // ============================================================================
+  // Credentials APIs
+  // ============================================================================
+
+  /**
+   * Get stored credentials (API keys are masked).
+   * @returns {Promise<object>} Credentials by provider, e.g. { anthropic: { api_key: "sk-***1234" } }
+   */
+  async getCredentials() {
+    return await this.callAppBackend('/api/v1/settings/credentials');
+  },
+
+  /**
+   * Save credentials for a provider.
+   * @param {string} provider - Provider name, e.g. "anthropic"
+   * @param {object} config - Credential config, e.g. { api_key: "sk-ant-...", base_url: "..." }
+   * @returns {Promise<object>} Result with success status
+   */
+  async setCredentials(provider, config) {
+    return await this.callAppBackend('/api/v1/settings/credentials', {
+      method: 'POST',
+      body: JSON.stringify({ [provider]: config }),
+    });
+  },
+
+  // ============================================================================
   // Convenience Methods for App Backend
   // ============================================================================
 

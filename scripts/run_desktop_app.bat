@@ -51,7 +51,7 @@ IF NOT EXIST "src\clients\desktop_app\node_modules" (
 
 REM Start the app in development mode
 echo Starting Electron app (Development Mode)...
-echo    AMI_DEV_MODE=1 -^> Using Python source code
+echo    AMI_DEV_MODE=1 -^> Using TypeScript daemon (tsx)
 
 echo.
 

@@ -175,26 +175,14 @@ function App() {
     i18n.changeLanguage(language);
   }, [language, i18n]);
 
-  // Auto-navigate to browser page when agent starts browsing
+  // Track agent browser state in store (no auto-navigation)
   const prevBrowserViewIdRef = useRef(null);
   useEffect(() => {
-    const isAlreadyOnBrowserPage = currentPage === "browser";
-
     if (browserViewId && !prevBrowserViewIdRef.current) {
-      if (isAlreadyOnBrowserPage) {
-        // Already on browser page — just switch tab + set mode in store
-        useBrowserTabStore.getState().setViewMode(browserViewId, "live");
-        useBrowserTabStore.getState().switchTab(browserViewId);
-      } else {
-        // Navigate to browser page with live mode
-        navigate("browser", {
-          mode: "live",
-          viewId: browserViewId,
-          taskId: activeTaskId,
-        });
-      }
+      // Agent started browsing — update store so BrowserPage shows live mode if user navigates there
+      useBrowserTabStore.getState().setViewMode(browserViewId, "live");
     } else if (!browserViewId && prevBrowserViewIdRef.current) {
-      // Agent stopped browsing — reset mode to idle, do NOT navigate away
+      // Agent stopped browsing — reset mode to idle
       useBrowserTabStore.getState().setViewMode(prevBrowserViewIdRef.current, "idle");
     }
     prevBrowserViewIdRef.current = browserViewId;
@@ -332,9 +320,9 @@ function App() {
   // Browser state
   const [browserOpening, setBrowserOpening] = useState(false);
 
-  // Open browser handler — navigate to browser page in login mode (viewId "7")
+  // Open browser handler — navigate to browser page, restoring last active tab
   const handleOpenBrowser = async () => {
-    navigate("browser", { mode: "login", viewId: "7" });
+    navigate("browser");
   };
 
 
@@ -928,13 +916,10 @@ function App() {
 
     const handleNavClick = (id) => {
       if (id === "browser") {
-        if (currentPage === "browser") {
-          // Already on browser page — switch to login tab via store
-          useBrowserTabStore.getState().setViewMode("7", "login");
-          useBrowserTabStore.getState().switchTab("7");
-        } else {
-          navigate("browser", { mode: "login", viewId: "7" });
+        if (currentPage !== "browser") {
+          navigate("browser");
         }
+        // If already on browser page, do nothing — keep current tab
       } else {
         navigate(id);
       }

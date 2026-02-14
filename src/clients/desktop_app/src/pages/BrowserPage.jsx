@@ -136,9 +136,13 @@ export default function BrowserPage({
         });
         startTimeRef.current = Date.now();
       }
-    } else if (initialMode === 'login') {
-      setViewMode('7', 'login');
-      switchTab('7');
+    } else {
+      // No explicit params — ensure view "7" has login mode for tab bar display,
+      // but keep whatever activeTabId the store already has (last selected tab).
+      const currentViews = useBrowserTabStore.getState().views;
+      if (!currentViews['7']?.mode || currentViews['7'].mode === 'idle') {
+        setViewMode('7', 'login');
+      }
     }
   }, []);
 

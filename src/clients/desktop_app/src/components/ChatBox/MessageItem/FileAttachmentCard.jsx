@@ -79,11 +79,14 @@ function FileAttachmentCard({ file }) {
   const {
     file_name,
     file_path,
-    file_type,
+    file_type: rawFileType,
     file_size,
     mime_type,
     preview,
   } = file;
+
+  // Normalize: old format used "type" key, new format uses "file_type"
+  const file_type = rawFileType || file.type || 'other';
 
   // Determine if this file type has a preview
   const hasPreview = ['image', 'html', 'csv', 'excel', 'code'].includes(file_type);
