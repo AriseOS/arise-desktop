@@ -285,6 +285,13 @@ async function start(): Promise<void> {
   process.on("SIGINT", () => shutdown(0));
   process.on("uncaughtException", (err) => {
     logger.error({ err }, "Uncaught exception");
+    // Playwright TimeoutErrors can leak as uncaught exceptions from waitForEvent
+    // timers. These are non-fatal — the tool call already handles the error.
+    const msg = err?.message ?? "";
+    if (msg.includes("Timeout") && msg.includes("waitForEvent")) {
+      logger.warn("Suppressed Playwright timeout — not shutting down");
+      return;
+    }
     shutdown(1);
   });
 }
