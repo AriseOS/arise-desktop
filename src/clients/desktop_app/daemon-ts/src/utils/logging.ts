@@ -12,14 +12,17 @@ mkdirSync(logDir, { recursive: true });
 
 const logFile = join(logDir, "app.log");
 
+const isDebug = !!(process.env.AMI_DEBUG || process.env.LOG_LEVEL === "debug");
+const consoleLevel = isDebug ? "debug" : "info";
+
 export const logger = pino({
-  level: process.env.LOG_LEVEL ?? "info",
+  level: isDebug ? "debug" : (process.env.LOG_LEVEL ?? "info"),
   transport: {
     targets: [
       {
         target: "pino-pretty",
         options: { colorize: true },
-        level: "info",
+        level: consoleLevel,
       },
       {
         target: "pino/file",
