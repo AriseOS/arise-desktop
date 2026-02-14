@@ -123,7 +123,7 @@ async function memoryPost(
     method: "POST",
     headers,
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(120_000),
   });
 
   if (!resp.ok) {
@@ -340,6 +340,12 @@ export class MemoryToolkit {
       )) as MemoryPlanResult;
     } catch (err) {
       logger.error({ err }, "Memory plan request failed");
+      const isTimeout =
+        (err instanceof DOMException && err.name === "TimeoutError") ||
+        (err instanceof Error && err.message.includes("timeout"));
+      if (isTimeout) {
+        throw new Error("Memory plan query timed out");
+      }
       return {
         memory_plan: {
           task,

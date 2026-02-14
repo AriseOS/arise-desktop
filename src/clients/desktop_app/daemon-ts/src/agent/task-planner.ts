@@ -126,7 +126,13 @@ export class AMITaskPlanner {
       const memoryReport = AMITaskPlanner.buildMemoryReport(memoryPlan, level);
       this.emitter?.emitAgentReport(memoryReport, "info");
     } catch (err) {
-      logger.warn({ err }, "L1 Planner memory query failed, proceeding without memory context");
+      const isTimeout = err instanceof Error && err.message.includes("timed out");
+      if (isTimeout) {
+        logger.warn({ err }, "L1 Planner memory query timed out, proceeding without memory context");
+        this.emitter?.emitAgentReport("Memory query timed out, proceeding without memory context", "warning");
+      } else {
+        logger.warn({ err }, "L1 Planner memory query failed, proceeding without memory context");
+      }
     }
 
     // Decompose with memory context injected into prompt
