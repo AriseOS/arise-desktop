@@ -1,33 +1,28 @@
 #!/usr/bin/env python3
 """
-Interactive Browser Test Script (V3)
+Interactive Browser Test Script (V4 - Electron CDP)
 
-This script allows you to test browser tools interactively,
-simulating what the LLM can see and do.
+This script connects to the running Electron app's built-in Chromium via CDP,
+then lets you interactively test browser tools (what the LLM can see and do).
 
-V3 Features:
-- Daemon session with browser reuse
-- Internal tab group management
+Prerequisites:
+    - The Electron desktop app must be running (it provides the browser via CDP)
 
 Usage:
     cd /path/to/2ami
     source .venv/bin/activate
-    python scripts/browser_interactive_test.py [--headless] [--session-id <id>]
+    python scripts/browser_interactive_test.py [--cdp-port <port>] [--session-id <id>]
 
 Options:
-    --headless              Run browser in headless mode
-    --session-id <id>       Session ID for the toolkit (default: "daemon")
-                            Use "daemon" to see all tabs including user-opened ones
-                            Use any other ID (e.g., "task-001") to simulate a task session
-                            which only sees its own tabs
+    --cdp-port <port>       CDP port to connect to (default: auto-detect from 9222+)
+    --session-id <id>       Session ID for the toolkit (default: "test-interactive")
 
 Commands:
     visit <url>           - Navigate to URL
     click <ref>           - Click element by ref (e.g., click e1)
-    click_text <text>     - Click element by text
     select <ref> <value>  - Select option from dropdown (e.g., select e1 Best Sellers)
     type <ref> <text>     - Type text into element
-    enter [ref]           - Press enter (optionally on element)
+    enter                 - Press enter
     scroll <up|down> [amount] - Scroll page
     snapshot              - Get page snapshot (what LLM sees)
     tabs                  - Show all tabs info
@@ -35,7 +30,6 @@ Commands:
     new_tab [url]         - Open new tab
     close_tab <tab_id>    - Close tab
     links                 - Get page snapshot with all links
-    console               - View recent console logs
     exec <js_code>        - Execute JavaScript
     back                  - Go back
     forward               - Go forward
@@ -43,17 +37,6 @@ Commands:
     status                - Show browser session status
     help                  - Show this help
     quit/exit             - Exit
-
-Tab Group commands (internal tracking):
-    group_create <task_id> [title] - Create a Tab Group
-    group_list                     - List all Tab Groups
-    group_tab <task_id> [url]      - Create tab in a group
-    group_close <task_id>          - Close a Tab Group
-
-Debug commands:
-    debug_session         - Show raw session info
-    debug_click <ref>     - Show raw click result (bypassing toolkit)
-    debug_groups          - Show Tab Groups internal state
 
 The script shows exactly what the LLM receives after each action.
 """
@@ -63,6 +46,7 @@ import sys
 import os
 import argparse
 import logging
+import subprocess
 from pathlib import Path
 
 from prompt_toolkit import PromptSession
@@ -88,29 +72,49 @@ from src.clients.desktop_app.ami_daemon.base_agent.tools.eigent_browser.browser_
 from src.clients.desktop_app.ami_daemon.base_agent.tools.toolkits.browser_toolkit import BrowserToolkit
 
 
+def detect_cdp_port(start_port: int = 9222, max_scan: int = 20) -> int | None:
+    """Auto-detect CDP port by scanning for a listening Electron process.
+
+    Electron is started with --remote-debugging-port=<port>.
+    We scan ports 9222..9242 and check if there's a CDP endpoint.
+    """
+    import urllib.request
+    import json
+
+    for port in range(start_port, start_port + max_scan):
+        try:
+            # CDP exposes /json/version on the debug port
+            url = f"http://127.0.0.1:{port}/json/version"
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=0.5) as resp:
+                data = json.loads(resp.read())
+                browser = data.get("Browser", "")
+                # Electron's Chromium will show something like "Chrome/xxx"
+                if browser:
+                    print(f"  Found CDP endpoint at port {port}: {browser}")
+                    return port
+        except Exception:
+            continue
+    return None
+
+
 class InteractiveBrowserTester:
     """Interactive browser testing interface."""
 
-    # Available commands for auto-completion
     COMMANDS = [
-        "visit", "click", "click_text", "select", "type", "enter", "scroll",
+        "visit", "click", "select", "type", "enter", "scroll",
         "snapshot", "tabs", "switch", "new_tab", "close_tab", "links",
-        "console", "exec", "back", "forward", "info", "status", "help",
-        # Tab Group commands (internal tracking)
-        "group_create", "group_list", "group_tab", "group_close",
-        # Debug commands
-        "debug_session", "debug_click", "debug_snapshot", "debug_groups",
-        "raw_click", "raw_ctrl_click",
+        "exec", "back", "forward", "info", "status", "help",
+        "debug_session", "debug_click", "debug_snapshot",
         "quit", "exit", "q"
     ]
 
-    def __init__(self, headless: bool = False, session_id: str = "daemon"):
-        self.headless = headless
+    def __init__(self, cdp_port: int, session_id: str = "test-interactive"):
+        self.cdp_port = cdp_port
         self.session_id = session_id
         self.session: HybridBrowserSession = None
         self.toolkit: BrowserToolkit = None
 
-        # Setup prompt_toolkit with history and auto-completion
         history_file = Path.home() / ".browser_interactive_history"
         self.prompt_session = PromptSession(
             history=FileHistory(str(history_file)),
@@ -119,54 +123,32 @@ class InteractiveBrowserTester:
         )
 
     async def setup(self):
-        """Initialize browser session and toolkit.
-
-        Always uses daemon session mode to ensure browser reuse,
-        matching production behavior.
-        """
+        """Connect to Electron's browser via CDP and initialize toolkit."""
         print("\n" + "="*60)
-        print("Starting browser session (daemon mode)...")
-        print(f"  Headless: {self.headless}")
+        print("Connecting to Electron browser via CDP...")
+        print(f"  CDP port: {self.cdp_port}")
         print(f"  Session ID: {self.session_id}")
         print("="*60 + "\n")
 
-        # Use a persistent user_data_dir for browser reuse
-        user_data_dir = str(Path.home() / ".ami" / "browser-profile")
-        print(f"  Using browser profile: {user_data_dir}")
+        # Set the env var that HybridBrowserSession expects
+        os.environ["BROWSER_CDP_PORT"] = str(self.cdp_port)
 
-        print("Starting daemon session...")
-        self.session = await HybridBrowserSession.start_daemon_session(
-            config={
-                "browser": {
-                    "headless": self.headless,
-                    "auto_restart": True,
-                    "user_data_dir": user_data_dir,
-                }
-            },
-        )
-        print("  Daemon session started")
+        print("Starting daemon session (connecting to Electron CDP)...")
+        self.session = await HybridBrowserSession.start_daemon_session()
+        print("  Connected to Electron browser")
 
         # Create toolkit with specified session_id
-        # If session_id is "daemon", toolkit uses daemon session directly
-        # Otherwise, toolkit creates a task session that only sees its own tabs
-        self.toolkit = BrowserToolkit(
-            session_id=self.session_id,
-            headless=self.headless,
-        )
+        self.toolkit = BrowserToolkit(session_id=self.session_id)
 
-        if self.session_id == "daemon":
-            print("  Using daemon session (sees all tabs including user-opened)")
-        else:
-            print(f"  Using task session '{self.session_id}' (only sees own tabs)")
-
+        print(f"  Toolkit session: '{self.session_id}'")
         print("Browser ready!")
         print("\nType 'help' for available commands.\n")
 
     async def cleanup(self):
-        """Close browser session."""
-        print("\nStopping daemon session...")
+        """Disconnect from browser (does NOT close Electron)."""
+        print("\nDisconnecting from Electron browser...")
         await HybridBrowserSession.stop_daemon_session()
-        print("Daemon session stopped.")
+        print("Disconnected.")
 
     def print_result(self, title: str, result: str):
         """Print result in a formatted box."""
@@ -280,20 +262,6 @@ class InteractiveBrowserTester:
                 result = await self.toolkit.browser_get_page_snapshot(include_links=True)
                 self.print_result("LLM sees (links)", result)
 
-            elif command == "console":
-                print("\n>>> Getting console logs")
-                try:
-                    session = await self.toolkit._get_session()
-                    logs = await session.get_console_logs()
-                    recent_logs = list(logs)[-20:]  # Last 20 entries
-                    if recent_logs:
-                        result = "\n".join([f"[{log['type']}] {log['text']}" for log in recent_logs])
-                    else:
-                        result = "(No console logs)"
-                    self.print_result("Console logs", result)
-                except Exception as e:
-                    print(f"  Error: {e}")
-
             elif command == "exec":
                 if not args:
                     print("Usage: exec <javascript_code>")
@@ -330,66 +298,14 @@ class InteractiveBrowserTester:
                 except Exception as e:
                     print(f"  Error: {e}")
 
-            # =========================================================
-            # V3 Tab Group commands
-            # =========================================================
-            elif command == "group_create":
-                group_parts = args.split(maxsplit=1)
-                if not group_parts:
-                    print("Usage: group_create <task_id> [title]")
-                else:
-                    task_id = group_parts[0]
-                    title = group_parts[1] if len(group_parts) > 1 else None
-                    print(f"\n>>> Creating Tab Group for task {task_id}" + (f" with title '{title}'" if title else ""))
-                    group = await self.session.create_tab_group(task_id, title)
-                    print(f"  Created: {group.title} (color={group.color})")
-
-            elif command == "group_list":
-                print("\n>>> Listing Tab Groups")
-                groups_info = self.session.get_tab_groups_info()
-                if not groups_info:
-                    print("  No Tab Groups")
-                else:
-                    for g in groups_info:
-                        print(f"  [{g['color']}] {g['title']} ({g['tab_count']} tabs)")
-                        print(f"       task_id: {g['task_id']}")
-                        print(f"       chrome_group_id: {g['chrome_group_id']}")
-                        for t in g['tabs']:
-                            marker = "*" if t['is_current'] else " "
-                            print(f"       {marker} {t['tab_id']}: {t['url']}")
-
-            elif command == "group_tab":
-                group_parts = args.split(maxsplit=1)
-                if not group_parts:
-                    print("Usage: group_tab <task_id> [url]")
-                else:
-                    task_id = group_parts[0]
-                    url = group_parts[1] if len(group_parts) > 1 else None
-                    print(f"\n>>> Creating tab in group {task_id}" + (f" with URL: {url}" if url else ""))
-                    tab_id, page = await self.session.create_tab_in_group(task_id, url)
-                    print(f"  Created tab: {tab_id}")
-                    print(f"  URL: {page.url}")
-
-            elif command == "group_close":
-                if not args:
-                    print("Usage: group_close <task_id>")
-                else:
-                    print(f"\n>>> Closing Tab Group for task {args}")
-                    closed = await self.session.close_tab_group(args)
-                    print(f"  Closed: {closed}")
-
-            # =========================================================
-            # Daemon status command
-            # =========================================================
             elif command == "status":
                 print("\n>>> Browser session status")
                 daemon = HybridBrowserSession.get_daemon_session()
-                ext_bridge = HybridBrowserSession.get_extension_bridge()
                 print(f"  Daemon session: {'Active' if daemon else 'Not running'}")
-                print(f"  Extension bridge: {'Connected' if (ext_bridge and ext_bridge.is_connected) else 'Not connected'}")
+                print(f"  CDP port: {self.cdp_port}")
                 if daemon:
-                    print(f"  Browser PID: {HybridBrowserSession._browser_pid}")
-                    print(f"  CDP URL: {HybridBrowserSession._cdp_url}")
+                    browser_connected = daemon._browser and daemon._browser.is_connected()
+                    print(f"  Browser connected: {browser_connected}")
                     print(f"  Tab Groups: {len(daemon._tab_groups)}")
                     print(f"  Pages: {len(daemon._pages)}")
 
@@ -398,116 +314,50 @@ class InteractiveBrowserTester:
             # =========================================================
             elif command == "debug_session":
                 print("\n>>> Debug: Session internal state")
-                print(f"  Session object: {self.session}")
-                print(f"  _pages dict: {list(self.session._pages.keys())}")
-                print(f"  _current_tab_id: {self.session._current_tab_id}")
-                print(f"  _page object: {self.session._page}")
-                if self.session._page:
-                    print(f"  _page.url: {self.session._page.url}")
-                    print(f"  _page.is_closed(): {self.session._page.is_closed()}")
-                tab_info = await self.session.get_tab_info()
+                session = await self.toolkit._get_session()
+                print(f"  Session object: {session}")
+                print(f"  Session ID: {session._session_id}")
+                print(f"  _pages dict: {list(session._pages.keys())}")
+                print(f"  _current_tab_id: {session._current_tab_id}")
+                print(f"  _page object: {session._page}")
+                if session._page:
+                    print(f"  _page.url: {session._page.url}")
+                    print(f"  _page.is_closed(): {session._page.is_closed()}")
+                tab_info = await session.get_tab_info()
                 print(f"  get_tab_info(): {tab_info}")
-                current = await self.session.get_current_tab_id()
-                print(f"  get_current_tab_id(): {current}")
-
-            elif command == "debug_groups":
-                print("\n>>> Debug: Tab Groups internal state")
-                print(f"  _tab_groups: {list(self.session._tab_groups.keys())}")
-                print(f"  _color_index: {self.session._color_index}")
-                for task_id, group in self.session._tab_groups.items():
-                    print(f"  [{task_id}]:")
-                    print(f"    title: {group.title}")
-                    print(f"    color: {group.color}")
-                    print(f"    chrome_group_id: {group.chrome_group_id}")
-                    print(f"    tabs: {list(group.tabs.keys())}")
-                    print(f"    current_tab_id: {group.current_tab_id}")
 
             elif command == "debug_click":
                 if not args:
                     print("Usage: debug_click <ref>")
                 else:
                     print(f"\n>>> Debug: Raw click on ref={args}")
-                    print("  (This bypasses BrowserToolkit and calls session.exec_action directly)")
-
-                    # Show state before click
+                    session = await self.toolkit._get_session()
                     print(f"\n  BEFORE click:")
-                    print(f"    _current_tab_id: {self.session._current_tab_id}")
-                    print(f"    _pages: {list(self.session._pages.keys())}")
-                    print(f"    _page.url: {self.session._page.url if self.session._page else 'None'}")
+                    print(f"    _current_tab_id: {session._current_tab_id}")
+                    print(f"    _pages: {list(session._pages.keys())}")
+                    print(f"    _page.url: {session._page.url if session._page else 'None'}")
 
-                    # Execute click
                     action = {"type": "click", "ref": args}
-                    result = await self.session.exec_action(action)
+                    result = await session.exec_action(action)
 
-                    # Show raw result
                     print(f"\n  Raw exec_action result:")
                     print(f"    success: {result.get('success')}")
                     print(f"    message: {result.get('message')}")
                     details = result.get('details', {})
                     print(f"    details.click_method: {details.get('click_method')}")
                     print(f"    details.new_tab_created: {details.get('new_tab_created')}")
-                    print(f"    details.new_tab_index: {details.get('new_tab_index')}")
-                    print(f"    details.strategies_tried: {details.get('strategies_tried')}")
 
-                    # Show state after click
                     print(f"\n  AFTER click:")
-                    print(f"    _current_tab_id: {self.session._current_tab_id}")
-                    print(f"    _pages: {list(self.session._pages.keys())}")
-                    print(f"    _page.url: {self.session._page.url if self.session._page else 'None'}")
+                    print(f"    _current_tab_id: {session._current_tab_id}")
+                    print(f"    _pages: {list(session._pages.keys())}")
+                    print(f"    _page.url: {session._page.url if session._page else 'None'}")
 
             elif command == "debug_snapshot":
                 print("\n>>> Debug: Raw snapshot")
-                snapshot = await self.session.get_snapshot(force_refresh=True)
+                session = await self.toolkit._get_session()
+                snapshot = await session.get_snapshot(force_refresh=True)
                 print(f"  Length: {len(snapshot)} chars")
                 print(f"  First 500 chars:\n{snapshot[:500]}")
-
-            elif command == "raw_click":
-                # Direct Playwright click without Ctrl modifier
-                if not args:
-                    print("Usage: raw_click <ref>")
-                else:
-                    print(f"\n>>> Raw Playwright click on ref={args} (NO Ctrl modifier)")
-                    page = self.session._page
-                    selector = f"[aria-ref='{args}']"
-
-                    # Get URL before
-                    url_before = page.url
-                    print(f"  URL before: {url_before}")
-
-                    # Direct click without any modifiers
-                    element = page.locator(selector).first
-                    count = await element.count()
-                    print(f"  Element found: {count > 0}")
-
-                    if count > 0:
-                        await element.click()  # Normal click, no modifiers, no force
-                        url_after = page.url
-                        print(f"  URL after: {url_after}")
-                        print(f"  URL changed: {url_before != url_after}")
-
-            elif command == "raw_ctrl_click":
-                # Direct Playwright click WITH Ctrl modifier
-                if not args:
-                    print("Usage: raw_ctrl_click <ref>")
-                else:
-                    print(f"\n>>> Raw Playwright click on ref={args} (WITH Ctrl modifier)")
-                    page = self.session._page
-                    selector = f"[aria-ref='{args}']"
-
-                    # Get URL before
-                    url_before = page.url
-                    print(f"  URL before: {url_before}")
-
-                    # Direct click WITH Ctrl modifier
-                    element = page.locator(selector).first
-                    count = await element.count()
-                    print(f"  Element found: {count > 0}")
-
-                    if count > 0:
-                        await element.click(modifiers=["ControlOrMeta"])
-                        url_after = page.url
-                        print(f"  URL after: {url_after}")
-                        print(f"  URL changed: {url_before != url_after}")
 
             else:
                 print(f"Unknown command: {command}")
@@ -525,22 +375,18 @@ class InteractiveBrowserTester:
         await self.setup()
 
         print("="*60)
-        print("Interactive Browser Test (V3)")
+        print("Interactive Browser Test (V4 - Electron CDP)")
         print("="*60)
         print("\nThis simulates what the LLM can see and do with the browser.")
         print("Every result shows exactly what would be returned to the LLM.\n")
         print("Features:")
-        print("  - Arrow keys: navigate command history (up/down) and edit (left/right)")
+        print("  - Arrow keys: navigate command history (up/down)")
         print("  - Tab: auto-complete commands")
         print("  - History is saved across sessions\n")
-        print("V3 Features:")
-        print("  - Browser reuse via daemon session (single browser instance)")
-        print("  - Internal Tab Groups: group_create, group_tab, group_list, group_close\n")
         print("Tips:")
         print("  - Use 'status' to see browser session status")
         print("  - Use 'debug_click <ref>' to see raw click results")
         print("  - Use 'debug_session' to see internal tab state")
-        print("  - Use 'debug_groups' to see Tab Groups state")
         print("  - Use 'tabs' to see what LLM knows about tabs\n")
 
         try:
@@ -559,19 +405,34 @@ class InteractiveBrowserTester:
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Interactive Browser Test (V3)")
-    parser.add_argument("--headless", action="store_true", help="Run browser in headless mode")
+    parser = argparse.ArgumentParser(description="Interactive Browser Test (V4 - Electron CDP)")
+    parser.add_argument("--cdp-port", "-p", type=int, default=None,
+                        help="CDP port to connect to (default: auto-detect)")
     parser.add_argument("--no-debug", action="store_true", help="Disable debug logging")
-    parser.add_argument("--session-id", "-s", default="daemon",
-                        help="Session ID for the toolkit (default: daemon). "
-                             "Use 'daemon' to see all tabs, or any other ID to simulate a task session.")
+    parser.add_argument("--session-id", "-s", default="test-interactive",
+                        help="Session ID for the toolkit (default: test-interactive)")
     args = parser.parse_args()
 
     if args.no_debug:
         os.environ["AMI_DEBUG"] = ""
         logging.getLogger().setLevel(logging.INFO)
 
-    tester = InteractiveBrowserTester(headless=args.headless, session_id=args.session_id)
+    # Determine CDP port
+    cdp_port = args.cdp_port
+    if cdp_port is None:
+        print("Auto-detecting CDP port...")
+        cdp_port = detect_cdp_port()
+        if cdp_port is None:
+            print("\nERROR: Could not find a running Electron app with CDP enabled.")
+            print("Make sure the desktop app is running first:")
+            print("  cd src/clients/desktop_app && npm start")
+            print("\nOr specify the port manually:")
+            print("  python scripts/browser_interactive_test.py --cdp-port 9222")
+            sys.exit(1)
+    else:
+        print(f"Using specified CDP port: {cdp_port}")
+
+    tester = InteractiveBrowserTester(cdp_port=cdp_port, session_id=args.session_id)
     await tester.run()
 
 
