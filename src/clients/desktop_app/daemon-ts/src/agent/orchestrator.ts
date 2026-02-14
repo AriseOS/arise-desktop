@@ -841,15 +841,21 @@ export class OrchestratorSession {
     const executorId = `exec_${this.executorCounter}`;
     const taskLabel = taskDescription.slice(0, 20).trim();
 
-    // Resolve workspace path: workspaceFolder is a relative subdirectory name
-    // (e.g. "product-hunt-weekly-top10") from decompose_task. Join with the
-    // task's base workspace (this.workspaceDir) to get an absolute path.
-    // If empty, use the base workspace directly.
+    // Resolve workspace path:
+    // - Resume: use the original task's workspace (files live there)
+    // - Normal: workspaceFolder is a relative subdirectory name, join with base
     const { join: pathJoin } = await import("node:path");
     const { mkdirSync } = await import("node:fs");
-    const resolvedWorkspace = workspaceFolder
-      ? pathJoin(this.workspaceDir, workspaceFolder)
-      : this.workspaceDir;
+    let resolvedWorkspace: string;
+    if (resumeTaskId) {
+      // Use the original task's workspace where previous subtasks saved files
+      const { getTaskWorkspacePath } = await import("../utils/workspace-manager.js");
+      resolvedWorkspace = getTaskWorkspacePath(resumeTaskId);
+    } else {
+      resolvedWorkspace = workspaceFolder
+        ? pathJoin(this.workspaceDir, workspaceFolder)
+        : this.workspaceDir;
+    }
     mkdirSync(resolvedWorkspace, { recursive: true });
 
     const abortController = new AbortController();

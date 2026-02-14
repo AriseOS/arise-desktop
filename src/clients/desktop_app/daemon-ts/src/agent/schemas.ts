@@ -93,6 +93,7 @@ export interface TaskExecutorLike {
   resume(): void;
   readonly isPaused: boolean;
   getCurrentAgent(): AgentLike | null;
+  getRunningAgents(): Map<string, AgentLike>;
   replanSubtasks(newSubtasks: AMISubtask[]): ReplanResult;
 }
 
