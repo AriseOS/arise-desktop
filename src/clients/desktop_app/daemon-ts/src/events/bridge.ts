@@ -95,28 +95,11 @@ export function mapAgentEventToSSE(
     }
 
     case "message_update": {
-      // Use the streaming delta from assistantMessageEvent for incremental updates
-      const ame = (event as any).assistantMessageEvent;
-      let content = "";
-      if (ame) {
-        if (ame.type === "text_delta") {
-          content = ame.delta ?? "";
-        } else if (ame.type === "thinking_delta") {
-          content = ame.delta ?? "";
-        }
-      }
-      // Fallback: extract from accumulated message
-      if (!content) {
-        content = extractText((event as any).message);
-      }
-      if (!content) return null;
-      return {
-        action: Action.agent_thinking,
-        agent_name: agentName,
-        thinking: content,
-        task_id: taskId,
-        timestamp,
-      };
+      // Accumulate streaming deltas — do NOT emit per-token SSE events.
+      // The accumulated text is emitted as a single agent_thinking event
+      // at turn boundaries (tool_execution_start / message_end / turn_end).
+      // This is handled in bridgeAgentToSSE() below.
+      return null;
     }
 
     case "tool_execution_start":
@@ -175,36 +158,61 @@ export function bridgeAgentToSSE(
   taskId: string,
   agentName = "Agent",
 ): () => void {
-  // Track accumulated text within a turn for agent_report emission
+  // Accumulate streaming deltas within a turn.
+  // Emit as a single agent_thinking + agent_report at boundaries:
+  //   - tool_execution_start: thinking before a tool call (+ agent_report)
+  //   - agent_end: final response text (no tool call followed)
+  //
+  // Event order from pi-agent-core for a tool-call turn:
+  //   turn_start → message_start → message_update* → message_end → tool_execution_start → ...
+  // Event order for a text-only turn (final answer):
+  //   turn_start → message_start → message_update* → message_end → turn_end → agent_end
+  //
+  // We do NOT emit at message_end because we can't tell if a tool_execution_start
+  // will follow. Instead we emit at tool_execution_start or agent_end.
   let turnText = "";
+  // Whether accumulated text was already emitted (to avoid double-emit)
+  let flushed = false;
 
   return agent.subscribe((event: AgentEvent) => {
     // Reset accumulated text at turn boundaries
     if (event.type === "turn_start") {
       turnText = "";
+      flushed = false;
+      return;
+    }
+
+    // Accumulate streaming deltas (message_update returns null from mapAgentEventToSSE)
+    if (event.type === "message_update") {
+      const ame = (event as any).assistantMessageEvent;
+      if (ame) {
+        if (ame.type === "text_delta" || ame.type === "thinking_delta") {
+          turnText += ame.delta ?? "";
+        }
+      }
+      return;
+    }
+
+    // Skip message_end — we flush at tool_execution_start or agent_end instead
+    if (event.type === "message_end" || event.type === "message_start") {
       return;
     }
 
     const sseEvent = mapAgentEventToSSE(event, taskId, agentName);
     if (sseEvent) {
-      emitter.emit(sseEvent);
-
-      // Track text from message_update → agent_thinking
-      if (sseEvent.action === Action.agent_thinking && "thinking" in sseEvent) {
-        const delta = (sseEvent as any).thinking;
-        turnText += delta;
-      }
-
       // When tool execution starts and there's accumulated text,
-      // emit agent_report so it shows in ChatBox as a thinking bubble
-      if (sseEvent.action === Action.activate_toolkit && turnText) {
+      // emit agent_thinking + agent_report before the tool event
+      if (sseEvent.action === Action.activate_toolkit && turnText && !flushed) {
+        emitter.emitAgentThinking(turnText.slice(0, 500), agentName);
+        emitter.emitAgentReport(turnText.slice(0, 300), "thinking");
         logger.info(
           { agent: agentName, thinking: turnText.slice(0, 200) },
           "Agent thinking before tool call",
         );
-        emitter.emitAgentReport(turnText.slice(0, 300), "thinking");
-        turnText = "";
+        flushed = true;
       }
+
+      emitter.emit(sseEvent);
 
       // Log tool execution events
       if (sseEvent.action === Action.activate_toolkit) {
@@ -224,21 +232,21 @@ export function bridgeAgentToSSE(
         );
       }
 
-      // If agent_end carried an error, emit a dedicated SSE error event
+      // If agent_end: emit remaining text + handle errors
       if (sseEvent.action === Action.deactivate_agent) {
+        if (turnText && !flushed) {
+          emitter.emitAgentThinking(turnText.slice(0, 500), agentName);
+          logger.info(
+            { agent: agentName, thinking: turnText.slice(0, 200) },
+            "Agent final response",
+          );
+        }
         if ("error" in sseEvent && sseEvent.error) {
           logger.error({ agent: agentName, error: sseEvent.error }, "Agent ended with error");
           emitter.emitError(
             sseEvent.error,
             "AGENT_ERROR",
             false,
-          );
-        }
-        // Log remaining thinking text that wasn't followed by a tool call
-        if (turnText) {
-          logger.info(
-            { agent: agentName, thinking: turnText.slice(0, 200) },
-            "Agent final response",
           );
         }
       }
