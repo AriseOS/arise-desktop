@@ -216,10 +216,10 @@ learner/
 |---|---|---|
 | 时机 | 任务开始前 | 任务完成后 |
 | 输入 | 用户请求文本 | TaskExecutionData |
-| 输出 | MemoryPlan（读取建议） | LearnResult（写入建议） |
-| LLM 工具 | recall_phrases, search_states, explore_graph | find_states_by_urls, get_state_sequences, verify_action |
-| LLM 判断 | 哪些 Memory 匹配任务 | 哪些 States 构成有效路径 |
-| 最终动作 | 返回 workflow_guide | 创建 CognitivePhrase |
+| 输出 | MemoryPlan（读取建议） | LearnResult（写入结果） |
+| LLM 工具 | recall_phrases, search_states, explore_graph | recall_phrases, find_states_by_urls, get_state_sequences, verify_action |
+| 核心策略 | Coverage 判断 + workflow_guide 注入 | Recall-First + Coverage 判断 + Phrase 创建 |
+| 最终动作 | 返回 workflow_guide | 创建 CognitivePhrase + auto-share |
 
 ### LearnerAgent 接口
 
@@ -244,77 +244,87 @@ class LearnerAgent:
 class LearnerTools:
     """LLM 在分析过程中可调用的 Memory 查询工具。"""
 
+    async def recall_phrases(self, query: str, top_k: int = 5) -> str:
+        """搜索已有的 CognitivePhrases（embedding 相似度）。
+
+        Recall-First：LLM 第一步就调用此工具，判断已有 phrases 是否已覆盖当前任务。
+        返回每个 phrase 的完整信息（state_path, execution_plan, actions, similarity_score）。
+        """
+
     async def find_states_by_urls(self, urls: List[str]) -> str:
         """给定 URL 列表，查找 Memory 中对应的 States。
 
-        使用 memory.find_state_by_url(url) O(1) 查找。
-        返回每个 URL 对应的 State（id, description, page_url）或 "not found"。
+        使用 URL index O(1) 查找。
+        返回每个 URL 对应的 State（id, description, page_url, domain）或 "not found"。
         """
 
     async def get_state_sequences(self, state_id: str) -> str:
         """查询某个 State 上的所有 IntentSequences。
 
-        使用 memory.intent_sequence_manager.list_by_state(state_id)。
         返回该 State 上所有 IntentSequence 的摘要（id, description, intent 数量）。
         """
 
     async def verify_action(self, source_state_id: str, target_state_id: str) -> str:
         """验证两个 States 之间是否存在 Action。
 
-        使用 memory.action_manager.get_action(source_id, target_id)。
         返回 Action 信息或 "no action found"。
-        """
-
-    async def check_similar_phrases(self, description: str, top_k: int = 3) -> str:
-        """检查 Memory 中是否已有相似的 CognitivePhrase。
-
-        使用 embedding 相似度搜索。
-        如果已有高度相似的 phrase，可能不需要创建新的。
-        返回相似 phrases 列表。
         """
 ```
 
-### LLM 的工作流程
+> **注意**：原设计中的 `check_similar_phrases` 已重命名为 `recall_phrases`，与 PlannerAgent 对称。功能从"去重检查"升级为"Recall-First 工作流"的核心入口。
 
-LLM 收到 `TaskExecutionData` 的压缩表示，然后：
+### LLM 的工作流程（Recall-First）
 
-**Phase 1：分析执行数据，确定有效路径**
+LLM 收到 `TaskExecutionData` 的压缩表示，遵循 **Recall-First** 工作流：
 
-LLM 阅读每个子任务的 tool_records（包含 thinking 和 judgment），判断：
-- 哪些操作是有效步骤
-- 哪些是弯路/探索/试错
-- 有效路径经过了哪些 URL
+**Step 1：Recall 已有 Phrases**
 
-**Phase 2：调用工具，对接 Memory 实体**
+LLM **首先**调用 `recall_phrases(user_request + subtask summaries)` 搜索已有的 CognitivePhrases。
 
-LLM 用 `find_states_by_urls` 查找有效路径上的 States：
-- 找到 → 记录 State ID
-- 找不到 → 标记为 "uncovered"（可能是 online learning 没有写入的）
+**Step 2：Coverage 判断**
 
-LLM 用 `verify_action` 确认相邻 States 之间有 Action。
-LLM 用 `get_state_sequences` 查看每个 State 上有哪些操作。
+LLM 阅读每个 recalled phrase 的完整信息（state_path, execution_plan），判断每个 browser 子任务是否已被覆盖。判断标准是 **workflow pattern** 而非具体搜索词（如 "Search products on Amazon" 覆盖 "Search for headphones on Amazon"）。
 
-**Phase 3：检查去重**
+- **如果所有 browser 子任务都已覆盖** → 输出空 learning_plan（0 个 phrase_candidate），**提前退出**（节省 tokens）
+- **如果有未覆盖的子任务** → 继续分析
 
-LLM 用 `check_similar_phrases` 确认 Memory 中没有高度相似的 CognitivePhrase。
+**Step 2.5：按 Method 分组**
 
-**Phase 4：输出学习计划**
+对于未覆盖的 browser 子任务，识别不同的工作流模式。同一类操作（如重复提取不同产品页面信息）→ 一个 phrase。
 
-LLM 输出 `<learning_plan>` XML：
+**Step 3：分析未覆盖部分**
+
+对每个未覆盖的子任务：
+1. 提取有效 URL（排除弯路/探索/试错）
+2. 调用 `find_states_by_urls` 查找 Memory 中的 States
+3. 调用 `verify_action` 确认 States 间有 Action 连接
+4. 可选调用 `get_state_sequences` 查看已有的页面操作
+
+**Step 4：输出学习计划**
+
+LLM 输出 `<learning_plan>` XML，支持 **0 到 N 个 phrase_candidate**：
 
 ```xml
 <learning_plan>
-  <should_create_phrase>true</should_create_phrase>
-  <description>在亚马逊上搜索某品类商品，按销量排序，提取前N款产品信息并生成Excel报告</description>
-  <label>Amazon Best Sellers Search and Report</label>
-  <effective_path>
-    <state url="https://www.amazon.com/" state_id="state_abc" />
-    <state url="https://www.amazon.com/s?k=ai+glasses" state_id="state_def" />
-    <state url="https://www.amazon.com/s?k=ai+glasses&s=exact-aware-popularity-rank" state_id="state_ghi" />
-  </effective_path>
-  <reason>首次完成此类任务，Memory 中无类似 CognitivePhrase</reason>
+  <coverage_judgment>
+    Recalled "Amazon Product Search" (0.87): covers sub_1 and sub_2 (same search+sort pattern).
+    sub_3 (Google Shopping comparison) is new — no existing phrase.
+  </coverage_judgment>
+
+  <phrase_candidate>
+    <should_create>true</should_create>
+    <description>在 Google Shopping 上搜索并比较商品价格</description>
+    <label>Google Shopping Price Compare</label>
+    <effective_path>
+      <state state_id="state_abc" />
+      <state state_id="state_def" />
+    </effective_path>
+    <reason>New workflow for Google Shopping, not covered by existing phrases.</reason>
+  </phrase_candidate>
 </learning_plan>
 ```
+
+> **与原设计的关键差异**：原设计将去重检查放在 Phase 3（分析之后），实际实现将 recall 放在 Step 1（分析之前），实现了 early exit 优化。
 
 ### 代码构建 CognitivePhrase
 
@@ -333,65 +343,82 @@ LLM 输出 `<learning_plan>` 后，**代码**（不是 LLM）负责：
 
 ```python
 @dataclass
-class LearningPlan:
-    """LLM 输出的学习计划。"""
-    should_create_phrase: bool
+class PhraseCandidate:
+    """单个 phrase 候选。"""
+    should_create: bool
     description: str
     label: str
     effective_state_ids: List[str]    # 有效路径上的 State IDs
-    reason: str                       # 为什么创建/不创建
+    reason: str
+
+@dataclass
+class LearningPlan:
+    """LLM 输出的学习计划（支持多个候选）。"""
+    coverage_judgment: str             # 覆盖判断推理
+    candidates: List[PhraseCandidate]  # 0..N 个 phrase 候选
 
 @dataclass
 class LearnResult:
     """Learner 的最终输出。"""
+    success: bool
     phrase_created: bool
-    phrase_id: Optional[str] = None   # 新创建的 CognitivePhrase ID
-    learning_plan: Optional[LearningPlan] = None
-    debug_trace: Dict[str, Any] = field(default_factory=dict)
+    phrase_ids: List[str] = field(default_factory=list)        # 新创建的 CognitivePhrase IDs
+    shared_phrase_ids: List[str] = field(default_factory=list) # 分享到公共 Memory 的 IDs
+    reason: str = ""
 ```
 
 ## 触发条件
 
-不是每次任务完成都需要学习。触发条件：
+不是每次任务完成都需要学习。分两层判断：
 
-1. **任务成功**：至少有 1 个浏览器子任务且全部成功
-2. **有新知识**：`check_similar_phrases` 没有找到高度相似的已有 phrase
-3. **非平凡任务**：子任务数量 ≥ 2（单步任务不值得生成 CognitivePhrase）
+### Executor 侧（`_should_trigger_learning()`）
 
-判断 1 和 3 在 Agent 侧（Executor）做，判断 2 在 Memory 侧（Learner）做。
+1. 未被停止/取消
+2. 有 `cloud_client` 和 `user_id`
+3. 至少有 1 个 browser 子任务
+4. 子任务总数 ≥ 2（单步任务不值得生成 CognitivePhrase）
+5. **所有** browser 子任务成功（`SubtaskState.DONE`）
+
+### LearnerAgent 侧（Recall-First 工作流）
+
+6. `recall_phrases` 未找到完全覆盖的已有 phrase（LLM 判断 coverage）
+
+条件 1-5 是廉价的前置检查（不调 LLM），条件 6 在 LearnerAgent 内部通过 Recall-First 工作流判断。
 
 ## 调用链路
 
 ```
 AMITaskExecutor.execute()
-  ├─ 执行所有子任务
-  ├─ 每个子任务完成后：
-  │     collector.collect_subtask_data(agent, subtask)  ← 提取 messages
+  ├─ collector = ExecutionDataCollector()
+  ├─ 执行所有子任务（支持并行）
+  │   ├─ 每次 retry：fresh BehaviorRecorder（录制 → 写入 State/Action/IntentSequence）
+  │   └─ 成功后：collector.collect_subtask_data(agent, subtask)  ← 提取 messages
   │
   └─ 全部完成后：
-        if should_trigger_learning(subtasks):
+        if _should_trigger_learning():
             task_data = collector.build_task_data(task_id, user_request, subtasks)
-
-            # 调用 Cloud Backend 的新 API（或本地调用）
-            result = await cloud_client.learn_from_execution(
-                user_id=user_id,
-                execution_data=task_data,
-            )
+            # Fire-and-forget：不阻塞任务完成
+            asyncio.create_task(_learn_from_execution(task_data))
 ```
 
-Cloud Backend 新增 API：
+`_learn_from_execution()` 内部：
+1. Dump `task_data` 到 `~/.ami/logs/learner_input_{task_id}_{timestamp}.json`（调试用）
+2. 调用 `cloud_client.learn_from_execution(user_id, execution_data)`
+
+Cloud Backend API：
 
 ```
 POST /api/v1/memory/learn
 Body: { user_id, execution_data: TaskExecutionData }
-Response: { phrase_created, phrase_id, reason }
+Response: { success, phrase_created, phrase_ids, shared_phrase_ids, reason }
 ```
 
 该 API 内部：
 1. 获取用户的 private Memory
-2. 创建 LearnerAgent
+2. 创建 LearnerAgent（使用 cached provider 和 embedding service）
 3. 调用 `learner.learn(execution_data)`
-4. 返回结果
+4. Auto-share 创建的 phrases 到 public memory
+5. 返回 LearnResult
 
 ## 不需要改动的部分
 
@@ -626,8 +653,8 @@ PlannerAgent.recall_phrases("亚马逊上卖的最好的望远镜")
 
 1. **非浏览器子任务在 CognitivePhrase 中怎么表达？** 当前 CognitivePhrase 的 execution_plan 完全绑定 State（页面）。document 子任务没有 State。本次设计先只覆盖浏览器部分，非浏览器子任务的认知记录留待后续。
 
-2. **异步还是同步？** 学习过程需要调 LLM（生成 description）和 embedding。可以异步执行，不阻塞用户。但需要确保 Memory 写入在下一次任务查询前完成。
+2. ~~**异步还是同步？**~~ **已解决**：采用 fire-and-forget（`asyncio.create_task`），不阻塞任务完成。学习结果可能在下一次 PlannerAgent 查询前尚未写入，但这是可接受的权衡。
 
-3. **失败任务要不要学？** 当前设计只在任务成功时学习。但部分成功（3/4 子任务成功）也可能有值得学的路径。留待后续。
+3. **失败任务要不要学？** 当前实现要求所有 browser 子任务成功才触发学习。部分成功（3/4 子任务成功）可能有值得学的路径。留待后续。
 
 4. **CognitivePhrase 质量评估？** 自动生成的 phrase 质量可能不如人工录制的。可以通过 `success_count` 追踪后续使用效果，低效的 phrase 自动降权。

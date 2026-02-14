@@ -30,14 +30,20 @@ const SKIP_TOOLS = new Set([
 ]);
 
 // Tool input compression rules per tool type
+// Keys must match actual tool names from browser-tools.ts
 const INPUT_KEEP_FIELDS: Record<string, string[]> = {
-  browser_navigate: ["url"],
+  browser_visit_page: ["url"],
   browser_click: ["coordinate", "element_description"],
   browser_type: ["coordinate", "text", "element_description"],
   browser_scroll: ["coordinate", "direction"],
-  browser_select_option: ["coordinate", "value"],
+  browser_select: ["coordinate", "value"],
+  browser_enter: [],
+  browser_back: [],
+  browser_forward: [],
+  browser_press_key: ["key"],
   browser_switch_tab: ["tab_id"],
   browser_close_tab: ["tab_id"],
+  browser_new_tab: ["url"],
   search_google: ["query"],
   take_note: ["content"],
   read_note: [],

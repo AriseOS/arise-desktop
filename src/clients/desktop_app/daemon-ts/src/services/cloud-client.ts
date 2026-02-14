@@ -37,6 +37,7 @@ export class CloudClient {
     body?: unknown,
     extraHeaders?: Record<string, string>,
     creds?: RequestCredentials,
+    timeoutMs?: number,
   ): Promise<unknown> {
     const url = `${this.baseUrl}${path}`;
     const headers: Record<string, string> = {
@@ -57,7 +58,7 @@ export class CloudClient {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(this.timeout),
+      signal: AbortSignal.timeout(timeoutMs ?? this.timeout),
     });
 
     if (!resp.ok) {
@@ -115,11 +116,13 @@ export class CloudClient {
   }
 
   async memoryPlan(body: Record<string, unknown>, creds?: RequestCredentials): Promise<unknown> {
-    return this.post("/api/v1/memory/plan", body, creds);
+    // PlannerAgent runs LLM agent loop — needs longer timeout than default 30s
+    return this.request("POST", "/api/v1/memory/plan", body, undefined, creds, 120_000);
   }
 
   async memoryLearn(body: Record<string, unknown>, creds?: RequestCredentials): Promise<unknown> {
-    return this.post("/api/v1/memory/learn", body, creds);
+    // LearnerAgent runs LLM agent loop with tool calls — typically 20-50s, can exceed 60s for large tasks
+    return this.request("POST", "/api/v1/memory/learn", body, undefined, creds, 120_000);
   }
 
   async memoryAdd(body: Record<string, unknown>, creds?: RequestCredentials): Promise<unknown> {

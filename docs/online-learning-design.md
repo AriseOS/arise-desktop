@@ -52,7 +52,7 @@ def __init__(
 
 #### 1.2 改动 `_execute_subtask()` 流程
 
-在子任务执行前后包裹 recorder 生命周期：
+Recorder 在 **retry loop 内部**创建，每次重试都使用新 recorder，避免失败尝试的 operations 污染：
 
 ```python
 async def _execute_subtask(self, subtask: AMISubtask) -> bool:
@@ -60,26 +60,33 @@ async def _execute_subtask(self, subtask: AMISubtask) -> bool:
     # ...existing validation...
 
     agent.reset()
-
-    # --- 新增：browser 子任务启动 recorder ---
     recorder = None
-    if subtask.agent_type == "browser":
-        recorder = await self._start_behavior_recorder(agent)
-
-    # ...existing execution code (build prompt, astep, etc.)...
 
     try:
-        # ...existing retry loop...
-        response = await agent.astep(prompt)
-        subtask.state = SubtaskState.DONE
+        while subtask.retry_count <= self._max_retries:
+            try:
+                # --- 每次重试都创建新 recorder ---
+                if subtask.agent_type == "browser":
+                    recorder = await self._start_behavior_recorder(agent=agent)
 
-        # --- 新增：子任务成功，保存录制的操作到 Memory ---
-        if recorder:
-            await self._save_recorded_operations(recorder, subtask)
+                response = await agent.astep(prompt)
+                subtask.state = SubtaskState.DONE
 
-        return True
+                # --- 子任务成功，保存录制的操作到 Memory ---
+                if recorder:
+                    await self._save_recorded_operations(recorder, subtask)
+
+                return True
+
+            except Exception as e:
+                # --- 失败时停止 recorder，丢弃 operations ---
+                if recorder:
+                    await self._stop_behavior_recorder(recorder)
+                    recorder = None
+                subtask.retry_count += 1
+                ...
     finally:
-        # --- 新增：无论成功失败，停止 recorder ---
+        # --- 最后兜底：停止 recorder 释放 CDP session ---
         if recorder:
             await self._stop_behavior_recorder(recorder)
 ```
@@ -87,14 +94,23 @@ async def _execute_subtask(self, subtask: AMISubtask) -> bool:
 #### 1.3 新增三个私有方法
 
 ```python
-async def _start_behavior_recorder(self, agent: "AMIAgent") -> Optional["BehaviorRecorder"]:
+async def _start_behavior_recorder(self, agent: Optional["AMIAgent"] = None) -> Optional["BehaviorRecorder"]:
     """为 browser 子任务启动 BehaviorRecorder。"""
     try:
         from ...tools.eigent_browser.behavior_recorder import BehaviorRecorder
-        from ...tools.eigent_browser.browser_session import HybridBrowserSession
 
-        # 获取 agent 使用的共享 browser session
-        session = await HybridBrowserSession.get_session(session_id=self.task_id)
+        # 优先从 agent 的 BrowserToolkit 获取 session（支持并行执行，每个 agent 独立 session）
+        session = None
+        if agent:
+            tool = agent.get_tool("browser_get_page_snapshot")
+            if tool:
+                toolkit = tool.func.__self__
+                session = await toolkit._get_session()
+
+        # 兜底：通过 task_id 查找共享 session
+        if session is None:
+            from ...tools.eigent_browser.browser_session import HybridBrowserSession
+            session = await HybridBrowserSession.get_session(session_id=self.task_id)
 
         recorder = BehaviorRecorder(enable_snapshot_capture=False)  # 不需要 DOM snapshot
         await recorder.start_recording(session)
@@ -137,6 +153,7 @@ async def _save_recorded_operations(
             operations=operations,
             session_id=f"{self.task_id}_{subtask.id}",
             generate_embeddings=True,
+            skip_cognitive_phrase=True,  # 防止 Runtime 阶段创建 CognitivePhrase，由 Post-Execution 阶段统一创建
         )
         logger.info(f"[OnlineLearning] Memory save result: {result}")
     except Exception as e:
@@ -146,8 +163,11 @@ async def _save_recorded_operations(
 **关键设计决策**：
 
 - **`enable_snapshot_capture=False`**：不需要 DOM snapshot，agent 已经有 page snapshot 系统
-- **`session_id=f"{task_id}_{subtask_id}"`**：每个子任务一个独立的 session_id，使 CognitivePhrase 按子任务分开
+- **`session_id=f"{task_id}_{subtask_id}"`**：每个子任务一个独立的 session_id，使图实体按子任务分开
+- **`skip_cognitive_phrase=True`**：Runtime Learning 只写入 State/Action/IntentSequence，CognitivePhrase 由 Post-Execution Learning 统一创建
 - **只在 `subtask.state == DONE` 时保存**：失败子任务的操作不写入 Memory
+- **每次 retry 创建新 recorder**：recorder 在 retry loop 内部创建，失败尝试的 operations 被丢弃
+- **从 agent 的 BrowserToolkit 获取 session**：支持并行执行，每个 agent 有独立的 browser session
 - **try-except 包裹所有 recorder 操作**：recorder 失败不影响主任务执行
 - **`finally` 中 stop_recording**：确保 recorder 资源释放，防止 CDP session 泄漏
 
