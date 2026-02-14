@@ -107,7 +107,7 @@ class AMISubtask:
     retry_count: int = 0
 
 
-MAX_PARALLEL_SUBTASKS = 10  # Pool has 16 WebContentsViews; reserve some for user browsing
+MAX_PARALLEL_SUBTASKS = 5  # Pool has 8 WebContentsViews; keep some for user browsing
 
 
 class _AgentPool:
@@ -207,7 +207,7 @@ class AMITaskExecutor:
     Key features:
     - Parallel execution: eligible subtasks (no unmet dependencies) run concurrently
     - Agent pooling: browser agents cloned with independent sessions for parallel use
-    - Semaphore-bounded concurrency (MAX_PARALLEL_SUBTASKS = 6)
+    - Semaphore-bounded concurrency (MAX_PARALLEL_SUBTASKS = 5)
     - workflow_guide injected as explicit instruction in the prompt
     - Dependency resolution with fail-fast propagation
     - SSE events for real-time UI updates
@@ -1261,6 +1261,8 @@ No historical workflow guide available. Please explore and complete the task usi
 
         subtask_agent_type = subtask.agent_type
 
+        subtask_label = subtask.content[:40].strip()
+
         async def on_retry(attempt: int, max_retries: int, delay: float, error_msg: str) -> None:
             if not self._task_state:
                 return
@@ -1273,6 +1275,7 @@ No historical workflow guide available. Please explore and complete the task usi
                 agent_type=subtask_agent_type,
                 executor_id=self.executor_id,
                 task_label=self.task_label,
+                subtask_label=subtask_label,
             ))
 
         provider.set_on_retry_callback(on_retry)
@@ -1319,6 +1322,7 @@ No historical workflow guide available. Please explore and complete the task usi
 
         # Report: Subtask starting with progress counter
         progress = self._get_subtask_progress(subtask)
+        subtask_label = subtask.content[:40].strip()
         content_preview = subtask.content[:80]
         if len(subtask.content) > 80:
             content_preview += "..."
@@ -1330,6 +1334,7 @@ No historical workflow guide available. Please explore and complete the task usi
             agent_type=subtask.agent_type,
             executor_id=self.executor_id,
             task_label=self.task_label,
+            subtask_label=subtask_label,
         ))
 
         # Emit assign_task event (for compatibility)
@@ -1363,6 +1368,7 @@ No historical workflow guide available. Please explore and complete the task usi
 
         # Report: Subtask state change with progress counter
         progress = self._get_subtask_progress(subtask)
+        subtask_label = subtask.content[:40].strip()
         content_preview = subtask.content[:50]
         if len(subtask.content) > 50:
             content_preview += "..."
@@ -1377,6 +1383,7 @@ No historical workflow guide available. Please explore and complete the task usi
                 agent_type=subtask.agent_type,
                 executor_id=self.executor_id,
                 task_label=self.task_label,
+                subtask_label=subtask_label,
             ))
         elif subtask.state == SubtaskState.FAILED:
             # Classify error for user-friendly message
@@ -1391,6 +1398,7 @@ No historical workflow guide available. Please explore and complete the task usi
                 agent_type=subtask.agent_type,
                 executor_id=self.executor_id,
                 task_label=self.task_label,
+                subtask_label=subtask_label,
             ))
 
         await self._task_state.put_event(SubtaskStateData(
